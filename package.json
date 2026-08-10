@@ -1,0 +1,12 @@
+{
+  "name": "openbindings-openapi-client-workspace",
+  "private": true,
+  "packageManager": "pnpm@10.15.0",
+  "scripts": {
+    "build": "pnpm --dir typescript build",
+    "test": "pnpm --dir typescript test",
+    "lint": "pnpm --dir typescript lint",
+    "boundary": "pnpm build && node scripts/verify-boundary.mjs",
+    "verify": "pnpm lint && pnpm test && pnpm boundary"
+  }
+}
