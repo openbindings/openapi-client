@@ -326,7 +326,7 @@ export class OpenAPIClient {
     input: OpenAPICallInput,
     callOptions: OpenAPICallOptions,
   ): Promise<OpenAPIStreamResult<T, E>> {
-    const native = nativeInput(
+    const native = await nativeInput(
       this.document,
       resolved.pathItem,
       resolved.operation,
@@ -497,12 +497,12 @@ function resolveOperation(document: OpenAPIDocument, selector: OpenAPIOperationS
   );
 }
 
-function nativeInput(
+async function nativeInput(
   document: OpenAPIDocument,
   pathItem: OpenAPIPathItem,
   operation: OpenAPIOperation,
   input: OpenAPICallInput,
-): { supplied: boolean; value: unknown; mediaType?: string } {
+): Promise<{ supplied: boolean; value: unknown; mediaType?: string }> {
   const parameters = effectiveParameters(pathItem, operation);
   const plans = planRequestBodies(operation, {
     profile: OPENAPI_PROFILE_FULL,
@@ -536,13 +536,14 @@ function nativeInput(
       throw new OpenAPIClientError("input", "BODY_NOT_DECLARED", "operation does not declare a supported request body");
     }
     const plan = selectedPlans[0]!;
+    const body = await nativeRequestBody(plan, input.body);
     if (plan.synthetic || plan.wholeObject) {
-      value[routes.wholeBodyField] = input.body;
+      value[routes.wholeBodyField] = body;
     } else {
-      if (input.body === null || typeof input.body !== "object" || Array.isArray(input.body)) {
+      if (body === null || typeof body !== "object" || Array.isArray(body)) {
         throw new OpenAPIClientError("input", "OBJECT_BODY_REQUIRED", `${plan.mediaType} requires an object body`);
       }
-      for (const [name, member] of Object.entries(input.body as Record<string, unknown>)) {
+      for (const [name, member] of Object.entries(body as Record<string, unknown>)) {
         value[routes.bodyField(name)] = member;
       }
     }
@@ -565,6 +566,38 @@ function nativeInput(
     }],
     ...(selectedPlans[0]?.mediaType ? { mediaType: input.mediaType ?? selectedPlans[0].mediaType } : {}),
   };
+}
+
+async function nativeRequestBody(plan: BodyPlan, body: unknown): Promise<unknown> {
+  if (!plan.rawBoundary) return body;
+  let bytes: Uint8Array;
+  if (typeof body === "string") {
+    bytes = new TextEncoder().encode(body);
+  } else if (body instanceof Uint8Array) {
+    bytes = body;
+  } else if (body instanceof ArrayBuffer) {
+    bytes = new Uint8Array(body);
+  } else if (ArrayBuffer.isView(body)) {
+    bytes = new Uint8Array(body.buffer, body.byteOffset, body.byteLength);
+  } else if (body instanceof Blob) {
+    bytes = new Uint8Array(await body.arrayBuffer());
+  } else {
+    throw new OpenAPIClientError(
+      "input",
+      "RAW_BODY_BYTES_REQUIRED",
+      `${plan.mediaType} requires a string, Blob, ArrayBuffer, or typed-array body`,
+    );
+  }
+  return bytesToBase64(bytes);
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.byteLength; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+  }
+  return btoa(binary);
 }
 
 function selectBodyPlans(plans: BodyPlan[], configured: string | undefined, openapiVersion: string | undefined): BodyPlan[] {
@@ -631,11 +664,6 @@ function nativeContext(
     }
   }
   if (Object.keys(apiKeys).length > 0) context.apiKeys = apiKeys;
-  if (Object.keys(handlers).length > 0) {
-    context["$openapiSecurity"] = Object.fromEntries(
-      Object.keys(handlers).map((name) => [name, true]),
-    );
-  }
   return { context, handlers };
 }
 

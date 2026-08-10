@@ -88,6 +88,26 @@ describe("OpenAPIClient native API", () => {
     expect(result.openapi).toEqual({ declared: true, responseKey: "201", mediaType: "application/json" });
   });
 
+  it("accepts native bytes for raw request media without exposing private Base64 carriage", async () => {
+    const bytes = Uint8Array.of(0, 1, 254, 255);
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input as Request;
+      expect(request.headers.get("content-type")).toBe("image/png");
+      expect(new Uint8Array(await request.arrayBuffer())).toEqual(bytes);
+      return new Response(null, { status: 204 });
+    });
+    const client = await OpenAPIClient.load(document({
+      operationId: "uploadImage",
+      requestBody: { required: true, content: { "image/png": {} } },
+      responses: { "204": { description: "stored" } },
+    }, "/image", "put"), { fetch: fetchFn });
+
+    await expect(client.call("uploadImage", {
+      body: bytes,
+      mediaType: "image/png",
+    })).resolves.toMatchObject({ ok: true });
+  });
+
   it("places credentials by their authored security-scheme names", async () => {
     const doc = document({
       operationId: "secured",

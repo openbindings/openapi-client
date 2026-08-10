@@ -20,13 +20,14 @@ type sharedNativeCase struct {
 	Input       struct {
 		Parameters Parameters      `json:"parameters"`
 		Body       json.RawMessage `json:"body"`
+		BodyBase64 string          `json:"bodyBase64"`
 		MediaType  string          `json:"mediaType"`
 	} `json:"input"`
 	Response struct {
-		Status  int               `json:"status"`
-		Headers map[string]string `json:"headers"`
-		Body    json.RawMessage   `json:"body"`
-		BodyBase64 string         `json:"bodyBase64"`
+		Status     int               `json:"status"`
+		Headers    map[string]string `json:"headers"`
+		Body       json.RawMessage   `json:"body"`
+		BodyBase64 string            `json:"bodyBase64"`
 	} `json:"response"`
 	Expect struct {
 		Method       string            `json:"method"`
@@ -34,6 +35,7 @@ type sharedNativeCase struct {
 		Query        string            `json:"query"`
 		Headers      map[string]string `json:"headers"`
 		BodyJSON     json.RawMessage   `json:"bodyJSON"`
+		BodyBase64   string            `json:"bodyBase64"`
 		OK           bool              `json:"ok"`
 		Value        any               `json:"value"`
 		ValueBase64  string            `json:"valueBase64"`
@@ -77,13 +79,25 @@ func TestSharedNativeWireConformance(t *testing.T) {
 						t.Errorf("body = %#v, want %#v", got, want)
 					}
 				}
+				if fixture.Expect.BodyBase64 != "" {
+					body, _ := io.ReadAll(request.Body)
+					want, decodeErr := base64.StdEncoding.DecodeString(fixture.Expect.BodyBase64)
+					if decodeErr != nil {
+						t.Errorf("expected request base64: %v", decodeErr)
+					}
+					if !reflect.DeepEqual(body, want) {
+						t.Errorf("request body = %#v, want %#v", body, want)
+					}
+				}
 				for name, value := range fixture.Response.Headers {
 					writer.Header().Set(name, value)
 				}
 				writer.WriteHeader(fixture.Response.Status)
 				if fixture.Response.BodyBase64 != "" {
 					body, decodeErr := base64.StdEncoding.DecodeString(fixture.Response.BodyBase64)
-					if decodeErr != nil { t.Errorf("response base64: %v", decodeErr) }
+					if decodeErr != nil {
+						t.Errorf("response base64: %v", decodeErr)
+					}
 					_, _ = writer.Write(body)
 				} else if fixture.Response.Body != nil && string(fixture.Response.Body) != "null" {
 					_, _ = writer.Write(fixture.Response.Body)
@@ -104,6 +118,13 @@ func TestSharedNativeWireConformance(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			if fixture.Input.BodyBase64 != "" {
+				input.Body, err = base64.StdEncoding.DecodeString(fixture.Input.BodyBase64)
+				if err != nil {
+					t.Fatal(err)
+				}
+				input.BodyPresent = true
+			}
 			result, err := client.Call(context.Background(), OperationID(fixture.OperationID), input)
 			if err != nil {
 				t.Fatal(err)
@@ -117,7 +138,9 @@ func TestSharedNativeWireConformance(t *testing.T) {
 			}
 			if fixture.Expect.ValueBase64 != "" {
 				want, _ := base64.StdEncoding.DecodeString(fixture.Expect.ValueBase64)
-				if !reflect.DeepEqual(value, want) { t.Fatalf("value = %#v, want bytes %#v", value, want) }
+				if !reflect.DeepEqual(value, want) {
+					t.Fatalf("value = %#v, want bytes %#v", value, want)
+				}
 			} else if !fixture.Expect.ValueOmitted && !reflect.DeepEqual(value, fixture.Expect.Value) {
 				t.Fatalf("value = %#v, want %#v", value, fixture.Expect.Value)
 			}

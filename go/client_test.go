@@ -93,6 +93,33 @@ func TestClientCallPreservesFalsyWholeJSONBodies(t *testing.T) {
 	}
 }
 
+func TestClientAcceptsNativeBytesForRawRequestMedia(t *testing.T) {
+	want := []byte{0, 1, 254, 255}
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, incoming *http.Request) {
+		if incoming.Header.Get("Content-Type") != "image/png" {
+			t.Errorf("content type = %q", incoming.Header.Get("Content-Type"))
+		}
+		got, _ := io.ReadAll(incoming.Body)
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("body = %#v, want %#v", got, want)
+		}
+		writer.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	document := testDocument(server.URL, `{ "/image":{"put":{"operationId":"uploadImage","requestBody":{"required":true,"content":{"image/png":{}}},"responses":{"204":{"description":"stored"}}}} }`)
+	client, err := Load(context.Background(), Source{Content: document}, ClientOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := client.Call(context.Background(), OperationID("uploadImage"), Input{Body: want, BodyPresent: true, MediaType: "image/png"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.OK {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
 func TestClientReturnsDeclaredHTTPFailureAsNativeResult(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("Content-Type", "application/problem+json")
@@ -150,6 +177,85 @@ func TestClientKeysCredentialsByAuthoredSchemeName(t *testing.T) {
 	}
 	if !result.OK {
 		t.Fatalf("result = %#v", result)
+	}
+}
+
+func TestEngineDerivesCustomSecurityOnlyFromInstalledHandler(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, incoming *http.Request) {
+		if incoming.Header.Get("Cookie") != "session=ready" {
+			t.Errorf("handler did not observe final cookie header: %q", incoming.Header.Get("Cookie"))
+		}
+		if incoming.Header.Get("Authorization") != "Digest engine-proof" {
+			t.Errorf("authorization = %q", incoming.Header.Get("Authorization"))
+		}
+		writer.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	document := testDocument(server.URL, `{ "/secure":{"get":{"security":[{"digest":[]}],"responses":{"204":{"description":"ok"}}}} }`)
+	var raw map[string]any
+	if err := json.Unmarshal(document, &raw); err != nil {
+		t.Fatal(err)
+	}
+	raw["components"] = map[string]any{"securitySchemes": map[string]any{
+		"digest": map[string]any{"type": "http", "scheme": "digest"},
+	}}
+	document, _ = json.Marshal(raw)
+	engine := NewEngine(nil)
+
+	spoofed, err := engine.Prepare(context.Background(), PrepareOptions{
+		Source:  Source{Content: document},
+		Ref:     "#/paths/~1secure/get",
+		Profile: FullProfile(),
+		Context: map[string]any{"$openapiSecurity": map[string]bool{"digest": true}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spoofed.Prerequisites() == nil {
+		t.Fatal("caller-authored security marker bypassed prerequisite discovery")
+	}
+	if _, err := spoofed.Start(context.Background()); err == nil {
+		t.Fatal("caller-authored security marker bypassed execution refusal")
+	} else {
+		var executionErr *ExecutionError
+		if !errors.As(err, &executionErr) || executionErr.Code != CodeContextRequired {
+			t.Fatalf("spoofed marker error = %#v", err)
+		}
+	}
+
+	prepared, err := engine.Prepare(context.Background(), PrepareOptions{
+		Source:  Source{Content: document},
+		Ref:     "#/paths/~1secure/get",
+		Profile: FullProfile(),
+		Context: map[string]any{"cookies": map[string]any{"session": "ready"}},
+		SecurityHandlers: map[string]SecurityHandler{
+			"digest": func(request *http.Request, context SecurityHandlerContext) error {
+				if context.SchemeName != "digest" {
+					return fmt.Errorf("scheme = %q", context.SchemeName)
+				}
+				if request.Header.Get("Cookie") != "session=ready" {
+					return fmt.Errorf("handler observed cookie %q", request.Header.Get("Cookie"))
+				}
+				request.Header.Set("Authorization", "Digest engine-proof")
+				return nil
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prepared.Prerequisites() != nil {
+		t.Fatalf("installed handler left prerequisites: %#v", prepared.Prerequisites())
+	}
+	execution, err := prepared.Start(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range execution.Events() {
+		t.Fatal("204 response emitted an output")
+	}
+	if err := execution.Wait(); err != nil {
+		t.Fatal(err)
 	}
 }
 

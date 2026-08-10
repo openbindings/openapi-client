@@ -8,7 +8,7 @@ interface SharedCase {
   document: OpenAPIDocument;
   operationId: string;
   auth?: Record<string, string>;
-  input: OpenAPICallInput;
+  input: OpenAPICallInput & { bodyBase64?: string };
   response: { status: number; headers: Record<string, string>; body?: unknown; bodyBase64?: string };
   expect: {
     method: string;
@@ -16,6 +16,7 @@ interface SharedCase {
     query: string;
     headers: Record<string, string>;
     bodyJSON?: unknown;
+    bodyBase64?: string;
     ok: boolean;
     value?: unknown;
     valueBase64?: string;
@@ -46,6 +47,11 @@ describe("language-neutral native wire conformance", () => {
         if (Object.prototype.hasOwnProperty.call(fixture.expect, "bodyJSON")) {
           expect(await request.json()).toEqual(fixture.expect.bodyJSON);
         }
+        if (fixture.expect.bodyBase64 !== undefined) {
+          expect(new Uint8Array(await request.arrayBuffer())).toEqual(
+            Uint8Array.from(atob(fixture.expect.bodyBase64), (character) => character.charCodeAt(0)),
+          );
+        }
         const body = fixture.response.bodyBase64 !== undefined
           ? Uint8Array.from(atob(fixture.response.bodyBase64), (character) => character.charCodeAt(0))
           : fixture.response.body === null || fixture.response.body === undefined
@@ -59,7 +65,12 @@ describe("language-neutral native wire conformance", () => {
       const options: OpenAPIClientOptions = { fetch: fetchFn };
       if (fixture.auth) options.auth = fixture.auth;
       const client = await OpenAPIClient.load(document, options);
-      const result = await client.call(fixture.operationId, fixture.input);
+      const input = structuredClone(fixture.input);
+      if (input.bodyBase64 !== undefined) {
+        input.body = Uint8Array.from(atob(input.bodyBase64), (character) => character.charCodeAt(0));
+        delete input.bodyBase64;
+      }
+      const result = await client.call(fixture.operationId, input);
       expect(result.ok).toBe(fixture.expect.ok);
       if (fixture.expect.valueBase64 !== undefined) {
         expect(result.ok ? result.data : result.error).toEqual(

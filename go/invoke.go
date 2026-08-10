@@ -390,6 +390,13 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 	for k, v := range contextHeaders(args.Context) {
 		req.Header.Set(k, v)
 	}
+	// One Cookie header (OAPI-P-10): declared cookie parameters in
+	// declaration order, credentials appended after.
+	if len(cookieUnits) > 0 {
+		req.Header.Set("Cookie", strings.Join(cookieUnits, "; "))
+	}
+	// Extension handlers observe the final built-in request and apply last, so
+	// schemes such as Digest or signature auth can cover every finalized field.
 	for _, selected := range selectedSchemes {
 		handler := args.SecurityHandlers[selected.name]
 		if handler == nil {
@@ -399,11 +406,6 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 			inv.failExecution(&ExecutionError{Code: CodeSourceConfigError, Message: fmt.Sprintf("OpenAPI security handler %q failed: %v", selected.name, err), Cause: err})
 			return
 		}
-	}
-	// One Cookie header (OAPI-P-10): declared cookie parameters in
-	// declaration order, credentials appended after.
-	if len(cookieUnits) > 0 {
-		req.Header.Set("Cookie", strings.Join(cookieUnits, "; "))
 	}
 
 	resp, err := client.Do(req)

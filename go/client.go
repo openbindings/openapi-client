@@ -58,7 +58,9 @@ type Parameters struct {
 
 type Input struct {
 	Parameters Parameters
-	Body       any
+	// Body is the native application body. Raw media accepts []byte or string;
+	// callers never provide the engine's private Base64 carriage form.
+	Body any
 	// BodyPresent distinguishes an authored JSON null body from omission.
 	// Non-nil Body values are present without setting this field.
 	BodyPresent bool
@@ -439,10 +441,14 @@ func nativeInput(document *openapi3.T, pathItem *openapi3.PathItem, operation *o
 			return nativeInvocationInput{}, inputError("BODY_NOT_DECLARED", "operation does not declare a supported request body", nil)
 		}
 		plan := selected[0]
+		bodyValue, bodyErr := nativeRequestBody(plan, input.Body)
+		if bodyErr != nil {
+			return nativeInvocationInput{}, bodyErr
+		}
 		if plan.synthetic || plan.wholeObject {
-			value[routes.wholeBodyField] = input.Body
+			value[routes.wholeBodyField] = bodyValue
 		} else {
-			body, ok := toStringAnyMap(input.Body)
+			body, ok := toStringAnyMap(bodyValue)
 			if !ok {
 				return nativeInvocationInput{}, inputError("OBJECT_BODY_REQUIRED", fmt.Sprintf("%s requires an object body", plan.mediaType), nil)
 			}
@@ -478,6 +484,24 @@ func nativeInput(document *openapi3.T, pathItem *openapi3.PathItem, operation *o
 	return nativeInvocationInput{supplied: supplied, mediaType: mediaType, value: []any{map[string]any{
 		profile.InputRouteKey: profile.InputRouteMarker, "value": value, "parameters": routeParameters, "body": body,
 	}}}, nil
+}
+
+func nativeRequestBody(plan *bodyPlan, body any) (any, error) {
+	if plan == nil || !plan.rawBoundary {
+		return body, nil
+	}
+	var value []byte
+	switch typed := body.(type) {
+	case []byte:
+		value = typed
+	case json.RawMessage:
+		value = []byte(typed)
+	case string:
+		value = []byte(typed)
+	default:
+		return nil, inputError("RAW_BODY_BYTES_REQUIRED", fmt.Sprintf("%s requires a []byte or string body", plan.mediaType), nil)
+	}
+	return base64.StdEncoding.EncodeToString(value), nil
 }
 
 func (c *Client) prepareOptions(operation resolvedOperation, input nativeInvocationInput, call CallOptions) (PrepareOptions, error) {
@@ -537,7 +561,6 @@ func (c *Client) prepareOptions(operation resolvedOperation, input nativeInvocat
 	for name, handler := range call.SecurityHandlers {
 		handlers[name] = handler
 	}
-	configured := map[string]any{}
 	for name, credential := range auth {
 		scheme, ok := securityScheme(c.document, name)
 		if !ok {
@@ -548,17 +571,13 @@ func (c *Client) prepareOptions(operation resolvedOperation, input nativeInvocat
 			return PrepareOptions{}, err
 		}
 		handlers[name] = handler
-		configured[name] = true
 	}
 	for name := range handlers {
 		if _, ok := securityScheme(c.document, name); !ok {
 			return PrepareOptions{}, &ClientError{Kind: ErrorConfiguration, Code: "UNKNOWN_SECURITY_SCHEME", Message: fmt.Sprintf("security scheme %q was not found", name)}
 		}
-		configured[name] = true
 	}
-	if len(configured) > 0 {
-		contextValue["$openapiSecurity"] = configured
-	}
+	contextValue = contextWithSecurityHandlers(contextValue, handlers)
 	return PrepareOptions{Source: c.source, Ref: operation.info.Ref, Profile: FullProfile(), Context: contextValue, HTTPClient: client, MaxDeliveryUnitBytes: maxBytes, SecurityHandlers: handlers}, nil
 }
 

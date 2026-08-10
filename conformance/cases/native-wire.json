@@ -136,6 +136,27 @@
     "expect": { "method": "GET", "path": "/secret", "query": "", "headers": {}, "ok": false, "value": { "code": "denied" }, "responseKey": "403", "mediaType": "application/problem+json" }
   },
   {
+    "name": "schema-omitted OpenAPI 3.1 raw request uses native bytes",
+    "document": {
+      "openapi": "3.1.2",
+      "info": { "title": "binary upload", "version": "1" },
+      "servers": [{ "url": "http://fixture.invalid" }],
+      "paths": {
+        "/blob": {
+          "put": {
+            "operationId": "putBlob",
+            "requestBody": { "required": true, "content": { "application/octet-stream": {} } },
+            "responses": { "204": { "description": "stored" } }
+          }
+        }
+      }
+    },
+    "operationId": "putBlob",
+    "input": { "bodyBase64": "AP7/", "mediaType": "application/octet-stream" },
+    "response": { "status": 204, "headers": {} },
+    "expect": { "method": "PUT", "path": "/blob", "query": "", "headers": { "content-type": "application/octet-stream" }, "bodyBase64": "AP7/", "ok": true, "valueOmitted": true }
+  },
+  {
     "name": "schema-omitted OpenAPI 3.1 binary response is native bytes",
     "document": {
       "openapi": "3.1.2",

@@ -253,6 +253,7 @@ export class OpenAPIEngine {
     const args: PreparedArguments = {
       ...options,
       profile: options.profile ?? OPENAPI_PROFILE_FULL,
+      context: contextWithSecurityHandlers(options.context, options.securityHandlers),
       fetch: options.fetch ?? this.options.fetch,
       hooks: options.hooks,
       defaultHooks: this.options.hooks,
@@ -283,6 +284,7 @@ export class OpenAPIEngine {
     const args: PreparedArguments = {
       ...options,
       profile: options.profile ?? OPENAPI_PROFILE_FULL,
+      context: contextWithSecurityHandlers(options.context, options.securityHandlers),
       fetch: options.fetch ?? this.options.fetch,
       hooks: options.hooks,
       defaultHooks: this.options.hooks,
@@ -332,6 +334,26 @@ export class OpenAPIEngine {
     this.cache.set(source.location, document);
     return document;
   }
+}
+
+/**
+ * Custom security satisfaction is engine-owned configuration, not caller
+ * invocation context. Strip any caller-authored marker and derive the private
+ * compatibility view exclusively from handlers installed for this prepare.
+ */
+function contextWithSecurityHandlers(
+  context: Record<string, unknown> | undefined,
+  handlers: Record<string, OpenAPIEngineSecurityHandler> | undefined,
+): Record<string, unknown> | undefined {
+  const result: Record<string, unknown> = { ...(context ?? {}) };
+  delete result["$openapiSecurity"];
+  const configured = Object.entries(handlers ?? {})
+    .filter(([, handler]) => typeof handler === "function")
+    .map(([name]) => name);
+  if (configured.length > 0) {
+    result["$openapiSecurity"] = Object.fromEntries(configured.map((name) => [name, true]));
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
 }
 
 function assertOperation(document: OpenAPIDocument, ref: string): void {

@@ -37,6 +37,7 @@ func (p *PreparedOperation) Prerequisites() *Prerequisites {
 
 func (e *Engine) Prepare(ctx context.Context, options PrepareOptions) (*PreparedOperation, error) {
 	options.Profile = normalizedProfile(options.Profile)
+	options.Context = contextWithSecurityHandlers(options.Context, options.SecurityHandlers)
 	client := options.HTTPClient
 	if client == nil {
 		client = e.client
@@ -74,7 +75,33 @@ func (e *Engine) PrepareCached(ctx context.Context, options PrepareOptions) (*Pr
 	if document == nil {
 		return nil, nil
 	}
+	options.Context = contextWithSecurityHandlers(options.Context, options.SecurityHandlers)
 	return prepareDocument(document, options)
+}
+
+// Custom security satisfaction is engine configuration, not caller context.
+// Derive the private compatibility view only from handlers installed on this
+// prepare so a caller cannot spoof an unsupported scheme as satisfied.
+func contextWithSecurityHandlers(contextValue map[string]any, handlers map[string]SecurityHandler) map[string]any {
+	result := make(map[string]any, len(contextValue)+1)
+	for key, value := range contextValue {
+		if key != "$openapiSecurity" {
+			result[key] = value
+		}
+	}
+	configured := map[string]bool{}
+	for name, handler := range handlers {
+		if handler != nil {
+			configured[name] = true
+		}
+	}
+	if len(configured) > 0 {
+		result["$openapiSecurity"] = configured
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
 }
 
 func prepareDocument(document *openapi3.T, options PrepareOptions) (*PreparedOperation, error) {
