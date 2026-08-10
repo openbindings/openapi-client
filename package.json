@@ -5,8 +5,9 @@
   "scripts": {
     "build": "pnpm --dir typescript build",
     "test": "pnpm --dir typescript test",
+    "test:go": "cd go && GOWORK=off go test -race ./...",
     "lint": "pnpm --dir typescript lint",
     "boundary": "pnpm build && node scripts/verify-boundary.mjs",
-    "verify": "pnpm lint && pnpm test && pnpm boundary"
+    "verify": "pnpm lint && pnpm test && pnpm test:go && pnpm boundary"
   }
 }

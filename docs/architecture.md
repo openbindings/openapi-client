@@ -63,8 +63,13 @@ The separate adapter maps immutable OpenBindings OpenAPI revisions to those
 profiles and supplies the binding-private routed-input marker. The native
 client selects the fullest profile directly.
 
-The former in-workspace runtime mirror has been retired after the native client
-and all 579 TypeScript adapter tests passed through this engine. A Go-neutral
-engine and native Go client remain future parity work.
+The Go module now follows the same boundary: its public `Client`, `Engine`,
+prepared operation, execution session, HTTP result, failure evidence, and SSE
+types import no OpenBindings package. The Go binding package maps immutable
+binding revisions to engine profiles and bridges Core invocation frames. Its
+former request/response execution loop has been retired; synthesis analysis
+remains there by ownership.
 
-The Go parity port will consume the same language-neutral conformance cases. It must not expose `openbindings.Invocation` or OpenBindings context shapes from its public native API.
+Both languages execute the language-neutral native wire fixtures. The full
+TypeScript client suite and the pre-existing Go binding conformance suite pass
+through their respective standalone engines.

@@ -1,0 +1,81 @@
+package openapiclient
+
+import (
+	"net/http"
+
+	"github.com/getkin/kin-openapi/openapi3"
+)
+
+// Source identifies an OpenAPI artifact without an OBI.
+type Source struct {
+	Location string
+	Content  []byte
+	Document *openapi3.T
+}
+
+type Requirement struct {
+	Type        string
+	Name        string
+	Durable     *bool
+	Description string
+	Extra       map[string]any
+}
+
+type RequirementAlternative struct {
+	Requirements []Requirement
+}
+
+type Prerequisites struct {
+	Target       string
+	Alternatives []RequirementAlternative
+}
+
+type Metadata map[string][]string
+
+type HookSite struct {
+	Ref     string
+	Target  string
+	Profile string
+}
+
+type RawResult struct {
+	Status *int
+	Body   []byte
+	Meta   Metadata
+}
+
+// Hooks are OpenAPI-native customization points. handled=false declines to
+// the engine builtin.
+type Hooks struct {
+	Decode   func(HookSite, RawResult) (value any, handled bool, err error)
+	Classify func(HookSite, RawResult) (value bool, handled bool, err error)
+}
+
+type SecurityHandlerContext struct {
+	SchemeName string
+	Scheme     any
+}
+
+type SecurityHandler func(*http.Request, SecurityHandlerContext) error
+
+type PrepareOptions struct {
+	Source               Source
+	Ref                  string
+	Profile              Profile
+	Context              map[string]any
+	HTTPClient           *http.Client
+	Hooks                *Hooks
+	MaxDeliveryUnitBytes int64
+	SecurityHandlers     map[string]SecurityHandler
+	AllowExternalRefs    *bool
+}
+
+type Event struct {
+	Value    any
+	Metadata Metadata
+}
+
+type Diagnostics struct {
+	Leading  Metadata
+	Trailing Metadata
+}

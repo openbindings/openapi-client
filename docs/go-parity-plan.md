@@ -1,5 +1,8 @@
 # Go parity port
 
+Status: completed for the current pre-release support boundary. This document
+remains the maintenance contract for future cross-language changes.
+
 The Go client will implement the same native contract as the TypeScript client. It must not be a façade that exposes native-looking methods while importing the OpenBindings binding package as its execution implementation.
 
 ## Public shape
@@ -22,13 +25,13 @@ Streaming will use an explicit session with an ordered receive channel or iterat
 
 ## Extraction sequence
 
-1. Move document loading/resolution, parameter/media/server/security planning, HTTP execution, response matching, and SSE framing behind an SDK-neutral internal engine package.
-2. Define small native request/result/error/session types in this repository.
-3. Port the language-neutral conformance cases before adding convenience APIs.
-4. Implement the native `Client` over the engine.
-5. Replace the Go binding package's direct runtime implementation with an adapter over the engine.
-6. Keep OBI synthesis in `openbindings-go/formats/openapi`; share document-analysis helpers only where their ownership is genuinely artifact-native.
-7. Delete the old execution mirror after differential parity passes.
+1. Move document loading/resolution, parameter/media/server/security planning, HTTP execution, response matching, and SSE framing behind an SDK-neutral engine package. **Complete.**
+2. Define small native request/result/error/session types in this repository. **Complete.**
+3. Run language-neutral conformance cases in both clients. **Complete.**
+4. Implement the native `Client` over the engine. **Complete.**
+5. Replace the Go binding package's direct runtime implementation with an adapter over the engine. **Complete.**
+6. Keep OBI synthesis in `openbindings-go/formats/openapi`; share document-analysis helpers only where their ownership is genuinely artifact-native. **Preserved.**
+7. Delete the old execution mirror after differential parity passes. **Complete.**
 
 ## Why this is not a wrapper-first port
 

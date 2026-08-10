@@ -61,8 +61,10 @@ The adapter may switch from its current in-repository engine mirror only when:
 - package inspection proves the standalone public entry point has no Core dependency;
 - no duplicated OpenAPI request/response implementation remains in the adapter package.
 
-The TypeScript cutover satisfies this gate: 579 adapter tests pass through the
-standalone engine, package declarations preserve SDK class ownership, and the
-obsolete in-workspace execution mirror has been removed. Synthesis-only schema
-projection/dialect modules remain in the adapter by design; shared artifact
-analysis comes from the standalone `./analysis` entry point.
+Both cutovers satisfy this gate. TypeScript package declarations preserve SDK
+class ownership and the adapter suite passes through the standalone engine.
+The Go adapter converts neutral prerequisites, hooks, metadata, failures,
+inputs, outputs, cancellation, and completion while the existing binding
+suite passes unchanged, including under the race detector. The displaced Go
+HTTP/SSE execution loop has been removed. Synthesis-only schema projection and
+dialect modules remain in each adapter by design.

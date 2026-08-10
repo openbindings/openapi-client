@@ -6,7 +6,8 @@ The client does not generate source code and does not require an OpenBindings In
 
 This repository is also the OpenAPI execution substrate used by the OpenBindings OpenAPI binding adapter. The standalone API is deliberately OpenAPI-native; protocol abstraction belongs in the adapter, not in this client.
 
-> Status: pre-release extraction. The TypeScript client is runnable and tested. Its public API is being stabilized before the first package release. The Go parity port is tracked in the repository's development contract and is not yet published.
+> Status: pre-release. The TypeScript and Go clients are runnable and tested;
+> their public APIs are being stabilized before the first package releases.
 
 ## TypeScript quick start
 
@@ -30,6 +31,41 @@ if (result.ok) {
   console.error(result.response.status, result.error);
 }
 ```
+
+## Go quick start
+
+```go
+client, err := openapiclient.Load(ctx, openapiclient.Source{
+    Location: "https://example.com/openapi.yaml",
+}, openapiclient.ClientOptions{
+    Auth: map[string]any{"session": os.Getenv("EXAMPLE_TOKEN")},
+})
+if err != nil {
+    log.Fatal(err)
+}
+
+result, err := client.Call(ctx, openapiclient.OperationID("getPet"), openapiclient.Input{
+    Parameters: openapiclient.Parameters{
+        Path:  map[string]any{"petId": "p-123"},
+        Query: map[string]any{"include": []any{"owner", "vaccinations"}},
+    },
+})
+if err != nil {
+    log.Fatal(err)
+}
+if result.OK {
+    fmt.Println(result.Data)
+} else {
+    fmt.Println(result.Response.StatusCode, result.Error)
+}
+```
+
+Go accepts an absolute artifact URI, UTF-8 JSON/YAML bytes, or an already
+parsed `*openapi3.T`. `OperationID`, `PathOperation`, and `OperationRef`
+select operations without an OBI. `Client.Stream` exposes ordered SSE values,
+framing metadata, cancellation, backpressure, and terminal completion through
+`Stream.Next`. Values already emitted remain readable before a terminal failure
+is returned.
 
 The grouped parameter shape preserves identities that OpenAPI treats as distinct. A path parameter, query parameter, header parameter, cookie parameter, and body property may legally share a name without overwriting one another.
 
@@ -184,11 +220,14 @@ See [Architecture](docs/architecture.md), [Fidelity contract](docs/fidelity-cont
 ```sh
 pnpm install
 pnpm verify
+cd go
+GOWORK=off go test -race ./...
 ```
 
-The package has no runtime dependency on an OpenBindings SDK. Its default
-entry point exposes only the native client surface; lower-level engine and
-analysis APIs live on explicit subpaths.
+Neither language implementation has a runtime dependency on an OpenBindings
+SDK. TypeScript's default entry point exposes the native client while its
+lower-level engine and analysis APIs live on explicit subpaths. Go exposes the
+native `Client` and lower-level `Engine` from one idiomatic package.
 
 ### Execution-engine entry point
 

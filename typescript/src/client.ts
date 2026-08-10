@@ -17,7 +17,9 @@ import {
   configureRequestMedia,
   governingResponse,
   governingResponseMedia,
+  governingResponseMediaMatch,
   planRequestBodies,
+  responseUsesRawBoundary,
   type BodyPlan,
 } from "./media.js";
 import { decodeBytesByContentType } from "./invoke.js";
@@ -401,7 +403,7 @@ export class OpenAPIClient {
       void closed.catch(() => undefined);
       return {
         ok: true,
-        events: mapOutputs<T>(execution.events),
+        events: mapOutputs<T>(execution.events, nativeResponseUsesRawBoundary(this.document, resolved.operation, observed.response)),
         closed,
         cancel: () => execution.cancel(),
         response: observed.response,
@@ -746,6 +748,7 @@ async function applyResponseMiddleware(
 
 async function* mapOutputs<T>(
   events: AsyncIterable<OpenAPIExecutionEvent<unknown>>,
+  rawBoundary = false,
 ): AsyncIterable<OpenAPIStreamEvent<T>> {
   try {
     for await (const item of events) {
@@ -761,10 +764,36 @@ async function* mapOutputs<T>(
             ...(retry !== undefined && Number.isFinite(retry) ? { retry } : {}),
           }
         : undefined;
-      yield { data: item.value as T, ...(sse ? { sse } : {}) };
+      const value = rawBoundary && typeof item.value === "string"
+        ? Uint8Array.from(atob(item.value), (character) => character.charCodeAt(0))
+        : item.value;
+      yield { data: value as T, ...(sse ? { sse } : {}) };
     }
   } catch (error: unknown) {
     throw clientError(error);
+  }
+}
+
+function nativeResponseUsesRawBoundary(
+  document: OpenAPIDocument,
+  operation: OpenAPIOperation,
+  response: Response,
+): boolean {
+  const contentType = response.headers.get("content-type");
+  if (!contentType) return false;
+  const declaration = governingResponse(operation, response.status);
+  if (!declaration) return false;
+  try {
+    const match = governingResponseMediaMatch(declaration.response, contentType, true, true);
+    return match !== null && responseUsesRawBoundary(
+      match.media,
+      contentType,
+      document.openapi ?? "3.0",
+      OPENAPI_PROFILE_FULL,
+      !("specificity" in match.declared),
+    );
+  } catch {
+    return false;
   }
 }
 

@@ -1,0 +1,158 @@
+[
+  {
+    "name": "same-named path query and JSON body remain distinct",
+    "document": {
+      "openapi": "3.1.0",
+      "info": { "title": "collision", "version": "1" },
+      "servers": [{ "url": "http://fixture.invalid" }],
+      "paths": {
+        "/items/{id}": {
+          "post": {
+            "operationId": "replaceItem",
+            "parameters": [
+              { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+              { "name": "id", "in": "query", "schema": { "type": "string" } }
+            ],
+            "requestBody": {
+              "required": true,
+              "content": { "application/json": { "schema": { "type": "object", "properties": { "id": { "type": "string" } } } } }
+            },
+            "responses": { "200": { "description": "ok", "content": { "application/json": {} } } }
+          }
+        }
+      }
+    },
+    "operationId": "replaceItem",
+    "input": {
+      "parameters": { "path": { "id": "path-id" }, "query": { "id": "query-id" } },
+      "body": { "id": "body-id" }
+    },
+    "response": { "status": 200, "headers": { "content-type": "application/json" }, "body": { "ok": true } },
+    "expect": {
+      "method": "POST",
+      "path": "/items/path-id",
+      "query": "id=query-id",
+      "headers": { "content-type": "application/json" },
+      "bodyJSON": { "id": "body-id" },
+      "ok": true,
+      "value": { "ok": true }
+    }
+  },
+  {
+    "name": "form query array explode false",
+    "document": {
+      "openapi": "3.0.3",
+      "info": { "title": "query", "version": "1" },
+      "servers": [{ "url": "http://fixture.invalid" }],
+      "paths": {
+        "/search": {
+          "get": {
+            "operationId": "search",
+            "parameters": [{ "name": "tags", "in": "query", "style": "form", "explode": false, "schema": { "type": "array", "items": { "type": "string" } } }],
+            "responses": { "204": { "description": "empty" } }
+          }
+        }
+      }
+    },
+    "operationId": "search",
+    "input": { "parameters": { "query": { "tags": ["red", "blue"] } } },
+    "response": { "status": 204, "headers": {}, "body": null },
+    "expect": { "method": "GET", "path": "/search", "query": "tags=red,blue", "headers": {}, "ok": true, "valueOmitted": true }
+  },
+  {
+    "name": "scheme-named API keys preserve separate channels",
+    "document": {
+      "openapi": "3.1.1",
+      "info": { "title": "security", "version": "1" },
+      "servers": [{ "url": "http://fixture.invalid" }],
+      "components": {
+        "securitySchemes": {
+          "tenant": { "type": "apiKey", "in": "header", "name": "X-Tenant" },
+          "session": { "type": "apiKey", "in": "query", "name": "session" }
+        }
+      },
+      "paths": {
+        "/secure": {
+          "get": {
+            "operationId": "secure",
+            "security": [{ "tenant": [], "session": [] }],
+            "responses": { "200": { "description": "ok", "content": { "application/json": {} } } }
+          }
+        }
+      }
+    },
+    "operationId": "secure",
+    "auth": { "tenant": "tenant-value", "session": "session-value" },
+    "input": {},
+    "response": { "status": 200, "headers": { "content-type": "application/json" }, "body": true },
+    "expect": {
+      "method": "GET",
+      "path": "/secure",
+      "query": "session=session-value",
+      "headers": { "x-tenant": "tenant-value" },
+      "ok": true,
+      "value": true
+    }
+  },
+  {
+    "name": "false is a present whole JSON body",
+    "document": {
+      "openapi": "3.0.4",
+      "info": { "title": "falsy", "version": "1" },
+      "servers": [{ "url": "http://fixture.invalid" }],
+      "paths": {
+        "/flag": {
+          "put": {
+            "operationId": "flag",
+            "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "boolean" } } } },
+            "responses": { "200": { "description": "ok", "content": { "application/json": {} } } }
+          }
+        }
+      }
+    },
+    "operationId": "flag",
+    "input": { "body": false },
+    "response": { "status": 200, "headers": { "content-type": "application/json" }, "body": false },
+    "expect": { "method": "PUT", "path": "/flag", "query": "", "headers": { "content-type": "application/json" }, "bodyJSON": false, "ok": true, "value": false }
+  },
+  {
+    "name": "declared non-2xx is a native failure result with application body",
+    "document": {
+      "openapi": "3.1.2",
+      "info": { "title": "failure", "version": "1" },
+      "servers": [{ "url": "http://fixture.invalid" }],
+      "paths": {
+        "/secret": {
+          "get": {
+            "operationId": "secret",
+            "responses": { "403": { "description": "denied", "content": { "application/problem+json": {} } } }
+          }
+        }
+      }
+    },
+    "operationId": "secret",
+    "input": {},
+    "response": { "status": 403, "headers": { "content-type": "application/problem+json", "x-trace": "trace-1" }, "body": { "code": "denied" } },
+    "expect": { "method": "GET", "path": "/secret", "query": "", "headers": {}, "ok": false, "value": { "code": "denied" }, "responseKey": "403", "mediaType": "application/problem+json" }
+  },
+  {
+    "name": "schema-omitted OpenAPI 3.1 binary response is native bytes",
+    "document": {
+      "openapi": "3.1.2",
+      "info": { "title": "binary", "version": "1" },
+      "servers": [{ "url": "http://fixture.invalid" }],
+      "paths": {
+        "/blob": {
+          "get": {
+            "operationId": "blob",
+            "responses": { "200": { "description": "bytes", "content": { "application/octet-stream": {} } } }
+          }
+        }
+      }
+    },
+    "operationId": "blob",
+    "input": {},
+    "response": { "status": 200, "headers": { "content-type": "application/octet-stream" }, "bodyBase64": "AP7/" },
+    "expect": { "method": "GET", "path": "/blob", "query": "", "headers": {}, "ok": true, "valueBase64": "AP7/", "responseKey": "200", "mediaType": "application/octet-stream" }
+  }
+]
