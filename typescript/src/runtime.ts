@@ -42,6 +42,8 @@ export interface OpenAPIRuntimeInvocationArgs {
   maxDeliveryUnitBytes?: number;
   signal?: AbortSignal;
   fetch?: typeof globalThis.fetch;
+  /** Defaults to `manual`, keeping redirect responses observable. */
+  redirect?: RequestRedirect;
   securityHandlers?: Record<string, ArtifactSecurityHandler>;
   observeOutput?: (value: unknown, metadata: Record<string, string[]>) => void;
   hooks?: InvokeHooks | null;
@@ -166,6 +168,7 @@ function toBindingArgs(args: OpenAPIRuntimeInvocationArgs): BindingInvocationArg
     maxDeliveryUnitBytes: args.maxDeliveryUnitBytes,
     signal: args.signal,
     fetch: args.fetch,
+    redirect: args.redirect,
     securityHandlers: args.securityHandlers,
     observeOutput: args.observeOutput,
     hooks: args.hooks,

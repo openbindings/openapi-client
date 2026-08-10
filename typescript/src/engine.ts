@@ -73,6 +73,7 @@ export interface OpenAPIExecutionHooks {
 
 export interface OpenAPIEngineOptions {
   fetch?: typeof globalThis.fetch;
+  redirect?: RequestRedirect;
   hooks?: OpenAPIExecutionHooks;
   maxDeliveryUnitBytes?: number;
 }
@@ -85,6 +86,7 @@ export interface OpenAPIPrepareOptions {
   context?: Record<string, unknown>;
   signal?: AbortSignal;
   fetch?: typeof globalThis.fetch;
+  redirect?: RequestRedirect;
   hooks?: OpenAPIExecutionHooks;
   maxDeliveryUnitBytes?: number;
   securityHandlers?: Record<string, OpenAPIEngineSecurityHandler>;
@@ -204,6 +206,7 @@ export class PreparedOpenAPIOperation {
           maxDeliveryUnitBytes: this.args.maxDeliveryUnitBytes,
           signal: this.args.signal,
           fetch: this.args.fetch,
+          redirect: this.args.redirect,
           securityHandlers: this.args.securityHandlers as Record<string, ArtifactSecurityHandler> | undefined,
           observeOutput: (_value, valueMetadata) => metadata.push(cloneMetadata(valueMetadata)),
           hooks,
@@ -255,6 +258,7 @@ export class OpenAPIEngine {
       profile: options.profile ?? OPENAPI_PROFILE_FULL,
       context: contextWithSecurityHandlers(options.context, options.securityHandlers),
       fetch: options.fetch ?? this.options.fetch,
+      redirect: options.redirect ?? this.options.redirect,
       hooks: options.hooks,
       defaultHooks: this.options.hooks,
       maxDeliveryUnitBytes: options.maxDeliveryUnitBytes ?? this.options.maxDeliveryUnitBytes,
@@ -286,6 +290,7 @@ export class OpenAPIEngine {
       profile: options.profile ?? OPENAPI_PROFILE_FULL,
       context: contextWithSecurityHandlers(options.context, options.securityHandlers),
       fetch: options.fetch ?? this.options.fetch,
+      redirect: options.redirect ?? this.options.redirect,
       hooks: options.hooks,
       defaultHooks: this.options.hooks,
       maxDeliveryUnitBytes: options.maxDeliveryUnitBytes ?? this.options.maxDeliveryUnitBytes,

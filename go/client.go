@@ -510,7 +510,7 @@ func (c *Client) prepareOptions(operation resolvedOperation, input nativeInvocat
 		client = c.options.HTTPClient
 	}
 	if client == nil {
-		client = defaultHTTPClient()
+		client = defaultInvocationHTTPClient()
 	}
 	maxBytes := call.MaxResponseBytes
 	if maxBytes == 0 {

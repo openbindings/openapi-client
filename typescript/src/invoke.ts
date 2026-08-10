@@ -449,7 +449,7 @@ export async function runBinding(
     headers: fetchHeaders,
     body: wire.body,
     signal: inv.signal,
-    redirect: "manual",
+    redirect: args.redirect ?? "manual",
   };
   let securedRequest: Request | undefined;
   if (selectedSecurity && args.securityHandlers) {

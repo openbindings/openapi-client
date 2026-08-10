@@ -93,6 +93,66 @@ func TestClientCallPreservesFalsyWholeJSONBodies(t *testing.T) {
 	}
 }
 
+func TestClientKeepsRedirectsObservableByDefaultAndAllowsConfiguredFollowing(t *testing.T) {
+	type observation struct{ method, body string }
+	observed := map[string]observation{}
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, incoming *http.Request) {
+		body, _ := io.ReadAll(incoming.Body)
+		observed[incoming.URL.Path] = observation{method: incoming.Method, body: string(body)}
+		switch incoming.URL.Path {
+		case "/rewrite":
+			http.Redirect(writer, incoming, "/rewrite-final", http.StatusSeeOther)
+		case "/preserve":
+			http.Redirect(writer, incoming, "/preserve-final", http.StatusTemporaryRedirect)
+		default:
+			writer.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	defer server.Close()
+	document := testDocument(server.URL, `{
+  "/rewrite":{"post":{"operationId":"rewrite","requestBody":{"required":true,"content":{"application/json":{"schema":{"type":"object"}}}},"responses":{"204":{"description":"done"}}}},
+  "/preserve":{"post":{"operationId":"preserve","requestBody":{"required":true,"content":{"application/json":{"schema":{"type":"object"}}}},"responses":{"204":{"description":"done"}}}}
+}`)
+	client, err := Load(context.Background(), Source{Content: document}, ClientOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, operationID := range []string{"rewrite", "preserve"} {
+		result, callErr := client.Call(context.Background(), OperationID(operationID), Input{
+			Body:        map[string]any{"value": operationID},
+			BodyPresent: true,
+		})
+		if callErr != nil || result.OK {
+			t.Fatalf("%s: result=%#v err=%v", operationID, result, callErr)
+		}
+	}
+	if _, present := observed["/rewrite-final"]; present {
+		t.Fatal("default client followed a 303 response")
+	}
+	if _, present := observed["/preserve-final"]; present {
+		t.Fatal("default client followed a 307 response")
+	}
+	following, err := Load(context.Background(), Source{Content: document}, ClientOptions{HTTPClient: &http.Client{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, operationID := range []string{"rewrite", "preserve"} {
+		result, callErr := following.Call(context.Background(), OperationID(operationID), Input{
+			Body:        map[string]any{"value": operationID},
+			BodyPresent: true,
+		})
+		if callErr != nil || !result.OK {
+			t.Fatalf("follow %s: result=%#v err=%v", operationID, result, callErr)
+		}
+	}
+	if got := observed["/rewrite-final"]; got != (observation{method: http.MethodGet}) {
+		t.Fatalf("303 final request = %#v", got)
+	}
+	if got := observed["/preserve-final"]; got != (observation{method: http.MethodPost, body: `{"value":"preserve"}`}) {
+		t.Fatalf("307 final request = %#v", got)
+	}
+}
+
 func TestClientAcceptsNativeBytesForRawRequestMedia(t *testing.T) {
 	want := []byte{0, 1, 254, 255}
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, incoming *http.Request) {

@@ -198,3 +198,13 @@ func checkAcceptedOpenAPIVersion(document *openapi3.T) error {
 func defaultHTTPClient() *http.Client {
 	return &http.Client{}
 }
+
+// defaultInvocationHTTPClient keeps the response to the artifact-bound
+// operation observable. In particular, an ordinary user-agent redirect can
+// rewrite POST to GET or replay a body at another target. Standalone callers
+// can opt into that behavior by supplying their own *http.Client.
+func defaultInvocationHTTPClient() *http.Client {
+	return &http.Client{CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+}

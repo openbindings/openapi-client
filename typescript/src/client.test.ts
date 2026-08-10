@@ -1,3 +1,4 @@
+import { createServer } from "node:http";
 import { describe, expect, it, vi } from "vitest";
 import { OpenAPIClient, OpenAPIClientError } from "./client.js";
 import type { OpenAPIDocument } from "./types.js";
@@ -38,6 +39,93 @@ describe("OpenAPIClient native API", () => {
     expect(client.operation("createWidget").info.method).toBe("post");
     expect(client.operation({ path: "/widgets/{id}", method: "post" }).info.operationId).toBe("createWidget");
     expect(client.operation({ ref: "#/paths/~1widgets~1{id}/post" }).info.path).toBe("/widgets/{id}");
+  });
+
+  it("propagates cancellation through document loading", async () => {
+    const controller = new AbortController();
+    const fetchFn = vi.fn<typeof globalThis.fetch>(async (_input, init) => {
+      return await new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal;
+        if (signal?.aborted) {
+          reject(signal.reason);
+          return;
+        }
+        signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+    });
+    const loading = OpenAPIClient.load("https://example.test/openapi.yaml", {
+      fetch: fetchFn,
+      signal: controller.signal,
+    });
+    controller.abort(new DOMException("release qualification cancellation", "AbortError"));
+    await expect(loading).rejects.toMatchObject({
+      name: "OpenAPIClientError",
+      kind: "source",
+      code: "SOURCE_LOAD_FAILED",
+    });
+    expect(fetchFn).toHaveBeenCalledOnce();
+  });
+
+  it("keeps redirects observable by default and offers explicit user-agent following", async () => {
+    const observed = new Map<string, { method: string; body: string }>();
+    const server = createServer(async (request, response) => {
+      const chunks: Uint8Array[] = [];
+      for await (const chunk of request) chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+      observed.set(request.url ?? "", {
+        method: request.method ?? "",
+        body: Buffer.concat(chunks).toString("utf8"),
+      });
+      if (request.url === "/rewrite") {
+        response.writeHead(303, { location: "/rewrite-final" });
+        response.end();
+        return;
+      }
+      if (request.url === "/preserve") {
+        response.writeHead(307, { location: "/preserve-final" });
+        response.end();
+        return;
+      }
+      response.writeHead(204);
+      response.end();
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("expected an internet server address");
+    const baseURL = `http://127.0.0.1:${address.port}`;
+    const redirectDocument: OpenAPIDocument = {
+      openapi: "3.1.2",
+      info: { title: "Redirect fidelity", version: "1" },
+      servers: [{ url: baseURL }],
+      paths: {
+        "/rewrite": { post: jsonRedirectOperation("rewrite") },
+        "/preserve": { post: jsonRedirectOperation("preserve") },
+      },
+    };
+    try {
+      const client = await OpenAPIClient.load(redirectDocument);
+      await expect(client.call("rewrite", { body: { value: "rewrite" } })).resolves.toMatchObject({
+        ok: false,
+        response: { status: 303 },
+      });
+      await expect(client.call("preserve", { body: { value: "preserve" } })).resolves.toMatchObject({
+        ok: false,
+        response: { status: 307 },
+      });
+      expect(observed.has("/rewrite-final")).toBe(false);
+      expect(observed.has("/preserve-final")).toBe(false);
+
+      await expect(client.call("rewrite", { body: { value: "rewrite" } }, { redirect: "follow" }))
+        .resolves.toMatchObject({ ok: true });
+      await expect(client.call("preserve", { body: { value: "preserve" } }, { redirect: "follow" }))
+        .resolves.toMatchObject({ ok: true });
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    }
+    expect(observed.get("/rewrite-final")).toEqual({ method: "GET", body: "" });
+    expect(observed.get("/preserve-final")).toEqual({ method: "POST", body: '{"value":"preserve"}' });
   });
 
   it("preserves same-named values in path, query, and body", async () => {
@@ -386,3 +474,14 @@ describe("OpenAPIClient native API", () => {
     expect(calls).toEqual(["first"]);
   });
 });
+
+function jsonRedirectOperation(operationId: string): Record<string, unknown> {
+  return {
+    operationId,
+    requestBody: {
+      required: true,
+      content: { "application/json": { schema: { type: "object" } } },
+    },
+    responses: { "204": { description: "done" } },
+  };
+}

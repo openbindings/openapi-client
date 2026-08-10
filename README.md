@@ -196,7 +196,16 @@ const client = await OpenAPIClient.load(document, {
 });
 ```
 
-Per-call options override client defaults for credentials, server selection, headers, cancellation, fetch, and response delivery-unit limits.
+Per-call options override client defaults for credentials, server selection, headers, cancellation, fetch, redirect handling, and response delivery-unit limits.
+The client-level `signal` also cancels document loading and becomes the default
+for later calls; a per-call signal overrides it.
+
+Redirect responses are observable native outcomes by default (`manual`) so an
+artifact-bound method and body are not silently rewritten or replayed. A
+standalone TypeScript caller can select `redirect: "follow"`; a Go caller can
+supply an `http.Client` with its preferred `CheckRedirect` policy. Artifact
+document retrieval still follows redirects so relative references use the
+final retrieval URI.
 
 ## Scope
 
@@ -213,13 +222,13 @@ The invocation-complete scope is:
 
 Inbound callbacks and webhooks are reverse interactions, not client calls. Code generation, mocking, validation-as-policy, server implementation, documentation rendering, and link traversal are outside this client's invocation scope.
 
-See [Architecture](docs/architecture.md), [Fidelity contract](docs/fidelity-contract.md), [adapter contract](docs/adapter-contract.md), [extraction ledger](docs/extraction-ledger.md), [Go parity plan](docs/go-parity-plan.md), and [Conformance](conformance/README.md).
+See [Architecture](docs/architecture.md), [Fidelity contract](docs/fidelity-contract.md), [adapter contract](docs/adapter-contract.md), [extraction ledger](docs/extraction-ledger.md), [release qualification](docs/release-qualification.md), [Go parity plan](docs/go-parity-plan.md), and [Conformance](conformance/README.md).
 
 ## Development
 
 ```sh
 pnpm install
-pnpm verify
+pnpm qualify:release
 cd go
 GOWORK=off go test -race ./...
 ```

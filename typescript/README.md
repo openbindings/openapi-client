@@ -6,7 +6,8 @@ The client does not generate source code and does not require an OpenBindings In
 
 This repository is also the OpenAPI execution substrate used by the OpenBindings OpenAPI binding adapter. The standalone API is deliberately OpenAPI-native; protocol abstraction belongs in the adapter, not in this client.
 
-> Status: pre-release extraction. The TypeScript client is runnable and tested. Its public API is being stabilized before the first package release. The Go parity port is tracked in the repository's development contract and is not yet published.
+> Status: pre-release. The TypeScript and Go clients are runnable and tested;
+> their public APIs are being stabilized before the first package releases.
 
 ## TypeScript quick start
 
@@ -160,7 +161,14 @@ const client = await OpenAPIClient.load(document, {
 });
 ```
 
-Per-call options override client defaults for credentials, server selection, headers, cancellation, fetch, and response delivery-unit limits.
+Per-call options override client defaults for credentials, server selection, headers, cancellation, fetch, redirect handling, and response delivery-unit limits.
+The client-level `signal` also cancels document loading and becomes the default
+for later calls; a per-call signal overrides it.
+
+Operation redirects are observable by default (`redirect: "manual"`). Set
+`redirect: "follow"` on the client or call only when ordinary user-agent
+following is intended. Artifact retrieval follows redirects independently so
+external-reference bases use the final retrieval URI.
 
 ## Scope
 
@@ -183,7 +191,7 @@ See [Architecture](docs/architecture.md), [Fidelity contract](docs/fidelity-cont
 
 ```sh
 pnpm install
-pnpm verify
+pnpm qualify:release
 ```
 
 The package has no runtime dependency on an OpenBindings SDK. Its distributable public entry point exposes only the native client surface.

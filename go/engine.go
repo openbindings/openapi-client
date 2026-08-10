@@ -11,16 +11,21 @@ import (
 )
 
 type Engine struct {
-	client *http.Client
-	mu     sync.RWMutex
-	cache  map[string]*openapi3.T
+	client           *http.Client
+	invocationClient *http.Client
+	mu               sync.RWMutex
+	cache            map[string]*openapi3.T
 }
 
 func NewEngine(client *http.Client) *Engine {
 	if client == nil {
-		client = defaultHTTPClient()
+		return &Engine{
+			client:           defaultHTTPClient(),
+			invocationClient: defaultInvocationHTTPClient(),
+			cache:            map[string]*openapi3.T{},
+		}
 	}
-	return &Engine{client: client, cache: map[string]*openapi3.T{}}
+	return &Engine{client: client, invocationClient: client, cache: map[string]*openapi3.T{}}
 }
 
 type PreparedOperation struct {
@@ -42,12 +47,15 @@ func (e *Engine) Prepare(ctx context.Context, options PrepareOptions) (*Prepared
 	if client == nil {
 		client = e.client
 	}
-	options.HTTPClient = client
+	loadClient := client
+	if options.HTTPClient == nil {
+		options.HTTPClient = e.invocationClient
+	}
 	allowExternal := true
 	if options.AllowExternalRefs != nil {
 		allowExternal = *options.AllowExternalRefs
 	}
-	document, err := loadDocument(ctx, client, options.Source, allowExternal)
+	document, err := loadDocument(ctx, loadClient, options.Source, allowExternal)
 	if err != nil {
 		return nil, &ExecutionError{Code: CodeSourceLoadFailed, Message: err.Error(), Cause: err}
 	}
@@ -74,6 +82,9 @@ func (e *Engine) PrepareCached(ctx context.Context, options PrepareOptions) (*Pr
 	e.mu.RUnlock()
 	if document == nil {
 		return nil, nil
+	}
+	if options.HTTPClient == nil {
+		options.HTTPClient = e.invocationClient
 	}
 	options.Context = contextWithSecurityHandlers(options.Context, options.SecurityHandlers)
 	return prepareDocument(document, options)
@@ -156,7 +167,7 @@ func (p *PreparedOperation) Start(ctx context.Context) (*Execution, error) {
 	execution := newExecution(ctx)
 	client := p.options.HTTPClient
 	if client == nil {
-		client = defaultHTTPClient()
+		client = defaultInvocationHTTPClient()
 	}
 	args := newExecutionArgs(p.options)
 	go func() {

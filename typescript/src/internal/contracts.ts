@@ -24,6 +24,8 @@ export interface BindingInvocationArgs {
   maxDeliveryUnitBytes?: number;
   signal?: AbortSignal;
   fetch?: typeof globalThis.fetch;
+  /** Fetch redirect mode. Artifact engines default to `manual` to preserve the bound exchange. */
+  redirect?: RequestRedirect;
   securityHandlers?: Record<string, ArtifactSecurityHandler>;
   observeOutput?: (value: unknown, metadata: Record<string, string[]>) => void;
   hooks?: InvokeHooks | null;

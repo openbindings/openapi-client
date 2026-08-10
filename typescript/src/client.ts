@@ -90,6 +90,8 @@ export interface OpenAPICallOptions {
   signal?: AbortSignal;
   maxResponseBytes?: number;
   fetch?: typeof globalThis.fetch;
+  /** Defaults to `manual`, keeping redirect responses observable as the bound operation outcome. */
+  redirect?: RequestRedirect;
 }
 
 export interface OpenAPIClientMiddlewareContext {
@@ -107,7 +109,11 @@ export interface OpenAPIClientOptions {
   auth?: Record<string, OpenAPIAuthValue>;
   server?: OpenAPIServerSelection;
   headers?: HeadersInit;
+  /** Cancels document loading and, unless overridden per call, later invocations. */
+  signal?: AbortSignal;
   fetch?: typeof globalThis.fetch;
+  /** Defaults to `manual`; set `follow` to opt into ordinary user-agent redirect behavior. */
+  redirect?: RequestRedirect;
   middleware?: OpenAPIClientMiddleware[];
   maxResponseBytes?: number;
 }
@@ -237,7 +243,7 @@ export class OpenAPIClient {
       document = await loadOpenAPIDocument(
         normalized.location,
         normalized.content,
-        undefined,
+        { signal: options.signal },
         options.fetch,
       );
     } catch (error: unknown) {
@@ -357,8 +363,9 @@ export class OpenAPIClient {
       profile: OPENAPI_PROFILE_FULL,
       context: security.context,
       maxDeliveryUnitBytes: callOptions.maxResponseBytes ?? this.options.maxResponseBytes,
-      signal: callOptions.signal,
+      signal: callOptions.signal ?? this.options.signal,
       fetch: doFetch,
+      redirect: callOptions.redirect ?? this.options.redirect,
       securityHandlers: artifactSecurityHandlers(security.handlers, resolved.info),
     });
     const execution = await prepared.start<unknown, unknown>();
