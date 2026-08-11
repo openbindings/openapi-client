@@ -9,9 +9,10 @@ TypeScript and Go clients and the `openbindings.openapi@1` adapters. OpenAPI
 uninstalled vendor-extension behavior are not part of this release boundary.
 
 The loop may fix an implementation defect in the lowest owning layer. It may
-not add a Core field, alter the OBI document model, expand an immutable binding
-profile, or infer behavior from one corpus producer. Evidence of such a need
-stops release qualification for explicit design review.
+not add a Core field, alter the OBI document model, silently widen the
+candidate's declared semantic boundary, or infer behavior from one corpus
+producer. Evidence of such a need stops release qualification for explicit
+design review.
 
 ## Local release gate
 
@@ -47,7 +48,7 @@ Core limitation.
 The current candidate passes the local gate with 237 TypeScript tests, the Go
 race suite, production boundary inspection, clean npm ESM/CommonJS installs,
 and a clean external Go-module consumer. The OpenBindings system gate passes
-580 TypeScript adapter tests and the full Go adapter race suite.
+574 TypeScript adapter tests and the full Go adapter race suite.
 
 The authority suite contains 17 cross-layer wire cases. The standalone and
 OpenBindings TypeScript lanes have zero wire or application mismatches, the Go

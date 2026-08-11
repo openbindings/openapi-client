@@ -1,7 +1,10 @@
 package openapiclient
 
 // Profile selects artifact-execution capabilities. The engine intentionally
-// knows capabilities, not OpenBindings binding identifiers.
+// knows capabilities, not OpenBindings binding identifiers. Older internal
+// filenames and helper names containing numbered "revision" labels record the
+// order in which capabilities were developed; they were never published
+// binding-specification identifiers or revisions.
 type Profile struct {
 	Name                           string
 	RoutedInputs                   bool

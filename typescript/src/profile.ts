@@ -1,6 +1,9 @@
 /**
  * Artifact-execution capabilities selected by a native client or adapter.
  * The engine intentionally knows capabilities, not OpenBindings binding IDs.
+ * Older internal filenames and helper names containing numbered "revision"
+ * labels record the order in which these capabilities were developed. Those
+ * labels were never published binding-specification identifiers or revisions.
  */
 export interface OpenAPIExecutionProfile {
   readonly name: string;

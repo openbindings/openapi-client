@@ -12,7 +12,11 @@ The adapter resolves the selected OBI binding and supplies:
 - resolved configuration and credentials;
 - cancellation, size limits, and optional diagnostic hooks.
 
-The engine remains authoritative for `$ref` resolution, servers, parameter serialization, request bodies, security placement, HTTP, responses, and SSE.
+The engine is the adapter's single implementation substrate for `$ref`
+resolution, servers, parameter serialization, request bodies, security
+placement, HTTP, responses, and SSE. Portable OpenBindings meaning still comes
+from the selected binding specification; this split prevents the adapter from
+silently creating a second OpenAPI execution policy.
 
 ## Results from the engine
 
@@ -27,8 +31,8 @@ The adapter maps those facts into the OpenBindings invocation frame:
 
 - application values become operation outputs;
 - application-authored error bodies may become portable failure details under the binding rules;
-- transport/protocol/decoding/configuration failures become terminal invocation failures;
-- protocol evidence may be retained as explicit diagnostics;
+- transport/protocol/decoding/configuration failures become unsuccessful invocation completion with protocol-independent codes and presentation messages;
+- the engine's concrete error text and protocol evidence may be retained only as explicit diagnostics;
 - HTTP status and headers never become required abstract output fields.
 
 ## Class and package isolation
@@ -38,15 +42,20 @@ The engine must not construct or return `@openbindings/sdk` classes. In particul
 The adapter therefore owns a small mechanical bridge:
 
 1. convert engine error records into the SDK's `InvocationError` class;
-2. copy `code`, portable `details`, and optional diagnostics without changing their meaning;
+2. normalize the ordinary error code/message, copy portable `details`, and retain native evidence under explicit diagnostics;
 3. expose the SDK's invocation interface while forwarding writes, close, cancellation, outputs, and lifecycle;
 4. translate hook callbacks at the package boundary.
 
 No request planning or OpenAPI response logic belongs in this bridge.
 
-## Compatibility profiles
+## Development capability profiles
 
-Historical `openbindings.openapi@1` through `@7` identifiers are immutable binding contracts. The adapter selects the corresponding execution capability profile. The standalone native client selects the fullest current fidelity profile and does not expose binding-spec identifiers.
+No OpenAPI binding specification has been published. The adapter accepts only
+the unreleased first `openbindings.openapi@1` candidate and maps it to the
+engine's fullest capability profile. The engine's other named profiles record
+development and migration stages; they have never been binding-specification
+identifiers or revisions. The standalone native client selects the fullest
+profile and does not expose binding-spec identifiers.
 
 The profile is an engine input, not synthesis authority. Synthesis still creates OBI operations and private correspondence transforms; it does not decide how OpenAPI behaves on the wire.
 

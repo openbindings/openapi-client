@@ -59,14 +59,17 @@ The TypeScript package is dependency-isolated from `@openbindings/sdk`. It
 publishes three deliberate entry points: the native client, the SDK-neutral
 execution engine, and reusable document analysis. Engine behavior is selected
 by named capability profiles; it contains no OpenBindings binding identifier.
-The separate adapter maps immutable OpenBindings OpenAPI revisions to those
-profiles and supplies the binding-private routed-input marker. The native
-client selects the fullest profile directly.
+The separate adapter maps the unreleased first OpenBindings OpenAPI candidate
+to the full profile and supplies the binding-private routed-input marker. The
+other profiles are internal development/migration coordinates, not published
+binding specifications. The native client selects the fullest profile
+directly.
 
 The Go module now follows the same boundary: its public `Client`, `Engine`,
 prepared operation, execution session, HTTP result, failure evidence, and SSE
-types import no OpenBindings package. The Go binding package maps immutable
-binding revisions to engine profiles and bridges Core invocation frames. Its
+types import no OpenBindings package. The Go binding package maps the
+unreleased candidate semantics to the full engine profile and bridges Core
+invocation frames. Its
 former request/response execution loop has been retired; synthesis analysis
 remains there by ownership.
 

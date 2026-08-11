@@ -2,7 +2,7 @@
 
 A document-driven OpenAPI 3.0 and 3.1 client for invoking brownfield APIs directly from their OpenAPI documents.
 
-The client does not generate source code and does not require an OpenBindings Interface (OBI). Load a document, select an authored operation, and call it. The document remains authoritative for server resolution, parameter serialization, request-body carriage, security placement, response selection, decoding, and streaming.
+The client does not generate source code and does not require an OpenBindings Interface (OBI). Load a document, select an authored operation, and call it. This client's contract deliberately follows the document and incorporated OpenAPI/HTTP rules for server resolution, parameter serialization, request-body carriage, security placement, response selection, decoding, and streaming.
 
 This repository is also the OpenAPI execution substrate used by the OpenBindings OpenAPI binding adapter. The standalone API is deliberately OpenAPI-native; protocol abstraction belongs in the adapter, not in this client.
 
