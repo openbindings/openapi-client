@@ -231,7 +231,7 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 	if routedRevision && inputSupplied && envelope == nil && flatInputHasAmbiguousParameter(params, inputMap) {
 		inv.failExecution(&ExecutionError{
 			Code:    CodeValidationFailed,
-			Message: "this revision-2 input supplies one flat field for independently declared same-named parameters and requires a routed source input (normally produced by the binding's inputTransform)",
+			Message: "this input supplies one flat field for independently declared same-named parameters and requires an explicit routed-input envelope",
 		})
 		return
 	}
@@ -925,7 +925,7 @@ func openAPIFailureError(resp *http.Response, body []byte, match *governingRespo
 func singletonResponseHeader(header http.Header, name string) (string, error) {
 	values := header.Values(name)
 	if len(values) > 1 {
-		return "", fmt.Errorf("response contains %d %s field instances; this binding revision requires a singleton", len(values), name)
+		return "", fmt.Errorf("response contains %d %s field instances; the selected execution profile requires a singleton", len(values), name)
 	}
 	if len(values) == 0 {
 		return "", nil

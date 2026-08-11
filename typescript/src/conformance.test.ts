@@ -812,7 +812,7 @@ describe("OAPI-P-04 — request media on the wire", () => {
     const call = new OpenAPIRuntime().invokeBinding({
       source: {
         ...src(spec),
-        profile: withInputRouteMarker(OPENAPI_PROFILE_ROUTED, "openbindings.openapi@2"),
+        profile: withInputRouteMarker(OPENAPI_PROFILE_ROUTED, "openbindings.openapi@1"),
       },
       ref: "#/paths/~1blob/post",
       fetch,

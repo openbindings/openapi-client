@@ -658,7 +658,7 @@ function validateRevision3URLEncoded(
     if (property === false) continue;
     if (property === true || (!openapiVersion.startsWith("3.0") && !hasDeclaredSchemaType(property))) {
       throw new Error(
-        `urlencoded property ${JSON.stringify(name)} has no revision-3 mapping from its default octets to a JSON caller value`,
+        `urlencoded property ${JSON.stringify(name)} has no declaration-defined mapping from its default octets to a JSON caller value`,
       );
     }
     const enc = asObject(encoding[name]);
@@ -674,7 +674,7 @@ function validateRevision3URLEncoded(
     }
     if (openapiVersion.startsWith("3.0") && binarySignaled(property, true)) {
       throw new Error(
-        `urlencoded binary property ${JSON.stringify(name)} has no Base64 boundary in this binding revision`,
+        `urlencoded binary property ${JSON.stringify(name)} has no Base64 boundary in the selected execution profile`,
       );
     }
     validateContentBasedMedia(name, property, enc, openapiVersion.startsWith("3.0"), "urlencoded");
@@ -783,7 +783,7 @@ function validateRevision3Multipart(
     }
     if (headers !== null && Object.keys(headers).length > 0) {
       throw new Error(
-        `multipart property ${JSON.stringify(name)} declares encoding.headers, for which this binding revision defines no caller source mapping`,
+        `multipart property ${JSON.stringify(name)} declares encoding.headers, for which the selected execution profile defines no caller source mapping`,
       );
     }
     if (Object.hasOwn(enc, "contentType") && typeof enc.contentType !== "string") {
@@ -798,7 +798,7 @@ function validateRevision3Multipart(
     if (property === false) continue;
     if (property === true || (!openapiVersion.startsWith("3.0") && !hasDeclaredSchemaType(property))) {
       throw new Error(
-        `multipart property ${JSON.stringify(name)} has a typeless OAS 3.1 schema whose octet-stream boundary is not defined by this binding revision`,
+        `multipart property ${JSON.stringify(name)} has a typeless OAS 3.1 schema whose octet-stream boundary is not defined by the selected execution profile`,
       );
     }
     validateContentTransferEncoding(name, property);
@@ -812,12 +812,12 @@ function validateRevision3Multipart(
       if (items === false) continue;
       if (items === null || items === true || !hasDeclaredSchemaType(items)) {
         throw new Error(
-          `multipart array property ${JSON.stringify(name)} has typeless items whose octet-stream boundary is not defined by this binding revision`,
+          `multipart array property ${JSON.stringify(name)} has typeless items whose octet-stream boundary is not defined by the selected execution profile`,
         );
       }
       if (schemaTypeIs(items, "array")) {
         throw new Error(
-          `multipart array property ${JSON.stringify(name)} has nested array items with no revision-3 repeated-part mapping`,
+          `multipart array property ${JSON.stringify(name)} has nested array items with no declaration-defined repeated-part mapping`,
         );
       }
       validateContentTransferEncoding(name, items);
@@ -937,7 +937,7 @@ function parseSingleMultipartContentType(raw: string, name: string): ParsedMedia
   const members = splitCommaList(raw);
   if (members.length !== 1) {
     throw new Error(
-      `multipart property ${JSON.stringify(name)} declares multiple encoding.contentType members, for which this binding revision defines no part-selection rule`,
+      `multipart property ${JSON.stringify(name)} declares multiple encoding.contentType members, for which the selected execution profile defines no part-selection rule`,
     );
   }
   try {
@@ -1163,7 +1163,7 @@ function resolvedBodyShape(
       schema.if !== undefined || schema.then !== undefined || schema.else !== undefined
     ) {
       throw new Error(
-        "conditional/combinatorial request schema has no single declaration-defined flattened surface in openbindings.openapi@1 revision 1",
+        "conditional/combinatorial request schema has no single declaration-defined flattened surface in the selected execution profile",
       );
     }
     const props = new Set<string>();
@@ -1707,7 +1707,7 @@ function writeMultipartPart(
       "application/octet-stream";
     if (revision3 && is30) {
       if (typeof value !== "string") {
-        throw new Error(`binary part ${JSON.stringify(name)}: revision 3 requires a canonical Base64 string`);
+        throw new Error(`binary part ${JSON.stringify(name)} requires a canonical Base64 string`);
       }
       const data = binaryPartBytes(name, value, "", true);
       fd.append(name, new Blob([data as BlobPart], { type: ct }), name);
@@ -1782,7 +1782,7 @@ function writeRevision3MultipartPart(
 
   if (schema === null || (!is30 && !hasDeclaredSchemaType(schema))) {
     throw new Error(
-      `multipart property ${JSON.stringify(name)} has no revision-3 mapping from its default octet-stream part to a JSON caller value`,
+      `multipart property ${JSON.stringify(name)} has no declaration-defined mapping from its default octet-stream part to a JSON caller value`,
     );
   }
 
@@ -1805,7 +1805,7 @@ function writeRevision3MultipartPart(
 
   if (is30 && binarySignaled(schema, true)) {
     if (typeof value !== "string") {
-      throw new Error(`binary part ${JSON.stringify(name)}: revision 3 requires a canonical Base64 string`);
+      throw new Error(`binary part ${JSON.stringify(name)} requires a canonical Base64 string`);
     }
     const data = binaryPartBytes(name, value, "", true);
     fd.append(name, new Blob([data as BlobPart], { type: contentType }), name);
@@ -1820,7 +1820,7 @@ function writeRevision3MultipartPart(
   if (selected.base === "application/octet-stream" && contentEncoding !== "") {
     if (typeof value !== "string") {
       throw new Error(is30
-        ? `binary part ${JSON.stringify(name)}: revision 3 requires a canonical Base64 string`
+        ? `binary part ${JSON.stringify(name)} requires a canonical Base64 string`
         : `octet-stream part ${JSON.stringify(name)} requires an artifact-encoded string`);
     }
     const data = is30

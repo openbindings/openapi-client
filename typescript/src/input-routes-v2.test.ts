@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { OPENAPI_PROFILE_ROUTED, withInputRouteMarker } from "./profile.js";
 
-const ROUTED_PROFILE = withInputRouteMarker(OPENAPI_PROFILE_ROUTED, "openbindings.openapi@2");
+const ROUTED_PROFILE = withInputRouteMarker(OPENAPI_PROFILE_ROUTED, "openbindings.openapi@1");
 import {
   parseRoutedEnvelope,
   routeEnvelope,

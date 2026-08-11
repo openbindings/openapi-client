@@ -4,7 +4,7 @@
 
 The release candidate accepts exactly OpenAPI 3.0.0–3.0.4 and
 3.1.0–3.1.2 client-invoked Path Item operations. It includes the native
-TypeScript and Go clients and the `openbindings.openapi@7` adapters. OpenAPI
+TypeScript and Go clients and the `openbindings.openapi@1` adapters. OpenAPI
 3.2, Swagger 2.0, code generation, link traversal, callbacks, webhooks, and
 uninstalled vendor-extension behavior are not part of this release boundary.
 

@@ -229,16 +229,21 @@ func routeInputFor(params openapi3.Parameters, input map[string]any, pathTemplat
 				// object body to pass through into.
 				unmatched = append(unmatched, name)
 			}
-		default:
+		case plan.family == familyJSON || plan.props[name]:
 			// Evaluation-free body passthrough: no schema evaluation
-			// participates in routing; enforcing the body schema is the
-			// server's business.
+			// participates in JSON routing, while form and multipart members
+			// require an artifact declaration that defines their wire carriage.
 			r.bodyFields[name] = value
+		default:
+			unmatched = append(unmatched, name)
 		}
 	}
 	if len(unmatched) > 0 {
 		if plan != nil && plan.declared && (plan.synthetic || plan.wholeObject) {
 			return nil, fmt.Errorf("field(s) %s match no declared parameter, and the declared request body uses whole-value carriage (its flattened contract carries only the synthetic %q property)", strings.Join(unmatched, ", "), syntheticBodyProperty)
+		}
+		if plan != nil && plan.declared {
+			return nil, fmt.Errorf("field(s) %s have no declaration-defined carriage for the %s request body", strings.Join(unmatched, ", "), plan.mediaType)
 		}
 		return nil, fmt.Errorf("field(s) %s match no declared parameter, and the operation declares no request body to pass them through to", strings.Join(unmatched, ", "))
 	}

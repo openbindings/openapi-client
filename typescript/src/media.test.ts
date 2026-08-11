@@ -119,7 +119,7 @@ describe("planRequestBody — deterministic unconfigured selection", () => {
   });
 });
 
-describe("revision-3 media-range carriage existence", () => {
+describe("media-range carriage existence", () => {
   const options = { profile: OPENAPI_PROFILE_MEDIA, openapiVersion: "3.1.2" };
 
   it.each([

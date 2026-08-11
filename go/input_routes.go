@@ -214,11 +214,11 @@ func parseRoutedEnvelopeWithKey(input any, key, markerValue string) (*routedEnve
 		return nil, nil
 	}
 	if len(tuple) != 1 {
-		return nil, fmt.Errorf("revision-2 routed input must be an exact one-item array")
+		return nil, fmt.Errorf("routed input must be an exact one-item array")
 	}
 	envelope, ok := toStringAnyMap(tuple[0])
 	if !ok {
-		return nil, fmt.Errorf("revision-2 routed input array item must be an object")
+		return nil, fmt.Errorf("routed input array item must be an object")
 	}
 	marker, marked := envelope[key]
 	if !marked {
@@ -237,7 +237,7 @@ func parseRoutedEnvelopeWithKey(input any, key, markerValue string) (*routedEnve
 		if converted, convertedOK := toStringAnyMap(envelope["value"]); convertedOK {
 			value = converted
 		} else {
-			return nil, fmt.Errorf("revision-2 routed input value must be a JSON object")
+			return nil, fmt.Errorf("routed input value must be a JSON object")
 		}
 	}
 
@@ -248,27 +248,27 @@ func parseRoutedEnvelopeWithKey(input any, key, markerValue string) (*routedEnve
 		// An empty JSONata array can arrive as []interface{} (the common
 		// case); omission is also accepted as an empty parameter map.
 		if envelope["parameters"] != nil {
-			return nil, fmt.Errorf("revision-2 routed input parameters must be an array")
+			return nil, fmt.Errorf("routed input parameters must be an array")
 		}
 	}
 	seenParams := map[string]bool{}
 	for _, raw := range rawParams {
 		entry, ok := toStringAnyMap(raw)
 		if !ok {
-			return nil, fmt.Errorf("revision-2 routed parameter entry must be an object")
+			return nil, fmt.Errorf("routed parameter entry must be an object")
 		}
 		in, _ := entry["in"].(string)
 		name, _ := entry["name"].(string)
 		field, _ := entry["field"].(string)
 		if in == "" || name == "" || field == "" {
-			return nil, fmt.Errorf("revision-2 routed parameter entry requires non-empty in, name, and field")
+			return nil, fmt.Errorf("routed parameter entry requires non-empty in, name, and field")
 		}
 		identity := in + "\x00" + name
 		if seenParams[identity] {
-			return nil, fmt.Errorf("revision-2 routed input repeats parameter %q in %q", name, in)
+			return nil, fmt.Errorf("routed input repeats parameter %q in %q", name, in)
 		}
 		if seenFields[field] {
-			return nil, fmt.Errorf("revision-2 routed input field %q supplies more than one destination", field)
+			return nil, fmt.Errorf("routed input field %q supplies more than one destination", field)
 		}
 		seenParams[identity] = true
 		seenFields[field] = true
@@ -278,20 +278,20 @@ func parseRoutedEnvelopeWithKey(input any, key, markerValue string) (*routedEnve
 	if rawBody, present := envelope["body"]; present {
 		body, ok := toStringAnyMap(rawBody)
 		if !ok {
-			return nil, fmt.Errorf("revision-2 routed input body descriptor must be an object")
+			return nil, fmt.Errorf("routed input body descriptor must be an object")
 		}
 		if rawProps, present := body["properties"]; present {
 			props, ok := toStringAnyMap(rawProps)
 			if !ok {
-				return nil, fmt.Errorf("revision-2 routed body properties must be an object")
+				return nil, fmt.Errorf("routed body properties must be an object")
 			}
 			for name, rawField := range props {
 				field, ok := rawField.(string)
 				if name == "" || !ok || field == "" {
-					return nil, fmt.Errorf("revision-2 routed body property mappings require non-empty string names and fields")
+					return nil, fmt.Errorf("routed body property mappings require non-empty string names and fields")
 				}
 				if seenFields[field] {
-					return nil, fmt.Errorf("revision-2 routed input field %q supplies more than one destination", field)
+					return nil, fmt.Errorf("routed input field %q supplies more than one destination", field)
 				}
 				seenFields[field] = true
 				r.bodyFields[name] = field
@@ -300,10 +300,10 @@ func parseRoutedEnvelopeWithKey(input any, key, markerValue string) (*routedEnve
 		if rawWhole, present := body["whole"]; present {
 			whole, ok := rawWhole.(string)
 			if !ok || whole == "" {
-				return nil, fmt.Errorf("revision-2 routed whole-body field must be a non-empty string")
+				return nil, fmt.Errorf("routed whole-body field must be a non-empty string")
 			}
 			if seenFields[whole] {
-				return nil, fmt.Errorf("revision-2 routed input field %q supplies more than one destination", whole)
+				return nil, fmt.Errorf("routed input field %q supplies more than one destination", whole)
 			}
 			seenFields[whole] = true
 			r.wholeBodyField = whole
@@ -331,7 +331,7 @@ func validateEnvelopeRoutes(params openapi3.Parameters, plans []*bodyPlan, envel
 	}
 	for _, route := range envelope.parameters {
 		if !knownParams[route.In+"\x00"+route.Name] {
-			return fmt.Errorf("revision-2 routed parameter %q in %q does not identify an effective OpenAPI declaration", route.Name, route.In)
+			return fmt.Errorf("routed parameter %q in %q does not identify an effective OpenAPI declaration", route.Name, route.In)
 		}
 	}
 
@@ -351,11 +351,11 @@ func validateEnvelopeRoutes(params openapi3.Parameters, plans []*bodyPlan, envel
 	}
 	for name := range envelope.bodyFields {
 		if !knownBodyFields[name] {
-			return fmt.Errorf("revision-2 routed body property %q does not identify a property in any admissible request-body candidate", name)
+			return fmt.Errorf("routed body property %q does not identify a property in any admissible request-body candidate", name)
 		}
 	}
 	if envelope.wholeBodyField != "" && !wholeBody {
-		return fmt.Errorf("revision-2 routed whole-body field does not identify any admissible whole-value request-body candidate")
+		return fmt.Errorf("routed whole-body field does not identify any admissible whole-value request-body candidate")
 	}
 	return nil
 }

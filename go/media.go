@@ -657,7 +657,7 @@ func exactRequestFamily(doc *openapi3.T, parsed parsedMediaType, media *openapi3
 		return familyMultipart, false, nil
 	case parsed.base == "application/x-www-form-urlencoded":
 		if hasMediaFidelity(bindingSpec) && mediaSchema(media) == nil {
-			return "", false, fmt.Errorf("schema-omitted form media has no revision-3 caller route")
+			return "", false, fmt.Errorf("schema-omitted form media has no declaration-defined caller route")
 		}
 		if hasMediaFidelity(bindingSpec) {
 			if err := validateRevision3URLEncodedMedia(doc, media); err != nil {
@@ -689,7 +689,7 @@ func exactRequestFamily(doc *openapi3.T, parsed parsedMediaType, media *openapi3
 func validateRevision3URLEncodedMedia(doc *openapi3.T, media *openapi3.MediaType) error {
 	schema := mediaSchema(media)
 	if schema == nil {
-		return fmt.Errorf("schema-omitted urlencoded media has no revision-3 caller route")
+		return fmt.Errorf("schema-omitted urlencoded media has no declaration-defined caller route")
 	}
 	_, props, err := resolvedBodyShape(schema, map[*openapi3.Schema]bool{})
 	if err != nil {
@@ -702,7 +702,7 @@ func validateRevision3URLEncodedMedia(doc *openapi3.T, media *openapi3.MediaType
 			if !literal {
 				continue
 			}
-			return fmt.Errorf("urlencoded property %q has an unconstrained boolean schema with no revision-3 octet boundary", name)
+			return fmt.Errorf("urlencoded property %q has an unconstrained boolean schema with no declaration-defined octet boundary", name)
 		}
 		var enc *openapi3.Encoding
 		if media != nil {
@@ -732,7 +732,7 @@ func validateRevision3URLEncodedMedia(doc *openapi3.T, media *openapi3.MediaType
 func validateRevision3MultipartMedia(doc *openapi3.T, media *openapi3.MediaType) error {
 	schema := mediaSchema(media)
 	if schema == nil {
-		return fmt.Errorf("schema-omitted multipart media has no revision-3 caller route")
+		return fmt.Errorf("schema-omitted multipart media has no declaration-defined caller route")
 	}
 	_, props, err := resolvedBodyShape(schema, map[*openapi3.Schema]bool{})
 	if err != nil {
@@ -745,14 +745,14 @@ func validateRevision3MultipartMedia(doc *openapi3.T, media *openapi3.MediaType)
 			if !literal {
 				continue // an unsatisfiable property has no admissible runtime value
 			}
-			return fmt.Errorf("multipart part %q has an unconstrained boolean schema with no revision-3 octet boundary", name)
+			return fmt.Errorf("multipart part %q has an unconstrained boolean schema with no declaration-defined octet boundary", name)
 		}
 		var enc *openapi3.Encoding
 		if media != nil {
 			enc = media.Encoding[name]
 		}
 		if enc != nil && len(enc.Headers) > 0 {
-			return fmt.Errorf("multipart part %q declares encoding.headers, but this binding revision defines no caller source for dynamic part-header values", name)
+			return fmt.Errorf("multipart part %q declares encoding.headers, but the selected execution profile defines no caller source for dynamic part-header values", name)
 		}
 		if encodingUsesSerialization(enc) {
 			if err := validateMultipartSerializationMethod(name, partSchema, enc); err != nil {
@@ -764,7 +764,7 @@ func validateRevision3MultipartMedia(doc *openapi3.T, media *openapi3.MediaType)
 		if schemaTypeIs(partSchema, "array", map[*openapi3.Schema]bool{}) {
 			contentSchema = resolvedMultipartItems(partSchema, map[*openapi3.Schema]bool{})
 			if schemaTypeIs(contentSchema, "array", map[*openapi3.Schema]bool{}) {
-				return fmt.Errorf("multipart part %q has nested array items with no revision-3 repeated-part mapping", name)
+				return fmt.Errorf("multipart part %q has nested array items with no declaration-defined repeated-part mapping", name)
 			}
 		}
 		contentType, err := revision3PartContentType(contentSchema, enc, is30)
@@ -834,10 +834,10 @@ func revision3EncodingSerializationMethod(enc *openapi3.Encoding) openapi3.Seria
 
 func revision3PartContentType(schema *openapi3.Schema, enc *openapi3.Encoding, is30 bool) (parsedMediaType, error) {
 	if schema == nil {
-		return parsedMediaType{}, fmt.Errorf("an absent part schema defaults to application/octet-stream, but this binding revision defines no JSON-to-octet boundary")
+		return parsedMediaType{}, fmt.Errorf("an absent part schema defaults to application/octet-stream, but the selected execution profile defines no JSON-to-octet boundary")
 	}
 	if _, boolean := booleanSchemaLiteral(schema); boolean {
-		return parsedMediaType{}, fmt.Errorf("an unconstrained boolean part schema has no revision-3 octet boundary")
+		return parsedMediaType{}, fmt.Errorf("an unconstrained boolean part schema has no declaration-defined octet boundary")
 	}
 	contentEncoding, encodingConflict := resolvedSchemaKeywordString(schema, "contentEncoding")
 	if encodingConflict {
@@ -861,14 +861,14 @@ func revision3PartContentType(schema *openapi3.Schema, enc *openapi3.Encoding, i
 			return parsedMediaType{}, fmt.Errorf("invalid encoding.contentType: %w", err)
 		}
 		if len(members) != 1 {
-			return parsedMediaType{}, fmt.Errorf("encoding.contentType has %d members; this binding revision defines no per-part member selection rule", len(members))
+			return parsedMediaType{}, fmt.Errorf("encoding.contentType has %d members; the selected execution profile defines no per-part member selection rule", len(members))
 		}
 		declared = members[0]
 	} else {
 		var ok bool
 		declared, ok = defaultRevision3PartContentType(schema, is30)
 		if !ok {
-			return parsedMediaType{}, fmt.Errorf("typeless part schema defaults to application/octet-stream, but this binding revision defines no JSON-to-octet boundary")
+			return parsedMediaType{}, fmt.Errorf("typeless part schema defaults to application/octet-stream, but the selected execution profile defines no JSON-to-octet boundary")
 		}
 	}
 	parsed, err := parseRevision3MediaType(declared)
@@ -919,7 +919,7 @@ func revision3PropertyCarriage(schema *openapi3.Schema, contentType parsedMediaT
 		if allowRaw30 {
 			return revision3PropertyRaw30, nil
 		}
-		return 0, fmt.Errorf("OAS 3.0 binary has no revision-3 urlencoded octet boundary")
+		return 0, fmt.Errorf("OAS 3.0 binary has no declaration-defined urlencoded octet boundary")
 	}
 	if contentType.base == "text/plain" {
 		if schemaTypeIs(schema, "string", map[*openapi3.Schema]bool{}) ||
@@ -929,7 +929,7 @@ func revision3PropertyCarriage(schema *openapi3.Schema, contentType parsedMediaT
 			return revision3PropertyText, nil
 		}
 	}
-	return 0, fmt.Errorf("Content-Type %q has no revision-3 native property serializer", contentType.canonical)
+	return 0, fmt.Errorf("Content-Type %q has no declaration-defined native property serializer", contentType.canonical)
 }
 
 func schemaHasContentEncoding(schema *openapi3.Schema) bool {
@@ -1127,7 +1127,7 @@ func resolvedBodyShape(schema *openapi3.Schema, seen map[*openapi3.Schema]bool) 
 	seen[schema] = true
 	defer delete(seen, schema)
 	if len(schema.OneOf) > 0 || len(schema.AnyOf) > 0 || schema.Not != nil {
-		return false, nil, fmt.Errorf("conditional/combinatorial request schema has no single declaration-defined flattened surface in openapi@1 revision 1")
+		return false, nil, fmt.Errorf("conditional/combinatorial request schema has no single declaration-defined flattened surface in the selected execution profile")
 	}
 	props := map[string]bool{}
 	object := schema.Type.Is("object") || schema.Properties != nil
@@ -1281,7 +1281,7 @@ func selectRevision3RequestPlan(doc *openapi3.T, op *openapi3.Operation, plans [
 		}
 	}
 	if skeleton == nil {
-		return nil, fmt.Errorf("configured requestMedia %q selects declaration %q, which has no revision-3 carriage", wanted.canonical, selected.key)
+		return nil, fmt.Errorf("configured requestMedia %q selects declaration %q, which has no supported carriage in the selected execution profile", wanted.canonical, selected.key)
 	}
 	if !skeleton.mediaRange {
 		copy := *skeleton
@@ -1309,7 +1309,7 @@ func selectRevision3RequestPlan(doc *openapi3.T, op *openapi3.Operation, plans [
 		applyDynamicObjectShape(plan)
 	}
 	if plan.synthetic != skeleton.synthetic || plan.wholeObject != skeleton.wholeObject {
-		return nil, fmt.Errorf("configured requestMedia %q selects range %q with no single revision-3 routed body shape", wanted.canonical, selected.key)
+		return nil, fmt.Errorf("configured requestMedia %q selects range %q with no single declaration-defined routed body shape", wanted.canonical, selected.key)
 	}
 	return []*bodyPlan{plan}, nil
 }
@@ -1523,7 +1523,7 @@ func buildMultipartBodyForMediaType(doc *openapi3.T, media *openapi3.MediaType, 
 			enc = media.Encoding[name]
 		}
 		if hasMediaFidelity(bindingSpec) && enc != nil && len(enc.Headers) > 0 {
-			return nil, "", fmt.Errorf("multipart part %q declares encoding.headers, but this binding revision defines no caller source for dynamic part-header values", name)
+			return nil, "", fmt.Errorf("multipart part %q declares encoding.headers, but the selected execution profile defines no caller source for dynamic part-header values", name)
 		}
 		if hasMediaFidelity(bindingSpec) && encodingUsesSerialization(enc) {
 			units, err := serializeMultipartValue(name, value, enc)
@@ -1911,7 +1911,7 @@ func writeMultipartPart(writer *multipart.Writer, name string, value any, schema
 
 func writeRevision3MultipartPart(writer *multipart.Writer, name string, value any, schema *openapi3.Schema, enc *openapi3.Encoding, is30 bool) error {
 	if enc != nil && len(enc.Headers) > 0 {
-		return fmt.Errorf("multipart part %q declares encoding.headers, but this binding revision defines no caller source for dynamic part-header values", name)
+		return fmt.Errorf("multipart part %q declares encoding.headers, but the selected execution profile defines no caller source for dynamic part-header values", name)
 	}
 	parsedContentType, err := revision3PartContentType(schema, enc, is30)
 	if err != nil {
@@ -2280,7 +2280,7 @@ func revision3PropertyBytes(name string, value any, schema *openapi3.Schema, con
 		}
 		return encodeTextString(text, contentType)
 	}
-	return nil, fmt.Errorf("unknown revision-3 property carriage")
+	return nil, fmt.Errorf("unknown property carriage mode")
 }
 
 // ---------------------------------------------------------------------------

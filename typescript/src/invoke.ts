@@ -230,7 +230,7 @@ export async function runBinding(
     if (revision3 && supportedBodyPlans.length === 0) {
       inv.fireError(new InvocationError(
         ERR_SOURCE_CONFIG_ERROR,
-        "required request body has no declaration with a revision-3 supported carriage",
+        "required request body has no declaration with a supported carriage in the selected execution profile",
       ));
       return;
     }
@@ -306,7 +306,7 @@ export async function runBinding(
   if (routedRevision && inputSupplied && envelope === null && flatInputHasAmbiguousParameter(params, inputMap)) {
     inv.fireError(new InvocationError(
       ERR_VALIDATION_FAILED,
-      `this ${revision3 ? "revision-3" : "revision-2"} input supplies one flat field for independently declared same-named parameters and requires a routed source input (normally produced by the binding's inputTransform)`,
+      "this input supplies one flat field for independently declared same-named parameters and requires an explicit routed-input envelope",
     ));
     return;
   }
