@@ -5,10 +5,10 @@ import {
   contextSatisfies,
   classifyThroughHooks,
   decodeThroughHooks,
-  contextBearerToken,
+  contextBearerTokenFor,
   contextApiKeyFor,
-  contextBasicAuth,
-  contextString,
+  contextBasicAuthFor,
+  contextAccessTokenFor,
   contextHeaders,
   contextCookies,
   contextConfiguration,
@@ -94,7 +94,7 @@ function configOrSourceError(e: unknown): InvocationError {
     return contextRequiredError(e.message, {
       target: "",
       alternatives: [
-        { requirements: [configValueRequirement(e.point, e.key, e.message, e.choices, e.durable)] },
+        { requirements: [configValueRequirement(e.point, e.path, e.message, e.choices, e.durable)] },
       ],
     });
   }
@@ -634,8 +634,8 @@ export async function runBinding(
   // (per-invocation hook → invoker-level hook → the format builtins
   // below). The binding specification's defaults (OAPI-P-07/P-08),
   // content-independent throughout: classify = success iff status ∈ 2xx
-  // (declared `responses` never change classification — they enrich
-  // failure details); decode = the response's Content-Type HEADER decides
+  // (declared `responses` never change classification — they can identify
+  // application-authored failure data); decode = the response's Content-Type HEADER decides
   // the lane (wire framing, not payload sniffing): JSON for
   // application/json and +json suffixes, the charset-honoring text lane
   // otherwise, absent/unparseable header → text.
@@ -659,11 +659,21 @@ export async function runBinding(
     // native response and the OpenAPI declaration match remain available on
     // the failure completion. The legacy status/body members remain for
     // callers that already consume them.
+    const failureValue = openAPIFailureValue(
+      resp,
+      bodyBytes,
+      responseDeclaration,
+      contentType,
+      doc.openapi ?? "3.0",
+      args.source.profile,
+      revision3,
+      responseFidelity,
+    );
     inv.fireError(
       new InvocationError(
         httpErrorCode(resp.status),
         "Invocation completed unsuccessfully",
-        undefined,
+        failureValue.present ? failureValue.value : undefined,
         openAPIFailureDetails(
           resp,
           bodyBytes,
@@ -817,8 +827,10 @@ function requestMediaContextDetails(target: string): ContextRequiredDetails {
     alternatives: [{
       requirements: [configValueRequirement(
         "requestMedia",
-        "mediaType",
+        "",
         "select a concrete request media type admitted by the OpenAPI content declarations",
+        undefined,
+        true,
       )],
     }],
   };
@@ -851,7 +863,7 @@ export function requiredRequestMediaContext(
 
 /**
  * The openapi builtin result classifier (OAPI-P-08): success iff the final
- * HTTP status is 2xx (declared responses refine failure DETAILS only,
+ * HTTP status is 2xx (declared responses may identify application failure data,
  * never classification).
  */
 export function builtinClassify(_site: InvokeSite, raw: RawResult): boolean | typeof USE_DEFAULT {
@@ -1046,8 +1058,8 @@ function responseMetadata(resp: Response): Metadata {
 /**
  * Builds the binding-native evidence carried by an unsuccessful OpenAPI HTTP
  * exchange. `httpResponse.body.base64` is the fidelity record: it preserves
- * arbitrary bytes through both in-process use and JSON invoker frames. The
- * older top-level `status`/`body` members remain a convenience text view.
+ * arbitrary bytes for protocol-aware standalone-runtime consumers. The older
+ * top-level `status`/`body` members remain a convenience text view.
  */
 function openAPIFailureDetails(
   resp: Response,
@@ -1098,6 +1110,69 @@ function openAPIFailureDetails(
     httpResponse,
     openapi: artifact,
   };
+}
+
+/**
+ * Identifies the application value inside an unsuccessful OpenAPI response.
+ * Protocol evidence remains on the standalone runtime's native error; only a
+ * declaration-selected, faithfully decoded JSON-domain value is eligible for
+ * the OpenBindings adapter's opaque failure-data lane.
+ */
+function openAPIFailureValue(
+  resp: Response,
+  bodyBytes: Uint8Array,
+  declaration: ReturnType<typeof governingResponse>,
+  contentType: string | null,
+  openAPIVersion: string,
+  profile: OpenAPIExecutionProfile,
+  revision3: boolean,
+  responseFidelity: boolean,
+): { present: false } | { present: true; value: unknown } {
+  if (
+    bodyBytes.byteLength === 0
+    || contentType === null
+    || isSSEContentType(contentType)
+    || declaration === null
+  ) {
+    return { present: false };
+  }
+  try {
+    const match = governingResponseMediaMatch(
+      declaration.response,
+      contentType,
+      revision3,
+      responseFidelity,
+    );
+    if (!match) return { present: false };
+    // The abstract failure-data lane is deliberately narrower than the
+    // standalone runtime's native evidence. Text and binary response bodies
+    // remain available to protocol-aware runtime consumers, but only a
+    // declared JSON representation can denote an opaque application value.
+    if (!isJSONMediaType(normalizeMediaType(contentType))) {
+      return { present: false };
+    }
+    if (
+      responseUsesRawBoundary(
+        match.media,
+        contentType,
+        openAPIVersion,
+        profile,
+        !("specificity" in match.declared),
+      )
+    ) {
+      return { present: false };
+    }
+    const decode = decodeBytesByContentType(contentType, bodyBytes, revision3);
+    return {
+      present: true,
+      value: decode(
+        { operation: "", invokedAs: "", bindingKey: "", bindingSpec: "openapi", ref: "", target: "" },
+        { status: resp.status, body: "", meta: {} },
+      ),
+    };
+  } catch {
+    return { present: false };
+  }
 }
 
 function bytesToBase64(bytes: Uint8Array): string {
@@ -1310,6 +1385,7 @@ function schemeRequirements(
   return requirements.map((requirement) => ({
     ...requirement,
     name,
+    durable: true,
     ...(scheme.description ? { description: scheme.description } : {}),
   }));
 }
@@ -1506,12 +1582,12 @@ function credentialValues(plan: SecurityPlan, ctx: Record<string, unknown>): Cre
       case "http":
         switch ((scheme.scheme ?? "").toLowerCase()) {
           case "bearer": {
-            const token = contextBearerToken(ctx);
+            const token = contextBearerTokenFor(ctx, schemeName);
             if (token) add("header", "Authorization", `Bearer ${token}`);
             break;
           }
           case "basic": {
-            const basic = contextBasicAuth(ctx);
+            const basic = contextBasicAuthFor(ctx, schemeName);
             if (basic) {
               add("header", "Authorization", `Basic ${btoa(`${basic.username}:${basic.password}`)}`);
             }
@@ -1521,7 +1597,7 @@ function credentialValues(plan: SecurityPlan, ctx: Record<string, unknown>): Cre
         break;
       case "oauth2":
       case "openIdConnect": {
-        const token = contextString(ctx, "accessToken") || contextBearerToken(ctx);
+        const token = contextAccessTokenFor(ctx, schemeName) || contextBearerTokenFor(ctx, schemeName);
         if (token) add("header", "Authorization", `Bearer ${token}`);
         break;
       }

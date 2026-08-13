@@ -319,6 +319,83 @@ func TestEngineDerivesCustomSecurityOnlyFromInstalledHandler(t *testing.T) {
 	}
 }
 
+func TestEnginePreservesDeclaredJSONFailureValuesIncludingNull(t *testing.T) {
+	values := []any{map[string]any{"reason": "missing"}, []any{"missing"}, "missing", float64(0), false, nil}
+	for _, value := range values {
+		value := value
+		t.Run(fmt.Sprintf("%T-%v", value, value), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				writer.Header().Set("Content-Type", "application/problem+json")
+				writer.WriteHeader(http.StatusNotFound)
+				_ = json.NewEncoder(writer).Encode(value)
+			}))
+			defer server.Close()
+
+			engine := NewEngine(nil)
+			prepared, err := engine.Prepare(context.Background(), PrepareOptions{
+				Source: Source{Content: testDocument(server.URL, `{
+					"/widgets":{"get":{"responses":{"404":{"description":"missing","content":{"application/problem+json":{}}}}}}
+				}`)},
+				Ref: "#/paths/~1widgets/get", Profile: FullProfile(),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			execution, err := prepared.Start(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			for range execution.Events() {
+				t.Fatal("unsuccessful response emitted an output")
+			}
+			var terminal *ExecutionError
+			if err := execution.Wait(); !errors.As(err, &terminal) {
+				t.Fatalf("terminal = %#v", err)
+			}
+			if !terminal.DetailsPresent || !reflect.DeepEqual(terminal.Details, value) {
+				t.Fatalf("details = present %v, %#v; want %#v", terminal.DetailsPresent, terminal.Details, value)
+			}
+		})
+	}
+}
+
+func TestEngineDoesNotPromoteMalformedOrNonJSONFailureBodies(t *testing.T) {
+	for _, contentType := range []string{"application/json", "text/plain", "application/octet-stream"} {
+		contentType := contentType
+		t.Run(contentType, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				writer.Header().Set("Content-Type", contentType)
+				writer.WriteHeader(http.StatusNotFound)
+				_, _ = writer.Write([]byte("not-json"))
+			}))
+			defer server.Close()
+			engine := NewEngine(nil)
+			prepared, err := engine.Prepare(context.Background(), PrepareOptions{
+				Source: Source{Content: testDocument(server.URL, `{
+					"/widgets":{"get":{"responses":{"404":{"description":"missing","content":{"application/json":{},"text/plain":{},"application/octet-stream":{}}}}}}
+				}`)},
+				Ref: "#/paths/~1widgets/get", Profile: FullProfile(),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			execution, err := prepared.Start(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			for range execution.Events() {
+			}
+			var terminal *ExecutionError
+			if err := execution.Wait(); !errors.As(err, &terminal) {
+				t.Fatalf("terminal = %#v", err)
+			}
+			if terminal.DetailsPresent {
+				t.Fatalf("failure body was promoted: %#v", terminal.Details)
+			}
+		})
+	}
+}
+
 func TestClientSSEPreservesOrderingFramingAndCompletion(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("Content-Type", "text/event-stream")
@@ -455,6 +532,31 @@ func TestEnginePrepareRefusesInvalidConfiguredRequestMedia(t *testing.T) {
 	var executionErr *ExecutionError
 	if !errors.As(err, &executionErr) || executionErr.Code != CodeSourceConfigError {
 		t.Fatalf("prepare error = %#v", err)
+	}
+}
+
+func TestEnginePrepareUsesWholePointPathForRequestMedia(t *testing.T) {
+	engine := NewEngine(nil)
+	prepared, err := engine.Prepare(context.Background(), PrepareOptions{
+		Source: Source{Content: testDocument("https://api.example.test", `{
+			"/widgets":{"post":{
+				"requestBody":{"required":true,"content":{"application/*":{"schema":{"type":"object"}}}},
+				"responses":{"204":{"description":"done"}}
+			}}
+		}`)},
+		Ref:     "#/paths/~1widgets/post",
+		Profile: MediaProfile(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	details := prepared.Prerequisites()
+	if details == nil || len(details.Alternatives) != 1 || len(details.Alternatives[0].Requirements) != 1 {
+		t.Fatalf("prerequisites = %#v", details)
+	}
+	requirement := details.Alternatives[0].Requirements[0]
+	if requirement.Type != "config.value" || requirement.Extra["point"] != "requestMedia" || requirement.Extra["path"] != "" {
+		t.Fatalf("requestMedia requirement = %#v", requirement)
 	}
 }
 

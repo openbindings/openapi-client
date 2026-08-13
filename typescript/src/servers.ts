@@ -22,7 +22,7 @@ import type { OpenAPIDocument, OpenAPIOperation, OpenAPIPathItem } from "./types
 export class ConfigRequired extends Error {
   constructor(
     readonly point: string,
-    readonly key: string,
+    readonly path: string,
     message: string,
     readonly choices?: string[],
     readonly durable?: boolean,
@@ -234,7 +234,7 @@ function substituteServerVariables(
       const enumVals = Array.isArray(v.enum) ? v.enum : undefined;
       throw new ConfigRequired(
         "server",
-        name,
+        `/variables/${escapeJSONPointerToken(name)}`,
         `server "${srv.url}": variable "${name}" has no supplied value and no declared default`,
         enumVals,
       );
@@ -287,7 +287,11 @@ export function absolutizeServerURL(serverURL: string, sourceLocation: string | 
   }
   throw new ConfigRequired(
     "server",
-    "url",
+    "/url",
     `server URL "${serverURL}" cannot resolve to an absolute URL: the source has no absolute-URI location to serve as the artifact's base URI; supply a base URL at the server configuration point`,
   );
+}
+
+function escapeJSONPointerToken(value: string): string {
+  return value.replaceAll("~", "~0").replaceAll("/", "~1");
 }

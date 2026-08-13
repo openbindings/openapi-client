@@ -37,7 +37,7 @@ type bufferedResponseBody struct {
 func configOrSourceError(err error) *ExecutionError {
 	var cr *configRequired
 	if errors.As(err, &cr) {
-		req := newConfigValueRequirementCompat(cr.point, cr.key, cr.description, cr.choices, cr.durable)
+		req := newConfigValueRequirementCompat(cr.point, cr.path, cr.description, cr.choices, cr.durable)
 		return newContextRequiredError(cr.description, &Prerequisites{
 			Alternatives: []RequirementAlternative{{Requirements: []Requirement{req}}},
 		})
@@ -592,8 +592,8 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 	// (per-invocation hook → invoker-level hook → the format builtins
 	// below). The binding specification's defaults (OAPI-P-07/P-08),
 	// content-independent throughout: classify = success iff status ∈ 2xx
-	// (declared `responses` never change classification — they enrich
-	// failure details); decode = the response's Content-Type HEADER decides
+	// (declared `responses` never change classification — they can identify
+	// application-authored failure data); decode = the response's Content-Type HEADER decides
 	// the lane (wire framing, not payload sniffing): JSON for
 	// application/json and +json suffixes, text otherwise, absent /
 	// unparseable header → text.
@@ -681,7 +681,7 @@ func requiredRequestMediaContext(doc *openapi3.T, op *openapi3.Operation, bindin
 		return nil, nil
 	}
 	requirement := newConfigValueRequirementCompat(
-		"requestMedia", "value",
+		"requestMedia", "",
 		"select a concrete request media type admitted by the OpenAPI declaration",
 		nil, nil,
 	)
@@ -735,7 +735,7 @@ func decodeClassifyTrailer(hooks *invokeHooks, builtinDecode string) Metadata {
 
 // builtinClassify is the openapi builtin result classifier (OAPI-P-08):
 // success iff the final HTTP status is 2xx (declared responses refine
-// failure DETAILS only, never classification).
+// application failure data only, never classification).
 func builtinClassify(_ HookSite, raw RawResult) (bool, error) {
 	return raw.Status != nil && *raw.Status >= 200 && *raw.Status < 300, nil
 }
@@ -873,9 +873,20 @@ func headerMetadata(h http.Header) Metadata {
 // openAPIFailureError retains expert diagnostic evidence for an unsuccessful
 // OpenAPI HTTP exchange. The operation output stays empty and ordinary callers
 // need none of these HTTP-shaped facts. httpResponse.body is base64 so the
-// optional diagnostic survives JSON invoker frames.
+// standalone runtime can preserve exact bytes for protocol-aware consumers.
 func openAPIFailureError(resp *http.Response, body []byte, match *governingResponseMatch, bindingSpec string) *ExecutionError {
 	ierr := httpFailureError(resp.StatusCode, resp.Status)
+	contentType := resp.Header.Get("Content-Type")
+	if len(body) > 0 && match != nil && !isSSEContentType(contentType) && isJSONContentTypeFor(contentType, bindingSpec) {
+		if _, err := governingResponseMediaFor(match.response, contentType, bindingSpec); err == nil {
+			decoder := decodeByContentTypeFor(contentType, bindingSpec)
+			status := resp.StatusCode
+			if value, err := decoder(HookSite{}, RawResult{Status: &status, Body: body, Meta: headerMetadata(resp.Header)}); err == nil {
+				ierr.Details = value
+				ierr.DetailsPresent = true
+			}
+		}
+	}
 	details, _ := ierr.Diagnostics.(map[string]any)
 	if details == nil {
 		details = map[string]any{"status": resp.StatusCode}
@@ -910,7 +921,6 @@ func openAPIFailureError(resp *http.Response, body []byte, match *governingRespo
 	artifact := map[string]any{"declared": match != nil}
 	if match != nil {
 		artifact["responseKey"] = match.key
-		contentType := resp.Header.Get("Content-Type")
 		if hasMediaFidelity(bindingSpec) {
 			contentType, _ = singletonResponseHeader(resp.Header, "Content-Type")
 		}
@@ -1068,7 +1078,9 @@ func securityPlans(doc *openapi3.T, op *openapi3.Operation, baseURL string) []se
 			next := make([]securityPlan, 0, len(expanded)*len(options))
 			for _, plan := range expanded {
 				for _, option := range options {
+					durable := true
 					option.Name = schemeName
+					option.Durable = &durable
 					if ref.Value.Description != "" {
 						option.Description = ref.Value.Description
 					}
@@ -1457,18 +1469,18 @@ func credentialValues(plan securityPlan, bindCtx map[string]any) []credentialPla
 		case "http":
 			switch strings.ToLower(s.Scheme) {
 			case "bearer":
-				if token := contextBearerToken(bindCtx); token != "" {
+				if token := contextBearerTokenFor(bindCtx, named.name); token != "" {
 					placements = append(placements, credentialPlacement{channel: "header", name: "Authorization", value: "Bearer " + token})
 				}
 			case "basic":
-				if u, p, ok := contextBasicAuth(bindCtx); ok {
+				if u, p, ok := contextBasicAuthFor(bindCtx, named.name); ok {
 					placements = append(placements, credentialPlacement{channel: "header", name: "Authorization", value: "Basic " + base64.StdEncoding.EncodeToString([]byte(u+":"+p))})
 				}
 			}
 		case "oauth2", "openIdConnect":
-			token := contextString(bindCtx, "accessToken")
+			token := contextAccessTokenFor(bindCtx, named.name)
 			if token == "" {
-				token = contextBearerToken(bindCtx)
+				token = contextBearerTokenFor(bindCtx, named.name)
 			}
 			if token != "" {
 				placements = append(placements, credentialPlacement{channel: "header", name: "Authorization", value: "Bearer " + token})

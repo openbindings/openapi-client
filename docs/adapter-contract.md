@@ -30,9 +30,9 @@ The engine reports an SDK-neutral event sequence and terminal outcome:
 The adapter maps those facts into the OpenBindings invocation frame:
 
 - application values become operation outputs;
-- application-authored error bodies may become portable failure details under the binding rules;
-- transport/protocol/decoding/configuration failures become unsuccessful invocation completion with protocol-independent codes and presentation messages;
-- the engine's concrete error text and protocol evidence may be retained only as explicit diagnostics;
+- application-authored error bodies may become portable failure data under the binding rules;
+- transport/protocol/decoding/configuration failures become unsuccessful invocation completion with protocol-independent codes;
+- the engine's concrete error text and protocol evidence remain available only on this standalone runtime's native surface or in protocol-native tooling; they do not cross the abstract invocation boundary;
 - HTTP status and headers never become required abstract output fields.
 
 ## Class and package isolation
@@ -42,7 +42,7 @@ The engine must not construct or return `@openbindings/sdk` classes. In particul
 The adapter therefore owns a small mechanical bridge:
 
 1. convert engine error records into the SDK's `InvocationError` class;
-2. normalize the ordinary error code/message, copy portable `details`, and retain native evidence under explicit diagnostics;
+2. normalize the error code and copy `data` only where the governing binding rule admits an application-authored value or defines the code's data;
 3. expose the SDK's invocation interface while forwarding writes, close, cancellation, outputs, and lifecycle;
 4. translate hook callbacks at the package boundary.
 

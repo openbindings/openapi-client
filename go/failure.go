@@ -36,8 +36,8 @@ type FailureDeclaration struct {
 }
 
 // FailureEvidenceFrom extracts and validates the OpenAPI-native evidence from
-// an invocation error. It accepts diagnostics that crossed a JSON invoker frame as
-// well as the in-process map produced by this package.
+// a standalone execution error, including evidence reconstructed through the
+// runtime's neutral carrier.
 func FailureEvidenceFrom(err error) (FailureEvidence, bool) {
 	var invocationError *ExecutionError
 	if !errors.As(err, &invocationError) || invocationError == nil || invocationError.Diagnostics == nil {

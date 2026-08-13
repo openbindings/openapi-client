@@ -24,12 +24,15 @@ const (
 
 // ExecutionError is an SDK-neutral artifact execution failure.
 type ExecutionError struct {
-	Code        string
-	Message     string
-	Details     any
-	Evidence    any
-	Diagnostics any
-	Cause       error
+	Code    string
+	Message string
+	Details any
+	// DetailsPresent distinguishes an absent application value from an
+	// explicitly authored JSON null.
+	DetailsPresent bool
+	Evidence       any
+	Diagnostics    any
+	Cause          error
 }
 
 func (e *ExecutionError) Error() string {

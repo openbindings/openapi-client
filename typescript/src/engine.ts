@@ -154,6 +154,27 @@ export class OpenAPIExecutionError extends Error {
   }
 }
 
+export type OpenAPIPortableFailureData =
+  | { present: false }
+  | { present: true; value: unknown };
+
+/**
+ * Returns the application value that the OpenAPI document itself declared for
+ * an unsuccessful response. Native response evidence remains available to
+ * standalone runtime consumers, but adapters must not promote arbitrary error
+ * details across a protocol-agnostic boundary.
+ */
+export function openAPIPortableFailureData(error: unknown): OpenAPIPortableFailureData {
+  if (!(error instanceof OpenAPIExecutionError) || !Object.hasOwn(error, "details")) {
+    return { present: false };
+  }
+  const evidence = record(error.evidence);
+  const declaration = record(evidence?.openapi);
+  return declaration?.declared === true && typeof declaration.governingMedia === "string"
+    ? { present: true, value: error.details }
+    : { present: false };
+}
+
 /**
  * A loaded, directly resolved OpenAPI operation. Calling start() first runs
  * every pre-input check, then returns a session waiting for application input.
@@ -462,8 +483,8 @@ function toExecutionError(error: unknown): OpenAPIExecutionError {
   if (error instanceof InvocationError) {
     return new OpenAPIExecutionError(error.code, error.message, {
       cause: error,
-      details: error.details,
-      evidence: error.diagnostics,
+      ...(Object.hasOwn(error, "details") ? { details: error.details } : {}),
+      ...(Object.hasOwn(error, "diagnostics") ? { evidence: error.diagnostics } : {}),
     });
   }
   return new OpenAPIExecutionError("RUNTIME_ERROR", errorMessage(error), { cause: error });
@@ -472,9 +493,21 @@ function toExecutionError(error: unknown): OpenAPIExecutionError {
 function toInternalError(error: unknown): InvocationError {
   if (error instanceof InvocationError) return error;
   if (error instanceof OpenAPIExecutionError) {
-    return new InvocationError(error.code, error.message, error.details, error.evidence);
+    return new InvocationError(
+      error.code,
+      error.message,
+      error.details,
+      error.evidence,
+      error,
+    );
   }
   return new InvocationError("ERR_RUNTIME", errorMessage(error));
+}
+
+function record(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
 }
 
 function cloneMetadata(metadata: Record<string, string[]>): Record<string, string[]> {

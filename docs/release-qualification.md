@@ -34,8 +34,13 @@ exports, accidental workspace dependencies, and source-only success.
 The OpenBindings workspace additionally runs the authority-derived wire
 differential, TypeScript/Go adapter suites, exact synthesis-and-coverage parity,
 the varied development corpus, sealed holdouts, and comparator mutation
-self-checks. Those system reports remain in `corpus-lab`; they do not become a
-runtime dependency of this standalone repository.
+self-checks. The corpus of independently sourced third-party artifacts and
+its per-artifact reports are internal qualification assets of the
+OpenBindings project and are not redistributed; the published evidence is the
+authored conformance content, the aggregate counts below, and the
+sealed-cohort SHA-256 commitments recorded in the OpenBindings
+specification's conformance evidence policy. None of it is a runtime
+dependency of this standalone repository.
 
 A release is qualified only when both the local and system gates are green,
 unsupported semantics refuse before dispatch when knowable, and every new
@@ -60,8 +65,12 @@ All 70 authority-derived semantic cells are assigned exactly once in the
 release evidence ledger, with executable evidence in both languages. Across
 the 170-artifact corpus, all 152 artifacts in the supported comparison
 envelope have exact TypeScript/Go synthesis and coverage parity. Three sealed
-holdout cohorts contain 66 supported artifacts with exact parity plus four
-invalid-upstream tolerance observations, and no goal-relevant mismatch.
+holdout cohorts (SHA-256 seals
+`b9c168ff9c81008a7f47086ead5e14030bd154e356bae224942ab0176a22a6a4`,
+`9ddba505f83ba19f534996d915f3dd25bdf0683eecb7fa1b9f62979b065fd153`, and
+`95c04c900686c3d52d46fc856bea883b2e38d5ddb035409c9242b47b0b881a46`) contain
+66 supported artifacts with exact parity plus four invalid-upstream tolerance
+observations, and no goal-relevant mismatch.
 
 ## Host policy and hostile artifacts
 

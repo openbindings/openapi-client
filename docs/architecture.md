@@ -46,7 +46,8 @@ If a behavior can be decided from the OpenAPI document, native call options, and
 | Select an OBI binding | OpenBindings Core SDK |
 | Apply an OBI `inputTransform` | OpenBindings Core SDK |
 | Map HTTP-native failure into abstract invocation failure | OpenBindings adapter |
-| Expose raw protocol evidence as optional diagnostics | OpenBindings adapter |
+| Expose raw protocol evidence to protocol-aware callers | native client / execution engine |
+| Keep raw protocol evidence outside abstract invocation frames | OpenBindings adapter |
 | Synthesize OBI operations and binding references | OpenBindings adapter/synthesizer |
 
 ## No synthesis dependency

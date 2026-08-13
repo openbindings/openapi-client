@@ -269,6 +269,12 @@ interfaces; it never constructs an OpenBindings SDK class. Reusable document
 analysis primitives are available from `./analysis`. Most application code
 should use the native `OpenAPIClient` entry point above.
 
+For abstraction adapters, `openAPIPortableFailureData(error)` returns only a
+JSON-domain value selected and decoded through the governing OpenAPI Response
+Object and media declaration. Generic `OpenAPIExecutionError.details` and
+native response evidence are intentionally not interchangeable with portable
+application failure data.
+
 ## License
 
 Apache-2.0.

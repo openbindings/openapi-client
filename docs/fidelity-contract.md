@@ -4,7 +4,7 @@
 
 For every operation within the declared OpenAPI support boundary, a developer should be able to point the client at the brownfield document and obtain an invocation at least as faithful as bespoke protocol code written from that same document. The client may hide mechanical complexity, but it must not silently collapse distinctions the artifact or exchange makes relevant to correct invocation.
 
-OpenBindings adds a protocol-independent overlay above this client. It must preserve application behavior while hiding protocol vocabulary; protocol evidence is an optional diagnostic escape hatch, never a required ordinary output.
+OpenBindings adds a protocol-independent overlay above this client. It must preserve application behavior while hiding protocol vocabulary; protocol evidence remains on this standalone client or in protocol-native tooling and does not cross the abstract invocation boundary.
 
 ## Required properties
 
