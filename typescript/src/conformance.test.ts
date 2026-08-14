@@ -7,6 +7,7 @@ import {
   ERR_MISSING_INPUT,
   ERR_PROTOCOL,
   ERR_RESPONSE_ERROR,
+  ERR_REFUSED,
   ERR_SOURCE_CONFIG_ERROR,
   ERR_VALIDATION_FAILED,
 } from "./internal/index.js";
@@ -276,7 +277,7 @@ describe("OAPI-P-03 — flattened-model refusals", () => {
       fetch,
     });
     await expect(call.closed).rejects.toMatchObject({
-      code: ERR_SOURCE_CONFIG_ERROR,
+      code: ERR_REFUSED,
       message: expect.stringContaining("unflattenable"),
     });
     expect(requests).toHaveLength(0);
@@ -293,7 +294,7 @@ describe("OAPI-P-03 — flattened-model refusals", () => {
     });
     await call.write({ session_id: "s", bogus: 1 });
     await expect(call.closed).rejects.toMatchObject({
-      code: ERR_VALIDATION_FAILED,
+      code: ERR_REFUSED,
       message: expect.stringContaining("bogus"),
     });
     expect(requests).toHaveLength(0);
@@ -365,7 +366,7 @@ describe("OAPI-P-03 — flattened-model refusals", () => {
       });
       await call.write({ body: "x", stray: 1 });
       await expect(call.closed, name).rejects.toMatchObject({
-        code: ERR_VALIDATION_FAILED,
+        code: ERR_REFUSED,
         message: expect.stringContaining(wantMsg),
       });
       expect(requests, name).toHaveLength(0);
@@ -818,7 +819,7 @@ describe("OAPI-P-04 — request media on the wire", () => {
       fetch,
     });
     await expect(call.closed).rejects.toMatchObject({
-      code: ERR_SOURCE_CONFIG_ERROR,
+      code: ERR_REFUSED,
     });
     expect(requests).toHaveLength(0);
   });
@@ -888,7 +889,7 @@ describe("OAPI-P-04 — request media on the wire", () => {
         fetch,
       });
       await expect(call.closed).rejects.toMatchObject({
-        code: ERR_SOURCE_CONFIG_ERROR,
+        code: ERR_REFUSED,
         message,
       });
       expect(requests).toHaveLength(0);
@@ -1063,7 +1064,7 @@ describe("OAPI-P-04 — request media on the wire", () => {
     });
     await call2.write({ body: 1 });
     await expect(call2.closed).rejects.toMatchObject({
-      code: ERR_VALIDATION_FAILED,
+      code: ERR_REFUSED,
     });
     expect(requests).toHaveLength(1);
   });
@@ -1429,7 +1430,7 @@ describe("OAPI-P-10 — channel assembly", () => {
       });
       await call.write({ [tc.param]: "caller-value" });
       await expect(call.closed).rejects.toMatchObject({
-        code: ERR_VALIDATION_FAILED,
+        code: ERR_REFUSED,
         message: expect.stringContaining("OAPI-P-10"),
       });
       expect(requests).toHaveLength(0);

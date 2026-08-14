@@ -4,6 +4,11 @@ import "fmt"
 
 const (
 	CodeContextRequired   = "CONTEXT_REQUIRED"
+	// CodeRefused carries the binding-invoker contract's never-dispatched
+	// guarantee: the invocation was refused before dispatch and no
+	// observable interaction side effect occurred. Emitted ONLY where that
+	// guarantee provably holds.
+	CodeRefused           = "ERR_REFUSED"
 	CodeCancelled         = "ERR_CANCELLED"
 	CodeTimeout           = "ERR_TIMEOUT"
 	CodeInputClosed       = "ERR_INPUT_CLOSED"

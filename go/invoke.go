@@ -42,7 +42,7 @@ func configOrSourceError(err error) *ExecutionError {
 			Alternatives: []RequirementAlternative{{Requirements: []Requirement{req}}},
 		})
 	}
-	return &ExecutionError{Code: CodeSourceConfigError, Message: err.Error()}
+	return &ExecutionError{Code: CodeRefused, Message: err.Error()}
 }
 
 // classifyhttpFailureError maps a transport-level error from http.Client.Do to a
@@ -104,7 +104,7 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 	}
 
 	if doc.Paths == nil {
-		inv.failExecution(&ExecutionError{Code: CodeSourceConfigError, Message: "OpenAPI document has no paths defined"})
+		inv.failExecution(&ExecutionError{Code: CodeRefused, Message: "OpenAPI document has no paths defined"})
 		return
 	}
 	// Pointer evaluation follows OAS reference resolution (OAPI-D-03): the
@@ -129,14 +129,14 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 	params := effectiveParameters(pathItem, op)
 	if name := unflattenableParamForRevision(params, args.Source.Capability); name != "" {
 		inv.failExecution(&ExecutionError{
-			Code:    CodeSourceConfigError,
+			Code:    CodeRefused,
 			Message: fmt.Sprintf("operation declares parameter %q without a distinct wire identity under %s (OAPI-P-03, unflattenable/unresolvable)", name, args.Source.Capability),
 		})
 		return
 	}
 	if err := checkEffectiveParameterOwnership(params); err != nil {
 		inv.failExecution(&ExecutionError{
-			Code:    CodeSourceConfigError,
+			Code:    CodeRefused,
 			Message: err.Error(),
 		})
 		return
@@ -151,17 +151,17 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 	// network I/O, so a no-input-consumed retry (after the operation layer
 	// resolves context) is safe.
 	if err := securityConfigurationError(doc, op); err != nil {
-		inv.failExecution(&ExecutionError{Code: CodeSourceConfigError, Message: err.Error()})
+		inv.failExecution(&ExecutionError{Code: CodeRefused, Message: err.Error()})
 		return
 	}
 	if err := securityAlternativesCollision(doc, op, baseURL, params); err != nil {
-		inv.failExecution(&ExecutionError{Code: CodeValidationFailed, Message: err.Error()})
+		inv.failExecution(&ExecutionError{Code: CodeRefused, Message: err.Error()})
 		return
 	}
 	details := requiredContext(doc, op, args.Context, baseURL, params)
 	mediaDetails, mediaRequirementErr := requiredRequestMediaContext(doc, op, args.Source.Capability, args.Context)
 	if mediaRequirementErr != nil {
-		inv.failExecution(&ExecutionError{Code: CodeSourceConfigError, Message: mediaRequirementErr.Error()})
+		inv.failExecution(&ExecutionError{Code: CodeRefused, Message: mediaRequirementErr.Error()})
 		return
 	}
 	details = mergeRequirements(details, mediaDetails)
@@ -197,7 +197,7 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 			// body are optional; proceed with an empty input.
 			if missing := requiredInputMissing(params, op); missing != "" {
 				inv.failExecution(&ExecutionError{
-					Code:    CodeMissingInput,
+					Code:    CodeRefused,
 					Message: missing,
 				})
 				return
@@ -210,7 +210,7 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 			if routedRevision {
 				envelope, err = parseRoutedEnvelopeWithKey(v, args.InputRouteKey, args.InputRouteMarker)
 				if err != nil {
-					inv.failExecution(&ExecutionError{Code: CodeValidationFailed, Message: err.Error()})
+					inv.failExecution(&ExecutionError{Code: CodeRefused, Message: err.Error()})
 					return
 				}
 			}
@@ -218,7 +218,7 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 				if m, ok := toStringAnyMap(v); ok {
 					inputMap = m
 				} else {
-					inv.failExecution(&ExecutionError{Code: CodeValidationFailed, Message: "OpenAPI input value must be a JSON object"})
+					inv.failExecution(&ExecutionError{Code: CodeRefused, Message: "OpenAPI input value must be a JSON object"})
 					return
 				}
 			}
@@ -230,7 +230,7 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 
 	if routedRevision && inputSupplied && envelope == nil && flatInputHasAmbiguousParameter(params, inputMap) {
 		inv.failExecution(&ExecutionError{
-			Code:    CodeValidationFailed,
+			Code:    CodeRefused,
 			Message: "this input supplies one flat field for independently declared same-named parameters and requires an explicit routed-input envelope",
 		})
 		return
@@ -244,13 +244,13 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 	if willEmitBody || envelope != nil {
 		plans, err = planRequestBodiesFor(doc, op, args.Source.Capability)
 		if err != nil {
-			inv.failExecution(&ExecutionError{Code: CodeSourceConfigError, Message: err.Error()})
+			inv.failExecution(&ExecutionError{Code: CodeRefused, Message: err.Error()})
 			return
 		}
 	}
 	if envelope != nil {
 		if err := validateEnvelopeRoutes(params, plans, envelope); err != nil {
-			inv.failExecution(&ExecutionError{Code: CodeValidationFailed, Message: err.Error()})
+			inv.failExecution(&ExecutionError{Code: CodeRefused, Message: err.Error()})
 			return
 		}
 	}
@@ -314,9 +314,9 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 		}
 	}
 	if err != nil {
-		code := CodeValidationFailed
+		code := CodeRefused
 		if errors.Is(err, errMissingPathParam) {
-			code = CodeMissingInput
+			code = CodeRefused
 		}
 		inv.failExecution(&ExecutionError{Code: code, Message: err.Error()})
 		return
@@ -326,11 +326,11 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 
 	placements, selectedSchemes, credentialOwnership, err := selectCredentialPlacements(doc, op, args.Context, baseURL, params, routed.populated)
 	if err != nil {
-		inv.failExecution(&ExecutionError{Code: CodeValidationFailed, Message: err.Error()})
+		inv.failExecution(&ExecutionError{Code: CodeRefused, Message: err.Error()})
 		return
 	}
 	if err := contextChannelCollision(args.Context, params, credentialOwnership); err != nil {
-		inv.failExecution(&ExecutionError{Code: CodeValidationFailed, Message: err.Error()})
+		inv.failExecution(&ExecutionError{Code: CodeRefused, Message: err.Error()})
 		return
 	}
 
@@ -403,7 +403,7 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 			continue
 		}
 		if err := handler(req, SecurityHandlerContext{SchemeName: selected.name, Scheme: selected.scheme}); err != nil {
-			inv.failExecution(&ExecutionError{Code: CodeSourceConfigError, Message: fmt.Sprintf("OpenAPI security handler %q failed: %v", selected.name, err), Cause: err})
+			inv.failExecution(&ExecutionError{Code: CodeRefused, Message: fmt.Sprintf("OpenAPI security handler %q failed: %v", selected.name, err), Cause: err})
 			return
 		}
 	}

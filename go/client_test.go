@@ -527,7 +527,9 @@ func TestExecutionBareHalfCloseRefusesRequiredInput(t *testing.T) {
 		}
 		err = execution.Wait()
 		var executionErr *ExecutionError
-		if !errors.As(err, &executionErr) || executionErr.Code != CodeMissingInput {
+		// A required-input refusal is pre-dispatch: it carries the
+		// never-dispatched guarantee (ERR_REFUSED, ruled 2026-08-14).
+		if !errors.As(err, &executionErr) || executionErr.Code != CodeRefused {
 			t.Fatalf("attempt %d: terminal error = %#v", attempt, err)
 		}
 	}

@@ -14,6 +14,7 @@ import {
   contextConfiguration,
   httpErrorCode,
   ERR_INVALID_REF,
+  ERR_REFUSED,
   ERR_SOURCE_CONFIG_ERROR,
   ERR_REF_NOT_FOUND,
   ERR_CONNECT_FAILED,
@@ -98,7 +99,7 @@ function configOrSourceError(e: unknown): InvocationError {
       ],
     });
   }
-  return new InvocationError(ERR_SOURCE_CONFIG_ERROR, errorMessage(e));
+  return new InvocationError(ERR_REFUSED, errorMessage(e));
 }
 import { isSSEContentType, streamSSE } from "./sse.js";
 
@@ -129,7 +130,7 @@ export async function runBinding(
 
   if (!doc.paths) {
     inv.fireError(
-      new InvocationError(ERR_SOURCE_CONFIG_ERROR, "OpenAPI document has no paths defined"),
+      new InvocationError(ERR_REFUSED, "OpenAPI document has no paths defined"),
     );
     return;
   }
@@ -164,19 +165,19 @@ export async function runBinding(
   const params = effectiveParameters(pathItem, op);
   const ownershipConflict = parameterOwnershipConflict(params);
   if (ownershipConflict !== "") {
-    inv.fireError(new InvocationError(ERR_SOURCE_CONFIG_ERROR, ownershipConflict));
+    inv.fireError(new InvocationError(ERR_REFUSED, ownershipConflict));
     return;
   }
   const securityConfigurationFailure = securityConfigurationError(doc, op);
   if (securityConfigurationFailure !== "") {
-    inv.fireError(new InvocationError(ERR_SOURCE_CONFIG_ERROR, securityConfigurationFailure));
+    inv.fireError(new InvocationError(ERR_REFUSED, securityConfigurationFailure));
     return;
   }
   const unflattenable = unflattenableParam(params, args.source.profile);
   if (unflattenable !== "") {
     inv.fireError(
       new InvocationError(
-        ERR_SOURCE_CONFIG_ERROR,
+        ERR_REFUSED,
         `operation declares parameter "${unflattenable}" without a distinct wire identity under execution profile ${args.source.profile.name} (OAPI-P-03, unflattenable/unresolvable)`,
       ),
     );
@@ -186,7 +187,7 @@ export async function runBinding(
     try {
       for (const parameter of params) validateParameterSerialization(parameter);
     } catch (error: unknown) {
-      inv.fireError(new InvocationError(ERR_SOURCE_CONFIG_ERROR, errorMessage(error)));
+      inv.fireError(new InvocationError(ERR_REFUSED, errorMessage(error)));
       return;
     }
   }
@@ -203,7 +204,7 @@ export async function runBinding(
   // resolves context) is safe.
   const securityConflict = securityAlternativesCollision(doc, op, baseURL, params);
   if (securityConflict !== "") {
-    inv.fireError(new InvocationError(ERR_VALIDATION_FAILED, securityConflict));
+    inv.fireError(new InvocationError(ERR_REFUSED, securityConflict));
     return;
   }
 
@@ -223,13 +224,13 @@ export async function runBinding(
     try {
       requiredBodyPlans = planRequestBodies(op, planningOptions);
     } catch (e: unknown) {
-      inv.fireError(new InvocationError(ERR_SOURCE_CONFIG_ERROR, errorMessage(e)));
+      inv.fireError(new InvocationError(ERR_REFUSED, errorMessage(e)));
       return;
     }
     const supportedBodyPlans = requiredBodyPlans.filter((plan) => !plan.unsupported);
     if (revision3 && supportedBodyPlans.length === 0) {
       inv.fireError(new InvocationError(
-        ERR_SOURCE_CONFIG_ERROR,
+        ERR_REFUSED,
         "required request body has no declaration with a supported carriage in the selected execution profile",
       ));
       return;
@@ -270,12 +271,12 @@ export async function runBinding(
     void inv.closeInput();
     if (first === undefined) {
       // Bare close: with a required parameter or required requestBody the
-      // dispatch cannot succeed — fire ERR_MISSING_INPUT before any
+      // dispatch cannot succeed — fire ERR_REFUSED before any
       // network I/O (cross-SDK parity). Otherwise parameters and body are
       // optional; proceed with an empty input.
       const missing = requiredInputMissing(params, op);
       if (missing !== "") {
-        inv.fireError(new InvocationError(ERR_MISSING_INPUT, missing));
+        inv.fireError(new InvocationError(ERR_REFUSED, missing));
         return;
       }
       inputMap = {};
@@ -285,13 +286,13 @@ export async function runBinding(
         try {
           envelope = parseRoutedEnvelope(first, args.source.profile);
         } catch (e: unknown) {
-          inv.fireError(new InvocationError(ERR_VALIDATION_FAILED, errorMessage(e)));
+          inv.fireError(new InvocationError(ERR_REFUSED, errorMessage(e)));
           return;
         }
       }
       if (envelope === null) {
         if (first === null || typeof first !== "object" || Array.isArray(first)) {
-          inv.fireError(new InvocationError(ERR_VALIDATION_FAILED, "OpenAPI input value must be a JSON object"));
+          inv.fireError(new InvocationError(ERR_REFUSED, "OpenAPI input value must be a JSON object"));
           return;
         }
         inputMap = first as Record<string, unknown>;
@@ -305,7 +306,7 @@ export async function runBinding(
 
   if (routedRevision && inputSupplied && envelope === null && flatInputHasAmbiguousParameter(params, inputMap)) {
     inv.fireError(new InvocationError(
-      ERR_VALIDATION_FAILED,
+      ERR_REFUSED,
       "this input supplies one flat field for independently declared same-named parameters and requires an explicit routed-input envelope",
     ));
     return;
@@ -319,7 +320,7 @@ export async function runBinding(
     try {
       plans = requiredBodyPlans ?? planRequestBodies(op, planningOptions);
     } catch (e: unknown) {
-      inv.fireError(new InvocationError(ERR_SOURCE_CONFIG_ERROR, errorMessage(e)));
+      inv.fireError(new InvocationError(ERR_REFUSED, errorMessage(e)));
       return;
     }
   }
@@ -327,7 +328,7 @@ export async function runBinding(
     try {
       validateEnvelopeRoutes(params, plans.filter((plan) => !plan.unsupported), envelope, args.source.profile);
     } catch (e: unknown) {
-      inv.fireError(new InvocationError(ERR_VALIDATION_FAILED, errorMessage(e)));
+      inv.fireError(new InvocationError(ERR_REFUSED, errorMessage(e)));
       return;
     }
   }
@@ -371,7 +372,7 @@ export async function runBinding(
         reasons.length > 0 ? reasons.join("; ") : "configured requestMedia selects no declared supported candidate"
       }`,
     );
-    const code = failure instanceof MissingPathParamError ? ERR_MISSING_INPUT : ERR_VALIDATION_FAILED;
+    const code = failure instanceof MissingPathParamError ? ERR_MISSING_INPUT : ERR_REFUSED;
     inv.fireError(new InvocationError(code, errorMessage(failure)));
     return;
   }
@@ -384,12 +385,12 @@ export async function runBinding(
     : [];
   const collision = credentialCollision(placements, params, routed.populated);
   if (collision !== "") {
-    inv.fireError(new InvocationError(ERR_VALIDATION_FAILED, collision));
+    inv.fireError(new InvocationError(ERR_REFUSED, collision));
     return;
   }
   const contextCollision = contextChannelCollision(args.context, params, placements);
   if (contextCollision !== "") {
-    inv.fireError(new InvocationError(ERR_VALIDATION_FAILED, contextCollision));
+    inv.fireError(new InvocationError(ERR_REFUSED, contextCollision));
     return;
   }
 
@@ -460,7 +461,7 @@ export async function runBinding(
       try {
         securedRequest = await handler(securedRequest, { schemeName: name, scheme }) ?? securedRequest;
       } catch (error: unknown) {
-        inv.fireError(new InvocationError(ERR_SOURCE_CONFIG_ERROR, errorMessage(error)));
+        inv.fireError(new InvocationError(ERR_REFUSED, errorMessage(error)));
         return;
       }
     }
