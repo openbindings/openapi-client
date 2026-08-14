@@ -65,7 +65,24 @@ func resolveServer(doc *openapi3.T, pathItem *openapi3.PathItem, op *openapi3.Op
 		}
 	}
 	if len(servers) != 1 {
-		return "", fmt.Errorf("the effective server list has %d alternatives; configuration.server must select one (openapi@1 OAPI-P-05)", len(servers))
+		// Declared alternatives without a selection are missing consumer
+		// configuration, not source misconfiguration (ruled 2026-08-13,
+		// R1+R5): the invocation challenges CONTEXT_REQUIRED (config.value,
+		// point server) — the same retryable negotiation §9.2 gives the
+		// parallel missing-requestMedia case — instead of refusing terminally.
+		choices := make([]string, 0, len(servers))
+		for _, srv := range servers {
+			if srv != nil {
+				choices = append(choices, srv.URL)
+			}
+		}
+		return "", &configRequired{
+			point:       "server",
+			path:        "/url",
+			description: fmt.Sprintf("the effective server list has %d alternatives; configuration.server must select one (openapi@1 OAPI-P-05)", len(servers)),
+			choices:     choices,
+			durable:     &serverChoiceDurable,
+		}
 	}
 
 	substituted, err := substituteServerVariables(servers[0], nil)
@@ -260,3 +277,5 @@ type configRequired struct {
 }
 
 func (c *configRequired) Error() string { return c.description }
+
+var serverChoiceDurable = true

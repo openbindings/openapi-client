@@ -641,3 +641,62 @@ func TestEmbeddedRelativeExternalRefRequiresLocation(t *testing.T) {
 		t.Fatalf("error = %v", err)
 	}
 }
+
+// A multi-alternative effective server list without a selection challenges
+// CONTEXT_REQUIRED (config.value, point server) instead of refusing
+// terminally (openbindings.openapi §9.3, ruled 2026-08-13).
+func TestEngineMultiServerWithoutSelectionChallengesContextRequired(t *testing.T) {
+	document := []byte(`{
+  "openapi":"3.1.0",
+  "info":{"title":"test","version":"1"},
+  "servers":[{"url":"https://a.example.test"},{"url":"https://b.example.test"}],
+  "paths":{"/things":{"get":{"responses":{"204":{"description":"ok"}}}}}
+}`)
+	engine := NewEngine(nil)
+	prepared, err := engine.Prepare(context.Background(), PrepareOptions{
+		Source:  Source{Content: document},
+		Ref:     "#/paths/~1things/get",
+		Profile: FullProfile(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = prepared.Start(context.Background())
+	if err == nil {
+		t.Fatal("an unselected multi-server list must challenge before dispatch")
+	}
+	var terminal *ExecutionError
+	if !errors.As(err, &terminal) {
+		t.Fatalf("terminal = %#v", err)
+	}
+	if terminal.Code != CodeContextRequired {
+		t.Fatalf("code = %q, want %q (details: %#v)", terminal.Code, CodeContextRequired, terminal.Details)
+	}
+	prereq, ok := terminal.Details.(*Prerequisites)
+	if !ok || len(prereq.Alternatives) == 0 {
+		t.Fatalf("details = %#v, want prerequisites with alternatives", terminal.Details)
+	}
+	requirement := prereq.Alternatives[0].Requirements[0]
+	if requirement.Type != "config.value" || requirement.Extra["point"] != "server" {
+		t.Fatalf("requirement = %#v, want config.value/server", requirement)
+	}
+
+	// Selecting a member resolves the challenge; dispatch proceeds.
+	configured, err := NewEngine(nil).Prepare(context.Background(), PrepareOptions{
+		Source:  Source{Content: document},
+		Ref:     "#/paths/~1things/get",
+		Profile: FullProfile(),
+		Context: map[string]any{"configuration": map[string]any{"server": map[string]any{"index": 1}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := configured.Start(context.Background()); err != nil {
+		var challenge *ExecutionError
+		if errors.As(err, &challenge) && challenge.Code == CodeContextRequired {
+			t.Fatalf("configured selection still challenged: %#v", challenge.Details)
+		}
+		// Network failure is fine — the challenge is resolved and dispatch
+		// was attempted against the configured target.
+	}
+}

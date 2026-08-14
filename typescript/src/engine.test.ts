@@ -198,3 +198,53 @@ describe("failure bodies decode through the success lanes", () => {
     });
   }
 });
+
+// A multi-alternative effective server list without a selection challenges
+// CONTEXT_REQUIRED (config.value, point server) instead of refusing
+// terminally (openbindings.openapi §9.3, ruled 2026-08-13; Go twin:
+// TestEngineMultiServerWithoutSelectionChallengesContextRequired).
+describe("multi-server selection negotiation", () => {
+  const multiServerDocument = {
+    openapi: "3.1.0",
+    info: { title: "engine", version: "1" },
+    servers: [{ url: "https://a.example.test" }, { url: "https://b.example.test" }],
+    paths: { "/things": { get: { responses: { "204": { description: "ok" } } } } },
+  };
+
+  it("challenges config.value/server when unselected", async () => {
+    const prepared = await new OpenAPIEngine().prepare({
+      source: { content: multiServerDocument },
+      ref: "#/paths/~1things/get",
+      profile: OPENAPI_PROFILE_FULL,
+      fetch: async () => new Response(null, { status: 204 }),
+    });
+    let challenge: unknown;
+    try {
+      await prepared.start();
+    } catch (error: unknown) {
+      challenge = error;
+    }
+    expect(challenge).toBeInstanceOf(OpenAPIExecutionError);
+    const failure = challenge as OpenAPIExecutionError & { details?: { alternatives?: Array<{ requirements: Array<Record<string, unknown>> }> } };
+    expect(failure.code).toBe("CONTEXT_REQUIRED");
+    const requirement = failure.details?.alternatives?.[0]?.requirements?.[0] as Record<string, unknown>;
+    expect(requirement.type).toBe("config.value");
+    expect(requirement.point).toBe("server");
+  });
+
+  it("dispatches once a member is selected", async () => {
+    const fetchFn = vi.fn<typeof fetch>(async () => new Response(null, { status: 204 }));
+    const prepared = await new OpenAPIEngine().prepare({
+      source: { content: multiServerDocument },
+      ref: "#/paths/~1things/get",
+      profile: OPENAPI_PROFILE_FULL,
+      context: { configuration: { server: { index: 1 } } },
+      fetch: fetchFn,
+    });
+    const execution = await prepared.start();
+    await execution.finishInput();
+    for await (const _ of execution.events) { /* drain */ }
+    await execution.completed;
+    expect(fetchFn.mock.calls[0]?.[0]?.toString()).toContain("b.example.test");
+  });
+});

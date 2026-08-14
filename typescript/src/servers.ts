@@ -90,8 +90,18 @@ export function resolveServer(
   }
 
   if (servers.length !== 1) {
-    throw new Error(
+    // Declared alternatives without a selection are missing consumer
+    // configuration, not source misconfiguration (ruled 2026-08-13, R1+R5):
+    // the invocation challenges CONTEXT_REQUIRED (config.value, point
+    // server) — the same retryable negotiation §9.2 gives the parallel
+    // missing-requestMedia case — instead of refusing terminally (Go twin:
+    // resolveServer).
+    throw new ConfigRequired(
+      "server",
+      "/url",
       `the effective server list has ${servers.length} alternatives; configuration.server must select one (openbindings.openapi@1 OAPI-P-05)`,
+      servers.map((entry) => entry.url),
+      true,
     );
   }
   const substituted = substituteServerVariables(servers[0], undefined);
