@@ -165,7 +165,10 @@ export type OpenAPIPortableFailureData =
  * details across a protocol-agnostic boundary.
  */
 export function openAPIPortableFailureData(error: unknown): OpenAPIPortableFailureData {
-  if (!(error instanceof OpenAPIExecutionError) || !Object.hasOwn(error, "details")) {
+  // Admitted failure data is always a JSON-domain value, so undefined is an
+  // unambiguous absence sentinel. (An own-property check is not: the class
+  // field declaration defines `details` as undefined on every instance.)
+  if (!(error instanceof OpenAPIExecutionError) || error.details === undefined) {
     return { present: false };
   }
   const evidence = record(error.evidence);

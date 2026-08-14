@@ -443,7 +443,7 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 				return
 			}
 			if !ok {
-				inv.failExecution(openAPIFailureError(resp, []byte{}, responseMatch, args.Source.Capability))
+				inv.failExecution(openAPIFailureError(resp, []byte{}, responseMatch, args.Source.Capability, doc))
 				return
 			}
 			inv.setTrailingMetadata(decodeClassifyTrailer(args.Hooks, "not-consulted/empty"))
@@ -483,7 +483,7 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 					inv.failExecution(&ExecutionError{Code: CodeResponseError, Message: fmt.Sprintf("response exceeds %d byte limit", maxUnit)})
 					return
 				}
-				inv.failExecution(openAPIFailureError(resp, failureBody, responseMatch, args.Source.Capability))
+				inv.failExecution(openAPIFailureError(resp, failureBody, responseMatch, args.Source.Capability, doc))
 				return
 			}
 			revision3ClassifiedSuccess = true
@@ -536,7 +536,7 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 				})
 				return
 			}
-			inv.failExecution(openAPIFailureError(resp, failureBody, responseMatch, args.Source.Capability))
+			inv.failExecution(openAPIFailureError(resp, failureBody, responseMatch, args.Source.Capability, doc))
 			return
 		}
 		if !isStreamingCapableFor(op, args.Source.Capability) {
@@ -619,7 +619,7 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 		// native response and the OpenAPI declaration match remain available
 		// on the failure completion. The legacy status/body members remain for
 		// callers using HTTPStatus/HTTPResponseBody.
-		inv.failExecution(openAPIFailureError(resp, respBody, responseMatch, args.Source.Capability))
+		inv.failExecution(openAPIFailureError(resp, respBody, responseMatch, args.Source.Capability, doc))
 		return
 	}
 	if hasMediaFidelity(args.Source.Capability) && revision3ContentTypeErr != nil {
@@ -874,12 +874,22 @@ func headerMetadata(h http.Header) Metadata {
 // OpenAPI HTTP exchange. The operation output stays empty and ordinary callers
 // need none of these HTTP-shaped facts. httpResponse.body is base64 so the
 // standalone runtime can preserve exact bytes for protocol-aware consumers.
-func openAPIFailureError(resp *http.Response, body []byte, match *governingResponseMatch, bindingSpec string) *ExecutionError {
+func openAPIFailureError(resp *http.Response, body []byte, match *governingResponseMatch, bindingSpec string, doc *openapi3.T) *ExecutionError {
 	ierr := httpFailureError(resp.StatusCode, resp.Status)
 	contentType := resp.Header.Get("Content-Type")
-	if len(body) > 0 && match != nil && !isSSEContentType(contentType) && isJSONContentTypeFor(contentType, bindingSpec) {
-		if _, err := governingResponseMediaFor(match.response, contentType, bindingSpec); err == nil {
+	// A declared failure body decodes through the same response lanes a
+	// successful body would (§9.5 names §9.2's lanes): JSON-family as JSON,
+	// raw-byte declarations as the canonical Base64 boundary string, and
+	// every other represented selection through the UTF-8 text lane. An
+	// undeclared, empty, or SSE-framed failure admits nothing.
+	if len(body) > 0 && match != nil && !isSSEContentType(contentType) {
+		if matched, err := governingResponseMediaMatchFor(match.response, contentType, bindingSpec); err == nil {
 			decoder := decodeByContentTypeFor(contentType, bindingSpec)
+			if hasResponseFidelity(bindingSpec) && responseUsesRawBoundary(doc, matched.media, contentType, bindingSpec, matched.declared.rangeSpecificity == 2) {
+				decoder = func(_ HookSite, raw RawResult) (any, error) {
+					return base64.StdEncoding.EncodeToString(raw.Body), nil
+				}
+			}
 			status := resp.StatusCode
 			if value, err := decoder(HookSite{}, RawResult{Status: &status, Body: body, Meta: headerMetadata(resp.Header)}); err == nil {
 				ierr.Details = value

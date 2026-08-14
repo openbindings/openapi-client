@@ -2,6 +2,7 @@ package openapiclient
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -359,7 +360,19 @@ func TestEnginePreservesDeclaredJSONFailureValuesIncludingNull(t *testing.T) {
 	}
 }
 
-func TestEngineDoesNotPromoteMalformedOrNonJSONFailureBodies(t *testing.T) {
+// A declared failure body decodes through the same response lanes as a
+// successful body (openbindings.openapi §9.5, ruled 2026-08-13): a declared
+// JSON lane refuses a malformed body (nothing promoted), the text lane
+// carries the string, and a declared raw-byte lane carries canonical Base64.
+func TestEngineFailureBodiesDecodeThroughSuccessLanes(t *testing.T) {
+	expectations := map[string]struct {
+		present bool
+		details any
+	}{
+		"application/json":         {present: false},
+		"text/plain":               {present: true, details: "not-json"},
+		"application/octet-stream": {present: true, details: base64.StdEncoding.EncodeToString([]byte("not-json"))},
+	}
 	for _, contentType := range []string{"application/json", "text/plain", "application/octet-stream"} {
 		contentType := contentType
 		t.Run(contentType, func(t *testing.T) {
@@ -389,8 +402,12 @@ func TestEngineDoesNotPromoteMalformedOrNonJSONFailureBodies(t *testing.T) {
 			if err := execution.Wait(); !errors.As(err, &terminal) {
 				t.Fatalf("terminal = %#v", err)
 			}
-			if terminal.DetailsPresent {
-				t.Fatalf("failure body was promoted: %#v", terminal.Details)
+			want := expectations[contentType]
+			if terminal.DetailsPresent != want.present {
+				t.Fatalf("details present = %v (%#v); want %v", terminal.DetailsPresent, terminal.Details, want.present)
+			}
+			if want.present && !reflect.DeepEqual(terminal.Details, want.details) {
+				t.Fatalf("details = %#v; want %#v", terminal.Details, want.details)
 			}
 		})
 	}

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   OpenAPIEngine,
   OpenAPIExecutionError,
+  openAPIPortableFailureData,
   OPENAPI_PROFILE_FULL,
 } from "./engine.js";
 
@@ -134,4 +135,66 @@ describe("OpenAPIEngine", () => {
       ref: "#/paths/~1missing/get",
     })).rejects.toMatchObject({ code: "OPERATION_NOT_FOUND" });
   });
+});
+
+// A declared failure body decodes through the same response lanes as a
+// successful body (openbindings.openapi §9.5, ruled 2026-08-13; Go twin:
+// TestEngineFailureBodiesDecodeThroughSuccessLanes).
+describe("failure bodies decode through the success lanes", () => {
+  const failureDocument = {
+    openapi: "3.1.0",
+    info: { title: "engine", version: "1" },
+    servers: [{ url: "https://api.example.test" }],
+    paths: {
+      "/widgets": {
+        get: {
+          responses: {
+            "404": {
+              description: "missing",
+              content: {
+                "application/json": {},
+                "text/plain": {},
+                "application/octet-stream": {},
+              },
+            },
+          },
+        },
+      },
+    },
+  };
+
+  const bodyText = "not-json";
+  const cases: Array<[string, { present: boolean; value?: unknown }]> = [
+    ["application/json", { present: false }],
+    ["text/plain", { present: true, value: "not-json" }],
+    ["application/octet-stream", { present: true, value: btoa("not-json") }],
+  ];
+
+  for (const [contentType, want] of cases) {
+    it(`${contentType}`, async () => {
+      const fetchFn = vi.fn<typeof fetch>(async () => new Response(bodyText, {
+        status: 404,
+        headers: { "content-type": contentType },
+      }));
+      const prepared = await new OpenAPIEngine().prepare({
+        source: { content: failureDocument },
+        ref: "#/paths/~1widgets/get",
+        profile: OPENAPI_PROFILE_FULL,
+        fetch: fetchFn,
+      });
+      const execution = await prepared.start();
+      await execution.finishInput();
+      let terminal: unknown;
+      try {
+        for await (const _ of execution.events) { /* drain */ }
+        await execution.completed;
+      } catch (error: unknown) {
+        terminal = error;
+      }
+      expect(terminal).toBeInstanceOf(OpenAPIExecutionError);
+      const portable = openAPIPortableFailureData(terminal);
+      expect(portable.present).toBe(want.present);
+      if (want.present && portable.present) expect(portable.value).toEqual(want.value);
+    });
+  }
 });

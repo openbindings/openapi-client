@@ -1144,15 +1144,14 @@ function openAPIFailureValue(
       responseFidelity,
     );
     if (!match) return { present: false };
-    // The abstract failure-data lane is deliberately narrower than the
-    // standalone runtime's native evidence. Text and binary response bodies
-    // remain available to protocol-aware runtime consumers, but only a
-    // declared JSON representation can denote an opaque application value.
-    if (!isJSONMediaType(normalizeMediaType(contentType))) {
-      return { present: false };
-    }
+    // A declared failure body decodes through the same response lanes a
+    // successful body would (openbindings.openapi §9.5 names §9.2's lanes,
+    // ruled 2026-08-13): JSON-family as JSON, a declared raw-byte lane as
+    // the canonical Base64 boundary string, every other represented
+    // selection through the UTF-8 text lane (Go twin: openAPIFailureError).
     if (
-      responseUsesRawBoundary(
+      responseFidelity
+      && responseUsesRawBoundary(
         match.media,
         contentType,
         openAPIVersion,
@@ -1160,7 +1159,7 @@ function openAPIFailureValue(
         !("specificity" in match.declared),
       )
     ) {
-      return { present: false };
+      return { present: true, value: bytesToBase64(bodyBytes) };
     }
     const decode = decodeBytesByContentType(contentType, bodyBytes, revision3);
     return {
