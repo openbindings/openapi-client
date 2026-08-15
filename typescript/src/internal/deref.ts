@@ -43,6 +43,14 @@ export interface DereferenceOptions {
     target: { resourceURI?: string; fragment: string },
   ) => boolean | void;
   /**
+   * Invoked once per document the dereference registers — the entry document
+   * first, then each external resource as it is fetched — with that document's
+   * root and its base URI. It exists so a caller that must recover a resolved
+   * node's DECLARING document (an external component's own name, say) can do
+   * so; the dereferenced output alone no longer says where a node came from.
+   */
+  onResource?: (root: Record<string, unknown>, baseURI?: string) => void;
+  /**
    * Preserve a `$ref` object when its fragment does not resolve instead of
    * rejecting the complete document. Strict rejection remains the default.
    * This is intended for processors that inventory and exclude invalid
@@ -167,6 +175,7 @@ export async function dereference<T = unknown>(
   const allowUnresolved = options?.allowUnresolved ?? false;
   const mergeRefSiblings = options?.mergeRefSiblings;
   const prepareRefTarget = options?.prepareRefTarget;
+  const onResource = options?.onResource;
 
   // The single working tree. Internal refs resolve against THIS clone, never
   // the caller's `doc`: resolving against the original both mutates the
@@ -238,6 +247,7 @@ export async function dereference<T = unknown>(
     indexResourceSubtree(root, rootScope);
     const effectiveRootScope = scopeByNode.get(root) ?? rootScope;
     for (const alias of aliases) resourcesByURI.set(alias, effectiveRootScope);
+    onResource?.(root, rootScope.baseURI);
     return { root, rootScope: effectiveRootScope };
   }
 

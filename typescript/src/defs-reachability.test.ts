@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { decycleSchema } from "./util.js";
+import { decycleSchema, type DeclaredComponent } from "./util.js";
 
 // The runtime-side half of F-O1-5b's invariant. decycleSchema is the layer
 // that mints `$defs` entries, so the closure it must hold is: it hoists a
@@ -32,6 +32,11 @@ function refStrings(node: unknown): string[] {
 
 const REF_BASE = "#/operations/createRecord/input";
 
+/** The artifact's own declaration of a component, as componentSchemaNames reports it. */
+function declared(name: string): DeclaredComponent {
+  return { name, pointer: `/components/schemas/${name}` };
+}
+
 /** A self-recursive component object graph, as full dereference produces it. */
 function auditEntry(): Record<string, unknown> {
   const entry: Record<string, unknown> = {
@@ -47,7 +52,7 @@ function auditEntry(): Record<string, unknown> {
 describe("decycleSchema $defs reachability (F-O1-5b)", () => {
   it("mints no definition for a cycle participant outside the schema it walks", () => {
     const entry = auditEntry();
-    const names = new Map<object, string>([[entry, "AuditEntry"]]);
+    const names = new Map<object, DeclaredComponent>([[entry, declared("AuditEntry")]]);
 
     // The caller already removed the only branch that reached the component.
     const projected = { type: "object", properties: { title: { type: "string" } } };
@@ -59,7 +64,7 @@ describe("decycleSchema $defs reachability (F-O1-5b)", () => {
 
   it("mints exactly one referenced definition for a cycle participant it reaches", () => {
     const entry = auditEntry();
-    const names = new Map<object, string>([[entry, "AuditEntry"]]);
+    const names = new Map<object, DeclaredComponent>([[entry, declared("AuditEntry")]]);
 
     const reached = {
       type: "object",
@@ -78,7 +83,7 @@ describe("decycleSchema $defs reachability (F-O1-5b)", () => {
 
   it("emits no `$ref` that fails to resolve inside the emitted schema (OBI-D-16)", () => {
     const entry = auditEntry();
-    const names = new Map<object, string>([[entry, "AuditEntry"]]);
+    const names = new Map<object, DeclaredComponent>([[entry, declared("AuditEntry")]]);
     const decycled = decycleSchema(
       { type: "object", properties: { audit: entry, alsoAudit: entry } },
       names,

@@ -127,6 +127,13 @@ export async function loadOpenAPIDocument(
     allowExternalRefs?: boolean;
     /** Refuse schemas whose dialect cannot be projected faithfully into OBI. */
     requirePortableSchemaDialect?: boolean;
+    /**
+     * Receives every document this load composed — the artifact first, then
+     * each document reached through an external `$ref` — with its base
+     * address. Synthesis uses it to recover an externally-declared
+     * component's own name (componentSchemaNames).
+     */
+    onResource?: (root: Record<string, unknown>, baseURI?: string) => void;
   },
   fetchFn?: typeof globalThis.fetch,
 ): Promise<OpenAPIDocument> {
@@ -202,6 +209,7 @@ export async function loadOpenAPIDocument(
     fetch: refFetch,
     mergeRefSiblings: (target, reference) => normalizer.mergeReferenceObject(target, reference),
     prepareRefTarget: (root, target) => normalizer.prepareTarget(root, target.resourceURI),
+    onResource: options?.onResource,
   });
   normalizer.restore(dereferenced);
   return dereferenced;
@@ -457,22 +465,240 @@ export function isObjectTypedSchema(schema: Record<string, unknown>): boolean {
 // ---------------------------------------------------------------------------
 
 /**
- * Maps the identity of each named component schema node to its name.
- * After full dereference, internal `$ref`s alias the very objects under
- * `components.schemas`, so object identity recovers the upstream name a
- * cycle participant was declared under.
+ * A component schema as the document that declares it names it.
+ *
+ * `document` is that document's address (absent for the artifact's own
+ * components, which need no qualification) and `pointer` is the RFC 6901
+ * pointer it is declared under. Together they are the cut point's identity;
+ * see `assignCutPointNames` for what the two engines do with it.
  */
-export function componentSchemaNames(doc: Record<string, unknown>): Map<object, string> {
-  const names = new Map<object, string>();
-  const components = doc["components"];
-  const schemas = components && typeof components === "object"
-    ? (components as Record<string, unknown>)["schemas"]
-    : undefined;
-  if (schemas && typeof schemas === "object" && !Array.isArray(schemas)) {
+export interface DeclaredComponent {
+  readonly name: string;
+  readonly document?: string;
+  readonly pointer: string;
+}
+
+/**
+ * A document root and its address, as `dereference`'s `onResource` reported
+ * it. The entry document is the first element.
+ */
+export interface LoadedResource {
+  readonly root: Record<string, unknown>;
+  readonly baseURI?: string;
+}
+
+/**
+ * Maps the identity of each declared component schema node to how its own
+ * document names it. After full dereference, `$ref`s alias the very objects
+ * under a document's `components.schemas`, so object identity recovers the
+ * name a cycle participant was declared under — for the artifact itself and,
+ * when the resources it composed are supplied, for every document it reached.
+ *
+ * Without the external documents an externally-declared component is anonymous
+ * here, which is how it used to be named by an ordinal instead of by the name
+ * its own document gives it.
+ */
+export function componentSchemaNames(
+  doc: Record<string, unknown>,
+  resources?: readonly LoadedResource[],
+): Map<object, DeclaredComponent> {
+  const names = new Map<object, DeclaredComponent>();
+  const seen = new Set<object>();
+  const collect = (root: Record<string, unknown>, document?: string): void => {
+    if (seen.has(root)) return;
+    seen.add(root);
+    const components = root["components"];
+    const schemas = components && typeof components === "object"
+      ? (components as Record<string, unknown>)["schemas"]
+      : undefined;
+    if (!schemas || typeof schemas !== "object" || Array.isArray(schemas)) return;
     for (const [name, node] of Object.entries(schemas as Record<string, unknown>)) {
-      if (node && typeof node === "object") names.set(node, name);
+      if (node === null || typeof node !== "object") continue;
+      // The first declaration wins, and the artifact is always visited first:
+      // a component the artifact itself declares is never renamed because some
+      // composed document declares an alias of it.
+      if (names.has(node)) continue;
+      names.set(node, {
+        name,
+        document,
+        pointer: `/components/schemas/${escapeJSONPointerSegment(name)}`,
+      });
     }
+  };
+  collect(doc);
+  for (const resource of resources ?? []) collect(resource.root, resource.baseURI);
+  return names;
+}
+
+function escapeJSONPointerSegment(segment: string): string {
+  return segment.replace(/~/gu, "~0").replace(/\//gu, "~1");
+}
+
+// ---------------------------------------------------------------------------
+// Cut-point naming
+//
+// A cyclic schema is emitted using the dialect's own recursion mechanism: the
+// cycle participant is hoisted into the operation schema's `$defs` and every
+// occurrence becomes a same-document `$ref` to it. The hoisted member needs a
+// key, and that key is SYNTHESIS surface: `openbindings.openapi@1` §10 places
+// deterministic generation of OBI documents from OpenAPI artifacts outside the
+// specification, and the binding-specification authoring doctrine states that a
+// family specification does not define a synthesis naming convention. Nothing
+// in Core, in the OpenAPI specification, or in anything either incorporates
+// decides it. It is therefore this implementation's convention, and its only
+// hard obligation is that the TypeScript and Go engines mint identical keys.
+//
+// The convention, twinned in openbindings-go/formats/openapi/cutpoint_names.go:
+//
+//  1. A cut point is named by the component's OWN name in the document that
+//     declares it. (This is the convention the AsyncAPI family settled as F7:
+//     cut at the artifact's own component name.)
+//  2. Names are assigned over the SET of cut points minted for one operation
+//     schema, never in traversal order. A name claimed by exactly one cut point
+//     is used as written.
+//  3. When two or more cut points claim one name, the artifact's own component
+//     keeps it and each externally-declared claimant is qualified by the
+//     document that declares it: that document's address relative to the
+//     artifact's own, extension stripped, every character outside
+//     [A-Za-z0-9_.-] replaced by "_", joined to the component name with "_".
+//  4. If qualification still leaves a name claimed twice, the remaining
+//     claimants are ordered by their canonical identity (document address, NUL,
+//     pointer) in code-point order and suffixed "_2", "_3", … . This is a last
+//     resort; no artifact shape is known to reach it, and it exists so the rule
+//     is total.
+// ---------------------------------------------------------------------------
+
+function canonicalComponentIdentity(component: DeclaredComponent): string {
+  return `${component.document ?? ""}\u0000${component.pointer}`;
+}
+
+function sanitizeNameSegment(segment: string): string {
+  return segment.replace(/[^A-Za-z0-9_.-]/gu, "_");
+}
+
+function documentPath(uri: string): { scheme: string; host: string; path: string } | undefined {
+  try {
+    const url = new URL(uri);
+    // The DECODED path, matching Go's url.URL.Path: a name qualified by a
+    // document whose path carries a space must spell that space the same way
+    // in both engines.
+    let path = url.pathname;
+    try { path = decodeURIComponent(path); } catch { /* keep the raw spelling */ }
+    return { scheme: url.protocol, host: url.host, path };
+  } catch {
+    // A resolver may record a target as a bare path. Treat it as sharing the
+    // artifact's origin, exactly as the Go twin does.
+    return uri.startsWith("/") ? { scheme: "", host: "", path: uri } : undefined;
   }
+}
+
+/**
+ * Expresses a declaring document's address relative to the artifact's own,
+ * with any file extension removed. Keeping it relative is what makes a
+ * qualified name independent of how the artifact was reached: the same two
+ * documents laid out the same way qualify identically whether they were loaded
+ * from a checkout or from a server.
+ */
+export function relativeDocumentName(base: string | undefined, document: string): string {
+  const target = documentPath(document);
+  if (!target) return document;
+  const origin = base === undefined ? undefined : documentPath(base);
+  let path = target.path;
+  if (
+    origin !== undefined && origin.host === target.host
+    && (origin.scheme === target.scheme || origin.scheme === "" || target.scheme === "")
+  ) {
+    const slash = origin.path.lastIndexOf("/");
+    const dir = slash < 0 ? "./" : slash === 0 ? "/" : `${origin.path.slice(0, slash)}/`;
+    if (path.startsWith(dir)) path = path.slice(dir.length);
+  } else if (target.host !== "") {
+    path = target.host + path;
+  }
+  path = path.replace(/^\//u, "");
+  const dot = path.lastIndexOf(".");
+  const lastSlash = path.lastIndexOf("/");
+  if (dot > lastSlash) path = path.slice(0, dot);
+  return path === "" ? document : path;
+}
+
+/**
+ * A short, stable digest of a possibly-cyclic schema node's shape. It exists
+ * only to name an anonymous cut point from what is emitted rather than from a
+ * traversal counter; it is not a security or collision-proof hash, and the
+ * caller breaks the residual collision deterministically.
+ *
+ * The walk is cycle-safe: a node already on the path serializes as a
+ * back-reference to its depth, so the same shape always serializes the same
+ * way and a cycle terminates. Object keys serialize in code-point order.
+ */
+export function shapeDigest(node: unknown): string {
+  const path = new Map<object, number>();
+  const write = (value: unknown, depth: number): string => {
+    if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
+    const back = path.get(value);
+    if (back !== undefined) return `^${depth - back}`;
+    path.set(value, depth);
+    let out: string;
+    if (Array.isArray(value)) {
+      out = `[${value.map((item) => write(item, depth + 1)).join(",")}]`;
+    } else {
+      const entries = Object.keys(value as Record<string, unknown>).sort(codePointCompare);
+      out = `{${entries
+        .map((key) => `${JSON.stringify(key)}:${write((value as Record<string, unknown>)[key], depth + 1)}`)
+        .join(",")}}`;
+    }
+    path.delete(value);
+    return out;
+  };
+  const serialized = write(node, 0);
+  // FNV-1a, 32 bit. No crypto dependency: this must run unchanged in a browser.
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < serialized.length; i += 1) {
+    hash ^= serialized.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
+}
+
+/**
+ * Assigns a `$defs` key to every cut point minted for one operation schema.
+ * The result is a function of the cut-point SET, so no traversal order can
+ * reach the output.
+ */
+export function assignCutPointNames(
+  components: readonly DeclaredComponent[],
+  base: string | undefined,
+): string[] {
+  const claimed = new Map<string, number>();
+  for (const component of components) {
+    claimed.set(component.name, (claimed.get(component.name) ?? 0) + 1);
+  }
+  const names = new Array<string>(components.length);
+  const taken = new Set<string>();
+  const contested: number[] = [];
+  components.forEach((component, index) => {
+    if (claimed.get(component.name) === 1 || component.document === undefined) {
+      names[index] = component.name;
+      taken.add(component.name);
+      return;
+    }
+    contested.push(index);
+  });
+  contested
+    .sort((a, b) => codePointCompare(
+      canonicalComponentIdentity(components[a]!),
+      canonicalComponentIdentity(components[b]!),
+    ))
+    .forEach((index) => {
+      const component = components[index]!;
+      const qualified = `${sanitizeNameSegment(
+        relativeDocumentName(base, component.document as string),
+      )}_${component.name}`;
+      let name = qualified;
+      for (let attempt = 2; taken.has(name); attempt += 1) name = `${qualified}_${attempt}`;
+      names[index] = name;
+      taken.add(name);
+    });
   return names;
 }
 
@@ -497,7 +723,7 @@ export function componentSchemaNames(doc: Record<string, unknown>): Map<object, 
  * participate in a reference cycle (can reach themselves). decycleSchema
  * consumes this set per embedded schema.
  */
-export function cyclicComponents(names: ReadonlyMap<object, string>): ReadonlySet<object> {
+export function cyclicComponents(names: ReadonlyMap<object, unknown>): ReadonlySet<object> {
   const cyclic = new Set<object>();
   for (const node of names.keys()) {
     const visited = new Set<object>();
@@ -595,8 +821,9 @@ const DECYCLE_ARRAY_KEYS = new Set(["oneOf", "anyOf", "allOf", "prefixItems"]);
 
 export function decycleSchema(
   schema: unknown,
-  names: ReadonlyMap<object, string>,
+  names: ReadonlyMap<object, DeclaredComponent>,
   refBase: string,
+  base?: string,
 ): unknown {
   if (schema === null || typeof schema !== "object") return schema;
 
@@ -615,17 +842,41 @@ export function decycleSchema(
     for (const member of named.length > 0 ? named : [...group]) cyclic.add(member);
   }
 
-  const defs: Record<string, unknown> = {};
+  // Every cut point is named before the copy walk begins, over the SET of
+  // nodes that will be hoisted — never in the order the walk meets them. The
+  // named ones carry the name their own document gives them; see
+  // assignCutPointNames for the complete convention and its Go twin.
   const defName = new Map<object, string>();
-  let anon = 0;
+  const declared: DeclaredComponent[] = [];
+  const declaredNodes: object[] = [];
+  const anonymous: object[] = [];
+  for (const node of cyclic) {
+    const component = names.get(node);
+    if (component === undefined) anonymous.push(node);
+    else { declared.push(component); declaredNodes.push(node); }
+  }
+  assignCutPointNames(declared, base).forEach((name, index) => {
+    defName.set(declaredNodes[index] as object, name);
+  });
+  // An anonymous cut point — a cycle passing through no declared component —
+  // has no artifact-supplied name to carry. It is named from the shape it
+  // hoists rather than from a counter, so the key is still a function of what
+  // is emitted and not of the walk. (The Go engine does not hoist this case at
+  // all; that divergence is a hoisting question, tracked separately.)
+  const taken = new Set(defName.values());
   const assignName = (node: object): string => {
-    let name = defName.get(node);
-    if (name !== undefined) return name;
-    name = names.get(node) ?? `cycle${anon++}`;
-    while (Object.hasOwn(defs, name) || [...defName.values()].includes(name)) name = `${name}_`;
+    const existing = defName.get(node);
+    if (existing !== undefined) return existing;
+    const stem = `cycle_${shapeDigest(node)}`;
+    let name = stem;
+    for (let attempt = 2; taken.has(name); attempt += 1) name = `${stem}_${attempt}`;
+    taken.add(name);
     defName.set(node, name);
     return name;
   };
+  for (const node of anonymous) assignName(node);
+
+  const defs: Record<string, unknown> = {};
   const pendingDefs: object[] = [];
   const stack = new Set<object>();
   // Fully-dereferenced documents are DAGs: shared components appear at many
