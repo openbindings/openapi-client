@@ -182,3 +182,143 @@ describe("loadOpenAPIDocument reference closure", () => {
     expect(post?.responses?.["200"]).toMatchObject({ description: "ok" });
   });
 });
+
+// String content parses under YAML 1.2.2, and its plain scalars resolve by
+// §10.3.2's core tag resolution: the null/bool/int/float patterns, with
+// everything else — date- and time-shaped scalars included — a string. The
+// restriction is the artifact authority's: every accepted OAS edition
+// requires that "Tags MUST be limited to those allowed by [YAML's] JSON
+// schema ruleset" (§4.2), and YAML 1.1's timestamp tag is outside that set.
+// Resolving one anyway destroyed the declared value silently, because a
+// canonical-JSON writer renders a Date — an object with no own enumerable
+// properties — as {}.
+describe("YAML 1.2.2 core tag resolution (OAS §4.2, YAML 1.2.2 §10.3.2)", () => {
+  const document = (spelling: string) => `openapi: 3.0.0
+info:
+  title: scalars
+  version: 1.0.0
+paths:
+  /probe:
+    get:
+      operationId: probe
+      parameters:
+        - name: value
+          in: query
+          schema:
+            type: string
+            example: ${spelling}
+      responses:
+        "200":
+          description: ok
+`;
+
+  const example = async (spelling: string): Promise<unknown> => {
+    const loaded = await loadOpenAPIDocument(undefined, document(spelling));
+    return (loaded.paths?.["/probe"]?.get?.parameters?.[0] as {
+      schema?: { example?: unknown };
+    }).schema?.example;
+  };
+
+  // No YAML 1.2 schema carries a timestamp type; every one of these matches
+  // none of §10.3.2's patterns and falls through to tag:yaml.org,2002:str.
+  // The bare-date and space-separated spellings are the sensitive ones: a
+  // timestamp resolution does not even round-trip their text.
+  it.each([
+    "2020-01-01T12:00:00Z",
+    "2020-01-01",
+    "2020-01-01 12:00:00",
+    "2001-12-14 21:59:43.10 -5",
+    "12:30:45",
+    "190:20:30",
+  ])("resolves the date- or time-shaped scalar %s as a string", async (spelling) => {
+    expect(await example(spelling)).toBe(spelling);
+  });
+
+  // The remaining YAML 1.1 implicit types DEFAULT_SCHEMA carries are absent
+  // for the same reason: their tags are outside the OAS's permitted set.
+  it.each(["yes", "no", "on", "off", "y", "n"])(
+    "resolves the YAML 1.1 boolean word %s as a string",
+    async (spelling) => {
+      expect(await example(spelling)).toBe(spelling);
+    },
+  );
+
+  it("refuses an explicit YAML 1.1 tag rather than resolving it", async () => {
+    await expect(loadOpenAPIDocument(undefined, document("!!timestamp 2020-01-01")))
+      .rejects.toThrow(/unknown tag/u);
+  });
+
+  // §10.3.2's own patterns keep resolving, and each keeps its JSON type.
+  it.each([
+    ["null", null],
+    ["NULL", null],
+    ["~", null],
+    ["true", true],
+    ["True", true],
+    ["FALSE", false],
+    ["017", 17],
+    ["0o17", 15],
+    ["0x1F", 31],
+    ["-19", -19],
+    ["+12.3", 12.3],
+    [".5", 0.5],
+    ["5.", 5],
+    ["12e03", 12000],
+    ["1_000", "1_000"],
+  ] as const)("resolves %s by §10.3.2's patterns", async (spelling, want) => {
+    expect(await example(spelling)).toStrictEqual(want);
+  });
+
+  // One spelling this parser still resolves by a YAML 1.1 rule the accepted
+  // OAS editions do not admit, recorded here so the divergence is named
+  // rather than absent: §10.3.2 has no binary int pattern, so 0b101 matches
+  // nothing and is the string "0b101". js-yaml resolves it under every
+  // schema it ships, and the Go twin's decoder does the same, so the twins
+  // agree with each other and not with the authority. Converging costs a
+  // conformant scalar-resolution layer in both; filed as F-O1-7 in
+  // corpus-lab/OPENAPI-RUNTIME.md rather than half-fixed in one twin. No
+  // corpus specimen's emitted OBI depends on it.
+  it("records the binary-int non-conformance both twins share (F-O1-7)", async () => {
+    expect(await example("0b101")).toBe(5);
+  });
+
+  // ±.inf and .nan resolve to floats JSON cannot spell. The operation value
+  // domain is JSON (core §5) and the OAS admits YAML to "preserve the
+  // ability to round-trip between YAML and JSON formats" (§4.2), so the
+  // artifact is refused loudly here rather than reaching the boundary as a
+  // null the author never wrote. The Go twin refuses the same documents.
+  it.each([".inf", "-.inf", ".nan", ".NaN"])(
+    "refuses the artifact whose scalar %s has no JSON image",
+    async (spelling) => {
+      await expect(loadOpenAPIDocument(undefined, document(spelling)))
+        .rejects.toThrow(/no JSON representation/u);
+    },
+  );
+
+  // §3's duplicate-key pin is unaffected by the schema restriction, in the
+  // JSON spelling too — which JSON.parse would silently last-wins.
+  it("still refuses duplicate mapping keys", async () => {
+    await expect(loadOpenAPIDocument(
+      undefined,
+      "openapi: 3.0.0\ninfo:\n  title: t\n  title: u\n  version: 1\npaths: {}\n",
+    )).rejects.toThrow(/duplicated mapping key/u);
+  });
+
+  // Anchors and aliases are syntax, not schema: they survive the
+  // restriction, so a shared declaration still resolves.
+  it("still resolves anchors and aliases", async () => {
+    const loaded = await loadOpenAPIDocument(undefined, `openapi: 3.0.0
+info:
+  title: t
+  version: 1.0.0
+components:
+  schemas:
+    Shared: &shared
+      type: string
+    Alias: *shared
+paths: {}
+`);
+    const schemas = (loaded.components as { schemas?: Record<string, unknown> } | undefined)?.schemas;
+    expect(schemas?.["Alias"]).toEqual({ type: "string" });
+  });
+});

@@ -338,13 +338,93 @@ export function errorMessage(e: unknown): string {
 }
 
 /**
- * Parses string content as YAML, of which JSON is a valid subset, so one
- * grammar covers both spellings deterministically (§3's string-grammar
- * pin). Duplicate mapping keys are refused loudly by the YAML layer itself
+ * Parses string content as YAML 1.2.2, of which JSON is a valid subset, so
+ * one grammar covers both spellings deterministically (§3's string-grammar
+ * pin).
+ *
+ * Plain scalars resolve under the CORE schema's tag resolution (YAML 1.2.2
+ * §10.3.2): the null, bool, int and float patterns, and anything matching
+ * none of them — a date- or time-shaped scalar among them — is a string.
+ * That restriction is the artifact authority's, not a local preference:
+ * every accepted OAS edition requires that "Tags MUST be limited to those
+ * allowed by [YAML's] JSON schema ruleset" (§4.2), and YAML 1.1's
+ * timestamp, merge, binary, omap, pairs and set tags are outside that set.
+ * js-yaml's DEFAULT_SCHEMA carries all six, so it resolves tags the OAS
+ * forbids; js-yaml 4 exposes the restricted resolution as CORE_SCHEMA (an
+ * alias of its JSON_SCHEMA — the same object, and the one the AsyncAPI
+ * client already parses under). Duplicate mapping keys stay loud under it
  * — in the JSON spelling too, which JSON.parse would silently last-wins.
  */
 function parseJSONOrYAML(text: string): unknown {
-  return yaml.load(text.trim());
+  return assertJSONDomain(yaml.load(text.trim(), { schema: yaml.CORE_SCHEMA }));
+}
+
+/**
+ * Refuses a parsed artifact carrying a value with no JSON image, before a
+ * downstream writer can silently substitute one.
+ *
+ * The operation value domain is JSON (core §5), and the OAS admits YAML
+ * precisely to "preserve the ability to round-trip between YAML and JSON
+ * formats" (§4.2); a scalar with no JSON image is outside both. YAML 1.2.2
+ * §10.3.2 resolves `.inf`, `-.inf` and `.nan` to floats that JSON cannot
+ * spell, and a canonical-JSON writer emits `null` for them — the artifact's
+ * declared value, destroyed without a diagnostic. Refusing the artifact is
+ * the loud, pre-dispatch outcome, and it is what the Go twin already does
+ * (its YAML-to-JSON conversion fails on the same values).
+ *
+ * This is also the standing guard on the parser itself: a resolution change
+ * that produced Date, RegExp or undefined nodes again is refused here
+ * instead of reaching the boundary as `{}`.
+ */
+function assertJSONDomain(root: unknown): unknown {
+  // An empty document parses to undefined; the accepted-edition check owns
+  // that diagnostic, so this guard stays out of its way.
+  if (root === undefined) return root;
+  const seen = new WeakSet<object>();
+  const walk = (value: unknown, path: string): void => {
+    if (value === null) return;
+    switch (typeof value) {
+      case "string":
+      case "boolean":
+        return;
+      case "number":
+        if (Number.isFinite(value)) return;
+        throw new Error(
+          `OpenAPI document value at ${path || "the document root"} is `
+          + `${String(value)}, which has no JSON representation; YAML 1.2.2 `
+          + "resolves it as a float, and the OpenAPI document model is JSON",
+        );
+      case "object": {
+        const node = value as object;
+        if (seen.has(node)) return;
+        seen.add(node);
+        if (Array.isArray(node)) {
+          node.forEach((item, index) => walk(item, `${path}/${index}`));
+          return;
+        }
+        const tag = Object.prototype.toString.call(node);
+        if (tag !== "[object Object]") {
+          throw new Error(
+            `OpenAPI document value at ${path || "the document root"} parsed `
+            + `as ${tag}, which is not a JSON value; string content parses `
+            + "under YAML 1.2.2 core tag resolution, whose scalars are only "
+            + "null, booleans, numbers and strings",
+          );
+        }
+        for (const [key, member] of Object.entries(node)) {
+          walk(member, `${path}/${key.replace(/~/gu, "~0").replace(/\//gu, "~1")}`);
+        }
+        return;
+      }
+      default:
+        throw new Error(
+          `OpenAPI document value at ${path || "the document root"} parsed as `
+          + `${typeof value}, which is not a JSON value`,
+        );
+    }
+  };
+  walk(root, "");
+  return root;
 }
 
 /**
