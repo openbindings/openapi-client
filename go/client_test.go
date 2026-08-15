@@ -703,14 +703,15 @@ func TestEngineMultiServerWithoutSelectionChallengesContextRequired(t *testing.T
 	}
 }
 
-// §9.2's string-carriage lane, ruled 2026-08-15: every concrete non-JSON,
-// non-form selection whose GOVERNING SCHEMA resolves to type: string carries
-// the caller's string as the body under the artifact's own header. The lane
-// is stated once for every such media type rather than as a list of admitted
-// subtypes, and it is selected by the declaration — never by the media type's
-// primary type, and never by the caller's value.
+// §9.2's string-carriage lane, ruled 2026-08-15 and scope-corrected the same
+// day: a concrete non-JSON, non-form selection carries the caller's string as
+// the body under the artifact's own header when its GOVERNING SCHEMA resolves
+// to type: string AND its media type is character data. Both halves are
+// derived — the OAS decides the value is a string, the media-type
+// registration decides whether a string has an octet image — so the lane is
+// never selected by the caller's value.
 func TestClientCarriesStringDeclaredNonJSONBodies(t *testing.T) {
-	for _, media := range []string{"text/csv", "text/x-markdown", "application/xml", "text/xml"} {
+	for _, media := range []string{"text/csv", "text/x-markdown", "application/xml", "text/xml", "image/svg+xml"} {
 		t.Run(media, func(t *testing.T) {
 			var request struct{ contentType, body string }
 			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, incoming *http.Request) {
@@ -738,6 +739,83 @@ func TestClientCarriesStringDeclaredNonJSONBodies(t *testing.T) {
 			}
 			if request.contentType != media || request.body != want {
 				t.Fatalf("wire = %#v, want %q carrying the supplied string verbatim", request, media)
+			}
+		})
+	}
+}
+
+// A media type whose registration establishes no character encoding has no
+// defined string-to-octets mapping, so a `type: string` declaration on it is
+// NOT string carriage: it keeps the artifact-authorized byte boundary. Under
+// OAS 3.1 `format: binary` is an annotation with no assertion force, so an
+// arrow-stream declaration resolves to a bare `type: string` and is decided
+// entirely by its media type. An Arrow IPC stream is octets; a caller cannot
+// supply them faithfully as characters.
+func TestClientDoesNotStringCarryNonCharacterDataMedia(t *testing.T) {
+	for _, schema := range []string{`{"type":"string"}`, `{"type":"string","format":"binary"}`} {
+		t.Run(schema, func(t *testing.T) {
+			// A local server so that a wrongly-admitted string lane would
+			// dispatch successfully rather than failing on the network.
+			dispatched := false
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				dispatched = true
+				writer.WriteHeader(http.StatusNoContent)
+			}))
+			defer server.Close()
+			document := testDocument(server.URL, fmt.Sprintf(`{
+  "/write":{"put":{"operationId":"write","requestBody":{"required":true,"content":{"application/vnd.apache.arrow.stream":{"schema":%s}}},
+  "responses":{"204":{"description":"stored"}}}}
+}`, schema))
+			client, err := Load(context.Background(), Source{Content: document}, ClientOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = client.Call(context.Background(), OperationID("write"), Input{Body: "arrow bytes", BodyPresent: true})
+			if err == nil {
+				t.Fatal("a string-declared binary media type must not gain the string-carriage lane")
+			}
+			if !strings.Contains(err.Error(), "selects a request carriage lane") {
+				t.Fatalf("error = %v", err)
+			}
+			if dispatched {
+				t.Fatal("refusal must happen before dispatch")
+			}
+		})
+	}
+}
+
+// A schema that asserts nothing makes no claim the body is a string at all,
+// so it is the same declaration as an omitted `schema` and takes the
+// artifact-authorized byte lane — canonical Base64 in, exact octets out.
+func TestClientCarriesUnconstrainedDeclarationsAtTheByteBoundary(t *testing.T) {
+	for _, schema := range []string{"true", "{}"} {
+		t.Run(schema, func(t *testing.T) {
+			var request struct {
+				contentType string
+				body        []byte
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, incoming *http.Request) {
+				request.contentType = incoming.Header.Get("Content-Type")
+				request.body, _ = io.ReadAll(incoming.Body)
+				writer.WriteHeader(http.StatusNoContent)
+			}))
+			defer server.Close()
+			document := testDocument(server.URL, fmt.Sprintf(`{
+  "/upload":{"put":{"operationId":"upload","requestBody":{"required":true,"content":{"text/plain":{"schema":%s}}},
+  "responses":{"204":{"description":"stored"}}}}
+}`, schema))
+			client, err := Load(context.Background(), Source{Content: document}, ClientOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			// The native surface takes the octets themselves and performs the
+			// Base64 boundary encoding on the caller's behalf.
+			result, err := client.Call(context.Background(), OperationID("upload"), Input{Body: []byte("a,b\n"), BodyPresent: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !result.OK || request.contentType != "text/plain" || string(request.body) != "a,b\n" {
+				t.Fatalf("wire = %#v (ok=%v), want the exact octets under text/plain", request, result.OK)
 			}
 		})
 	}
