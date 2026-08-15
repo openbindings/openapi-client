@@ -702,3 +702,69 @@ func TestEngineMultiServerWithoutSelectionChallengesContextRequired(t *testing.T
 		// was attempted against the configured target.
 	}
 }
+
+// §9.2's string-carriage lane, ruled 2026-08-15: every concrete non-JSON,
+// non-form selection whose GOVERNING SCHEMA resolves to type: string carries
+// the caller's string as the body under the artifact's own header. The lane
+// is stated once for every such media type rather than as a list of admitted
+// subtypes, and it is selected by the declaration — never by the media type's
+// primary type, and never by the caller's value.
+func TestClientCarriesStringDeclaredNonJSONBodies(t *testing.T) {
+	for _, media := range []string{"text/csv", "text/x-markdown", "application/xml", "text/xml"} {
+		t.Run(media, func(t *testing.T) {
+			var request struct{ contentType, body string }
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, incoming *http.Request) {
+				request.contentType = incoming.Header.Get("Content-Type")
+				body, _ := io.ReadAll(incoming.Body)
+				request.body = string(body)
+				writer.WriteHeader(http.StatusNoContent)
+			}))
+			defer server.Close()
+			document := testDocument(server.URL, fmt.Sprintf(`{
+  "/upload":{"put":{"operationId":"upload","requestBody":{"required":true,"content":{%q:{"schema":{"type":"string"}}}},
+  "responses":{"204":{"description":"stored"}}}}
+}`, media))
+			client, err := Load(context.Background(), Source{Content: document}, ClientOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := "a,b\n1,2\n"
+			result, err := client.Call(context.Background(), OperationID("upload"), Input{Body: want, BodyPresent: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !result.OK {
+				t.Fatalf("result = %#v", result)
+			}
+			if request.contentType != media || request.body != want {
+				t.Fatalf("wire = %#v, want %q carrying the supplied string verbatim", request, media)
+			}
+		})
+	}
+}
+
+// No lane builds a document from an object model, so an object-declared
+// selection outside the JSON and form lanes selects nothing — which is what
+// keeps schema-guided XML generation out of this revision while string
+// carriage of XML documents is admitted above.
+func TestClientRefusesObjectDeclaredNonJSONBodies(t *testing.T) {
+	for _, media := range []string{"application/xml", "text/xml", "text/json", "text/csv"} {
+		t.Run(media, func(t *testing.T) {
+			document := testDocument("https://api.example.test", fmt.Sprintf(`{
+  "/upload":{"put":{"operationId":"upload","requestBody":{"required":true,"content":{%q:{"schema":{"type":"object","properties":{"a":{"type":"string"}}}}}},
+  "responses":{"204":{"description":"stored"}}}}
+}`, media))
+			client, err := Load(context.Background(), Source{Content: document}, ClientOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = client.Call(context.Background(), OperationID("upload"), Input{Body: map[string]any{"a": "b"}, BodyPresent: true})
+			if err == nil {
+				t.Fatalf("object-declared %s must refuse before dispatch", media)
+			}
+			if !strings.Contains(err.Error(), "selects a request carriage lane") {
+				t.Fatalf("error = %v", err)
+			}
+		})
+	}
+}

@@ -409,7 +409,7 @@ export function planRequestBodies(
   if (candidates.length === 0) {
     declared.sort();
     throw new Error(
-      `request body declares only media types outside the families openbindings.openapi@1 defines a request carriage for (declared: ${declared.join(", ")})`,
+      `request body declares no media type whose declaration selects a request carriage lane openbindings.openapi@1 defines (declared: ${declared.join(", ")})`,
     );
   }
   candidates.sort((a, b) => a.parsed.identity.localeCompare(b.parsed.identity));
@@ -603,7 +603,7 @@ function buildBodyPlan(
     }
   } else if (candidate.family === FAMILY_TEXT) {
     if (schema !== null && shape.object) {
-      throw new Error("request media candidate text/plain has an object body schema and is inadmissible");
+      throw new Error(`request media candidate ${plan.mediaType} has an object body schema and is inadmissible`);
     }
     plan.synthetic = true;
   } else if (candidate.family === FAMILY_RAW) {
@@ -1110,8 +1110,12 @@ function concreteBodyFamily(
   if (isJSONMediaType(base)) return FAMILY_JSON;
   if (base === "multipart/form-data") return FAMILY_MULTIPART;
   if (base === "application/x-www-form-urlencoded") return FAMILY_URLENCODED;
-  if (base === "text/plain") return FAMILY_TEXT;
-  if (!revision3) return "";
+  if (!revision3) return base === "text/plain" ? FAMILY_TEXT : "";
+  // The artifact-authorized byte lanes are evaluated first: they are the
+  // cases where the ARTIFACT determines the octets. §9.2 carries no
+  // media-type carve-out here — a schema-omitted text declaration is a
+  // schema-omitted declaration like any other, which is what keeps it from
+  // being orphaned between two lanes.
   if (allowRaw && rawBoundarySchema(schema, openapiVersion, allowSchemaOmittedOAS30Bytes)) return FAMILY_RAW;
   // In OAS 3.1 contentEncoding describes the string's own representation.
   // The caller supplies that encoded string verbatim; it is not decoded at
@@ -1123,6 +1127,16 @@ function concreteBodyFamily(
     && schemaTypeIs(schema, "string")
     && resolvedSchemaStringKeyword(schema, "contentEncoding") !== ""
   ) {
+    return FAMILY_TEXT;
+  }
+  // §9.2 string carriage: every other concrete non-JSON, non-form selection
+  // whose governing schema resolves to type: string carries the supplied
+  // string under the declared charset. The CALLER determines these octets,
+  // so the lane authors no correspondence and is stated once for every such
+  // media type rather than as a list of admitted subtypes — text/plain,
+  // text/csv, and a string-schema application/xml alike. Scoped by the
+  // declaration: the supplied value's type never selects a lane.
+  if (schema !== null && typeof schema === "object" && schemaTypeIs(schema, "string")) {
     return FAMILY_TEXT;
   }
   return "";
@@ -1410,10 +1424,11 @@ export function buildRequestBody(
     case FAMILY_TEXT: {
       if (!routed.bodySet) return { body: undefined, contentType: "" };
       if (typeof routed.bodyValue !== "string") {
-        // The selection condition failed: text/plain is selected only when
-        // the body value is a string (OAPI-P-04).
+        // §9.2 selects this lane from the declaration alone, so a non-string
+        // value is a pre-dispatch refusal against the artifact's own type,
+        // not a change of candidate set (OAPI-P-04).
         throw new Error(
-          `request media ${plan.mediaType} was selected but the body value is ${typeof routed.bodyValue}, not a string`,
+          `request media ${plan.mediaType} declares a string body but the supplied value is ${typeof routed.bodyValue}, not a string`,
         );
       }
       return {
