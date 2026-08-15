@@ -654,13 +654,9 @@ function validateRevision3URLEncoded(
 ): void {
   if (schema === null) return;
   const encoding = asObject(media?.encoding) ?? {};
-  for (const [name, property] of Object.entries(resolvedMultipartPropertySchemas(schema, new Set()))) {
-    if (property === false) continue;
-    if (property === true || (!openapiVersion.startsWith("3.0") && !hasDeclaredSchemaType(property))) {
-      throw new Error(
-        `urlencoded property ${JSON.stringify(name)} has no declaration-defined mapping from its default octets to a JSON caller value`,
-      );
-    }
+  for (const [name, rawProperty] of Object.entries(resolvedMultipartPropertySchemas(schema, new Set()))) {
+    const { schema: property } = effectiveRevision3PartSchema(rawProperty);
+    if (property === false || property === null) continue; // an unsatisfiable property has no admissible runtime value
     const enc = asObject(encoding[name]);
     if (Object.hasOwn(encoding, name) && enc === null) {
       throw new Error(`urlencoded property ${JSON.stringify(name)} declares an invalid Encoding Object`);
@@ -794,13 +790,9 @@ function validateRevision3Multipart(
     }
   }
   if (schema === null) return;
-  for (const [name, property] of Object.entries(resolvedMultipartPropertySchemas(schema, new Set()))) {
-    if (property === false) continue;
-    if (property === true || (!openapiVersion.startsWith("3.0") && !hasDeclaredSchemaType(property))) {
-      throw new Error(
-        `multipart property ${JSON.stringify(name)} has a typeless OAS 3.1 schema whose octet-stream boundary is not defined by the selected execution profile`,
-      );
-    }
+  for (const [name, rawProperty] of Object.entries(resolvedMultipartPropertySchemas(schema, new Set()))) {
+    const { schema: property } = effectiveRevision3PartSchema(rawProperty);
+    if (property === false || property === null) continue; // an unsatisfiable property has no admissible runtime value
     validateContentTransferEncoding(name, property);
     const enc = asObject(encoding[name]);
     if (hasExplicitMultipartExpansion(enc)) {
@@ -808,11 +800,14 @@ function validateRevision3Multipart(
     }
     let contentSchema = property;
     if (schemaTypeIs(property, "array") && !hasExplicitMultipartExpansion(enc)) {
-      const items = resolvedMultipartItemsSchema(property);
-      if (items === false) continue;
-      if (items === null || items === true || !hasDeclaredSchemaType(items)) {
+      const rawItems = resolvedMultipartItemsSchema(property);
+      if (rawItems === false) continue;
+      const items = rawItems === true || booleanSchemaLiteral(rawItems) === true
+        ? {}
+        : asObject(rawItems);
+      if (items === null) {
         throw new Error(
-          `multipart array property ${JSON.stringify(name)} has typeless items whose octet-stream boundary is not defined by the selected execution profile`,
+          `multipart array property ${JSON.stringify(name)} has no items declaration for its default octet-stream parts in the selected execution profile`,
         );
       }
       if (schemaTypeIs(items, "array")) {
@@ -836,9 +831,15 @@ function validateContentBasedMedia(
   is30: boolean,
   subject: string,
 ): void {
-  const selected = typeof enc?.contentType === "string"
+  const declared = typeof enc?.contentType === "string"
     ? parseSingleMultipartContentType(enc.contentType, name)
-    : parseMediaType(defaultMultipartContentType(schema, is30), true);
+    : null;
+  if (declared === null && !hasDeclaredSchemaType(schema) && partSchemaValueDispatches(schema)) {
+    // §9.2: an unconstrained property schema's OAS per-type part default is
+    // keyed by the supplied value's JSON application type at invocation.
+    return;
+  }
+  const selected = declared ?? parseMediaType(defaultMultipartContentType(schema, is30), true);
   requireSupportedCharset(selected, `${subject} property ${JSON.stringify(name)}`);
   if (isJSONMediaType(selected.base)) return;
   if (selected.base === "text/plain") {
@@ -931,6 +932,133 @@ function hasDeclaredSchemaType(schema: Record<string, unknown>): boolean {
     const nested = asObject(member);
     return nested !== null && hasDeclaredSchemaType(nested);
   });
+}
+
+/**
+ * The boolean schema literals in both spellings: the literal itself and the
+ * structural encodings some toolchains emit for them — `{"anyOf":[{},
+ * {"not":{}}]}` for true and `{"allOf":[{},{"not":{}}]}` for false. Returns
+ * null for every ordinary schema.
+ */
+function booleanSchemaLiteral(schema: Record<string, unknown> | boolean | null): boolean | null {
+  if (schema === true || schema === false) return schema;
+  if (schema === null || Object.keys(schema).length !== 1) return null;
+  for (const [keyword, literal] of [["anyOf", true], ["allOf", false]] as const) {
+    const members = schema[keyword];
+    if (!Array.isArray(members) || members.length !== 2) continue;
+    const first = asObject(members[0]);
+    const second = asObject(members[1]);
+    if (first === null || Object.keys(first).length !== 0 || second === null || Object.keys(second).length !== 1) continue;
+    const not = asObject(second.not);
+    if (not !== null && Object.keys(not).length === 0) return literal;
+  }
+  return null;
+}
+
+/**
+ * Applies the binding specification's part-schema interpretations before
+ * carriage selection (§9.2). The boolean literal true is the same
+ * unconstrained declaration as {}. A resolved top level declaring exactly
+ * one anyOf/oneOf whose branches comprise one non-null branch beside
+ * {type: "null"}-only branches collapses to that non-null branch — the
+ * artifact declares exactly one carriage, so this is schema interpretation,
+ * not branch selection — and `nullable` lets a JSON null value elide the
+ * optional part.
+ */
+function effectiveRevision3PartSchema(
+  schema: Record<string, unknown> | boolean | null,
+): { schema: Record<string, unknown> | false | null; nullable: boolean } {
+  const literal = booleanSchemaLiteral(schema);
+  if (literal === true) return { schema: {}, nullable: false };
+  if (literal === false) return { schema: false, nullable: false };
+  if (schema === null || typeof schema === "boolean") return { schema: null, nullable: false };
+  const collapsed = collapsedNullableChoiceBranch(schema);
+  if (collapsed !== null) return { schema: collapsed, nullable: true };
+  return { schema, nullable: false };
+}
+
+/**
+ * The single-non-null-branch collapse: the schema's top level declares
+ * exactly one of anyOf/oneOf, no type and no other applicator, and the
+ * branches are exactly one non-null branch with every remaining branch
+ * declaring {type: "null"} alone. A choice with more than one non-null
+ * branch declares value-dependent alternatives and does not collapse.
+ */
+function collapsedNullableChoiceBranch(schema: Record<string, unknown>): Record<string, unknown> | null {
+  const anyOf = Array.isArray(schema.anyOf) ? schema.anyOf : null;
+  const oneOf = Array.isArray(schema.oneOf) ? schema.oneOf : null;
+  if (anyOf !== null && oneOf !== null) return null;
+  const branches = anyOf ?? oneOf;
+  if (branches === null || branches.length < 2) return null;
+  const dependentSchemas = asObject(schema.dependentSchemas);
+  if (
+    hasDeclaredSchemaType(schema)
+    || Array.isArray(schema.allOf)
+    || schema.not !== undefined
+    || schema.if !== undefined
+    || schema.then !== undefined
+    || schema.else !== undefined
+    || (dependentSchemas !== null && Object.keys(dependentSchemas).length > 0)
+    || Object.keys(asObject(schema.properties) ?? {}).length > 0
+    || schema.items !== undefined
+  ) {
+    return null;
+  }
+  let nonNull: Record<string, unknown> | null = null;
+  for (const raw of branches) {
+    const branch = asObject(raw);
+    if (branch === null) return null;
+    if (nullOnlyBranch(branch)) continue;
+    if (nonNull !== null) return null;
+    nonNull = branch;
+  }
+  return nonNull;
+}
+
+/** A branch declaring {type: "null"} alone (annotations aside): the null arm of the nullable-choice idiom. */
+function nullOnlyBranch(schema: Record<string, unknown>): boolean {
+  const types = declaredSchemaTypes(schema);
+  if (types.length !== 1 || types[0] !== "null") return false;
+  return !Array.isArray(schema.anyOf) && !Array.isArray(schema.oneOf) && !Array.isArray(schema.allOf)
+    && schema.not === undefined && Object.keys(asObject(schema.properties) ?? {}).length === 0
+    && schema.items === undefined
+    && (!Array.isArray(schema.enum) || schema.enum.length === 0);
+}
+
+/**
+ * A carriage-unconstrained resolved part schema: a declaration with no type
+ * and no choice or conditional applicator, through allOf. §9.2: such a
+ * schema's OAS per-type part default is keyed by the supplied value's JSON
+ * application type — the value's TYPE is structure, never payload sniffing.
+ * An absent schema is not a declaration and never dispatches.
+ */
+function partSchemaValueDispatches(schema: Record<string, unknown> | boolean | null): boolean {
+  const literal = booleanSchemaLiteral(schema);
+  if (literal !== null) return literal;
+  if (schema === null || typeof schema === "boolean") return false;
+  if (hasDeclaredSchemaType(schema)) return false;
+  const dependentSchemas = asObject(schema.dependentSchemas);
+  if (
+    Array.isArray(schema.oneOf)
+    || Array.isArray(schema.anyOf)
+    || schema.not !== undefined
+    || schema.if !== undefined
+    || schema.then !== undefined
+    || schema.else !== undefined
+    || (dependentSchemas !== null && Object.keys(dependentSchemas).length > 0)
+    || schema.format === "binary"
+    || resolvedSchemaStringKeyword(schema, "contentEncoding") !== ""
+    || resolvedSchemaStringKeyword(schema, "contentMediaType") !== ""
+  ) {
+    return false;
+  }
+  if (Array.isArray(schema.allOf)) {
+    return schema.allOf.every((member) => {
+      const nested = asObject(member);
+      return nested === null || partSchemaValueDispatches(nested);
+    });
+  }
+  return true;
 }
 
 function parseSingleMultipartContentType(raw: string, name: string): ParsedMediaType {
@@ -1553,10 +1681,20 @@ export function buildMultipartBody(
 
   for (const name of Object.keys(fields).sort()) {
     const value = fields[name];
-    const propSchema = dynamicProperties
+    let propSchema = dynamicProperties
       ? resolvedMultipartProperty(schema, name, new Set())
       : asObject(resolvedMultipartProperties(schema, new Set())[name]);
     const enc = asObject(encoding[name]);
+    if (revision3) {
+      if (propSchema === null && !dynamicProperties && staticPartBooleanLiteral(schema, name) === true) {
+        propSchema = {}; // true is the same unconstrained declaration as {}
+      }
+      const effective = effectiveRevision3PartSchema(propSchema);
+      if (effective.nullable && value === null) {
+        continue; // §9.2: a JSON null value elides the nullable optional part
+      }
+      if (effective.schema !== null && effective.schema !== false) propSchema = effective.schema;
+    }
 
     // A declared array expands into repeated parts of the same name, each
     // element encoded per the items schema (the multipart way to carry
@@ -1578,6 +1716,35 @@ export function buildMultipartBody(
     writeMultipartPart(fd, name, value, propSchema, enc, is30, revision3);
   }
   return fd;
+}
+
+/**
+ * The boolean literal directly declared for a statically named property,
+ * through allOf; null when the property's declaration is not a boolean
+ * literal. Object property resolution drops boolean literals, so the
+ * revision-3 part pipeline recovers them here.
+ */
+function staticPartBooleanLiteral(
+  schema: Record<string, unknown> | null,
+  name: string,
+  seen: Set<Record<string, unknown>> = new Set(),
+): boolean | null {
+  if (schema === null || seen.has(schema)) return null;
+  seen.add(schema);
+  try {
+    const properties = asObject(schema.properties);
+    const direct = properties?.[name];
+    if (direct === true || direct === false) return direct;
+    if (Array.isArray(schema.allOf)) {
+      for (const member of schema.allOf) {
+        const literal = staticPartBooleanLiteral(asObject(member), name, seen);
+        if (literal !== null) return literal;
+      }
+    }
+    return null;
+  } finally {
+    seen.delete(schema);
+  }
 }
 
 function resolvedMultipartProperty(
@@ -1780,7 +1947,7 @@ function writeRevision3MultipartPart(
     return;
   }
 
-  if (schema === null || (!is30 && !hasDeclaredSchemaType(schema))) {
+  if (schema === null) {
     throw new Error(
       `multipart property ${JSON.stringify(name)} has no declaration-defined mapping from its default octet-stream part to a JSON caller value`,
     );
@@ -1789,6 +1956,28 @@ function writeRevision3MultipartPart(
   const declaredEncodingType = typeof enc?.contentType === "string"
     ? parseSingleMultipartContentType(enc.contentType, name)
     : null;
+  if (declaredEncodingType === null && !hasDeclaredSchemaType(schema) && !binarySignaled(schema, is30)) {
+    if (!partSchemaValueDispatches(schema)) {
+      throw new Error(Array.isArray(schema.anyOf) || Array.isArray(schema.oneOf)
+        ? `multipart property ${JSON.stringify(name)} declares a choice applicator that does not collapse to one non-null branch; no single part carriage is defined`
+        : `multipart property ${JSON.stringify(name)} has no declaration-defined mapping from its default octet-stream part to a JSON caller value`);
+    }
+    // §9.2: an unconstrained part schema's OAS per-type part default is
+    // keyed by the supplied value's JSON application type — objects and
+    // arrays ride as application/json, primitives as text/plain. JSON null
+    // names no per-type default and refuses.
+    if (value === null || value === undefined) {
+      throw new Error(
+        `multipart property ${JSON.stringify(name)}: an unconstrained part schema defines no form carriage for JSON null`,
+      );
+    }
+    if (asObject(value) !== null || asArray(value) !== null) {
+      fd.append(name, new Blob([JSON.stringify(value)], { type: "application/json" }), name);
+    } else {
+      fd.append(name, primitiveString(value));
+    }
+    return;
+  }
   const selected = declaredEncodingType
     ?? parseMediaType(defaultMultipartContentType(schema, is30), true);
   requireSupportedCharset(selected, `multipart property ${JSON.stringify(name)}`);
@@ -1862,6 +2051,11 @@ function defaultMultipartContentType(schema: Record<string, unknown>, is30: bool
     || schemaTypeIs(schema, "boolean")
   ) {
     return "text/plain";
+  }
+  if (Array.isArray(schema.anyOf) || Array.isArray(schema.oneOf)) {
+    throw new Error(
+      "multipart property declares a choice applicator that does not collapse to one non-null branch; no single part carriage is defined",
+    );
   }
   throw new Error("multipart property has no declaration-defined default Content-Type");
 }
@@ -2138,9 +2332,17 @@ function buildRevision3URLEncodedBody(
   const encoding = asObject(media?.encoding) ?? {};
   const units: string[] = [];
   for (const name of Object.keys(fields).sort()) {
-    const property = dynamicProperties
+    let property = dynamicProperties
       ? resolvedMultipartProperty(schema, name, new Set())
       : asObject(properties[name]);
+    if (property === null && !dynamicProperties && staticPartBooleanLiteral(schema, name) === true) {
+      property = {}; // true is the same unconstrained declaration as {}
+    }
+    const effective = effectiveRevision3PartSchema(property);
+    if (effective.nullable && fields[name] === null) {
+      continue; // §9.2: a JSON null value elides the nullable optional field
+    }
+    if (effective.schema !== null && effective.schema !== false) property = effective.schema;
     if (property === null) {
       throw new Error(`urlencoded property ${JSON.stringify(name)} has no declaration-defined carriage`);
     }
@@ -2167,9 +2369,28 @@ function buildRevision3URLEncodedBody(
       continue;
     }
 
-    const selected = typeof enc?.contentType === "string"
+    const declaredCT = typeof enc?.contentType === "string"
       ? parseSingleMultipartContentType(enc.contentType, name)
-      : parseMediaType(defaultMultipartContentType(property, openapiVersion.startsWith("3.0")), true);
+      : null;
+    if (declaredCT === null && !hasDeclaredSchemaType(property) && partSchemaValueDispatches(property)) {
+      // §9.2: an unconstrained property schema's OAS per-type part default
+      // is keyed by the supplied value's JSON application type — objects and
+      // arrays ride as JSON text, primitives as plain text. JSON null names
+      // no per-type default and refuses.
+      const value = fields[name];
+      if (value === null || value === undefined) {
+        throw new Error(
+          `urlencoded property ${JSON.stringify(name)}: an unconstrained property schema defines no form carriage for JSON null`,
+        );
+      }
+      const dispatched = asObject(value) !== null || asArray(value) !== null
+        ? JSON.stringify(value)
+        : primitiveString(value);
+      units.push(`${formEncodeBytes(new TextEncoder().encode(name))}=${formEncodeBytes(new TextEncoder().encode(dispatched))}`);
+      continue;
+    }
+    const selected = declaredCT
+      ?? parseMediaType(defaultMultipartContentType(property, openapiVersion.startsWith("3.0")), true);
     requireSupportedCharset(selected, `urlencoded property ${JSON.stringify(name)}`);
     let text: string;
     const encodedString = !openapiVersion.startsWith("3.0")
