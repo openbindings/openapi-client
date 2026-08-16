@@ -418,14 +418,24 @@ export async function dereference<T = unknown>(
   /**
    * Evaluates a JSON Pointer that addresses a position BELOW a reference.
    *
-   * RFC 6901 evaluates against the document as written, so a pointer whose
-   * path runs through a `$ref` object denotes nothing there; this runs only
-   * after that plain evaluation has already returned undefined. Following the
-   * intervening reference is resolution, not composition scope: every node the
-   * pointer passes through is itself composed, and the reached value is the
-   * same one a resolver that had already replaced the reference would find.
-   * That is what this dereferencer used to do implicitly, by rewriting a whole
-   * resource before any pointer into it was evaluated.
+   * THIS IS THIS IMPLEMENTATION'S CONVENTION, NOT AN AUTHORITY ANSWER, and the
+   * two engines pin it identically so they cannot drift while the question is
+   * open. RFC 6901 §4 evaluates each token "against the document's contents",
+   * under which a pointer whose path runs through a `$ref` object denotes
+   * nothing there — so this runs only after that plain evaluation has already
+   * returned undefined, and no previously-succeeding case changed. But JSON
+   * Reference §4 says an implementation "MAY choose to replace the reference
+   * with the referenced value", and against a document where that replacement
+   * has happened the same pointer denotes the reached value. Neither text
+   * sequences the two, so both readings survive on the merits.
+   *
+   * Following the intervening reference is resolution, not composition scope:
+   * every node the pointer passes through is itself composed. It is what this
+   * dereferencer used to do implicitly, by rewriting a whole resource before
+   * any pointer into it was evaluated, and pointer scope did not raise the
+   * question — answering it differently would have smuggled a new observable
+   * behavior in under a conformance fix. Open item: corpus-lab's
+   * OPENAPI-RUNTIME.md, "Pointer-scoped external composition".
    */
   async function resolveFragmentThroughReferences(
     scope: ResourceScope,
