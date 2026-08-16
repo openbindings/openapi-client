@@ -16,15 +16,171 @@ import {
 const ARTIFACT = "https://api.example/root.yaml";
 
 describe("relativeDocumentName", () => {
-  it("expresses a composed document relative to the artifact, extension stripped", () => {
-    expect(relativeDocumentName(ARTIFACT, "https://api.example/shared/node.yaml"))
-      .toBe("shared/node");
-    expect(relativeDocumentName(ARTIFACT, "https://api.example/one.json")).toBe("one");
-  });
+  // The naming rule's own unit surface, pinned cell for cell in
+  // openbindings-go/formats/openapi/cutpoint_names_test.go. Both engines must
+  // derive the same qualified spelling from the same two addresses. The whole
+  // base x document matrix is here because the twin claim was once made by
+  // three absolute http cases, and the two engines disagreed on every RELATIVE
+  // and every OPAQUE address without a test noticing.
+  //
+  // Read down a column to see one document qualified from every artifact
+  // address; read across a row to see one artifact address qualify every
+  // document form. Rule 3 in util.ts states the three cases.
+  const DOCUMENTS = [
+    "https://api.example/shared/node.yaml",
+    "https://api.example/one.json",
+    "https://other.example/one.yaml",
+    "https://api.example:8443/v1/defs.yaml",
+    "file:///checkout/api/shared/node.yaml",
+    "/checkout/api/shared/node.yaml",
+    "defs.yaml",
+    "schemas/defs.yaml",
+    "./defs.yaml",
+    "urn:example:one",
+    "https://api.example/a b/c.yaml",
+    "https://api.example/a%20b/c.yaml",
+    "https://api.example/v1/defs",
+  ];
+  const MATRIX: ReadonlyArray<readonly [string, readonly string[]]> = [
+    ["https://api.example/root.yaml", [
+      "shared/node",
+      "one",
+      "other.example/one",
+      "api.example:8443/v1/defs",
+      "checkout/api/shared/node",
+      "checkout/api/shared/node",
+      "defs",
+      "schemas/defs",
+      "defs",
+      "urn:example:one",
+      "a b/c",
+      "a b/c",
+      "v1/defs",
+    ]],
+    ["https://api.example/v1/root.yaml", [
+      "shared/node",
+      "one",
+      "other.example/one",
+      "api.example:8443/v1/defs",
+      "checkout/api/shared/node",
+      "checkout/api/shared/node",
+      "defs",
+      "schemas/defs",
+      "defs",
+      "urn:example:one",
+      "a b/c",
+      "a b/c",
+      "defs",
+    ]],
+    ["https://api.example/root", [
+      "shared/node",
+      "one",
+      "other.example/one",
+      "api.example:8443/v1/defs",
+      "checkout/api/shared/node",
+      "checkout/api/shared/node",
+      "defs",
+      "schemas/defs",
+      "defs",
+      "urn:example:one",
+      "a b/c",
+      "a b/c",
+      "v1/defs",
+    ]],
+    ["https://api.example:8443/v1/root.yaml", [
+      "api.example/shared/node",
+      "api.example/one",
+      "other.example/one",
+      "defs",
+      "checkout/api/shared/node",
+      "checkout/api/shared/node",
+      "defs",
+      "schemas/defs",
+      "defs",
+      "urn:example:one",
+      "api.example/a b/c",
+      "api.example/a b/c",
+      "api.example/v1/defs",
+    ]],
+    ["file:///checkout/api/root.yaml", [
+      "api.example/shared/node",
+      "api.example/one",
+      "other.example/one",
+      "api.example:8443/v1/defs",
+      "shared/node",
+      "shared/node",
+      "defs",
+      "schemas/defs",
+      "defs",
+      "urn:example:one",
+      "api.example/a b/c",
+      "api.example/a b/c",
+      "api.example/v1/defs",
+    ]],
+    ["/checkout/api/root.yaml", [
+      "api.example/shared/node",
+      "api.example/one",
+      "other.example/one",
+      "api.example:8443/v1/defs",
+      "shared/node",
+      "shared/node",
+      "defs",
+      "schemas/defs",
+      "defs",
+      "urn:example:one",
+      "api.example/a b/c",
+      "api.example/a b/c",
+      "api.example/v1/defs",
+    ]],
+    ["root.yaml", [
+      "api.example/shared/node",
+      "api.example/one",
+      "other.example/one",
+      "api.example:8443/v1/defs",
+      "checkout/api/shared/node",
+      "checkout/api/shared/node",
+      "defs",
+      "schemas/defs",
+      "defs",
+      "urn:example:one",
+      "api.example/a b/c",
+      "api.example/a b/c",
+      "api.example/v1/defs",
+    ]],
+    ["https://api.example/", [
+      "shared/node",
+      "one",
+      "other.example/one",
+      "api.example:8443/v1/defs",
+      "checkout/api/shared/node",
+      "checkout/api/shared/node",
+      "defs",
+      "schemas/defs",
+      "defs",
+      "urn:example:one",
+      "a b/c",
+      "a b/c",
+      "v1/defs",
+    ]],
+    ["urn:example:root", [
+      "api.example/shared/node",
+      "api.example/one",
+      "other.example/one",
+      "api.example:8443/v1/defs",
+      "checkout/api/shared/node",
+      "checkout/api/shared/node",
+      "defs",
+      "schemas/defs",
+      "defs",
+      "urn:example:one",
+      "api.example/a b/c",
+      "api.example/a b/c",
+      "api.example/v1/defs",
+    ]],
+  ];
 
-  it("keeps a foreign origin distinguishable", () => {
-    expect(relativeDocumentName(ARTIFACT, "https://other.example/one.yaml"))
-      .toBe("other.example/one");
+  it.each(MATRIX)("qualifies every document form against %s", (base, want) => {
+    expect(DOCUMENTS.map((document) => relativeDocumentName(base, document))).toEqual(want);
   });
 
   it("is independent of how the artifact was reached", () => {
@@ -36,43 +192,126 @@ describe("relativeDocumentName", () => {
 });
 
 describe("assignCutPointNames", () => {
-  const declared = (name: string, document?: string): DeclaredComponent =>
-    ({ name, document, pointer: `/components/schemas/${name}` });
-
-  it("uses the declaring document's own name when nothing contests it", () => {
-    expect(assignCutPointNames(
-      [declared("Node"), declared("Team", "https://api.example/shared/model.yaml")],
-      ARTIFACT,
-    )).toEqual(["Node", "Team"]);
-  });
-
-  it("qualifies every contesting composed document and leaves the artifact's own name alone", () => {
-    expect(assignCutPointNames(
+  // Every claimant shape the assignment rule admits, pinned identically in
+  // openbindings-go/formats/openapi/cutpoint_names_test.go. The rule must be
+  // TOTAL (every claimant gets a key) and INJECTIVE (no two get the same one):
+  // `$defs` is a map, so a repeated key drops one definition and silently
+  // resolves the other cut point's `$ref` to the survivor.
+  //
+  // A claimant is either the artifact's own component (no declaring document)
+  // or one reached through an external reference, whose declaring document may
+  // be a real address or, where the resolver recorded none, empty.
+  const CASES: ReadonlyArray<readonly [string, readonly DeclaredComponent[], readonly string[]]> = [
+    [
+      "uncontested names are the declaring document's own",
       [
-        declared("Node"),
-        declared("Node", "https://api.example/one.yaml"),
-        declared("Node", "https://api.example/two.yaml"),
+        { name: "Node", pointer: "/components/schemas/Node" },
+        { name: "Team", document: "https://api.example/shared/model.yaml", pointer: "/components/schemas/Team" },
       ],
-      ARTIFACT,
-    )).toEqual(["Node", "one_Node", "two_Node"]);
+      ["Node", "Team"],
+    ],
+    [
+      "the artifact's own component keeps the name, composed documents qualify",
+      [
+        { name: "Node", pointer: "/components/schemas/Node" },
+        { name: "Node", document: "https://api.example/one.yaml", pointer: "/components/schemas/Node" },
+        { name: "Node", document: "https://api.example/two.yaml", pointer: "/components/schemas/Node" },
+      ],
+      ["Node", "one_Node", "two_Node"],
+    ],
+    [
+      "two claimants with no declaring document to qualify by",
+      [
+        { name: "Node", document: "", pointer: "/components/schemas/Node" },
+        { name: "Node", document: "", pointer: "/definitions/Node" },
+      ],
+      ["Node", "Node_2"],
+    ],
+    [
+      "three claimants with no declaring document to qualify by",
+      [
+        { name: "Node", document: "", pointer: "/a/Node" },
+        { name: "Node", document: "", pointer: "/b/Node" },
+        { name: "Node", document: "", pointer: "/c/Node" },
+      ],
+      ["Node", "Node_2", "Node_3"],
+    ],
+    [
+      "the artifact's own component outranks an unqualifiable claimant",
+      [
+        { name: "Node", pointer: "/components/schemas/Node" },
+        { name: "Node", document: "", pointer: "/definitions/Node" },
+      ],
+      ["Node", "Node_2"],
+    ],
+    [
+      "three-way collision between composed documents",
+      [
+        { name: "Node", document: "https://api.example/one.yaml", pointer: "/components/schemas/Node" },
+        { name: "Node", document: "https://api.example/two.yaml", pointer: "/components/schemas/Node" },
+        { name: "Node", document: "https://api.example/three.yaml", pointer: "/components/schemas/Node" },
+      ],
+      ["one_Node", "two_Node", "three_Node"],
+    ],
+    [
+      "two documents that qualify to one name",
+      [
+        { name: "Node", document: "https://api.example/one.yaml", pointer: "/components/schemas/Node" },
+        { name: "Node", document: "https://api.example/one.json", pointer: "/components/schemas/Node" },
+      ],
+      ["one_Node_2", "one_Node"],
+    ],
+    [
+      "a qualified name the artifact already spells itself",
+      [
+        { name: "one_Node", pointer: "/components/schemas/one_Node" },
+        { name: "Node", document: "https://api.example/one.yaml", pointer: "/components/schemas/Node" },
+        { name: "Node", document: "https://api.example/two.yaml", pointer: "/components/schemas/Node" },
+      ],
+      ["one_Node", "one_Node_2", "two_Node"],
+    ],
+    [
+      "unknown and absent declaring documents together",
+      [
+        { name: "Node", document: "", pointer: "/a/Node" },
+        { name: "Node", document: "", pointer: "/b/Node" },
+        { name: "Node", pointer: "/components/schemas/Node" },
+      ],
+      ["Node_2", "Node_3", "Node"],
+    ],
+    [
+      "opaque and relative declaring documents",
+      [
+        { name: "Node", document: "urn:example:one", pointer: "/components/schemas/Node" },
+        { name: "Node", document: "defs.yaml", pointer: "/components/schemas/Node" },
+        { name: "Node", document: "./defs.yaml", pointer: "/components/schemas/Node" },
+      ],
+      ["urn_example_one_Node", "defs_Node_2", "defs_Node"],
+    ],
+  ];
+
+  it.each(CASES)("assigns a distinct key to every claimant: %s", (_label, claimants, want) => {
+    const got = assignCutPointNames(claimants, ARTIFACT);
+    expect(got).toEqual([...want]);
+    // Totality and injectivity, asserted rather than inferred from the table.
+    expect(got.filter((name) => name === undefined || name === "")).toEqual([]);
+    expect(new Set(got).size).toBe(claimants.length);
   });
 
-  it("assigns over the set, so reordering the input reorders only the output", () => {
-    const components = [
-      declared("Node", "https://api.example/one.yaml"),
-      declared("Node", "https://api.example/two.yaml"),
-    ];
-    const forward = assignCutPointNames(components, ARTIFACT);
-    const reversed = assignCutPointNames([...components].reverse(), ARTIFACT);
-    expect(forward).toEqual(["one_Node", "two_Node"]);
-    expect([...reversed].reverse()).toEqual(forward);
+  it.each(CASES)("assigns over the SET, not the order: %s", (_label, claimants, want) => {
+    const reversed = assignCutPointNames([...claimants].reverse(), ARTIFACT);
+    expect([...reversed].reverse()).toEqual([...want]);
   });
 
-  it("replaces characters a member name cannot carry", () => {
-    expect(assignCutPointNames(
-      [declared("Node", "https://api.example/a b/c.yaml"), declared("Node", "https://api.example/d.yaml")],
+  it("gives the artifact's own component the name even when it is claimed twice with no document", () => {
+    // The defect this pins: the pre-fix rule handed the bare name to EVERY
+    // claimant presenting without a document, so two of them collided.
+    const both = assignCutPointNames(
+      [{ name: "Node", pointer: "/components/schemas/Node" }, { name: "Node", pointer: "/components/schemas/Node" }],
       ARTIFACT,
-    )).toEqual(["a_b_c_Node", "d_Node"]);
+    );
+    expect(new Set(both).size).toBe(2);
+    expect(both).toEqual(["Node", "Node_2"]);
   });
 });
 

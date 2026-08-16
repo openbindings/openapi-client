@@ -556,16 +556,47 @@ function escapeJSONPointerSegment(segment: string): string {
 //  2. Names are assigned over the SET of cut points minted for one operation
 //     schema, never in traversal order. A name claimed by exactly one cut point
 //     is used as written.
-//  3. When two or more cut points claim one name, the artifact's own component
-//     keeps it and each externally-declared claimant is qualified by the
-//     document that declares it: that document's address relative to the
-//     artifact's own, extension stripped, every character outside
-//     [A-Za-z0-9_.-] replaced by "_", joined to the component name with "_".
-//  4. If qualification still leaves a name claimed twice, the remaining
-//     claimants are ordered by their canonical identity (document address, NUL,
-//     pointer) in code-point order and suffixed "_2", "_3", … . This is a last
-//     resort; no artifact shape is known to reach it, and it exists so the rule
-//     is total.
+//  3. When two or more cut points claim one name, AT MOST ONE claimant keeps it
+//     unqualified — the artifact's own component, or, where no artifact
+//     component is in the contest, the first claimant in canonical-identity
+//     order among those with no declaring document to qualify by. Every other
+//     claimant is qualified by the document that declares it: that document's
+//     address relative to the artifact's own, extension stripped, every
+//     character outside [A-Za-z0-9_.-] replaced by "_", joined to the component
+//     name with "_". A claimant whose declaring document is unknown — absent, or
+//     recorded as an empty address — cannot be qualified by it and is treated
+//     exactly as the artifact's own component here: qualifying it by nothing
+//     would mint a name derived from nothing.
+//
+//     relativeDocumentName decides "relative to the artifact's own" in three
+//     cases, because an address is not always a hierarchical path:
+//
+//       - An address with an OPAQUE path — a scheme whose remainder does not
+//         begin with "/", as in `urn:example:one` — has no hierarchical path at
+//         all. There is nothing to make relative, no extension to strip, and no
+//         part of it that can be dropped without losing what distinguishes it
+//         (`urn:example:one` and `tag:example:one` are different documents). It
+//         is used verbatim.
+//       - A RELATIVE address — no scheme, no authority, no leading "/" — is
+//         already expressed relative to the artifact, so the artifact's own
+//         address plays no part in reading it. Leading "./" segments carry no
+//         information (RFC 3986 spells "no prefix" both ways) and are removed,
+//         so one document referenced both ways qualifies identically. "../" is
+//         NOT removed: it denotes a different place.
+//       - Every other address is hierarchical: it is expressed relative to the
+//         artifact's directory when it shares the artifact's origin, prefixed
+//         with its authority when it does not, and then has its leading "/" and
+//         file extension removed.
+//
+//  4. If qualification still leaves a name taken, the claimant is suffixed
+//     "_2", "_3", … . Claimants are processed in canonical-identity order
+//     (document address, NUL, pointer) in code-point order, so the suffix is a
+//     function of the identity set rather than of the walk. Rules 2-4 together
+//     are TOTAL and INJECTIVE: every cut point receives exactly one key and no
+//     two cut points in one operation schema receive the same key. That is not
+//     an aesthetic property — `$defs` is a map, so a repeated key drops one
+//     definition and silently resolves the other cut point's `$ref` to the
+//     survivor.
 // ---------------------------------------------------------------------------
 
 function canonicalComponentIdentity(component: DeclaredComponent): string {
@@ -576,20 +607,56 @@ function sanitizeNameSegment(segment: string): string {
   return segment.replace(/[^A-Za-z0-9_.-]/gu, "_");
 }
 
-function documentPath(uri: string): { scheme: string; host: string; path: string } | undefined {
-  try {
-    const url = new URL(uri);
-    // The DECODED path, matching Go's url.URL.Path: a name qualified by a
-    // document whose path carries a space must spell that space the same way
-    // in both engines.
-    let path = url.pathname;
-    try { path = decodeURIComponent(path); } catch { /* keep the raw spelling */ }
-    return { scheme: url.protocol, host: url.host, path };
-  } catch {
-    // A resolver may record a target as a bare path. Treat it as sharing the
-    // artifact's origin, exactly as the Go twin does.
-    return uri.startsWith("/") ? { scheme: "", host: "", path: uri } : undefined;
+/**
+ * An address as rule 3 reads it. `opaque` marks an address with no hierarchical
+ * path at all; `relative` marks one that is already relative to the artifact.
+ * The fields mirror Go's `url.URL` (Scheme/Host/Path) because the two engines
+ * must read one address the same way.
+ */
+interface DocumentAddress {
+  readonly opaque: boolean;
+  readonly relative: boolean;
+  readonly scheme: string;
+  readonly host: string;
+  readonly path: string;
+}
+
+/** RFC 3986 §3.1. A relative reference has no scheme. */
+const ADDRESS_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:/u;
+
+function decodePath(path: string): string {
+  // The DECODED path, matching Go's url.URL.Path: a name qualified by a
+  // document whose path carries a space must spell that space the same way in
+  // both engines.
+  try { return decodeURIComponent(path); } catch { return path; }
+}
+
+function documentAddress(uri: string): DocumentAddress {
+  const opaqueAddress: DocumentAddress =
+    { opaque: true, relative: false, scheme: "", host: "", path: "" };
+  const scheme = ADDRESS_SCHEME.exec(uri);
+  if (scheme !== null) {
+    // Go's url.Parse: a scheme whose remainder does not begin with "/" has an
+    // opaque, non-hierarchical path (`urn:example:one`). `new URL` would expose
+    // that opaque part as a `pathname` and silently drop the scheme with it.
+    if (!uri.slice(scheme[0].length).startsWith("/")) return opaqueAddress;
+    try {
+      const url = new URL(uri);
+      return {
+        opaque: false,
+        relative: false,
+        scheme: url.protocol,
+        host: url.host,
+        path: decodePath(url.pathname),
+      };
+    } catch {
+      return opaqueAddress;
+    }
   }
+  // A relative reference. Its query and fragment are not part of its path,
+  // which is what Go's url.Parse leaves in Path.
+  const path = decodePath(uri.replace(/[#?][\s\S]*$/u, ""));
+  return { opaque: false, relative: !path.startsWith("/"), scheme: "", host: "", path };
 }
 
 /**
@@ -598,21 +665,33 @@ function documentPath(uri: string): { scheme: string; host: string; path: string
  * qualified name independent of how the artifact was reached: the same two
  * documents laid out the same way qualify identically whether they were loaded
  * from a checkout or from a server.
+ *
+ * The three address cases are rule 3's; the Go twin
+ * (openbindings-go/formats/openapi/cutpoint_names.go) reads an address the same
+ * way, and cutpoint-names.test.ts pins the whole base x document matrix in both
+ * engines.
  */
 export function relativeDocumentName(base: string | undefined, document: string): string {
-  const target = documentPath(document);
-  if (!target) return document;
-  const origin = base === undefined ? undefined : documentPath(base);
+  const target = documentAddress(document);
+  // An opaque path is not a path: nothing to make relative, nothing to strip.
+  if (target.opaque) return document;
   let path = target.path;
-  if (
-    origin !== undefined && origin.host === target.host
-    && (origin.scheme === target.scheme || origin.scheme === "" || target.scheme === "")
-  ) {
-    const slash = origin.path.lastIndexOf("/");
-    const dir = slash < 0 ? "./" : slash === 0 ? "/" : `${origin.path.slice(0, slash)}/`;
-    if (path.startsWith(dir)) path = path.slice(dir.length);
-  } else if (target.host !== "") {
-    path = target.host + path;
+  if (target.relative) {
+    // Already relative to the artifact; reading it does not involve the
+    // artifact's own address at all.
+    while (path.startsWith("./")) path = path.slice("./".length);
+  } else {
+    const origin = base === undefined ? undefined : documentAddress(base);
+    if (
+      origin !== undefined && !origin.opaque && origin.host === target.host
+      && (origin.scheme === target.scheme || origin.scheme === "" || target.scheme === "")
+    ) {
+      const slash = origin.path.lastIndexOf("/");
+      const dir = slash < 0 ? "./" : slash === 0 ? "/" : `${origin.path.slice(0, slash)}/`;
+      if (path.startsWith(dir)) path = path.slice(dir.length);
+    } else if (target.host !== "") {
+      path = target.host + path;
+    }
   }
   path = path.replace(/^\//u, "");
   const dot = path.lastIndexOf(".");
@@ -661,9 +740,20 @@ export function shapeDigest(node: unknown): string {
 }
 
 /**
+ * Reports whether a claimant has a declaring document address for rule 3 to
+ * qualify it BY. The artifact's own components have none, and neither does an
+ * external reference whose resolver recorded no address.
+ */
+function isQualifiable(component: DeclaredComponent): boolean {
+  return component.document !== undefined && component.document !== "";
+}
+
+/**
  * Assigns a `$defs` key to every cut point minted for one operation schema.
  * The result is a function of the cut-point SET, so no traversal order can
- * reach the output.
+ * reach the output, and it is injective: `$defs` is a map, so two cut points
+ * sharing a key would drop one definition and resolve the other's `$ref` to
+ * the survivor.
  */
 export function assignCutPointNames(
   components: readonly DeclaredComponent[],
@@ -673,32 +763,55 @@ export function assignCutPointNames(
   for (const component of components) {
     claimed.set(component.name, (claimed.get(component.name) ?? 0) + 1);
   }
+  // The artifact's own components first, then canonical-identity order: which
+  // claimant keeps a contested name unqualified must not depend on the walk
+  // either. Array.sort is stable, so two claimants that agree on document AND
+  // pointer — the same component by every fact recorded here — keep their
+  // given order.
+  const rank = (component: DeclaredComponent): number => (component.document === undefined ? 0 : 1);
+  const order = components
+    .map((_, index) => index)
+    .sort((a, b) => (
+      rank(components[a]!) - rank(components[b]!)
+      || codePointCompare(
+        canonicalComponentIdentity(components[a]!),
+        canonicalComponentIdentity(components[b]!),
+      )
+    ));
+
   const names = new Array<string>(components.length);
   const taken = new Set<string>();
-  const contested: number[] = [];
-  components.forEach((component, index) => {
-    if (claimed.get(component.name) === 1 || component.document === undefined) {
+  const kept = new Set<string>();
+  const remaining: number[] = [];
+  // Every uncontested name is the declaring document's own. Of the contested
+  // ones, the claimants that cannot be qualified take the bare name — but only
+  // the first of them, or the rule would not be injective.
+  for (const index of order) {
+    const component = components[index]!;
+    if (
+      claimed.get(component.name) === 1
+      || (!isQualifiable(component) && !kept.has(component.name))
+    ) {
       names[index] = component.name;
       taken.add(component.name);
-      return;
+      kept.add(component.name);
+      continue;
     }
-    contested.push(index);
-  });
-  contested
-    .sort((a, b) => codePointCompare(
-      canonicalComponentIdentity(components[a]!),
-      canonicalComponentIdentity(components[b]!),
-    ))
-    .forEach((index) => {
-      const component = components[index]!;
-      const qualified = `${sanitizeNameSegment(
-        relativeDocumentName(base, component.document as string),
-      )}_${component.name}`;
-      let name = qualified;
-      for (let attempt = 2; taken.has(name); attempt += 1) name = `${qualified}_${attempt}`;
-      names[index] = name;
-      taken.add(name);
-    });
+    remaining.push(index);
+  }
+  // Contested claimants qualify by their declaring document where they have
+  // one, and fall through to rule 4's suffix where they do not or where
+  // qualification still lands on a taken name.
+  for (const index of remaining) {
+    const component = components[index]!;
+    const stem = isQualifiable(component)
+      ? `${sanitizeNameSegment(relativeDocumentName(base, component.document as string))}_${component.name}`
+      : component.name;
+    let name = stem;
+    for (let attempt = 2; taken.has(name); attempt += 1) name = `${stem}_${attempt}`;
+    names[index] = name;
+    taken.add(name);
+  }
   return names;
 }
 
