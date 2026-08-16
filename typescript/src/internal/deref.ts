@@ -51,6 +51,20 @@ export interface DereferenceOptions {
    */
   onResource?: (root: Record<string, unknown>, baseURI?: string) => void;
   /**
+   * Invoked for every reference that resolves to an object, with the resolved
+   * target, the root of the document that declares it, and the RFC 6901
+   * pointer it is declared under. Substitution erases the fact that a node was
+   * ADDRESSED by the artifact; a caller that must recover which nodes those
+   * were — to decide what may become a cut point, and what the artifact calls
+   * it — reads them here. Anchors and whole-document references report no
+   * pointer and are not reported.
+   */
+  onRefTarget?: (
+    target: object,
+    declaringRoot: Record<string, unknown>,
+    pointer: string,
+  ) => void;
+  /**
    * Preserve a `$ref` object when its fragment does not resolve instead of
    * rejecting the complete document. Strict rejection remains the default.
    * This is intended for processors that inventory and exclude invalid
@@ -176,6 +190,7 @@ export async function dereference<T = unknown>(
   const mergeRefSiblings = options?.mergeRefSiblings;
   const prepareRefTarget = options?.prepareRefTarget;
   const onResource = options?.onResource;
+  const onRefTarget = options?.onRefTarget;
 
   // The single working tree. Internal refs resolve against THIS clone, never
   // the caller's `doc`: resolving against the original both mutates the
@@ -346,6 +361,7 @@ export async function dereference<T = unknown>(
       });
       if (prepared) scope = reindexPreparedResource(scope.root, scope, owner);
       const target = resolveFragment(scope, ref);
+      reportRefTarget(scope, ref, target);
       return target;
     }
 
@@ -367,7 +383,24 @@ export async function dereference<T = unknown>(
     const prepared = prepareRefTarget?.(resource.root, { resourceURI, fragment });
     if (prepared) resource = reindexPreparedResource(resource.root, resource, owner);
     const target = resolveFragment(resource, fragment);
+    reportRefTarget(resource, fragment, target);
     return target;
+  }
+
+  // A reference names a node only when its fragment is a non-empty JSON
+  // Pointer: an anchor carries no pointer, and the empty fragment addresses the
+  // resource root, which is not a schema position.
+  function reportRefTarget(scope: ResourceScope, fragment: string, target: unknown): void {
+    if (!onRefTarget || target === null || typeof target !== "object") return;
+    const pointer = fragment.startsWith("#") ? fragment.slice(1) : fragment;
+    if (!pointer.startsWith("/")) return;
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(pointer);
+    } catch {
+      return;
+    }
+    onRefTarget(target as object, scope.root, decoded);
   }
 
   async function walkAsync(node: unknown, document: DocumentContext): Promise<unknown> {

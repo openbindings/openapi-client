@@ -134,6 +134,17 @@ export async function loadOpenAPIDocument(
      * component's own name (componentSchemaNames).
      */
     onResource?: (root: Record<string, unknown>, baseURI?: string) => void;
+    /**
+     * Receives every node this load reached through a `$ref`, with the root of
+     * the document that declares it and its RFC 6901 pointer there.
+     * Dereferencing erases which nodes the artifact ADDRESSED; synthesis reads
+     * them back to decide what may become a cut point (componentSchemaNames).
+     */
+    onRefTarget?: (
+      target: object,
+      declaringRoot: Record<string, unknown>,
+      pointer: string,
+    ) => void;
   },
   fetchFn?: typeof globalThis.fetch,
 ): Promise<OpenAPIDocument> {
@@ -210,6 +221,7 @@ export async function loadOpenAPIDocument(
     mergeRefSiblings: (target, reference) => normalizer.mergeReferenceObject(target, reference),
     prepareRefTarget: (root, target) => normalizer.prepareTarget(root, target.resourceURI),
     onResource: options?.onResource,
+    onRefTarget: options?.onRefTarget,
   });
   normalizer.restore(dereferenced);
   return dereferenced;
@@ -488,11 +500,36 @@ export interface LoadedResource {
 }
 
 /**
- * Maps the identity of each declared component schema node to how its own
- * document names it. After full dereference, `$ref`s alias the very objects
- * under a document's `components.schemas`, so object identity recovers the
- * name a cycle participant was declared under — for the artifact itself and,
- * when the resources it composed are supplied, for every document it reached.
+ * A node the artifact addressed with a `$ref`, as `dereference`'s
+ * `onRefTarget` reported it.
+ */
+export interface AddressedNode {
+  readonly node: object;
+  readonly declaringRoot: Record<string, unknown>;
+  readonly pointer: string;
+}
+
+/**
+ * Maps the identity of each node the artifact ADDRESSES to how its own document
+ * names it. After full dereference, `$ref`s alias the very objects a document
+ * declares, so object identity recovers the name a cycle participant was
+ * declared under — for the artifact itself and, when the resources it composed
+ * are supplied, for every document it reached.
+ *
+ * Two kinds of node are in this map, and both are here for one reason: they are
+ * the nodes that may become cut points.
+ *
+ *  - Every `components.schemas` entry, named by its own key.
+ *  - Every other node reached through a `$ref` (`addressed`), named by the
+ *    final RFC 6901 token of the pointer that reaches it. A cycle can close
+ *    through `#/components/schemas/Wrapper/properties/inner`, which is a schema
+ *    position the artifact wrote and addressed even though it is not a declared
+ *    component; the Go twin registers exactly the same node set.
+ *
+ * Components are collected first, so a component reached ALSO by a longer
+ * pointer keeps the name its own declaration gives it. The addressed nodes are
+ * then taken in canonical identity order, never in reference-resolution order,
+ * so a node addressed by two pointers takes the same one on every run.
  *
  * Without the external documents an externally-declared component is anonymous
  * here, which is how it used to be named by an ordinal instead of by the name
@@ -501,10 +538,13 @@ export interface LoadedResource {
 export function componentSchemaNames(
   doc: Record<string, unknown>,
   resources?: readonly LoadedResource[],
+  addressed?: readonly AddressedNode[],
 ): Map<object, DeclaredComponent> {
   const names = new Map<object, DeclaredComponent>();
   const seen = new Set<object>();
+  const addressOf = new Map<object, string | undefined>();
   const collect = (root: Record<string, unknown>, document?: string): void => {
+    addressOf.set(root, document);
     if (seen.has(root)) return;
     seen.add(root);
     const components = root["components"];
@@ -527,7 +567,30 @@ export function componentSchemaNames(
   };
   collect(doc);
   for (const resource of resources ?? []) collect(resource.root, resource.baseURI);
+
+  if (addressed !== undefined && addressed.length > 0) {
+    const remaining = addressed.filter((entry) => !names.has(entry.node));
+    remaining.sort((a, b) => codePointCompare(
+      `${addressOf.get(a.declaringRoot) ?? ""}\u0000${a.pointer}`,
+      `${addressOf.get(b.declaringRoot) ?? ""}\u0000${b.pointer}`,
+    ));
+    for (const entry of remaining) {
+      if (names.has(entry.node)) continue;
+      const slash = entry.pointer.lastIndexOf("/");
+      const token = slash < 0 ? entry.pointer : entry.pointer.slice(slash + 1);
+      if (token === "") continue;
+      names.set(entry.node, {
+        name: unescapeJSONPointerSegment(token),
+        document: addressOf.get(entry.declaringRoot),
+        pointer: entry.pointer,
+      });
+    }
+  }
   return names;
+}
+
+function unescapeJSONPointerSegment(segment: string): string {
+  return segment.replace(/~1/gu, "/").replace(/~0/gu, "~");
 }
 
 function escapeJSONPointerSegment(segment: string): string {
@@ -944,9 +1007,9 @@ export function decycleSchema(
   // name-level: sibling-merged $refs produce anonymous copies whose cycles
   // never pass through the named component object, so detection is an SCC
   // computation over the object graph (iterative Tarjan). Within an SCC
-  // that contains named components, only the named members are hoisted —
-  // anonymous intermediates (property maps, array wrappers) inline and the
-  // cycle cuts at the named node. An SCC with no named member hoists all
+  // that contains addressed nodes, only those are hoisted — anonymous
+  // intermediates (property maps, array wrappers) inline and the cycle cuts
+  // at the addressed node. An SCC with no addressed member hoists all
   // its members, cutting at the first schema-position encounter; the
   // on-stack backstop below covers any unnamed sub-loop.
   const cyclic = new Set<object>();
@@ -971,11 +1034,11 @@ export function decycleSchema(
   assignCutPointNames(declared, base).forEach((name, index) => {
     defName.set(declaredNodes[index] as object, name);
   });
-  // An anonymous cut point — a cycle passing through no declared component —
-  // has no artifact-supplied name to carry. It is named from the shape it
-  // hoists rather than from a counter, so the key is still a function of what
-  // is emitted and not of the walk. (The Go engine does not hoist this case at
-  // all; that divergence is a hoisting question, tracked separately.)
+  // An anonymous cut point — a cycle passing through no node the artifact
+  // addressed, which a sibling-merged copy can still produce — has no
+  // artifact-supplied name to carry. It is named from the shape it hoists
+  // rather than from a counter, so the key is still a function of what is
+  // emitted and not of the walk.
   const taken = new Set(defName.values());
   const assignName = (node: object): string => {
     const existing = defName.get(node);
