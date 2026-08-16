@@ -2576,6 +2576,30 @@ function buildRevision3URLEncodedBody(
   return units.join("&");
 }
 
+// formEncodeBytes percent-encodes one piece of an
+// application/x-www-form-urlencoded body for the CONTENT lane — the lane the
+// OAS reaches when an Encoding Object declares none of style, explode or
+// allowReserved, and which it assigns to RFC 1866 Section 8.2.1 rather than to
+// RFC 6570. The twin of openbindings-go's and openapi-client/go's
+// formURLEncodedEscape; the two lanes are SUPPOSED to spell a space
+// differently, so nothing here should be converged onto the style lane.
+//
+// RFC 1866 Section 8.2.1 names the space ("space characters are replaced by
+// `+', and then reserved characters are escaped as per [URL]") and delegates
+// the rest to [URL] = RFC 1738; its following "that is, non-alphanumeric
+// characters are replaced by `%HH'" gloss is stricter than the rule it presents
+// itself as restating, and no accepted OAS edition asks for the stricter form.
+// RFC 1738 Section 2.2 permits "only alphanumerics, the special characters
+// `$-_.+!*'(),`, and reserved characters used for their reserved purposes"
+// unencoded, permits encoding anything not required to be encoded, and requires
+// `~` to be encoded (it is named unsafe). The set below is the WHATWG
+// form-urlencoded serializer set, which lies inside that permission on every
+// accepted edition and which OAS 3.0.4 / 3.1.1 Appendix E.3.2 (E.4.2 in 3.1.2)
+// gives a SHOULD for.
+//
+// Which member of the permitted set to emit is this implementation's
+// convention, not openbindings.openapi@1's, and it is pinned by the shared twin
+// case table (testdata/urlencoded-escaper-cases.json).
 function formEncodeBytes(bytes: Uint8Array): string {
   let result = "";
   for (const byte of bytes) {
