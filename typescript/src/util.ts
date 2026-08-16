@@ -242,7 +242,21 @@ function normalizeExternalRefFetch(
     const response = await real(input, init);
     if (!response.ok) return response;
     const retrieval = response.url || requested;
-    const parsed = parseJSONOrYAML(await response.text());
+    const text = await response.text();
+    let parsed: unknown;
+    try {
+      parsed = parseJSONOrYAML(text);
+    } catch (e: unknown) {
+      // Under pointer-scoped composition the reference's own address is the
+      // only fact a reader has about which part of a multi-document artifact
+      // failed; a bare parser message would name none of it. Parsing is not
+      // scoping: a target that cannot be read fails whatever the pointer
+      // would have selected.
+      throw new Error(
+        `failed to parse $ref ${retrieval}: ${errorMessage(e)}`,
+        { cause: e },
+      );
+    }
     const normalized = normalizer.normalize(
       parsed,
       retrieval,

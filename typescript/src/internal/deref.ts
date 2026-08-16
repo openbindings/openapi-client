@@ -5,6 +5,12 @@
  * `https://...`) $ref pointers. External refs are fetched via the
  * global `fetch` API, so this works in both browsers and Node 18+.
  *
+ * Composition is POINTER-SCOPED. A reference into another resource composes
+ * the value at the pointer it names and that value's transitive closure of
+ * references; the rest of that resource is fetched, parsed and indexed but
+ * never resolved, so a defect the reference does not reach cannot make the
+ * referring document unresolvable.
+ *
  * Circular references are detected and left as shared object
  * references (no infinite recursion).
  */
@@ -147,7 +153,17 @@ async function fetchDocument(
     throw new Error(`failed to fetch $ref ${url}: ${resp.status}`);
   }
   const text = await resp.text();
-  const parsed = parse(text);
+  let parsed: unknown;
+  try {
+    parsed = parse(text);
+  } catch (e: unknown) {
+    // Name the resource. A parser message alone says nothing about which of a
+    // multi-document artifact's parts could not be read.
+    throw new Error(
+      `failed to parse $ref ${url}: ${e instanceof Error ? e.message : String(e)}`,
+      { cause: e },
+    );
+  }
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new Error(`external $ref ${url} did not return an object document`);
   }
@@ -285,11 +301,17 @@ export async function dereference<T = unknown>(
     record.ready = (async () => {
       const fetched = await fetchDocument(key, doFetch, parse, signal);
       const context = registerDocument(fetched.document, fetched.retrievalURI, key);
-      // Publish the parsed/indexed document before walking it. A circular
-      // external edge can now resolve back to this object graph without
-      // awaiting itself; resolvedNodes below terminates the object cycle.
+      // The resource is parsed and indexed, and NOT walked. A reference
+      // composes the value at the pointer it names and that value's own
+      // transitive closure; the rest of the resource is never resolved, so a
+      // defect outside the composed closure cannot make the referring document
+      // unresolvable. The caller resolves the fragment and walks THAT node,
+      // which is what makes resolution lazy from the pointer outward.
+      //
+      // Publishing the context before returning also lets a circular external
+      // edge resolve back into this object graph without awaiting itself;
+      // resolvedNodes terminates the object cycle.
       record.context = context;
-      await walkAsync(context.root, context);
       return context;
     })();
     return record.ready;
@@ -360,7 +382,10 @@ export async function dereference<T = unknown>(
         fragment: ref,
       });
       if (prepared) scope = reindexPreparedResource(scope.root, scope, owner);
-      const target = resolveFragment(scope, ref);
+      let target = resolveFragment(scope, ref);
+      if (target === undefined) {
+        target = await resolveFragmentThroughReferences(scope, ref, document);
+      }
       reportRefTarget(scope, ref, target);
       return target;
     }
@@ -382,9 +407,67 @@ export async function dereference<T = unknown>(
     }
     const prepared = prepareRefTarget?.(resource.root, { resourceURI, fragment });
     if (prepared) resource = reindexPreparedResource(resource.root, resource, owner);
-    const target = resolveFragment(resource, fragment);
+    let target = resolveFragment(resource, fragment);
+    if (target === undefined) {
+      target = await resolveFragmentThroughReferences(resource, fragment, document);
+    }
     reportRefTarget(resource, fragment, target);
     return target;
+  }
+
+  /**
+   * Evaluates a JSON Pointer that addresses a position BELOW a reference.
+   *
+   * RFC 6901 evaluates against the document as written, so a pointer whose
+   * path runs through a `$ref` object denotes nothing there; this runs only
+   * after that plain evaluation has already returned undefined. Following the
+   * intervening reference is resolution, not composition scope: every node the
+   * pointer passes through is itself composed, and the reached value is the
+   * same one a resolver that had already replaced the reference would find.
+   * That is what this dereferencer used to do implicitly, by rewriting a whole
+   * resource before any pointer into it was evaluated.
+   */
+  async function resolveFragmentThroughReferences(
+    scope: ResourceScope,
+    fragment: string,
+    document: DocumentContext,
+  ): Promise<unknown> {
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(fragment.startsWith("#") ? fragment.slice(1) : fragment);
+    } catch {
+      return undefined;
+    }
+    // An anchor names a node directly; there is no path to run through.
+    if (decoded === "" || !decoded.startsWith("/")) return undefined;
+
+    let current: unknown = scope.root;
+    for (const encoded of decoded.slice(1).split("/")) {
+      if (/~(?:[^01]|$)/.test(encoded)) return undefined;
+      const token = encoded.replace(/~1/g, "/").replace(/~0/g, "~");
+
+      for (let hop = 0; ; hop++) {
+        if (current === null || typeof current !== "object" || Array.isArray(current)) break;
+        const object = current as Record<string, unknown>;
+        if (typeof object.$ref !== "string") break;
+        if (Object.hasOwn(object, token)) break;
+        // A reference cycle cannot lead anywhere a pointer can land.
+        if (hop >= 100) return undefined;
+        current = await resolveReference(object.$ref, object, document);
+      }
+
+      if (current === null || typeof current !== "object") return undefined;
+      if (Array.isArray(current)) {
+        if (!/^(?:0|[1-9][0-9]*)$/.test(token)) return undefined;
+        const index = Number(token);
+        if (!Number.isSafeInteger(index) || !Object.hasOwn(current, index)) return undefined;
+        current = current[index];
+      } else {
+        if (!Object.hasOwn(current, token)) return undefined;
+        current = (current as Record<string, unknown>)[token];
+      }
+    }
+    return current;
   }
 
   // A reference names a node only when its fragment is a non-empty JSON

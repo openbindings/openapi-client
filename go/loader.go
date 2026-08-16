@@ -36,11 +36,16 @@ func loadDocument(ctx context.Context, client *http.Client, source Source, allow
 	loader.JoinFunc = artifactJoinFunc(retrievalURIs, &retrievalMu)
 	normalizer := newRawRefSiblingNormalizer(loader.JoinFunc)
 	read := artifactReadFunc(client, source.Content != nil && source.Location == "", retrievalURIs, &retrievalMu)
+	composition := newExternalComposition(
+		func(resource *url.URL) ([]byte, error) { return read(loader, resource) },
+		loader.JoinFunc,
+	)
 	loader.ReadFromURIFunc = func(loader *openapi3.Loader, resource *url.URL) ([]byte, error) {
 		data, err := read(loader, resource)
 		if err != nil {
 			return nil, err
 		}
+		data = composition.prune(resource, data)
 		return normalizer.normalizeResourceAt(data, resource, artifactRetrievalURI(resource, retrievalURIs, &retrievalMu))
 	}
 
@@ -58,6 +63,7 @@ func loadDocument(ctx context.Context, client *http.Client, source Source, allow
 		if normalizeErr != nil {
 			return nil, normalizeErr
 		}
+		composition.setEntry(resource, data)
 		if resource != nil {
 			document, err = loader.LoadFromDataWithPath(data, resource)
 		} else {
@@ -71,6 +77,7 @@ func loadDocument(ctx context.Context, client *http.Client, source Source, allow
 		if parseErr != nil {
 			return nil, parseErr
 		}
+		composition.setEntry(resource, nil)
 		document, err = loader.LoadFromURI(resource)
 	}
 	if err != nil {
