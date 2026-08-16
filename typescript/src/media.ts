@@ -655,7 +655,7 @@ function validateRevision3URLEncoded(
   if (schema === null) return;
   const encoding = asObject(media?.encoding) ?? {};
   for (const [name, rawProperty] of Object.entries(resolvedMultipartPropertySchemas(schema, new Set()))) {
-    const { schema: property } = effectiveRevision3PartSchema(rawProperty);
+    const { schema: property } = effectiveRevision3PartSchema(rawProperty, openapiVersion.startsWith("3.0"));
     if (property === false || property === null) continue; // an unsatisfiable property has no admissible runtime value
     const enc = asObject(encoding[name]);
     if (Object.hasOwn(encoding, name) && enc === null) {
@@ -791,7 +791,7 @@ function validateRevision3Multipart(
   }
   if (schema === null) return;
   for (const [name, rawProperty] of Object.entries(resolvedMultipartPropertySchemas(schema, new Set()))) {
-    const { schema: property } = effectiveRevision3PartSchema(rawProperty);
+    const { schema: property } = effectiveRevision3PartSchema(rawProperty, openapiVersion.startsWith("3.0"));
     if (property === false || property === null) continue; // an unsatisfiable property has no admissible runtime value
     validateContentTransferEncoding(name, property);
     const enc = asObject(encoding[name]);
@@ -834,7 +834,7 @@ function validateContentBasedMedia(
   const declared = typeof enc?.contentType === "string"
     ? parseSingleMultipartContentType(enc.contentType, name)
     : null;
-  if (declared === null && !hasDeclaredSchemaType(schema) && partSchemaValueDispatches(schema)) {
+  if (declared === null && !hasDeclaredSchemaType(schema) && partSchemaValueDispatches(schema, is30)) {
     // §9.2: an unconstrained property schema's OAS per-type part default is
     // keyed by the supplied value's JSON application type at invocation.
     return;
@@ -843,8 +843,16 @@ function validateContentBasedMedia(
   requireSupportedCharset(selected, `${subject} property ${JSON.stringify(name)}`);
   if (isJSONMediaType(selected.base)) return;
   if (selected.base === "text/plain") {
-    const types = declaredSchemaTypes(schema);
-    if (types.length === 0 || types.some((type) => !["string", "number", "integer", "boolean", "null"].includes(type))) {
+    // The Go twin's rule: the resolved declaration must BE one of the
+    // primitive types text/plain can carry. A union that survived the
+    // nullable collapse declares value-dependent alternatives and has no
+    // single faithful carriage here either.
+    if (
+      !schemaTypeIs(schema, "string")
+      && !schemaTypeIs(schema, "number")
+      && !schemaTypeIs(schema, "integer")
+      && !schemaTypeIs(schema, "boolean")
+    ) {
       throw new Error(`${subject} property ${JSON.stringify(name)} cannot serialize its schema as text/plain`);
     }
     return;
@@ -963,10 +971,12 @@ function booleanSchemaLiteral(schema: Record<string, unknown> | boolean | null):
  * {type: "null"}-only branches collapses to that non-null branch — the
  * artifact declares exactly one carriage, so this is schema interpretation,
  * not branch selection — and `nullable` lets a JSON null value elide the
- * optional part.
+ * optional part. The union-type spelling of the same declaration takes the
+ * same collapse; see collapsedNullableTypeMember.
  */
 function effectiveRevision3PartSchema(
   schema: Record<string, unknown> | boolean | null,
+  is30: boolean,
 ): { schema: Record<string, unknown> | false | null; nullable: boolean } {
   const literal = booleanSchemaLiteral(schema);
   if (literal === true) return { schema: {}, nullable: false };
@@ -974,7 +984,59 @@ function effectiveRevision3PartSchema(
   if (schema === null || typeof schema === "boolean") return { schema: null, nullable: false };
   const collapsed = collapsedNullableChoiceBranch(schema);
   if (collapsed !== null) return { schema: collapsed, nullable: true };
+  const member = collapsedNullableTypeMember(schema, is30);
+  if (member !== null) {
+    // The sibling keywords are the same schema's own assertions and keep
+    // applying: only the union spelling of the type is resolved.
+    return { schema: { ...schema, type: member }, nullable: true };
+  }
   return { schema, nullable: false };
+}
+
+/**
+ * The union-type spelling of the same nullable declaration
+ * collapsedNullableChoiceBranch handles. JSON Schema 2020-12 §6.1.1 defines
+ * an array-valued `type` as a union — "If the value of `type` is an array,
+ * then an instance validates successfully if its type matches any of the
+ * types indicated by the strings in the array" — so
+ * {"type": ["string", "null"]} asserts exactly what
+ * {"anyOf": [{"type": "string"}, {"type": "null"}]} asserts, and takes the
+ * same collapse to its single non-null member. Two or more non-null members
+ * declare value-dependent alternatives, leave no single faithful part
+ * carriage, and do not collapse.
+ *
+ * The union spelling belongs to the OAS 3.1 line, which adopts JSON Schema
+ * 2020-12 wholesale. Every 3.0 edition states of the Schema Object: "type -
+ * Value MUST be a string. Multiple types via an array are not supported"
+ * (3.0.0 §Schema Object through 3.0.4, verbatim in all five). An
+ * array-valued `type` under that line is therefore not a union declaration
+ * this specification can read, and gains no part carriage from one.
+ *
+ * The collapse reads the resolved top level only, exactly as the choice
+ * collapse does; a union reached through allOf is not rewritten.
+ */
+function collapsedNullableTypeMember(schema: Record<string, unknown>, is30: boolean): string | null {
+  if (is30 || !Array.isArray(schema.type)) return null;
+  const types = schema.type;
+  if (types.length < 2) return null; // a single-member `type` already denotes that member
+  let member: string | null = null;
+  for (const candidate of types) {
+    if (typeof candidate !== "string") return null;
+    if (candidate === "null") continue;
+    if (member !== null) return null;
+    member = candidate;
+  }
+  return member; // null when "null" alone: no carriable value is declared
+}
+
+/**
+ * A resolved top-level array-valued `type` that collapsedNullableTypeMember
+ * declined, so a caller can say which of the two reasons applies instead of
+ * reporting the schema as having no declared default.
+ */
+function nonCollapsingUnionType(schema: Record<string, unknown>): string[] | null {
+  if (!Array.isArray(schema.type) || schema.type.length < 2) return null;
+  return schema.type.map(entry => String(entry));
 }
 
 /**
@@ -1032,7 +1094,7 @@ function nullOnlyBranch(schema: Record<string, unknown>): boolean {
  * application type — the value's TYPE is structure, never payload sniffing.
  * An absent schema is not a declaration and never dispatches.
  */
-function partSchemaValueDispatches(schema: Record<string, unknown> | boolean | null): boolean {
+function partSchemaValueDispatches(schema: Record<string, unknown> | boolean | null, is30: boolean): boolean {
   const literal = booleanSchemaLiteral(schema);
   if (literal !== null) return literal;
   if (schema === null || typeof schema === "boolean") return false;
@@ -1047,15 +1109,27 @@ function partSchemaValueDispatches(schema: Record<string, unknown> | boolean | n
     || schema.else !== undefined
     || (dependentSchemas !== null && Object.keys(dependentSchemas).length > 0)
     || schema.format === "binary"
-    || resolvedSchemaStringKeyword(schema, "contentEncoding") !== ""
-    || resolvedSchemaStringKeyword(schema, "contentMediaType") !== ""
+  ) {
+    return false;
+  }
+  // `contentEncoding` and `contentMediaType` belong to the 3.1 line's
+  // dialect. There they are assertions this engine refuses on a non-string
+  // declaration, so they stop the value-typed dispatch. Under the 3.0 line
+  // the Schema Object is Wright-Draft-00-based and neither keyword is in
+  // its vocabulary, so an artifact carrying one has written an annotation
+  // the dialect ignores; a schema that is otherwise typeless still
+  // dispatches by the supplied value's JSON type, as the Go twin does.
+  if (
+    !is30
+    && (resolvedSchemaStringKeyword(schema, "contentEncoding") !== ""
+      || resolvedSchemaStringKeyword(schema, "contentMediaType") !== "")
   ) {
     return false;
   }
   if (Array.isArray(schema.allOf)) {
     return schema.allOf.every((member) => {
       const nested = asObject(member);
-      return nested === null || partSchemaValueDispatches(nested);
+      return nested === null || partSchemaValueDispatches(nested, is30);
     });
   }
   return true;
@@ -1757,7 +1831,7 @@ export function buildMultipartBody(
       if (propSchema === null && !dynamicProperties && staticPartBooleanLiteral(schema, name) === true) {
         propSchema = {}; // true is the same unconstrained declaration as {}
       }
-      const effective = effectiveRevision3PartSchema(propSchema);
+      const effective = effectiveRevision3PartSchema(propSchema, is30);
       if (effective.nullable && value === null) {
         continue; // §9.2: a JSON null value elides the nullable optional part
       }
@@ -1861,10 +1935,20 @@ function resolvedMultipartProperty(
   }
 }
 
+/**
+ * Reports a resolved declaration whose type IS `want` — the single type it
+ * denotes, not one alternative among several. An array-valued `type` is a
+ * union (JSON Schema 2020-12 §6.1.1), so it denotes `want` only when `want`
+ * is its one member; a genuine union is resolved by
+ * collapsedNullableTypeMember before carriage, or refuses. This is the Go
+ * twin's `Types.Is` rule, and reading a multi-member union as every one of
+ * its members would let the two engines pick different carriage lanes for
+ * one declaration.
+ */
 function schemaTypeIs(schema: Record<string, unknown>, want: string): boolean {
   const ty = schema.type;
   if (typeof ty === "string") return ty === want;
-  if (Array.isArray(ty)) return ty.includes(want);
+  if (Array.isArray(ty)) return ty.length === 1 && ty[0] === want;
   return Array.isArray(schema.allOf) && schema.allOf.some(member => {
     const nested = asObject(member);
     return nested !== null && schemaTypeIs(nested, want);
@@ -2025,7 +2109,7 @@ function writeRevision3MultipartPart(
     ? parseSingleMultipartContentType(enc.contentType, name)
     : null;
   if (declaredEncodingType === null && !hasDeclaredSchemaType(schema) && !binarySignaled(schema, is30)) {
-    if (!partSchemaValueDispatches(schema)) {
+    if (!partSchemaValueDispatches(schema, is30)) {
       throw new Error(Array.isArray(schema.anyOf) || Array.isArray(schema.oneOf)
         ? `multipart property ${JSON.stringify(name)} declares a choice applicator that does not collapse to one non-null branch; no single part carriage is defined`
         : `multipart property ${JSON.stringify(name)} has no declaration-defined mapping from its default octet-stream part to a JSON caller value`);
@@ -2123,6 +2207,14 @@ function defaultMultipartContentType(schema: Record<string, unknown>, is30: bool
   if (Array.isArray(schema.anyOf) || Array.isArray(schema.oneOf)) {
     throw new Error(
       "multipart property declares a choice applicator that does not collapse to one non-null branch; no single part carriage is defined",
+    );
+  }
+  const union = nonCollapsingUnionType(schema);
+  if (union !== null) {
+    throw new Error(
+      is30
+        ? `multipart property declares type [${union.join(" ")}], but an OAS 3.0 \`type\` MUST be a string and multiple types via an array are not supported; no part carriage is defined`
+        : `multipart property declares union type [${union.join(" ")}], which does not collapse to one non-null type; no single part carriage is defined`,
     );
   }
   throw new Error("multipart property has no declaration-defined default Content-Type");
@@ -2406,7 +2498,7 @@ function buildRevision3URLEncodedBody(
     if (property === null && !dynamicProperties && staticPartBooleanLiteral(schema, name) === true) {
       property = {}; // true is the same unconstrained declaration as {}
     }
-    const effective = effectiveRevision3PartSchema(property);
+    const effective = effectiveRevision3PartSchema(property, openapiVersion.startsWith("3.0"));
     if (effective.nullable && fields[name] === null) {
       continue; // §9.2: a JSON null value elides the nullable optional field
     }
@@ -2440,7 +2532,7 @@ function buildRevision3URLEncodedBody(
     const declaredCT = typeof enc?.contentType === "string"
       ? parseSingleMultipartContentType(enc.contentType, name)
       : null;
-    if (declaredCT === null && !hasDeclaredSchemaType(property) && partSchemaValueDispatches(property)) {
+    if (declaredCT === null && !hasDeclaredSchemaType(property) && partSchemaValueDispatches(property, openapiVersion.startsWith("3.0"))) {
       // §9.2: an unconstrained property schema's OAS per-type part default
       // is keyed by the supplied value's JSON application type — objects and
       // arrays ride as JSON text, primitives as plain text. JSON null names
