@@ -169,6 +169,20 @@ describe("union-type carriage — the twin case table", () => {
   });
 });
 
+// The frozen twin table. The identical expectations are asserted by both Go
+// engines in union_type_carriage_expectations_test.go, whose header carries
+// the per-row basis.
+//
+// FIVE cells moved from refused to admitted on 2026-08-17 — 3.1.2 x
+// {integer-null, object-null} x both media, plus
+// 3.1.2|urlencoded|array-null|contentEncoding. A `contentEncoding` sibling on
+// a union that collapses to a NON-string member is inert: [JSON Schema
+// 2020-12] Section 8.1 makes the Content vocabulary annotations that "do not
+// function as validation assertions" and Section 8.3 conditions the keyword on
+// a string instance, while 3.1.1 and 3.1.2 hold `n/a` in the contentEncoding
+// column of the `number, integer, or boolean`, `object` and `array` rows —
+// "the presence or value of contentEncoding is irrelevant", in the table's own
+// words. Each of the five now reads exactly as its |plain twin.
 const EXPECTED: Record<string, string> = {
   "3.0.4|application/x-www-form-urlencoded|absent-type|contentEncoding": "admitted;value=p=x;null=error",
   "3.0.4|application/x-www-form-urlencoded|absent-type|plain": "admitted;value=p=x;null=error",
@@ -228,13 +242,13 @@ const EXPECTED: Record<string, string> = {
   "3.0.4|multipart/form-data|string|plain": "admitted;value=text/plain:x;null=text/plain:",
   "3.1.2|application/x-www-form-urlencoded|absent-type|contentEncoding": "refused",
   "3.1.2|application/x-www-form-urlencoded|absent-type|plain": "refused",
-  "3.1.2|application/x-www-form-urlencoded|array-null|contentEncoding": "refused",
+  "3.1.2|application/x-www-form-urlencoded|array-null|contentEncoding": "admitted;value=p=%5B%22a%22%5D;null=elided",
   "3.1.2|application/x-www-form-urlencoded|array-null|plain": "admitted;value=p=%5B%22a%22%5D;null=elided",
   "3.1.2|application/x-www-form-urlencoded|boolean-true|contentEncoding": "refused",
   "3.1.2|application/x-www-form-urlencoded|boolean-true|plain": "refused",
   "3.1.2|application/x-www-form-urlencoded|empty-array|contentEncoding": "refused",
   "3.1.2|application/x-www-form-urlencoded|empty-array|plain": "refused",
-  "3.1.2|application/x-www-form-urlencoded|integer-null|contentEncoding": "refused",
+  "3.1.2|application/x-www-form-urlencoded|integer-null|contentEncoding": "admitted;value=p=7;null=elided",
   "3.1.2|application/x-www-form-urlencoded|integer-null|plain": "admitted;value=p=7;null=elided",
   "3.1.2|application/x-www-form-urlencoded|memberless|contentEncoding": "refused",
   "3.1.2|application/x-www-form-urlencoded|memberless|plain": "refused",
@@ -242,7 +256,7 @@ const EXPECTED: Record<string, string> = {
   "3.1.2|application/x-www-form-urlencoded|null-only|plain": "refused",
   "3.1.2|application/x-www-form-urlencoded|null-string|contentEncoding": "admitted;value=p=x;null=elided",
   "3.1.2|application/x-www-form-urlencoded|null-string|plain": "admitted;value=p=x;null=elided",
-  "3.1.2|application/x-www-form-urlencoded|object-null|contentEncoding": "refused",
+  "3.1.2|application/x-www-form-urlencoded|object-null|contentEncoding": "admitted;value=p=%7B%22k%22%3A%22v%22%7D;null=elided",
   "3.1.2|application/x-www-form-urlencoded|object-null|plain": "admitted;value=p=%7B%22k%22%3A%22v%22%7D;null=elided",
   "3.1.2|application/x-www-form-urlencoded|string-array-1|contentEncoding": "admitted;value=p=x;null=error",
   "3.1.2|application/x-www-form-urlencoded|string-array-1|plain": "admitted;value=p=x;null=p=",
@@ -262,7 +276,7 @@ const EXPECTED: Record<string, string> = {
   "3.1.2|multipart/form-data|boolean-true|plain": "refused",
   "3.1.2|multipart/form-data|empty-array|contentEncoding": "refused",
   "3.1.2|multipart/form-data|empty-array|plain": "refused",
-  "3.1.2|multipart/form-data|integer-null|contentEncoding": "refused",
+  "3.1.2|multipart/form-data|integer-null|contentEncoding": "admitted;value=text/plain:7;null=elided",
   "3.1.2|multipart/form-data|integer-null|plain": "admitted;value=text/plain:7;null=elided",
   "3.1.2|multipart/form-data|memberless|contentEncoding": "refused",
   "3.1.2|multipart/form-data|memberless|plain": "refused",
@@ -270,7 +284,7 @@ const EXPECTED: Record<string, string> = {
   "3.1.2|multipart/form-data|null-only|plain": "refused",
   "3.1.2|multipart/form-data|null-string|contentEncoding": "admitted;value=application/octet-stream:x;null=elided",
   "3.1.2|multipart/form-data|null-string|plain": "admitted;value=text/plain:x;null=elided",
-  "3.1.2|multipart/form-data|object-null|contentEncoding": "refused",
+  "3.1.2|multipart/form-data|object-null|contentEncoding": "admitted;value=application/json:{\"k\":\"v\"};null=elided",
   "3.1.2|multipart/form-data|object-null|plain": "admitted;value=application/json:{\"k\":\"v\"};null=elided",
   "3.1.2|multipart/form-data|string-array-1|contentEncoding": "admitted;value=application/octet-stream:x;null=error",
   "3.1.2|multipart/form-data|string-array-1|plain": "admitted;value=text/plain:x;null=text/plain:",

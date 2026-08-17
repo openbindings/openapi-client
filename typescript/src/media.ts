@@ -1197,12 +1197,18 @@ function partSchemaValueDispatches(schema: Record<string, unknown> | boolean | n
     return false;
   }
   // `contentEncoding` and `contentMediaType` belong to the 3.1 line's
-  // dialect. There they are assertions this engine refuses on a non-string
-  // declaration, so they stop the value-typed dispatch. Under the 3.0 line
-  // the Schema Object is Wright-Draft-00-based and neither keyword is in
-  // its vocabulary, so an artifact carrying one has written an annotation
-  // the dialect ignores; a schema that is otherwise typeless still
-  // dispatches by the supplied value's JSON type, as the Go twin does.
+  // dialect. A schema carrying one and declaring no `type` is the
+  // type-absent cell, which every accepted 3.1 edition gives
+  // application/octet-stream and for which this revision defines no
+  // JSON-to-octet part boundary — so it does not value-dispatch, it refuses.
+  // (On a schema that DECLARES a non-string type the keywords are inert
+  // annotations, [JSON Schema 2020-12] Section 8.1/8.3/8.4, and the part
+  // keeps its own per-type row; that case never reaches here because it has a
+  // declared type.) Under the 3.0 line the Schema Object is
+  // Wright-Draft-00-based and neither keyword is in its vocabulary, so an
+  // artifact carrying one has written an annotation the dialect ignores; a
+  // schema that is otherwise typeless still dispatches by the supplied
+  // value's JSON type, as the Go twin does.
   if (
     !is30
     && (resolvedSchemaStringKeyword(schema, "contentEncoding") !== ""
@@ -1758,6 +1764,13 @@ function multipartTransferEncodings(
     const partSchema = schemaTypeIs(property, "array")
       ? resolvedMultipartItems(property)
       : property;
+    // [JSON Schema 2020-12] Section 8.3 derives `contentEncoding` from MIME's
+    // Content-Transfer-Encoding header and conditions it on the instance being
+    // a string. On a declared non-string type the keyword is inert, so the
+    // header it maps to is not emitted either; emitting it would give an
+    // annotation that carries no meaning force on the wire. The Go twins gate
+    // the same header the same way.
+    if (partSchema === null || !schemaTypeIs(partSchema, "string")) continue;
     const encoding = resolvedSchemaStringKeyword(partSchema, "contentEncoding");
     if (encoding !== "") result[name] = encoding;
   }
@@ -2299,9 +2312,33 @@ function writeRevision3MultipartPart(
   fd.append(name, new Blob([data], { type: contentType }), name);
 }
 
+/**
+ * The accepted editions' own default part-Content-Type rows. Every row is
+ * keyed on the DECLARED type:
+ *
+ * - 3.0.0-3.0.3 and 3.0.4 key application/octet-stream on "a `type: string`
+ *   with `format: binary` or `format: base64`"; `contentEncoding` is not in the
+ *   3.0 Schema Object's dialect at all.
+ * - 3.1.0 Section 4.8.14.5 keys it on "a `type: string` with a
+ *   `contentEncoding`", and gives primitives text/plain and complex values
+ *   application/json without reference to the keyword.
+ * - 3.1.1 and 3.1.2 Section 4.8.15.1.1 tabulate `string` x contentEncoding
+ *   present -> application/octet-stream, and hold `n/a` in the contentEncoding
+ *   column of the `number, integer, or boolean`, `object` and `array` rows —
+ *   which the table's own note defines as "the presence or value of
+ *   contentEncoding is irrelevant".
+ *
+ * The `schemaTypeIs(schema, "string")` guard on the encoded row is that
+ * condition. Without it a declared non-string part carrying `contentEncoding`
+ * took application/octet-stream, which no accepted edition assigns it.
+ */
 function defaultMultipartContentType(schema: Record<string, unknown>, is30: boolean): string {
   if (is30 && binarySignaled(schema, true)) return "application/octet-stream";
-  if (!is30 && resolvedSchemaStringKeyword(schema, "contentEncoding") !== "") {
+  if (
+    !is30
+    && schemaTypeIs(schema, "string")
+    && resolvedSchemaStringKeyword(schema, "contentEncoding") !== ""
+  ) {
     return "application/octet-stream";
   }
   if (schemaTypeIs(schema, "object") || schemaTypeIs(schema, "array")) return "application/json";
