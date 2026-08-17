@@ -11,7 +11,6 @@ import {
   serializeMultipartValue,
   serializeQueryValue,
 } from "./params.js";
-import { jsonImage } from "./json-image.js";
 import { bodySchemaFlattens } from "./util.js";
 import {
   hasDynamicObjectCarriage,
@@ -1588,13 +1587,13 @@ export function buildRequestBody(
           // body rides the wire.
           return { body: undefined, contentType: "" };
         }
-        return { body: jsonImage(routed.bodyValue ?? null), contentType: plan.mediaType };
+        return { body: JSON.stringify(routed.bodyValue ?? null), contentType: plan.mediaType };
       }
       if (Object.keys(routed.bodyFields).length === 0) {
         if (plan.required || routed.bodySet) return { body: "{}", contentType: plan.mediaType };
         return { body: undefined, contentType: "" };
       }
-      return { body: jsonImage(routed.bodyFields), contentType: plan.mediaType };
+      return { body: JSON.stringify(routed.bodyFields), contentType: plan.mediaType };
     }
     case FAMILY_MULTIPART: {
       const fields = objectBodyFields(plan, routed);
@@ -2161,14 +2160,14 @@ function writeMultipartPart(
     const ct = normalizeMediaType(encContentType);
     let body: string;
     if (isJSONMediaType(ct)) {
-      body = jsonImage(value ?? null);
+      body = JSON.stringify(value ?? null);
     } else if (typeof value === "string") {
       body = value;
     } else {
       try {
         body = primitiveString(value);
       } catch {
-        body = jsonImage(value ?? null);
+        body = JSON.stringify(value ?? null);
       }
     }
     fd.append(name, new Blob([body], { type: encContentType }), name);
@@ -2178,7 +2177,7 @@ function writeMultipartPart(
   // Per-type defaults: objects (and undeclared complex values) ride as
   // application/json parts; primitives as plain form fields.
   if (isComplexPartValue(value, schema)) {
-    fd.append(name, new Blob([jsonImage(value ?? null)], { type: "application/json" }), name);
+    fd.append(name, new Blob([JSON.stringify(value ?? null)], { type: "application/json" }), name);
     return;
   }
   fd.append(name, primitiveString(value));
@@ -2234,7 +2233,7 @@ function writeRevision3MultipartPart(
       );
     }
     if (asObject(value) !== null || asArray(value) !== null) {
-      fd.append(name, new Blob([jsonImage(value)], { type: "application/json" }), name);
+      fd.append(name, new Blob([JSON.stringify(value)], { type: "application/json" }), name);
     } else {
       fd.append(name, primitiveString(value));
     }
@@ -2264,7 +2263,7 @@ function writeRevision3MultipartPart(
   }
 
   if (isJSONMediaType(selected.base)) {
-    fd.append(name, new Blob([jsonImage(value ?? null)], { type: contentType }), name);
+    fd.append(name, new Blob([JSON.stringify(value ?? null)], { type: contentType }), name);
     return;
   }
 
@@ -2655,7 +2654,7 @@ function buildRevision3URLEncodedBody(
         );
       }
       const dispatched = asObject(value) !== null || asArray(value) !== null
-        ? jsonImage(value)
+        ? JSON.stringify(value)
         : primitiveString(value);
       units.push(`${formEncodeBytes(new TextEncoder().encode(name))}=${formEncodeBytes(new TextEncoder().encode(dispatched))}`);
       continue;
@@ -2673,7 +2672,7 @@ function buildRevision3URLEncodedBody(
       }
       text = fields[name];
     } else if (isJSONMediaType(selected.base)) {
-      text = jsonImage(fields[name] ?? null);
+      text = JSON.stringify(fields[name] ?? null);
     } else if (selected.base === "text/plain") {
       text = primitiveString(fields[name]);
     } else {

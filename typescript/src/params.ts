@@ -1,5 +1,4 @@
 import type { OpenAPIParameter, OpenAPIPathItem, OpenAPIOperation } from "./types.js";
-import { jsonImage } from "./json-image.js";
 import { mergeParameters } from "./util.js";
 import { isJSONMediaType, normalizeMediaType, parseMediaType, type BodyPlan } from "./media.js";
 import { hasMediaFidelity, hasRoutedInputs } from "./constants.js";
@@ -398,7 +397,7 @@ function serializeParamContentValue(
   const mt = parsed?.base ?? normalizeMediaType(mediaKey);
   let text: string;
   if (isJSONMediaType(mt)) {
-    text = jsonImage(value);
+    text = JSON.stringify(value);
   } else if (mt === "text/plain") {
     if (typeof value !== "string") {
       throw new Error(
@@ -728,8 +727,6 @@ export function primitiveString(v: unknown): string {
   if (v === null || v === undefined) return "";
   if (typeof v === "string") return v;
   if (typeof v === "boolean") return v ? "true" : "false";
-  // Not jsonImage's class: a JSON number's image contains no character any
-  // encoder may escape, so the two languages cannot disagree here.
   if (typeof v === "number") return JSON.stringify(v);
   throw new Error(`value of type ${typeof v} is not a primitive`);
 }
