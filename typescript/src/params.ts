@@ -1,4 +1,5 @@
 import type { OpenAPIParameter, OpenAPIPathItem, OpenAPIOperation } from "./types.js";
+import { jsonImage } from "./json-image.js";
 import { mergeParameters } from "./util.js";
 import { isJSONMediaType, normalizeMediaType, parseMediaType, type BodyPlan } from "./media.js";
 import { hasMediaFidelity, hasRoutedInputs } from "./constants.js";
@@ -397,7 +398,7 @@ function serializeParamContentValue(
   const mt = parsed?.base ?? normalizeMediaType(mediaKey);
   let text: string;
   if (isJSONMediaType(mt)) {
-    text = JSON.stringify(value);
+    text = jsonImage(value);
   } else if (mt === "text/plain") {
     if (typeof value !== "string") {
       throw new Error(

@@ -9,6 +9,7 @@ import {
   routeParameter,
   type RoutedInput,
 } from "./params.js";
+import { jsonImage } from "./json-image.js";
 import { codePointCompare } from "./util.js";
 
 export interface AbstractParameterRoute {
@@ -129,7 +130,7 @@ export function planAbstractInputRoutes(
       const body: Record<string, unknown> = {};
       if (Object.keys(bodyFields).length > 0) body.properties = bodyFields;
       if (wholeBodyField) body.whole = wholeBodyField;
-      return `[{"$openbindings":${JSON.stringify(profile.inputRouteMarker)},"value":$,"parameters":${JSON.stringify(parameters)},"body":${JSON.stringify(body)}}]`;
+      return `[{"$openbindings":${jsonImage(profile.inputRouteMarker)},"value":$,"parameters":${jsonImage(parameters)},"body":${jsonImage(body)}}]`;
     },
   };
 }
