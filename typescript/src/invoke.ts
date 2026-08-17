@@ -89,14 +89,8 @@ import type { OpenAPIExecutionProfile } from "./profile.js";
  * the challenge carries an empty target; a resolver may satisfy it
  * interactively or from caller-owned policy, but must not invent a reusable
  * target.
- *
- * Exported for the shared server target-base case table, whose `outcomeClass`
- * cells read the class off THIS mapping rather than off the signal type, so
- * they pin what a caller observes. It reaches no package entry point
- * (`index.ts`, `engine.ts` and `analysis.ts` all import named symbols from this
- * module), so this is package-internal surface.
  */
-export function configOrSourceError(e: unknown): InvocationError {
+function configOrSourceError(e: unknown): InvocationError {
   if (e instanceof ConfigRequired) {
     return contextRequiredError(e.message, {
       target: "",

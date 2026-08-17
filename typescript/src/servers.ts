@@ -279,24 +279,6 @@ function substituteServerVariables(
  * non-empty-host requirement for the http and https schemes, rather than by the
  * WHATWG URL parser. See that file for why the host parser was the wrong
  * authority.
- *
- * THE OUTCOME CLASS IS A REFUSAL, NOT A RETRYABLE CHALLENGE. §9.3 partitions the
- * two ways the `server` point can go unanswered inside one sentence: "A missing
- * selection from a multi-entry list is the retryable context challenge above,
- * never a terminal refusal; an out-of-enum variable value, or a server URL that
- * cannot resolve to an absolute URL — the implied `/` with no base URI, for
- * instance — is a pre-dispatch refusal." OAPI-P-05 restates it ("unresolvable
- * targets refuse before dispatch"). This function is the second half of that
- * sentence, so it MUST NOT throw a ConfigRequired: that class is the first
- * half's signal, which the invoke path turns into a retryable CONTEXT_REQUIRED
- * challenge.
- *
- * Consumer configuration is not thereby lost — resolveServer consults
- * configuration.server before anything reaches here — so the refusal is what a
- * declaration that names no address gets when nothing was configured. The
- * ordinary error class also closes a loop the retryable one made possible: a
- * supplied configuration.server that still does not resolve used to challenge
- * for the value the consumer had just supplied.
  */
 export function absolutizeServerURL(serverURL: string, sourceLocation: string | undefined): string {
   if (denotesTargetBase(serverURL)) {
@@ -312,8 +294,10 @@ export function absolutizeServerURL(serverURL: string, sourceLocation: string | 
       // fall through to the refusal
     }
   }
-  throw new Error(
-    `server URL "${serverURL}" cannot resolve to an absolute URL: supply a base URL at the server configuration point (openbindings.openapi@1 §9.3, OAPI-P-05)`,
+  throw new ConfigRequired(
+    "server",
+    "/url",
+    `server URL "${serverURL}" cannot resolve to an absolute URL: supply a base URL at the server configuration point`,
   );
 }
 
