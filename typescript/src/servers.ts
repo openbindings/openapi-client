@@ -1,4 +1,5 @@
 import { contextConfiguration, contextMetadata } from "./internal/index.js";
+import { denotesTargetBase, hasURIScheme } from "./target-base.js";
 import type { OpenAPIDocument, OpenAPIOperation, OpenAPIPathItem } from "./types.js";
 
 // This file implements §9.3 of openbindings.openapi@1 (OAPI-P-05): the
@@ -151,7 +152,7 @@ function resolveServerConfig(raw: unknown, servers: [ServerEntry, ...ServerEntry
   if (typeof raw === "string") {
     const srv = serverByURL(servers, raw);
     if (srv) return substituteServerVariables(srv, undefined);
-    if (isAbsoluteURL(raw)) return raw;
+    if (denotesTargetBase(raw)) return raw;
     throw new Error(
       `configuration.server "${raw}" matches no declared server entry and is not an absolute base URL`,
     );
@@ -160,7 +161,7 @@ function resolveServerConfig(raw: unknown, servers: [ServerEntry, ...ServerEntry
     const v = raw as Record<string, unknown>;
     const base = v["baseUrl"];
     if (typeof base === "string" && base !== "") {
-      if (!isAbsoluteURL(base)) {
+      if (!denotesTargetBase(base)) {
         throw new Error(`configuration.server.baseUrl "${base}" is not an absolute URL`);
       }
       return base;
@@ -265,30 +266,28 @@ function substituteServerVariables(
   return u;
 }
 
-/** True when the string parses as an absolute URI (it carries a scheme). */
-function isAbsoluteURL(s: string): boolean {
-  if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(s)) return false;
-  try {
-    new URL(s);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 /**
- * Resolves a (possibly relative) server URL to an absolute URL: absolute
- * URLs pass through; relative ones resolve against the artifact's base URI
- * — the source's location (§6) — per RFC 3986. A server URL that cannot
- * resolve to an absolute URL is the §9.3 pre-dispatch refusal. The
- * returned URL carries no trailing slash, so joining with the operation's
- * path template is concatenation.
+ * Resolves a (possibly relative) server URL to an absolute target base: a URL
+ * that already denotes a target address passes through; a relative reference
+ * resolves against the artifact's base URI — the source's location (§6) — per
+ * RFC 3986. A server URL that cannot resolve to an absolute URL is the §9.3
+ * pre-dispatch refusal. The returned URL carries no trailing slash, so joining
+ * with the operation's path template is concatenation.
+ *
+ * Whether a string denotes a target address is decided by denotesTargetBase
+ * (target-base.ts), which reads RFC 3986's URI production and RFC 9110's
+ * non-empty-host requirement for the http and https schemes, rather than by the
+ * WHATWG URL parser. See that file for why the host parser was the wrong
+ * authority.
  */
 export function absolutizeServerURL(serverURL: string, sourceLocation: string | undefined): string {
-  if (isAbsoluteURL(serverURL)) {
+  if (denotesTargetBase(serverURL)) {
     return serverURL.replace(/\/+$/, "");
   }
-  if (sourceLocation && isAbsoluteURL(sourceLocation)) {
+  // Only a relative reference can be completed by a base URI. A string carrying
+  // a scheme has already named an address, so failing the predicate means that
+  // address does not exist and no base can supply it.
+  if (!hasURIScheme(serverURL) && sourceLocation && denotesTargetBase(sourceLocation)) {
     try {
       return new URL(serverURL, sourceLocation).toString().replace(/\/+$/, "");
     } catch {
@@ -298,7 +297,7 @@ export function absolutizeServerURL(serverURL: string, sourceLocation: string | 
   throw new ConfigRequired(
     "server",
     "/url",
-    `server URL "${serverURL}" cannot resolve to an absolute URL: the source has no absolute-URI location to serve as the artifact's base URI; supply a base URL at the server configuration point`,
+    `server URL "${serverURL}" cannot resolve to an absolute URL: supply a base URL at the server configuration point`,
   );
 }
 
