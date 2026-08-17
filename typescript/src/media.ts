@@ -882,8 +882,10 @@ function validateContentBasedMedia(
     ? parseSingleMultipartContentType(enc.contentType, name)
     : null;
   if (declared === null && !hasDeclaredSchemaType(schema) && partSchemaValueDispatches(schema, is30)) {
-    // §9.2: an unconstrained property schema's OAS per-type part default is
-    // keyed by the supplied value's JSON application type at invocation.
+    refuseTypelessPartOn31(subject, name, is30, schema);
+    // §9.2, the 3.0-line convention: the property schema's per-type part
+    // default is keyed by the supplied value's JSON application type at
+    // invocation.
     return;
   }
   const selected = declared ?? parseMediaType(defaultMultipartContentType(schema, is30), true);
@@ -1135,11 +1137,46 @@ function nullOnlyBranch(schema: Record<string, unknown>): boolean {
 }
 
 /**
+ * §9.2, per edition. Every accepted 3.1 edition states a default part
+ * `Content-Type` for a schema declaring no `type`, and all three state
+ * `application/octet-stream`: 3.1.1 and 3.1.2 tabulate it as the Encoding
+ * Object default table's `type`-absent row, and 3.1.0 reaches it through the
+ * total catch-all closing its prose enumeration ("for all other cases the
+ * default is application/octet-stream"). This revision defines no
+ * JSON-to-octet part boundary, so such a part refuses there rather than
+ * taking the 3.0-line convention. On the 3.0 line every stated default row is
+ * keyed on a declared `type` and none reaches a declaration carrying none,
+ * which is the residue the convention answers.
+ */
+function refuseTypelessPartOn31(
+  subject: string,
+  name: string,
+  is30: boolean,
+  schema: Record<string, unknown> | boolean | null,
+): void {
+  if (is30) return;
+  if (schema !== null && typeof schema === "object" && schema.type !== undefined) {
+    // `type` is present but names no type at all. No accepted 3.1 default
+    // row reaches that — 3.1.1 and 3.1.2 key their first row on `type` being
+    // ABSENT, and 3.1.0's catch-all keys on the property type it does not
+    // have — and JSON Schema 2020-12's own meta-schema requires an
+    // array-valued `type` to carry at least one member, so the declaration
+    // admits no instance.
+    throw new Error(
+      `${subject} property ${JSON.stringify(name)}: the part schema declares an empty \`type\`, which no accepted OAS 3.1 default part Content-Type row reaches and which admits no instance; no part carriage is defined`,
+    );
+  }
+  throw new Error(
+    `${subject} property ${JSON.stringify(name)}: a part schema declaring no \`type\` defaults to application/octet-stream on every accepted OAS 3.1 edition, but this binding revision defines no JSON-to-octet part boundary`,
+  );
+}
+
+/**
  * A carriage-unconstrained resolved part schema: a declaration with no type
- * and no choice or conditional applicator, through allOf. §9.2: such a
- * schema's OAS per-type part default is keyed by the supplied value's JSON
- * application type — the value's TYPE is structure, never payload sniffing.
- * An absent schema is not a declaration and never dispatches.
+ * and no choice or conditional applicator, through allOf. §9.2: on the 3.0
+ * line such a schema's per-type part default is keyed by the supplied value's
+ * JSON application type — the value's TYPE is structure, never payload
+ * sniffing. An absent schema is not a declaration and never dispatches.
  */
 function partSchemaValueDispatches(schema: Record<string, unknown> | boolean | null, is30: boolean): boolean {
   const literal = booleanSchemaLiteral(schema);
@@ -2161,7 +2198,8 @@ function writeRevision3MultipartPart(
         ? `multipart property ${JSON.stringify(name)} declares a choice applicator that does not collapse to one non-null branch; no single part carriage is defined`
         : `multipart property ${JSON.stringify(name)} has no declaration-defined mapping from its default octet-stream part to a JSON caller value`);
     }
-    // §9.2: an unconstrained part schema's OAS per-type part default is
+    refuseTypelessPartOn31("multipart", name, is30, schema);
+    // §9.2, the 3.0-line convention: the part schema's per-type default is
     // keyed by the supplied value's JSON application type — objects and
     // arrays ride as application/json, primitives as text/plain. JSON null
     // names no per-type default and refuses.
@@ -2580,10 +2618,11 @@ function buildRevision3URLEncodedBody(
       ? parseSingleMultipartContentType(enc.contentType, name)
       : null;
     if (declaredCT === null && !hasDeclaredSchemaType(property) && partSchemaValueDispatches(property, openapiVersion.startsWith("3.0"))) {
-      // §9.2: an unconstrained property schema's OAS per-type part default
-      // is keyed by the supplied value's JSON application type — objects and
-      // arrays ride as JSON text, primitives as plain text. JSON null names
-      // no per-type default and refuses.
+      refuseTypelessPartOn31("urlencoded", name, openapiVersion.startsWith("3.0"), property);
+      // §9.2, the 3.0-line convention: the property schema's per-type part
+      // default is keyed by the supplied value's JSON application type —
+      // objects and arrays ride as JSON text, primitives as plain text. JSON
+      // null names no per-type default and refuses.
       const value = fields[name];
       if (value === null || value === undefined) {
         throw new Error(
