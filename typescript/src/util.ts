@@ -3,6 +3,7 @@ import { VALID_METHODS } from "./constants.js";
 import { dereference } from "./internal/index.js";
 import yaml from "js-yaml";
 import { OpenAPIRefSiblingNormalizer } from "./ref-siblings.js";
+import { OPENAPI_YAML_SCHEMA } from "./yaml-core-schema.js";
 
 // The u flag makes the class match whole code points, so an astral-plane
 // character replaces as one underscore, not one per surrogate half
@@ -494,21 +495,24 @@ export function errorMessage(e: unknown): string {
  * one grammar covers both spellings deterministically (§3's string-grammar
  * pin).
  *
- * Plain scalars resolve under the CORE schema's tag resolution (YAML 1.2.2
- * §10.3.2): the null, bool, int and float patterns, and anything matching
- * none of them — a date- or time-shaped scalar among them — is a string.
- * That restriction is the artifact authority's, not a local preference:
- * every accepted OAS edition requires that "Tags MUST be limited to those
- * allowed by [YAML's] JSON schema ruleset" (§4.2), and YAML 1.1's
- * timestamp, merge, binary, omap, pairs and set tags are outside that set.
- * js-yaml's DEFAULT_SCHEMA carries all six, so it resolves tags the OAS
- * forbids; js-yaml 4 exposes the restricted resolution as CORE_SCHEMA (an
- * alias of its JSON_SCHEMA — the same object, and the one the AsyncAPI
- * client already parses under). Duplicate mapping keys stay loud under it
- * — in the JSON spelling too, which JSON.parse would silently last-wins.
+ * Plain scalars resolve under YAML 1.2.2 §10.3.2's core tag resolution: the
+ * null, bool, int and float patterns, and anything matching none of them — a
+ * date- or time-shaped scalar, a `1_000`, a `0b101`, a `<<` merge key among
+ * them — is a string. That restriction is the artifact authority's, not a
+ * local preference: every accepted OAS edition requires that "Tags MUST be
+ * limited to those allowed by [YAML's] JSON schema ruleset" (§4.2), and
+ * YAML 1.1's timestamp, merge, binary, omap, pairs and set tags are outside
+ * that set.
+ *
+ * The schema is `./yaml-core-schema.ts`, not js-yaml's `CORE_SCHEMA`: that
+ * one is an alias of its `JSON_SCHEMA` and its own header says it "does not
+ * support schema-specific tag resolution restrictions … It allows numbers
+ * in binary notaion". §10.3.2's table has no binary row. Duplicate mapping
+ * keys stay loud under either — in the JSON spelling too, which JSON.parse
+ * would silently last-wins.
  */
 function parseJSONOrYAML(text: string): unknown {
-  return assertJSONDomain(yaml.load(text.trim(), { schema: yaml.CORE_SCHEMA }));
+  return assertJSONDomain(yaml.load(text.trim(), { schema: OPENAPI_YAML_SCHEMA }));
 }
 
 /**
