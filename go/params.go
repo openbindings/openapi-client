@@ -941,9 +941,9 @@ func queryEscape(s string, allowReserved bool) string {
 // outright: Appendix E.3.2 (E.4.2 in 3.1.2) gives a SHOULD for WHATWG's
 // form-urlencoded rules, and 3.1.2 Section 4.8.12.4 names the tilde.
 //
-// Which member of that permitted set to pick is the IMPLEMENTATIONS'
-// convention, not the binding specification's: openbindings.openapi@1 states
-// the permitted set and does not narrow it. The pick is pinned by the shared
+// Which member of that permitted set to pick is this package's own
+// convention: the authorities quoted above state the permitted set, and none of
+// them narrows it to one byte-identical body. The pick is pinned by the shared
 // twin case table (testdata/urlencoded-escaper-cases.json), executed by both Go
 // engines and by openapi-client/typescript.
 //

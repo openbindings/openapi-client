@@ -3,7 +3,7 @@ package openapiclient
 import "fmt"
 
 const (
-	CodeContextRequired   = "CONTEXT_REQUIRED"
+	CodeContextRequired = "CONTEXT_REQUIRED"
 	// CodeRefused carries the binding-invoker contract's never-dispatched
 	// guarantee: the invocation was refused before dispatch and no
 	// observable interaction side effect occurred. Emitted ONLY where that
