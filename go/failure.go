@@ -43,6 +43,8 @@ func FailureEvidenceFrom(err error) (FailureEvidence, bool) {
 	if !errors.As(err, &invocationError) || invocationError == nil || invocationError.Diagnostics == nil {
 		return FailureEvidence{}, false
 	}
+	// Not jsonImage's class: marshal-then-unmarshal into the wire struct
+	// below. Escaping is transparent through the round trip.
 	raw, marshalErr := json.Marshal(invocationError.Diagnostics)
 	if marshalErr != nil {
 		return FailureEvidence{}, false
