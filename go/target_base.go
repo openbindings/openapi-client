@@ -2,12 +2,12 @@ package openapiclient
 
 import "strings"
 
-// This file answers one question about the OAS Server Object: does a server
-// URL, after Server Variable substitution, denote a target address?
+// This file answers one question for §9.3 of openbindings.openapi@1: does a
+// server URL, after Server Variable substitution, denote a target address?
 //
 // It exists because the answer used to come from the HOST LANGUAGE's URL
 // parser — Go's net/url here, the WHATWG URL parser in the TypeScript twin —
-// and neither is an authority this package incorporates. The two
+// and neither is an authority this specification incorporates. The two
 // disagree, and the corpus caught both halves in opposite directions: net/url
 // rejects a server URL carrying an unsubstituted template variable and accepts
 // one whose http authority has no host, while the WHATWG parser does the
@@ -24,9 +24,10 @@ import "strings"
 //     sender MUST NOT generate an 'http' URI with an empty host identifier. A
 //     recipient that processes such a URI reference MUST reject it as invalid."
 //
-// Both are incorporated authorities for this question: RFC 9110 for plain HTTP
-// semantics, and RFC 3986 for server-URL resolution. This is a restatement of
-// an incorporated consequence, not a convention of this implementation's own.
+// Both are incorporated: §2 of the binding specification incorporates RFC 9110
+// "for plain HTTP semantics", and §9.3 and §11 name RFC 3986 for server-URL
+// resolution. This is a restatement of an incorporated consequence, not a
+// convention of this implementation's own.
 //
 // Deliberately RFC 3986's `URI` and not its `absolute-URI`: the two differ only
 // in the optional fragment, and refusing a fragment-bearing server URL is a
@@ -38,20 +39,11 @@ import "strings"
 // Equally deliberately, nothing here repairs the artifact's value: a space is
 // not percent-encoded, a non-ASCII host is not IDNA-mapped, and an unsubstituted
 // `{name}` is not guessed at. A server URL that is not a URI leaves the target
-// undetermined, and that leaves the target for the caller's `server`
-// configuration to supply.
+// undetermined, and §9.3 sends that to the `server` configuration point.
 //
-// Twinned with the TypeScript implementation in
+// Twinned byte-for-byte with the TypeScript implementation in
 // openapi-client/typescript/src/servers.ts and pinned by the shared case table
 // testdata/server-target-base-cases.json.
-//
-// `openapi-client/go/target_base.go` and
-// `openbindings-go/formats/openapi/target_base.go` are twins, identical apart
-// from the package clause and the three prose sentences that name the governing
-// authority: the openbindings-go copy cites the binding specification by
-// identifier and section, and the standalone copy names the incorporated RFCs
-// directly, because it must stay readable outside OpenBindings. Deliberate
-// divergence, not drift.
 
 // denotesTargetBase reports whether s is a URI under RFC 3986 that also
 // satisfies RFC 9110's host requirement for the http and https schemes.
