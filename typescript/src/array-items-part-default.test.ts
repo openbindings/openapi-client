@@ -7,7 +7,7 @@ import type { OpenAPIDocument, OpenAPIMediaType, OpenAPIOperation } from "./type
 
 // The identical file is executed by openbindings-go/formats/openapi and by
 // openapi-client/go; changing it in one engine without the others fails here.
-const CASES_DIGEST = "54bfba9f3480ef4d2670cb2c57f9b0e7afd378b02d9a34c86d34bc3dcd221266";
+const CASES_DIGEST = "ab97e415bb05951f406037c1850878d65beb6f9c8457ead87c51cfe0ff88be12";
 
 interface PartDefaultCase {
   name: string;
@@ -20,6 +20,8 @@ interface PartDefaultCase {
   derivedFrom: string;
   expect: string;
   writeLane?: string;
+  nonArrayValue?: unknown;
+  nonArrayValueExpect?: string;
   basis: string;
 }
 
@@ -52,8 +54,14 @@ function operation(c: PartDefaultCase): OpenAPIOperation {
 }
 
 async function emission(c: PartDefaultCase): Promise<string> {
+  return rendering(c, { [c.propertyName]: c.value });
+}
+
+// The emission renderer with the supplied fields as a parameter, so one
+// rendering serves both the table's declared array value and its
+// nonArrayValue row.
+async function rendering(c: PartDefaultCase, fields: Record<string, unknown>): Promise<string> {
   const doc = { openapi: c.openapi } as OpenAPIDocument;
-  const fields = { [c.propertyName]: c.value };
   try {
     if (c.media === "application/x-www-form-urlencoded") {
       const encoded = buildURLEncodedBody(bodyMedia(c), fields, true, c.openapi, false);
@@ -107,6 +115,40 @@ describe("array-items part default — the twin case table", () => {
       }
     });
   }
+
+  // Runs every multipart cell a second time with a value that is not an array.
+  //
+  // openbindings.openapi@1 §9.2 says of the form lanes: "An invalid value or a
+  // member for which the resolved schema leaves no faithful form carriage
+  // refuses before dispatch." An array property's multipart carriage is one
+  // part per element, so a value with no elements has no faithful carriage at
+  // all. The engines used to fall through to the WHOLE-property schema and send
+  // one application/json part carrying the invalid value — a part the
+  // declaration never described, emitted silently.
+  let nonArrayCells = 0;
+  for (const c of cases) {
+    if (c.nonArrayValueExpect === undefined) continue;
+    nonArrayCells += 1;
+    it(`${c.name} — non-array value`, async () => {
+      expect(c.media).toBe("multipart/form-data");
+      let got = "refused";
+      try {
+        planRequestBodies(operation(c), { profile: OPENAPI_PROFILE_FULL, openapiVersion: c.openapi });
+        got = `admitted;emit=${await rendering(c, { [c.propertyName]: c.nonArrayValue })}`;
+      } catch {
+        got = "refused";
+      }
+      if (got !== c.nonArrayValueExpect) {
+        throw new Error(
+          `${c.name}: decision with a non-array value = ${got}, want ${c.nonArrayValueExpect}\nbasis: ${c.basis}`,
+        );
+      }
+    });
+  }
+
+  it("carries a non-array-value decision for every multipart cell", () => {
+    expect(nonArrayCells).toBe(24);
+  });
 
   // Executes the body-encoding lane DIRECTLY, bypassing media admission, for
   // every cell whose table row carries a `writeLane` decision.

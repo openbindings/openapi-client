@@ -1949,6 +1949,19 @@ export function buildMultipartBody(
         }
         continue;
       }
+      // §9.2: "An invalid value or a member for which the resolved schema
+      // leaves no faithful form carriage refuses before dispatch." The
+      // declaration decides this part's carriage — an array property rides as
+      // one part per element — so a supplied value with no elements to carry
+      // has no faithful form carriage at all. Falling through would serialize
+      // it against the whole-property schema and send one application/json
+      // part the declaration never described, which is the silent-carriage
+      // outcome the rule exists to prevent.
+      if (revision3) {
+        throw new Error(
+          `multipart part ${JSON.stringify(name)} is declared as an array but the supplied value carries no elements`,
+        );
+      }
     }
     writeMultipartPart(fd, name, value, propSchema, enc, is30, revision3);
   }
