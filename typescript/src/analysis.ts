@@ -13,3 +13,4 @@ export * from "./ref-siblings.js";
 export * from "./servers.js";
 export * from "./types.js";
 export * from "./util.js";
+export { OPENAPI_YAML_SCHEMA } from "./yaml-core-schema.js";
