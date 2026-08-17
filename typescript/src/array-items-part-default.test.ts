@@ -7,7 +7,7 @@ import type { OpenAPIDocument, OpenAPIMediaType, OpenAPIOperation } from "./type
 
 // The identical file is executed by openbindings-go/formats/openapi and by
 // openapi-client/go; changing it in one engine without the others fails here.
-const CASES_DIGEST = "16ac8ae3c08e081b82c1f6d9a7ffebefe1a215292eded8dea677a6b63a561be0";
+const CASES_DIGEST = "54bfba9f3480ef4d2670cb2c57f9b0e7afd378b02d9a34c86d34bc3dcd221266";
 
 interface PartDefaultCase {
   name: string;
@@ -19,6 +19,7 @@ interface PartDefaultCase {
   value: unknown[];
   derivedFrom: string;
   expect: string;
+  writeLane?: string;
   basis: string;
 }
 
@@ -106,6 +107,52 @@ describe("array-items part default — the twin case table", () => {
       }
     });
   }
+
+  // Executes the body-encoding lane DIRECTLY, bypassing media admission, for
+  // every cell whose table row carries a `writeLane` decision.
+  //
+  // Admission and encoding are two lanes reading one declaration. Where
+  // admission refuses, nothing selects the plan, so the encoder's own answer is
+  // invisible on the wire — which is precisely why it went unasserted and why
+  // the two lanes were free to disagree. This measures the encoder without
+  // admission in front of it, so "unreachable" is a property of the code rather
+  // than of what happens to run first.
+  let writeLaneCells = 0;
+  for (const c of cases) {
+    if (c.writeLane === undefined) continue;
+    writeLaneCells += 1;
+    it(`${c.name} — write lane`, () => {
+      expect(c.media).toBe("multipart/form-data");
+      const doc = { openapi: c.openapi } as OpenAPIDocument;
+      let got = "admitted";
+      try {
+        buildMultipartBody(doc, bodyMedia(c), { [c.propertyName]: c.value }, true, false);
+      } catch {
+        got = "refused";
+      }
+      if (got !== c.writeLane) {
+        throw new Error(
+          `${c.name}: write-lane decision = ${got}, want ${c.writeLane} (admission decides ${c.expect})\nbasis: ${c.basis}`,
+        );
+      }
+    });
+  }
+
+  // The guard cannot be removed by deleting a table field instead of a test.
+  it("pins both lanes for every multipart nested-array cell", () => {
+    let seen = 0;
+    for (const c of cases) {
+      if (c.media !== "multipart/form-data" || c.items !== "nested-array") continue;
+      seen += 1;
+      if (c.expect !== "refused" || c.writeLane !== "refused") {
+        throw new Error(
+          `${c.name}: expect = ${c.expect}, writeLane = ${c.writeLane}; both lanes must refuse a nested array declaration`,
+        );
+      }
+    }
+    expect(seen).toBe(3);
+    expect(writeLaneCells).toBe(3);
+  });
 
   // The invariant the table exists for, stated as a claim in its own right: on
   // the multipart lane an array property carries its ITEMS schema's default,

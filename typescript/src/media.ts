@@ -1933,6 +1933,17 @@ export function buildMultipartBody(
       const arr = asArray(value);
       if (arr) {
         const items = resolvedMultipartItems(propSchema);
+        // The write lane refuses exactly what the admission lane refuses.
+        // validateRevision3Multipart excludes a nested array declaration from
+        // the candidate set, so a plan carrying one cannot be selected;
+        // without this the two lanes disagree about the same declaration, and
+        // the disagreement is only invisible because something else happens
+        // to exclude it first. Same decision, each engine's own wording.
+        if (revision3 && items !== null && schemaTypeIs(items, "array")) {
+          throw new Error(
+            `multipart array property ${JSON.stringify(name)} has nested array items with no declaration-defined repeated-part mapping`,
+          );
+        }
         for (const elem of arr) {
           writeMultipartPart(fd, name, elem, items, enc, is30, revision3);
         }
