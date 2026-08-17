@@ -77,6 +77,28 @@ export interface DereferenceOptions {
    * targets individually after dereferencing the rest of the artifact.
    */
   allowUnresolved?: boolean;
+  /**
+   * Invoked when a fragment's evaluation reaches a `$ref` object that does not
+   * itself carry the next reference token — the pointer's path runs BELOW a
+   * reference — and immediately before that reference would be followed.
+   *
+   * Whether following is right is a question of the FORMAT's authority, not of
+   * this dereferencer's: it is decided differently by the two OpenAPI edition
+   * lines. So the policy lives with the format adapter, which throws from this
+   * hook to refuse. Omitting it follows, which is the reading a document whose
+   * references have already been substituted supports and the behavior every
+   * other caller of this module already has.
+   */
+  onFragmentBelowReference?: (detail: {
+    /** The artifact's own `$ref` string whose fragment is being evaluated. */
+    readonly reference: string;
+    /** That reference's fragment, as evaluated. */
+    readonly fragment: string;
+    /** The reference token that identified no member. */
+    readonly token: string;
+    /** The `$ref` value of the object standing in the pointer's path. */
+    readonly standingRef: string;
+  }) => void;
 }
 
 /** Resolve a JSON Pointer (RFC 6901) against a root object. */
@@ -207,6 +229,7 @@ export async function dereference<T = unknown>(
   const prepareRefTarget = options?.prepareRefTarget;
   const onResource = options?.onResource;
   const onRefTarget = options?.onRefTarget;
+  const onFragmentBelowReference = options?.onFragmentBelowReference;
 
   // The single working tree. Internal refs resolve against THIS clone, never
   // the caller's `doc`: resolving against the original both mutates the
@@ -384,7 +407,7 @@ export async function dereference<T = unknown>(
       if (prepared) scope = reindexPreparedResource(scope.root, scope, owner);
       let target = resolveFragment(scope, ref);
       if (target === undefined) {
-        target = await resolveFragmentThroughReferences(scope, ref, document);
+        target = await resolveFragmentThroughReferences(scope, ref, document, ref);
       }
       reportRefTarget(scope, ref, target);
       return target;
@@ -409,7 +432,7 @@ export async function dereference<T = unknown>(
     if (prepared) resource = reindexPreparedResource(resource.root, resource, owner);
     let target = resolveFragment(resource, fragment);
     if (target === undefined) {
-      target = await resolveFragmentThroughReferences(resource, fragment, document);
+      target = await resolveFragmentThroughReferences(resource, fragment, document, ref);
     }
     reportRefTarget(resource, fragment, target);
     return target;
@@ -418,29 +441,33 @@ export async function dereference<T = unknown>(
   /**
    * Evaluates a JSON Pointer that addresses a position BELOW a reference.
    *
-   * THIS IS THIS IMPLEMENTATION'S CONVENTION, NOT AN AUTHORITY ANSWER, and the
-   * two engines pin it identically so they cannot drift while the question is
-   * open. RFC 6901 §4 evaluates each token "against the document's contents",
-   * under which a pointer whose path runs through a `$ref` object denotes
-   * nothing there — so this runs only after that plain evaluation has already
-   * returned undefined, and no previously-succeeding case changed. But JSON
-   * Reference §4 says an implementation "MAY choose to replace the reference
-   * with the referenced value", and against a document where that replacement
-   * has happened the same pointer denotes the reached value. Neither text
-   * sequences the two, so both readings survive on the merits.
+   * WHETHER THAT POSITION MEANS ANYTHING IS THE FORMAT AUTHORITY'S QUESTION,
+   * AND FOR OPENAPI IT IS ANSWERED DIFFERENTLY BY THE TWO EDITION LINES. This
+   * module is a generic dereferencer, so it holds neither answer: it runs only
+   * after plain RFC 6901 evaluation has already returned undefined — RFC 6901
+   * §4 evaluates each token "against the document's contents", under which the
+   * position denotes nothing there — and it gives the format adapter the
+   * `onFragmentBelowReference` hook at exactly the moment the intervening
+   * reference would be followed.
    *
-   * Following the intervening reference is resolution, not composition scope:
-   * every node the pointer passes through is itself composed. It is what this
-   * dereferencer used to do implicitly, by rewriting a whole resource before
-   * any pointer into it was evaluated, and pointer scope did not raise the
-   * question — answering it differently would have smuggled a new observable
-   * behavior in under a conformance fix. Open item: corpus-lab's
-   * OPENAPI-RUNTIME.md, "Pointer-scoped external composition".
+   * The OpenAPI adapter's policy, with its authorities per edition line, is in
+   * `src/util.ts` beside `followsPointerBelowReference`, and its Go twin is
+   * `reference_traversal.go` in both Go engines. In outline: the 3.0 line
+   * processes `$ref` as per JSON Reference, which frames itself as transclusion
+   * and permits replacing the reference with its target, so following is the
+   * incorporated reading; the 3.1 line makes the fragment a JSON-Pointer over
+   * the referenced document's own contents and adopts JSON Schema 2020-12,
+   * where `$ref` is an applicator that substitutes nothing, so the reference is
+   * unresolvable.
+   *
+   * Following, where it applies, is resolution and not composition scope: every
+   * node the pointer passes through is itself composed.
    */
   async function resolveFragmentThroughReferences(
     scope: ResourceScope,
     fragment: string,
     document: DocumentContext,
+    reference: string,
   ): Promise<unknown> {
     let decoded: string;
     try {
@@ -460,7 +487,17 @@ export async function dereference<T = unknown>(
         if (current === null || typeof current !== "object" || Array.isArray(current)) break;
         const object = current as Record<string, unknown>;
         if (typeof object.$ref !== "string") break;
+        // A `$ref` object that also declares the token as a sibling member is
+        // not a traversal: the token names a member of the node in hand, which
+        // is the case JSON Schema 2020-12 §8.2.3.1's own note contemplates.
         if (Object.hasOwn(object, token)) break;
+        // The format adapter decides, and refuses by throwing.
+        onFragmentBelowReference?.({
+          reference,
+          fragment,
+          token,
+          standingRef: object.$ref,
+        });
         // A reference cycle cannot lead anywhere a pointer can land.
         if (hop >= 100) return undefined;
         current = await resolveReference(object.$ref, object, document);

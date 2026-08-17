@@ -30,7 +30,7 @@ function serve(documents: Record<string, string>): {
   return { fetch: fetchFn, retrieved };
 }
 
-const entryReferencing = (ref: string) => `openapi: 3.1.2
+const entryReferencing = (ref: string, edition = "3.1.2") => `openapi: ${edition}
 info: {title: Entry, version: "1"}
 paths:
   /items:
@@ -98,10 +98,14 @@ components:
       .rejects.toThrow("broken.yaml");
   });
 
-  it("reaches a position below a reference, composing the reference it passes through", async () => {
-    const { fetch } = serve({
-      [ENTRY]: entryReferencing("./library.yaml#/components/schemas/Alias/properties/name"),
-      "https://composition.example/library.yaml": `openapi: 3.1.2
+  /**
+   * Reference traversal, per edition line. See `followsPointerBelowReference`
+   * in `util.ts` for the authorities: the 3.0 line processes `$ref` as per JSON
+   * Reference and follows; the 3.1 line makes the fragment a JSON-Pointer over
+   * the referenced document's literal contents, where JSON Schema 2020-12's
+   * applicator `$ref` substitutes nothing, and the reference is unresolvable.
+   */
+  const aliasLibrary = (edition: string) => `openapi: ${edition}
 info: {title: Library, version: "1"}
 components:
   schemas:
@@ -111,11 +115,81 @@ components:
       properties:
         name: {type: string}
     Unused: {$ref: "#/components/schemas/NeverDeclared"}
+`;
+
+  for (const edition of ["3.0.0", "3.0.4"]) {
+    it(`follows a reference standing in a pointer's path under OAS ${edition}`, async () => {
+      const { fetch } = serve({
+        [ENTRY]: entryReferencing("./library.yaml#/components/schemas/Alias/properties/name", edition),
+        "https://composition.example/library.yaml": aliasLibrary(edition),
+      });
+      const document = await loadOpenAPIDocument(ENTRY, undefined, {}, fetch);
+      const schema = (document as Record<string, any>)
+        .paths["/items"].post.requestBody.content["application/json"].schema;
+      expect(schema).toEqual({ type: "string" });
+    });
+  }
+
+  for (const edition of ["3.1.0", "3.1.2"]) {
+    it(`refuses a reference standing in a pointer's path under OAS ${edition}`, async () => {
+      const { fetch } = serve({
+        [ENTRY]: entryReferencing("./library.yaml#/components/schemas/Alias/properties/name", edition),
+        "https://composition.example/library.yaml": aliasLibrary(edition),
+      });
+      await expect(loadOpenAPIDocument(ENTRY, undefined, {}, fetch))
+        .rejects.toThrow(
+          `reference "./library.yaml#/components/schemas/Alias/properties/name" is unresolvable under OAS ${edition}`,
+        );
+    });
+  }
+
+  it("evaluates a same-resource fragment below a reference under the same rule", async () => {
+    const { fetch } = serve({
+      [ENTRY]: `openapi: 3.1.2
+info: {title: Entry, version: "1"}
+paths:
+  /items:
+    post:
+      operationId: createItem
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/Alias/properties/name"}
+      responses: {"204": {description: ok}}
+components:
+  schemas:
+    Alias: {$ref: "#/components/schemas/Real"}
+    Real:
+      type: object
+      properties:
+        name: {type: string}
+`,
+    });
+    await expect(loadOpenAPIDocument(ENTRY, undefined, {}, fetch))
+      .rejects.toThrow('token "properties" identifies no member');
+  });
+
+  it("takes a sibling member literally rather than as a traversal", async () => {
+    const { fetch } = serve({
+      [ENTRY]: entryReferencing("./library.yaml#/components/schemas/Alias/properties/name"),
+      "https://composition.example/library.yaml": `openapi: 3.1.2
+info: {title: Library, version: "1"}
+components:
+  schemas:
+    Alias:
+      $ref: "#/components/schemas/Real"
+      properties:
+        name: {type: integer}
+    Real:
+      type: object
+      properties:
+        name: {type: string}
 `,
     });
     const document = await loadOpenAPIDocument(ENTRY, undefined, {}, fetch);
     const schema = (document as Record<string, any>)
       .paths["/items"].post.requestBody.content["application/json"].schema;
-    expect(schema).toEqual({ type: "string" });
+    expect(schema).toEqual({ type: "integer" });
   });
 });

@@ -46,6 +46,12 @@ func loadDocument(ctx context.Context, client *http.Client, source Source, allow
 			return nil, err
 		}
 		data = composition.prune(resource, data)
+		// A reference the edition's own text makes unresolvable is reported
+		// here, at the seam that already serves every resource, rather than
+		// left for the typed loader to fail on some later symptom.
+		if err := composition.refusal(); err != nil {
+			return nil, err
+		}
 		return normalizer.normalizeResourceAt(data, resource, artifactRetrievalURI(resource, retrievalURIs, &retrievalMu))
 	}
 
@@ -64,6 +70,13 @@ func loadDocument(ctx context.Context, client *http.Client, source Source, allow
 			return nil, normalizeErr
 		}
 		composition.setEntry(resource, data)
+		// Embedded content never passes through ReadFromURIFunc, so the entry's
+		// own tree is read here instead. It is the same call the location lane
+		// makes from `prune`, and it retrieves nothing.
+		composition.scanEntry(data)
+		if err := composition.refusal(); err != nil {
+			return nil, err
+		}
 		if resource != nil {
 			document, err = loader.LoadFromDataWithPath(data, resource)
 		} else {
