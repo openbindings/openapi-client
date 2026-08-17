@@ -1160,12 +1160,19 @@ function partSchemaValueDispatches(schema: Record<string, unknown> | boolean | n
     return false;
   }
   // `contentEncoding` and `contentMediaType` belong to the 3.1 line's
-  // dialect. There they are assertions this engine refuses on a non-string
-  // declaration, so they stop the value-typed dispatch. Under the 3.0 line
-  // the Schema Object is Wright-Draft-00-based and neither keyword is in
-  // its vocabulary, so an artifact carrying one has written an annotation
-  // the dialect ignores; a schema that is otherwise typeless still
-  // dispatches by the supplied value's JSON type, as the Go twin does.
+  // dialect. Only a schema with NO declared type reaches this point (the
+  // guard above), and that is the one cell where the two keywords still
+  // stop carriage: OAS 3.1.1 and 3.1.2 give a part with `type` absent the
+  // default `application/octet-stream`, for which this binding revision
+  // defines no JSON-to-octet part boundary. On a DECLARED non-string type
+  // neither keyword has force — JSON Schema 2020-12 §8.3/§8.4 condition
+  // both on a string instance and the 3.1.1/3.1.2 table calls their
+  // presence irrelevant — and that part takes its own per-type row rather
+  // than reaching here. Under the 3.0 line the Schema Object is
+  // Wright-Draft-00-based and neither keyword is in its vocabulary, so an
+  // artifact carrying one has written an annotation the dialect ignores; a
+  // schema that is otherwise typeless still dispatches by the supplied
+  // value's JSON type, as the Go twin does.
   if (
     !is30
     && (resolvedSchemaStringKeyword(schema, "contentEncoding") !== ""
@@ -2239,7 +2246,17 @@ function writeRevision3MultipartPart(
 
 function defaultMultipartContentType(schema: Record<string, unknown>, is30: boolean): string {
   if (is30 && binarySignaled(schema, true)) return "application/octet-stream";
-  if (!is30 && resolvedSchemaStringKeyword(schema, "contentEncoding") !== "") {
+  // The encoded-string row is scoped to `type: string` by every 3.1 edition
+  // that states it: 3.1.0 §4.8.14.5 "If the property is a `type: string` with
+  // a `contentEncoding`, the default Content-Type is application/octet-stream",
+  // and the 3.1.1 / 3.1.2 tables at §4.8.15.1.1, whose only octet-stream rows
+  // are `type` absent and `string` x contentEncoding present. A declared
+  // non-string type therefore falls through to its own row below, where the
+  // table's own note — "an n/a in the contentEncoding column means that the
+  // presence or value of contentEncoding is irrelevant" — puts it. The 3.0
+  // line never reaches here: `contentEncoding` is not in its Schema Object's
+  // dialect at all.
+  if (!is30 && schemaTypeIs(schema, "string") && resolvedSchemaStringKeyword(schema, "contentEncoding") !== "") {
     return "application/octet-stream";
   }
   if (schemaTypeIs(schema, "object") || schemaTypeIs(schema, "array")) return "application/json";
