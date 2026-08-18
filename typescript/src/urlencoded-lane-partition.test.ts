@@ -7,7 +7,7 @@ import type { OpenAPIMediaType, OpenAPIOperation } from "./types.js";
 
 // The identical file is executed by openbindings-go/formats/openapi and by
 // openapi-client/go; changing it in one engine without the others fails here.
-const CASES_DIGEST = "254966b36a9ee291416330518bbc2af341a2f54c2fe547f58e946ceb4e0d1e09";
+const CASES_DIGEST = "26ec2ca0143b630fe045e3ec8841057b2afb26e68ef4c86922bca36ef73a1d5b";
 
 const EDITIONS = ["3.0.0", "3.0.1", "3.0.2", "3.0.3", "3.0.4", "3.1.0", "3.1.1", "3.1.2"];
 const VARIANTS = [
@@ -83,14 +83,12 @@ function decision(c: LaneCase): string {
   return `admitted;emit=${encoded === "" ? "elided" : encoded}`;
 }
 
-// What this table pins is that lane selection is PRESENCE-keyed and the same on
-// every accepted edition. 3.0.4 and the 3.1 line each state that an explicitly
-// defined style, explode or allowReserved makes the Encoding Object's
-// contentType ignored, which is meaningful only because contentType otherwise
-// governs; 3.0.4 adds that with all three absent "Encoding is to be based on
-// contentType alone". 3.0.0-3.0.3 state no lane-selection rule of their own and
-// reach the same behaviour through their own section 4.1 patch-uniformity
-// instruction. See each case's "basis".
+// The partition this table pins is edition-keyed and comes from upstream
+// authority text: 3.0.4 and the 3.1 line each state that an explicitly defined
+// style, explode or allowReserved makes the Encoding Object's contentType
+// ignored, which is meaningful only because contentType otherwise governs;
+// 3.0.4 adds that with all three absent "Encoding is to be based on contentType
+// alone". No 3.0.0-3.0.3 text says either thing. See each case's "basis".
 describe("urlencoded edition-to-lane partition — the twin case table", () => {
   const table = loadTable();
 
@@ -103,16 +101,15 @@ describe("urlencoded edition-to-lane partition — the twin case table", () => {
     });
   }
 
-  // The rule stated as a claim in its own right, against the table's own literal
-  // edition->lane map, so a drift in the engine cannot pass by moving the
-  // expectations with it. The map is UNIFORM, and its uniformity is the
-  // assertion: no urlencoded behaviour here keys on the openapi field.
-  it("matches the literal edition-to-lane table, which is uniform", () => {
+  // The partition stated as a claim in its own right, against the table's own
+  // literal edition->lane map, so a silent drift in legacyOpenAPIFormEncoding
+  // cannot pass by moving the expectations with it.
+  it("matches the literal edition-to-lane table", () => {
     const want: Record<string, string> = {
-      "3.0.0": "content",
-      "3.0.1": "content",
-      "3.0.2": "content",
-      "3.0.3": "content",
+      "3.0.0": "style",
+      "3.0.1": "style",
+      "3.0.2": "style",
+      "3.0.3": "style",
       "3.0.4": "content",
       "3.1.0": "content",
       "3.1.1": "content",
@@ -122,31 +119,13 @@ describe("urlencoded edition-to-lane partition — the twin case table", () => {
     for (const [edition, lane] of Object.entries(want)) {
       expect(`${edition}=${table.partition[edition]}`).toBe(`${edition}=${lane}`);
     }
-    expect(new Set(Object.values(table.partition)).size).toBe(1);
     for (const c of table.cases) {
       const expected = c.explicitControl ? "style" : want[c.openapi];
       if (c.lane !== expected) {
         throw new Error(
-          `${c.name}: lane = ${c.lane}, want ${expected} (${c.explicitControl ? "an explicit RFC6570-style control is written" : "no RFC6570-style control is written, so the content path governs on every accepted edition"})`,
+          `${c.name}: lane = ${c.lane}, want ${expected} (${c.explicitControl ? "an explicit RFC6570-style control is written" : "no RFC6570-style control is written, so the edition decides"})`,
         );
       }
-    }
-  });
-
-  // The deleted predicate, stated as an executable claim rather than as an
-  // absence in prose: two documents differing ONLY in the patch component of
-  // their openapi field emit the same bytes, for every pair on both lines.
-  it("emits identical bytes across the patch component of a line", () => {
-    const byVariant = new Map<string, Set<string>>();
-    for (const c of table.cases) {
-      const line = c.openapi.slice(0, c.openapi.lastIndexOf("."));
-      const key = `${line}|${c.variant}`;
-      if (!byVariant.has(key)) byVariant.set(key, new Set());
-      byVariant.get(key)!.add(decision(c));
-    }
-    expect(byVariant.size).toBe(16);
-    for (const [key, decisions] of byVariant) {
-      expect(`${key}=${[...decisions].join(" AND ")}`).toBe(`${key}=${[...decisions][0]}`);
     }
   });
 

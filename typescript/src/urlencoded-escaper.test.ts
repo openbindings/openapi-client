@@ -5,7 +5,7 @@ import { buildURLEncodedBody } from "./media.js";
 
 // The identical file is executed by openbindings-go/formats/openapi and by
 // openapi-client/go; changing it in one engine without the others fails here.
-const CASES_DIGEST = "c019a6aa163add2a943d953b0cb904441615b29a58c0525d51222177c32060d0";
+const CASES_DIGEST = "1af21db9a7c158d671bd4e388f7729dc5372d571c4c00fa257bfb707d162d818";
 
 interface EscaperCase {
   name: string;
@@ -107,14 +107,11 @@ describe("urlencoded escaper case table", () => {
       declarations.set(c.declaration, c.lane);
       seen.set(c.openapi, declarations);
     }
-    // One edition per dialect branch the engines distinguish, plus the pair
-    // whose identity is the point: 3.0.3 states the content interpretation
-    // nowhere in its own text and reaches it through its own section 4.1, while
-    // 3.0.4 states it outright, so the two editions' rows must agree cell for
-    // cell. A difference between them is what a reintroduced patch-version
-    // switch would produce.
+    // One edition per branch the engines distinguish: the 3.0 line that applies
+    // the style defaults unconditionally, the 3.0 edition that reaches the
+    // content lane, and the 3.1 line.
     const want: Record<string, Record<string, string>> = {
-      "3.0.3": { content: "content", style: "style", "allow-reserved-false": "style" },
+      "3.0.3": { content: "style", style: "style", "allow-reserved-false": "style" },
       "3.0.4": { content: "content", style: "style", "allow-reserved-false": "style" },
       "3.1.1": { content: "content", style: "style", "allow-reserved-false": "style" },
     };
@@ -123,22 +120,6 @@ describe("urlencoded escaper case table", () => {
       for (const [declaration, lane] of Object.entries(declarations)) {
         expect(seen.get(edition)?.get(declaration), `${edition} ${declaration}`).toBe(lane);
       }
-    }
-  });
-
-  // The patch component decides nothing: 3.0.3 and 3.0.4 emit the same bytes
-  // for every cell they share.
-  it("emits identical bytes on 3.0.3 and 3.0.4 for every shared cell", () => {
-    const byCell = new Map<string, Map<string, string>>();
-    for (const c of cases) {
-      const key = `${c.declaration}|${c.position}|${c.cell}`;
-      const byEdition = byCell.get(key) ?? new Map<string, string>();
-      byEdition.set(c.openapi, c.expect);
-      byCell.set(key, byEdition);
-    }
-    expect(byCell.size).toBe(60);
-    for (const [key, byEdition] of byCell) {
-      expect(`${key}=${byEdition.get("3.0.3")}`).toBe(`${key}=${byEdition.get("3.0.4")}`);
     }
   });
 });
