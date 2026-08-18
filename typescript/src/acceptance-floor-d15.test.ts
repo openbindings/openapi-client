@@ -88,10 +88,28 @@ const cases: D15Case[] = [
     invalidAlternatives: 0,
   },
   {
-    name: "the same boolean `properties` member is this class on the 3.0 line",
+    // The 3.0 line's Schema Object is not the 2020-12 dialect and a boolean is
+    // not a Schema Object there -- but `openbindings.openapi@1` §9.2 already
+    // ascribes a part interpretation to a boolean-valued multipart part on
+    // this line, so the spelling is REFERRED rather than classified, the same
+    // device D1n/D1a use. Zero corpus incidence.
+    name: "a boolean `properties` member on the 3.0 line is REFERRED, not this class",
     doc: {
       openapi: "3.0.0",
       paths: { "/a": { get: { responses: { 200: { description: "ok", content: { "application/json": { schema: { type: "object", properties: { f: true } } } } } } } } },
+    },
+    positions: [],
+    method: "get",
+    disposition: "represented",
+    invalidAlternatives: 0,
+  },
+  {
+    // The clause that DOES fire at a `properties` member on the 3.0 line: the
+    // bohr-io shape, a bare string where a Schema Object belongs.
+    name: "a string `properties` member is this class on the 3.0 line",
+    doc: {
+      openapi: "3.0.0",
+      paths: { "/a": { get: { responses: { 200: { description: "ok", content: { "application/json": { schema: { type: "object", properties: { f: "array" } } } } } } } } },
     },
     positions: ["#/paths/~1a/get/responses/200/content/application~1json/schema/properties/f"],
     method: "get",
