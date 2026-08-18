@@ -103,7 +103,7 @@ func urlencodedLanePartitionDocument(t *testing.T, c urlencodedLanePartitionCase
 // the decision itself crosses the twin boundary.
 func urlencodedLanePartitionDecision(t *testing.T, c urlencodedLanePartitionCase) string {
 	t.Helper()
-	doc, err := loadDocument(context.Background(), nil, Source{Content: urlencodedLanePartitionDocument(t, c)}, false)
+	doc, _, err := loadDocument(context.Background(), nil, Source{Content: urlencodedLanePartitionDocument(t, c)}, false)
 	if err != nil {
 		t.Fatalf("%s: load document: %v", c.Name, err)
 	}

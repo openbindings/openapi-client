@@ -188,6 +188,7 @@ func (e *ClientError) Unwrap() error { return e.Cause }
 
 type Client struct {
 	document *openapi3.T
+	floor    *acceptanceFloor
 	source   Source
 	options  ClientOptions
 }
@@ -197,19 +198,19 @@ func Load(ctx context.Context, source Source, options ClientOptions) (*Client, e
 	if client == nil {
 		client = defaultHTTPClient()
 	}
-	document, err := loadDocument(ctx, client, source, true)
+	document, floor, err := loadDocument(ctx, client, source, true)
 	if err != nil {
 		return nil, &ClientError{Kind: ErrorSource, Code: "SOURCE_LOAD_FAILED", Message: err.Error(), Cause: err}
 	}
 	source.Document = document
 	source.Content = nil
-	return &Client{document: document, source: source, options: options}, nil
+	return &Client{document: document, floor: floor, source: source, options: options}, nil
 }
 
 func (c *Client) Document() *openapi3.T { return c.document }
 
 func (c *Client) Operations() []OperationInfo {
-	operations := enumerateOperations(c.document)
+	operations := enumerateOperationsWithFloor(c.document, c.floor)
 	result := make([]OperationInfo, len(operations))
 	for index := range operations {
 		result[index] = operations[index].info
@@ -258,7 +259,7 @@ func (c *Client) Stream(ctx context.Context, selector OperationSelector, input I
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	resolved, err := resolveOperation(c.document, selector)
+	resolved, err := resolveOperation(c.document, c.floor, selector)
 	if err != nil {
 		return nil, err
 	}
@@ -322,6 +323,13 @@ type resolvedOperation struct {
 }
 
 func enumerateOperations(document *openapi3.T) []resolvedOperation {
+	return enumerateOperationsWithFloor(document, nil)
+}
+
+// enumerateOperationsWithFloor applies the acceptance-floor inventory filter
+// (openbindings.openapi@1 §3): a ladder-invalid target is not addressed and
+// is not enumerated as invocable.
+func enumerateOperationsWithFloor(document *openapi3.T, floor *acceptanceFloor) []resolvedOperation {
 	if document == nil || document.Paths == nil {
 		return nil
 	}
@@ -342,6 +350,9 @@ func enumerateOperations(document *openapi3.T) []resolvedOperation {
 			if operation == nil {
 				continue
 			}
+			if verdict := floor.opVerdict("#/paths/" + escapeJSONPointerSegment(path) + "/" + method); verdict != nil && verdict.Disposition == "invalid" {
+				continue
+			}
 			result = append(result, resolvedOperation{pathItem: item, operation: operation, info: OperationInfo{
 				Ref: "#/paths/" + escapeJSONPointerSegment(path) + "/" + method, Path: path, Method: Method(method),
 				OperationID: operation.OperationID, Summary: operation.Summary, Tags: append([]string(nil), operation.Tags...),
@@ -351,8 +362,8 @@ func enumerateOperations(document *openapi3.T) []resolvedOperation {
 	return result
 }
 
-func resolveOperation(document *openapi3.T, selector OperationSelector) (resolvedOperation, error) {
-	operations := enumerateOperations(document)
+func resolveOperation(document *openapi3.T, floor *acceptanceFloor, selector OperationSelector) (resolvedOperation, error) {
+	operations := enumerateOperationsWithFloor(document, floor)
 	if selector.operationID != "" {
 		matches := []resolvedOperation{}
 		for _, operation := range operations {

@@ -95,7 +95,7 @@ func urlencodedContentPathDocument(t *testing.T, c urlencodedContentPathCase) []
 // the decision itself crosses the twin boundary.
 func urlencodedContentPathDecision(t *testing.T, c urlencodedContentPathCase) string {
 	t.Helper()
-	doc, err := loadDocument(context.Background(), nil, Source{Content: urlencodedContentPathDocument(t, c)}, false)
+	doc, _, err := loadDocument(context.Background(), nil, Source{Content: urlencodedContentPathDocument(t, c)}, false)
 	if err != nil {
 		t.Fatalf("%s: load document: %v", c.Name, err)
 	}

@@ -114,7 +114,7 @@ func serverTargetBaseDocument(t *testing.T, c serverTargetResolution) []byte {
 // no source location, which is the state an unconfigured invocation is in.
 func serverTargetBaseResolution(t *testing.T, c serverTargetResolution) (string, bool) {
 	t.Helper()
-	doc, err := loadDocument(context.Background(), nil, Source{Content: serverTargetBaseDocument(t, c)}, false)
+	doc, _, err := loadDocument(context.Background(), nil, Source{Content: serverTargetBaseDocument(t, c)}, false)
 	if err != nil {
 		t.Fatalf("%s: load document: %v", c.Name, err)
 	}

@@ -14,7 +14,14 @@ type Engine struct {
 	client           *http.Client
 	invocationClient *http.Client
 	mu               sync.RWMutex
-	cache            map[string]*openapi3.T
+	cache            map[string]cachedDocument
+}
+
+// cachedDocument pairs a location-cached document with its acceptance floor,
+// so PrepareCached applies the same inventory filter as a fresh load.
+type cachedDocument struct {
+	document *openapi3.T
+	floor    *acceptanceFloor
 }
 
 func NewEngine(client *http.Client) *Engine {
@@ -22,10 +29,10 @@ func NewEngine(client *http.Client) *Engine {
 		return &Engine{
 			client:           defaultHTTPClient(),
 			invocationClient: defaultInvocationHTTPClient(),
-			cache:            map[string]*openapi3.T{},
+			cache:            map[string]cachedDocument{},
 		}
 	}
-	return &Engine{client: client, invocationClient: client, cache: map[string]*openapi3.T{}}
+	return &Engine{client: client, invocationClient: client, cache: map[string]cachedDocument{}}
 }
 
 type PreparedOperation struct {
@@ -55,16 +62,16 @@ func (e *Engine) Prepare(ctx context.Context, options PrepareOptions) (*Prepared
 	if options.AllowExternalRefs != nil {
 		allowExternal = *options.AllowExternalRefs
 	}
-	document, err := loadDocument(ctx, loadClient, options.Source, allowExternal)
+	document, floor, err := loadDocument(ctx, loadClient, options.Source, allowExternal)
 	if err != nil {
 		return nil, &ExecutionError{Code: CodeSourceLoadFailed, Message: err.Error(), Cause: err}
 	}
 	if options.Source.Location != "" {
 		e.mu.Lock()
-		e.cache[options.Source.Location] = document
+		e.cache[options.Source.Location] = cachedDocument{document: document, floor: floor}
 		e.mu.Unlock()
 	}
-	return prepareDocument(document, options)
+	return prepareDocumentWithFloor(document, floor, options)
 }
 
 func (e *Engine) PrepareCached(ctx context.Context, options PrepareOptions) (*PreparedOperation, error) {
@@ -78,16 +85,16 @@ func (e *Engine) PrepareCached(ctx context.Context, options PrepareOptions) (*Pr
 		return nil, nil
 	}
 	e.mu.RLock()
-	document := e.cache[options.Source.Location]
+	cached := e.cache[options.Source.Location]
 	e.mu.RUnlock()
-	if document == nil {
+	if cached.document == nil {
 		return nil, nil
 	}
 	if options.HTTPClient == nil {
 		options.HTTPClient = e.invocationClient
 	}
 	options.Context = contextWithSecurityHandlers(options.Context, options.SecurityHandlers)
-	return prepareDocument(document, options)
+	return prepareDocumentWithFloor(cached.document, cached.floor, options)
 }
 
 // Custom security satisfaction is engine configuration, not caller context.
@@ -116,6 +123,16 @@ func contextWithSecurityHandlers(contextValue map[string]any, handlers map[strin
 }
 
 func prepareDocument(document *openapi3.T, options PrepareOptions) (*PreparedOperation, error) {
+	return prepareDocumentWithFloor(document, nil, options)
+}
+
+func prepareDocumentWithFloor(document *openapi3.T, floor *acceptanceFloor, options PrepareOptions) (*PreparedOperation, error) {
+	// The acceptance-floor inventory filter (openbindings.openapi@1 §3): a
+	// ladder-invalid target is not addressed, and its invocation is refused
+	// before dispatch -- provably no interaction side effect.
+	if verdict := floor.opVerdict(options.Ref); verdict != nil && verdict.Disposition == "invalid" {
+		return nil, &ExecutionError{Code: CodeRefused, Message: floorInvalidTargetMessage(len(verdict.Defects)) + " (" + options.Ref + ")"}
+	}
 	path, method, err := parseRef(options.Ref)
 	if err != nil {
 		return nil, &ExecutionError{Code: CodeInvalidRef, Message: err.Error(), Cause: err}

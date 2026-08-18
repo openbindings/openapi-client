@@ -105,7 +105,7 @@ func arrayItemsPartDefaultDocument(t *testing.T, c arrayItemsPartDefaultCase) []
 // the decision itself crosses the twin boundary.
 func arrayItemsPartDefaultDecision(t *testing.T, c arrayItemsPartDefaultCase) string {
 	t.Helper()
-	doc, err := loadDocument(context.Background(), nil, Source{Content: arrayItemsPartDefaultDocument(t, c)}, false)
+	doc, _, err := loadDocument(context.Background(), nil, Source{Content: arrayItemsPartDefaultDocument(t, c)}, false)
 	if err != nil {
 		t.Fatalf("%s: load document: %v", c.Name, err)
 	}
@@ -212,7 +212,7 @@ func TestArrayItemsPartDefaultRefusesANonArrayValue(t *testing.T) {
 			if c.Media != "multipart/form-data" {
 				t.Fatalf("%s: nonArrayValueExpect is defined for the multipart lane only", c.Name)
 			}
-			doc, err := loadDocument(context.Background(), nil, Source{Content: arrayItemsPartDefaultDocument(t, c)}, false)
+			doc, _, err := loadDocument(context.Background(), nil, Source{Content: arrayItemsPartDefaultDocument(t, c)}, false)
 			if err != nil {
 				t.Fatalf("%s: load document: %v", c.Name, err)
 			}
@@ -242,7 +242,7 @@ func TestArrayItemsPartDefaultStillExpandsAGoStringSlice(t *testing.T) {
 		Name: "go []string", OpenAPI: "3.1.1", Media: "multipart/form-data",
 		ItemsSchema: map[string]any{"type": "string"}, PropertyName: "p",
 	}
-	doc, err := loadDocument(context.Background(), nil, Source{Content: arrayItemsPartDefaultDocument(t, c)}, false)
+	doc, _, err := loadDocument(context.Background(), nil, Source{Content: arrayItemsPartDefaultDocument(t, c)}, false)
 	if err != nil {
 		t.Fatalf("load document: %v", err)
 	}
@@ -274,7 +274,7 @@ func TestArrayItemsPartDefaultWriteLaneAgreesWithAdmission(t *testing.T) {
 			if c.Media != "multipart/form-data" {
 				t.Fatalf("%s: writeLane is defined for the multipart body-encoding lane only", c.Name)
 			}
-			doc, err := loadDocument(context.Background(), nil, Source{Content: arrayItemsPartDefaultDocument(t, c)}, false)
+			doc, _, err := loadDocument(context.Background(), nil, Source{Content: arrayItemsPartDefaultDocument(t, c)}, false)
 			if err != nil {
 				t.Fatalf("%s: load document: %v", c.Name, err)
 			}

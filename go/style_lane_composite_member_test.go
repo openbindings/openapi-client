@@ -135,7 +135,7 @@ func styleLaneCompositeMemberDocument(t *testing.T, c styleLaneCompositeMemberCa
 func TestStyleLaneCompositeMemberCaseTable(t *testing.T) {
 	for _, testCase := range loadStyleLaneCompositeMemberCases(t) {
 		t.Run(testCase.Name, func(t *testing.T) {
-			doc, err := loadDocument(context.Background(), nil, Source{Content: styleLaneCompositeMemberDocument(t, testCase)}, false)
+			doc, _, err := loadDocument(context.Background(), nil, Source{Content: styleLaneCompositeMemberDocument(t, testCase)}, false)
 			if err != nil {
 				t.Fatalf("load document: %v", err)
 			}

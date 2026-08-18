@@ -97,7 +97,7 @@ func TestExternalCompositionIsPointerScoped(t *testing.T) {
 				}, nil
 			})}
 
-			_, err := loadDocument(context.Background(), client, Source{Location: testCase.Entry}, true)
+			_, _, err := loadDocument(context.Background(), client, Source{Location: testCase.Entry}, true)
 
 			if testCase.Expect.Outcome == "refused" {
 				if err == nil {

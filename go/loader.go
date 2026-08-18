@@ -2,6 +2,7 @@ package openapiclient
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,7 +14,7 @@ import (
 	"github.com/getkin/kin-openapi/openapi3"
 )
 
-func loadDocument(ctx context.Context, client *http.Client, source Source, allowExternalRefs bool) (*openapi3.T, error) {
+func loadDocument(ctx context.Context, client *http.Client, source Source, allowExternalRefs bool) (*openapi3.T, *acceptanceFloor, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -21,12 +22,21 @@ func loadDocument(ctx context.Context, client *http.Client, source Source, allow
 		client = defaultHTTPClient()
 	}
 	if source.Document != nil {
+		// A pre-loaded typed document carries no raw artifact image, so the
+		// acceptance floor is not computed for this lane (the caller that
+		// loaded it owns the floor).
 		document := source.Document
 		if err := checkAcceptedOpenAPIVersion(document); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		localizeReferenceMetadata(document)
-		return document, nil
+		return document, nil, nil
+	}
+	var entryBytes []byte
+	if source.Content != nil {
+		// The artifact's own image, before ref-sibling normalization: what
+		// the acceptance floor classifies against.
+		entryBytes = append([]byte(nil), source.Content...)
 	}
 	loader := openapi3.NewLoader()
 	loader.Context = ctx
@@ -45,6 +55,10 @@ func loadDocument(ctx context.Context, client *http.Client, source Source, allow
 		if err != nil {
 			return nil, err
 		}
+		if entryBytes == nil {
+			// The entry document is the loader's first resource read.
+			entryBytes = append([]byte(nil), data...)
+		}
 		data = composition.prune(resource, data)
 		// A reference the edition's own text makes unresolvable is reported
 		// here, at the seam that already serves every resource, rather than
@@ -62,12 +76,12 @@ func loadDocument(ctx context.Context, client *http.Client, source Source, allow
 		if source.Location != "" {
 			resource, err = absoluteDocumentURL(source.Location)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 		}
 		data, normalizeErr := normalizer.normalizeResource(source.Content, resource)
 		if normalizeErr != nil {
-			return nil, normalizeErr
+			return nil, nil, normalizeErr
 		}
 		composition.setEntry(resource, data)
 		// Embedded content never passes through ReadFromURIFunc, so the entry's
@@ -75,7 +89,7 @@ func loadDocument(ctx context.Context, client *http.Client, source Source, allow
 		// makes from `prune`, and it retrieves nothing.
 		composition.scanEntry(data)
 		if err := composition.refusal(); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if resource != nil {
 			document, err = loader.LoadFromDataWithPath(data, resource)
@@ -84,23 +98,31 @@ func loadDocument(ctx context.Context, client *http.Client, source Source, allow
 		}
 	} else {
 		if source.Location == "" {
-			return nil, fmt.Errorf("OpenAPI source requires location or content")
+			return nil, nil, fmt.Errorf("OpenAPI source requires location or content")
 		}
 		resource, parseErr := absoluteDocumentURL(source.Location)
 		if parseErr != nil {
-			return nil, parseErr
+			return nil, nil, parseErr
 		}
 		composition.setEntry(resource, nil)
 		document, err = loader.LoadFromURI(resource)
 	}
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	localizeReferenceMetadata(document)
 	if err := checkAcceptedOpenAPIVersion(document); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return document, nil
+	// The invalid-artifact acceptance floor (openbindings.openapi@1 §3),
+	// computed over the entry document's raw image. Part 2's single derived
+	// whole-source refusal is returned as a load failure; per-target
+	// verdicts ride with the document for the prepare-time inventory filter.
+	floor := computeAcceptanceFloorFromBytes(entryBytes)
+	if floor != nil && floor.Refusal != "" {
+		return nil, nil, errors.New(floor.Refusal)
+	}
+	return document, floor, nil
 }
 
 func absoluteDocumentURL(location string) (*url.URL, error) {

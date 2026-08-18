@@ -110,7 +110,7 @@ func partContentEncodingDocument(t *testing.T, c partContentEncodingCase) []byte
 // itself crosses the twin boundary.
 func partContentEncodingDecision(t *testing.T, c partContentEncodingCase) string {
 	t.Helper()
-	doc, err := loadDocument(context.Background(), nil, Source{Content: partContentEncodingDocument(t, c)}, false)
+	doc, _, err := loadDocument(context.Background(), nil, Source{Content: partContentEncodingDocument(t, c)}, false)
 	if err != nil {
 		return "source-refused"
 	}
@@ -269,7 +269,7 @@ func TestRevision3PartContentTransferEncoding(t *testing.T) {
 				Name: test.name, OpenAPI: "3.1.1", Media: "multipart/form-data",
 				PropertyName: "p", PropertySchema: test.schema, Value: test.value,
 			}
-			doc, err := loadDocument(context.Background(), nil, Source{Content: partContentEncodingDocument(t, c)}, false)
+			doc, _, err := loadDocument(context.Background(), nil, Source{Content: partContentEncodingDocument(t, c)}, false)
 			if err != nil {
 				t.Fatalf("load: %v", err)
 			}

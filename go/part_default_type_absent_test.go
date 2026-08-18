@@ -103,7 +103,7 @@ func partDefaultTypeAbsentDocument(t *testing.T, c partDefaultTypeAbsentCase) []
 // the decision itself crosses the twin boundary.
 func partDefaultTypeAbsentDecision(t *testing.T, c partDefaultTypeAbsentCase) string {
 	t.Helper()
-	doc, err := loadDocument(context.Background(), nil, Source{Content: partDefaultTypeAbsentDocument(t, c)}, false)
+	doc, _, err := loadDocument(context.Background(), nil, Source{Content: partDefaultTypeAbsentDocument(t, c)}, false)
 	if err != nil {
 		return "source-refused"
 	}

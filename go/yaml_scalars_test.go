@@ -30,7 +30,7 @@ func TestLoadDocument_YAMLCoreScalarResolution(t *testing.T) {
 	}
 	for spelling, want := range cases {
 		t.Run(spelling, func(t *testing.T) {
-			document, err := loadDocument(context.Background(), nil, Source{
+			document, _, err := loadDocument(context.Background(), nil, Source{
 				Location: "https://scalars.example/openapi.yaml",
 				Content:  []byte(yamlScalarDocument(spelling)),
 			}, false)
@@ -53,7 +53,7 @@ func TestLoadDocument_YAMLCoreScalarResolution(t *testing.T) {
 func TestLoadDocument_YAMLScalarWithoutJSONImageRefuses(t *testing.T) {
 	for _, spelling := range []string{".inf", "-.inf", ".nan"} {
 		t.Run(spelling, func(t *testing.T) {
-			if _, err := loadDocument(context.Background(), nil, Source{
+			if _, _, err := loadDocument(context.Background(), nil, Source{
 				Location: "https://scalars.example/openapi.yaml",
 				Content:  []byte(yamlScalarDocument(spelling)),
 			}, false); err == nil {
