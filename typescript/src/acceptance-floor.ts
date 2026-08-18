@@ -39,7 +39,10 @@
 // defers the question to resolution.
 //
 // The shipped defect roster is the 8b-reviewed class table (D1-D13 + D1s;
-// D1n/D1a referred, never emitted). Additionally, an internal reference that
+// D1n/D1a referred, never emitted), plus the registry-scoped class D15 -- a
+// Schema Object keyword whose value violates the governing dialect's declared
+// JSON type for it, whose answer is stated once in the reviewed owning-unit
+// policy and is the same as D1's. Additionally, an internal reference that
 // identifies no location in the entry document invalidates each unit whose
 // closure reaches the referencing site (P1/P2 per position); a pointer whose
 // traversal stops ON another Reference Object is the edition-split traversal
@@ -156,6 +159,10 @@ function floorAuthority(cls: string, line: "3.0" | "3.1"): string {
       return "OAS, content maps: each media type key's value is a Media Type Object; no Reference Object alternative is named at this position";
     case "D13":
       return "OAS, Paths Object: each patterned field key begins with a forward slash and is appended to the Server Object's url to construct the target URL";
+    case "D15":
+      return is30
+        ? "OAS 3.0 line, Schema Object: a keyword's value carries the JSON type the governing dialect declares for it -- `items` Value MUST be an object and not an array; `properties` definitions MUST be a Schema Object; `required` and `enum` are taken directly from JSON Schema, where each is an array"
+        : "OAS 3.1 line via JSON Schema 2020-12: a keyword's value carries the JSON type the dialect declares for it -- `required` (Validation §6.5.3) and `enum` (§6.1.2) are arrays; `properties` members and `items` and `contains` are schemas, which on this line may be objects or booleans; `exclusiveMinimum` (§6.2.5) and `exclusiveMaximum` (§6.2.3) are numbers";
     case "URef":
       return is30
         ? "OAS 3.0 line, Reference Object: $ref follows JSON Reference; its fragment is a JSON Pointer (RFC 6901) and identifies no location in the entry document"
@@ -169,6 +176,11 @@ type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => v !== null && typeof v === "object" && !Array.isArray(v);
 const isRefObj = (v: unknown): boolean => isObj(v) && typeof v["$ref"] === "string";
 const refString = (v: unknown): string => (isObj(v) && typeof v["$ref"] === "string" ? (v["$ref"] as string) : "");
+// Whether a value is spelled as a schema at all on the governing line: an
+// object on both lines, and additionally a boolean on the 3.1 line, whose
+// 2020-12 dialect admits the boolean schemas. This asks only the JSON type the
+// position declares, never whether the schema is otherwise well-formed.
+const isSchemaValued = (v: unknown, line: "3.0" | "3.1"): boolean => isObj(v) || (line === "3.1" && typeof v === "boolean");
 // A Response Object is REQUIRED to carry `description` in all eight accepted
 // editions; its absence is a decidable proof that a value is not one.
 const isResponseObject = (v: unknown): boolean => isObj(v) && typeof v["description"] === "string";
@@ -401,9 +413,33 @@ export function computeAcceptanceFloor(raw: unknown): AcceptanceFloor | undefine
     }
   }
 
-  // D1 / D1s over every reachable Schema Object position. D1n/D1a (the two
-  // 3.1-shaped null spellings on the 3.0 line) are referred, never emitted.
+  // D1 / D1s / D15 over every reachable Schema Object position. D1n/D1a (the
+  // two 3.1-shaped null spellings on the 3.0 line) are referred, never emitted.
   const visitSchema = (node: Obj, ptr: string): void => {
+    // D15 -- a Schema Object keyword whose value violates the governing
+    // dialect's declared JSON type for it. Same derivation as D1/D1s: the
+    // nearest rung containing the Schema Object owns it, and P1/P2 decide
+    // whether it climbs. Edition-scoped where the two lines differ: a boolean
+    // `exclusiveMinimum` is the 3.0 line's own correct draft-4 spelling and is
+    // not this class there, and a boolean schema is a 3.1 spelling the 3.0
+    // line does not admit. Independent of `type`, which is why these run
+    // before the type gate below.
+    if ("required" in node && !Array.isArray(node["required"])) addDefect(defect("D15", `${ptr}/required`));
+    if ("enum" in node && !Array.isArray(node["enum"])) addDefect(defect("D15", `${ptr}/enum`));
+    if (Array.isArray(node["items"])) addDefect(defect("D15", `${ptr}/items`));
+    const properties = node["properties"];
+    if (isObj(properties)) {
+      for (const key of sortedKeys(properties)) {
+        if (!isSchemaValued(properties[key], line)) addDefect(defect("D15", `${ptr}/properties/${esc(key)}`));
+      }
+    }
+    if (line === "3.1") {
+      for (const keyword of ["exclusiveMaximum", "exclusiveMinimum"]) {
+        if (keyword in node && typeof node[keyword] !== "number") addDefect(defect("D15", `${ptr}/${keyword}`));
+      }
+      if ("contains" in node && !isSchemaValued(node["contains"], line)) addDefect(defect("D15", `${ptr}/contains`));
+    }
+
     if (!("type" in node)) return;
     const t = node["type"];
     if (typeof t === "string") {
