@@ -167,3 +167,39 @@ func TestConfinement_FastPathUnchanged(t *testing.T) {
 		t.Fatalf("conforming operation must be represented, got %+v", verdict)
 	}
 }
+
+// Seam C, schema position, the 3.0 gate's OTHER half. The target here is a
+// description-less RESPONSE Object -- it carries `content`. It is a D6 hit
+// (D6's test is only the absence of a string `description`), but it is not
+// Schema-shaped, so the 3.0 line must NOT inline it: a Response Object body
+// standing where an operation's output SCHEMA belongs, on a line whose dialect
+// has no `content` keyword, is not something D6 licenses. The load keeps the
+// loader's original error.
+//
+// This is the case the gate admitted before record 84's F2 narrowing; it
+// reddens if `isFloorSchemaShaped` is widened back to "is an object".
+func TestConfinement_SeamCSchemaPositionRefusesAResponseShapedTarget(t *testing.T) {
+	document := `{
+	  "openapi": "3.0.3",
+	  "info": {"title": "T", "version": "1"},
+	  "components": {"responses": {"ThingResponse": {"content": {"application/json": {"schema": {"type": "object"}}}}}},
+	  "paths": {
+	    "/things": {
+	      "get": {
+	        "operationId": "listThings",
+	        "responses": {
+	          "200": {
+	            "description": "ok",
+	            "content": {"application/json": {"schema": {"$ref": "#/components/responses/ThingResponse"}}}
+	          }
+	        }
+	      }
+	    }
+	  }
+	}`
+	if _, err := loadConfined(document); err == nil {
+		t.Fatalf("a Response-shaped target must not be inlined into a schema position on the 3.0 line")
+	} else if !strings.Contains(err.Error(), "expecting ref to schema object") {
+		t.Errorf("the loader's original error must stand, got %q", err)
+	}
+}
