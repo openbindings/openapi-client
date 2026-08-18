@@ -1,6 +1,6 @@
 import type { OpenAPIParameter, OpenAPIPathItem, OpenAPIOperation } from "./types.js";
 import { mergeParameters } from "./util.js";
-import { isJSONMediaType, normalizeMediaType, parseMediaType, type BodyPlan } from "./media.js";
+import { isJSONMediaType, normalizeMediaType, parseMediaType, styleLaneUndefinedExpansionMember, type BodyPlan } from "./media.js";
 import { hasMediaFidelity, hasRoutedInputs } from "./constants.js";
 import { OPENAPI_PROFILE_BASE, type OpenAPIExecutionProfile } from "./profile.js";
 
@@ -254,6 +254,49 @@ export function validateParameterSerialization(p: OpenAPIParameter): void {
     default:
       throw new Error(`parameter ${JSON.stringify(p.name)} declares unsupported location ${JSON.stringify(p.in)}`);
   }
+}
+
+/**
+ * Reports a style-lane parameter's first offending declared member as
+ * "<parameter><member path>", or null when the parameter is not on the style
+ * lane or declares no offending member. See styleLaneUndefinedExpansionMember
+ * in media.ts for the per-edition authority reading.
+ *
+ * The four styles below are the ones the ruling covers: they are the query and
+ * cookie styles, and they are where the corpus population lives. The path and
+ * header styles (simple, label, matrix) carry the same structural question and
+ * are deliberately NOT decided here — see the residue note in
+ * corpus-lab/openapi-runtime/70-*.md.
+ */
+export function parameterStyleLaneUndefinedExpansionMember(
+  p: OpenAPIParameter,
+  is30: boolean,
+): string | null {
+  if (!p || (p.content !== undefined && typeof p.content === "object") || p.schema === undefined) return null;
+  const { style } = serializationMethod(p);
+  if (style !== "form" && style !== "spaceDelimited" && style !== "pipeDelimited" && style !== "deepObject") {
+    return null;
+  }
+  const member = styleLaneUndefinedExpansionMember(p.schema, is30);
+  return member === null ? null : `${p.name ?? ""}${member}`;
+}
+
+/**
+ * Reports the first effective parameter whose style-lane declaration carries a
+ * member with no defined expansion. Parameters are visited in their effective
+ * declaration order.
+ */
+export function styleLaneUndefinedExpansionParam(
+  params: OpenAPIParameter[],
+  profile: OpenAPIExecutionProfile,
+  is30: boolean,
+): string | null {
+  if (!hasMediaFidelity(profile)) return null;
+  for (const parameter of params) {
+    const member = parameterStyleLaneUndefinedExpansionMember(parameter, is30);
+    if (member !== null) return member;
+  }
+  return null;
 }
 
 function parameterSchemaTypes(schema: Record<string, unknown>): string[] {

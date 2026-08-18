@@ -11,7 +11,7 @@ import {
   serializeMultipartValue,
   serializeQueryValue,
 } from "./params.js";
-import { bodySchemaFlattens } from "./util.js";
+import { bodySchemaFlattens, codePointCompare } from "./util.js";
 import {
   hasDynamicObjectCarriage,
   hasMediaFidelity,
@@ -665,7 +665,7 @@ function validateRevision3URLEncoded(
       throw new Error(`urlencoded property ${JSON.stringify(name)} declares a non-string encoding.contentType`);
     }
     if (hasExplicitMultipartExpansion(enc)) {
-      validateFormStyle(name, property, enc, "urlencoded");
+      validateFormStyle(name, property, enc, "urlencoded", openapiVersion.startsWith("3.0"));
       continue;
     }
     if (openapiVersion.startsWith("3.0") && binarySignaled(property, true)) {
@@ -766,6 +766,7 @@ function validateFormStyle(
   schema: Record<string, unknown>,
   enc: Record<string, unknown> | null,
   subject: string,
+  is30: boolean,
 ): void {
   if (Object.hasOwn(enc ?? {}, "style") && (typeof enc?.style !== "string" || enc.style === "")) {
     throw new Error(`${subject} property ${JSON.stringify(name)} declares an invalid style`);
@@ -779,24 +780,158 @@ function validateFormStyle(
   const style = typeof enc?.style === "string" && enc.style !== "" ? enc.style : "form";
   const explode = typeof enc?.explode === "boolean" ? enc.explode : style === "form";
   const types = declaredSchemaTypes(schema);
-  if (style === "form") return;
   if (style === "spaceDelimited" || style === "pipeDelimited") {
     if (explode || types.length === 0 || types.some((type) => type !== "array")) {
       throw new Error(
         `${subject} property ${JSON.stringify(name)} uses ${style}, which is defined only for arrays with explode=false`,
       );
     }
-    return;
-  }
-  if (style === "deepObject") {
+  } else if (style === "deepObject") {
     if (!explode || types.length === 0 || types.some((type) => type !== "object")) {
       throw new Error(
         `${subject} property ${JSON.stringify(name)} uses deepObject, which is defined only for objects with explode=true`,
       );
     }
-    return;
+  } else if (style !== "form") {
+    throw new Error(`${subject} property ${JSON.stringify(name)} declares unsupported style ${JSON.stringify(style)}`);
   }
-  throw new Error(`${subject} property ${JSON.stringify(name)} declares unsupported style ${JSON.stringify(style)}`);
+  const member = styleLaneUndefinedExpansionMember(schema, is30);
+  if (member !== null) {
+    throw new Error(
+      `${subject} property ${JSON.stringify(name)} member ${JSON.stringify(name + member)} has no expansion defined for style ${style}`,
+    );
+  }
+}
+
+/**
+ * Reports the first DECLARED member of a resolved RFC6570-style-lane schema
+ * whose expansion the governing OAS style row leaves undefined. Answers "[]"
+ * for an array's items, ".<name>" for an object's property, and null when no
+ * declared member offends. Members are visited in code-point order, so both
+ * engines name the same one.
+ *
+ * A member offends when its resolved schema is `object` or `array`. Every
+ * style this lane serves expands a composite value exactly one level: each
+ * member becomes a member STRING. A member that is itself composite has no
+ * representation, and the refusal is decided by the DECLARATION, not by a
+ * supplied value — every value conforming to such a declaration is composite,
+ * so an operation admitted here would be one this candidate is statically
+ * guaranteed to refuse. That is why the exclusion is accounted at synthesis
+ * rather than raised at invocation.
+ *
+ * WHERE THE AUTHORITY SPEAKS, AND WHERE IT DOES NOT. Read per edition, because
+ * section 2 of the binding specification reads every accepted edition under its
+ * own immutable text and does not aggregate them. The style table is section
+ * 4.7.12.3 "Style Values" on the 3.0 line and section 4.8.12.3 on the 3.1 line.
+ *
+ *	form              Every accepted edition's row cites the incorporated
+ *	                  authority by section: "Form style parameters defined by
+ *	                  [RFC6570] Section 3.2.8." RFC 6570 section 2.4.2 states
+ *	                  that an explode modifier applies "the expansion process
+ *	                  ... to each member of the composite as if it were listed
+ *	                  as a separate variable", and the expansions it defines
+ *	                  append member strings. A member that is itself a list or
+ *	                  an associative array has no expansion there.
+ *	spaceDelimited,   No accepted edition's row cites any RFC section. The
+ *	pipeDelimited     rows read "Space separated array values" / "Pipe
+ *	                  separated array values" on 3.0.0 through 3.0.3, and
+ *	                  "... array values or object properties and values" on
+ *	                  3.0.4 and the 3.1 line.
+ *	deepObject        No accepted edition's row cites any RFC section either,
+ *	                  and the row's own text differs by edition:
+ *
+ *	                    3.0.0, 3.0.1, 3.0.2, 3.0.3, 3.1.0
+ *	                      "deepObject | object | query | Provides a simple way
+ *	                      of rendering nested objects using form parameters."
+ *	                      The row GOVERNS this case and does not DEFINE it.
+ *	                      The worked example beside it has scalar members only
+ *	                      (color[R]=100&color[G]=200&color[B]=150).
+ *
+ *	                    3.0.4, 3.1.1, 3.1.2
+ *	                      "Allows objects with scalar properties to be
+ *	                      represented using form parameters. The
+ *	                      representation of array or object properties is not
+ *	                      defined."
+ *
+ * The later editions say in words what the earlier ones leave undefined; on no
+ * accepted edition does an authority this specification incorporates supply a
+ * representation for a composite member. So this function refuses and the
+ * synthesizer accounts the exclusion. Nothing here authors bytes for the
+ * member: an interpretation choice for these cells remains available to a
+ * future revision and is deliberately not taken.
+ *
+ * Reproduce the per-edition presence pattern (edition order 3.0.0, 3.0.1,
+ * 3.0.2, 3.0.3, 3.0.4, 3.1.0, 3.1.1, 3.1.2):
+ *
+ *	node corpus-lab/scripts/strip-oas-html.mjs --count \
+ *	  "Provides a simple way of rendering nested objects using form \
+ *	   parameters"                                           -> 1/1/1/1/0/1/0/0
+ *	node corpus-lab/scripts/strip-oas-html.mjs --count \
+ *	  "The representation of array or object properties is not defined"
+ *	                                                         -> 0/0/0/0/1/0/1/1
+ *	node corpus-lab/scripts/strip-oas-html.mjs --count \
+ *	  "Form style parameters defined by \[RFC6570\] Section 3\.2\.8"
+ *	                                                         -> 1/1/1/1/1/1/1/1
+ *
+ * (each --count is one line). The digests of the renderings those counts run
+ * over are recorded in corpus-lab/OPENAPI-RUNTIME-INDEX.md.
+ *
+ * Pinned by the shared style-lane-composite-member-cases.json case table,
+ * carried byte-for-byte by the other two engines. Package:
+ * design/openapi-style-lane-composite-member-ruling.md, RULED 2026-08-18.
+ */
+export function styleLaneUndefinedExpansionMember(
+  schema: Record<string, unknown> | boolean | null,
+  is30: boolean,
+): string | null {
+  const resolved = collapsedStyleLaneSchema(schema, is30);
+  if (resolved === null) return null;
+  if (schemaTypeIs(resolved, "array")) {
+    const items = collapsedStyleLaneSchema(resolvedMultipartItems(resolved), is30);
+    return styleLaneCompositeMember(items) ? "[]" : null;
+  }
+  if (!schemaTypeIs(resolved, "object")) return null;
+  const properties = resolvedMultipartPropertySchemas(resolved, new Set());
+  for (const name of Object.keys(properties).sort(codePointCompare)) {
+    const member = collapsedStyleLaneSchema(properties[name] ?? null, is30);
+    if (styleLaneCompositeMember(member)) return `.${name}`;
+  }
+  return null;
+}
+
+/**
+ * A resolved member schema declaring a composite JSON value. A member
+ * declaring no type is NOT composite by declaration: its runtime value may be
+ * a scalar, and a declaration-keyed refusal must not reach a declaration that
+ * admits one.
+ */
+function styleLaneCompositeMember(schema: Record<string, unknown> | null): boolean {
+  if (schema === null) return false;
+  return schemaTypeIs(schema, "object") || schemaTypeIs(schema, "array");
+}
+
+/**
+ * Applies §9.2's single-non-null-branch and union-type collapses before the
+ * member kinds are read, so the nullable spelling of a declaration is
+ * classified as the declaration it restates. It is the same collapse
+ * effectiveRevision3PartSchema applies, reached through that function so the
+ * family holds one implementation of it.
+ */
+function collapsedStyleLaneSchema(
+  schema: Record<string, unknown> | boolean | null,
+  is30: boolean,
+): Record<string, unknown> | null {
+  let current = schema;
+  for (let i = 0; current !== null && i < 8; i++) {
+    const literal = booleanSchemaLiteral(current);
+    if (literal === true) return {}; // the same unconstrained declaration as {}
+    if (literal === false) return null; // an unsatisfiable member has no admissible runtime value
+    const { schema: collapsed } = effectiveRevision3PartSchema(current, is30);
+    if (collapsed === false || collapsed === null) return null;
+    if (collapsed === current) return collapsed;
+    current = collapsed;
+  }
+  return typeof current === "object" && current !== null ? current : null;
 }
 
 function declaredSchemaTypes(schema: Record<string, unknown>): string[] {
@@ -848,7 +983,7 @@ function validateRevision3Multipart(
     validateContentTransferEncoding(name, property);
     const enc = asObject(encoding[name]);
     if (hasExplicitMultipartExpansion(enc)) {
-      validateFormStyle(name, property, enc, "multipart");
+      validateFormStyle(name, property, enc, "multipart", openapiVersion.startsWith("3.0"));
     }
     let contentSchema = property;
     if (schemaTypeIs(property, "array") && !hasExplicitMultipartExpansion(enc)) {
