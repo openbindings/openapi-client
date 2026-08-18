@@ -32,87 +32,123 @@ func loadDocument(ctx context.Context, client *http.Client, source Source, allow
 		localizeReferenceMetadata(document)
 		return document, nil, nil
 	}
+	// The artifact's own entry image, captured once by the first attempt and
+	// never overwritten: it is what the acceptance floor classifies against
+	// and what block 8d-2's confinement pass reads.
 	var entryBytes []byte
 	if source.Content != nil {
-		// The artifact's own image, before ref-sibling normalization: what
-		// the acceptance floor classifies against.
 		entryBytes = append([]byte(nil), source.Content...)
 	}
-	loader := openapi3.NewLoader()
-	loader.Context = ctx
-	loader.IsExternalRefsAllowed = allowExternalRefs
-	retrievalURIs := map[string]*url.URL{}
-	var retrievalMu sync.RWMutex
-	loader.JoinFunc = artifactJoinFunc(retrievalURIs, &retrievalMu)
-	normalizer := newRawRefSiblingNormalizer(loader.JoinFunc)
-	read := artifactReadFunc(client, source.Content != nil && source.Location == "", retrievalURIs, &retrievalMu)
-	composition := newExternalComposition(
-		func(resource *url.URL) ([]byte, error) { return read(loader, resource) },
-		loader.JoinFunc,
-	)
-	loader.ReadFromURIFunc = func(loader *openapi3.Loader, resource *url.URL) ([]byte, error) {
-		data, err := read(loader, resource)
+
+	// attempt runs one complete shipped load. `entryOverride`, when non-nil,
+	// replaces the ENTRY document's bytes at the seam block 8a proved --
+	// before normalizeResource, in every lane -- so a confined retry keeps
+	// each lane's own base-URI and retrieval semantics.
+	attempt := func(entryOverride []byte) (*openapi3.T, error) {
+		loader := openapi3.NewLoader()
+		loader.Context = ctx
+		loader.IsExternalRefsAllowed = allowExternalRefs
+		retrievalURIs := map[string]*url.URL{}
+		var retrievalMu sync.RWMutex
+		loader.JoinFunc = artifactJoinFunc(retrievalURIs, &retrievalMu)
+		normalizer := newRawRefSiblingNormalizer(loader.JoinFunc)
+		read := artifactReadFunc(client, source.Content != nil && source.Location == "", retrievalURIs, &retrievalMu)
+		composition := newExternalComposition(
+			func(resource *url.URL) ([]byte, error) { return read(loader, resource) },
+			loader.JoinFunc,
+		)
+		entrySeen := false
+		loader.ReadFromURIFunc = func(loader *openapi3.Loader, resource *url.URL) ([]byte, error) {
+			data, err := read(loader, resource)
+			if err != nil {
+				return nil, err
+			}
+			if !entrySeen {
+				// The entry document is the loader's first resource read.
+				entrySeen = true
+				if entryBytes == nil {
+					entryBytes = append([]byte(nil), data...)
+				}
+				if entryOverride != nil {
+					data = append([]byte(nil), entryOverride...)
+				}
+			}
+			data = composition.prune(resource, data)
+			// A reference the edition's own text makes unresolvable is reported
+			// here, at the seam that already serves every resource, rather than
+			// left for the typed loader to fail on some later symptom.
+			if err := composition.refusal(); err != nil {
+				return nil, err
+			}
+			return normalizer.normalizeResourceAt(data, resource, artifactRetrievalURI(resource, retrievalURIs, &retrievalMu))
+		}
+
+		var document *openapi3.T
+		var err error
+		if source.Content != nil {
+			var resource *url.URL
+			if source.Location != "" {
+				resource, err = absoluteDocumentURL(source.Location)
+				if err != nil {
+					return nil, err
+				}
+			}
+			entry := source.Content
+			if entryOverride != nil {
+				entry = entryOverride
+			}
+			data, normalizeErr := normalizer.normalizeResource(entry, resource)
+			if normalizeErr != nil {
+				return nil, normalizeErr
+			}
+			composition.setEntry(resource, data)
+			// Embedded content never passes through ReadFromURIFunc, so the entry's
+			// own tree is read here instead. It is the same call the location lane
+			// makes from `prune`, and it retrieves nothing.
+			composition.scanEntry(data)
+			if err := composition.refusal(); err != nil {
+				return nil, err
+			}
+			if resource != nil {
+				document, err = loader.LoadFromDataWithPath(data, resource)
+			} else {
+				document, err = loader.LoadFromData(data)
+			}
+		} else {
+			if source.Location == "" {
+				return nil, fmt.Errorf("OpenAPI source requires location or content")
+			}
+			resource, parseErr := absoluteDocumentURL(source.Location)
+			if parseErr != nil {
+				return nil, parseErr
+			}
+			composition.setEntry(resource, nil)
+			document, err = loader.LoadFromURI(resource)
+		}
 		if err != nil {
 			return nil, err
 		}
-		if entryBytes == nil {
-			// The entry document is the loader's first resource read.
-			entryBytes = append([]byte(nil), data...)
-		}
-		data = composition.prune(resource, data)
-		// A reference the edition's own text makes unresolvable is reported
-		// here, at the seam that already serves every resource, rather than
-		// left for the typed loader to fail on some later symptom.
-		if err := composition.refusal(); err != nil {
+		localizeReferenceMetadata(document)
+		if err := checkAcceptedOpenAPIVersion(document); err != nil {
 			return nil, err
 		}
-		return normalizer.normalizeResourceAt(data, resource, artifactRetrievalURI(resource, retrievalURIs, &retrievalMu))
+		return document, nil
 	}
 
-	var document *openapi3.T
-	var err error
-	if source.Content != nil {
-		var resource *url.URL
-		if source.Location != "" {
-			resource, err = absoluteDocumentURL(source.Location)
-			if err != nil {
-				return nil, nil, err
-			}
-		}
-		data, normalizeErr := normalizer.normalizeResource(source.Content, resource)
-		if normalizeErr != nil {
-			return nil, nil, normalizeErr
-		}
-		composition.setEntry(resource, data)
-		// Embedded content never passes through ReadFromURIFunc, so the entry's
-		// own tree is read here instead. It is the same call the location lane
-		// makes from `prune`, and it retrieves nothing.
-		composition.scanEntry(data)
-		if err := composition.refusal(); err != nil {
-			return nil, nil, err
-		}
-		if resource != nil {
-			document, err = loader.LoadFromDataWithPath(data, resource)
-		} else {
-			document, err = loader.LoadFromData(data)
-		}
-	} else {
-		if source.Location == "" {
-			return nil, nil, fmt.Errorf("OpenAPI source requires location or content")
-		}
-		resource, parseErr := absoluteDocumentURL(source.Location)
-		if parseErr != nil {
-			return nil, nil, parseErr
-		}
-		composition.setEntry(resource, nil)
-		document, err = loader.LoadFromURI(resource)
-	}
+	document, err := attempt(nil)
 	if err != nil {
-		return nil, nil, err
-	}
-	localizeReferenceMetadata(document)
-	if err := checkAcceptedOpenAPIVersion(document); err != nil {
-		return nil, nil, err
+		// Fast path first: confinement is reached only after the shipped load
+		// has already refused. On any confinement failure the ORIGINAL error
+		// stands.
+		confined, confinedErr, took := confineEntryDocument(entryBytes, attempt, err)
+		switch {
+		case !took:
+			return nil, nil, err
+		case confinedErr != nil:
+			return nil, nil, confinedErr
+		default:
+			document = confined
+		}
 	}
 	// The invalid-artifact acceptance floor (openbindings.openapi@1 §3),
 	// computed over the entry document's raw image. Part 2's single derived
