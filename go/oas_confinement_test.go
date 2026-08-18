@@ -49,18 +49,62 @@ func TestConfinement_MethodMemberArrayConfinesAndSiblingSurvives(t *testing.T) {
 	}
 }
 
-// The rail that makes this a confinement and not salvage.
+// The rail that makes this a confinement and not salvage. A `components.schemas`
+// member that is a bare STRING is one of the shape table's `hits: []` cells
+// (`C2-component-value-string`): no shipped class names the position, so
+// nothing attributes it and the load keeps the loader's own error.
 func TestConfinement_UnattributedDefectRefusesWithTheOriginalError(t *testing.T) {
 	document := `{
 	  "openapi": "3.0.3",
 	  "info": {"title": "T", "version": "1"},
-	  "components": {"schemas": {"Thing": {"type": "object", "properties": {"member": []}}}},
+	  "components": {"schemas": {"Thing": "not a schema"}},
 	  "paths": {"/good": {"get": {"operationId": "getGood", "responses": {"200": {"description": "ok"}}}}}
 	}`
 	if _, err := loadConfined(document); err == nil {
 		t.Fatalf("a defect no shipped class attributes must never be confined")
-	} else if !strings.Contains(err.Error(), "Schema.properties") {
+	} else if !strings.Contains(err.Error(), "failed to unmarshal") {
 		t.Errorf("the loader's original error must stand, got %q", err)
+	}
+}
+
+// Block 8d-3: the registry-scoped class D15 -- a Schema Object keyword whose
+// value violates the governing dialect's declared JSON type. `properties/member`
+// holds an ARRAY, which kin refuses at unmarshal; the ladder now owns the
+// position, so the pass neutralises it and the operation whose closure REACHES
+// it carries the invalid verdict while the one that does not reach it survives.
+func TestConfinement_D15SchemaKeywordConfinesAndReachIsAttributed(t *testing.T) {
+	document := `{
+	  "openapi": "3.0.3",
+	  "info": {"title": "T", "version": "1"},
+	  "components": {"schemas": {"Thing": {"type": "object", "properties": {"member": []}}}},
+	  "paths": {
+	    "/good": {"get": {"operationId": "getGood", "responses": {"200": {"description": "ok"}}}},
+	    "/reaching": {"get": {"operationId": "getReaching", "responses": {"200": {"description": "ok",
+	      "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Thing"}}}}}}}
+	  }
+	}`
+	doc, floor, err := loadDocument(context.Background(), nil, Source{Content: []byte(document)}, false)
+	if err != nil {
+		t.Fatalf("a D15 position the ladder owns must confine: %v", err)
+	}
+	if doc == nil || doc.Paths == nil || doc.Paths.Value("/good") == nil {
+		t.Fatalf("the non-reaching sibling must survive the confined load")
+	}
+	if verdict := floor.opVerdict("#/paths/~1good/get"); verdict == nil || verdict.Disposition != "represented" {
+		t.Fatalf("the non-reaching sibling must stay represented, got %+v", verdict)
+	}
+	verdict := floor.opVerdict("#/paths/~1reaching/get")
+	if verdict == nil || verdict.Disposition != "invalid" {
+		t.Fatalf("the reaching operation must carry an invalid ladder verdict, got %+v", verdict)
+	}
+	found := false
+	for _, d := range verdict.Defects {
+		if d.Class == floorD15 && d.Position == "#/components/schemas/Thing/properties/member" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the climbing defect must name the D15 position, got %+v", verdict.Defects)
 	}
 }
 
