@@ -78,6 +78,13 @@ export interface DereferenceOptions {
    */
   allowUnresolved?: boolean;
   /**
+   * Tolerate an internal (same-document) `$ref` whose plain RFC 6901
+   * evaluation finds no location: the reference object is returned in place
+   * instead of throwing. External references, fetch failures, and the
+   * fragment-below-reference refusal are unaffected.
+   */
+  tolerateUnresolvableInternalRefs?: boolean;
+  /**
    * Invoked when a fragment's evaluation reaches a `$ref` object that does not
    * itself carry the next reference token — the pointer's path runs BELOW a
    * reference — and immediately before that reference would be followed.
@@ -225,6 +232,7 @@ export async function dereference<T = unknown>(
   const baseUrl = options?.baseUrl;
   const signal = options?.signal;
   const allowUnresolved = options?.allowUnresolved ?? false;
+  const tolerateUnresolvableInternalRefs = options?.tolerateUnresolvableInternalRefs ?? false;
   const mergeRefSiblings = options?.mergeRefSiblings;
   const prepareRefTarget = options?.prepareRefTarget;
   const onResource = options?.onResource;
@@ -586,6 +594,7 @@ export async function dereference<T = unknown>(
         return resolved;
       }
       if (allowUnresolved) return obj;
+      if (tolerateUnresolvableInternalRefs && ref.startsWith("#")) return obj;
       throw new Error(`unresolvable $ref ${JSON.stringify(ref)}`);
     }
 

@@ -128,6 +128,20 @@ export async function loadOpenAPIDocument(
     /** Refuse schemas whose dialect cannot be projected faithfully into OBI. */
     requirePortableSchemaDialect?: boolean;
     /**
+     * Receives the entry document's RAW parsed tree, before ref-sibling
+     * normalization and dereference -- the artifact's own image, which the
+     * acceptance floor (openbindings.openapi@1 §3) classifies against.
+     */
+    onRawDocument?: (raw: unknown) => void;
+    /**
+     * Tolerate an internal `$ref` whose fragment identifies no location in
+     * its document: the node is left in place instead of failing the load.
+     * The acceptance floor invalidates each unit whose closure reaches the
+     * referencing site (P1/P2 per position), so a tolerated node is never
+     * read by synthesis. External references keep today's refusals.
+     */
+    tolerateUnresolvableInternalRefs?: boolean;
+    /**
      * Receives every document this load composed — the artifact first, then
      * each document reached through an external `$ref` — with its base
      * address. Synthesis uses it to recover an externally-declared
@@ -192,6 +206,7 @@ export async function loadOpenAPIDocument(
   }
 
   checkAcceptedOpenAPIVersion(raw);
+  options?.onRawDocument?.(raw);
   const openapiVersion = (raw as Record<string, unknown>).openapi as string;
   const normalizer = new OpenAPIRefSiblingNormalizer(
     openapiVersion,
@@ -222,6 +237,7 @@ export async function loadOpenAPIDocument(
     prepareRefTarget: (root, target) => normalizer.prepareTarget(root, target.resourceURI),
     onResource: options?.onResource,
     onRefTarget: options?.onRefTarget,
+    tolerateUnresolvableInternalRefs: options?.tolerateUnresolvableInternalRefs,
     onFragmentBelowReference: followsPointerBelowReference(openapiVersion)
       ? undefined
       : ({ reference, token, standingRef }) => {

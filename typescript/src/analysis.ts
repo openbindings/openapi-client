@@ -3,6 +3,7 @@
  * execution engine, and external adapters/synthesizers. This entry point has
  * no OBI model or OpenBindings SDK dependency.
  */
+export * from "./acceptance-floor.js";
 export * from "./failure.js";
 export { VALID_METHODS } from "./constants.js";
 export * from "./input-routes-v2.js";

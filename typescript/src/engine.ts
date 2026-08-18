@@ -23,6 +23,7 @@ import {
   runBinding,
 } from "./invoke.js";
 import { errorMessage, loadOpenAPIDocument, parseRef } from "./util.js";
+import { computeAcceptanceFloor, floorInvalidTargetMessage, floorOpVerdict, type AcceptanceFloor } from "./acceptance-floor.js";
 
 /** Artifact source accepted by the SDK-neutral execution engine. */
 export interface OpenAPIEngineSource {
@@ -267,8 +268,13 @@ interface PreparedArguments extends Omit<RequiredByKey<OpenAPIPrepareOptions, "p
 type RequiredByKey<T, K extends keyof T> = T & Required<Pick<T, K>>;
 
 /** SDK-neutral OpenAPI document loading and operation execution engine. */
+interface LoadedOpenAPIDocument {
+  document: OpenAPIDocument;
+  floor: AcceptanceFloor | undefined;
+}
+
 export class OpenAPIEngine {
-  private readonly cache = new Map<string, OpenAPIDocument>();
+  private readonly cache = new Map<string, LoadedOpenAPIDocument>();
   private readonly options: OpenAPIEngineOptions;
 
   constructor(options: OpenAPIEngineOptions = {}) {
@@ -287,13 +293,13 @@ export class OpenAPIEngine {
       defaultHooks: this.options.hooks,
       maxDeliveryUnitBytes: options.maxDeliveryUnitBytes ?? this.options.maxDeliveryUnitBytes,
     };
-    let document: OpenAPIDocument;
+    let loaded: LoadedOpenAPIDocument;
     try {
-      document = await this.load(args.source, args.signal, args.fetch, args.allowExternalRefs);
+      loaded = await this.load(args.source, args.signal, args.fetch, args.allowExternalRefs);
     } catch (error: unknown) {
       throw new OpenAPIExecutionError("SOURCE_LOAD_FAILED", errorMessage(error), { cause: error });
     }
-    return this.prepared(document, args);
+    return this.prepared(loaded, args);
   }
 
   /**
@@ -323,9 +329,17 @@ export class OpenAPIEngine {
   }
 
   private prepared(
-    document: OpenAPIDocument,
+    loaded: LoadedOpenAPIDocument,
     args: PreparedArguments,
   ): PreparedOpenAPIOperation {
+    const document = loaded.document;
+    // The acceptance-floor inventory filter (openbindings.openapi@1 §3): a
+    // ladder-invalid target is not addressed, and its invocation is refused
+    // before dispatch -- provably no interaction side effect.
+    const verdict = floorOpVerdict(loaded.floor, args.ref);
+    if (verdict && verdict.disposition === "invalid") {
+      throw new OpenAPIExecutionError("ERR_REFUSED", `${floorInvalidTargetMessage(verdict.defects.length)} (${args.ref})`);
+    }
     assertOperation(document, args.ref);
     let prerequisites: ContextRequiredDetails | null = null;
     const target = preflightTarget(document, args.ref, args.context, args.source.location);
@@ -343,25 +357,42 @@ export class OpenAPIEngine {
     signal: AbortSignal | undefined,
     fetchFn: typeof globalThis.fetch | undefined,
     allowExternalRefs: boolean | undefined,
-  ): Promise<OpenAPIDocument> {
+  ): Promise<LoadedOpenAPIDocument> {
+    let floor: AcceptanceFloor | undefined;
+    const floorOptions = {
+      onRawDocument: (raw: unknown) => {
+        floor = computeAcceptanceFloor(raw);
+      },
+      tolerateUnresolvableInternalRefs: true,
+    };
+    const refuseWholeSource = (): void => {
+      // §3 part 2's derived whole-source refusal, at load.
+      if (floor && floor.refusal) throw new Error(floor.refusal);
+    };
     if (source.content !== undefined) {
       const document = await loadOpenAPIDocument(
         source.location,
         source.content,
-        { signal, allowExternalRefs },
+        { signal, allowExternalRefs, ...floorOptions },
         fetchFn,
       );
-      if (source.location) this.cache.set(source.location, document);
-      return document;
+      refuseWholeSource();
+      const loaded = { document, floor };
+      if (source.location) this.cache.set(source.location, loaded);
+      return loaded;
     }
     if (!source.location) {
-      return loadOpenAPIDocument(undefined, undefined, { signal, allowExternalRefs }, fetchFn);
+      const document = await loadOpenAPIDocument(undefined, undefined, { signal, allowExternalRefs, ...floorOptions }, fetchFn);
+      refuseWholeSource();
+      return { document, floor };
     }
     const cached = this.cache.get(source.location);
     if (cached) return cached;
-    const document = await loadOpenAPIDocument(source.location, undefined, { signal, allowExternalRefs }, fetchFn);
-    this.cache.set(source.location, document);
-    return document;
+    const document = await loadOpenAPIDocument(source.location, undefined, { signal, allowExternalRefs, ...floorOptions }, fetchFn);
+    refuseWholeSource();
+    const loaded = { document, floor };
+    this.cache.set(source.location, loaded);
+    return loaded;
   }
 }
 
