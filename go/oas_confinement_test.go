@@ -253,27 +253,39 @@ func TestConfinement_SeamCSchemaPositionRefusesAResponseShapedTarget(t *testing.
 // Mechanism (c). A reference RESOLUTION failure reaches neither earlier
 // mechanism: kin accepts `{"$ref": "#/x"}` at the unmarshal oracle and fails
 // later while resolving it, with a report that matches no seam-C pattern. The
-// ladder already classifies the position (URef at the referencing site), so
-// the round neutralises exactly the sites whose verdict CLIMBS.
+// ladder classifies the position, and the round CAN neutralise exactly the
+// sites whose verdict CLIMBS -- but unlike (a) and (b) it AUTHORS a value the
+// artifact never wrote, so it is admitted only through the EMISSION GATE:
+// something has to demonstrate that what was authored never reaches the content
+// the engine emits.
 //
-// These five cases bite in both directions:
+// THIS ENGINE HAS NO EMISSION. It derives no interface from a document; it
+// prepares one operation at a time and builds a request at execution. So it
+// passes a nil gate and the round always DECLINES, keeping the loader's own
+// error -- the behaviour before the round existed. That is a deliberate
+// asymmetry with `openbindings-go`, whose synthesis can answer the question,
+// and it is the conservative side of it: a pass that cannot show its authored
+// values are unreachable must not admit them. `oas_confinement.go` and
+// `acceptance_floor.go` remain byte-identical between the two engines apart
+// from the package clause and the one pre-existing `buildJSONPointerRef` line;
+// the whole difference is the argument at each engine's call site.
 //
-//   - UNDER-fire: delete the (c) block and the first and fourth cases go red,
-//     because the loader refuses the whole artifact again.
-//   - OVER-fire: populate ClimbingURefSites from the PROJECTING sink as well
-//     and the second case goes red; populate it from the whole raw tree rather
-//     than the ladder's own closure walk and the third goes red; remove the
-//     post-loop subtraction of positions a SURVIVING unit projects and the
-//     fifth goes red. Every one of those turns a confinement into salvage.
+// So every URef case here asserts the DECLINE, and they bite in both
+// directions:
 //
-// The fifth case is the one the first four cannot reach. Each of them perturbs
-// a position with exactly ONE role, so all four are satisfied by a set that
-// ignores the per-unit split that this set's per-position keying creates.
+//   - OVER-fire: pass a gate that admits unconditionally, or drop the nil-gate
+//     decline, and all five go red -- including the two whose documents this
+//     engine could safely have confined, which is the price of the asymmetry
+//     and is why it is stated rather than hidden.
+//   - The five documents are kept exactly as they are in the `openbindings-go`
+//     twin so that any future engine that gains an emission surface can be held
+//     to the twin's outcomes without rewriting them.
 
 // The elmasy shape: a success response's only media alternative carries a
-// schema `$ref` that identifies no location. The defect climbs, so the
-// operation is an invalid target and the intact sibling survives.
-func TestConfinement_URefClimbingSchemaPositionConfines(t *testing.T) {
+// schema `$ref` that identifies no location. openbindings-go confines this and
+// synthesizes the intact sibling; this engine cannot demonstrate that, so it
+// declines.
+func TestConfinement_URefClimbingSchemaPositionDeclinesWithoutAnEmissionSurface(t *testing.T) {
 	document := `{
 	  "openapi": "3.0.3",
 	  "info": {"title": "T", "version": "1"},
@@ -283,28 +295,18 @@ func TestConfinement_URefClimbingSchemaPositionConfines(t *testing.T) {
 	      "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Missing"}}}}}}}
 	  }
 	}`
-	doc, floor, err := loadDocument(context.Background(), nil, Source{Content: []byte(document)}, false)
-	if err != nil {
-		t.Fatalf("a climbing URef position must confine: %v", err)
-	}
-	if doc == nil || doc.Paths == nil || doc.Paths.Value("/good") == nil {
-		t.Fatalf("the intact sibling path item must survive the confined load")
-	}
-	verdict := floor.opVerdict("#/paths/~1reaching/get")
-	if verdict == nil || verdict.Disposition != "invalid" {
-		t.Fatalf("the reaching operation must carry an invalid ladder verdict, got %+v", verdict)
-	}
-	good := floor.opVerdict("#/paths/~1good/get")
-	if good == nil || good.Disposition != "represented" {
-		t.Fatalf("the intact sibling must stay represented, got %+v", good)
+	if _, err := loadConfined(document); err == nil {
+		t.Fatalf("an engine with no emission surface must never admit an authored value")
+	} else if !strings.Contains(err.Error(), "Missing") {
+		t.Errorf("the loader's original error must stand, got %q", err)
 	}
 }
 
 // The ensi-platform shape: a dangling reference AT a success response member.
 // The ladder reads that as an invalid declaration that loses no representation
-// -- it PROJECTS, and the operation survives -- so neutralising it would put an
-// authored value into shipped content. The pass must decline and the loader's
-// own error must stand.
+// -- it PROJECTS, and the operation survives -- so the site never enters
+// `ClimbingURefSites` at all. This case is red under a sink that adds
+// projections, independently of the gate.
 func TestConfinement_URefProjectingPositionIsNeverConfined(t *testing.T) {
 	document := `{
 	  "openapi": "3.0.3",
@@ -323,7 +325,8 @@ func TestConfinement_URefProjectingPositionIsNeverConfined(t *testing.T) {
 
 // A dangling reference inside a component no unit's closure walk reaches. The
 // ladder classifies nothing there, so there is no attribution to confine
-// under, and the pass must decline. This is the algorand shape.
+// under, and the pass must decline. This is the algorand shape, and it is red
+// under a whole-raw-tree sink independently of the gate.
 func TestConfinement_URefUnreachedByAnyUnitIsNeverConfined(t *testing.T) {
 	document := `{
 	  "openapi": "3.0.3",
@@ -338,11 +341,10 @@ func TestConfinement_URefUnreachedByAnyUnitIsNeverConfined(t *testing.T) {
 	}
 }
 
-// The spiceai shape: the dangling `$ref` carries a sibling. Seam C's
-// bare-Reference-Object restriction does not carry over -- the target does not
-// exist, so there is no composition to discard -- and the sibling is left where
-// it is rather than the position being rewritten.
-func TestConfinement_URefWithSiblingsConfinesAndKeepsTheSiblings(t *testing.T) {
+// The spiceai shape: the dangling `$ref` carries a sibling. openbindings-go
+// confines it and keeps the sibling; this engine declines for the same reason
+// as the first case.
+func TestConfinement_URefWithSiblingsDeclinesWithoutAnEmissionSurface(t *testing.T) {
 	document := `{
 	  "openapi": "3.0.3",
 	  "info": {"title": "T", "version": "1"},
@@ -353,53 +355,74 @@ func TestConfinement_URefWithSiblingsConfinesAndKeepsTheSiblings(t *testing.T) {
 	      "responses": {"200": {"description": "ok"}}}}
 	  }
 	}`
-	doc, floor, err := loadDocument(context.Background(), nil, Source{Content: []byte(document)}, false)
-	if err != nil {
-		t.Fatalf("a climbing URef position carrying siblings must confine: %v", err)
-	}
-	if doc == nil || doc.Paths == nil || doc.Paths.Value("/good") == nil {
-		t.Fatalf("the intact sibling path item must survive the confined load")
-	}
-	verdict := floor.opVerdict("#/paths/~1sib/get")
-	if verdict == nil || verdict.Disposition != "invalid" {
-		t.Fatalf("the operation carrying the dangling reference must be invalid, got %+v", verdict)
+	if _, err := loadConfined(document); err == nil {
+		t.Fatalf("an engine with no emission surface must never admit an authored value")
+	} else if !strings.Contains(err.Error(), "Missing") {
+		t.Errorf("the loader's original error must stand, got %q", err)
 	}
 }
 
-// A position with TWO ROLES. `ClimbingURefSites` is keyed by POSITION while the
-// ladder's verdict is per UNIT, so one position inside a shared component can
-// climb for one unit and PROJECT on another unit that survives and is emitted.
-//
-// The three single-role cases above are structurally blind to this: each
-// perturbs a position that has exactly one role, so each can be satisfied by a
-// set that ignores the per-unit split entirely. Without the subtraction that
-// removes every position a surviving unit names, the confined load succeeds
-// here and `/survive` keeps a response schema whose `$ref` member the pass
-// deleted -- an authored value inside a unit that survives and is emitted.
-//
-// The nocodb shape: the corpus reported this class as an unpredicted refusal
-// text move, and record 95 read the signal as a prediction miss.
-func TestConfinement_URefDualRolePositionIsNeverConfined(t *testing.T) {
-	document := `{
-	  "openapi": "3.0.3",
-	  "info": {"title": "T", "version": "1"},
-	  "components": {"schemas": {
-	    "Shared": {"type": "object", "properties": {"x": {"$ref": "#/components/schemas/Missing"}}}
-	  }},
-	  "paths": {
-	    "/climb": {"get": {"operationId": "getClimb",
-	      "parameters": [{"name": "p", "in": "query", "schema": {"$ref": "#/components/schemas/Shared"}}],
-	      "responses": {"200": {"description": "ok"}}}},
-	    "/survive": {"get": {"operationId": "getSurvive",
-	      "responses": {"200": {"description": "ok", "content": {
-	        "application/json": {"schema": {"$ref": "#/components/schemas/Shared"}},
-	        "text/plain": {"schema": {"type": "string"}}
-	      }}}}}
-	  }
-	}`
-	if _, err := loadConfined(document); err == nil {
-		t.Fatalf("a URef position a SURVIVING unit still emits must never be confined")
-	} else if !strings.Contains(err.Error(), "Missing") {
-		t.Errorf("the loader's original error must stand, got %q", err)
+// A position with TWO ROLES, and the four channels that reach a surviving unit
+// without passing through the acceptance floor's closure walk. In
+// `openbindings-go` these are the cases the emission gate exists for, and the
+// twin's `TestConfinement_URefEmissionThroughAnUnwalkedChannelIsNeverConfined`
+// is red under its removal. Here they are covered by the nil-gate decline, and
+// they are kept so that the two engines answer the same documents.
+func TestConfinement_URefEmissionReachableSitesAreNeverConfined(t *testing.T) {
+	const climbing = `"/climb": {"get": {"operationId": "getClimb",
+		  "parameters": [{"name": "p", "in": "query", "schema": {"$ref": "#/components/schemas/Shared"}}],
+		  "responses": {"200": {"description": "ok"}}}}`
+	const sharedSchemas = `"Shared": {"type": "object", "properties": {"x": {"$ref": "#/components/schemas/Missing"}}}`
+
+	for _, tc := range []struct {
+		name       string
+		components string
+		surviving  string
+	}{
+		{
+			name:       "dual role, through a walked channel",
+			components: `"schemas": {` + sharedSchemas + `}`,
+			surviving: `"/survive": {"get": {"operationId": "getSurvive",
+			  "responses": {"200": {"description": "ok", "content": {
+			    "application/json": {"schema": {"$ref": "#/components/schemas/Shared"}},
+			    "text/plain": {"schema": {"type": "string"}}
+			  }}}}}`,
+		},
+		{
+			name:       "parameter content form, operation level",
+			components: `"schemas": {` + sharedSchemas + `}`,
+			surviving: `"/survive": {"get": {"operationId": "getSurvive",
+			  "parameters": [{"name": "q", "in": "query", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Shared"}}}}],
+			  "responses": {"200": {"description": "ok"}}}}`,
+		},
+		{
+			name: "success response is a Reference Object",
+			components: `"schemas": {` + sharedSchemas + `},
+			  "responses": {"OK": {"description": "ok", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Shared"}}}}}`,
+			surviving: `"/survive": {"get": {"operationId": "getSurvive",
+			  "responses": {"200": {"$ref": "#/components/responses/OK"}}}}`,
+		},
+		{
+			name: "request body is a Reference Object",
+			components: `"schemas": {` + sharedSchemas + `},
+			  "requestBodies": {"Body": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Shared"}}}}}`,
+			surviving: `"/survive": {"post": {"operationId": "postSurvive",
+			  "requestBody": {"$ref": "#/components/requestBodies/Body"},
+			  "responses": {"200": {"description": "ok"}}}}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			document := `{
+			  "openapi": "3.0.3",
+			  "info": {"title": "T", "version": "1"},
+			  "components": {` + tc.components + `},
+			  "paths": {` + climbing + `,` + tc.surviving + `}
+			}`
+			if _, err := loadConfined(document); err == nil {
+				t.Fatalf("a position a SURVIVING unit EMITS must never be confined, whatever channel carries it")
+			} else if !strings.Contains(err.Error(), "Missing") {
+				t.Errorf("the loader's original error must stand, got %q", err)
+			}
+		})
 	}
 }
