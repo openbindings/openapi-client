@@ -11,6 +11,13 @@ interface SharedCase {
   input: OpenAPICallInput & { bodyBase64?: string };
   response: { status: number; headers: Record<string, string>; body?: unknown; bodyBase64?: string };
   expect: {
+    /**
+     * When set, states the conformance README's first boundary: the call is
+     * refused before dispatch and the refusal names the artifact defect. No
+     * request reaches the transport, so the remaining request and result
+     * members are not read.
+     */
+    refuse?: string;
     method: string;
     path: string;
     query: string;
@@ -69,6 +76,11 @@ describe("language-neutral native wire conformance", () => {
       if (input.bodyBase64 !== undefined) {
         input.body = Uint8Array.from(atob(input.bodyBase64), (character) => character.charCodeAt(0));
         delete input.bodyBase64;
+      }
+      if (fixture.expect.refuse !== undefined) {
+        await expect(client.call(fixture.operationId, input)).rejects.toThrow(fixture.expect.refuse);
+        expect(fetchFn).not.toHaveBeenCalled();
+        return;
       }
       const result = await client.call(fixture.operationId, input);
       expect(result.ok).toBe(fixture.expect.ok);

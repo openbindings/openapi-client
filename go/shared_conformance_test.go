@@ -9,6 +9,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"reflect"
+	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -30,6 +32,11 @@ type sharedNativeCase struct {
 		BodyBase64 string            `json:"bodyBase64"`
 	} `json:"response"`
 	Expect struct {
+		// Refuse, when set, states the conformance README's first boundary:
+		// the call is refused before dispatch and the refusal names the
+		// artifact defect. No request reaches the server, so the remaining
+		// request and result members are not read.
+		Refuse       string            `json:"refuse"`
 		Method       string            `json:"method"`
 		Path         string            `json:"path"`
 		Query        string            `json:"query"`
@@ -57,7 +64,12 @@ func TestSharedNativeWireConformance(t *testing.T) {
 	for _, fixture := range fixtures {
 		fixture := fixture
 		t.Run(fixture.Name, func(t *testing.T) {
+			var dispatched atomic.Bool
 			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				dispatched.Store(true)
+				if fixture.Expect.Refuse != "" {
+					return // the refusal assertion below owns this case
+				}
 				if request.Method != fixture.Expect.Method || request.URL.Path != fixture.Expect.Path || request.URL.RawQuery != fixture.Expect.Query {
 					t.Errorf("request = %s %s?%s", request.Method, request.URL.Path, request.URL.RawQuery)
 				}
@@ -126,6 +138,18 @@ func TestSharedNativeWireConformance(t *testing.T) {
 				input.BodyPresent = true
 			}
 			result, err := client.Call(context.Background(), OperationID(fixture.OperationID), input)
+			if fixture.Expect.Refuse != "" {
+				if err == nil {
+					t.Fatalf("call succeeded, want a pre-dispatch refusal containing %q", fixture.Expect.Refuse)
+				}
+				if !strings.Contains(err.Error(), fixture.Expect.Refuse) {
+					t.Fatalf("refusal = %q, want it to contain %q", err.Error(), fixture.Expect.Refuse)
+				}
+				if dispatched.Load() {
+					t.Fatalf("refused call still put a request on the wire")
+				}
+				return
+			}
 			if err != nil {
 				t.Fatal(err)
 			}

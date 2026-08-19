@@ -141,6 +141,16 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 		})
 		return
 	}
+	// Last of the declaration-only checks, and ahead of server resolution: an
+	// operation with no addressable target refuses terminally rather than
+	// challenging the consumer to configure a server it can never reach.
+	if err := checkPathTemplateAddressability(pathTemplate, params); err != nil {
+		inv.failExecution(&ExecutionError{
+			Code:    CodeRefused,
+			Message: err.Error(),
+		})
+		return
+	}
 	baseURL, err := resolveServer(doc, pathItem, op, args.Context, args.Source.Location)
 	if err != nil {
 		inv.failExecution(configOrSourceError(err))

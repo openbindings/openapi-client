@@ -43,7 +43,7 @@ import type {
   OpenAPISecurityScheme,
   OpenAPIOAuthFlow,
 } from "./types.js";
-import { errorMessage, parseRef } from "./util.js";
+import { codePointCompare, errorMessage, parseRef } from "./util.js";
 import {
   MissingPathParamError,
   effectiveParameters,
@@ -191,6 +191,14 @@ export async function runBinding(
       inv.fireError(new InvocationError(ERR_REFUSED, errorMessage(error)));
       return;
     }
+  }
+  // Last of the declaration-only checks, and ahead of server resolution: an
+  // operation with no addressable target refuses terminally rather than
+  // challenging the consumer to configure a server it can never reach.
+  const unaddressableTarget = pathTemplateAddressabilityConflict(path, params);
+  if (unaddressableTarget !== "") {
+    inv.fireError(new InvocationError(ERR_REFUSED, unaddressableTarget));
+    return;
   }
   let baseURL: string;
   try {
@@ -1663,6 +1671,63 @@ export function parameterOwnershipConflict(params: OpenAPIParameter[]): string {
     return "effective raw Cookie header parameter collides with structured cookie parameters (OAPI-P-10)";
   }
   return "";
+}
+
+/**
+ * Enforces §9.3 (OAPI-P-05): the target URL is the resolved server joined
+ * with the operation's path template, so a template variable that no declared
+ * path parameter can supply leaves no target to address and refuses before
+ * dispatch — the same ground §9.1 states for the neighbouring case of a
+ * declared path parameter the caller omitted ("the URL cannot be built").
+ * Every accepted OAS edition requires a path template variable to have a
+ * corresponding `in: path` Parameter Object with `required: true`, so this
+ * reaches only artifacts that violate that requirement. Emitting the
+ * unsubstituted template instead would percent-encode the braces and put a
+ * meaningless segment on a live service.
+ *
+ * The predicate is the exact inverse of the substitution routeParameter
+ * performs (replaceAll of `{` + name + `}`): an expression is addressable iff
+ * a declared path parameter's name equals the enclosed text. It is
+ * declaration-only — independent of any invocation input — and so is checked
+ * before input consumption. Empty string means addressable.
+ */
+export function pathTemplateAddressabilityConflict(
+  pathTemplate: string,
+  params: OpenAPIParameter[],
+): string {
+  const declared = new Set(
+    params.filter((parameter) => parameter.in === "path" && !!parameter.name)
+      .map((parameter) => parameter.name!),
+  );
+  const unaddressable: string[] = [];
+  for (const name of pathTemplateVariables(pathTemplate)) {
+    if (declared.has(name) || unaddressable.includes(name)) continue;
+    unaddressable.push(name);
+  }
+  if (unaddressable.length === 0) return "";
+  unaddressable.sort(codePointCompare);
+  return `path template variable(s) ${unaddressable.join(", ")} have no declared path parameter: `
+    + "the target URL cannot be built (OAPI-P-05: unresolvable target)";
+}
+
+/**
+ * The names of the brace-delimited expressions in a path template, in order.
+ * An unclosed `{` delimits nothing and is an ordinary literal; an inner `{`
+ * restarts the expression, matching the innermost pair the substitution would
+ * otherwise have to match.
+ */
+function pathTemplateVariables(pathTemplate: string): string[] {
+  const names: string[] = [];
+  let open = -1;
+  for (let index = 0; index < pathTemplate.length; index += 1) {
+    const char = pathTemplate[index];
+    if (char === "{") open = index;
+    else if (char === "}" && open >= 0) {
+      names.push(pathTemplate.slice(open + 1, index));
+      open = -1;
+    }
+  }
+  return names;
 }
 
 /**

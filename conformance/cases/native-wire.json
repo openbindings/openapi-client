@@ -175,5 +175,25 @@
     "input": {},
     "response": { "status": 200, "headers": { "content-type": "application/octet-stream" }, "bodyBase64": "AP7/" },
     "expect": { "method": "GET", "path": "/blob", "query": "", "headers": {}, "ok": true, "valueBase64": "AP7/", "responseKey": "200", "mediaType": "application/octet-stream" }
+  },
+  {
+    "name": "path template variable with no declared parameter refuses before dispatch",
+    "document": {
+      "openapi": "3.0.3",
+      "info": { "title": "unaddressable target", "version": "1" },
+      "servers": [{ "url": "http://fixture.invalid" }],
+      "paths": {
+        "/policies/{policy_slug}": {
+          "get": {
+            "operationId": "showPolicy",
+            "responses": { "200": { "description": "policy", "content": { "application/json": { "schema": { "type": "object" } } } } }
+          }
+        }
+      }
+    },
+    "operationId": "showPolicy",
+    "input": {},
+    "response": { "status": 200, "headers": { "content-type": "application/json" }, "body": { "ok": true } },
+    "expect": { "refuse": "path template variable(s) policy_slug have no declared path parameter", "method": "GET", "path": "/policies/{policy_slug}", "query": "", "headers": {}, "ok": false, "valueOmitted": true }
   }
 ]
