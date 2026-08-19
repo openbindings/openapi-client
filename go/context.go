@@ -166,7 +166,23 @@ func flatRequirementIsUnambiguous(details *Prerequisites, requirement Requiremen
 	return len(identities)+unnamed == 1
 }
 
+// contextAnonymous reports whether the caller asserted that this invocation
+// carries no credentials. See the twin in openbindings-go/contextstore.go for
+// the full reasoning; in short, an OpenAPI document's `security` states what
+// the API accepts while the server decides what it enforces, and a public read
+// under a blanket document-level requirement is otherwise unreachable.
+func contextAnonymous(ctx map[string]any) bool {
+	value, ok := ctx["anonymous"].(bool)
+	return ok && value
+}
+
 func requirementSatisfied(ctx map[string]any, requirement Requirement, allowFlatNamedCredential bool) bool {
+	// Anonymity answers credential requirements and nothing else: a
+	// `config.value` point is not a credential, so an alternative mixing the
+	// two still has to answer the configuration half.
+	if contextAnonymous(ctx) && strings.HasPrefix(requirement.Type, "auth.") {
+		return true
+	}
 	if requirement.Name != "" {
 		if configured, ok := ctx["$openapiSecurity"].(map[string]any); ok {
 			if present, _ := configured[requirement.Name].(bool); present {
@@ -209,7 +225,13 @@ func requirementSatisfied(ctx map[string]any, requirement Requirement, allowFlat
 		if contextAccessTokenFor(ctx, requirement.Name) != "" && (contextNamedCredential(ctx, requirement.Name) != nil || allowFlatNamedCredential) {
 			return true
 		}
-		return false
+		// A flat bearer token counts, because an OAuth2 access token reaches
+		// the wire AS a Bearer credential and the placement side already
+		// falls back to it when no accessToken is present. Until the two
+		// agreed, an oauth2-declaring artifact was a dead end: the challenge
+		// asked for context, the remedy it printed stored a bearerToken, and
+		// the next attempt challenged identically.
+		return allowFlatNamedCredential && contextBearerToken(ctx) != ""
 	}
 	if requirement.Type == "config.value" {
 		point, _ := requirement.Extra["point"].(string)
