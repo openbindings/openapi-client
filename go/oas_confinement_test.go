@@ -5,11 +5,29 @@ package openapiclient
 // shared 66-cell case table, which block 8d-1 proved cannot redden under an
 // over-firing mutation (record 80, FIX 7):
 //
-//   - UNDER-fire: disable the pass and the four cases that require it to fire
-//     go red, because the loader refuses the whole artifact again.
+//   - UNDER-fire: disable the pass and the cases that require it to fire go
+//     red, because the loader refuses the whole artifact again.
 //   - OVER-fire: remove the ladder-attribution rail and
 //     TestConfinement_UnattributedDefectRefusesWithTheOriginalError goes red,
 //     because an unrostered defect would then be silently neutralised.
+//
+// BLOCK 8h CHANGED WHAT THIS ENGINE CONFINES, and the change is a widening of
+// a cost this engine already carried rather than a new kind of it. Every
+// mechanism that AUTHORS now registers with one `confinementLedger` and every
+// exit goes through one `confinementAdmit`, which admits an authored value only
+// on an emission gate's word. This engine derives no interface from a document
+// -- it prepares one operation at a time and builds a request at execution --
+// so it passes a nil gate and DECLINES every confinement that authors, not only
+// the URef round it already declined.
+//
+// The remaining confinement here is the one that authors nothing: seam C's
+// schema-position inline, where the value that lands is the artifact's own at
+// the place its own pointer denotes. The measured cost is eight corpus
+// specimens this engine loaded at `76174c4` and no longer loads, five of which
+// `openbindings-go` still synthesizes -- so the SDK yields an OBI this client
+// cannot load and therefore cannot invoke. That is record 100's filing V3, one
+// measurement wider, and it is recorded at
+// `corpus-lab/openapi-runtime/103-block-8h-*` §8.
 
 import (
 	"context"
@@ -24,7 +42,8 @@ func loadConfined(document string) (*openapi3.T, error) {
 }
 
 // The Kong shape: an HTTP-method member that is an empty ARRAY (D2b, P3).
-func TestConfinement_MethodMemberArrayConfinesAndSiblingSurvives(t *testing.T) {
+// Mechanism (a) authors here, this engine cannot gate it, and it declines.
+func TestConfinement_MethodMemberArrayAuthorsAndThisEngineDeclines(t *testing.T) {
 	document := `{
 	  "openapi": "3.0.3",
 	  "info": {"title": "T", "version": "1"},
@@ -33,19 +52,12 @@ func TestConfinement_MethodMemberArrayConfinesAndSiblingSurvives(t *testing.T) {
 	    "/bad": {"get": []}
 	  }
 	}`
-	doc, floor, err := loadDocument(context.Background(), nil, Source{Content: []byte(document)}, false)
-	if err != nil {
-		t.Fatalf("confinement must let the intact sibling load: %v", err)
+	_, _, err := loadDocument(context.Background(), nil, Source{Content: []byte(document)}, false)
+	if err == nil {
+		t.Fatalf("an engine with no emission must not admit an authored value")
 	}
-	if doc == nil || doc.Paths == nil || doc.Paths.Value("/good") == nil {
-		t.Fatalf("the intact sibling path item must survive the confined load")
-	}
-	if doc.Paths.Value("/bad") != nil && len(doc.Paths.Value("/bad").Operations()) != 0 {
-		t.Fatalf("the confined target must not survive as an operation")
-	}
-	verdict := floor.opVerdict("#/paths/~1bad/get")
-	if verdict == nil || verdict.Disposition != "invalid" {
-		t.Fatalf("the confined position must carry an invalid ladder verdict, got %+v", verdict)
+	if !strings.Contains(err.Error(), "cannot unmarshal") {
+		t.Errorf("the loader's ORIGINAL error must stand, got %q", err)
 	}
 }
 
@@ -69,10 +81,15 @@ func TestConfinement_UnattributedDefectRefusesWithTheOriginalError(t *testing.T)
 
 // Block 8d-3: the registry-scoped class D15 -- a Schema Object keyword whose
 // value violates the governing dialect's declared JSON type. `properties/member`
-// holds an ARRAY, which kin refuses at unmarshal; the ladder now owns the
-// position, so the pass neutralises it and the operation whose closure REACHES
-// it carries the invalid verdict while the one that does not reach it survives.
-func TestConfinement_D15SchemaKeywordConfinesAndReachIsAttributed(t *testing.T) {
+// holds an ARRAY, which kin refuses at unmarshal.
+//
+// Block 8h: neutralising that position AUTHORS, and this engine has no emission
+// to certify it against. In `openbindings-go` the position has a markable
+// anchor (`#/components/schemas/Thing`) and the gate decides it on the
+// emitter's word; here there is no gate to ask, so the load keeps the loader's
+// original error. This is the widened V3 asymmetry stated as a test rather than
+// as prose: the SAME document synthesizes in the SDK and refuses here.
+func TestConfinement_D15SchemaKeywordAuthorsAndThisEngineDeclines(t *testing.T) {
 	document := `{
 	  "openapi": "3.0.3",
 	  "info": {"title": "T", "version": "1"},
@@ -83,15 +100,18 @@ func TestConfinement_D15SchemaKeywordConfinesAndReachIsAttributed(t *testing.T) 
 	      "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Thing"}}}}}}}
 	  }
 	}`
-	doc, floor, err := loadDocument(context.Background(), nil, Source{Content: []byte(document)}, false)
-	if err != nil {
-		t.Fatalf("a D15 position the ladder owns must confine: %v", err)
+	_, _, err := loadDocument(context.Background(), nil, Source{Content: []byte(document)}, false)
+	if err == nil {
+		t.Fatalf("an engine with no emission must not admit an authored value")
 	}
-	if doc == nil || doc.Paths == nil || doc.Paths.Value("/good") == nil {
-		t.Fatalf("the non-reaching sibling must survive the confined load")
+	if !strings.Contains(err.Error(), "cannot unmarshal") {
+		t.Errorf("the loader's ORIGINAL error must stand, got %q", err)
 	}
+	// The ladder's own verdicts are unaffected by the pass declining: D15 is
+	// still owned, still climbs, and is still readable from the raw image.
+	floor := computeAcceptanceFloorFromBytes([]byte(document))
 	if verdict := floor.opVerdict("#/paths/~1good/get"); verdict == nil || verdict.Disposition != "represented" {
-		t.Fatalf("the non-reaching sibling must stay represented, got %+v", verdict)
+		t.Fatalf("the non-reaching sibling must stay represented in the ladder, got %+v", verdict)
 	}
 	verdict := floor.opVerdict("#/paths/~1reaching/get")
 	if verdict == nil || verdict.Disposition != "invalid" {
@@ -143,9 +163,11 @@ func TestConfinement_SeamCSchemaPositionInlinesTheDenotedValue(t *testing.T) {
 	}
 }
 
-// Seam C, response position (the tsuru shape): the D7 member is removed and
-// the operation keeps its explicit 2xx.
-func TestConfinement_SeamCResponsePositionRemovesTheMember(t *testing.T) {
+// Seam C, response position (the tsuru shape): the D7 member is removed, which
+// AUTHORS, and this engine cannot certify it -- so the load keeps its original
+// error. `openbindings-go` declines this shape too, for a different reason: a
+// Responses Object has no markable anchor there either.
+func TestConfinement_SeamCResponsePositionAuthorsAndThisEngineDeclines(t *testing.T) {
 	document := `{
 	  "openapi": "3.0.3",
 	  "info": {"title": "T", "version": "1"},
@@ -162,19 +184,8 @@ func TestConfinement_SeamCResponsePositionRemovesTheMember(t *testing.T) {
 	    }
 	  }
 	}`
-	doc, err := loadConfined(document)
-	if err != nil {
-		t.Fatalf("seam C must close this load: %v", err)
-	}
-	item := doc.Paths.Value("/info")
-	if item == nil || item.Get == nil {
-		t.Fatalf("the operation must survive")
-	}
-	if item.Get.Responses.Value("default") != nil {
-		t.Errorf("the D7 response member must be removed by the pass")
-	}
-	if item.Get.Responses.Value("200") == nil {
-		t.Errorf("the explicit 2xx must be untouched")
+	if _, err := loadConfined(document); err == nil {
+		t.Fatalf("removing a D7 response member is authoring and must not be admitted here")
 	}
 }
 
