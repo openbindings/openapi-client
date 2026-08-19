@@ -437,3 +437,63 @@ func TestConfinement_URefEmissionReachableSitesAreNeverConfined(t *testing.T) {
 		})
 	}
 }
+
+// The accounting obligation, exercised directly because a mechanism that
+// authors without a ledger cannot be shipped in order to test it. This is the
+// property that replaced a claimed compile obligation the language does not
+// supply: `confinementUnledgeredDifference` compares the tree about to be handed
+// back against a second parse of the artifact's own bytes.
+//
+// It goes red if the walk stops descending, if prefix coverage is widened to
+// "anything under the root", or if the check is skipped when the ledger is
+// empty -- which is exactly the state a forgetful mechanism leaves behind.
+func TestConfinement_UnledgeredAuthoringIsNotAccounted(t *testing.T) {
+	entry := []byte(`{"openapi":"3.0.3","info":{"title":"T","version":"1"},"paths":{"/x":{"get":{"operationId":"getX","responses":{"200":{"description":"ok"}}}}}}`)
+	parse := func() map[string]any {
+		tree, ok := parseRawResource(entry)
+		if !ok {
+			t.Fatal("entry must parse")
+		}
+		root, ok := tree.(map[string]any)
+		if !ok {
+			t.Fatal("entry must be an object")
+		}
+		return root
+	}
+
+	// Unchanged: nothing to account for, with an empty ledger.
+	if where, unaccounted := confinementUnledgeredDifference(entry, parse(), newConfinementLedger()); unaccounted {
+		t.Errorf("an unchanged tree has nothing unaccounted, got %q", where)
+	}
+
+	// A fifth mechanism's change, with no ledger entry anywhere.
+	fifth := parse()
+	fifth["info"].(map[string]any)["title"] = "AUTHORED BY A MECHANISM WITH NO LEDGER"
+	where, unaccounted := confinementUnledgeredDifference(entry, fifth, newConfinementLedger())
+	if !unaccounted {
+		t.Fatalf("an unledgered change must not be accounted")
+	}
+	if where != "#/info/title" {
+		t.Errorf("the decline must name the position, got %q", where)
+	}
+
+	// The same change, recorded. An entry accounts for the position and for
+	// everything beneath it, and for nothing else.
+	ledger := newConfinementLedger()
+	ledger.author("#/info/title")
+	if where, unaccounted := confinementUnledgeredDifference(entry, fifth, ledger); unaccounted {
+		t.Errorf("a recorded position is accounted, got %q", where)
+	}
+	elsewhere := newConfinementLedger()
+	elsewhere.author("#/info/version")
+	if _, unaccounted := confinementUnledgeredDifference(entry, fifth, elsewhere); !unaccounted {
+		t.Errorf("an entry at another position accounts for nothing here")
+	}
+
+	// A removed member is a difference AT the removed position.
+	removed := parse()
+	delete(removed["paths"].(map[string]any)["/x"].(map[string]any), "get")
+	if where, _ := confinementUnledgeredDifference(entry, removed, newConfinementLedger()); where != "#/paths/~1x/get" {
+		t.Errorf("a removal is a difference at the removed position, got %q", where)
+	}
+}
