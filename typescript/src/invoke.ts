@@ -3,7 +3,6 @@ import {
   contextRequiredError,
   configValueRequirement,
   contextSatisfies,
-  contextAnonymous,
   classifyThroughHooks,
   decodeThroughHooks,
   contextBearerTokenFor,
@@ -1549,13 +1548,6 @@ function selectedSecurityPlan(
   baseURL: string,
   params: OpenAPIParameter[],
 ): SecurityPlan | undefined {
-  // An anonymous invocation places nothing — that is the point of asserting
-  // it: the caller wants the request a client with no credentials sends.
-  // Satisfying the challenge without this would let a credential left in
-  // context from an earlier call ride along, so the assertion has to reach the
-  // wire and not only the negotiation. It returns before plan selection, so no
-  // scheme is ever consulted for a value to place.
-  if (contextAnonymous(ctx)) return undefined;
   const plans = viableSecurityPlans(doc, op, baseURL, params);
   if (!plans) return undefined;
   return plans.find((candidate) =>

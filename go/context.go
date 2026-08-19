@@ -166,23 +166,8 @@ func flatRequirementIsUnambiguous(details *Prerequisites, requirement Requiremen
 	return len(identities)+unnamed == 1
 }
 
-// contextAnonymous reports whether the caller asserted that this invocation
-// carries no credentials. See the twin in openbindings-go/contextstore.go for
-// the full reasoning; in short, an OpenAPI document's `security` states what
-// the API accepts while the server decides what it enforces, and a public read
-// under a blanket document-level requirement is otherwise unreachable.
-func contextAnonymous(ctx map[string]any) bool {
-	value, ok := ctx["anonymous"].(bool)
-	return ok && value
-}
 
 func requirementSatisfied(ctx map[string]any, requirement Requirement, allowFlatNamedCredential bool) bool {
-	// Anonymity answers credential requirements and nothing else: a
-	// `config.value` point is not a credential, so an alternative mixing the
-	// two still has to answer the configuration half.
-	if contextAnonymous(ctx) && strings.HasPrefix(requirement.Type, "auth.") {
-		return true
-	}
 	if requirement.Name != "" {
 		if configured, ok := ctx["$openapiSecurity"].(map[string]any); ok {
 			if present, _ := configured[requirement.Name].(bool); present {
