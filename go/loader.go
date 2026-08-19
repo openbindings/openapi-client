@@ -144,7 +144,17 @@ func loadDocument(ctx context.Context, client *http.Client, source Source, allow
 		// Fast path first: confinement is reached only after the shipped load
 		// has already refused. On any confinement failure the ORIGINAL error
 		// stands.
-		confined, confinedErr, took := confineEntryDocument(entryBytes, attempt, err)
+		//
+		// The emission gate is nil here, and that is a decision rather than an
+		// omission. The URef round is the one mechanism that AUTHORS a value,
+		// and it may only be admitted by an engine that can show what it
+		// authored never reaches emitted content. This engine derives no
+		// interface from a document: it prepares one operation at a time and
+		// builds a request at execution, so it has no emission of its own to
+		// compare and cannot make that showing. It therefore declines the round
+		// and keeps the loader's original error -- the behaviour before the
+		// round existed. Every other mechanism is unaffected.
+		confined, confinedErr, took := confineEntryDocument(entryBytes, attempt, err, nil)
 		switch {
 		case !took:
 			return nil, nil, err
