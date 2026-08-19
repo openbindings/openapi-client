@@ -31,9 +31,11 @@ package openapiclient
 
 import (
 	"context"
-	"github.com/getkin/kin-openapi/openapi3"
+	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/getkin/kin-openapi/openapi3"
 )
 
 func loadConfined(document string) (*openapi3.T, error) {
@@ -495,5 +497,146 @@ func TestConfinement_UnledgeredAuthoringIsNotAccounted(t *testing.T) {
 	delete(removed["paths"].(map[string]any)["/x"].(map[string]any), "get")
 	if where, _ := confinementUnledgeredDifference(entry, removed, newConfinementLedger()); where != "#/paths/~1x/get" {
 		t.Errorf("a removal is a difference at the removed position, got %q", where)
+	}
+}
+
+// RED PROOF FOR THE ACCOUNTING CHECK'S CALL SITE, and the reason it exists is a
+// verification finding rather than a design one.
+//
+// The case above proves that `confinementUnledgeredDifference` COMPUTES
+// differences. It calls the helper directly, four times, with hand-built trees,
+// and it cannot notice if the pass stops calling it: with
+// `confinementAdmit`'s call replaced by `if false`, the entire `formats/openapi`
+// suite stayed GREEN (record 107 §6.2). That is exactly the failure block 8h's
+// re-run reported about its own perturbation A -- "an unfaithful perturbation
+// that passes is worth nothing" -- in the perturbation it did not re-check.
+//
+// This case exercises `confinementAdmit`, which is the pass's ONE admission
+// point and the function the obligation is stated over. It is two-sided on
+// purpose:
+//
+//   - an unledgered difference must DECLINE. Red if the call site is removed,
+//     which is the regression the case above cannot see.
+//   - the SAME difference, recorded, must ADMIT. Red if the check is widened to
+//     decline whatever it is handed, which would make the first half pass for
+//     the wrong reason.
+//
+// What it cannot do is drive the difference in through `confineEntryDocument`,
+// because a mechanism that authors without a ledger is by definition one this
+// engine does not ship. This is the tightest faithful proof available without
+// shipping the defect in order to test it, and it is red under the exact
+// perturbation that motivated it.
+func TestConfinement_AdmissionCallsTheAccountingCheck(t *testing.T) {
+	entry := []byte(`{"openapi":"3.0.3","info":{"title":"T","version":"1"},"paths":{"/x":{"get":{"operationId":"getX","responses":{"200":{"description":"ok"}}}}}}`)
+	authored := func() map[string]any {
+		tree, ok := parseRawResource(entry)
+		if !ok {
+			t.Fatal("entry must parse")
+		}
+		root, ok := tree.(map[string]any)
+		if !ok {
+			t.Fatal("entry must be an object")
+		}
+		// A fifth mechanism's change, reaching into the raw tree the way Go will
+		// always let one reach into it.
+		root["info"].(map[string]any)["title"] = "AUTHORED BY A MECHANISM WITH NO LEDGER"
+		return root
+	}
+	reload := func(data []byte) (*openapi3.T, error) {
+		loader := openapi3.NewLoader()
+		return loader.LoadFromData(data)
+	}
+	admittingGate := func(shipped, marked *openapi3.T, floor *acceptanceFloor) bool { return true }
+
+	tree := authored()
+	floor := computeAcceptanceFloor(tree)
+	if floor == nil {
+		t.Fatal("the edition gate must read this artifact")
+	}
+	shipped, err := json.Marshal(tree)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	loaded, err := reload(shipped)
+	if err != nil {
+		t.Fatalf("the authored tree must load: %v", err)
+	}
+
+	if _, _, ok := confinementAdmit(entry, tree, newConfinementLedger(), floor, reload, admittingGate, loaded); ok {
+		t.Fatalf("admission must consult the accounting check: an unledgered change was ADMITTED")
+	}
+
+	ledger := newConfinementLedger()
+	ledger.author("#/info/title")
+	doc, admitErr, ok := confinementAdmit(entry, tree, ledger, floor, reload, admittingGate, loaded)
+	if !ok || admitErr != nil || doc == nil {
+		t.Fatalf("a recorded position an admitting gate clears must be admitted, got ok=%v err=%v", ok, admitErr)
+	}
+}
+
+// RED PROOF FOR THE DENOTATION EXEMPTION, at the half a signature cannot carry.
+//
+// `confinementInlineDenoted` takes a POINTER rather than a value, so no caller
+// can MINT through it. That was claimed to make the exemption structural rather
+// than declared, and it does not: nothing in the signature says `site` has
+// anything to do with `target`, so any caller could RELOCATE the artifact's own
+// value to a position the artifact never put it, past an admitting gate,
+// accounted as denoted. A verifier shipped `info.title = "getSurvive"` that way
+// in one line (record 107 §6.3).
+//
+// The site is now checked to BE a Reference Object whose `$ref` names `target`,
+// which is what the exemption's justification always asserted. Two-sided:
+// relocation must be refused and the shipped seam-C shape must still inline.
+func TestConfinement_DenotationRequiresTheSiteToDenoteTheTarget(t *testing.T) {
+	entry := []byte(`{"openapi":"3.0.3","info":{"title":"T","version":"1"},
+	  "components":{"schemas":{"S":{"type":"object"}}},
+	  "paths":{"/survive":{"get":{"operationId":"getSurvive",
+	    "responses":{"200":{"description":"ok","content":{"application/json":{"schema":{"$ref":"#/components/schemas/S"}}}}}}}}}`)
+	parse := func() map[string]any {
+		tree, ok := parseRawResource(entry)
+		if !ok {
+			t.Fatal("entry must parse")
+		}
+		root, ok := tree.(map[string]any)
+		if !ok {
+			t.Fatal("entry must be an object")
+		}
+		return root
+	}
+
+	// RELOCATION: the artifact's own value, at a position that denotes nothing.
+	relocate := parse()
+	ledger := newConfinementLedger()
+	if confinementInlineDenoted(relocate, "#/info/title", "#/paths/~1survive/get/operationId", ledger) {
+		t.Fatalf("a site that does not denote the target must never be inlined")
+	}
+	if title := relocate["info"].(map[string]any)["title"]; title != "T" {
+		t.Fatalf("nothing may move at a site that denotes nothing, got %v", title)
+	}
+	if len(ledger.denoted) != 0 {
+		t.Fatalf("a refused inline records nothing, got %v", ledger.denoted)
+	}
+
+	// The shipped shape: a bare Reference Object at the position, whose own
+	// `$ref` names the target.
+	inline := parse()
+	site := "#/paths/~1survive/get/responses/200/content/application~1json/schema"
+	if !confinementInlineDenoted(inline, site, "#/components/schemas/S", ledger) {
+		t.Fatalf("a Reference Object must still be inlined with the value its own pointer names")
+	}
+	landed, ok := confinementResolveRaw(inline, site)
+	if !ok {
+		t.Fatalf("the site must still hold a value")
+	}
+	if landedMap, isMap := landed.(map[string]any); !isMap || landedMap["type"] != "object" {
+		t.Fatalf("the target's own value must land, got %v", landed)
+	}
+	if !ledger.denoted[site] {
+		t.Fatalf("an inlined position is recorded as denoted, got %v", ledger.denoted)
+	}
+	// Both spellings of the target name it.
+	fragment := parse()
+	if !confinementInlineDenoted(fragment, site, "/components/schemas/S", newConfinementLedger()) {
+		t.Fatalf("the fragment spelling must name the same target")
 	}
 }
