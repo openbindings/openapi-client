@@ -157,6 +157,15 @@ func loadDocument(ctx context.Context, client *http.Client, source Source, allow
 		confined, confinedErr, took := confineEntryDocument(entryBytes, attempt, err, nil)
 		switch {
 		case !took:
+			// A load failure does not preempt the whole-source refusal: part 2's
+			// refusal is decided over the artifact's raw image, which is in hand,
+			// and it is the document's own reason. Block 8h: a confinement that
+			// declines because it cannot gate itself now leaves the loader's
+			// error standing where it used to leave a confined document that
+			// then reached this refusal a few lines later.
+			if floor := computeAcceptanceFloorFromBytes(entryBytes); floor != nil && floor.Refusal != "" {
+				return nil, nil, errors.New(floor.Refusal)
+			}
 			return nil, nil, err
 		case confinedErr != nil:
 			return nil, nil, confinedErr
