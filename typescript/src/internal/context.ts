@@ -507,7 +507,15 @@ function requirementSatisfied(
       return false;
     }
     const selected = configurationValueAt((configuration as Record<string, unknown>)[point], path);
-    return selected.present && selected.value !== undefined && selected.value !== null && selected.value !== "";
+    if (
+      !selected.present
+      || selected.value === undefined
+      || selected.value === null
+      || selected.value === ""
+    ) {
+      return false;
+    }
+    return configValueMatchesSchema(req, selected.value);
   }
   const mappedField = REQUIREMENT_FIELDS[req.type];
   if (mappedField === undefined && req.type.startsWith("auth.")) {
@@ -516,6 +524,51 @@ function requirementSatisfied(
   const field = mappedField ?? req.type;
   const v = ctx[field];
   return v !== undefined && v !== null && v !== "";
+}
+
+/**
+ * Validates a stored config.value against the requirement's engine-asserted
+ * `schema`: absent = unconstrained, so the value passes; a present `enum`
+ * member is the closed admissible set the value must belong to (JSON
+ * equality). TWIN DIVERGENCE BY NECESSITY: this standalone package carries no
+ * JSON Schema validator dependency, so — unlike the SDK twin, which validates
+ * the whole schema through the core package's 2020-12 machinery — only the
+ * `enum` member is enforced here; other schema keywords are not evaluated
+ * (a value passing here could still fail the SDK twin's full validation).
+ * Fail-closed on what IS readable: a schema that is not a plain object, or an
+ * enum that is not an array, makes the requirement unsatisfiable from the
+ * store — the challenge surfaces instead of releasing a stored value against
+ * a constraint this layer could not read.
+ */
+function configValueMatchesSchema(req: ContextRequirement, value: unknown): boolean {
+  if (!("schema" in req) || req.schema === undefined) return true;
+  const schema = req.schema;
+  if (schema === null || typeof schema !== "object" || Array.isArray(schema)) return false;
+  if (!("enum" in schema)) return true;
+  const admissible = (schema as Record<string, unknown>)["enum"];
+  if (!Array.isArray(admissible)) return false;
+  return admissible.some((member) => jsonEqual(member, value));
+}
+
+/** Structural JSON equality (the equality JSON Schema's `enum` prescribes). */
+function jsonEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (Array.isArray(a) && Array.isArray(b)) {
+    return a.length === b.length && a.every((item, index) => jsonEqual(item, b[index]));
+  }
+  if (
+    a !== null && b !== null
+    && typeof a === "object" && typeof b === "object"
+    && !Array.isArray(a) && !Array.isArray(b)
+  ) {
+    const aKeys = Object.keys(a as Record<string, unknown>);
+    const bKeys = Object.keys(b as Record<string, unknown>);
+    return aKeys.length === bKeys.length && aKeys.every((key) =>
+      Object.hasOwn(b, key)
+      && jsonEqual((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key]),
+    );
+  }
+  return false;
 }
 
 /**
@@ -754,8 +807,10 @@ function mergeConfigurationFragment(left: Record<string, unknown>, right: Record
 
 /**
  * Builds a read-only {@link ContextResolver} backed by a {@link ContextStore}:
- * an optional stored realization of binding-invoker challenges. It derives
- * the store key from the challenge's `target` by normalizing it
+ * an optional stored realization of binding-invoker challenges. For an
+ * alternative made solely of config.value requirements it looks up the exact
+ * asserted `target` string; for credential-family-bearing alternatives it
+ * derives the store key from the challenge's `target` by normalizing it
  * ({@link normalizeEndpoint}), returns the least-privilege subset of the stored
  * context ({@link scopeContext}) when it satisfies one of the challenge's
  * alternatives, and declines (null) otherwise — at which point the challenge
@@ -787,6 +842,38 @@ export function storeContextResolver(store: ContextStore): ContextResolver {
       ),
     };
     if (reusable.alternatives.length === 0) return null;
+
+    // Keying rule (context-scope model, ratified 2026-08-19): scopes are
+    // opaque and engine-asserted, so consumers file and fetch by the EXACT
+    // asserted key, never derive. An alternative consisting solely of
+    // config.value requirements is artifact-bound — its asserted target is
+    // the canonicalized source identity, not an endpoint — so it looks up
+    // under the verbatim `details.target` string. Endpoint normalization
+    // there would conflate every artifact served from one host onto a single
+    // origin key (many specs, one host). Credential-family-bearing
+    // alternatives keep the endpoint-normalized origin convention: their
+    // scope is the destination the credential is for. The partition does not
+    // change flat-credential ambiguity: config.value requirements never
+    // collide with an auth.* family, so per-subset evaluation matches the
+    // whole-set evaluation. Twin of the SDK's storeContextResolver.
+    const configOnly: ContextRequiredDetails = {
+      ...details,
+      alternatives: reusable.alternatives.filter((alternative) =>
+        alternative.requirements.every((requirement) => requirement.type === "config.value"),
+      ),
+    };
+    if (configOnly.alternatives.length > 0 && details.target !== "") {
+      const ctx = await store.get(details.target);
+      if (ctx && contextSatisfies(ctx, configOnly)) return scopeContext(ctx, configOnly);
+    }
+
+    const credentialBearing: ContextRequiredDetails = {
+      ...details,
+      alternatives: reusable.alternatives.filter((alternative) =>
+        alternative.requirements.some((requirement) => requirement.type !== "config.value"),
+      ),
+    };
+    if (credentialBearing.alternatives.length === 0) return null;
     const key = normalizeEndpoint(details.target);
     // An empty or unkeyable target cannot safely select reusable stored
     // context. Interactive or application-specific resolvers may still
@@ -794,6 +881,6 @@ export function storeContextResolver(store: ContextStore): ContextResolver {
     if (!key) return null;
     const ctx = await store.get(key);
     if (!ctx) return null;
-    return contextSatisfies(ctx, reusable) ? scopeContext(ctx, reusable) : null;
+    return contextSatisfies(ctx, credentialBearing) ? scopeContext(ctx, credentialBearing) : null;
   };
 }

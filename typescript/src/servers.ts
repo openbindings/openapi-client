@@ -25,7 +25,12 @@ export class ConfigRequired extends Error {
     readonly point: string,
     readonly path: string,
     message: string,
-    readonly choices?: string[],
+    /**
+     * Engine-asserted JSON Schema for the value at (point, path); absent =
+     * unconstrained. An `enum` member is the closed admissible set, emitted
+     * only where the admissible set is already computed at the throw site.
+     */
+    readonly schema?: Record<string, unknown>,
     readonly durable?: boolean,
   ) {
     super(message);
@@ -101,7 +106,11 @@ export function resolveServer(
       "server",
       "/url",
       `the effective server list has ${servers.length} alternatives; configuration.server must select one (openbindings.openapi@1 OAPI-P-05)`,
-      servers.map((entry) => entry.url),
+      // The declared entries are the closed admissible set at /url (a
+      // not-declared url is refused by resolveServerConfig; an out-of-list
+      // base rides `baseUrl` instead), so the challenge asserts them as an
+      // enum schema.
+      { enum: servers.map((entry) => entry.url) },
       true,
     );
   }
@@ -242,12 +251,17 @@ function substituteServerVariables(
     const declaredDefault = typeof v.default === "string" ? v.default : "";
     const val = supplied?.[name] ?? declaredDefault;
     if (val === "" && declaredDefault === "") {
-      const enumVals = Array.isArray(v.enum) ? v.enum : undefined;
+      // The artifact-declared enum (its string members — the set the
+      // substitution check below enforces) is the closed admissible set;
+      // asserted as an enum schema only where declared and non-empty.
+      const enumVals = Array.isArray(v.enum)
+        ? v.enum.filter((item): item is string => typeof item === "string")
+        : [];
       throw new ConfigRequired(
         "server",
         `/variables/${escapeJSONPointerToken(name)}`,
         `server "${srv.url}": variable "${name}" has no supplied value and no declared default`,
-        enumVals,
+        enumVals.length > 0 ? { enum: enumVals } : undefined,
       );
     }
     const enumValues = Array.isArray(v.enum) ? v.enum.filter((item): item is string => typeof item === "string") : [];
