@@ -14,7 +14,7 @@ import { computeAcceptanceFloor } from "./acceptance-floor.js";
 // The embedded table's own digest, and the digest of the shape table it was
 // generated from. A change to either is a change to the shared answer and
 // must land in every engine simultaneously.
-const CASE_TABLE_SHA256 = "415c14f8da03fbb0979909c6390592a216cc17a69c1d2a9adf177d8d0636eae1";
+const CASE_TABLE_SHA256 = "3eebb54e2d035a11c3b8373fd5cdf55c0712c7985c6a451bc345d028aa0de61e";
 const SHAPE_TABLE_SHA256 = "4e8f5393e48868e2a9468d7232921e1c2f3b33efd941f605b9e328b23191d456";
 
 interface CaseExpect {
@@ -79,7 +79,7 @@ describe("acceptance-floor shared case table", () => {
   });
 
   it("reproduces the 66-cell shape table", () => {
-    expect(table.shapeCells).toHaveLength(66);
+    expect(table.shapeCells).toHaveLength(68);
     for (const c of table.shapeCells) assertCase(c.id, c.doc, c.expect);
   });
 });

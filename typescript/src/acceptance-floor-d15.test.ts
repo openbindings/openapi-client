@@ -89,18 +89,30 @@ const cases: D15Case[] = [
   },
   {
     // The 3.0 line's Schema Object is not the 2020-12 dialect and a boolean is
-    // not a Schema Object there -- but `openbindings.openapi@1` §9.2 already
-    // ascribes a part interpretation to a boolean-valued multipart part on
-    // this line, so the spelling is REFERRED rather than classified, the same
-    // device D1n/D1a use. Zero corpus incidence.
-    name: "a boolean `properties` member on the 3.0 line is REFERRED, not this class",
+    // not a Schema Object there, so a boolean `properties` member IS this
+    // class -- and the defect confines to the smallest unit that owns it
+    // (F-O1-13, ruled 2026-08-20; here a response schema, so P2 climbs it to
+    // the operation, exactly as the string member below).
+    //
+    // This case read "is REFERRED, not this class" until then. The referral
+    // rested on `openbindings.openapi@1` §9.2 ascribing an interpretation to a
+    // boolean-valued schema on this line, and §9.2 says of that clause that it
+    // governs a Media Type Object's own `schema` and does not descend to a
+    // form part -- so it never reached a `properties` member. Against it stood
+    // pinned authority: JSON Schema draft-wright-json-schema-00 Section 4.4,
+    // "A JSON schema MUST be an object"; its validation companion Section
+    // 5.16, each value of `properties` "MUST be an object"; and OAS 3.0.4
+    // Section 4.7.24, "Property definitions MUST be a Schema Object and not a
+    // standard JSON Schema", with `additionalProperties` the only position
+    // that line grants a boolean.
+    name: "a boolean `properties` member on the 3.0 line is this class",
     doc: {
       openapi: "3.0.0",
       paths: { "/a": { get: { responses: { 200: { description: "ok", content: { "application/json": { schema: { type: "object", properties: { f: true } } } } } } } } },
     },
-    positions: [],
+    positions: ["#/paths/~1a/get/responses/200/content/application~1json/schema/properties/f"],
     method: "get",
-    disposition: "represented",
+    disposition: "invalid",
     invalidAlternatives: 0,
   },
   {

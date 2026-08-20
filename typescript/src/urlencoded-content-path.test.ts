@@ -7,7 +7,7 @@ import type { OpenAPIMediaType, OpenAPIOperation } from "./types.js";
 
 // The identical file is executed by openbindings-go/formats/openapi and by
 // openapi-client/go, and carried by openbindings-ts's openapi package.
-const CASES_DIGEST = "cdd4c439ff453c3b5a8c2df13edb4ed9065766ac8e1210fcfbf3c6a337c2c732";
+const CASES_DIGEST = "ca17623d67205f5c85424e58295400571394c8e095850c13d7ada68eb72a0fa8";
 
 const EDITIONS = ["3.0.0", "3.0.1", "3.0.2", "3.0.3", "3.0.4", "3.1.0", "3.1.1", "3.1.2"];
 const SHAPES = [
@@ -114,12 +114,15 @@ describe("urlencoded content path — the twin case table", () => {
     }
   });
 
-  // Which shapes may differ between the two accepted LINES, stated positively.
-  // The type-absent part default is the only one: every 3.1 edition states
-  // application/octet-stream for a part declaring no type and this
-  // specification defines no JSON-to-octet part boundary, while no 3.0 edition
-  // states a row for it and §9.2's own five-edition convention answers instead.
-  it("confines every edition difference to a line split", () => {
+  // NO declaration shape on this lane decides differently between the two
+  // accepted LINES, stated positively. This replaces "confines every edition
+  // difference to a line split", whose whole content was the one exception:
+  // the type-absent part default, which the 3.0 line's deleted value-keyed
+  // convention admitted while the 3.1 line refused. Escalation M2 (ruled
+  // 2026-08-20) removed that convention, so the shapes agree — on grounds
+  // that still differ per line, which is why the exception was legitimate
+  // while it stood and why its removal is a convergence, not an erasure.
+  it("decides every declaration shape identically on both lines", () => {
     const typeAbsent = new Set(["typeless-with-members", "unconstrained"]);
     const byShape = new Map<string, Record<string, string>>();
     for (const c of cases) {
@@ -130,12 +133,11 @@ describe("urlencoded content path — the twin case table", () => {
     }
     expect(byShape.size).toBe(10);
     for (const [shape, byLine] of byShape) {
-      const differs = byLine["3.0"] !== byLine["3.1"];
-      expect(`${shape} differs=${differs}`).toBe(`${shape} differs=${typeAbsent.has(shape)}`);
+      expect(`${shape}:${byLine["3.0"]}`).toBe(`${shape}:${byLine["3.1"]}`);
     }
     for (const shape of typeAbsent) {
       expect(byShape.get(shape)!["3.1"]).toBe("refused");
-      expect(byShape.get(shape)!["3.0"]).toBe("admitted;emit=p=main+st");
+      expect(byShape.get(shape)!["3.0"]).toBe("refused");
     }
   });
 
