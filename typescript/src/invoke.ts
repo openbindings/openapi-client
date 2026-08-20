@@ -85,17 +85,20 @@ import type { OpenAPIExecutionProfile } from "./profile.js";
  * CONTEXT_REQUIRED challenge — retryable after resolution (R1a) — while any
  * other error stays a terminal ERR_SOURCE_CONFIG_ERROR. resolveServer already
  * consulted the supplied context; the operation-invoker's bounded
- * resolve-and-retry loop is the backstop. No server target has resolved, so
- * the challenge carries an empty target; a resolver may satisfy it
- * interactively or from caller-owned policy, but must not invent a reusable
- * target.
+ * resolve-and-retry loop is the backstop. The point precedes destination
+ * resolution — no server target exists yet — so the challenge's asserted
+ * scope is the artifact's own identity: the canonicalized source location
+ * already threaded to resolveServer as the base URI (context-scope model,
+ * ratified 2026-08-19). A referenceless binding has no stable identity and
+ * asserts nothing (empty target); consumers file and fetch by the exact
+ * asserted key, never derive.
  */
-function configOrSourceError(e: unknown): InvocationError {
+function configOrSourceError(e: unknown, sourceLocation: string | undefined): InvocationError {
   if (e instanceof ConfigRequired) {
     return contextRequiredError(e.message, {
-      target: "",
+      target: sourceLocation ?? "",
       alternatives: [
-        { requirements: [configValueRequirement(e.point, e.path, e.message, e.choices, e.durable)] },
+        { requirements: [configValueRequirement(e.point, e.path, e.message, e.schema, e.durable)] },
       ],
     });
   }
@@ -203,7 +206,7 @@ export async function runBinding(
   try {
     baseURL = resolveServer(doc, pathItem, op, args.context, args.source.location);
   } catch (e: unknown) {
-    inv.fireError(configOrSourceError(e));
+    inv.fireError(configOrSourceError(e, args.source.location));
     return;
   }
 

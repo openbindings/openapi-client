@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolveServer } from "./servers.js";
+import { ConfigRequired, resolveServer } from "./servers.js";
 import type { OpenAPIDocument } from "./types.js";
 
 // Mirrors Go's servers_test.go: §9.3 (OAPI-P-05) server resolution — the
@@ -43,6 +43,22 @@ describe("resolveServer — effective list precedence", () => {
       "https://host.example.com",
     );
   });
+
+  // config.value schema ratification (2026-08-20): the declared entries are
+  // the closed admissible set at /url, asserted as `{"enum": [...]}`.
+  it("asserts the declared entry urls as the multi-server challenge's enum schema", () => {
+    try {
+      resolveServer(doc, null, {}, undefined, "");
+      expect.unreachable("expected a config-required challenge");
+    } catch (error: unknown) {
+      expect(error).toBeInstanceOf(ConfigRequired);
+      const challenge = error as ConfigRequired;
+      expect(challenge.point).toBe("server");
+      expect(challenge.path).toBe("/url");
+      expect(challenge.schema).toEqual({ enum: ["https://doc-a.example.com", "https://doc-b.example.com"] });
+      expect(challenge.durable).toBe(true);
+    }
+  });
 });
 
 // The default substitutes each server variable's declared default.
@@ -68,6 +84,32 @@ describe("resolveServer — variable defaults", () => {
       servers: [{ url: "https://{host}/v1", variables: { host: {} } }],
     };
     expect(() => resolveServer(doc, null, null, undefined, "")).toThrow("host");
+  });
+
+  // The variable challenge carries the artifact-declared enum as its schema
+  // exactly where one is declared, and asserts nothing where none is.
+  it("asserts the declared variable enum as the challenge schema, and no schema where none is declared", () => {
+    const withEnum: OpenAPIDocument = {
+      servers: [{ url: "https://{env}.example.com", variables: { env: { enum: ["api", "staging"] } } }],
+    };
+    try {
+      resolveServer(withEnum, null, null, undefined, "");
+      expect.unreachable("expected a config-required challenge");
+    } catch (error: unknown) {
+      expect(error).toBeInstanceOf(ConfigRequired);
+      const challenge = error as ConfigRequired;
+      expect(challenge.path).toBe("/variables/env");
+      expect(challenge.schema).toEqual({ enum: ["api", "staging"] });
+    }
+    const withoutEnum: OpenAPIDocument = {
+      servers: [{ url: "https://{host}/v1", variables: { host: {} } }],
+    };
+    try {
+      resolveServer(withoutEnum, null, null, undefined, "");
+      expect.unreachable("expected a config-required challenge");
+    } catch (error: unknown) {
+      expect((error as ConfigRequired).schema).toBeUndefined();
+    }
   });
 });
 

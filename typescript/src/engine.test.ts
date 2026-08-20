@@ -225,11 +225,41 @@ describe("multi-server selection negotiation", () => {
       challenge = error;
     }
     expect(challenge).toBeInstanceOf(OpenAPIExecutionError);
-    const failure = challenge as OpenAPIExecutionError & { details?: { alternatives?: Array<{ requirements: Array<Record<string, unknown>> }> } };
+    const failure = challenge as OpenAPIExecutionError & { details?: { target?: string; alternatives?: Array<{ requirements: Array<Record<string, unknown>> }> } };
     expect(failure.code).toBe("CONTEXT_REQUIRED");
+    // Inline content with no location: a referenceless binding has no stable
+    // identity and asserts nothing (context-scope model, 2026-08-19).
+    expect(failure.details?.target).toBe("");
     const requirement = failure.details?.alternatives?.[0]?.requirements?.[0] as Record<string, unknown>;
     expect(requirement.type).toBe("config.value");
     expect(requirement.point).toBe("server");
+    // The declared entries are the closed admissible set, asserted as an
+    // enum schema (config.value schema ratification, 2026-08-20).
+    expect(requirement.schema).toEqual({ enum: ["https://a.example.test", "https://b.example.test"] });
+  });
+
+  // Stage 0 of the config.value leg: the server point precedes destination
+  // resolution, so the engine asserts the artifact's own identity — the
+  // source location threaded to server resolution — as the challenge scope.
+  it("asserts the source location as the challenge target when the source has one", async () => {
+    const prepared = await new OpenAPIEngine().prepare({
+      source: {
+        location: "https://specs.example.test/apis/things.json",
+        content: multiServerDocument,
+      },
+      ref: "#/paths/~1things/get",
+      profile: OPENAPI_PROFILE_FULL,
+      fetch: async () => new Response(null, { status: 204 }),
+    });
+    let challenge: unknown;
+    try {
+      await prepared.start();
+    } catch (error: unknown) {
+      challenge = error;
+    }
+    const failure = challenge as OpenAPIExecutionError & { details?: { target?: string } };
+    expect(failure.code).toBe("CONTEXT_REQUIRED");
+    expect(failure.details?.target).toBe("https://specs.example.test/apis/things.json");
   });
 
   it("dispatches once a member is selected", async () => {
