@@ -176,16 +176,26 @@ type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => v !== null && typeof v === "object" && !Array.isArray(v);
 const isRefObj = (v: unknown): boolean => isObj(v) && typeof v["$ref"] === "string";
 const refString = (v: unknown): string => (isObj(v) && typeof v["$ref"] === "string" ? (v["$ref"] as string) : "");
-// Whether a value is spelled as a schema at all: an object, or a boolean.
-// Asks only the JSON type the position declares, never whether the schema is
-// otherwise well-formed. The 3.1 line admits the boolean schemas outright
-// (2020-12); on the 3.0 line a boolean is not a Schema Object, but that
-// spelling is REFERRED rather than classified here, the same device D1n/D1a
-// use: `openbindings.openapi@1` §9.2 already ascribes a part interpretation to
-// a boolean-valued multipart part on the 3.0 line, and whether
-// Schema-Object-hood or that part rule governs the position is a
-// candidate-versus-authority question one level up. Zero corpus incidence.
-const isSchemaValued = (v: unknown): boolean => isObj(v) || typeof v === "boolean";
+// Whether a value is spelled as a schema at all under the governing edition
+// line: an object on either line, and a boolean on the 3.1 line only. Asks
+// only the JSON type the position declares, never whether the schema is
+// otherwise well-formed.
+//
+// The 3.1 line admits the boolean schemas outright: its Schema Object IS a
+// JSON Schema 2020-12 schema, whose own meta-schema is
+// `{"$dynamicAnchor": "meta", "type": ["object", "boolean"]}`. The 3.0 line's
+// Schema Object is the Wright Draft 00 subset, where every Schema Object is an
+// object and the boolean-literal schemas are not in the dialect, so a boolean
+// at a schema position there violates the dialect's declared JSON type for it
+// — D15, exactly as any other keyword whose value is of the wrong JSON type.
+//
+// This REFERRED the 3.0 spelling until 2026-08-20 (F-O1-13), on the ground
+// that §9.2 ascribed a part interpretation to a boolean-valued multipart part
+// there. Escalation M2 deleted the interpretation that referral rested on —
+// a typeless part now refuses on every accepted edition — and the ruled
+// outcome is that the spelling confines as an accounted `invalid` at the
+// smallest owning unit rather than refusing the whole source.
+const isSchemaValued = (v: unknown, line: string): boolean => isObj(v) || (typeof v === "boolean" && line === "3.1");
 // A Response Object is REQUIRED to carry `description` in all eight accepted
 // editions; its absence is a decidable proof that a value is not one.
 const isResponseObject = (v: unknown): boolean => isObj(v) && typeof v["description"] === "string";
@@ -426,23 +436,24 @@ export function computeAcceptanceFloor(raw: unknown): AcceptanceFloor | undefine
     // nearest rung containing the Schema Object owns it, and P1/P2 decide
     // whether it climbs. Edition-scoped where the two lines differ: a boolean
     // `exclusiveMinimum` is the 3.0 line's own correct draft-4 spelling and is
-    // not this class there. A boolean-valued schema position on the 3.0 line
-    // is REFERRED, not classified -- see isSchemaValued. Independent of
-    // `type`, which is why these run before the type gate below.
+    // not this class there, while a boolean-valued schema position IS this
+    // class there and is not on the 3.1 line -- see isSchemaValued.
+    // Independent of `type`, which is why these run before the type gate
+    // below.
     if ("required" in node && !Array.isArray(node["required"])) addDefect(defect("D15", `${ptr}/required`));
     if ("enum" in node && !Array.isArray(node["enum"])) addDefect(defect("D15", `${ptr}/enum`));
     if (Array.isArray(node["items"])) addDefect(defect("D15", `${ptr}/items`));
     const properties = node["properties"];
     if (isObj(properties)) {
       for (const key of sortedKeys(properties)) {
-        if (!isSchemaValued(properties[key])) addDefect(defect("D15", `${ptr}/properties/${esc(key)}`));
+        if (!isSchemaValued(properties[key], line)) addDefect(defect("D15", `${ptr}/properties/${esc(key)}`));
       }
     }
     if (line === "3.1") {
       for (const keyword of ["exclusiveMaximum", "exclusiveMinimum"]) {
         if (keyword in node && typeof node[keyword] !== "number") addDefect(defect("D15", `${ptr}/${keyword}`));
       }
-      if ("contains" in node && !isSchemaValued(node["contains"])) addDefect(defect("D15", `${ptr}/contains`));
+      if ("contains" in node && !isSchemaValued(node["contains"], line)) addDefect(defect("D15", `${ptr}/contains`));
     }
 
     if (!("type" in node)) return;

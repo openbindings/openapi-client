@@ -11,7 +11,7 @@ import type { OpenAPIDocument, OpenAPIMediaType, OpenAPIOperation } from "./type
 // package's BUILT dist; changing it in one engine without the others fails
 // here.
 export const PART_DEFAULT_TYPE_ABSENT_CASES_DIGEST =
-  "93ceb6c3ad8fb64c974feefe13e1651ff2b0a9bac99f60d34aa2ea678310fe76";
+  "2d871e381018d76ff8e4cce4c8cf4c70aa3e32278a2b003291aaef104ed07d75";
 
 export interface PartDefaultTypeAbsentCase {
   name: string;
@@ -123,7 +123,7 @@ export async function partDefaultTypeAbsentDecision(c: PartDefaultTypeAbsentCase
 
 /**
  * The claim the table exists for, stated in its own right rather than left
- * implicit in 112 cells: a form part whose resolved schema declares no `type`
+ * implicit in 128 cells: a form part whose resolved schema declares no `type`
  * refuses on EVERY accepted edition — the 3.1 editions state
  * application/octet-stream for it and this revision defines no JSON-to-octet
  * part boundary to cross, the 3.0 editions state no row at all and this
@@ -157,8 +157,8 @@ describe("type-absent part default case table", () => {
     readFileSync(new URL("./testdata/part-default-type-absent-cases.json", import.meta.url)),
   );
 
-  it("has the 112 shared cells", () => {
-    expect(cases).toHaveLength(112);
+  it("has the 128 shared cells", () => {
+    expect(cases).toHaveLength(128);
   });
 
   for (const c of cases) {
@@ -169,6 +169,6 @@ describe("type-absent part default case table", () => {
   }
 
   it("refuses a type-absent part on every accepted edition", async () => {
-    expect(await assertTypeAbsentPartRefusesOnEveryAcceptedEdition(cases)).toBe(112);
+    expect(await assertTypeAbsentPartRefusesOnEveryAcceptedEdition(cases)).toBe(128);
   });
 });
