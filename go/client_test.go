@@ -453,6 +453,53 @@ func TestClientSSEPreservesOrderingFramingAndCompletion(t *testing.T) {
 	}
 }
 
+// A lone empty `data:` line DISPATCHES an event whose data is the empty
+// string (WHATWG: the data-buffer emptiness check precedes the trailing-LF
+// strip; openapi@1 §8), at its position in the stream. Blocks with no data
+// line — comment-only or `event:`/`id:`-only — still dispatch nothing, and
+// an incomplete final event is still discarded. The stream bytes and the
+// expected output sequence are the family's shared empty-data case, kept
+// byte-identical across the openapi and asyncapi engines.
+func TestClientSSEEmptyDataEventDispatchesEmptyString(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(writer, ": comment only\n\n")           // comment-only: nothing
+		_, _ = io.WriteString(writer, "event: tick\nid: 7\n\n")       // fields-only: nothing
+		_, _ = io.WriteString(writer, "data: first\n\n")              // emits "first"
+		_, _ = io.WriteString(writer, "data:\n\n")                    // lone empty data line: emits ""
+		_, _ = io.WriteString(writer, "data: third\n\n")              // emits "third"
+		_, _ = io.WriteString(writer, "data: incomplete-final-event") // no blank line: discarded
+	}))
+	defer server.Close()
+	document := testDocument(server.URL, `{ "/events":{"get":{"operationId":"events","responses":{"200":{"description":"ok","content":{"text/event-stream":{}}}}}} }`)
+	client, err := Load(context.Background(), Source{Content: document}, ClientOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := client.Stream(context.Background(), OperationID("events"), Input{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.OK {
+		t.Fatalf("result = %#v", result)
+	}
+	var data []any
+	for {
+		event, open, err := result.Stream.Next(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !open {
+			break
+		}
+		data = append(data, event.Data)
+	}
+	want := []any{"first", "", "third"}
+	if !reflect.DeepEqual(data, want) {
+		t.Fatalf("events = %#v, want %#v", data, want)
+	}
+}
+
 func TestStreamPreservesPartialOutputBeforeCancellation(t *testing.T) {
 	released := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, incoming *http.Request) {

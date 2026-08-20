@@ -791,6 +791,18 @@ func decodeByContentTypeFor(contentType, bindingSpec string) outputDecoder {
 	}
 }
 
+// decodePerEventTextFor is the SSE per-event builtin lane (OAPI-P-07's
+// per-event text default): the event's U+000A-joined data text, decoded
+// under the fixed UTF-8 charset. Unlike decodeByContentTypeFor it carries
+// no empty-body rule — a DISPATCHED event whose data text is empty (a lone
+// empty `data:` line, §8/WHATWG) is the empty-string value; the
+// empty-body→no-value rule is a whole-response rule, never per-event.
+func decodePerEventTextFor(contentType, bindingSpec string) outputDecoder {
+	return func(_ HookSite, raw RawResult) (any, error) {
+		return decodeTextLaneFor(contentType, raw.Body, bindingSpec)
+	}
+}
+
 // decodeTextLane decodes response bytes as text per the Content-Type
 // header's charset parameter, defaulting to UTF-8 (OAPI-P-07). Invalid
 // sequences, and charsets this implementation cannot decode, are loud

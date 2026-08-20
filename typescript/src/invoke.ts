@@ -887,12 +887,14 @@ export function builtinClassify(_site: InvokeSite, raw: RawResult): boolean | ty
  * over one delivery unit's TEXT (the SSE per-event lane): strict JSON for
  * application/json and +json suffixes (a declared-JSON body that fails to
  * parse is a lying server — a loud ERR_RESPONSE_ERROR, never a silent
- * string); the text itself otherwise; an empty unit is a null output.
+ * string); the text itself otherwise. It carries no empty-body rule — a
+ * DISPATCHED event whose data text is empty (a lone empty `data:` line,
+ * §8/WHATWG) is the empty-string value; the empty-body→no-value rule is a
+ * whole-response rule (decodeBytesByContentType), never per-event.
  */
 export function decodeByContentType(contentType: string | null): OutputDecoder {
   const isJSON = isJSONMediaType(normalizeMediaType(contentType ?? ""));
   return (_site: InvokeSite, raw: RawResult): unknown => {
-    if (raw.body.length === 0) return null;
     if (isJSON) {
       try {
         return JSON.parse(raw.body);
