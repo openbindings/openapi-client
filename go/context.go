@@ -1,6 +1,9 @@
 package openapiclient
 
-import "strings"
+import (
+	"reflect"
+	"strings"
+)
 
 func contextString(ctx map[string]any, key string) string {
 	if ctx == nil {
@@ -118,10 +121,14 @@ func contextConfiguration(ctx map[string]any) map[string]any {
 	return value
 }
 
-func newConfigValueRequirement(point, path, description string, choices []string, durable *bool) Requirement {
+// newConfigValueRequirement builds a config.value requirement. schema is the
+// engine-asserted JSON Schema for the value at (point, path) -- artifact-
+// derived where the artifact speaks, nil where it does not (absent =
+// unconstrained); an `enum` member is a closed admissible set.
+func newConfigValueRequirement(point, path, description string, schema map[string]any, durable *bool) Requirement {
 	extra := map[string]any{"point": point, "path": path}
-	if len(choices) > 0 {
-		extra["choices"] = append([]string(nil), choices...)
+	if schema != nil {
+		extra["schema"] = schema
 	}
 	return Requirement{Type: "config.value", Description: description, Durable: durable, Extra: extra}
 }
@@ -165,7 +172,6 @@ func flatRequirementIsUnambiguous(details *Prerequisites, requirement Requiremen
 	}
 	return len(identities)+unnamed == 1
 }
-
 
 func requirementSatisfied(ctx map[string]any, requirement Requirement, allowFlatNamedCredential bool) bool {
 	if requirement.Name != "" {
@@ -226,7 +232,41 @@ func requirementSatisfied(ctx map[string]any, requirement Requirement, allowFlat
 			return false
 		}
 		selected, selectedPresent := configurationValueAt(value, path)
-		return selectedPresent && selected != nil && selected != ""
+		if !selectedPresent || selected == nil || selected == "" {
+			return false
+		}
+		// When the requirement carries an engine-asserted schema, presence is
+		// not enough: the selected value must also validate against it.
+		// Twin divergence by necessity: the SDK's invoke package validates
+		// against the full JSON Schema via its core validator; this repo has
+		// no JSON Schema validator dependency of its own and does not add
+		// one, so it enforces only the closed `enum` member (the one
+		// constraint this engine itself asserts — every schema it emits is
+		// enum-only or absent). A general non-enum schema is not enforced
+		// here.
+		if schemaRaw, schemaPresent := requirement.Extra["schema"]; schemaPresent {
+			schema, ok := schemaRaw.(map[string]any)
+			if !ok {
+				return false
+			}
+			if enum, hasEnum := schema["enum"]; hasEnum {
+				members, ok := enum.([]any)
+				if !ok {
+					return false
+				}
+				admitted := false
+				for _, member := range members {
+					if reflect.DeepEqual(member, selected) {
+						admitted = true
+						break
+					}
+				}
+				if !admitted {
+					return false
+				}
+			}
+		}
+		return true
 	}
 	field := map[string]string{
 		"auth.bearer": "bearerToken",

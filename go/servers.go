@@ -70,17 +70,17 @@ func resolveServer(doc *openapi3.T, pathItem *openapi3.PathItem, op *openapi3.Op
 		// R1+R5): the invocation challenges CONTEXT_REQUIRED (config.value,
 		// point server) — the same retryable negotiation §9.2 gives the
 		// parallel missing-requestMedia case — instead of refusing terminally.
-		choices := make([]string, 0, len(servers))
+		urls := make([]string, 0, len(servers))
 		for _, srv := range servers {
 			if srv != nil {
-				choices = append(choices, srv.URL)
+				urls = append(urls, srv.URL)
 			}
 		}
 		return "", &configRequired{
 			point:       "server",
 			path:        "/url",
 			description: fmt.Sprintf("the effective server list has %d alternatives; configuration.server must select one (openapi@1 OAPI-P-05)", len(servers)),
-			choices:     choices,
+			schema:      enumSchema(urls),
 			durable:     &serverChoiceDurable,
 		}
 	}
@@ -207,7 +207,7 @@ func substituteServerVariables(srv *openapi3.Server, supplied map[string]string)
 				point:       "server",
 				path:        "/variables/" + escapeJSONPointerSegment(name),
 				description: fmt.Sprintf("server %q: variable %q has no supplied value and no declared default", srv.URL, name),
-				choices:     v.Enum,
+				schema:      enumSchema(v.Enum),
 			}
 		}
 		if len(v.Enum) > 0 {
@@ -278,10 +278,28 @@ type configRequired struct {
 	point       string
 	path        string
 	description string
-	choices     []string
-	durable     *bool
+	// schema is the engine-asserted JSON Schema for the missing value --
+	// artifact-derived where the artifact speaks (a declared closed set
+	// becomes {"enum": [...]}), nil where it does not (absent =
+	// unconstrained).
+	schema  map[string]any
+	durable *bool
 }
 
 func (c *configRequired) Error() string { return c.description }
+
+// enumSchema lifts an artifact-declared closed value set into the
+// engine-asserted schema shape ({"enum": [...]}); an empty set asserts
+// nothing (nil = absent = unconstrained).
+func enumSchema(values []string) map[string]any {
+	if len(values) == 0 {
+		return nil
+	}
+	members := make([]any, len(values))
+	for index, value := range values {
+		members[index] = value
+	}
+	return map[string]any{"enum": members}
+}
 
 var serverChoiceDurable = true
