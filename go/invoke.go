@@ -31,14 +31,24 @@ type bufferedResponseBody struct {
 // misconfiguration no runtime can fix. resolveServer already consulted the
 // supplied context and found the value absent, so the challenge fires
 // unconditionally; the operation-invoker's bounded resolve-and-retry loop is
-// the backstop. No server target has resolved, so the challenge target is
-// empty. A resolver may satisfy it interactively or from caller-owned policy;
-// a generic store-backed resolver must not infer a reusable target from it.
-func configOrSourceError(err error) *ExecutionError {
+// the backstop.
+//
+// target is the engine-asserted scope for the missing value (the
+// context-scope model, ratified 2026-08-19). For the server point no
+// destination has resolved yet, so the natural scope is the artifact's own
+// identity: the source location already threaded into resolveServer (the
+// loader admits only an absolute URI there). A content-only source has no
+// stable identity, asserts nothing, and the target stays empty — a resolver
+// may still satisfy the challenge interactively or from caller-owned policy.
+// For the requestMedia point the destination HAS resolved, so callers pass
+// the resolved base URL. Configuration is not assumed public; consumers
+// decide whether the asserted scope is sufficient for stored-value release.
+func configOrSourceError(err error, target string) *ExecutionError {
 	var cr *configRequired
 	if errors.As(err, &cr) {
-		req := newConfigValueRequirementCompat(cr.point, cr.path, cr.description, cr.choices, cr.durable)
+		req := newConfigValueRequirementCompat(cr.point, cr.path, cr.description, cr.schema, cr.durable)
 		return newContextRequiredError(cr.description, &Prerequisites{
+			Target:       target,
 			Alternatives: []RequirementAlternative{{Requirements: []Requirement{req}}},
 		})
 	}
@@ -153,7 +163,7 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 	}
 	baseURL, err := resolveServer(doc, pathItem, op, args.Context, args.Source.Location)
 	if err != nil {
-		inv.failExecution(configOrSourceError(err))
+		inv.failExecution(configOrSourceError(err, args.Source.Location))
 		return
 	}
 
@@ -283,7 +293,7 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 		if selectErr != nil {
 			var cr *configRequired
 			if errors.As(selectErr, &cr) {
-				inv.failExecution(configOrSourceError(selectErr))
+				inv.failExecution(configOrSourceError(selectErr, baseURL))
 				return
 			}
 			err = selectErr

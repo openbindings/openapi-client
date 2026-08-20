@@ -228,8 +228,8 @@ func doneContext(parent context.Context, done <-chan struct{}) (context.Context,
 	return ctx, cancel
 }
 
-func newConfigValueRequirementCompat(point, path, description string, choices []string, durable *bool) Requirement {
-	return newConfigValueRequirement(point, path, description, choices, durable)
+func newConfigValueRequirementCompat(point, path, description string, schema map[string]any, durable *bool) Requirement {
+	return newConfigValueRequirement(point, path, description, schema, durable)
 }
 
 func newContextRequiredError(message string, details *Prerequisites) *ExecutionError {
