@@ -161,9 +161,11 @@ describe("path-template addressability", () => {
 
   // The neighbouring §9.1 case is untouched: a DECLARED path parameter the
   // caller omitted keeps its own refusal, which states the missing INPUT
-  // rather than an artifact defect.
+  // rather than an artifact defect. Absent input and a supplied-but-
+  // incomplete input are ONE rule, so both spellings refuse while routing
+  // with the same message — the URL cannot be built either way.
   it.each([
-    { name: "required", required: true, want: 'operation requires parameter "id"' },
+    { name: "required", required: true, want: "missing path parameter(s) id" },
     { name: "optional", required: false, want: "missing path parameter(s) id" },
   ])("still refuses an omitted $name declared path parameter", async ({ required, want }) => {
     const client = await OpenAPIClient.load(

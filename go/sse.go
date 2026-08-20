@@ -80,9 +80,12 @@ func scanSSELines(data []byte, atEOF bool) (advance int, token []byte, err error
 //
 //   - `data:` lines accumulate; an event's data lines joined with U+000A
 //     form the event's text
-//   - comment-only and empty-`data` events emit no value (an event whose
-//     joined data text is empty is discarded, `event:`/`id:`-only events
-//     included)
+//   - a block that carried no `data` line — comment-only and
+//     `event:`/`id:`-only blocks included — dispatches nothing, while a
+//     received `data` line whose value is empty dispatches like any other:
+//     a lone empty `data:` line emits the empty string (WHATWG dispatch
+//     checks the data buffer for emptiness BEFORE the trailing-LF strip;
+//     openapi@1 §8)
 //   - `event`, `id`, and `retry` are FRAMING: they never enter the output
 //     value. This implementation surfaces them out of band on the per-unit
 //     Meta (x-sse-event / x-sse-id / x-sse-retry); the last event ID
@@ -121,14 +124,19 @@ func streamSSE(ctx context.Context, resp *http.Response, args *executionArgs, si
 	status := resp.StatusCode
 	invocationMeta := headerMetadata(resp.Header)
 	dispatch := func() bool {
+		hadDataLine := len(dataLines) > 0
 		rawData := strings.Join(dataLines, "\n")
 		name := eventName
 		eventName = ""
 		dataLines = nil
-		// Comment-only and empty-data events emit no value: an event whose
-		// joined data text is empty is discarded (WHATWG step 2 plus the
-		// trailing-newline strip; the last event ID, already set, persists).
-		if rawData == "" {
+		// A block that carried no data line dispatches nothing (WHATWG
+		// dispatch step 2: the data buffer is the empty string; comment-only
+		// and `event:`/`id:`-only blocks included). The emptiness check
+		// precedes the trailing-LF strip, so a received data line whose
+		// value is empty dispatches like any other — a lone empty `data:`
+		// line emits the empty string (the last event ID, already set,
+		// persists either way).
+		if !hadDataLine {
 			return true
 		}
 
@@ -156,7 +164,7 @@ func streamSSE(ctx context.Context, resp *http.Response, args *executionArgs, si
 		}
 		// WHATWG event data is already a formed UTF-8 text value. The HTTP
 		// response's charset parameter cannot reinterpret individual events.
-		data, derr := args.Hooks.DecodeOutput(site, raw, decodeByContentTypeFor("text/plain; charset=utf-8", args.Source.Capability))
+		data, derr := args.Hooks.DecodeOutput(site, raw, decodePerEventTextFor("text/plain; charset=utf-8", args.Source.Capability))
 		if derr != nil {
 			// A decode error mid-stream is terminal; already-emitted
 			// outputs stand (drain-before-terminal).

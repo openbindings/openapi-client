@@ -198,6 +198,7 @@ type routedEnvelope struct {
 	parameters     []abstractParameterRoute
 	bodyFields     map[string]string
 	wholeBodyField string
+	bodyPresent    bool
 }
 
 func parseRoutedEnvelope(input any) (*routedEnvelope, error) {
@@ -307,6 +308,13 @@ func parseRoutedEnvelopeWithKey(input any, key, markerValue string) (*routedEnve
 			}
 			seenFields[whole] = true
 			r.wholeBodyField = whole
+		}
+		if rawPresent, present := body["present"]; present {
+			flag, ok := rawPresent.(bool)
+			if !ok {
+				return nil, fmt.Errorf("routed body present marker must be boolean")
+			}
+			r.bodyPresent = flag
 		}
 	}
 	return r, nil
@@ -517,7 +525,7 @@ func envelopeWillEmitBody(envelope *routedEnvelope, op *openapi3.Operation) bool
 	if !hasRequestBody(op) {
 		return false
 	}
-	if op.RequestBody.Value.Required {
+	if envelope.bodyPresent {
 		return true
 	}
 	parameterFields := map[string]bool{}

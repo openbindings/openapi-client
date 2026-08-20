@@ -151,12 +151,13 @@ func TestInvokeKeepsAddressablePathTemplatesDispatchable(t *testing.T) {
 
 // The neighbouring §9.1 case is untouched: a DECLARED path parameter the
 // caller omitted keeps its own refusal, which states the missing INPUT rather
-// than an artifact defect. Both spellings of it survive — the required
-// declaration refuses on bare close, the (OAS-invalid but tolerated) optional
-// one refuses while routing.
+// than an artifact defect. Absent input and a supplied-but-incomplete input
+// are ONE rule, so both the required declaration and the (OAS-invalid but
+// tolerated) optional one refuse while routing, with the same message — the
+// URL cannot be built either way.
 func TestInvokeStillRefusesOmittedDeclaredPathParameter(t *testing.T) {
 	for _, testCase := range []struct{ name, required, want string }{
-		{name: "required", required: `,"required":true`, want: `operation requires parameter "id"`},
+		{name: "required", required: `,"required":true`, want: "missing path parameter(s) id"},
 		{name: "optional", required: "", want: "missing path parameter(s) id"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {

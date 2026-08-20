@@ -19,7 +19,6 @@ import {
   ERR_REF_NOT_FOUND,
   ERR_CONNECT_FAILED,
   ERR_RESPONSE_ERROR,
-  ERR_MISSING_INPUT,
   ERR_VALIDATION_FAILED,
   ERR_PROTOCOL,
   USE_DEFAULT,
@@ -281,15 +280,12 @@ export async function runBinding(
     const first = await readFirst(inv.inputs());
     void inv.closeInput();
     if (first === undefined) {
-      // Bare close: with a required parameter or required requestBody the
-      // dispatch cannot succeed — fire ERR_REFUSED before any
-      // network I/O (cross-SDK parity). Otherwise parameters and body are
-      // optional; proceed with an empty input.
-      const missing = requiredInputMissing(params, op);
-      if (missing !== "") {
-        inv.fireError(new InvocationError(ERR_REFUSED, missing));
-        return;
-      }
+      // Bare close: absent input and a supplied empty object are ONE rule
+      // (§9.1 required declarations) — the two requests are wire-identical,
+      // so they ride the same code below. The only pre-dispatch refusals are
+      // a required request body with no value to carry and an unsupplied
+      // path parameter; every other missing declaration is sent as supplied,
+      // the server's validation authoritative.
       inputMap = {};
     } else {
       inputSupplied = true;
@@ -327,6 +323,19 @@ export async function runBinding(
   const willEmitBody = envelope
     ? envelopeWillEmitBody(envelope, op)
     : requestWillEmitBody(params, inputMap, op);
+  // §9.1 required declarations: a required request body with no value to
+  // carry refuses before dispatch, applied to absent and
+  // supplied-but-incomplete input alike — the artifact's own
+  // requestBody.required is the ground. An explicitly present body (the
+  // routed envelope's body.present, or any field the routes carry to the
+  // body) is a value; anything else leaves nothing to send.
+  if (!willEmitBody && op.requestBody != null && op.requestBody.required === true) {
+    inv.fireError(new InvocationError(
+      ERR_REFUSED,
+      "operation requires a request body: the input supplies no value to carry (§9.1 required declarations)",
+    ));
+    return;
+  }
   if (willEmitBody || envelope) {
     try {
       plans = requiredBodyPlans ?? planRequestBodies(op, planningOptions);
@@ -383,8 +392,13 @@ export async function runBinding(
         reasons.length > 0 ? reasons.join("; ") : "configured requestMedia selects no declared supported candidate"
       }`,
     );
-    const code = failure instanceof MissingPathParamError ? ERR_MISSING_INPUT : ERR_REFUSED;
-    inv.fireError(new InvocationError(code, errorMessage(failure)));
+    // Every failure here — the unsupplied-path-parameter case included — is
+    // a §9.1/§9.2 pre-dispatch refusal, and ERR_REFUSED is the
+    // binding-invoker contract's never-dispatched guarantee (ruled
+    // 2026-08-14; Go twin parity). ERR_MISSING_INPUT stays a
+    // stream-cardinality code and cannot cover the supplied-but-incomplete
+    // half of the one rule.
+    inv.fireError(new InvocationError(ERR_REFUSED, errorMessage(failure)));
     return;
   }
 
@@ -770,28 +784,16 @@ async function readFirst<T>(inputs: AsyncIterable<T>): Promise<T | undefined> {
 }
 
 /**
- * Reports why a bare input close cannot satisfy the operation: a non-empty
- * string names the first required parameter or the required request body.
- * Empty string means an empty request is dispatchable.
+ * Reports whether the flat input carries a value for the declared request
+ * body: any field the parameter routes do not consume is body content.
+ * requestBody.required never forces a body into existence — a required body
+ * with no value to carry refuses instead (§9.1).
  */
-function requiredInputMissing(params: OpenAPIParameter[], op: OpenAPIOperation): string {
-  for (const p of params) {
-    if (p?.required === true) {
-      return `operation requires parameter "${p.name}"`;
-    }
-  }
-  if (op.requestBody != null && op.requestBody.required === true) {
-    return "operation requires a request body";
-  }
-  return "";
-}
-
 function requestWillEmitBody(
   params: OpenAPIParameter[],
   input: Record<string, unknown>,
   op: OpenAPIOperation,
 ): boolean {
-  if (op.requestBody?.required === true) return true;
   if (op.requestBody == null) return false;
   const parameterNames = new Set(params.map((parameter) => parameter.name).filter((name): name is string => Boolean(name)));
   return Object.keys(input).some((name) => !parameterNames.has(name));
@@ -887,12 +889,14 @@ export function builtinClassify(_site: InvokeSite, raw: RawResult): boolean | ty
  * over one delivery unit's TEXT (the SSE per-event lane): strict JSON for
  * application/json and +json suffixes (a declared-JSON body that fails to
  * parse is a lying server — a loud ERR_RESPONSE_ERROR, never a silent
- * string); the text itself otherwise; an empty unit is a null output.
+ * string); the text itself otherwise. It carries no empty-body rule — a
+ * DISPATCHED event whose data text is empty (a lone empty `data:` line,
+ * §8/WHATWG) is the empty-string value; the empty-body→no-value rule is a
+ * whole-response rule (decodeBytesByContentType), never per-event.
  */
 export function decodeByContentType(contentType: string | null): OutputDecoder {
   const isJSON = isJSONMediaType(normalizeMediaType(contentType ?? ""));
   return (_site: InvokeSite, raw: RawResult): unknown => {
-    if (raw.body.length === 0) return null;
     if (isJSON) {
       try {
         return JSON.parse(raw.body);

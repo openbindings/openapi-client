@@ -211,17 +211,13 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 		v, rerr := inv.readInputBoundary(bctx)
 		switch {
 		case errors.Is(rerr, io.EOF):
-			// Bare close: with a required parameter or required requestBody
-			// the dispatch cannot succeed — fire ERR_MISSING_INPUT before
-			// any network I/O (cross-SDK parity). Otherwise parameters and
-			// body are optional; proceed with an empty input.
-			if missing := requiredInputMissing(params, op); missing != "" {
-				inv.failExecution(&ExecutionError{
-					Code:    CodeRefused,
-					Message: missing,
-				})
-				return
-			}
+			// Bare close: absent input and a supplied empty object are ONE
+			// rule (§9.1 required declarations) — the two requests are
+			// wire-identical, so they ride the same code below. The only
+			// pre-dispatch refusals are a required request body with no
+			// value to carry and an unsupplied path parameter; every other
+			// missing declaration is sent as supplied, the server's
+			// validation authoritative.
 		case rerr != nil:
 			inv.failExecution(normalizeExecutionError(rerr))
 			return
@@ -260,6 +256,19 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 	willEmitBody := requestWillEmitBody(params, inputMap, op)
 	if envelope != nil {
 		willEmitBody = envelopeWillEmitBody(envelope, op)
+	}
+	// §9.1 required declarations: a required request body with no value to
+	// carry refuses before dispatch, applied to absent and
+	// supplied-but-incomplete input alike — the artifact's own
+	// requestBody.required is the ground. An explicitly present body (the
+	// routed envelope's body.present, or any field the routes carry to the
+	// body) is a value; anything else leaves nothing to send.
+	if !willEmitBody && hasRequestBody(op) && op.RequestBody.Value.Required {
+		inv.failExecution(&ExecutionError{
+			Code:    CodeRefused,
+			Message: "operation requires a request body: the input supplies no value to carry (§9.1 required declarations)",
+		})
+		return
 	}
 	if willEmitBody || envelope != nil {
 		plans, err = planRequestBodiesFor(doc, op, args.Source.Capability)
@@ -334,11 +343,12 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 		}
 	}
 	if err != nil {
-		code := CodeRefused
-		if errors.Is(err, errMissingPathParam) {
-			code = CodeRefused
-		}
-		inv.failExecution(&ExecutionError{Code: code, Message: err.Error()})
+		// Every failure here — the unsupplied-path-parameter case included —
+		// is a §9.1/§9.2 pre-dispatch refusal, and ERR_REFUSED is the
+		// binding-invoker contract's never-dispatched guarantee (ruled
+		// 2026-08-14). ERR_MISSING_INPUT stays a stream-cardinality code and
+		// cannot cover the supplied-but-incomplete half of the one rule.
+		inv.failExecution(&ExecutionError{Code: CodeRefused, Message: err.Error()})
 		return
 	}
 
@@ -787,6 +797,18 @@ func decodeByContentTypeFor(contentType, bindingSpec string) outputDecoder {
 			}
 			return parsed, nil
 		}
+		return decodeTextLaneFor(contentType, raw.Body, bindingSpec)
+	}
+}
+
+// decodePerEventTextFor is the SSE per-event builtin lane (OAPI-P-07's
+// per-event text default): the event's U+000A-joined data text, decoded
+// under the fixed UTF-8 charset. Unlike decodeByContentTypeFor it carries
+// no empty-body rule — a DISPATCHED event whose data text is empty (a lone
+// empty `data:` line, §8/WHATWG) is the empty-string value; the
+// empty-body→no-value rule is a whole-response rule, never per-event.
+func decodePerEventTextFor(contentType, bindingSpec string) outputDecoder {
+	return func(_ HookSite, raw RawResult) (any, error) {
 		return decodeTextLaneFor(contentType, raw.Body, bindingSpec)
 	}
 }
@@ -1375,27 +1397,13 @@ func hasRequestBody(op *openapi3.Operation) bool {
 	return op.RequestBody != nil && op.RequestBody.Value != nil
 }
 
-// requiredInputMissing reports why a bare input close cannot satisfy the
-// operation: a non-empty string names the first required parameter or the
-// required request body. Empty string means an empty request is dispatchable.
-func requiredInputMissing(params openapi3.Parameters, op *openapi3.Operation) string {
-	for _, paramRef := range params {
-		if paramRef != nil && paramRef.Value != nil && paramRef.Value.Required {
-			return fmt.Sprintf("operation requires parameter %q", paramRef.Value.Name)
-		}
-	}
-	if hasRequestBody(op) && op.RequestBody.Value.Required {
-		return "operation requires a request body"
-	}
-	return ""
-}
-
+// requestWillEmitBody reports whether the flat input carries a value for the
+// declared request body: any field the parameter routes do not consume is
+// body content. requestBody.required never forces a body into existence —
+// a required body with no value to carry refuses instead (§9.1).
 func requestWillEmitBody(params openapi3.Parameters, input map[string]any, op *openapi3.Operation) bool {
 	if !hasRequestBody(op) {
 		return false
-	}
-	if op.RequestBody.Value.Required {
-		return true
 	}
 	parameterNames := map[string]bool{}
 	for _, parameter := range params {

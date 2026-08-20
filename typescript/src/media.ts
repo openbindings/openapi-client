@@ -310,6 +310,75 @@ function hasRequestBody(op: OpenAPIOperation): boolean {
 export class DegenerateMediaError extends Error {}
 
 /**
+ * Inventories ONE OAS content map and returns the keys that denote a parsed
+ * media identity another key of the SAME map also denotes, each mapped to a
+ * stable rendering of the identity they collide on.
+ *
+ * §9.2: two keys in one content map denoting the same parsed media type are a
+ * normalized collision, and the defect CONFINES to that colliding parsed
+ * identity -- the smallest unit that owns it. No first-key rule is invented:
+ * every caller skips exactly the keys named here, so no request selection
+ * lands on the colliding identity, no response match is governed by it, and it
+ * is never advertised as an available response representation -- while the
+ * map's non-colliding entries remain usable alternatives. The inventory never
+ * spans two content maps, because a content map is the unit the rule names.
+ */
+export function normalizedMediaCollisions(
+  content: Record<string, unknown> | undefined,
+  revision3: boolean,
+): Map<string, string> {
+  const colliding = new Map<string, string>();
+  if (!content) return colliding;
+  const keys = Object.keys(content);
+  if (keys.length < 2) return colliding;
+  const members = new Map<string, string[]>();
+  const rendering = new Map<string, string>();
+  for (const key of keys) {
+    let parsed: ParsedMediaType | ParsedMediaRange;
+    try {
+      parsed = parseMediaType(key, revision3);
+    } catch {
+      try {
+        parsed = parseMediaRange(key, revision3);
+      } catch {
+        // An unparseable key denotes no identity, so it collides with
+        // nothing. Whether it is itself a defect is its owner's question.
+        continue;
+      }
+    }
+    const existingMembers = members.get(parsed.identity);
+    if (existingMembers) existingMembers.push(key);
+    else members.set(parsed.identity, [key]);
+    const existingRendering = rendering.get(parsed.identity);
+    if (existingRendering === undefined || parsed.canonical < existingRendering) {
+      rendering.set(parsed.identity, parsed.canonical);
+    }
+  }
+  for (const [identity, group] of members) {
+    if (group.length < 2) continue;
+    for (const key of group) colliding.set(key, rendering.get(identity) ?? identity);
+  }
+  return colliding;
+}
+
+/** Whether a concrete media type denotes one of a map's colliding identities. */
+function collidesWithNormalizedIdentity(
+  colliding: Map<string, string>,
+  parsed: ParsedMediaType,
+  revision3: boolean,
+): boolean {
+  if (colliding.size === 0) return false;
+  for (const key of colliding.keys()) {
+    try {
+      if (parseMediaType(key, revision3).identity === parsed.identity) return true;
+    } catch {
+      continue;
+    }
+  }
+  return false;
+}
+
+/**
  * Compatibility convenience for callers that need one SDK-local candidate.
  * Invocation uses planRequestBodies so the binding layer preserves every
  * artifact-permitted alternative until configuration or admissibility chooses.
@@ -346,7 +415,9 @@ export function planRequestBodies(
   }
   const candidates: Candidate[] = [];
   const declared: string[] = [];
-  const identities = new Map<string, string>();
+  const collided = new Set<string>();
+  let nonColliding = 0;
+  const colliding = normalizedMediaCollisions(content, revision3);
   for (const key of Object.keys(content)) {
     let parsed: ParsedMediaType | ParsedMediaRange;
     let range = false;
@@ -366,13 +437,16 @@ export function planRequestBodies(
       }
     }
     declared.push(parsed.canonical);
-    const previous = identities.get(parsed.identity);
-    if (previous !== undefined) {
-      throw new Error(
-        `request content declarations ${JSON.stringify(previous)} and ${JSON.stringify(key)} denote the same parsed media type (OAPI-P-04 normalized collision)`,
-      );
+    const collidingIdentity = colliding.get(key);
+    if (collidingIdentity !== undefined) {
+      // §9.2 normalized collision, confined: no request selection may land on
+      // this parsed identity, so the key contributes no candidate and its
+      // alternative is an accounted exclusion. The map's non-colliding
+      // entries are unaffected (OAPI-P-04).
+      collided.add(collidingIdentity);
+      continue;
     }
-    identities.set(parsed.identity, key);
+    nonColliding += 1;
     if (range) {
       const families = supportedRangeCarriageFamilies(
         parsed as ParsedMediaRange,
@@ -407,6 +481,11 @@ export function planRequestBodies(
     else if (options.inventoryUnsupported) candidates.push({ key, parsed, family: "", range: false, unsupported: true });
   }
   if (candidates.length === 0) {
+    if (collided.size > 0 && nonColliding === 0) {
+      throw new Error(
+        `every request content declaration denotes a normalized-colliding parsed media identity, so no selection may land on one (colliding: ${[...collided].sort().join(", ")})`,
+      );
+    }
     declared.sort();
     throw new Error(
       `request body declares no media type whose declaration selects a request carriage lane openbindings.openapi@1 defines (declared: ${declared.join(", ")})`,
@@ -441,26 +520,34 @@ function applyDynamicObjectShape(plan: BodyPlan): void {
   if (plan.synthetic || plan.unsupported) return;
   const raw = mediaSchema(plan.media);
   const schema = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : null;
-  if (schema === null || !hasExplicitDynamicProperties(schema, new Set())) return;
+  const oas30 = (plan.openapiVersion ?? "3.0").startsWith("3.0");
+  if (schema === null || !hasExplicitDynamicProperties(schema, new Set(), oas30)) return;
   plan.wholeObject = true;
   plan.props = undefined;
 }
 
+/**
+ * Reports §9.1's explicitly dynamic object. The trigger keywords are read
+ * under the GOVERNING EDITION'S dialect: `patternProperties` is not in the
+ * 3.0 line's Schema Object at all, so there it decides as if absent and the
+ * 3.0-line trigger is an explicit `additionalProperties` alone.
+ */
 function hasExplicitDynamicProperties(
   schema: Record<string, unknown>,
   seen: Set<Record<string, unknown>>,
+  oas30: boolean,
 ): boolean {
   if (seen.has(schema)) return false;
   seen.add(schema);
   try {
-    const patterns = asObject(schema.patternProperties);
+    const patterns = oas30 ? null : asObject(schema.patternProperties);
     if (patterns && Object.keys(patterns).length > 0) return true;
     if (Object.hasOwn(schema, "additionalProperties") && schema.additionalProperties !== false) {
       return true;
     }
     return Array.isArray(schema.allOf) && schema.allOf.some((member) => {
       const nested = asObject(member);
-      return nested !== null && hasExplicitDynamicProperties(nested, seen);
+      return nested !== null && hasExplicitDynamicProperties(nested, seen, oas30);
     });
   } finally {
     seen.delete(schema);
@@ -557,12 +644,12 @@ function buildBodyPlan(
     && !candidate.range
     && candidate.family === FAMILY_JSON
     && objectSchema !== null
-    && requiresWholeJSONCarriage(objectSchema, new Set());
+    && requiresWholeJSONCarriage(objectSchema, new Set(), openapiVersion.startsWith("3.0"));
   const shape = declarationComplexJSON
     ? { object: false, props: new Set<string>() }
     : typeof schema === "boolean"
     ? { object: false, props: new Set<string>() }
-    : resolvedBodyShape(objectSchema, new Set());
+    : resolvedBodyShape(objectSchema, new Set(), openapiVersion.startsWith("3.0"));
   if (plan.unsupported) {
     plan.synthetic = schema === null || !shape.object;
     if (candidate.range) plan.rangeSpecificity = (candidate.parsed as ParsedMediaRange).specificity;
@@ -619,28 +706,39 @@ function buildBodyPlan(
  * possible object surface cannot be preserved by projecting a fixed set of
  * named body properties. Only `allOf` is traversed because nested property
  * schemas do not alter the top-level route shape.
+ *
+ * The keywords are read under the GOVERNING EDITION'S dialect (§9.1). The
+ * 3.0 line's Schema Object carries `oneOf`, `anyOf` and `not` only, so
+ * `if`/`then`/`else`, `dependentSchemas` and `unevaluatedProperties` are
+ * strictly-unsupported keywords there and decide as if absent.
+ *
+ * `unevaluatedProperties` is a PRESENCE trigger — "an explicit
+ * `unevaluatedProperties` (any value)" — so the `false` spelling triggers
+ * exactly like `true` or a Schema Object.
  */
 function requiresWholeJSONCarriage(
   schema: Record<string, unknown>,
   seen: Set<Record<string, unknown>>,
+  oas30: boolean,
 ): boolean {
   if (seen.has(schema)) return false;
   seen.add(schema);
   try {
+    if (Array.isArray(schema.oneOf) || Array.isArray(schema.anyOf) || schema.not !== undefined) {
+      return true;
+    }
     const dependentSchemas = asObject(schema.dependentSchemas);
     if (
-      Array.isArray(schema.oneOf)
-      || Array.isArray(schema.anyOf)
-      || schema.not !== undefined
-      || schema.if !== undefined
-      || schema.then !== undefined
-      || schema.else !== undefined
-      || (dependentSchemas !== null && Object.keys(dependentSchemas).length > 0)
-      || (Object.hasOwn(schema, "unevaluatedProperties") && schema.unevaluatedProperties !== false)
+      !oas30
+      && (schema.if !== undefined
+        || schema.then !== undefined
+        || schema.else !== undefined
+        || (dependentSchemas !== null && Object.keys(dependentSchemas).length > 0)
+        || Object.hasOwn(schema, "unevaluatedProperties"))
     ) return true;
     return Array.isArray(schema.allOf) && schema.allOf.some((member) => {
       const nested = asObject(member);
-      return nested !== null && requiresWholeJSONCarriage(nested, seen);
+      return nested !== null && requiresWholeJSONCarriage(nested, seen, oas30);
     });
   } finally {
     seen.delete(schema);
@@ -1652,14 +1750,19 @@ export function responseUsesRawBoundary(
 function resolvedBodyShape(
   schema: Record<string, unknown> | null,
   seen: Set<Record<string, unknown>>,
+  oas30: boolean,
 ): { object: boolean; props: Set<string> } {
   if (schema === null) return { object: true, props: new Set() };
   if (seen.has(schema)) return { object: false, props: new Set() };
   seen.add(schema);
   try {
+    // Read under the governing edition's dialect (§9.1): `if`/`then`/`else`
+    // are not in the 3.0 line's Schema Object at all, so a 3.0 declaration
+    // carrying one is an ordinary named-property object and flattens.
     if (
-      Array.isArray(schema.oneOf) || Array.isArray(schema.anyOf) || schema.not !== undefined ||
-      schema.if !== undefined || schema.then !== undefined || schema.else !== undefined
+      Array.isArray(schema.oneOf) || Array.isArray(schema.anyOf) || schema.not !== undefined
+      || (!oas30
+        && (schema.if !== undefined || schema.then !== undefined || schema.else !== undefined))
     ) {
       throw new Error(
         "conditional/combinatorial request schema has no single declaration-defined flattened surface in the selected execution profile",
@@ -1674,7 +1777,7 @@ function resolvedBodyShape(
     if (Array.isArray(schema.allOf)) {
       for (const member of schema.allOf) {
         if (!member || typeof member !== "object" || Array.isArray(member)) continue;
-        const nested = resolvedBodyShape(member as Record<string, unknown>, seen);
+        const nested = resolvedBodyShape(member as Record<string, unknown>, seen, oas30);
         object ||= nested.object;
         for (const name of nested.props) props.add(name);
       }
@@ -2061,7 +2164,7 @@ export function buildMultipartBody(
   for (const name of Object.keys(fields).sort()) {
     const value = fields[name];
     let propSchema = dynamicProperties
-      ? resolvedMultipartProperty(schema, name, new Set())
+      ? resolvedMultipartProperty(schema, name, new Set(), is30)
       : asObject(resolvedMultipartProperties(schema, new Set())[name]);
     const enc = asObject(encoding[name]);
     if (revision3) {
@@ -2150,10 +2253,19 @@ function staticPartBooleanLiteral(
   }
 }
 
+/**
+ * Walks §9.2's dynamic-member resolution chain: an exact `properties`
+ * schema and every matching `patternProperties` schema, or the
+ * `additionalProperties` schema when neither matches. The resolution
+ * keywords are read under the governing edition's dialect (§9.1/§9.2): on
+ * the 3.0 line `patternProperties` has no meaning, so the chain there is
+ * `properties`, then `additionalProperties`.
+ */
 function resolvedMultipartProperty(
   schema: Record<string, unknown> | null,
   name: string,
   seen: Set<Record<string, unknown>>,
+  oas30: boolean,
 ): Record<string, unknown> | null {
   if (schema === null || seen.has(schema)) return null;
   seen.add(schema);
@@ -2164,7 +2276,7 @@ function resolvedMultipartProperty(
     if (exact !== null) candidates.push(exact);
 
     let patternMatched = false;
-    const patterns = asObject(schema.patternProperties);
+    const patterns = oas30 ? null : asObject(schema.patternProperties);
     for (const [pattern, raw] of Object.entries(patterns ?? {})) {
       let matches = false;
       try { matches = new RegExp(pattern, "u").test(name); } catch { /* validation owns invalid patterns */ }
@@ -2185,7 +2297,7 @@ function resolvedMultipartProperty(
       for (const member of schema.allOf) {
         const nested = asObject(member);
         if (nested === null) continue;
-        const candidate = resolvedMultipartProperty(nested, name, seen);
+        const candidate = resolvedMultipartProperty(nested, name, seen, oas30);
         if (candidate !== null) candidates.push(candidate);
       }
     }
@@ -2779,7 +2891,7 @@ function buildRevision3URLEncodedBody(
   const units: string[] = [];
   for (const name of Object.keys(fields).sort()) {
     let property = dynamicProperties
-      ? resolvedMultipartProperty(schema, name, new Set())
+      ? resolvedMultipartProperty(schema, name, new Set(), openapiVersion.startsWith("3.0"))
       : asObject(properties[name]);
     if (property === null && !dynamicProperties && staticPartBooleanLiteral(schema, name) === true) {
       property = {}; // true is the same unconstrained declaration as {}
@@ -2928,6 +3040,19 @@ export function isSuccessResponseKey(key: string): boolean {
  * normalized, deduplicated, and sorted (membership is normative, ordering
  * is not). Media ranges are excluded: they are not concrete.
  */
+/**
+ * Two SUCCESS RESPONSES may declare one identity in different spellings; that
+ * is not a collision (§9.2's unit is one content map), so the advertised set
+ * carries the identity once and takes the smallest spelling rather than
+ * whichever key was enumerated first.
+ */
+function advertise(seen: Map<string, string>, parsed: ParsedMediaType): void {
+  const existing = seen.get(parsed.identity);
+  if (existing === undefined || parsed.canonical < existing) {
+    seen.set(parsed.identity, parsed.canonical);
+  }
+}
+
 export function successMediaTypes(
   op: OpenAPIOperation | null | undefined,
   revision3 = false,
@@ -2944,15 +3069,20 @@ export function successMediaTypes(
     if (!isSuccessResponseKey(key) && !defaultCanGovernSuccess) continue;
     const content = (resp as OpenAPIResponse | undefined)?.content;
     if (!content) continue;
+    // §9.2 normalized collision, confined: a colliding parsed identity can
+    // govern no response match, so it is not an available representation and
+    // is not advertised -- advertising it would invite exactly the response
+    // the decode lane must refuse. Non-colliding siblings still advertise.
+    const colliding = normalizedMediaCollisions(content, revision3);
     for (const mt of Object.keys(content)) {
+      if (colliding.has(mt)) continue;
       try {
         const parsed = parseMediaType(mt, revision3);
-        if (!seen.has(parsed.identity)) seen.set(parsed.identity, parsed.canonical);
+        advertise(seen, parsed);
       } catch {
         if (revision3 && responseFidelity) {
           try {
-            const parsed = parseMediaRange(mt, true);
-            if (!seen.has(parsed.identity)) seen.set(parsed.identity, parsed.canonical);
+            advertise(seen, parseMediaRange(mt, true));
           } catch { /* malformed keys are handled when they govern */ }
         }
       }
@@ -3039,7 +3169,7 @@ export function governingResponseMediaMatch(
     rangeSpecificity: number;
     parameterSpecificity: number;
   }> = [];
-  const identities = new Map<string, string>();
+  const colliding = normalizedMediaCollisions(content, revision3);
   for (const [key, media] of Object.entries(content)) {
     let declared: ParsedMediaType | ParsedMediaRange;
     let rangeSpecificity = 2;
@@ -3059,14 +3189,13 @@ export function governingResponseMediaMatch(
         throw error;
       }
     }
-    if (revision3) {
-      const previous = identities.get(declared.identity);
-      if (previous !== undefined) {
-        throw new Error(
-          `response content declarations ${JSON.stringify(previous)} and ${JSON.stringify(key)} denote the same parsed media declaration (normalized collision)`,
-        );
-      }
-      identities.set(declared.identity, key);
+    if (colliding.has(key)) {
+      // §9.2 normalized collision, confined: no response match may be
+      // governed by this parsed identity, so the declaration competes for
+      // nothing. A concrete response that DOES denote the colliding identity
+      // then matches nothing and is loud below; a response denoting a
+      // non-colliding sibling decodes unaffected.
+      continue;
     }
     if (rangeSpecificity < 2 && !responseFidelity) continue;
     if (rangeSpecificity === 2) {
@@ -3085,6 +3214,11 @@ export function governingResponseMediaMatch(
     }
   }
   if (matches.length === 0) {
+    if (collidesWithNormalizedIdentity(colliding, actual, revision3)) {
+      throw new Error(
+        `response Content-Type ${JSON.stringify(actualContentType)} denotes a parsed media identity more than one content-map key declares (normalized collision), so no response match may be governed by it`,
+      );
+    }
     throw new Error(
       `response Content-Type ${JSON.stringify(actualContentType)} matches no media declaration in the governing Response Object`,
     );
