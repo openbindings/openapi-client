@@ -1140,15 +1140,15 @@ function validateContentBasedMedia(
     }
     return;
   }
-  const encodedString = !is30
-    && schemaTypeIs(schema, "string")
-    && resolvedSchemaStringKeyword(schema, "contentEncoding") !== "";
+  const encodedString = artifactEncodedString(schema, is30);
   // OAS 3.0 format: binary declares raw part bytes; encoding.contentType
   // describes those bytes and is not restricted to application/octet-stream.
   // A ZIP/image/vendor part therefore uses the same canonical Base64 caller
   // boundary as the default octet-stream case.
   if (is30 && binarySignaled(schema, true)) return;
-  if (selected.base === "application/octet-stream" && encodedString) return;
+  // An artifact-encoded string part carries its characters as-is under
+  // whatever content type the declaration or the default row named.
+  if (encodedString) return;
   throw new Error(`${subject} property ${JSON.stringify(name)} has no serializer for ${selected.canonical}`);
 }
 
@@ -1530,15 +1530,19 @@ function concreteBodyFamily(
   // schema-omitted declaration like any other, which is what keeps it from
   // being orphaned between two lanes.
   if (allowRaw && rawBoundarySchema(schema, openapiVersion, allowSchemaOmittedOAS30Bytes)) return FAMILY_RAW;
-  // In OAS 3.1 contentEncoding describes the string's own representation.
-  // The caller supplies that encoded string verbatim; it is not decoded at
-  // the OpenBindings boundary merely because the concrete media is binary.
+  // The artifact declares the string to be already-encoded text, so the
+  // caller supplies that encoded string verbatim and it is not decoded at the
+  // OpenBindings boundary merely because the concrete media is binary. In OAS
+  // 3.1 that declaration is `contentEncoding` on a string; on the 3.0 line it
+  // is `format: byte`, which every accepted 3.0 edition's own format registry
+  // defines as "base64 encoded characters" — §9.2 states the two as parallels
+  // and this candidate carries them as one lane. Neither is gated on
+  // character-data media: the artifact, not the media-type registration, is
+  // what makes the value characters here.
   if (
-    !openapiVersion.startsWith("3.0")
-    && schema !== null
+    schema !== null
     && typeof schema === "object"
-    && schemaTypeIs(schema, "string")
-    && resolvedSchemaStringKeyword(schema, "contentEncoding") !== ""
+    && artifactEncodedString(schema, openapiVersion.startsWith("3.0"))
   ) {
     return FAMILY_TEXT;
   }
@@ -2508,7 +2512,12 @@ function writeRevision3MultipartPart(
   const contentEncoding = !is30 && schemaTypeIs(schema, "string")
     ? resolvedSchemaStringKeyword(schema, "contentEncoding")
     : "";
-  if (contentEncoding !== "") {
+  // The artifact-encoded string lane, both editions: the declared characters
+  // ride the wire unchanged, with no OpenBindings boundary decode. No
+  // Content-Transfer-Encoding is emitted on the 3.0 line -- 3.0.4 equates a
+  // `format: byte` part with an Encoding Object declaring that header, and
+  // Section 9.2 reads the equivalence as declaration semantics.
+  if (artifactEncodedString(schema, is30)) {
     const data = encodeTextForMedia(value, contentType, `multipart property ${JSON.stringify(name)}`);
     fd.append(name, new Blob([data], { type: contentType }), name);
     return;
@@ -2581,7 +2590,15 @@ function writeRevision3MultipartPart(
  * took application/octet-stream, which no accepted edition assigns it.
  */
 function defaultMultipartContentType(schema: Record<string, unknown>, is30: boolean): string {
-  if (is30 && binarySignaled(schema, true)) return "application/octet-stream";
+  // 3.0.4's default-`contentType` table gives `string` with `format`
+  // "`binary` or `byte`" the default application/octet-stream, while 3.0.0
+  // through 3.0.3's prose names only `binary` before "other primitive types".
+  // Under the editions' own Section 4.1 patch-uniformity instruction the line
+  // answers uniformly, and 3.0.4 read under its own text fixes what the
+  // uniform default is (Section 9.2, OAPI-P-04).
+  if (is30 && (binarySignaled(schema, true) || artifactEncodedString(schema, true))) {
+    return "application/octet-stream";
+  }
   if (
     !is30
     && schemaTypeIs(schema, "string")
@@ -2660,6 +2677,26 @@ function resolvedMultipartItems(schema: Record<string, unknown>): Record<string,
   }
   if (candidates.length === 0) return null;
   return candidates.length === 1 ? candidates[0]! : { allOf: candidates };
+}
+
+/**
+ * §9.2's artifact-encoded string cell, under the governing edition's own
+ * vocabulary: a string the ARTIFACT declares to be already-encoded text, so
+ * the characters ride the wire unchanged and the OpenBindings boundary decode
+ * never runs. The 3.1 line spells it with `contentEncoding` on a declared
+ * string; the 3.0 line spells it with `format: byte`, which every accepted
+ * 3.0 edition's own format registry defines as "base64 encoded characters"
+ * (3.0.4's row citing [RFC 4648] Section 4). The edition gate is inside the
+ * predicate because the two spellings are inert on each other's line:
+ * `contentEncoding` is not in the 3.0 Schema Object's dialect at all, and on
+ * the 3.1 line `format` has no content-encoding force and `byte` is absent
+ * from the format tables.
+ */
+export function artifactEncodedString(schema: Record<string, unknown> | null, is30: boolean): boolean {
+  if (schema === null || !schemaTypeIs(schema, "string")) return false;
+  return is30
+    ? schemaFormatIs(schema, "byte")
+    : resolvedSchemaStringKeyword(schema, "contentEncoding") !== "";
 }
 
 /**
@@ -2933,9 +2970,7 @@ function buildRevision3URLEncodedBody(
       ?? parseMediaType(defaultMultipartContentType(property, openapiVersion.startsWith("3.0")), true);
     requireSupportedCharset(selected, `urlencoded property ${JSON.stringify(name)}`);
     let text: string;
-    const encodedString = !openapiVersion.startsWith("3.0")
-      && schemaTypeIs(property, "string")
-      && resolvedSchemaStringKeyword(property, "contentEncoding") !== "";
+    const encodedString = artifactEncodedString(property, openapiVersion.startsWith("3.0"));
     if (encodedString) {
       if (typeof fields[name] !== "string") {
         throw new Error(`urlencoded property ${JSON.stringify(name)} requires an artifact-encoded string`);
