@@ -310,6 +310,75 @@ function hasRequestBody(op: OpenAPIOperation): boolean {
 export class DegenerateMediaError extends Error {}
 
 /**
+ * Inventories ONE OAS content map and returns the keys that denote a parsed
+ * media identity another key of the SAME map also denotes, each mapped to a
+ * stable rendering of the identity they collide on.
+ *
+ * §9.2: two keys in one content map denoting the same parsed media type are a
+ * normalized collision, and the defect CONFINES to that colliding parsed
+ * identity -- the smallest unit that owns it. No first-key rule is invented:
+ * every caller skips exactly the keys named here, so no request selection
+ * lands on the colliding identity, no response match is governed by it, and it
+ * is never advertised as an available response representation -- while the
+ * map's non-colliding entries remain usable alternatives. The inventory never
+ * spans two content maps, because a content map is the unit the rule names.
+ */
+export function normalizedMediaCollisions(
+  content: Record<string, unknown> | undefined,
+  revision3: boolean,
+): Map<string, string> {
+  const colliding = new Map<string, string>();
+  if (!content) return colliding;
+  const keys = Object.keys(content);
+  if (keys.length < 2) return colliding;
+  const members = new Map<string, string[]>();
+  const rendering = new Map<string, string>();
+  for (const key of keys) {
+    let parsed: ParsedMediaType | ParsedMediaRange;
+    try {
+      parsed = parseMediaType(key, revision3);
+    } catch {
+      try {
+        parsed = parseMediaRange(key, revision3);
+      } catch {
+        // An unparseable key denotes no identity, so it collides with
+        // nothing. Whether it is itself a defect is its owner's question.
+        continue;
+      }
+    }
+    const existingMembers = members.get(parsed.identity);
+    if (existingMembers) existingMembers.push(key);
+    else members.set(parsed.identity, [key]);
+    const existingRendering = rendering.get(parsed.identity);
+    if (existingRendering === undefined || parsed.canonical < existingRendering) {
+      rendering.set(parsed.identity, parsed.canonical);
+    }
+  }
+  for (const [identity, group] of members) {
+    if (group.length < 2) continue;
+    for (const key of group) colliding.set(key, rendering.get(identity) ?? identity);
+  }
+  return colliding;
+}
+
+/** Whether a concrete media type denotes one of a map's colliding identities. */
+function collidesWithNormalizedIdentity(
+  colliding: Map<string, string>,
+  parsed: ParsedMediaType,
+  revision3: boolean,
+): boolean {
+  if (colliding.size === 0) return false;
+  for (const key of colliding.keys()) {
+    try {
+      if (parseMediaType(key, revision3).identity === parsed.identity) return true;
+    } catch {
+      continue;
+    }
+  }
+  return false;
+}
+
+/**
  * Compatibility convenience for callers that need one SDK-local candidate.
  * Invocation uses planRequestBodies so the binding layer preserves every
  * artifact-permitted alternative until configuration or admissibility chooses.
@@ -346,7 +415,9 @@ export function planRequestBodies(
   }
   const candidates: Candidate[] = [];
   const declared: string[] = [];
-  const identities = new Map<string, string>();
+  const collided = new Set<string>();
+  let nonColliding = 0;
+  const colliding = normalizedMediaCollisions(content, revision3);
   for (const key of Object.keys(content)) {
     let parsed: ParsedMediaType | ParsedMediaRange;
     let range = false;
@@ -366,13 +437,16 @@ export function planRequestBodies(
       }
     }
     declared.push(parsed.canonical);
-    const previous = identities.get(parsed.identity);
-    if (previous !== undefined) {
-      throw new Error(
-        `request content declarations ${JSON.stringify(previous)} and ${JSON.stringify(key)} denote the same parsed media type (OAPI-P-04 normalized collision)`,
-      );
+    const collidingIdentity = colliding.get(key);
+    if (collidingIdentity !== undefined) {
+      // §9.2 normalized collision, confined: no request selection may land on
+      // this parsed identity, so the key contributes no candidate and its
+      // alternative is an accounted exclusion. The map's non-colliding
+      // entries are unaffected (OAPI-P-04).
+      collided.add(collidingIdentity);
+      continue;
     }
-    identities.set(parsed.identity, key);
+    nonColliding += 1;
     if (range) {
       const families = supportedRangeCarriageFamilies(
         parsed as ParsedMediaRange,
@@ -407,6 +481,11 @@ export function planRequestBodies(
     else if (options.inventoryUnsupported) candidates.push({ key, parsed, family: "", range: false, unsupported: true });
   }
   if (candidates.length === 0) {
+    if (collided.size > 0 && nonColliding === 0) {
+      throw new Error(
+        `every request content declaration denotes a normalized-colliding parsed media identity, so no selection may land on one (colliding: ${[...collided].sort().join(", ")})`,
+      );
+    }
     declared.sort();
     throw new Error(
       `request body declares no media type whose declaration selects a request carriage lane openbindings.openapi@1 defines (declared: ${declared.join(", ")})`,
@@ -2961,6 +3040,19 @@ export function isSuccessResponseKey(key: string): boolean {
  * normalized, deduplicated, and sorted (membership is normative, ordering
  * is not). Media ranges are excluded: they are not concrete.
  */
+/**
+ * Two SUCCESS RESPONSES may declare one identity in different spellings; that
+ * is not a collision (§9.2's unit is one content map), so the advertised set
+ * carries the identity once and takes the smallest spelling rather than
+ * whichever key was enumerated first.
+ */
+function advertise(seen: Map<string, string>, parsed: ParsedMediaType): void {
+  const existing = seen.get(parsed.identity);
+  if (existing === undefined || parsed.canonical < existing) {
+    seen.set(parsed.identity, parsed.canonical);
+  }
+}
+
 export function successMediaTypes(
   op: OpenAPIOperation | null | undefined,
   revision3 = false,
@@ -2977,15 +3069,20 @@ export function successMediaTypes(
     if (!isSuccessResponseKey(key) && !defaultCanGovernSuccess) continue;
     const content = (resp as OpenAPIResponse | undefined)?.content;
     if (!content) continue;
+    // §9.2 normalized collision, confined: a colliding parsed identity can
+    // govern no response match, so it is not an available representation and
+    // is not advertised -- advertising it would invite exactly the response
+    // the decode lane must refuse. Non-colliding siblings still advertise.
+    const colliding = normalizedMediaCollisions(content, revision3);
     for (const mt of Object.keys(content)) {
+      if (colliding.has(mt)) continue;
       try {
         const parsed = parseMediaType(mt, revision3);
-        if (!seen.has(parsed.identity)) seen.set(parsed.identity, parsed.canonical);
+        advertise(seen, parsed);
       } catch {
         if (revision3 && responseFidelity) {
           try {
-            const parsed = parseMediaRange(mt, true);
-            if (!seen.has(parsed.identity)) seen.set(parsed.identity, parsed.canonical);
+            advertise(seen, parseMediaRange(mt, true));
           } catch { /* malformed keys are handled when they govern */ }
         }
       }
@@ -3072,7 +3169,7 @@ export function governingResponseMediaMatch(
     rangeSpecificity: number;
     parameterSpecificity: number;
   }> = [];
-  const identities = new Map<string, string>();
+  const colliding = normalizedMediaCollisions(content, revision3);
   for (const [key, media] of Object.entries(content)) {
     let declared: ParsedMediaType | ParsedMediaRange;
     let rangeSpecificity = 2;
@@ -3092,14 +3189,13 @@ export function governingResponseMediaMatch(
         throw error;
       }
     }
-    if (revision3) {
-      const previous = identities.get(declared.identity);
-      if (previous !== undefined) {
-        throw new Error(
-          `response content declarations ${JSON.stringify(previous)} and ${JSON.stringify(key)} denote the same parsed media declaration (normalized collision)`,
-        );
-      }
-      identities.set(declared.identity, key);
+    if (colliding.has(key)) {
+      // §9.2 normalized collision, confined: no response match may be
+      // governed by this parsed identity, so the declaration competes for
+      // nothing. A concrete response that DOES denote the colliding identity
+      // then matches nothing and is loud below; a response denoting a
+      // non-colliding sibling decodes unaffected.
+      continue;
     }
     if (rangeSpecificity < 2 && !responseFidelity) continue;
     if (rangeSpecificity === 2) {
@@ -3118,6 +3214,11 @@ export function governingResponseMediaMatch(
     }
   }
   if (matches.length === 0) {
+    if (collidesWithNormalizedIdentity(colliding, actual, revision3)) {
+      throw new Error(
+        `response Content-Type ${JSON.stringify(actualContentType)} denotes a parsed media identity more than one content-map key declares (normalized collision), so no response match may be governed by it`,
+      );
+    }
     throw new Error(
       `response Content-Type ${JSON.stringify(actualContentType)} matches no media declaration in the governing Response Object`,
     );
