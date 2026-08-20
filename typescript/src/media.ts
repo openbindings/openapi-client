@@ -1119,12 +1119,8 @@ function validateContentBasedMedia(
   const declared = typeof enc?.contentType === "string"
     ? parseSingleMultipartContentType(enc.contentType, name)
     : null;
-  if (declared === null && !hasDeclaredSchemaType(schema) && partSchemaValueDispatches(schema, is30)) {
-    refuseTypelessPartOn31(subject, name, is30, schema);
-    // §9.2, the 3.0-line convention: the property schema's per-type part
-    // default is keyed by the supplied value's JSON application type at
-    // invocation.
-    return;
+  if (declared === null && !hasDeclaredSchemaType(schema) && partSchemaDeclaresNoType(schema, is30)) {
+    refuseTypelessPart(subject, name, is30, schema);
   }
   const selected = declared ?? parseMediaType(defaultMultipartContentType(schema, is30), true);
   requireSupportedCharset(selected, `${subject} property ${JSON.stringify(name)}`);
@@ -1375,48 +1371,65 @@ function nullOnlyBranch(schema: Record<string, unknown>): boolean {
 }
 
 /**
- * §9.2, per edition. Every accepted 3.1 edition states a default part
- * `Content-Type` for a schema declaring no `type`, and all three state
- * `application/octet-stream`: 3.1.1 and 3.1.2 tabulate it as the Encoding
- * Object default table's `type`-absent row, and 3.1.0 reaches it through the
- * total catch-all closing its prose enumeration ("for all other cases the
- * default is application/octet-stream"). This revision defines no
- * JSON-to-octet part boundary, so such a part refuses there rather than
- * taking the 3.0-line convention. On the 3.0 line every stated default row is
- * keyed on a declared `type` and none reaches a declaration carrying none,
- * which is the residue the convention answers.
+ * §9.2: a resolved part schema that declares no `type` refuses before
+ * dispatch on EVERY accepted edition, and no supplied value's JSON type ever
+ * selects a part's carriage. The two lines reach that one outcome on
+ * different grounds — the 3.1 editions state a default this revision defines
+ * no boundary to cross, the 3.0 editions state no row at all and this
+ * revision fills nothing — so the diagnostic names the ground the artifact's
+ * own edition supplies.
  */
-function refuseTypelessPartOn31(
+function refuseTypelessPart(
   subject: string,
   name: string,
   is30: boolean,
   schema: Record<string, unknown> | boolean | null,
-): void {
-  if (is30) return;
+): never {
   if (schema !== null && typeof schema === "object" && schema.type !== undefined) {
-    // `type` is present but names no type at all. No accepted 3.1 default
-    // row reaches that — 3.1.1 and 3.1.2 key their first row on `type` being
-    // ABSENT, and 3.1.0's catch-all keys on the property type it does not
-    // have — and JSON Schema 2020-12's own meta-schema requires an
-    // array-valued `type` to carry at least one member, so the declaration
-    // admits no instance.
+    // `type` is present but names no type at all.
+    if (is30) {
+      throw new Error(
+        `${subject} property ${JSON.stringify(name)}: the part schema declares an array-valued \`type\`, but an OAS 3.0 \`type\` MUST be a string and multiple types via an array are not supported; no part carriage is defined`,
+      );
+    }
+    // No accepted 3.1 default row reaches it — 3.1.1 and 3.1.2 key their
+    // first row on `type` being ABSENT, and 3.1.0's catch-all keys on the
+    // property type it does not have — and JSON Schema 2020-12's own
+    // meta-schema requires an array-valued `type` to carry at least one
+    // member, so the declaration admits no instance.
     throw new Error(
       `${subject} property ${JSON.stringify(name)}: the part schema declares an empty \`type\`, which no accepted OAS 3.1 default part Content-Type row reaches and which admits no instance; no part carriage is defined`,
     );
   }
+  if (!is30) {
+    // Every accepted 3.1 edition states a default for such a part, and all
+    // three state application/octet-stream: 3.1.1 and 3.1.2 tabulate it as
+    // the Encoding Object default table's `type`-absent row, and 3.1.0
+    // reaches it through the total catch-all closing its prose enumeration.
+    // This revision defines no JSON-to-octet part boundary, so it refuses.
+    throw new Error(
+      `${subject} property ${JSON.stringify(name)}: a part schema declaring no \`type\` defaults to application/octet-stream on every accepted OAS 3.1 edition, but this binding revision defines no JSON-to-octet part boundary`,
+    );
+  }
+  // The 3.0 line states no row for it at all: 3.0.0 through 3.0.3 enumerate a
+  // `string` with `format: binary`, "other primitive types", `object` and
+  // `array` and close without a catch-all, and 3.0.4 tabulates the same cases
+  // keyed on `type`. Every stated row is keyed on a declared `type` and none
+  // reaches a declaration carrying none. This specification authors no row
+  // for that residue, so the part refuses here too and its alternative is an
+  // accounted exclusion.
   throw new Error(
-    `${subject} property ${JSON.stringify(name)}: a part schema declaring no \`type\` defaults to application/octet-stream on every accepted OAS 3.1 edition, but this binding revision defines no JSON-to-octet part boundary`,
+    `${subject} property ${JSON.stringify(name)}: a part schema declaring no \`type\` has no default part Content-Type row on any accepted OAS 3.0 edition, and this binding revision authors none; no part carriage is defined`,
   );
 }
 
 /**
- * A carriage-unconstrained resolved part schema: a declaration with no type
- * and no choice or conditional applicator, through allOf. §9.2: on the 3.0
- * line such a schema's per-type part default is keyed by the supplied value's
- * JSON application type — the value's TYPE is structure, never payload
- * sniffing. An absent schema is not a declaration and never dispatches.
+ * The §9.2 type-absent part cell: a resolved part declaration carrying no type
+ * and no choice or conditional applicator, through allOf. Such a part refuses
+ * before dispatch on every accepted edition. An absent schema is not a
+ * declaration and is answered by the caller's own absent-schema branch.
  */
-function partSchemaValueDispatches(schema: Record<string, unknown> | boolean | null, is30: boolean): boolean {
+function partSchemaDeclaresNoType(schema: Record<string, unknown> | boolean | null, is30: boolean): boolean {
   const literal = booleanSchemaLiteral(schema);
   if (literal !== null) return literal;
   if (schema === null || typeof schema === "boolean") return false;
@@ -1435,18 +1448,16 @@ function partSchemaValueDispatches(schema: Record<string, unknown> | boolean | n
     return false;
   }
   // `contentEncoding` and `contentMediaType` belong to the 3.1 line's
-  // dialect. A schema carrying one and declaring no `type` is the
-  // type-absent cell, which every accepted 3.1 edition gives
-  // application/octet-stream and for which this revision defines no
-  // JSON-to-octet part boundary — so it does not value-dispatch, it refuses.
-  // (On a schema that DECLARES a non-string type the keywords are inert
-  // annotations, [JSON Schema 2020-12] Section 8.1/8.3/8.4, and the part
-  // keeps its own per-type row; that case never reaches here because it has a
-  // declared type.) Under the 3.0 line the Schema Object is
-  // Wright-Draft-00-based and neither keyword is in its vocabulary, so an
-  // artifact carrying one has written an annotation the dialect ignores; a
-  // schema that is otherwise typeless still dispatches by the supplied
-  // value's JSON type, as the Go twin does.
+  // dialect. A 3.1 schema carrying one and declaring no `type` reaches the
+  // same refusal through the caller's own default-row path rather than this
+  // predicate, so it is excluded here. (On a schema that DECLARES a
+  // non-string type the keywords are inert annotations, [JSON Schema
+  // 2020-12] Section 8.1/8.3/8.4, and the part keeps its own per-type row;
+  // that case never reaches here because it has a declared type.) Under the
+  // 3.0 line the Schema Object is Wright-Draft-00-based and neither keyword
+  // is in its vocabulary, so an artifact carrying one has written an
+  // annotation the dialect ignores and the part decides as if it were
+  // absent — which is the type-absent cell, as the Go twin also reads it.
   if (
     !is30
     && (resolvedSchemaStringKeyword(schema, "contentEncoding") !== ""
@@ -1457,7 +1468,7 @@ function partSchemaValueDispatches(schema: Record<string, unknown> | boolean | n
   if (Array.isArray(schema.allOf)) {
     return schema.allOf.every((member) => {
       const nested = asObject(member);
-      return nested === null || partSchemaValueDispatches(nested, is30);
+      return nested === null || partSchemaDeclaresNoType(nested, is30);
     });
   }
   return true;
@@ -2482,27 +2493,12 @@ function writeRevision3MultipartPart(
     ? parseSingleMultipartContentType(enc.contentType, name)
     : null;
   if (declaredEncodingType === null && !hasDeclaredSchemaType(schema) && !binarySignaled(schema, is30)) {
-    if (!partSchemaValueDispatches(schema, is30)) {
+    if (!partSchemaDeclaresNoType(schema, is30)) {
       throw new Error(Array.isArray(schema.anyOf) || Array.isArray(schema.oneOf)
         ? `multipart property ${JSON.stringify(name)} declares a choice applicator that does not collapse to one non-null branch; no single part carriage is defined`
         : `multipart property ${JSON.stringify(name)} has no declaration-defined mapping from its default octet-stream part to a JSON caller value`);
     }
-    refuseTypelessPartOn31("multipart", name, is30, schema);
-    // §9.2, the 3.0-line convention: the part schema's per-type default is
-    // keyed by the supplied value's JSON application type — objects and
-    // arrays ride as application/json, primitives as text/plain. JSON null
-    // names no per-type default and refuses.
-    if (value === null || value === undefined) {
-      throw new Error(
-        `multipart property ${JSON.stringify(name)}: an unconstrained part schema defines no form carriage for JSON null`,
-      );
-    }
-    if (asObject(value) !== null || asArray(value) !== null) {
-      fd.append(name, new Blob([JSON.stringify(value)], { type: "application/json" }), name);
-    } else {
-      fd.append(name, primitiveString(value));
-    }
-    return;
+    refuseTypelessPart("multipart", name, is30, schema);
   }
   const selected = declaredEncodingType
     ?? parseMediaType(defaultMultipartContentType(schema, is30), true);
@@ -2930,23 +2926,8 @@ function buildRevision3URLEncodedBody(
     const declaredCT = typeof enc?.contentType === "string"
       ? parseSingleMultipartContentType(enc.contentType, name)
       : null;
-    if (declaredCT === null && !hasDeclaredSchemaType(property) && partSchemaValueDispatches(property, openapiVersion.startsWith("3.0"))) {
-      refuseTypelessPartOn31("urlencoded", name, openapiVersion.startsWith("3.0"), property);
-      // §9.2, the 3.0-line convention: the property schema's per-type part
-      // default is keyed by the supplied value's JSON application type —
-      // objects and arrays ride as JSON text, primitives as plain text. JSON
-      // null names no per-type default and refuses.
-      const value = fields[name];
-      if (value === null || value === undefined) {
-        throw new Error(
-          `urlencoded property ${JSON.stringify(name)}: an unconstrained property schema defines no form carriage for JSON null`,
-        );
-      }
-      const dispatched = asObject(value) !== null || asArray(value) !== null
-        ? JSON.stringify(value)
-        : primitiveString(value);
-      units.push(`${formEncodeBytes(new TextEncoder().encode(name))}=${formEncodeBytes(new TextEncoder().encode(dispatched))}`);
-      continue;
+    if (declaredCT === null && !hasDeclaredSchemaType(property) && partSchemaDeclaresNoType(property, openapiVersion.startsWith("3.0"))) {
+      refuseTypelessPart("urlencoded", name, openapiVersion.startsWith("3.0"), property);
     }
     const selected = declaredCT
       ?? parseMediaType(defaultMultipartContentType(property, openapiVersion.startsWith("3.0")), true);

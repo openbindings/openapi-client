@@ -7,7 +7,7 @@ import type { OpenAPIDocument, OpenAPIMediaType, OpenAPIOperation } from "./type
 
 // The identical file is executed by openbindings-go/formats/openapi and by
 // openapi-client/go; changing it in one engine without the others fails here.
-const CASES_DIGEST = "128716ca17b0545aa890f2c5d441fa77638f9f7598bf2bb23ce52a7162af3ae9";
+const CASES_DIGEST = "334169f20f73f42159fcdd45e3b11bdfa87957add143df5bb4ef4fccd30d00e1";
 
 interface PartDefaultCase {
   name: string;
@@ -193,7 +193,29 @@ describe("array-items part default — the twin case table", () => {
       }
     }
     expect(seen).toBe(3);
-    expect(writeLaneCells).toBe(3);
+    expect(writeLaneCells).toBe(5);
+  });
+
+  // The M2 convergence, pinned the same way: a multipart array whose ITEMS
+  // schema declares no type is the type-absent part cell — the multipart lane
+  // derives the part Content-Type from the items schema, so that schema IS
+  // the resolved part schema — and both lanes refuse it on the 3.0 line, as
+  // the 3.1 twin already did. The two cells carry `writeLane` for the same
+  // reason the nested-array cells do: admission refusing makes the encoder's
+  // own answer invisible on the wire, so it has to be measured directly.
+  it("pins both lanes for every 3.0 multipart typeless-items cell", () => {
+    let seen = 0;
+    for (const c of cases) {
+      if (c.media !== "multipart/form-data" || c.items !== "unconstrained") continue;
+      if (!c.openapi.startsWith("3.0")) continue;
+      seen += 1;
+      if (c.expect !== "refused" || c.writeLane !== "refused") {
+        throw new Error(
+          `${c.name}: expect = ${c.expect}, writeLane = ${c.writeLane}; both lanes must refuse a typeless items declaration`,
+        );
+      }
+    }
+    expect(seen).toBe(2);
   });
 
   // The invariant the table exists for, stated as a claim in its own right: on
