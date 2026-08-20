@@ -73,9 +73,10 @@ export function unflattenableParam(
 export const SYNTHETIC_BODY_PROPERTY = "body";
 
 /**
- * Marks the §9.1 always-refuses case — a supplied input missing a declared
- * path parameter — so the caller can map it to ERR_MISSING_INPUT rather
- * than the generic validation refusal.
+ * Marks the §9.1 always-refuses case — an input, absent or supplied,
+ * leaving a declared path parameter unfilled — so callers can stop
+ * candidate iteration: no other candidate can build the URL either. The
+ * refusal itself rides ERR_REFUSED like every pre-dispatch refusal.
  */
 export class MissingPathParamError extends Error {}
 

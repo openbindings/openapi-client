@@ -319,9 +319,10 @@ func routeInputFor(params openapi3.Parameters, input map[string]any, pathTemplat
 // body, unwrapped.
 const syntheticBodyProperty = "body"
 
-// errMissingPathParam marks the §9.1 always-refuses case — a supplied input
-// missing a declared path parameter — so the caller can map it to
-// ERR_MISSING_INPUT rather than the generic validation refusal.
+// errMissingPathParam marks the §9.1 always-refuses case — an input, absent
+// or supplied, leaving a declared path parameter unfilled — so callers can
+// stop candidate iteration: no other candidate can build the URL either.
+// The refusal itself rides ERR_REFUSED like every pre-dispatch refusal.
 var errMissingPathParam = errors.New("missing path parameter")
 
 // routeParameter serializes one populated parameter onto its wire location.

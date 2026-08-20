@@ -386,7 +386,6 @@ export function envelopeWillEmitBody(
   op: OpenAPIOperation,
 ): boolean {
   if (op.requestBody == null) return false;
-  if (op.requestBody.required === true) return true;
   if (envelope.bodyPresent) return true;
   const parameterFields = new Set(envelope.parameters.map((route) => route.field));
   return Object.keys(envelope.value).some((name) => !parameterFields.has(name));
