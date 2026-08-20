@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { buildMultipartBody, buildRequestBody, buildURLEncodedBody, planRequestBodies } from "./media.js";
+import { buildMultipartBody, buildRequestBody, buildURLEncodedBody, planRequestBodies, type BodyPlan } from "./media.js";
 import { OPENAPI_PROFILE_FULL } from "./profile.js";
 import { loadOpenAPIDocument } from "./util.js";
-import type { BodyPlan, OpenAPIDocument, OpenAPIMediaType, OpenAPIOperation, RoutedInput } from "./types.js";
+import type { RoutedInput } from "./params.js";
+import type { OpenAPIDocument, OpenAPIMediaType, OpenAPIOperation } from "./types.js";
 
 // The shared `format: byte` carriage case table (stage-3 block 5, escalation
 // M4). The identical file, at the identical digest, is executed by
