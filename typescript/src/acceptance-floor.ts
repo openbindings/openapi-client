@@ -74,9 +74,6 @@ const SUCCESS_CODE_RE = /^2\d\d$/;
 
 // The Schema Object keyword inventory the closure walk follows -- the union
 // of both edition lines; a keyword absent from an edition never occurs there.
-const SCHEMA_SUB_SINGLE = ["items", "not", "additionalProperties", "propertyNames", "contains", "if", "then", "else", "unevaluatedItems", "unevaluatedProperties", "additionalItems"];
-const SCHEMA_SUB_LIST = ["allOf", "anyOf", "oneOf", "prefixItems"];
-const SCHEMA_SUB_MAP = ["properties", "patternProperties", "definitions", "$defs", "dependentSchemas"];
 
 const FLOOR_METHODS = ["get", "put", "post", "delete", "options", "head", "patch", "trace"];
 
@@ -161,8 +158,8 @@ function floorAuthority(cls: string, line: "3.0" | "3.1"): string {
       return "OAS, Paths Object: each patterned field key begins with a forward slash and is appended to the Server Object's url to construct the target URL";
     case "D15":
       return is30
-        ? "OAS 3.0 line, Schema Object: a keyword's value carries the JSON type the governing dialect declares for it -- `items` Value MUST be an object and not an array; `properties` definitions MUST be a Schema Object; `required` and `enum` are taken directly from JSON Schema, where each is an array"
-        : "OAS 3.1 line via JSON Schema 2020-12: a keyword's value carries the JSON type the dialect declares for it -- `required` (Validation §6.5.3) and `enum` (§6.1.2) are arrays; `properties` members and `items` and `contains` are schemas, which on this line may be objects or booleans; `exclusiveMinimum` (§6.2.5) and `exclusiveMaximum` (§6.2.3) are numbers";
+        ? "OAS 3.0 line, Schema Object: a keyword's value carries the JSON type the governing dialect declares for it -- `items` Value MUST be an object and not an array; `properties` definitions MUST be a Schema Object; `required` and `enum` are taken directly from JSON Schema, where `required` is an array of unique elements and `enum` is an array"
+        : "OAS 3.1 line, §4.8.24.1: absent `jsonSchemaDialect` the OAS dialect schema id MUST be used for Schema Objects, and the value fails that dialect (https://spec.openapis.org/oas/3.1/dialect/base)";
     case "URef":
       return is30
         ? "OAS 3.0 line, Reference Object: $ref follows JSON Reference; its fragment is a JSON Pointer (RFC 6901) and identifies no location in the entry document"
@@ -171,31 +168,18 @@ function floorAuthority(cls: string, line: "3.0" | "3.1"): string {
   return "";
 }
 
+import {
+  SCHEMA_SUB_LIST,
+  SCHEMA_SUB_MAP,
+  SCHEMA_SUB_SINGLE,
+  schemaObjectDefects,
+} from "./schema-dialect.js";
+
 type Obj = Record<string, unknown>;
 
 const isObj = (v: unknown): v is Obj => v !== null && typeof v === "object" && !Array.isArray(v);
 const isRefObj = (v: unknown): boolean => isObj(v) && typeof v["$ref"] === "string";
 const refString = (v: unknown): string => (isObj(v) && typeof v["$ref"] === "string" ? (v["$ref"] as string) : "");
-// Whether a value is spelled as a schema at all under the governing edition
-// line: an object on either line, and a boolean on the 3.1 line only. Asks
-// only the JSON type the position declares, never whether the schema is
-// otherwise well-formed.
-//
-// The 3.1 line admits the boolean schemas outright: its Schema Object IS a
-// JSON Schema 2020-12 schema, whose own meta-schema is
-// `{"$dynamicAnchor": "meta", "type": ["object", "boolean"]}`. The 3.0 line's
-// Schema Object is the Wright Draft 00 subset, where every Schema Object is an
-// object and the boolean-literal schemas are not in the dialect, so a boolean
-// at a schema position there violates the dialect's declared JSON type for it
-// — D15, exactly as any other keyword whose value is of the wrong JSON type.
-//
-// This REFERRED the 3.0 spelling until 2026-08-20 (F-O1-13), on the ground
-// that §9.2 ascribed a part interpretation to a boolean-valued multipart part
-// there. Escalation M2 deleted the interpretation that referral rested on —
-// a typeless part now refuses on every accepted edition — and the ruled
-// outcome is that the spelling confines as an accounted `invalid` at the
-// smallest owning unit rather than refusing the whole source.
-const isSchemaValued = (v: unknown, line: string): boolean => isObj(v) || (typeof v === "boolean" && line === "3.1");
 // A Response Object is REQUIRED to carry `description` in all eight accepted
 // editions; its absence is a decidable proof that a value is not one.
 const isResponseObject = (v: unknown): boolean => isObj(v) && typeof v["description"] === "string";
@@ -431,47 +415,39 @@ export function computeAcceptanceFloor(raw: unknown): AcceptanceFloor | undefine
   // D1 / D1s / D15 over every reachable Schema Object position. D1n/D1a (the
   // two 3.1-shaped null spellings on the 3.0 line) are referred, never emitted.
   const visitSchema = (node: Obj, ptr: string): void => {
+    // D1 / D1s -- the `type` gate. It runs FIRST so that `type` keeps its own
+    // class and its own citation: a position already carrying a defect keeps
+    // the class that reached it (addDefect is first-wins), and D15's dialect
+    // verdict below reaches `/type` too on the 3.1 line.
+    if ("type" in node) {
+      const t = node["type"];
+      if (typeof t === "string") {
+        // D1n (the 3.0 line's `type: "null"`) is referred.
+        if (!(line === "3.0" && t === "null") && !types.has(t)) addDefect(defect("D1", `${ptr}/type`));
+      } else if (Array.isArray(t)) {
+        // D1a (the 3.0 line's array-valued `type`) is referred.
+        if (line !== "3.0") {
+          for (const member of t) {
+            if (typeof member !== "string" || !types.has(member)) {
+              addDefect(defect("D1", `${ptr}/type`));
+              break;
+            }
+          }
+        }
+      } else {
+        addDefect(defect("D1s", `${ptr}/type`));
+      }
+    }
+
     // D15 -- a Schema Object keyword whose value violates the governing
     // dialect's declared JSON type for it. Same derivation as D1/D1s: the
     // nearest rung containing the Schema Object owns it, and P1/P2 decide
-    // whether it climbs. Edition-scoped where the two lines differ: a boolean
-    // `exclusiveMinimum` is the 3.0 line's own correct draft-4 spelling and is
-    // not this class there, while a boolean-valued schema position IS this
-    // class there and is not on the 3.1 line -- see isSchemaValued.
-    // Independent of `type`, which is why these run before the type gate
-    // below.
-    if ("required" in node && !Array.isArray(node["required"])) addDefect(defect("D15", `${ptr}/required`));
-    if ("enum" in node && !Array.isArray(node["enum"])) addDefect(defect("D15", `${ptr}/enum`));
-    if (Array.isArray(node["items"])) addDefect(defect("D15", `${ptr}/items`));
-    const properties = node["properties"];
-    if (isObj(properties)) {
-      for (const key of sortedKeys(properties)) {
-        if (!isSchemaValued(properties[key], line)) addDefect(defect("D15", `${ptr}/properties/${esc(key)}`));
-      }
-    }
-    if (line === "3.1") {
-      for (const keyword of ["exclusiveMaximum", "exclusiveMinimum"]) {
-        if (keyword in node && typeof node[keyword] !== "number") addDefect(defect("D15", `${ptr}/${keyword}`));
-      }
-      if ("contains" in node && !isSchemaValued(node["contains"], line)) addDefect(defect("D15", `${ptr}/contains`));
-    }
-
-    if (!("type" in node)) return;
-    const t = node["type"];
-    if (typeof t === "string") {
-      if (line === "3.0" && t === "null") return; // D1n, referred
-      if (!types.has(t)) addDefect(defect("D1", `${ptr}/type`));
-    } else if (Array.isArray(t)) {
-      if (line === "3.0") return; // D1a, referred
-      for (const member of t) {
-        if (typeof member !== "string" || !types.has(member)) {
-          addDefect(defect("D1", `${ptr}/type`));
-          break;
-        }
-      }
-    } else {
-      addDefect(defect("D1s", `${ptr}/type`));
-    }
+    // whether it climbs. The verdict itself is not decided here: on the 3.1
+    // line it is delegated to the OAS dialect's own published artifact and on
+    // the 3.0 line it is a labeled, guarded transcription of that edition's own
+    // sentences, because that line's dialect published no meta-schema to point
+    // at. See schema-dialect.ts.
+    for (const position of schemaObjectDefects(node, line)) addDefect(defect("D15", `${ptr}${position}`));
   };
   const schemaRoots: Array<{ value: unknown; ptr: string }> = [];
   if (comps) {
