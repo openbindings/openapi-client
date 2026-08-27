@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/getkin/kin-openapi/openapi3"
 )
 
 func testDocument(serverURL, paths string) []byte {
@@ -22,6 +24,39 @@ func testDocument(serverURL, paths string) []byte {
   "servers":[{"url":%q}],
   "paths":%s
 }`, serverURL, paths))
+}
+
+func TestRawAndStructuredCookieDeclarationsAreValueDriven(t *testing.T) {
+	params := openapi3.Parameters{
+		&openapi3.ParameterRef{Value: &openapi3.Parameter{Name: "Cookie", In: openapi3.ParameterInHeader}},
+		&openapi3.ParameterRef{Value: &openapi3.Parameter{Name: "session", In: openapi3.ParameterInCookie}},
+	}
+	if err := checkEffectiveParameterOwnership(params); err != nil {
+		t.Fatalf("declarations alone: %v", err)
+	}
+	cookieCredential := []credentialPlacement{{channel: openapi3.ParameterInCookie, name: "auth_token"}}
+	if err := checkCredentialCollisions(cookieCredential, params, nil); err != nil {
+		t.Fatalf("raw declaration with selected structured credential but no supplied raw value: %v", err)
+	}
+	structuredOnly := map[string]map[string]bool{
+		openapi3.ParameterInHeader: {},
+		openapi3.ParameterInCookie: {"session": true},
+	}
+	if err := checkCredentialCollisions(nil, params, structuredOnly); err != nil {
+		t.Fatalf("structured-only contribution: %v", err)
+	}
+	both := map[string]map[string]bool{
+		openapi3.ParameterInHeader: {"Cookie": true},
+		openapi3.ParameterInCookie: {"session": true},
+	}
+	if err := checkCredentialCollisions(nil, params, both); err == nil {
+		t.Fatal("raw and structured contributions must collide")
+	}
+	if err := checkCredentialCollisions(cookieCredential, params, map[string]map[string]bool{
+		openapi3.ParameterInHeader: {"Cookie": true},
+	}); err == nil {
+		t.Fatal("supplied raw contribution and selected structured credential must collide")
+	}
 }
 
 func TestClientCallPreservesSameNamedParameterAndBodyIdentities(t *testing.T) {
