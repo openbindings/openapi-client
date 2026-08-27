@@ -420,6 +420,10 @@ func routeEnvelope(params openapi3.Parameters, envelope *routedEnvelope, pathTem
 }
 
 func routeEnvelopeFor(params openapi3.Parameters, envelope *routedEnvelope, pathTemplate string, plan *bodyPlan, bindingSpec string) (*routedInput, error) {
+	return routeEnvelopeWithParameterOptions(params, envelope, pathTemplate, plan, bindingSpec, parameterSerializationOptions{})
+}
+
+func routeEnvelopeWithParameterOptions(params openapi3.Parameters, envelope *routedEnvelope, pathTemplate string, plan *bodyPlan, bindingSpec string, options parameterSerializationOptions) (*routedInput, error) {
 	r := &routedInput{
 		resolvedPath: pathTemplate,
 		bodyFields:   map[string]any{},
@@ -450,7 +454,7 @@ func routeEnvelopeFor(params openapi3.Parameters, envelope *routedEnvelope, path
 			continue
 		}
 		consumed[field] = true
-		if err := routeParameterFor(r, p, value, bindingSpec); err != nil {
+		if err := routeParameterWithOptions(r, p, value, bindingSpec, options); err != nil {
 			return nil, err
 		}
 	}

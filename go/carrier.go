@@ -72,6 +72,7 @@ type executionArgs struct {
 	Site                 *HookSite
 	MaxDeliveryUnitBytes int64
 	SecurityHandlers     map[string]SecurityHandler
+	ParameterConverter   ParameterConverter
 }
 
 func newExecutionArgs(options PrepareOptions) *executionArgs {
@@ -90,6 +91,7 @@ func newExecutionArgs(options PrepareOptions) *executionArgs {
 		Hooks:                newInvokeHooks(options.Hooks),
 		MaxDeliveryUnitBytes: options.MaxDeliveryUnitBytes,
 		SecurityHandlers:     options.SecurityHandlers,
+		ParameterConverter:   options.ParameterConverter,
 	}
 }
 

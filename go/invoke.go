@@ -290,11 +290,12 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 	var routed *routedInput
 	var bodyReader io.Reader
 	var contentType string
+	parameterOptions := parameterSerializationOptions{edition: doc.OpenAPI, converter: args.ParameterConverter}
 	if len(plans) == 0 {
 		if envelope != nil {
-			routed, err = routeEnvelopeFor(params, envelope, pathTemplate, &bodyPlan{}, args.Source.Capability)
+			routed, err = routeEnvelopeWithParameterOptions(params, envelope, pathTemplate, &bodyPlan{}, args.Source.Capability, parameterOptions)
 		} else {
-			routed, err = routeInputFor(params, inputMap, pathTemplate, &bodyPlan{}, args.Source.Capability)
+			routed, err = routeInputWithParameterOptions(params, inputMap, pathTemplate, &bodyPlan{}, args.Source.Capability, parameterOptions)
 		}
 	} else {
 		var reasons []string
@@ -315,9 +316,9 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 			var candidateRouted *routedInput
 			var routeErr error
 			if envelope != nil {
-				candidateRouted, routeErr = routeEnvelopeFor(params, envelope, pathTemplate, candidate, args.Source.Capability)
+				candidateRouted, routeErr = routeEnvelopeWithParameterOptions(params, envelope, pathTemplate, candidate, args.Source.Capability, parameterOptions)
 			} else {
-				candidateRouted, routeErr = routeInputFor(params, inputMap, pathTemplate, candidate, args.Source.Capability)
+				candidateRouted, routeErr = routeInputWithParameterOptions(params, inputMap, pathTemplate, candidate, args.Source.Capability, parameterOptions)
 			}
 			if routeErr != nil {
 				if errors.Is(routeErr, errMissingPathParam) {
@@ -352,14 +353,15 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 		return
 	}
 
-	// ----- Channel assembly (§9.6, OAPI-P-10). -----
+	// ----- Channel assembly (openbindings.openapi-3.0@1 §11;
+	// openbindings.openapi-3.1@1 §11). -----
 
 	placements, selectedSchemes, credentialOwnership, err := selectCredentialPlacements(doc, op, args.Context, baseURL, params, routed.populated)
 	if err != nil {
 		inv.failExecution(&ExecutionError{Code: CodeRefused, Message: err.Error()})
 		return
 	}
-	if err := contextChannelCollision(args.Context, params, credentialOwnership); err != nil {
+	if err := contextChannelCollision(args.Context, credentialOwnership, routed.populated); err != nil {
 		inv.failExecution(&ExecutionError{Code: CodeRefused, Message: err.Error()})
 		return
 	}
@@ -420,7 +422,8 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 	for k, v := range contextHeaders(args.Context) {
 		req.Header.Set(k, v)
 	}
-	// One Cookie header (OAPI-P-10): declared cookie parameters in
+	// One Cookie header (openbindings.openapi-3.0@1 §8.3;
+	// openbindings.openapi-3.1@1 §8.3): declared cookie parameters in
 	// declaration order, credentials appended after.
 	if len(cookieUnits) > 0 {
 		req.Header.Set("Cookie", strings.Join(cookieUnits, "; "))
@@ -1445,8 +1448,8 @@ func encodePathValue(s string) string {
 }
 
 // ---------------------------------------------------------------------------
-// Credentials and channel assembly (§9.6: OAPI-P-09 wire application,
-// OAPI-P-10 channel assembly)
+// Credentials and channel assembly (openbindings.openapi-3.0@1 §11;
+// openbindings.openapi-3.1@1 §11).
 // ---------------------------------------------------------------------------
 
 // credentialPlacement is one credential's wire application: which channel
@@ -1465,6 +1468,13 @@ type credentialPlacement struct {
 // later complete alternative. No declared security means no credential wire
 // application, even when unrelated credentials exist in context.
 func selectCredentialPlacements(doc *openapi3.T, op *openapi3.Operation, bindCtx map[string]any, baseURL string, params openapi3.Parameters, populated map[string]map[string]bool) ([]credentialPlacement, []namedSecurityScheme, []credentialPlacement, error) {
+	// Parameter Cookie ownership is value-driven even when the operation has no
+	// security plan. A raw Cookie field and structured cookie units cannot both
+	// own the single outbound field (openbindings.openapi-3.0@1 §8.3;
+	// openbindings.openapi-3.1@1 §8.3).
+	if err := checkCredentialCollisions(nil, params, populated); err != nil {
+		return nil, nil, nil, err
+	}
 	for _, plan := range viableSecurityPlans(doc, op, baseURL, params) {
 		if len(plan.context.Requirements) == 0 {
 			return nil, nil, nil, nil // this complete alternative explicitly allows anonymous access
@@ -1529,7 +1539,8 @@ func credentialValues(plan securityPlan, bindCtx map[string]any) []credentialPla
 }
 
 // credentialDestinations is the artifact-only wire footprint of one security
-// plan. It lets context negotiation discard OAPI-P-10-colliding alternatives
+// plan. It lets context negotiation discard alternatives that collide under
+// openbindings.openapi-3.0@1 §11 / openbindings.openapi-3.1@1 §11
 // before credentials exist, so an unusable alternative is never challenged.
 func credentialDestinations(plan securityPlan) []credentialPlacement {
 	placements := make([]credentialPlacement, 0, len(plan.schemes))
@@ -1555,7 +1566,8 @@ func credentialDestinations(plan securityPlan) []credentialPlacement {
 	return placements
 }
 
-// checkCredentialCollisions enforces the OAPI-P-10 refusal: a name collision
+// checkCredentialCollisions enforces openbindings.openapi-3.0@1 §11 /
+// openbindings.openapi-3.1@1 §11: a name collision
 // between a credential and a caller-populated declared parameter on the same
 // channel is refused before dispatch — loud, never a silent overwrite in
 // either direction. Header names compare case-insensitively.
@@ -1609,8 +1621,9 @@ func checkCredentialCollisions(placements []credentialPlacement, params openapi3
 // contextChannelCollision keeps the context transport-hint channel from
 // overwriting the structured Cookie assembly. Cookie is one HTTP field with
 // two intentionally distinct caller surfaces (`headers.Cookie` and
-// `cookies`); ambiguous ownership is refused before dispatch.
-func contextChannelCollision(bindCtx map[string]any, params openapi3.Parameters, placements []credentialPlacement) error {
+// `cookies`); ambiguous emitted ownership is refused before dispatch
+// (openbindings.openapi-3.0@1 §8.3; openbindings.openapi-3.1@1 §8.3).
+func contextChannelCollision(bindCtx map[string]any, placements []credentialPlacement, populated map[string]map[string]bool) error {
 	rawContextCookie := false
 	for name := range contextHeaders(bindCtx) {
 		if http.CanonicalHeaderKey(name) == "Cookie" {
@@ -1618,19 +1631,8 @@ func contextChannelCollision(bindCtx map[string]any, params openapi3.Parameters,
 			break
 		}
 	}
-	hasRawCookieOwner := false
-	hasStructuredCookie := len(contextCookies(bindCtx)) > 0
-	for _, ref := range params {
-		if ref == nil || ref.Value == nil {
-			continue
-		}
-		if ref.Value.In == openapi3.ParameterInHeader && http.CanonicalHeaderKey(ref.Value.Name) == "Cookie" {
-			hasRawCookieOwner = true
-		}
-		if ref.Value.In == openapi3.ParameterInCookie {
-			hasStructuredCookie = true
-		}
-	}
+	hasRawCookieOwner := populated != nil && populated[openapi3.ParameterInHeader]["Cookie"]
+	hasStructuredCookie := len(contextCookies(bindCtx)) > 0 || populated != nil && len(populated[openapi3.ParameterInCookie]) > 0
 	for _, placement := range placements {
 		if placement.channel == "header" && http.CanonicalHeaderKey(placement.name) == "Cookie" {
 			hasRawCookieOwner = true
