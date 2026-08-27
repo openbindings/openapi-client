@@ -80,21 +80,23 @@ type ServerSelection struct {
 }
 
 type ClientOptions struct {
-	HTTPClient       *http.Client
-	Auth             map[string]any
-	Server           any
-	Headers          http.Header
-	MaxResponseBytes int64
-	SecurityHandlers map[string]SecurityHandler
+	HTTPClient         *http.Client
+	Auth               map[string]any
+	Server             any
+	Headers            http.Header
+	MaxResponseBytes   int64
+	SecurityHandlers   map[string]SecurityHandler
+	ParameterConverter ParameterConverter
 }
 
 type CallOptions struct {
-	HTTPClient       *http.Client
-	Auth             map[string]any
-	Server           any
-	Headers          http.Header
-	MaxResponseBytes int64
-	SecurityHandlers map[string]SecurityHandler
+	HTTPClient         *http.Client
+	Auth               map[string]any
+	Server             any
+	Headers            http.Header
+	MaxResponseBytes   int64
+	SecurityHandlers   map[string]SecurityHandler
+	ParameterConverter ParameterConverter
 }
 
 type DeclarationMatch struct {
@@ -588,8 +590,12 @@ func (c *Client) prepareOptions(operation resolvedOperation, input nativeInvocat
 			return PrepareOptions{}, &ClientError{Kind: ErrorConfiguration, Code: "UNKNOWN_SECURITY_SCHEME", Message: fmt.Sprintf("security scheme %q was not found", name)}
 		}
 	}
+	converter := call.ParameterConverter
+	if converter == nil {
+		converter = c.options.ParameterConverter
+	}
 	contextValue = contextWithSecurityHandlers(contextValue, handlers)
-	return PrepareOptions{Source: c.source, Ref: operation.info.Ref, Profile: FullProfile(), Context: contextValue, HTTPClient: client, MaxDeliveryUnitBytes: maxBytes, SecurityHandlers: handlers}, nil
+	return PrepareOptions{Source: c.source, Ref: operation.info.Ref, Profile: FullProfile(), Context: contextValue, HTTPClient: client, MaxDeliveryUnitBytes: maxBytes, SecurityHandlers: handlers, ParameterConverter: converter}, nil
 }
 
 func securityScheme(document *openapi3.T, name string) (*openapi3.SecurityScheme, bool) {

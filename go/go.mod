@@ -7,6 +7,7 @@ require (
 	github.com/getkin/kin-openapi v0.146.0
 	github.com/oasdiff/yaml v0.1.1
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
+	golang.org/x/net v0.56.0
 	golang.org/x/text v0.38.0
 )
 
