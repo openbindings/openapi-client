@@ -294,6 +294,13 @@ func routeInputWithParameterOptions(params openapi3.Parameters, input map[string
 			// Evaluation-free body passthrough: no schema evaluation
 			// participates in JSON routing, while form and multipart members
 			// require an artifact declaration that defines their wire carriage.
+			value, prepareErr := prepareEncodingPropertyValue(plan, name, value, options.converter)
+			if prepareErr != nil {
+				return nil, prepareErr
+			}
+			if contentPropertyNullIsElided(plan, name, value) {
+				continue
+			}
 			r.bodyFields[name] = value
 		default:
 			unmatched = append(unmatched, name)

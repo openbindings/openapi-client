@@ -65,6 +65,10 @@ type Input struct {
 	// Non-nil Body values are present without setting this field.
 	BodyPresent bool
 	MediaType   string
+	// PropertyMediaTypes supplies concrete media types for multipart or form
+	// properties whose Encoding contentType is a list/range, and for the OAS
+	// 3.0 typeless multipart cell that has no artifact default.
+	PropertyMediaTypes map[string]string
 }
 
 type BasicCredential struct {
@@ -397,9 +401,10 @@ func resolveOperation(document *openapi3.T, floor *acceptanceFloor, selector Ope
 }
 
 type nativeInvocationInput struct {
-	supplied  bool
-	value     any
-	mediaType string
+	supplied           bool
+	value              any
+	mediaType          string
+	propertyMediaTypes map[string]string
 }
 
 func nativeInput(document *openapi3.T, pathItem *openapi3.PathItem, operation *openapi3.Operation, input Input) (nativeInvocationInput, error) {
@@ -494,7 +499,11 @@ func nativeInput(document *openapi3.T, pathItem *openapi3.PathItem, operation *o
 		mediaType = selected[0].mediaType
 	}
 	profile := FullProfile()
-	return nativeInvocationInput{supplied: supplied, mediaType: mediaType, value: []any{map[string]any{
+	propertyMediaTypes := make(map[string]string, len(input.PropertyMediaTypes))
+	for name, selected := range input.PropertyMediaTypes {
+		propertyMediaTypes[name] = selected
+	}
+	return nativeInvocationInput{supplied: supplied, mediaType: mediaType, propertyMediaTypes: propertyMediaTypes, value: []any{map[string]any{
 		profile.InputRouteKey: profile.InputRouteMarker, "value": value, "parameters": routeParameters, "body": body,
 	}}}, nil
 }
@@ -546,6 +555,9 @@ func (c *Client) prepareOptions(operation resolvedOperation, input nativeInvocat
 	}
 	if input.mediaType != "" {
 		configuration["requestMedia"] = input.mediaType
+	}
+	if len(input.propertyMediaTypes) > 0 {
+		configuration["propertyMedia"] = input.propertyMediaTypes
 	}
 	contextValue := map[string]any{}
 	if len(configuration) > 0 {

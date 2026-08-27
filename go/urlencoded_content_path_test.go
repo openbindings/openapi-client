@@ -1,7 +1,6 @@
 package openapiclient
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -15,7 +14,7 @@ import (
 // identical file is executed by openbindings-go/formats/openapi and by
 // openapi-client/typescript/src (and carried by openbindings-ts's openapi
 // package); changing it in one engine without the others fails here.
-const urlencodedContentPathCasesDigest = "ca17623d67205f5c85424e58295400571394c8e095850c13d7ada68eb72a0fa8"
+const urlencodedContentPathCasesDigest = "25b8052eabb45a8934f09ce5c61be95fcaf736a9d4cde6638a8d6bb918d690c0"
 
 type urlencodedContentPathCase struct {
 	Name           string         `json:"name"`
@@ -95,7 +94,7 @@ func urlencodedContentPathDocument(t *testing.T, c urlencodedContentPathCase) []
 // the decision itself crosses the twin boundary.
 func urlencodedContentPathDecision(t *testing.T, c urlencodedContentPathCase) string {
 	t.Helper()
-	doc, _, err := loadDocument(context.Background(), nil, Source{Content: urlencodedContentPathDocument(t, c)}, false)
+	doc, err := loadDocumentCompat("", json.RawMessage(urlencodedContentPathDocument(t, c)))
 	if err != nil {
 		t.Fatalf("%s: load document: %v", c.Name, err)
 	}

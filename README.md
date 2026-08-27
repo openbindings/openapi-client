@@ -112,6 +112,12 @@ await client.call("upload", {
 });
 ```
 
+The Go `Input.PropertyMediaTypes` map supplies a concrete media type for a
+multipart or form property when its Encoding `contentType` is a range/list, or
+when an OpenAPI 3.0 typeless multipart property has no artifact default. The
+client validates each choice against the authored Encoding declaration before
+dispatch.
+
 ## Authentication
 
 Credentials are keyed by the names authored under `components.securitySchemes`. The client uses the document to determine whether and where each credential rides.

@@ -120,9 +120,15 @@ func unionTypeCarriageDecision(t *testing.T, edition, media, rawSchema string, e
 		Type:       &openapi3.Types{"object"},
 		Properties: openapi3.Schemas{"p": {Value: part}},
 	}}}
-	op := unionTypeOperation(openapi3.Content{media: body})
-	if _, err := planRequestBodiesFor(doc, op, profileFullCoordinate); err != nil {
+	op := opWithRequestBody(openapi3.Content{media: body}, true)
+	plans, err := planRequestBodiesFor(doc, op, profileFullCoordinate)
+	if err != nil {
 		return "refused"
+	}
+	for _, plan := range plans {
+		if len(plan.propertyMedia) > 0 {
+			return "missing-required-choice"
+		}
 	}
 	return "admitted;value=" + unionTypeEmission(t, doc, media, body, unionTypeProbeValue(rawSchema)) +
 		";null=" + unionTypeEmission(t, doc, media, body, nil)
@@ -172,12 +178,6 @@ func unionTypeEmission(t *testing.T, doc *openapi3.T, media string, body *openap
 		return "elided"
 	}
 	return rendered
-}
-
-func unionTypeOperation(content openapi3.Content) *openapi3.Operation {
-	return &openapi3.Operation{RequestBody: &openapi3.RequestBodyRef{Value: &openapi3.RequestBody{
-		Required: true, Content: content,
-	}}}
 }
 
 func unionTypeCarriageTable(t *testing.T) map[string]string {

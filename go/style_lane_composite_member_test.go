@@ -27,7 +27,7 @@ import (
 // Authority: styleLaneUndefinedExpansionMember in media.go reads the style
 // table per edition. Package:
 // design/openapi-style-lane-composite-member-ruling.md, RULED 2026-08-18.
-const styleLaneCompositeMemberCasesDigest = "1ea1045c75039b00c1035a2e2c3d09e440644e32a5fa1c3689be6add1eac7673"
+const styleLaneCompositeMemberCasesDigest = "ae6179681e8ba7c9700f05e250eec3fe05b3f5b27c6ec7658593a23495e3ab00"
 
 type styleLaneCompositeMemberCase struct {
 	Name     string          `json:"name"`
