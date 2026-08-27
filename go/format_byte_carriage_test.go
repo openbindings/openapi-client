@@ -9,7 +9,6 @@ package openapiclient
 // and an urlencoded property.
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -24,7 +23,7 @@ import (
 	"github.com/getkin/kin-openapi/openapi3"
 )
 
-const formByteCarriageCasesDigest = "fd1b8f260712957bd96398cbe48787b56c9d14f51f3cd52d1ea5f33fd0e5c0c0"
+const formByteCarriageCasesDigest = "37b2cf5eece416504551780469e934a17627b90f1be3e282c7826308ca8d4c0a"
 
 type formByteCarriageCase struct {
 	Name                string         `json:"name"`
@@ -107,7 +106,7 @@ func formByteCarriageDocument(t *testing.T, c formByteCarriageCase) []byte {
 
 func formByteCarriageDecision(t *testing.T, c formByteCarriageCase) string {
 	t.Helper()
-	doc, _, err := loadDocument(context.Background(), nil, Source{Content: formByteCarriageDocument(t, c)}, false)
+	doc, err := loadDocumentCompat("", json.RawMessage(formByteCarriageDocument(t, c)))
 	if err != nil {
 		return "source-refused"
 	}
@@ -203,7 +202,7 @@ func TestFormatByteEmitsNoContentTransferEncoding(t *testing.T) {
 			continue
 		}
 		checked++
-		doc, _, err := loadDocument(context.Background(), nil, Source{Content: formByteCarriageDocument(t, c)}, false)
+		doc, err := loadDocumentCompat("", json.RawMessage(formByteCarriageDocument(t, c)))
 		if err != nil {
 			t.Fatalf("%s: load document: %v", c.Name, err)
 		}
@@ -233,6 +232,77 @@ func TestFormatByteEmitsNoContentTransferEncoding(t *testing.T) {
 	}
 	if checked != 32 {
 		t.Fatalf("checked %d admitted multipart cells, want 32 (every multipart cell in the table)", checked)
+	}
+}
+
+func TestOpenAPI30ArtifactDeclaredBase64TransferHeader(t *testing.T) {
+	document := func(values string) json.RawMessage {
+		return json.RawMessage(`{
+			"openapi":"3.0.4","info":{"title":"transfer","version":"1"},
+			"paths":{"/send":{"post":{"requestBody":{"required":true,"content":{"multipart/form-data":{
+				"schema":{"type":"object","properties":{"payload":{"type":"string","format":"byte"}}},
+				"encoding":{"payload":{"headers":{"Content-Transfer-Encoding":{"schema":{"type":"string","enum":[` + values + `]}}}}}
+			}}},"responses":{"204":{"description":"ok"}}}}}
+		}`)
+	}
+	for _, testCase := range []struct {
+		name, values, wantHeader string
+		wantError                bool
+	}{
+		{name: "admits base64", values: `"base64"`, wantHeader: "base64"},
+		{name: "disallows base64", values: `"quoted-printable"`, wantError: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			doc, err := loadDocumentCompat("", document(testCase.values))
+			if err != nil {
+				t.Fatal(err)
+			}
+			media := doc.Paths.Find("/send").Post.RequestBody.Value.Content["multipart/form-data"]
+			reader, contentType, err := buildMultipartBodyForRevision(doc, media, map[string]any{"payload": "YWJj"}, profileFullCoordinate)
+			if testCase.wantError {
+				if err == nil || !strings.Contains(err.Error(), "disallows base64") {
+					t.Fatalf("transfer-header error = %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, params, _ := mime.ParseMediaType(contentType)
+			part, err := multipart.NewReader(reader, params["boundary"]).NextRawPart()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := part.Header.Get("Content-Transfer-Encoding"); got != testCase.wantHeader {
+				t.Fatalf("Content-Transfer-Encoding = %q, want %q", got, testCase.wantHeader)
+			}
+		})
+	}
+}
+
+func TestOpenAPI30DescriptiveEncodingHeaderDoesNotEmit(t *testing.T) {
+	doc, err := loadDocumentCompat("", json.RawMessage(`{
+		"openapi":"3.0.4","info":{"title":"headers","version":"1"},
+		"paths":{"/send":{"post":{"requestBody":{"required":true,"content":{"multipart/form-data":{
+			"schema":{"type":"object","properties":{"payload":{"type":"string"}}},
+			"encoding":{"payload":{"headers":{"X-Part-Meta":{"schema":{"type":"string"}}}}}
+		}}},"responses":{"204":{"description":"ok"}}}}}
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	media := doc.Paths.Find("/send").Post.RequestBody.Value.Content["multipart/form-data"]
+	reader, contentType, err := buildMultipartBodyForRevision(doc, media, map[string]any{"payload": "hello"}, profileFullCoordinate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, params, _ := mime.ParseMediaType(contentType)
+	part, err := multipart.NewReader(reader, params["boundary"]).NextRawPart()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := part.Header.Get("X-Part-Meta"); got != "" {
+		t.Fatalf("descriptive Encoding header emitted %q", got)
 	}
 }
 

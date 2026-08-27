@@ -185,6 +185,12 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 		return
 	}
 	details = mergeRequirements(details, mediaDetails)
+	propertyMediaDetails, propertyMediaRequirementErr := requiredPropertyMediaContext(doc, op, args.Source.Capability, args.Context)
+	if propertyMediaRequirementErr != nil {
+		inv.failExecution(&ExecutionError{Code: CodeRefused, Message: propertyMediaRequirementErr.Error()})
+		return
+	}
+	details = mergeRequirements(details, propertyMediaDetails)
 	if details != nil {
 		message := "OpenAPI operation requires authentication context"
 		if mediaDetails != nil {
@@ -309,6 +315,11 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 			err = selectErr
 		}
 		for _, candidate := range selectedPlans {
+			candidate, propertyErr := planWithPropertyMedia(candidate, args.Context)
+			if propertyErr != nil {
+				reasons = append(reasons, fmt.Sprintf("%s: %v", candidate.mediaType, propertyErr))
+				continue
+			}
 			if envelope == nil && candidateCollides(params, candidate) {
 				reasons = append(reasons, fmt.Sprintf("request media candidate %s collides with an independently declared parameter", candidate.mediaType))
 				continue

@@ -174,7 +174,11 @@ func preflightPrerequisites(document *openapi3.T, options PrepareOptions) (*Prer
 	if err != nil {
 		return nil, &ExecutionError{Code: CodeSourceConfigError, Message: err.Error(), Cause: err}
 	}
-	return mergeRequirements(security, media), nil
+	propertyMedia, err := requiredPropertyMediaContext(document, operation, profileCoordinate(options.Profile), options.Context)
+	if err != nil {
+		return nil, &ExecutionError{Code: CodeSourceConfigError, Message: err.Error(), Cause: err}
+	}
+	return mergeRequirements(mergeRequirements(security, media), propertyMedia), nil
 }
 
 func (p *PreparedOperation) Start(ctx context.Context) (*Execution, error) {

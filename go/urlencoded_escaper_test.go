@@ -1,7 +1,6 @@
 package openapiclient
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -101,7 +100,7 @@ func urlencodedEscaperDocument(t *testing.T, c urlencodedEscaperCase) []byte {
 
 func urlencodedEscaperMedia(t *testing.T, c urlencodedEscaperCase) (*openapi3.T, *openapi3.MediaType) {
 	t.Helper()
-	doc, _, err := loadDocument(context.Background(), nil, Source{Content: urlencodedEscaperDocument(t, c)}, false)
+	doc, err := loadDocumentCompat("file:///urlencoded-escaper-cases.json", urlencodedEscaperDocument(t, c))
 	if err != nil {
 		t.Fatalf("%s: load document: %v", c.Name, err)
 	}
@@ -283,7 +282,7 @@ func TestURLEncodedEncodingPresenceSurvivesTheTypedModel(t *testing.T) {
 "paths": {"/form": {"post": {"operationId": "postForm", "requestBody": {"content": {"application/x-www-form-urlencoded": {
 "schema": {"type": "object", "properties": {"note": {"type": "string"}}}` + encodingField + `}}},
 "responses": {"200": {"description": "ok"}}}}}}`
-			doc, _, err := loadDocument(context.Background(), nil, Source{Content: []byte(document)}, false)
+			doc, err := loadDocumentCompat("file:///presence.json", json.RawMessage(document))
 			if err != nil {
 				t.Fatalf("load: %v", err)
 			}

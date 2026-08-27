@@ -486,6 +486,14 @@ func routeEnvelopeWithParameterOptions(params openapi3.Parameters, envelope *rou
 				if !plan.props[bodyName] && !planAllowsObjectPassthrough(plan) {
 					continue
 				}
+				value, prepareErr := prepareEncodingPropertyValue(plan, bodyName, value, options.converter)
+				if prepareErr != nil {
+					return nil, prepareErr
+				}
+				if contentPropertyNullIsElided(plan, bodyName, value) {
+					consumed[field] = true
+					continue
+				}
 				r.bodyFields[bodyName] = value
 				consumed[field] = true
 			}

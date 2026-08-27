@@ -94,6 +94,82 @@ func prepareParameterStyleValue(name string, value any, style string, converter 
 	return converted, nil
 }
 
+// prepareEncodingPropertyValue applies the OpenAPI form/multipart scalar and
+// style mechanics before the selected body writer expands the property.
+func prepareEncodingPropertyValue(plan *bodyPlan, name string, value any, converter ParameterConverter) (any, error) {
+	if plan == nil || plan.media == nil {
+		return value, nil
+	}
+	encoding := plan.media.Encoding[name]
+	if !encodingUsesSerializationForPlan(plan, encoding) {
+		return prepareContentPropertyValue(plan, name, value, converter)
+	}
+	method := revision3EncodingSerializationMethod(encoding)
+	prepared, err := prepareParameterStyleValue(name, value, method.Style, converter)
+	if err != nil {
+		return nil, fmt.Errorf("body property %q: %w", name, err)
+	}
+	return prepared, nil
+}
+
+// contentPropertyNullIsElided implements the OAS 3.0 content-form cell where
+// an optional nullable property contributes no form unit for JSON null.
+func contentPropertyNullIsElided(plan *bodyPlan, name string, value any) bool {
+	if value != nil || plan == nil || plan.media == nil || !plan.oas30 {
+		return false
+	}
+	if encodingUsesSerializationForPlan(plan, plan.media.Encoding[name]) {
+		return false
+	}
+	root := resolveDeclaration(mediaSchema(plan.media), true)
+	return !root.requiresProperty(name) && root.property(name).admitsNull()
+}
+
+func prepareContentPropertyValue(plan *bodyPlan, name string, value any, converter ParameterConverter) (any, error) {
+	if plan == nil || plan.media == nil || !plan.oas30 {
+		return value, nil
+	}
+	root := resolveDeclaration(mediaSchema(plan.media), true)
+	converted, err := convertContentPropertyScalars(root.property(name), value, converter)
+	if err != nil {
+		return nil, fmt.Errorf("body property %q: %w", name, err)
+	}
+	return converted, nil
+}
+
+func convertContentPropertyScalars(declaration resolvedDeclaration, value any, converter ParameterConverter) (any, error) {
+	if value == nil || declaration.ambiguous || declaration.typeless() {
+		return value, nil
+	}
+	if declaration.declaresOnly("array", "null") {
+		array, ok := asArray(value)
+		if !ok {
+			return value, nil
+		}
+		items := declaration.items()
+		result := make([]any, len(array))
+		for index, member := range array {
+			converted, err := convertContentPropertyScalars(items, member, converter)
+			if err != nil {
+				return nil, fmt.Errorf("array member %d: %w", index, err)
+			}
+			result[index] = converted
+		}
+		return result, nil
+	}
+	if declaration.declaresOnly("boolean", "number", "integer", "null") && jsonBooleanOrNumber(value) {
+		if converter == nil {
+			return nil, fmt.Errorf("JSON boolean or number requires a ParameterConverter")
+		}
+		text, err := converter(value)
+		if err != nil {
+			return nil, fmt.Errorf("ParameterConverter: %w", err)
+		}
+		return text, nil
+	}
+	return value, nil
+}
+
 func convertParameterScalars(value any, converter ParameterConverter, member bool) (any, error) {
 	if value == nil {
 		if member {
@@ -191,119 +267,4 @@ func styleValueContainsDelimiter(value any, delimiters string) bool {
 		}
 	}
 	return false
-}
-
-// parameterDeclaration is the resolved type-set slice needed by the
-// parameter style table. The complete schema-analysis view is shared with the
-// media lanes in resolved_declaration.go.
-type parameterDeclaration struct {
-	types     map[string]bool
-	ambiguous bool
-}
-
-func resolveDeclaration(schema *openapi3.Schema, oas30 bool) parameterDeclaration {
-	conjuncts, ambiguous := parameterDeclarationConjuncts(schema, oas30, map[*openapi3.Schema]bool{})
-	result := parameterDeclaration{ambiguous: ambiguous}
-	if ambiguous {
-		return result
-	}
-	constrained := false
-	for _, conjunct := range conjuncts {
-		candidate, present := parameterDeclarationTypeSet(conjunct, oas30)
-		if !present {
-			continue
-		}
-		if !constrained {
-			result.types = candidate
-			constrained = true
-			continue
-		}
-		for member := range result.types {
-			if !candidate[member] {
-				delete(result.types, member)
-			}
-		}
-	}
-	return result
-}
-
-func parameterDeclarationConjuncts(schema *openapi3.Schema, oas30 bool, seen map[*openapi3.Schema]bool) ([]*openapi3.Schema, bool) {
-	if schema == nil || seen[schema] {
-		return nil, false
-	}
-	seen[schema] = true
-	defer delete(seen, schema)
-	conjuncts := []*openapi3.Schema{schema}
-	for _, choice := range []openapi3.SchemaRefs{schema.AnyOf, schema.OneOf} {
-		if len(choice) == 0 {
-			continue
-		}
-		var selected *openapi3.Schema
-		for _, branch := range choice {
-			if branch == nil || branch.Value == nil {
-				return nil, true
-			}
-			resolved := resolveDeclaration(branch.Value, oas30)
-			if resolved.declaresOnly("null") {
-				continue
-			}
-			if selected != nil {
-				return nil, true
-			}
-			selected = branch.Value
-		}
-		if selected == nil {
-			return nil, true
-		}
-		members, nestedAmbiguous := parameterDeclarationConjuncts(selected, oas30, seen)
-		if nestedAmbiguous {
-			return nil, true
-		}
-		conjuncts = append(conjuncts, members...)
-	}
-	for _, member := range schema.AllOf {
-		if member == nil || member.Value == nil {
-			continue
-		}
-		members, nestedAmbiguous := parameterDeclarationConjuncts(member.Value, oas30, seen)
-		if nestedAmbiguous {
-			return nil, true
-		}
-		conjuncts = append(conjuncts, members...)
-	}
-	return conjuncts, false
-}
-
-func parameterDeclarationTypeSet(schema *openapi3.Schema, oas30 bool) (map[string]bool, bool) {
-	if schema == nil || schema.Type == nil {
-		return nil, false
-	}
-	types := schema.Type.Slice()
-	if len(types) == 0 || oas30 && len(types) != 1 {
-		return nil, false
-	}
-	result := make(map[string]bool, len(types)+1)
-	for _, member := range types {
-		result[member] = true
-	}
-	if oas30 && schema.Nullable {
-		result["null"] = true
-	}
-	return result, true
-}
-
-func (d parameterDeclaration) declaresOnly(allowed ...string) bool {
-	if d.ambiguous || len(d.types) == 0 {
-		return false
-	}
-	set := make(map[string]bool, len(allowed))
-	for _, member := range allowed {
-		set[member] = true
-	}
-	for member := range d.types {
-		if !set[member] {
-			return false
-		}
-	}
-	return true
 }
