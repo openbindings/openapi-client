@@ -1,6 +1,6 @@
 # OpenBindings OpenAPI Client
 
-A document-driven OpenAPI 3.0 and 3.1 client for invoking brownfield APIs directly from their OpenAPI documents.
+A document-driven Swagger 2.0 and OpenAPI 3.0/3.1 client for invoking brownfield APIs directly from their API documents.
 
 The client does not generate source code and does not require an OpenBindings Interface (OBI). Load a document, select an authored operation, and call it. This client's contract deliberately follows the document and incorporated OpenAPI/HTTP rules for server resolution, parameter serialization, request-body carriage, security placement, response selection, decoding, and streaming.
 
@@ -31,6 +31,12 @@ if (result.ok) {
   console.error(result.response.status, result.error);
 }
 ```
+
+Swagger 2.0 uses an explicit raw-preserving lane rather than conversion through
+OpenAPI 3.x. `loadSwagger20` inventories an exact `swagger: "2.0"` source and
+`prepareSwagger20` selects a literal `#/paths/<escaped-path>/<method>` target;
+their document, parameter, media, server, security, response, and synthesis
+types are edition-native exports from `@openbindings/openapi-client/engine`.
 
 The grouped parameter shape preserves identities that OpenAPI treats as distinct. A path parameter, query parameter, header parameter, cookie parameter, and body property may legally share a name without overwriting one another.
 
@@ -174,7 +180,7 @@ external-reference bases use the final retrieval URI.
 
 The invocation-complete scope is:
 
-- OpenAPI 3.0.x and 3.1.x document loading and reference resolution;
+- native Swagger 2.0 plus OpenAPI 3.0.x and 3.1.x document loading and reference resolution;
 - operation discovery and exact selection;
 - document/path/operation server resolution and variables;
 - path, query, header, and cookie parameter serialization;

@@ -1,7 +1,7 @@
 {
   "name": "@openbindings/openapi-client",
   "version": "0.1.0",
-  "description": "Document-driven OpenAPI 3.0/3.1 client for TypeScript and JavaScript",
+  "description": "Document-driven Swagger 2.0 and OpenAPI 3.0/3.1 client for TypeScript and JavaScript",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
