@@ -269,11 +269,6 @@ func (o *OpenAPI32Overlay) operationImage(reference OperationReference, pruneCom
 		}
 	}
 	operationCopy := cloneOverlayValue(rawOperation, map[uintptr]any{})
-	if operation, ok := operationCopy.(map[string]any); ok {
-		// Dependencies are an explicit M6 seam. They cannot make the M5 request
-		// image unparseable, and they are preserved in the artifact overlay.
-		delete(operation, "callbacks")
-	}
 	if reference.Additional {
 		pathItem["additionalOperations"] = map[string]any{reference.Method: operationCopy}
 	} else {
