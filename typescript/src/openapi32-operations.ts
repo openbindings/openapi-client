@@ -23,6 +23,14 @@ export interface OpenAPIResolvedOperation {
   operation: OpenAPIOperation;
   /** Referring-document component names retained for explicit scope election. */
   referringSecuritySchemes?: Record<string, Record<string, unknown>>;
+  /** Response media alternatives excluded by confined closure defects. */
+  responseMediaExclusions?: OpenAPI32ResponseMediaExclusion[];
+}
+
+export interface OpenAPI32ResponseMediaExclusion {
+  responseKey: string;
+  mediaType: string;
+  reason: string;
 }
 
 export type OpenAPIOperationResolutionKind = "invalid-reference" | "not-found" | "excluded";

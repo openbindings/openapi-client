@@ -75,4 +75,76 @@ describe("OpenAPI 3.2 response governance", () => {
     expect(() => classifyOpenAPI32SequentialResponse("application/x-private", { itemSchema: {} }))
       .toThrow(/no incorporated sequential framing/u);
   });
+
+  it("materializes canonical response references while ignoring their siblings", async () => {
+    const resources: Record<string, unknown> = {
+      "https://identity.example/responses.json": {
+        openapi: "3.2.0",
+        $self: "https://identity.example/responses.json",
+        info: { title: "library", version: "1" },
+        components: {
+          responses: {
+            Value: { content: { "application/json": { schema: { type: "object" } } } },
+          },
+        },
+      },
+    };
+    const artifact = await loadOpenAPIArtifact({ content: document({
+      "200": {
+        $ref: "https://identity.example/responses.json#/components/responses/Value",
+        content: { "text/plain": { schema: { type: "string" } } },
+      },
+    }) }, {
+      fetch: (async (input: RequestInfo | URL) => new Response(
+        JSON.stringify(resources[String(input)]),
+        { status: resources[String(input)] ? 200 : 404 },
+      )) as typeof fetch,
+    });
+    const target = await artifact.resolveOperation("#/paths/~1x/get");
+    expect(target.operation.responses?.["200"]?.content).toEqual({
+      "application/json": { schema: { type: "object" } },
+    });
+  });
+
+  it("confines response-schema identity defects to their media alternative", async () => {
+    const source = document({
+      "200": {
+        content: {
+          "application/json": {
+            schema: { $ref: "#/components/schemas/Resource/properties/name" },
+          },
+          "text/plain": { schema: { type: "string" } },
+        },
+      },
+    });
+    source.components = {
+      schemas: {
+        Resource: {
+          $id: "https://schemas.example/resource",
+          type: "object",
+          properties: { name: { type: "string" } },
+        },
+      },
+    };
+    const target = await (await loadOpenAPIArtifact({ content: source }))
+      .resolveOperation("#/paths/~1x/get");
+    expect(Object.keys(target.operation.responses?.["200"]?.content ?? {})).toEqual(["text/plain"]);
+    expect(target.responseMediaExclusions).toEqual([expect.objectContaining({
+      responseKey: "200",
+      mediaType: "application/json",
+    })]);
+  });
+
+  it("terminates a resolvable response-reference cycle", async () => {
+    const source = document({ "204": { $ref: "#/components/responses/A" } });
+    source.components = {
+      responses: {
+        A: { $ref: "#/components/responses/B" },
+        B: { $ref: "#/components/responses/A" },
+      },
+    };
+    const target = await (await loadOpenAPIArtifact({ content: source }))
+      .resolveOperation("#/paths/~1x/get");
+    expect(target.operation.responses?.["204"]).toEqual({});
+  });
 });

@@ -690,6 +690,7 @@ export {
   parseOpenAPI32OperationReference,
 } from "./openapi32-operations.js";
 export type {
+  OpenAPI32ResponseMediaExclusion,
   OpenAPIOperationReference,
   OpenAPIResolvedOperation,
 } from "./openapi32-operations.js";

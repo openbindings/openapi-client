@@ -82,6 +82,7 @@ export type {
   OpenAPI32SequentialRequestKind,
 } from "./openapi32-media.js";
 export type {
+  OpenAPI32ResponseMediaExclusion,
   OpenAPIOperationReference,
   OpenAPIResolvedOperation,
 } from "./openapi32-operations.js";
