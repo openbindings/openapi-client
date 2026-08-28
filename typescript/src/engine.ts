@@ -696,3 +696,19 @@ export {
   validateOpenAPI32ParameterSerialization,
 } from "./openapi32-parameters.js";
 export type { OpenAPI32ParameterSerializationMethod } from "./openapi32-parameters.js";
+export {
+  buildOpenAPI32MultipartBody,
+  buildOpenAPI32SequentialBody,
+  normalizeOpenAPI32JSONNumber,
+  openAPI32NonJSONTextSchema,
+  openAPI32PositionalMultipart,
+  openAPI32RequestMediaAdmission,
+  serializeOpenAPI32NonJSONText,
+  validateOpenAPI32MultipartFields,
+} from "./openapi32-media.js";
+export type {
+  OpenAPI32MultipartWire,
+  OpenAPI32RequestMediaAdmission,
+  OpenAPI32RoutedBody,
+  OpenAPI32SequentialRequestKind,
+} from "./openapi32-media.js";

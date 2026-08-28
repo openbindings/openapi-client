@@ -215,6 +215,11 @@ export function prepareResolvedPropertyMediaView(
     if (!plan.media || (plan.family !== FAMILY_MULTIPART && plan.family !== FAMILY_URLENCODED)) {
       continue;
     }
+    // Positional 3.2 multipart owns prefixEncoding/itemEncoding. Creating an
+    // empty name-based encoding map here would make those mutually exclusive
+    // representations appear to be authored together when the carrier plans
+    // the prepared artifact a second time.
+    if (plan.openapiVersion === "3.2.0" && plan.positionalMultipart) continue;
     const required = plan.propertyMedia ?? [];
     const selected: Record<string, string> = {};
     for (const name of required) {
@@ -243,7 +248,10 @@ export function prepareResolvedPropertyMediaView(
       };
       materializeRawProperty(plan.media.schema, name, plan.oas30 === true);
     }
-    stripDescriptiveEncodingHeaders(media);
+    // OpenAPI 3.2's native multipart writer owns fixed part headers and uses
+    // them to detect Content-Transfer-Encoding contradictions. They are not
+    // descriptive noise on that edition's request lane.
+    if (plan.openapiVersion !== "3.2.0") stripDescriptiveEncodingHeaders(media);
     if (plan.oas30 && plan.family === FAMILY_MULTIPART) stripMultipartStyleControls(media);
   }
 }
