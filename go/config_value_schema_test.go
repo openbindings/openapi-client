@@ -30,7 +30,7 @@ func TestMultiServerChallengeCarriesEnumSchema(t *testing.T) {
 }
 
 func TestUndefaultedVariableChallengeSchemaFollowsDeclaredEnum(t *testing.T) {
-	withEnum := &openapi3.T{OpenAPI: "3.0.3", Servers: openapi3.Servers{{
+	withEnum := &openapi3.T{OpenAPI: "3.1.0", Servers: openapi3.Servers{{
 		URL:       "https://{env}.example.test",
 		Variables: map[string]*openapi3.ServerVariable{"env": {Enum: []string{"prod", "staging"}}},
 	}}}
@@ -44,7 +44,7 @@ func TestUndefaultedVariableChallengeSchemaFollowsDeclaredEnum(t *testing.T) {
 		t.Errorf("schema = %v, want the artifact-declared enum", cr.schema)
 	}
 
-	withoutEnum := &openapi3.T{OpenAPI: "3.0.3", Servers: openapi3.Servers{{
+	withoutEnum := &openapi3.T{OpenAPI: "3.1.0", Servers: openapi3.Servers{{
 		URL:       "https://{env}.example.test",
 		Variables: map[string]*openapi3.ServerVariable{"env": {}},
 	}}}

@@ -2,8 +2,9 @@ package openapiclient
 
 import "strings"
 
-// This file answers one question for §9.3 of openbindings.openapi@1: does a
-// server URL, after Server Variable substitution, denote a target address?
+// This file answers one question for openbindings.openapi-3.0@1 §10 and
+// openbindings.openapi-3.1@1 §10: does a server URL, after Server Variable
+// substitution, denote a target address?
 //
 // It exists because the answer used to come from the HOST LANGUAGE's URL
 // parser — Go's net/url here, the WHATWG URL parser in the TypeScript twin —
@@ -24,8 +25,8 @@ import "strings"
 //     sender MUST NOT generate an 'http' URI with an empty host identifier. A
 //     recipient that processes such a URI reference MUST reject it as invalid."
 //
-// Both are incorporated: §2 of the binding specification incorporates RFC 9110
-// "for plain HTTP semantics", and §9.3 and §11 name RFC 3986 for server-URL
+// Both are incorporated: §2 of each family specification incorporates RFC 9110
+// "for plain HTTP semantics", and §§10–11 name RFC 3986 for server-URL
 // resolution. This is a restatement of an incorporated consequence, not a
 // convention of this implementation's own.
 //
@@ -112,6 +113,10 @@ func denotesTargetBase(s string) bool {
 	}
 	return true
 }
+
+// IsServerBaseURL reports whether value is an RFC 3986 URI that also satisfies
+// RFC 9110's non-empty-host requirement for HTTP and HTTPS targets.
+func IsServerBaseURL(value string) bool { return denotesTargetBase(value) }
 
 // uriAuthorityHost splits an RFC 3986 authority into its host and validates
 // every component: authority = [ userinfo "@" ] host [ ":" port ].

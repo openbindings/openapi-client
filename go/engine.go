@@ -48,6 +48,9 @@ func (p *PreparedOperation) Prerequisites() *Prerequisites {
 }
 
 func (e *Engine) Prepare(ctx context.Context, options PrepareOptions) (*PreparedOperation, error) {
+	if err := normalizePrepareContentCodings(&options); err != nil {
+		return nil, &ExecutionError{Code: CodeRefused, Message: err.Error(), Cause: err}
+	}
 	options.Profile = normalizedProfile(options.Profile)
 	options.Context = contextWithSecurityHandlers(options.Context, options.SecurityHandlers)
 	client := options.HTTPClient
@@ -75,6 +78,9 @@ func (e *Engine) Prepare(ctx context.Context, options PrepareOptions) (*Prepared
 }
 
 func (e *Engine) PrepareCached(ctx context.Context, options PrepareOptions) (*PreparedOperation, error) {
+	if err := normalizePrepareContentCodings(&options); err != nil {
+		return nil, &ExecutionError{Code: CodeRefused, Message: err.Error(), Cause: err}
+	}
 	options.Profile = normalizedProfile(options.Profile)
 	if options.Source.Content != nil {
 		allow := false
@@ -95,6 +101,20 @@ func (e *Engine) PrepareCached(ctx context.Context, options PrepareOptions) (*Pr
 	}
 	options.Context = contextWithSecurityHandlers(options.Context, options.SecurityHandlers)
 	return prepareDocumentWithFloor(cached.document, cached.floor, options)
+}
+
+func normalizePrepareContentCodings(options *PrepareOptions) error {
+	request, err := normalizeContentEncoders(options.RequestContentCodings)
+	if err != nil {
+		return err
+	}
+	response, err := normalizeContentDecoders(options.ResponseContentCodings)
+	if err != nil {
+		return err
+	}
+	options.RequestContentCodings = request
+	options.ResponseContentCodings = response
+	return nil
 }
 
 // Custom security satisfaction is engine configuration, not caller context.

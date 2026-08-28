@@ -13,7 +13,7 @@ import (
 // file is executed by the other two engines that resolve an OpenAPI Server
 // Object into a target address; changing it in one engine without the others
 // fails here.
-const serverTargetBaseCasesDigest = "808708805f527a21c4e5012640245238637934e22dd177c3b5787f4f3eec7e5b"
+const serverTargetBaseCasesDigest = "5c87131c4db1b3e90381ae29d51948fdebb772a928648c4217fcfcb32386c68f"
 
 type serverTargetBaseTable struct {
 	Comment        string                   `json:"$comment"`

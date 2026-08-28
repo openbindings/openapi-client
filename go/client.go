@@ -84,23 +84,27 @@ type ServerSelection struct {
 }
 
 type ClientOptions struct {
-	HTTPClient         *http.Client
-	Auth               map[string]any
-	Server             any
-	Headers            http.Header
-	MaxResponseBytes   int64
-	SecurityHandlers   map[string]SecurityHandler
-	ParameterConverter ParameterConverter
+	HTTPClient             *http.Client
+	Auth                   map[string]any
+	Server                 any
+	Headers                http.Header
+	MaxResponseBytes       int64
+	SecurityHandlers       map[string]SecurityHandler
+	ParameterConverter     ParameterConverter
+	RequestContentCodings  map[string]ContentEncoder
+	ResponseContentCodings map[string]ContentDecoder
 }
 
 type CallOptions struct {
-	HTTPClient         *http.Client
-	Auth               map[string]any
-	Server             any
-	Headers            http.Header
-	MaxResponseBytes   int64
-	SecurityHandlers   map[string]SecurityHandler
-	ParameterConverter ParameterConverter
+	HTTPClient             *http.Client
+	Auth                   map[string]any
+	Server                 any
+	Headers                http.Header
+	MaxResponseBytes       int64
+	SecurityHandlers       map[string]SecurityHandler
+	ParameterConverter     ParameterConverter
+	RequestContentCodings  map[string]ContentEncoder
+	ResponseContentCodings map[string]ContentDecoder
 }
 
 type DeclarationMatch struct {
@@ -606,8 +610,20 @@ func (c *Client) prepareOptions(operation resolvedOperation, input nativeInvocat
 	if converter == nil {
 		converter = c.options.ParameterConverter
 	}
+	requestCodings := call.RequestContentCodings
+	if requestCodings == nil {
+		requestCodings = c.options.RequestContentCodings
+	}
+	responseCodings := call.ResponseContentCodings
+	if responseCodings == nil {
+		responseCodings = c.options.ResponseContentCodings
+	}
 	contextValue = contextWithSecurityHandlers(contextValue, handlers)
-	return PrepareOptions{Source: c.source, Ref: operation.info.Ref, Profile: FullProfile(), Context: contextValue, HTTPClient: client, MaxDeliveryUnitBytes: maxBytes, SecurityHandlers: handlers, ParameterConverter: converter}, nil
+	return PrepareOptions{
+		Source: c.source, Ref: operation.info.Ref, Profile: FullProfile(), Context: contextValue,
+		HTTPClient: client, MaxDeliveryUnitBytes: maxBytes, SecurityHandlers: handlers,
+		ParameterConverter: converter, RequestContentCodings: requestCodings, ResponseContentCodings: responseCodings,
+	}, nil
 }
 
 func securityScheme(document *openapi3.T, name string) (*openapi3.SecurityScheme, bool) {
@@ -625,20 +641,29 @@ func credentialHandler(name string, scheme *openapi3.SecurityScheme, credential 
 	configurationError := func(expected string) (SecurityHandler, error) {
 		return nil, &ClientError{Kind: ErrorConfiguration, Code: "INVALID_CREDENTIAL", Message: fmt.Sprintf("security scheme %q requires %s", name, expected)}
 	}
+	wireError := func(message string) (SecurityHandler, error) {
+		return nil, &ClientError{Kind: ErrorConfiguration, Code: "INVALID_CREDENTIAL", Message: message}
+	}
 	switch scheme.Type {
 	case "apiKey":
 		value, ok := credential.(string)
 		if !ok {
 			return configurationError("a string API key")
 		}
+		if scheme.In == "cookie" && !validRFC6265CookieValue(value) {
+			return wireError(fmt.Sprintf("cookie credential %q cannot be carried as an RFC 6265 cookie-value", name))
+		}
 		return func(request *http.Request, _ SecurityHandlerContext) error {
 			switch scheme.In {
 			case "header":
 				request.Header.Set(scheme.Name, value)
 			case "query":
-				query := request.URL.Query()
-				query.Set(scheme.Name, value)
-				request.URL.RawQuery = query.Encode()
+				unit := percentEncodeCredentialQuery(scheme.Name) + "=" + percentEncodeCredentialQuery(value)
+				if request.URL.RawQuery == "" {
+					request.URL.RawQuery = unit
+				} else {
+					request.URL.RawQuery += "&" + unit
+				}
 			case "cookie":
 				request.AddCookie(&http.Cookie{Name: scheme.Name, Value: value})
 			default:
@@ -653,6 +678,9 @@ func credentialHandler(name string, scheme *openapi3.SecurityScheme, credential 
 			if !ok {
 				return configurationError("BasicCredential")
 			}
+			if strings.Contains(value.Username, ":") || !validBasicCredentialText(value.Username) || !validBasicCredentialText(value.Password) {
+				return wireError(fmt.Sprintf("basic credential %q violates RFC 7617 user-id or character-encoding constraints", name))
+			}
 			return func(request *http.Request, _ SecurityHandlerContext) error {
 				request.SetBasicAuth(value.Username, value.Password)
 				return nil
@@ -661,6 +689,9 @@ func credentialHandler(name string, scheme *openapi3.SecurityScheme, credential 
 			value, ok := credential.(string)
 			if !ok {
 				return configurationError("a token string")
+			}
+			if !validBearerToken(value) {
+				return wireError(fmt.Sprintf("bearer credential %q is not an RFC 6750 b64token", name))
 			}
 			return func(request *http.Request, _ SecurityHandlerContext) error {
 				request.Header.Set("Authorization", "Bearer "+value)
@@ -673,6 +704,9 @@ func credentialHandler(name string, scheme *openapi3.SecurityScheme, credential 
 		value, ok := credential.(string)
 		if !ok {
 			return configurationError("an access-token string")
+		}
+		if !validBearerToken(value) {
+			return wireError(fmt.Sprintf("access token for %q is not an RFC 6750 b64token", name))
 		}
 		return func(request *http.Request, _ SecurityHandlerContext) error {
 			request.Header.Set("Authorization", "Bearer "+value)

@@ -67,6 +67,17 @@ framing metadata, cancellation, backpressure, and terminal completion through
 `Stream.Next`. Values already emitted remain readable before a terminal failure
 is returned.
 
+The lower-level Go surface exposes the same OpenAPI wire machinery directly.
+`EffectiveServerSet`, `NewServerSet`, `ServerSet.Resolve`,
+`AssembleRequestURL`, and `ValidateRequestURL` resolve and complete target
+URLs; `ValidateSecurityRequirementCarriage` checks the destinations in one
+Security Requirement Object. `RequestContentCodings` and
+`ResponseContentCodings` on `ClientOptions`, `CallOptions`, and
+`PrepareOptions` provide deterministic HTTP content codecs, while
+`DecodeResponseBody` applies the built-in response media lane. Engine callers
+can select unary event-stream buffering with `BufferEventStreams` or suppress
+the artifact-derived `Accept` preference with `OmitAcceptHeader`.
+
 The grouped parameter shape preserves identities that OpenAPI treats as distinct. A path parameter, query parameter, header parameter, cookie parameter, and body property may legally share a name without overwriting one another.
 
 ## Sources and operation selection
