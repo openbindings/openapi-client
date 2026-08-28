@@ -21,6 +21,8 @@ export interface OpenAPIResolvedOperation {
   document: OpenAPIDocument;
   pathItem: OpenAPIPathItem;
   operation: OpenAPIOperation;
+  /** Referring-document component names retained for explicit scope election. */
+  referringSecuritySchemes?: Record<string, Record<string, unknown>>;
 }
 
 export type OpenAPIOperationResolutionKind = "invalid-reference" | "not-found" | "excluded";

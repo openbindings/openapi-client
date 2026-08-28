@@ -697,6 +697,12 @@ export {
 } from "./openapi32-parameters.js";
 export type { OpenAPI32ParameterSerializationMethod } from "./openapi32-parameters.js";
 export {
+  openAPI32SecurityNameKind,
+  openAPI32SecurityRequirementNames,
+  openAPI32SecurityScheme,
+  openAPI32SecuritySchemeReference,
+} from "./openapi32-security.js";
+export {
   buildOpenAPI32MultipartBody,
   buildOpenAPI32SequentialBody,
   normalizeOpenAPI32JSONNumber,

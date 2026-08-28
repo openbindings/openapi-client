@@ -17,6 +17,12 @@ import {
   type OpenAPIResolvedOperation,
 } from "./openapi32-operations.js";
 import { validateOpenAPI32OperationParameters } from "./openapi32-parameters.js";
+import {
+  openAPI32SecurityNameKind,
+  openAPI32SecurityRequirementNames,
+  openAPI32SecurityScheme,
+  openAPI32SecuritySchemeReference,
+} from "./openapi32-security.js";
 
 export type OpenAPIEdition =
   | "3.0.0" | "3.0.1" | "3.0.2" | "3.0.3" | "3.0.4"
@@ -388,8 +394,89 @@ class OpenAPI32Overlay {
     const pathItem = await this.materializePathItem(selected, reference);
     const operation = openAPI32OperationValue(pathItem as Record<string, unknown>, reference) as OpenAPIOperation;
     const targetRoot = this.targetDocument(root, reference, pathItem);
+    const referringSecuritySchemes = await this.materializeSecurityTarget(
+      targetRoot,
+      asRecord(rawOperation)!,
+      selected.operationOwner,
+    );
     validateOpenAPI32OperationParameters(root as OpenAPIDocument, reference.path, pathItem, operation);
-    return { reference, document: targetRoot, pathItem, operation };
+    return {
+      reference,
+      document: targetRoot,
+      pathItem,
+      operation,
+      ...(Object.keys(referringSecuritySchemes).length > 0 ? { referringSecuritySchemes } : {}),
+    };
+  }
+
+  private async materializeSecurityTarget(
+    document: OpenAPIDocument,
+    rawOperation: Record<string, unknown>,
+    operationOwner: RawResource,
+  ): Promise<Record<string, Record<string, unknown>>> {
+    if (!this.entry) return {};
+    const entryRoot = asRecord(this.entry.root);
+    const entrySchemes = asRecord(asRecord(entryRoot?.components)?.securitySchemes) ?? {};
+    const operationOwnsSecurity = Object.hasOwn(rawOperation, "security");
+    const requirementOwner = operationOwnsSecurity ? operationOwner : this.entry;
+    const requirements = operationOwnsSecurity ? rawOperation.security : entryRoot?.security;
+    const names = openAPI32SecurityRequirementNames(requirements);
+    if (names.length === 0) return {};
+    const referringRoot = asRecord(requirementOwner.root);
+    const referringSchemes = asRecord(asRecord(referringRoot?.components)?.securitySchemes) ?? {};
+    const entryNames = new Set(Object.keys(entrySchemes));
+    const referringNames = new Set(Object.keys(referringSchemes));
+    const uriSchemes: Record<string, Record<string, unknown>> = {};
+    const materializedReferring: Record<string, Record<string, unknown>> = {};
+
+    for (const name of names) {
+      const kind = openAPI32SecurityNameKind(
+        name,
+        entryNames,
+        referringNames,
+        requirementOwner !== this.entry,
+      );
+      if (kind === "entry") continue;
+      try {
+        if (kind === "referring") {
+          const resolved = await this.resolveSecuritySchemeObject(
+            { value: referringSchemes[name], resource: requirementOwner, identity: `component:${name}` },
+            new Set(),
+          );
+          if (resolved) materializedReferring[name] = resolved;
+          continue;
+        }
+        const target = await this.resolveReference(name, requirementOwner, "securityScheme");
+        const resolved = await this.resolveSecuritySchemeObject(target, new Set());
+        if (resolved) uriSchemes[name] = resolved;
+      } catch {
+        // A failed URI owns only its containing security alternative.
+      }
+    }
+
+    if (Object.keys(uriSchemes).length > 0) {
+      const components = asRecord(document.components) ?? {};
+      document.components = components;
+      const schemes = asRecord(components.securitySchemes) ?? {};
+      components.securitySchemes = schemes;
+      for (const [name, scheme] of Object.entries(uriSchemes)) schemes[name] = scheme;
+    }
+    return materializedReferring;
+  }
+
+  private async resolveSecuritySchemeObject(
+    node: ResolvedRawNode,
+    seen: Set<string>,
+  ): Promise<Record<string, unknown> | null> {
+    if (seen.has(node.identity)) return null;
+    seen.add(node.identity);
+    const ref = openAPI32SecuritySchemeReference(node.value);
+    if (ref) {
+      const target = await this.resolveReference(ref, node.resource, "securityScheme");
+      return this.resolveSecuritySchemeObject(target, seen);
+    }
+    const scheme = openAPI32SecurityScheme(node.value);
+    return scheme ? cloneJSON(scheme) as Record<string, unknown> : null;
   }
 
   private async resolvePathItem(
@@ -697,7 +784,7 @@ class OpenAPI32Overlay {
   private async resolveReference(
     refText: string,
     owner: RawResource,
-    kind: "pathItem" | "parameter" | "requestBody" | "mediaType" | "header" | "schema",
+    kind: "pathItem" | "parameter" | "requestBody" | "mediaType" | "header" | "schema" | "securityScheme",
     baseOverride?: string,
   ): Promise<ResolvedRawNode> {
     const resolved = resolveReferenceURL(refText, baseOverride ?? owner.base);
