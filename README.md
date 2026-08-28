@@ -1,6 +1,6 @@
 # OpenBindings OpenAPI Client
 
-A document-driven OpenAPI 3.0 and 3.1 client for invoking brownfield APIs directly from their OpenAPI documents.
+A document-driven OpenAPI 2.0, 3.0, and 3.1 client for invoking brownfield APIs directly from their OpenAPI documents. The native Swagger 2.0 lane is currently available in Go; the TypeScript twin remains on the 3.x lane until its corresponding convergence pass lands.
 
 The client does not generate source code and does not require an OpenBindings Interface (OBI). Load a document, select an authored operation, and call it. This client's contract deliberately follows the document and incorporated OpenAPI/HTTP rules for server resolution, parameter serialization, request-body carriage, security placement, response selection, decoding, and streaming.
 
@@ -66,6 +66,13 @@ select operations without an OBI. `Client.Stream` exposes ordered SSE values,
 framing metadata, cancellation, backpressure, and terminal completion through
 `Stream.Next`. Values already emitted remain readable before a terminal failure
 is returned.
+
+Swagger 2.0 uses its own raw-preserving Go model and never converts through an
+OpenAPI 3.x document. `LoadSwagger20` loads and inventories an exact
+`swagger: "2.0"` source, `Swagger20Client.SynthesisModel` exposes native
+operation analysis for thin adapters, and `Engine.PrepareSwagger20` selects
+one literal path-operation reference through the edition-specific execution
+lane.
 
 The lower-level Go surface exposes the same OpenAPI wire machinery directly.
 `EffectiveServerSet`, `NewServerSet`, `ServerSet.Resolve`,
@@ -228,7 +235,7 @@ final retrieval URI.
 
 The invocation-complete scope is:
 
-- OpenAPI 3.0.x and 3.1.x document loading and reference resolution;
+- native Swagger 2.0 plus OpenAPI 3.0.x and 3.1.x document loading and reference resolution;
 - operation discovery and exact selection;
 - document/path/operation server resolution and variables;
 - path, query, header, and cookie parameter serialization;
