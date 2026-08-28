@@ -529,7 +529,7 @@ func revision3ParameterSerializationMethodForEdition(p *openapi3.Parameter, edit
 	default:
 		return nil, fmt.Errorf("unexpected parameter 'in': %q", p.In)
 	}
-	explode := style == openapi3.SerializationForm
+	explode := style == openapi3.SerializationForm || (strings.HasPrefix(edition, "3.2.") && style == "cookie")
 	if p.Explode != nil {
 		explode = *p.Explode
 	}
