@@ -283,7 +283,7 @@ func (c *Client) Stream(ctx context.Context, selector OperationSelector, input I
 		operation.RequestBody = nil
 		resolved.operation = &operation
 	}
-	native, err := nativeInput(resolved.document, resolved.pathItem, resolved.operation, input)
+	native, err := nativeInput(c.artifact, resolved.info.Ref, resolved.document, resolved.pathItem, resolved.operation, input)
 	if err != nil {
 		return nil, err
 	}
@@ -467,14 +467,31 @@ type nativeInvocationInput struct {
 	propertyMediaTypes map[string]string
 }
 
-func nativeInput(document *openapi3.T, pathItem *openapi3.PathItem, operation *openapi3.Operation, input Input) (nativeInvocationInput, error) {
+func nativeInput(artifact *Artifact, ref string, document *openapi3.T, pathItem *openapi3.PathItem, operation *openapi3.Operation, input Input) (nativeInvocationInput, error) {
 	parameters := effectiveParameters(pathItem, operation)
-	plans, err := planRequestBodiesFor(document, operation, profileFullCoordinate)
+	bodyPresent := input.BodyPresent || input.Body != nil
+	bypassOpenAPI32Media := artifact != nil && artifact.Edition.IsOpenAPI32() && !bodyPresent &&
+		(!hasRequestBody(operation) || !operation.RequestBody.Value.Required)
+	var plans []*bodyPlan
+	var err error
+	if bypassOpenAPI32Media {
+		plans = nil
+	} else if artifact != nil && artifact.Edition.IsOpenAPI32() {
+		reference, parseErr := ParseOperationReference(ref, artifact.Edition)
+		if parseErr != nil {
+			return nativeInvocationInput{}, inputError("BODY_UNSUPPORTED", parseErr.Error(), parseErr)
+		}
+		plans, err = planRequestBodiesForArtifact(artifact, &OperationTarget{OperationReference: reference, Document: document, PathItem: pathItem, Operation: operation}, profileFullCoordinate)
+	} else {
+		plans, err = planRequestBodiesFor(document, operation, profileFullCoordinate)
+	}
 	if err != nil {
 		return nativeInvocationInput{}, inputError("BODY_UNSUPPORTED", err.Error(), err)
 	}
 	selected := []*bodyPlan{}
-	if input.MediaType != "" {
+	if bypassOpenAPI32Media {
+		selected = nil
+	} else if input.MediaType != "" {
 		selected, err = configuredRequestPlansFor(document, operation, plans, map[string]any{"configuration": map[string]any{"requestMedia": input.MediaType}}, profileFullCoordinate)
 		if err != nil {
 			return nativeInvocationInput{}, inputError("REQUEST_MEDIA_NOT_DECLARED", err.Error(), err)
@@ -513,7 +530,6 @@ func nativeInput(document *openapi3.T, pathItem *openapi3.PathItem, operation *o
 			supplied = true
 		}
 	}
-	bodyPresent := input.BodyPresent || input.Body != nil
 	if bodyPresent {
 		if len(selected) == 0 {
 			return nativeInvocationInput{}, inputError("BODY_NOT_DECLARED", "operation does not declare a supported request body", nil)
@@ -554,9 +570,12 @@ func nativeInput(document *openapi3.T, pathItem *openapi3.PathItem, operation *o
 	if bodyPresent {
 		body["present"] = true
 	}
-	mediaType := input.MediaType
-	if mediaType == "" && len(selected) > 0 {
-		mediaType = selected[0].mediaType
+	mediaType := ""
+	if !bypassOpenAPI32Media {
+		mediaType = input.MediaType
+		if mediaType == "" && len(selected) > 0 {
+			mediaType = selected[0].mediaType
+		}
 	}
 	profile := FullProfile()
 	propertyMediaTypes := make(map[string]string, len(input.PropertyMediaTypes))

@@ -70,6 +70,7 @@ const (
 	familyURLEncoded = "urlencoded"
 	familyText       = "text"
 	familyOctets     = "octets"
+	familySequential = "sequential"
 )
 
 // bodyPlan is the pre-dispatch answer to the request-carriage questions: the
@@ -93,6 +94,10 @@ type bodyPlan struct {
 	propertyMedia             []string          // properties requiring a concrete consumer media choice
 	propertyMediaDeclarations map[string]string // authored Encoding contentType lists, before concrete selection
 	rawProperties             map[string]bool   // content-path properties crossing the canonical Base64 boundary
+	oas32                     bool
+	openAPI32                 *openAPI32MediaOverlay
+	sequentialKind            string
+	itemSchema                *openapi3.Schema
 }
 
 type parsedMediaType struct {
@@ -514,6 +519,23 @@ func planRequestBody(op *openapi3.Operation, bindingSpec string) (*bodyPlan, err
 // Range plans are synthesis/runtime skeletons: their concrete family and
 // emitted Content-Type are materialized from requestMedia at invocation.
 func planRequestBodiesFor(doc *openapi3.T, op *openapi3.Operation, bindingSpec string) ([]*bodyPlan, error) {
+	return planRequestBodiesForEdition(doc, op, bindingSpec, "", nil)
+}
+
+func planRequestBodiesForArtifact(artifact *Artifact, target *OperationTarget, bindingSpec string) ([]*bodyPlan, error) {
+	if target == nil {
+		return nil, nil
+	}
+	var overlays map[string]*openAPI32MediaOverlay
+	var edition Edition
+	if artifact != nil {
+		edition = artifact.Edition
+		overlays = artifact.openAPI32RequestMediaOverlays(target)
+	}
+	return planRequestBodiesForEdition(target.Document, target.Operation, bindingSpec, edition, overlays)
+}
+
+func planRequestBodiesForEdition(doc *openapi3.T, op *openapi3.Operation, bindingSpec string, edition Edition, overlays map[string]*openAPI32MediaOverlay) ([]*bodyPlan, error) {
 	if !hasRequestBody(op) {
 		return nil, nil
 	}
@@ -528,6 +550,8 @@ func planRequestBodiesFor(doc *openapi3.T, op *openapi3.Operation, bindingSpec s
 		family      string
 		rawBoundary bool
 		mediaRange  bool
+		sequential  string
+		overlay     *openAPI32MediaOverlay
 	}
 	var candidates []candidate
 	var declared []string
@@ -557,21 +581,26 @@ func planRequestBodiesFor(doc *openapi3.T, op *openapi3.Operation, bindingSpec s
 			continue
 		}
 		nonColliding++
-		media := rb.Content[key]
+		overlay := overlays[key]
+		media := openAPI32EffectiveMedia(rb.Content[key], overlay)
 		if parsed.rangeSpecificity < 2 {
+			if edition.IsOpenAPI32() && overlay != nil && overlay.invalid != "" {
+				rejected = append(rejected, fmt.Sprintf("request media candidate %s is inadmissible: OpenAPI 3.2 Media Type Object is unavailable: %s", parsed.canonical, overlay.invalid))
+				continue
+			}
 			family := representativeRangeFamily(parsed)
 			if family != "" {
-				candidates = append(candidates, candidate{key: key, parsed: parsed, family: family, mediaRange: true})
+				candidates = append(candidates, candidate{key: key, parsed: parsed, family: family, mediaRange: true, overlay: overlay})
 			}
 			continue
 		}
-		family, rawBoundary, carriageErr := exactRequestFamily(doc, parsed, media, bindingSpec)
+		family, rawBoundary, sequential, carriageErr := exactRequestFamilyForEdition(doc, parsed, media, bindingSpec, edition, overlay)
 		if carriageErr != nil {
 			rejected = append(rejected, fmt.Sprintf("request media candidate %s is inadmissible: %v", parsed.canonical, carriageErr))
 			continue
 		}
 		if family != "" {
-			candidates = append(candidates, candidate{key: key, parsed: parsed, family: family, rawBoundary: rawBoundary})
+			candidates = append(candidates, candidate{key: key, parsed: parsed, family: family, rawBoundary: rawBoundary, sequential: sequential, overlay: overlay})
 		}
 	}
 	if len(candidates) == 0 {
@@ -593,12 +622,22 @@ func planRequestBodiesFor(doc *openapi3.T, op *openapi3.Operation, bindingSpec s
 	plans := make([]*bodyPlan, 0, len(candidates))
 	oas30 := doc != nil && isOpenAPI30(majorMinor(doc.OpenAPI))
 	for _, candidate := range candidates {
-		media := rb.Content[candidate.key]
+		media := openAPI32EffectiveMedia(rb.Content[candidate.key], candidate.overlay)
 		wholeJSON := hasWholeJSONCarriage(bindingSpec) && !candidate.mediaRange && candidate.family == familyJSON &&
 			requiresWholeJSONCarriage(mediaSchema(media), map[*openapi3.Schema]bool{}, oas30)
 		var plan *bodyPlan
 		var err error
-		if wholeJSON {
+		if candidate.family == familySequential || candidate.family == familyMultipart && edition.IsOpenAPI32() && openAPI32PositionalMultipart(media, candidate.overlay) {
+			plan = &bodyPlan{
+				declared:  true,
+				required:  rb.Required,
+				mediaKey:  candidate.key,
+				mediaType: candidate.parsed.canonical,
+				media:     media,
+				family:    candidate.family,
+				synthetic: true,
+			}
+		} else if wholeJSON {
 			plan = &bodyPlan{
 				declared:    true,
 				required:    rb.Required,
@@ -619,6 +658,20 @@ func planRequestBodiesFor(doc *openapi3.T, op *openapi3.Operation, bindingSpec s
 		plan.rawBoundary = candidate.rawBoundary
 		plan.bindingSpec = bindingSpec
 		plan.oas30 = oas30
+		plan.oas32 = edition.IsOpenAPI32()
+		plan.openAPI32 = candidate.overlay
+		if plan.oas32 && candidate.overlay != nil && candidate.overlay.encodingPresent && candidate.family == familyURLEncoded {
+			plan.media = openAPI32MediaWithEncoding(media, candidate.overlay, true)
+		}
+		plan.sequentialKind = candidate.sequential
+		if media != nil && media.ItemSchema != nil {
+			plan.itemSchema = media.ItemSchema.Value
+		}
+		if plan.oas32 && (candidate.family == familySequential || candidate.family == familyMultipart && openAPI32PositionalMultipart(media, candidate.overlay)) {
+			plan.synthetic = true
+			plan.wholeObject = false
+			plan.props = nil
+		}
 		plan.propertyMedia = requiredPropertyMediaNames(plan)
 		plan.propertyMediaDeclarations = propertyMediaDeclarations(plan)
 		plan.rawProperties = rawPropertyNames(plan)
@@ -770,31 +823,61 @@ func applyRevision3BodyShape(plan *bodyPlan) {
 }
 
 func exactRequestFamily(doc *openapi3.T, parsed parsedMediaType, media *openapi3.MediaType, bindingSpec string) (string, bool, error) {
+	family, raw, _, err := exactRequestFamilyForEdition(doc, parsed, media, bindingSpec, "", nil)
+	return family, raw, err
+}
+
+func exactRequestFamilyForEdition(doc *openapi3.T, parsed parsedMediaType, media *openapi3.MediaType, bindingSpec string, edition Edition, overlay *openAPI32MediaOverlay) (string, bool, string, error) {
+	if edition.IsOpenAPI32() {
+		if overlay != nil && overlay.invalid != "" {
+			return "", false, "", fmt.Errorf("OpenAPI 3.2 Media Type Object is unavailable: %s", overlay.invalid)
+		}
+		if sequential, selected, err := openAPI32SequentialRequestKind(parsed.base, media, overlay); selected || err != nil {
+			if err != nil {
+				return "", false, "", err
+			}
+			if sequential == "multipart" {
+				if err := validateOpenAPI32MultipartMedia(doc, media, overlay, parsed.base == "multipart/form-data"); err != nil {
+					return "", false, "", err
+				}
+				return familyMultipart, false, sequential, nil
+			}
+			return familySequential, false, sequential, nil
+		}
+	}
 	switch {
 	case isJSONMediaType(parsed.base):
-		return familyJSON, false, nil
-	case parsed.base == "multipart/form-data":
+		return familyJSON, false, "", nil
+	case parsed.base == "multipart/form-data" || edition.IsOpenAPI32() && strings.HasPrefix(parsed.base, "multipart/"):
 		if hasMediaFidelity(bindingSpec) {
-			if err := validateRevision3MultipartMedia(doc, media); err != nil {
-				return "", false, err
+			if edition.IsOpenAPI32() {
+				if err := validateOpenAPI32MultipartMedia(doc, media, overlay, parsed.base == "multipart/form-data"); err != nil {
+					return "", false, "", err
+				}
+			} else if err := validateRevision3MultipartMedia(doc, media); err != nil {
+				return "", false, "", err
 			}
 		}
-		return familyMultipart, false, nil
+		return familyMultipart, false, "", nil
 	case parsed.base == "application/x-www-form-urlencoded":
 		if hasMediaFidelity(bindingSpec) && mediaSchema(media) == nil {
-			return "", false, fmt.Errorf("schema-omitted form media has no application-value caller route")
+			return "", false, "", fmt.Errorf("schema-omitted form media has no application-value caller route")
 		}
 		if hasMediaFidelity(bindingSpec) {
-			if err := validateRevision3URLEncodedMedia(doc, media); err != nil {
-				return "", false, err
+			if edition.IsOpenAPI32() {
+				if err := validateOpenAPI32URLEncodedMedia(doc, media, overlay); err != nil {
+					return "", false, "", err
+				}
+			} else if err := validateRevision3URLEncodedMedia(doc, media); err != nil {
+				return "", false, "", err
 			}
 		}
-		return familyURLEncoded, false, nil
+		return familyURLEncoded, false, "", nil
 	case parsed.base == "text/plain" && !hasMediaFidelity(bindingSpec):
-		return familyText, false, nil
+		return familyText, false, "", nil
 	}
 	if !hasMediaFidelity(bindingSpec) {
-		return "", false, nil
+		return "", false, "", nil
 	}
 	// The artifact-authorized byte lanes are evaluated first: they are the
 	// cases where the ARTIFACT determines the octets. §9.2 carries no
@@ -806,10 +889,10 @@ func exactRequestFamily(doc *openapi3.T, parsed parsedMediaType, media *openapi3
 	if doc != nil {
 		eligible, rawBoundary, err := octetRequestCarriage(doc, media, bindingSpec)
 		if err != nil {
-			return "", false, err
+			return "", false, "", err
 		}
 		if eligible {
-			return familyOctets, rawBoundary, nil
+			return familyOctets, rawBoundary, "", nil
 		}
 	}
 	// §9.2 string carriage. Its scope is DERIVED from two authorities, not
@@ -822,13 +905,14 @@ func exactRequestFamily(doc *openapi3.T, parsed parsedMediaType, media *openapi3
 	// lane authors no correspondence. Scoped by the declaration: the supplied
 	// value's type never selects a lane.
 	oas30 := doc != nil && isOpenAPI30(majorMinor(doc.OpenAPI))
-	if isCharacterDataMedia(parsed.base) && resolveDeclaration(mediaSchema(media), oas30).admitsStringAsSoleNonNullType() {
+	declaration := resolveDeclaration(mediaSchema(media), oas30)
+	if isCharacterDataMedia(parsed.base) && (declaration.admitsStringAsSoleNonNullType() || edition.IsOpenAPI32() && openAPI32NonJSONTextSchema(mediaSchema(media))) {
 		if err := supportedTextCharset(parsed); err != nil {
-			return "", false, err
+			return "", false, "", err
 		}
-		return familyText, false, nil
+		return familyText, false, "", nil
 	}
-	return "", false, nil
+	return "", false, "", nil
 }
 
 // isCharacterDataMedia is §9.2's closed, structural character-data test: the
@@ -1958,22 +2042,50 @@ func selectRevision3RequestPlan(doc *openapi3.T, op *openapi3.Operation, plans [
 		copy.mediaType = wanted.canonical
 		return []*bodyPlan{&copy}, nil
 	}
-	family, rawBoundary, carriageErr := exactRequestFamily(doc, wanted, op.RequestBody.Value.Content[selected.key], bindingSpec)
+	media := openAPI32EffectiveMedia(op.RequestBody.Value.Content[selected.key], skeleton.openAPI32)
+	edition := Edition("")
+	if skeleton.oas32 {
+		edition = EditionOpenAPI320
+	}
+	family, rawBoundary, sequential, carriageErr := exactRequestFamilyForEdition(doc, wanted, media, bindingSpec, edition, skeleton.openAPI32)
 	if carriageErr != nil {
 		return nil, carriageErr
 	}
 	if family == "" {
 		return nil, fmt.Errorf("configured requestMedia %q selects range %q but no existing request carriage family supports that concrete type", wanted.canonical, selected.key)
 	}
-	plan, err := buildBodyPlanFromMedia(op.RequestBody.Value, selected.key, wanted, family, op.RequestBody.Value.Content[selected.key])
-	if err != nil {
-		return nil, err
+	var plan *bodyPlan
+	var err error
+	if skeleton.oas32 && (family == familySequential || family == familyMultipart && openAPI32PositionalMultipart(media, skeleton.openAPI32)) {
+		plan = &bodyPlan{
+			declared:  true,
+			required:  op.RequestBody.Value.Required,
+			mediaKey:  selected.key,
+			mediaType: wanted.canonical,
+			media:     media,
+			family:    family,
+			synthetic: true,
+		}
+	} else {
+		plan, err = buildBodyPlanFromMedia(op.RequestBody.Value, selected.key, wanted, family, media)
+		if err != nil {
+			return nil, err
+		}
 	}
 	plan.mediaRange = true
 	plan.mediaType = wanted.canonical
 	plan.rawBoundary = rawBoundary
 	plan.bindingSpec = bindingSpec
 	plan.oas30 = doc != nil && isOpenAPI30(majorMinor(doc.OpenAPI))
+	plan.oas32 = skeleton.oas32
+	plan.openAPI32 = skeleton.openAPI32
+	if plan.oas32 && plan.openAPI32 != nil && plan.openAPI32.encodingPresent && family == familyURLEncoded {
+		plan.media = openAPI32MediaWithEncoding(media, plan.openAPI32, true)
+	}
+	plan.sequentialKind = sequential
+	if media != nil && media.ItemSchema != nil {
+		plan.itemSchema = media.ItemSchema.Value
+	}
 	plan.propertyMedia = requiredPropertyMediaNames(plan)
 	plan.propertyMediaDeclarations = propertyMediaDeclarations(plan)
 	plan.rawProperties = rawPropertyNames(plan)
@@ -2071,6 +2183,9 @@ func buildRequestBody(doc *openapi3.T, plan *bodyPlan, routed *routedInput) (io.
 		}
 		return bytes.NewReader(b), plan.mediaType, nil
 	case familyMultipart:
+		if plan.oas32 {
+			return buildOpenAPI32MultipartBody(doc, plan, routed)
+		}
 		fields, err := objectBodyFields(plan, routed)
 		if err != nil {
 			return nil, "", err
@@ -2087,6 +2202,13 @@ func buildRequestBody(doc *openapi3.T, plan *bodyPlan, routed *routedInput) (io.
 		if len(fields) == 0 && !plan.required {
 			return nil, "", nil
 		}
+		if plan.oas32 {
+			body, err := buildOpenAPI32URLEncodedBody(plan, fields)
+			if err != nil {
+				return nil, "", err
+			}
+			return strings.NewReader(body), plan.mediaType, nil
+		}
 		body, err := buildURLEncodedBodyForRevision(doc, plan.media, fields, plan.bindingSpec)
 		if err != nil {
 			return nil, "", err
@@ -2095,6 +2217,21 @@ func buildRequestBody(doc *openapi3.T, plan *bodyPlan, routed *routedInput) (io.
 	case familyText:
 		if !routed.bodySet {
 			return nil, "", nil
+		}
+		if plan.oas32 {
+			parsed, err := parseRevision3MediaType(plan.mediaType)
+			if err != nil {
+				return nil, "", err
+			}
+			text, err := serializeOpenAPI32NonJSONText(mediaSchema(plan.media), routed.bodyValue)
+			if err != nil {
+				return nil, "", fmt.Errorf("request media %s: %w", plan.mediaType, err)
+			}
+			encoded, err := encodeTextString(text, parsed)
+			if err != nil {
+				return nil, "", fmt.Errorf("request media %s: %w", plan.mediaType, err)
+			}
+			return bytes.NewReader(encoded), plan.mediaType, nil
 		}
 		s, ok := routed.bodyValue.(string)
 		if !ok {
@@ -2134,6 +2271,15 @@ func buildRequestBody(doc *openapi3.T, plan *bodyPlan, routed *routedInput) (io.
 			return nil, "", err
 		}
 		return bytes.NewReader(data), plan.mediaType, nil
+	case familySequential:
+		if !routed.bodySet {
+			return nil, "", nil
+		}
+		body, err := buildOpenAPI32SequentialBody(plan.sequentialKind, routed.bodyValue)
+		if err != nil {
+			return nil, "", err
+		}
+		return bytes.NewReader(body), plan.mediaType, nil
 	}
 	return nil, "", fmt.Errorf("unknown body family %q", plan.family)
 }

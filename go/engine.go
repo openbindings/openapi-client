@@ -170,7 +170,7 @@ func prepareArtifactWithFloor(artifact *Artifact, floor *acceptanceFloor, option
 		return nil, executionErrorForOperationResolution(err)
 	}
 	target = requestTargetForEdition(target, artifact.Edition)
-	prerequisites, err := preflightPrerequisitesForTarget(target.Document, target, options)
+	prerequisites, err := preflightPrerequisitesForArtifactTarget(artifact, target, options)
 	if err != nil {
 		return nil, err
 	}
@@ -204,6 +204,11 @@ func preflightPrerequisites(document *openapi3.T, options PrepareOptions) (*Prer
 }
 
 func preflightPrerequisitesForTarget(document *openapi3.T, target *OperationTarget, options PrepareOptions) (*Prerequisites, error) {
+	return preflightPrerequisitesForArtifactTarget(nil, target, options)
+}
+
+func preflightPrerequisitesForArtifactTarget(artifact *Artifact, target *OperationTarget, options PrepareOptions) (*Prerequisites, error) {
+	document := target.Document
 	pathItem := target.PathItem
 	operation := target.Operation
 	baseURL, err := resolveServer(document, pathItem, operation, options.Context, options.Source.Location)
@@ -212,11 +217,19 @@ func preflightPrerequisitesForTarget(document *openapi3.T, target *OperationTarg
 	}
 	parameters := effectiveParameters(pathItem, operation)
 	security := requiredContext(document, operation, options.Context, baseURL, parameters)
-	media, err := requiredRequestMediaContext(document, operation, profileCoordinate(options.Profile), options.Context)
+	var plans []*bodyPlan
+	openAPI32 := artifact != nil && artifact.Edition.IsOpenAPI32()
+	if openAPI32 && hasRequestBody(operation) && operation.RequestBody.Value.Required {
+		plans, err = planRequestBodiesForArtifact(artifact, target, profileCoordinate(options.Profile))
+		if err != nil {
+			return nil, &ExecutionError{Code: CodeSourceConfigError, Message: err.Error(), Cause: err}
+		}
+	}
+	media, err := requiredRequestMediaContextWithPlans(document, operation, profileCoordinate(options.Profile), options.Context, plans, openAPI32)
 	if err != nil {
 		return nil, &ExecutionError{Code: CodeSourceConfigError, Message: err.Error(), Cause: err}
 	}
-	propertyMedia, err := requiredPropertyMediaContext(document, operation, profileCoordinate(options.Profile), options.Context)
+	propertyMedia, err := requiredPropertyMediaContextWithPlans(document, operation, profileCoordinate(options.Profile), options.Context, plans)
 	if err != nil {
 		return nil, &ExecutionError{Code: CodeSourceConfigError, Message: err.Error(), Cause: err}
 	}

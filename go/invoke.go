@@ -120,6 +120,14 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 	doc := target.Document
 	pathTemplate, method := target.Path, target.WireMethod()
 	pathItem, op := target.PathItem, target.Operation
+	var openAPI32Plans []*bodyPlan
+	if artifact.Edition.IsOpenAPI32() && hasRequestBody(op) && op.RequestBody.Value.Required {
+		openAPI32Plans, err = planRequestBodiesForArtifact(artifact, target, args.Source.Capability)
+		if err != nil {
+			inv.failExecution(&ExecutionError{Code: CodeRefused, Message: err.Error()})
+			return
+		}
+	}
 
 	routedRevision := usesRoutedInput(args.Source.Capability)
 	// The input model's structural refusals (§9.1) are declaration-only and
@@ -169,13 +177,13 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 		return
 	}
 	details := requiredContext(doc, op, args.Context, baseURL, params)
-	mediaDetails, mediaRequirementErr := requiredRequestMediaContext(doc, op, args.Source.Capability, args.Context)
+	mediaDetails, mediaRequirementErr := requiredRequestMediaContextWithPlans(doc, op, args.Source.Capability, args.Context, openAPI32Plans, artifact.Edition.IsOpenAPI32())
 	if mediaRequirementErr != nil {
 		inv.failExecution(&ExecutionError{Code: CodeRefused, Message: mediaRequirementErr.Error()})
 		return
 	}
 	details = mergeRequirements(details, mediaDetails)
-	propertyMediaDetails, propertyMediaRequirementErr := requiredPropertyMediaContext(doc, op, args.Source.Capability, args.Context)
+	propertyMediaDetails, propertyMediaRequirementErr := requiredPropertyMediaContextWithPlans(doc, op, args.Source.Capability, args.Context, openAPI32Plans)
 	if propertyMediaRequirementErr != nil {
 		inv.failExecution(&ExecutionError{Code: CodeRefused, Message: propertyMediaRequirementErr.Error()})
 		return
@@ -274,7 +282,11 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 		return
 	}
 	if willEmitBody || envelope != nil {
-		plans, err = planRequestBodiesFor(doc, op, args.Source.Capability)
+		if artifact.Edition.IsOpenAPI32() {
+			plans, err = planRequestBodiesForArtifact(artifact, target, args.Source.Capability)
+		} else {
+			plans, err = planRequestBodiesFor(doc, op, args.Source.Capability)
+		}
 		if err != nil {
 			inv.failExecution(&ExecutionError{Code: CodeRefused, Message: err.Error()})
 			return
@@ -416,7 +428,7 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 	}
 	// The Accept header advertises only artifact-declared concrete success
 	// media. An empty membership set omits the header.
-	if accept := acceptHeaderFor(op, args.Source.Capability); accept != "" && !args.OmitAcceptHeader {
+	if accept := acceptHeaderFor(op, args.Source.Capability); accept != "" && !args.OmitAcceptHeader && !artifact.Edition.IsOpenAPI32() {
 		req.Header.Set("Accept", accept)
 	}
 
@@ -730,18 +742,25 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 }
 
 func requiredRequestMediaContext(doc *openapi3.T, op *openapi3.Operation, bindingSpec string, bindCtx map[string]any) (*Prerequisites, error) {
+	return requiredRequestMediaContextWithPlans(doc, op, bindingSpec, bindCtx, nil, false)
+}
+
+func requiredRequestMediaContextWithPlans(doc *openapi3.T, op *openapi3.Operation, bindingSpec string, bindCtx map[string]any, plans []*bodyPlan, openAPI32 bool) (*Prerequisites, error) {
 	if !hasMediaFidelity(bindingSpec) || op == nil || op.RequestBody == nil || op.RequestBody.Value == nil || !op.RequestBody.Value.Required {
 		return nil, nil
 	}
-	plans, err := planRequestBodiesFor(doc, op, bindingSpec)
-	if err != nil {
-		return nil, err
+	if plans == nil {
+		var err error
+		plans, err = planRequestBodiesFor(doc, op, bindingSpec)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if !requestMediaUnconfigured(bindCtx) {
 		_, err := configuredRequestPlansFor(doc, op, plans, bindCtx, bindingSpec)
 		return nil, err
 	}
-	if !onlyRangePlans(plans) {
+	if openAPI32 && soleConcreteRequestPlan(op, plans) != nil || !openAPI32 && !onlyRangePlans(plans) {
 		return nil, nil
 	}
 	requirement := newConfigValueRequirementCompat(
