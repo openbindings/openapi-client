@@ -28,10 +28,11 @@ const (
 )
 
 type OperationSelector struct {
-	operationID string
-	path        string
-	method      Method
-	ref         string
+	operationID      string
+	path             string
+	method           Method
+	additionalMethod string
+	ref              string
 }
 
 func OperationID(value string) OperationSelector { return OperationSelector{operationID: value} }
@@ -197,6 +198,7 @@ func (e *ClientError) Error() string {
 func (e *ClientError) Unwrap() error { return e.Cause }
 
 type Client struct {
+	artifact *Artifact
 	document *openapi3.T
 	floor    *acceptanceFloor
 	source   Source
@@ -208,19 +210,21 @@ func Load(ctx context.Context, source Source, options ClientOptions) (*Client, e
 	if client == nil {
 		client = defaultHTTPClient()
 	}
-	document, floor, err := loadDocument(ctx, client, source, true)
+	artifact, floor, err := loadArtifact(ctx, client, source, true)
 	if err != nil {
 		return nil, &ClientError{Kind: ErrorSource, Code: "SOURCE_LOAD_FAILED", Message: err.Error(), Cause: err}
 	}
-	source.Document = document
+	source.Artifact = artifact
+	source.Document = artifact.Document
 	source.Content = nil
-	return &Client{document: document, floor: floor, source: source, options: options}, nil
+	return &Client{artifact: artifact, document: artifact.Document, floor: floor, source: source, options: options}, nil
 }
 
 func (c *Client) Document() *openapi3.T { return c.document }
+func (c *Client) Artifact() *Artifact   { return c.artifact }
 
 func (c *Client) Operations() []OperationInfo {
-	operations := enumerateOperationsWithFloor(c.document, c.floor)
+	operations := enumerateOperationsWithFloor(c.artifact, c.floor)
 	result := make([]OperationInfo, len(operations))
 	for index := range operations {
 		result[index] = operations[index].info
@@ -269,11 +273,11 @@ func (c *Client) Stream(ctx context.Context, selector OperationSelector, input I
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	resolved, err := resolveOperation(c.document, c.floor, selector)
+	resolved, err := resolveOperation(c.artifact, c.floor, selector)
 	if err != nil {
 		return nil, err
 	}
-	native, err := nativeInput(c.document, resolved.pathItem, resolved.operation, input)
+	native, err := nativeInput(resolved.document, resolved.pathItem, resolved.operation, input)
 	if err != nil {
 		return nil, err
 	}
@@ -288,7 +292,7 @@ func (c *Client) Stream(ctx context.Context, selector OperationSelector, input I
 	if err != nil {
 		return nil, err
 	}
-	prepared, err := prepareDocument(c.document, prepare)
+	prepared, err := prepareArtifactWithFloor(c.artifact, nil, prepare)
 	if err != nil {
 		return nil, clientError(err)
 	}
@@ -323,24 +327,59 @@ func (c *Client) Stream(ctx context.Context, selector OperationSelector, input I
 		}
 		return &StreamResult{OK: false, Error: failure, Response: response, OpenAPI: declaration}, nil
 	}
-	return &StreamResult{OK: true, Stream: &Stream{execution: execution}, Response: response, OpenAPI: declaration, rawBoundary: nativeResponseUsesRawBoundary(c.document, resolved.operation, response)}, nil
+	return &StreamResult{OK: true, Stream: &Stream{execution: execution}, Response: response, OpenAPI: declaration, rawBoundary: nativeResponseUsesRawBoundary(resolved.document, resolved.operation, response)}, nil
 }
 
 type resolvedOperation struct {
 	info      OperationInfo
+	document  *openapi3.T
 	pathItem  *openapi3.PathItem
 	operation *openapi3.Operation
 }
 
 func enumerateOperations(document *openapi3.T) []resolvedOperation {
-	return enumerateOperationsWithFloor(document, nil)
+	if document == nil {
+		return nil
+	}
+	return enumerateOperationsWithFloor(&Artifact{Document: document, Edition: Edition(document.OpenAPI)}, nil)
 }
 
 // enumerateOperationsWithFloor applies the acceptance-floor inventory filter
 // (openbindings.openapi@1 §3): a ladder-invalid target is not addressed and
 // is not enumerated as invocable.
-func enumerateOperationsWithFloor(document *openapi3.T, floor *acceptanceFloor) []resolvedOperation {
-	if document == nil || document.Paths == nil {
+func enumerateOperationsWithFloor(artifact *Artifact, floor *acceptanceFloor) []resolvedOperation {
+	if artifact == nil || artifact.Refusal() != nil || artifact.SourceExclusion() != nil {
+		return nil
+	}
+	document := artifact.Document
+	if document == nil {
+		return nil
+	}
+	if artifact.Edition.IsOpenAPI32() {
+		if artifact.openAPI32 == nil {
+			return nil
+		}
+		result := []resolvedOperation{}
+		for _, reference := range artifact.openAPI32.operationReferences() {
+			if verdict := floor.opVerdict(reference.Ref); verdict != nil && verdict.Disposition == "invalid" {
+				continue
+			}
+			target, err := artifact.ResolveOperation(reference.Ref)
+			if err != nil {
+				continue
+			}
+			result = append(result, resolvedOperation{
+				document: target.Document, pathItem: target.PathItem, operation: target.Operation,
+				info: OperationInfo{
+					Ref: reference.Ref, Path: reference.Path, Method: Method(reference.Method),
+					OperationID: target.Operation.OperationID, Summary: target.Operation.Summary,
+					Tags: append([]string(nil), target.Operation.Tags...),
+				},
+			})
+		}
+		return result
+	}
+	if document.Paths == nil {
 		return nil
 	}
 	paths := document.Paths.Map()
@@ -363,7 +402,7 @@ func enumerateOperationsWithFloor(document *openapi3.T, floor *acceptanceFloor) 
 			if verdict := floor.opVerdict("#/paths/" + escapeJSONPointerSegment(path) + "/" + method); verdict != nil && verdict.Disposition == "invalid" {
 				continue
 			}
-			result = append(result, resolvedOperation{pathItem: item, operation: operation, info: OperationInfo{
+			result = append(result, resolvedOperation{document: document, pathItem: item, operation: operation, info: OperationInfo{
 				Ref: "#/paths/" + escapeJSONPointerSegment(path) + "/" + method, Path: path, Method: Method(method),
 				OperationID: operation.OperationID, Summary: operation.Summary, Tags: append([]string(nil), operation.Tags...),
 			}})
@@ -372,8 +411,8 @@ func enumerateOperationsWithFloor(document *openapi3.T, floor *acceptanceFloor) 
 	return result
 }
 
-func resolveOperation(document *openapi3.T, floor *acceptanceFloor, selector OperationSelector) (resolvedOperation, error) {
-	operations := enumerateOperationsWithFloor(document, floor)
+func resolveOperation(artifact *Artifact, floor *acceptanceFloor, selector OperationSelector) (resolvedOperation, error) {
+	operations := enumerateOperationsWithFloor(artifact, floor)
 	if selector.operationID != "" {
 		matches := []resolvedOperation{}
 		for _, operation := range operations {
@@ -390,14 +429,23 @@ func resolveOperation(document *openapi3.T, floor *acceptanceFloor, selector Ope
 		return resolvedOperation{}, &ClientError{Kind: ErrorOperation, Code: "OPERATION_NOT_FOUND", Message: fmt.Sprintf("operationId %q was not found", selector.operationID)}
 	}
 	if selector.ref != "" {
-		path, method, err := parseRef(selector.ref)
+		reference, err := parseOperationReference(selector.ref, artifact.Edition)
 		if err != nil {
 			return resolvedOperation{}, &ClientError{Kind: ErrorOperation, Code: "INVALID_OPERATION_REF", Message: err.Error(), Cause: err}
 		}
-		selector.path, selector.method = path, Method(method)
+		selector.path, selector.method = reference.Path, Method(reference.Method)
+		if reference.Additional {
+			selector.additionalMethod = reference.Method
+		}
 	}
 	for _, operation := range operations {
-		if operation.info.Path == selector.path && operation.info.Method == Method(strings.ToLower(string(selector.method))) {
+		if selector.additionalMethod != "" {
+			if operation.info.Path == selector.path && operation.info.Method == Method(selector.additionalMethod) && strings.Contains(operation.info.Ref, "/additionalOperations/") {
+				return operation, nil
+			}
+			continue
+		}
+		if operation.info.Path == selector.path && operation.info.Method == Method(strings.ToLower(string(selector.method))) && !strings.Contains(operation.info.Ref, "/additionalOperations/") {
 			return operation, nil
 		}
 	}
@@ -531,6 +579,10 @@ func nativeRequestBody(plan *bodyPlan, body any) (any, error) {
 }
 
 func (c *Client) prepareOptions(operation resolvedOperation, input nativeInvocationInput, call CallOptions) (PrepareOptions, error) {
+	document := operation.document
+	if document == nil {
+		document = c.document
+	}
 	client := call.HTTPClient
 	if client == nil {
 		client = c.options.HTTPClient
@@ -591,7 +643,7 @@ func (c *Client) prepareOptions(operation resolvedOperation, input nativeInvocat
 		handlers[name] = handler
 	}
 	for name, credential := range auth {
-		scheme, ok := securityScheme(c.document, name)
+		scheme, ok := securityScheme(document, name)
 		if !ok {
 			return PrepareOptions{}, &ClientError{Kind: ErrorConfiguration, Code: "UNKNOWN_SECURITY_SCHEME", Message: fmt.Sprintf("security scheme %q was not found", name)}
 		}
@@ -602,7 +654,7 @@ func (c *Client) prepareOptions(operation resolvedOperation, input nativeInvocat
 		handlers[name] = handler
 	}
 	for name := range handlers {
-		if _, ok := securityScheme(c.document, name); !ok {
+		if _, ok := securityScheme(document, name); !ok {
 			return PrepareOptions{}, &ClientError{Kind: ErrorConfiguration, Code: "UNKNOWN_SECURITY_SCHEME", Message: fmt.Sprintf("security scheme %q was not found", name)}
 		}
 	}

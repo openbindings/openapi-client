@@ -2,9 +2,8 @@ package openapiclient
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"net/http"
-	"strings"
 	"sync"
 
 	"github.com/getkin/kin-openapi/openapi3"
@@ -20,7 +19,7 @@ type Engine struct {
 // cachedDocument pairs a location-cached document with its acceptance floor,
 // so PrepareCached applies the same inventory filter as a fresh load.
 type cachedDocument struct {
-	document *openapi3.T
+	artifact *Artifact
 	floor    *acceptanceFloor
 }
 
@@ -36,7 +35,7 @@ func NewEngine(client *http.Client) *Engine {
 }
 
 type PreparedOperation struct {
-	document      *openapi3.T
+	artifact      *Artifact
 	options       PrepareOptions
 	prerequisites *Prerequisites
 }
@@ -65,16 +64,16 @@ func (e *Engine) Prepare(ctx context.Context, options PrepareOptions) (*Prepared
 	if options.AllowExternalRefs != nil {
 		allowExternal = *options.AllowExternalRefs
 	}
-	document, floor, err := loadDocument(ctx, loadClient, options.Source, allowExternal)
+	artifact, floor, err := loadArtifact(ctx, loadClient, options.Source, allowExternal)
 	if err != nil {
 		return nil, &ExecutionError{Code: CodeSourceLoadFailed, Message: err.Error(), Cause: err}
 	}
 	if options.Source.Location != "" {
 		e.mu.Lock()
-		e.cache[options.Source.Location] = cachedDocument{document: document, floor: floor}
+		e.cache[options.Source.Location] = cachedDocument{artifact: artifact, floor: floor}
 		e.mu.Unlock()
 	}
-	return prepareDocumentWithFloor(document, floor, options)
+	return prepareArtifactWithFloor(artifact, floor, options)
 }
 
 func (e *Engine) PrepareCached(ctx context.Context, options PrepareOptions) (*PreparedOperation, error) {
@@ -93,14 +92,14 @@ func (e *Engine) PrepareCached(ctx context.Context, options PrepareOptions) (*Pr
 	e.mu.RLock()
 	cached := e.cache[options.Source.Location]
 	e.mu.RUnlock()
-	if cached.document == nil {
+	if cached.artifact == nil {
 		return nil, nil
 	}
 	if options.HTTPClient == nil {
 		options.HTTPClient = e.invocationClient
 	}
 	options.Context = contextWithSecurityHandlers(options.Context, options.SecurityHandlers)
-	return prepareDocumentWithFloor(cached.document, cached.floor, options)
+	return prepareArtifactWithFloor(cached.artifact, cached.floor, options)
 }
 
 func normalizePrepareContentCodings(options *PrepareOptions) error {
@@ -143,47 +142,69 @@ func contextWithSecurityHandlers(contextValue map[string]any, handlers map[strin
 }
 
 func prepareDocument(document *openapi3.T, options PrepareOptions) (*PreparedOperation, error) {
-	return prepareDocumentWithFloor(document, nil, options)
+	if document == nil {
+		return prepareArtifactWithFloor(nil, nil, options)
+	}
+	return prepareArtifactWithFloor(&Artifact{Document: document, Edition: Edition(document.OpenAPI)}, nil, options)
 }
 
 func prepareDocumentWithFloor(document *openapi3.T, floor *acceptanceFloor, options PrepareOptions) (*PreparedOperation, error) {
+	if document == nil {
+		return prepareArtifactWithFloor(nil, floor, options)
+	}
+	return prepareArtifactWithFloor(&Artifact{Document: document, Edition: Edition(document.OpenAPI)}, floor, options)
+}
+
+func prepareArtifactWithFloor(artifact *Artifact, floor *acceptanceFloor, options PrepareOptions) (*PreparedOperation, error) {
 	// The acceptance-floor inventory filter (openbindings.openapi@1 §3): a
 	// ladder-invalid target is not addressed, and its invocation is refused
 	// before dispatch -- provably no interaction side effect.
 	if verdict := floor.opVerdict(options.Ref); verdict != nil && verdict.Disposition == "invalid" {
 		return nil, &ExecutionError{Code: CodeRefused, Message: floorInvalidTargetMessage(len(verdict.Defects)) + " (" + options.Ref + ")"}
 	}
-	path, method, err := parseRef(options.Ref)
+	if artifact == nil || artifact.Document == nil {
+		return nil, &ExecutionError{Code: CodeSourceConfigError, Message: "OpenAPI artifact is nil"}
+	}
+	target, err := artifact.ResolveOperation(options.Ref)
 	if err != nil {
-		return nil, &ExecutionError{Code: CodeInvalidRef, Message: err.Error(), Cause: err}
+		return nil, executionErrorForOperationResolution(err)
 	}
-	if document.Paths == nil {
-		return nil, &ExecutionError{Code: CodeSourceConfigError, Message: "OpenAPI document has no paths defined"}
-	}
-	pathItem := document.Paths.Find(path)
-	if pathItem == nil || pathItem.GetOperation(strings.ToUpper(method)) == nil {
-		return nil, &ExecutionError{Code: CodeRefNotFound, Message: fmt.Sprintf("operation %q was not found", options.Ref)}
-	}
-	prerequisites, err := preflightPrerequisites(document, options)
+	prerequisites, err := preflightPrerequisitesForTarget(target.Document, target, options)
 	if err != nil {
 		return nil, err
 	}
-	return &PreparedOperation{document: document, options: options, prerequisites: prerequisites}, nil
+	return &PreparedOperation{artifact: artifact, options: options, prerequisites: prerequisites}, nil
+}
+
+func executionErrorForOperationResolution(err error) *ExecutionError {
+	code := CodeInvalidRef
+	var resolution *OperationResolutionError
+	if errors.As(err, &resolution) {
+		switch resolution.Kind {
+		case OperationTargetNotFound:
+			code = CodeRefNotFound
+		case OperationTargetExcluded:
+			code = CodeRefused
+		}
+	}
+	return &ExecutionError{Code: code, Message: err.Error(), Cause: err}
 }
 
 func preflightPrerequisites(document *openapi3.T, options PrepareOptions) (*Prerequisites, error) {
-	path, method, err := parseRef(options.Ref)
-	if err != nil || document.Paths == nil {
+	if document == nil {
 		return nil, nil
 	}
-	pathItem := document.Paths.Find(path)
-	if pathItem == nil {
+	artifact := &Artifact{Document: document, Edition: Edition(document.OpenAPI)}
+	target, err := artifact.ResolveOperation(options.Ref)
+	if err != nil {
 		return nil, nil
 	}
-	operation := pathItem.GetOperation(strings.ToUpper(method))
-	if operation == nil {
-		return nil, nil
-	}
+	return preflightPrerequisitesForTarget(document, target, options)
+}
+
+func preflightPrerequisitesForTarget(document *openapi3.T, target *OperationTarget, options PrepareOptions) (*Prerequisites, error) {
+	pathItem := target.PathItem
+	operation := target.Operation
 	baseURL, err := resolveServer(document, pathItem, operation, options.Context, options.Source.Location)
 	if err != nil {
 		return nil, nil
@@ -212,7 +233,7 @@ func (p *PreparedOperation) Start(ctx context.Context) (*Execution, error) {
 	}
 	args := newExecutionArgs(p.options)
 	go func() {
-		runBinding(execution.ctx, client, args, execution, p.document)
+		runBinding(execution.ctx, client, args, execution, p.artifact)
 		execution.finishAfterRun()
 	}()
 	select {

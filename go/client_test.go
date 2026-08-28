@@ -662,14 +662,14 @@ func TestEnginePrepareUsesWholePointPathForRequestMedia(t *testing.T) {
 }
 
 func TestExactSupportedVersions(t *testing.T) {
-	accepted := []string{"3.0.0", "3.0.1", "3.0.2", "3.0.3", "3.0.4", "3.1.0", "3.1.1", "3.1.2"}
+	accepted := []string{"3.0.0", "3.0.1", "3.0.2", "3.0.3", "3.0.4", "3.1.0", "3.1.1", "3.1.2", "3.2.0"}
 	for _, version := range accepted {
 		document := []byte(fmt.Sprintf(`{"openapi":%q,"info":{"title":"t","version":"1"},"paths":{}}`, version))
 		if _, err := Load(context.Background(), Source{Content: document}, ClientOptions{}); err != nil {
 			t.Fatalf("%s: %v", version, err)
 		}
 	}
-	for _, version := range []string{"3.0.5", "3.1.3", "3.2.0", "2.0"} {
+	for _, version := range []string{"3.0.5", "3.1.3", "3.2.1", "2.0"} {
 		document := []byte(fmt.Sprintf(`{"openapi":%q,"info":{"title":"t","version":"1"},"paths":{}}`, version))
 		if _, err := Load(context.Background(), Source{Content: document}, ClientOptions{}); err == nil || !strings.Contains(err.Error(), "unsupported OpenAPI version") {
 			t.Fatalf("%s: %v", version, err)

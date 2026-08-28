@@ -98,7 +98,7 @@ func classifyhttpFailureError(ctx context.Context, err error) string {
 // path parameters, unmatched input fields, credential collisions — terminate
 // the handle before any network side effect, and before consuming input where
 // knowable.
-func runBinding(ctx context.Context, client *http.Client, args *executionArgs, inv executionHandle[any, any], doc *openapi3.T) {
+func runBinding(ctx context.Context, client *http.Client, args *executionArgs, inv executionHandle[any, any], artifact *Artifact) {
 	// Bound all HTTP I/O to the invocation's lifetime: caller Cancel(), an
 	// abandoned output stream, or upstream ctx cancellation tears down the
 	// in-flight request or SSE stream.
@@ -107,29 +107,18 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 
 	// ----- Pre-side-effect resolution. -----
 
-	pathTemplate, method, err := parseRef(args.Ref)
+	if artifact == nil || artifact.Document == nil {
+		inv.failExecution(&ExecutionError{Code: CodeRefused, Message: "OpenAPI artifact is nil"})
+		return
+	}
+	target, err := artifact.ResolveOperation(args.Ref)
 	if err != nil {
-		inv.failExecution(&ExecutionError{Code: CodeInvalidRef, Message: err.Error()})
+		inv.failExecution(executionErrorForOperationResolution(err))
 		return
 	}
-
-	if doc.Paths == nil {
-		inv.failExecution(&ExecutionError{Code: CodeRefused, Message: "OpenAPI document has no paths defined"})
-		return
-	}
-	// Pointer evaluation follows OAS reference resolution (OAPI-D-03): the
-	// loader resolves path-item $refs (including 3.1 components.pathItems
-	// targets) at load, before this lookup.
-	pathItem := doc.Paths.Find(pathTemplate)
-	if pathItem == nil {
-		inv.failExecution(&ExecutionError{Code: CodeRefNotFound, Message: fmt.Sprintf("path %q not in OpenAPI doc", pathTemplate)})
-		return
-	}
-	op := pathItem.GetOperation(strings.ToUpper(method))
-	if op == nil {
-		inv.failExecution(&ExecutionError{Code: CodeRefNotFound, Message: fmt.Sprintf("method %q not in path %q", method, pathTemplate)})
-		return
-	}
+	doc := target.Document
+	pathTemplate, method := target.Path, target.Method
+	pathItem, op := target.PathItem, target.Operation
 
 	routedRevision := usesRoutedInput(args.Source.Capability)
 	// The input model's structural refusals (§9.1) are declaration-only and

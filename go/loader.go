@@ -12,11 +12,36 @@ import (
 )
 
 func loadDocument(ctx context.Context, client *http.Client, source Source, allowExternalRefs bool) (*openapi3.T, *acceptanceFloor, error) {
+	artifact, floor, err := loadArtifact(ctx, client, source, allowExternalRefs)
+	if artifact == nil {
+		return nil, floor, err
+	}
+	return artifact.Document, floor, err
+}
+
+func loadArtifact(ctx context.Context, client *http.Client, source Source, allowExternalRefs bool) (*Artifact, *acceptanceFloor, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	if client == nil {
 		client = defaultHTTPClient()
+	}
+	if source.Artifact != nil {
+		artifact := source.Artifact
+		if artifact.Document == nil {
+			return nil, nil, fmt.Errorf("OpenAPI artifact document is nil")
+		}
+		if err := checkAcceptedOpenAPIVersion(artifact.Document); err != nil {
+			return nil, nil, err
+		}
+		if Edition(artifact.Document.OpenAPI) != artifact.Edition {
+			return nil, nil, fmt.Errorf("OpenAPI artifact edition %q does not match document edition %q", artifact.Edition, artifact.Document.OpenAPI)
+		}
+		if artifact.Edition.IsOpenAPI32() && artifact.openAPI32 == nil {
+			return nil, nil, fmt.Errorf("OpenAPI 3.2 artifact requires its raw-resource overlay")
+		}
+		localizeReferenceMetadata(artifact.Document)
+		return artifact, nil, nil
 	}
 	if source.Document != nil {
 		// A pre-loaded typed document carries no raw artifact image, so the
@@ -26,8 +51,11 @@ func loadDocument(ctx context.Context, client *http.Client, source Source, allow
 		if err := checkAcceptedOpenAPIVersion(document); err != nil {
 			return nil, nil, err
 		}
+		if Edition(document.OpenAPI).IsOpenAPI32() {
+			return nil, nil, fmt.Errorf("a preloaded OpenAPI 3.2 document must be supplied as Source.Artifact so its raw-resource overlay is preserved")
+		}
 		localizeReferenceMetadata(document)
-		return document, nil, nil
+		return &Artifact{Document: document, Edition: Edition(document.OpenAPI)}, nil, nil
 	}
 	// The artifact's own entry image, captured once by the first attempt and
 	// never overwritten: it is what the acceptance floor classifies against
@@ -36,6 +64,15 @@ func loadDocument(ctx context.Context, client *http.Client, source Source, allow
 	if source.Content != nil {
 		entryBytes = append([]byte(nil), source.Content...)
 	}
+	var edition Edition
+	if entryBytes != nil {
+		classified, err := ClassifyOpenAPIEdition(entryBytes)
+		if err != nil {
+			return nil, nil, err
+		}
+		edition = classified
+	}
+	var artifactOverlay *OpenAPI32Overlay
 
 	// attempt runs one complete shipped load. `entryOverride`, when non-nil,
 	// replaces the ENTRY document's bytes at the seam block 8a proved --
@@ -47,7 +84,23 @@ func loadDocument(ctx context.Context, client *http.Client, source Source, allow
 		loader.IsExternalRefsAllowed = allowExternalRefs
 		retrievalURIs := map[string]*url.URL{}
 		var retrievalMu sync.RWMutex
-		loader.JoinFunc = artifactJoinFunc(retrievalURIs, &retrievalMu)
+		var laneOverlay *OpenAPI32Overlay
+		if edition.IsOpenAPI32() {
+			laneOverlay = newOpenAPI32Overlay()
+			if artifactOverlay == nil {
+				artifactOverlay = laneOverlay
+			}
+		}
+		loader.JoinFunc = func(base, relative *url.URL) *url.URL {
+			resolvedBase := artifactRetrievalURI(base, retrievalURIs, &retrievalMu)
+			if laneOverlay != nil {
+				resolvedBase = laneOverlay.baseFor(resolvedBase)
+			}
+			if resolvedBase == nil {
+				return relative
+			}
+			return resolvedBase.ResolveReference(relative)
+		}
 		normalizer := newRawRefSiblingNormalizer(loader.JoinFunc)
 		read := artifactReadFunc(client, source.Content != nil && source.Location == "", retrievalURIs, &retrievalMu)
 		composition := newExternalComposition(
@@ -65,13 +118,39 @@ func loadDocument(ctx context.Context, client *http.Client, source Source, allow
 			// passes through here, and this call is an EXTERNAL resource --
 			// substituting the entry into it is exactly the confusion that
 			// dropped an externally referenced Path Item member.
-			if source.Content == nil && !entrySeen {
+			isEntry := source.Content == nil && !entrySeen
+			if isEntry {
 				entrySeen = true
 				if entryBytes == nil {
 					entryBytes = append([]byte(nil), data...)
 				}
+				classified, classifyErr := ClassifyOpenAPIEdition(data)
+				if classifyErr != nil {
+					return nil, classifyErr
+				}
+				if edition != "" && edition != classified {
+					return nil, fmt.Errorf("OpenAPI entry edition changed from %q to %q between load attempts", edition, classified)
+				}
+				edition = classified
+				if edition.IsOpenAPI32() {
+					laneOverlay = newOpenAPI32Overlay()
+					if artifactOverlay == nil {
+						artifactOverlay = laneOverlay
+					}
+				}
 				if entryOverride != nil {
 					data = append([]byte(nil), entryOverride...)
+				}
+			}
+			retrieval := artifactRetrievalURI(resource, retrievalURIs, &retrievalMu)
+			if laneOverlay != nil {
+				if captureErr := laneOverlay.capture(data, resource, retrieval, isEntry); captureErr != nil {
+					return nil, captureErr
+				}
+				if !isEntry && artifactOverlay != nil && artifactOverlay != laneOverlay {
+					if captureErr := artifactOverlay.capture(data, resource, retrieval, false); captureErr != nil {
+						return nil, captureErr
+					}
 				}
 			}
 			data = composition.prune(resource, data)
@@ -81,7 +160,7 @@ func loadDocument(ctx context.Context, client *http.Client, source Source, allow
 			if err := composition.refusal(); err != nil {
 				return nil, err
 			}
-			return normalizer.normalizeResourceAt(data, resource, artifactRetrievalURI(resource, retrievalURIs, &retrievalMu))
+			return normalizer.normalizeResourceAt(data, resource, retrieval)
 		}
 
 		var document *openapi3.T
@@ -97,6 +176,11 @@ func loadDocument(ctx context.Context, client *http.Client, source Source, allow
 			entry := source.Content
 			if entryOverride != nil {
 				entry = entryOverride
+			}
+			if laneOverlay != nil {
+				if captureErr := laneOverlay.capture(entry, resource, resource, true); captureErr != nil {
+					return nil, captureErr
+				}
 			}
 			data, normalizeErr := normalizer.normalizeResource(entry, resource)
 			if normalizeErr != nil {
@@ -133,10 +217,45 @@ func loadDocument(ctx context.Context, client *http.Client, source Source, allow
 		if err := checkAcceptedOpenAPIVersion(document); err != nil {
 			return nil, err
 		}
+		if Edition(document.OpenAPI) != edition {
+			return nil, fmt.Errorf("pre-resolution OpenAPI edition %q changed to %q during typed loading", edition, document.OpenAPI)
+		}
+		if artifactOverlay == nil {
+			artifactOverlay = laneOverlay
+		}
 		return document, nil
 	}
 
 	document, err := attempt(nil)
+	var operationTargets map[string]*OperationTarget
+	var operationErrors map[string]error
+	fallbackAllTargetsExcluded := false
+	if err == nil && edition.IsOpenAPI32() && artifactOverlay != nil {
+		composed := buildOpenAPI32Targets(artifactOverlay, artifactOverlay.composedOperationReferences(), attempt)
+		operationTargets = composed.targets
+		operationErrors = composed.errors
+	}
+	if err != nil {
+		if edition.IsOpenAPI32() && artifactOverlay != nil {
+			fallback := buildOpenAPI32Fallback(artifactOverlay, attempt)
+			if fallback.used {
+				document = fallback.document
+				if document == nil {
+					document = &openapi3.T{OpenAPI: string(edition), Paths: openapi3.NewPaths()}
+				}
+				operationTargets = fallback.targets
+				operationErrors = fallback.errors
+				fallbackAllTargetsExcluded = len(fallback.targets) == 0 && len(fallback.errors) > 0
+				err = nil
+			} else if len(artifactOverlay.operationReferences()) == 0 {
+				// A 3.2 description with no operation target is accepted even if
+				// kin rejects unrelated reusable material. The raw overlay remains
+				// the authority; the typed image is intentionally empty.
+				document = &openapi3.T{OpenAPI: string(edition), Paths: openapi3.NewPaths()}
+				err = nil
+			}
+		}
+	}
 	if err != nil {
 		// Fast path first: confinement is reached only after the shipped load
 		// has already refused. On any confinement failure the ORIGINAL error
@@ -178,7 +297,39 @@ func loadDocument(ctx context.Context, client *http.Client, source Source, allow
 	if floor != nil && floor.Refusal != "" {
 		return nil, nil, errors.New(floor.Refusal)
 	}
-	return document, floor, nil
+	sourceRefusal, sourceExclusion := openAPI32ArtifactDisposition(document)
+	if edition.IsOpenAPI32() && artifactOverlay != nil {
+		sourceRefusal, sourceExclusion = artifactOverlay.artifactDisposition()
+	}
+	if fallbackAllTargetsExcluded {
+		sourceRefusal = "every addressable OpenAPI 3.2 operation target is excluded"
+	}
+	artifact := &Artifact{
+		Document:         document,
+		Edition:          edition,
+		entryBytes:       append([]byte(nil), entryBytes...),
+		openAPI32:        artifactOverlay,
+		operationTargets: operationTargets,
+		operationErrors:  operationErrors,
+		sourceRefusal:    sourceRefusal,
+		sourceExclusion:  sourceExclusion,
+	}
+	if edition.IsOpenAPI32() && artifact.sourceRefusal == "" && artifact.sourceExclusion == "" {
+		references := artifactOverlay.operationReferences()
+		if len(references) > 0 {
+			surviving := false
+			for _, reference := range references {
+				if _, resolveErr := artifact.ResolveOperation(reference.Ref); resolveErr == nil {
+					surviving = true
+					break
+				}
+			}
+			if !surviving {
+				artifact.sourceRefusal = "every addressable OpenAPI 3.2 operation target is excluded"
+			}
+		}
+	}
+	return artifact, floor, nil
 }
 
 func absoluteDocumentURL(location string) (*url.URL, error) {
@@ -249,7 +400,7 @@ func checkAcceptedOpenAPIVersion(document *openapi3.T) error {
 	}
 	version := document.OpenAPI
 	accepted := version == "3.0.0" || version == "3.0.1" || version == "3.0.2" || version == "3.0.3" || version == "3.0.4" ||
-		version == "3.1.0" || version == "3.1.1" || version == "3.1.2"
+		version == "3.1.0" || version == "3.1.1" || version == "3.1.2" || version == "3.2.0"
 	if !accepted {
 		return fmt.Errorf("unsupported OpenAPI version %q", version)
 	}
