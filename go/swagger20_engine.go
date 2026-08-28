@@ -13,14 +13,19 @@ import (
 // deliberately separate from PrepareOptions so Source.Document remains typed
 // as *openapi3.T and the two edition lanes never share a structural model.
 type Swagger20PrepareOptions struct {
-	Source             Swagger20Source
-	Ref                string
-	Context            map[string]any
-	HTTPClient         *http.Client
-	Server             string
-	ParameterConverter ParameterConverter
-	EmptyValueForm     Swagger20EmptyValueForm
-	AllowExternalRefs  *bool
+	Source                 Swagger20Source
+	Ref                    string
+	Context                map[string]any
+	HTTPClient             *http.Client
+	Server                 string
+	RequestMedia           string
+	PropertyMedia          map[string]string
+	ParameterConverter     ParameterConverter
+	EmptyValueForm         Swagger20EmptyValueForm
+	RequestContentCodings  map[string]ContentEncoder
+	ResponseContentCodings map[string]ContentDecoder
+	MaxDeliveryUnitBytes   int64
+	AllowExternalRefs      *bool
 }
 
 type Swagger20PreparedOperation struct {
@@ -79,6 +84,16 @@ func (p *Swagger20PreparedOperation) parameters() (*swagger20ParameterSet, error
 // PrepareSwagger20 selects one operation through the exact Swagger 2.0 gate
 // and JSON-Pointer selector grammar. It never invokes the OpenAPI 3.x loader.
 func (e *Engine) PrepareSwagger20(ctx context.Context, options Swagger20PrepareOptions) (*Swagger20PreparedOperation, error) {
+	requestCodings, err := normalizeContentEncoders(options.RequestContentCodings)
+	if err != nil {
+		return nil, &ExecutionError{Code: CodeRefused, Message: err.Error(), Cause: err}
+	}
+	responseCodings, err := normalizeContentDecoders(options.ResponseContentCodings)
+	if err != nil {
+		return nil, &ExecutionError{Code: CodeRefused, Message: err.Error(), Cause: err}
+	}
+	options.RequestContentCodings = requestCodings
+	options.ResponseContentCodings = responseCodings
 	loadClient := options.HTTPClient
 	if loadClient == nil && e != nil {
 		loadClient = e.client

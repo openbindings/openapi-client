@@ -75,12 +75,6 @@ func validateSwagger20AssertionDeclaration(raw swagger20Object, typeName string)
 }
 
 func (p *swagger20Parameter) validateAndConvert(value any, converter ParameterConverter) ([]string, error) {
-	if p.typeName == "file" {
-		if _, ok := value.([]byte); !ok {
-			return nil, fmt.Errorf("parameter %q requires exact file octets", p.name)
-		}
-		return nil, nil
-	}
 	if p.typeName == "array" {
 		array, ok := swagger20Array(value)
 		if !ok {

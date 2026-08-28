@@ -10,6 +10,8 @@ type swagger20WireContribution struct {
 	value               string
 	valuePresent        bool
 	structuralDelimiter string
+	parameter           *swagger20Parameter
+	octets              []byte
 }
 
 type swagger20RoutedInput struct {
@@ -19,6 +21,7 @@ type swagger20RoutedInput struct {
 	formData     []swagger20WireContribution
 	body         any
 	bodyPresent  bool
+	formPresent  bool
 }
 
 func routeSwagger20Input(set *swagger20ParameterSet, path string, input Swagger20Input, options Swagger20PrepareOptions) (swagger20RoutedInput, error) {
@@ -82,6 +85,7 @@ func routeSwagger20Input(set *swagger20ParameterSet, path string, input Swagger2
 				routed.headers = append(routed.headers, contribution)
 			}
 		case Swagger20ParameterFormData:
+			routed.formPresent = true
 			routed.formData = append(routed.formData, contributions...)
 		}
 	}
@@ -89,12 +93,20 @@ func routeSwagger20Input(set *swagger20ParameterSet, path string, input Swagger2
 }
 
 func (p *swagger20Parameter) serialize(value any, converter ParameterConverter, emptyForm Swagger20EmptyValueForm) ([]swagger20WireContribution, error) {
+	if p.typeName == "file" {
+		text, ok := value.(string)
+		if !ok {
+			return nil, fmt.Errorf("parameter %q requires a canonical Base64 file value", p.name)
+		}
+		octets, err := canonicalBase64BoundaryBytes("parameter "+p.name, text)
+		if err != nil {
+			return nil, err
+		}
+		return []swagger20WireContribution{{name: p.name, valuePresent: true, parameter: p, octets: octets}}, nil
+	}
 	converted, err := p.validateAndConvert(value, converter)
 	if err != nil {
 		return nil, err
-	}
-	if p.typeName == "file" {
-		return []swagger20WireContribution{{name: p.name, valuePresent: true}}, nil
 	}
 	if p.typeName != "array" && len(converted) == 1 && converted[0] == "" {
 		if !p.allowEmptyValue {
@@ -102,20 +114,20 @@ func (p *swagger20Parameter) serialize(value any, converter ParameterConverter, 
 		}
 		switch emptyForm {
 		case Swagger20EmptyValueNameOnly:
-			return []swagger20WireContribution{{name: p.name}}, nil
+			return []swagger20WireContribution{{name: p.name, parameter: p}}, nil
 		case Swagger20EmptyValueEmpty:
-			return []swagger20WireContribution{{name: p.name, valuePresent: true}}, nil
+			return []swagger20WireContribution{{name: p.name, valuePresent: true, parameter: p}}, nil
 		default:
 			return nil, fmt.Errorf("parameter %q requires emptyValueForm name-only or empty", p.name)
 		}
 	}
 	if p.typeName != "array" {
-		return []swagger20WireContribution{{name: p.name, value: converted[0], valuePresent: true}}, nil
+		return []swagger20WireContribution{{name: p.name, value: converted[0], valuePresent: true, parameter: p}}, nil
 	}
 	if p.collectionFormat == "multi" {
 		result := make([]swagger20WireContribution, len(converted))
 		for index, member := range converted {
-			result[index] = swagger20WireContribution{name: p.name, value: member, valuePresent: true}
+			result[index] = swagger20WireContribution{name: p.name, value: member, valuePresent: true, parameter: p}
 		}
 		return result, nil
 	}
@@ -126,7 +138,7 @@ func (p *swagger20Parameter) serialize(value any, converter ParameterConverter, 
 		}
 	}
 	return []swagger20WireContribution{{
-		name: p.name, value: strings.Join(converted, delimiter), valuePresent: true, structuralDelimiter: delimiter,
+		name: p.name, value: strings.Join(converted, delimiter), valuePresent: true, structuralDelimiter: delimiter, parameter: p,
 	}}, nil
 }
 
