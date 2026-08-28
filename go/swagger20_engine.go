@@ -6,24 +6,31 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 )
 
 // Swagger20PrepareOptions is the edition-specific preparation surface. It is
 // deliberately separate from PrepareOptions so Source.Document remains typed
 // as *openapi3.T and the two edition lanes never share a structural model.
 type Swagger20PrepareOptions struct {
-	Source            Swagger20Source
-	Ref               string
-	Context           map[string]any
-	HTTPClient        *http.Client
-	AllowExternalRefs *bool
+	Source             Swagger20Source
+	Ref                string
+	Context            map[string]any
+	HTTPClient         *http.Client
+	Server             string
+	ParameterConverter ParameterConverter
+	EmptyValueForm     Swagger20EmptyValueForm
+	AllowExternalRefs  *bool
 }
 
 type Swagger20PreparedOperation struct {
-	document  *Swagger20Document
-	operation swagger20Operation
-	info      OperationInfo
-	options   Swagger20PrepareOptions
+	document      *Swagger20Document
+	operation     swagger20Operation
+	info          OperationInfo
+	options       Swagger20PrepareOptions
+	parameterOnce sync.Once
+	parameterSet  *swagger20ParameterSet
+	parameterErr  error
 }
 
 func (p *Swagger20PreparedOperation) Ref() string {
@@ -42,21 +49,55 @@ func (p *Swagger20PreparedOperation) Info() OperationInfo {
 	return info
 }
 
+// Parameters returns the effective Swagger 2.0 parameter identities after
+// reference resolution, override, and declaration-only exclusion checks.
+func (p *Swagger20PreparedOperation) Parameters() ([]Swagger20ParameterInfo, error) {
+	parameters, err := p.parameters()
+	if err != nil {
+		return nil, err
+	}
+	result := make([]Swagger20ParameterInfo, len(parameters.all))
+	for index, parameter := range parameters.all {
+		result[index] = parameter.info()
+	}
+	return result, nil
+}
+
+func (p *Swagger20PreparedOperation) parameters() (*swagger20ParameterSet, error) {
+	if p == nil {
+		return nil, &ExecutionError{Code: CodeRefused, Message: "Swagger 2.0 prepared operation is nil"}
+	}
+	p.parameterOnce.Do(func() {
+		p.parameterSet, p.parameterErr = effectiveSwagger20Parameters(p.document.graph, p.operation)
+		if p.parameterErr != nil {
+			p.parameterErr = &ExecutionError{Code: CodeRefused, Message: p.parameterErr.Error(), Cause: p.parameterErr}
+		}
+	})
+	return p.parameterSet, p.parameterErr
+}
+
 // PrepareSwagger20 selects one operation through the exact Swagger 2.0 gate
 // and JSON-Pointer selector grammar. It never invokes the OpenAPI 3.x loader.
 func (e *Engine) PrepareSwagger20(ctx context.Context, options Swagger20PrepareOptions) (*Swagger20PreparedOperation, error) {
-	client := options.HTTPClient
-	if client == nil && e != nil {
-		client = e.client
+	loadClient := options.HTTPClient
+	if loadClient == nil && e != nil {
+		loadClient = e.client
 	}
-	if client == nil {
-		client = defaultHTTPClient()
+	if loadClient == nil {
+		loadClient = defaultHTTPClient()
+	}
+	if options.HTTPClient == nil {
+		if e != nil {
+			options.HTTPClient = e.invocationClient
+		} else {
+			options.HTTPClient = defaultInvocationHTTPClient()
+		}
 	}
 	allowExternal := true
 	if options.AllowExternalRefs != nil {
 		allowExternal = *options.AllowExternalRefs
 	}
-	document, err := loadSwagger20Document(ctx, client, options.Source, allowExternal)
+	document, err := loadSwagger20Document(ctx, loadClient, options.Source, allowExternal)
 	if err != nil {
 		return nil, &ExecutionError{Code: CodeSourceLoadFailed, Message: err.Error(), Cause: err}
 	}
@@ -93,7 +134,9 @@ func resolveSwagger20Operation(document *Swagger20Document, ref string) (swagger
 	if !declared.present || !declared.valid {
 		return swagger20Operation{}, OperationInfo{}, &ExecutionError{Code: CodeRefNotFound, Message: fmt.Sprintf("operation %q was not found", ref)}
 	}
-	operation := swagger20Operation{raw: declared.value, resource: item.resource, path: path, method: method}
+	operation := swagger20Operation{
+		raw: declared.value, resource: item.resourceFor(method), pathItem: item, path: path, method: method,
+	}
 	return operation, operation.operationInfo(ref), nil
 }
 

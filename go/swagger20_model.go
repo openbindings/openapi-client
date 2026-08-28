@@ -111,8 +111,9 @@ func (d swagger20DocumentObject) paths() swagger20Member[swagger20Object] {
 }
 
 type swagger20PathItem struct {
-	raw      swagger20Object
-	resource *swagger20Resource
+	raw             swagger20Object
+	resource        *swagger20Resource
+	memberResources map[string]*swagger20Resource
 }
 
 func (p swagger20PathItem) reference() swagger20Member[string] {
@@ -127,9 +128,17 @@ func (p swagger20PathItem) parameters() swagger20Member[[]any] {
 	return p.raw.array("parameters")
 }
 
+func (p swagger20PathItem) resourceFor(member string) *swagger20Resource {
+	if resource := p.memberResources[member]; resource != nil {
+		return resource
+	}
+	return p.resource
+}
+
 type swagger20Operation struct {
 	raw      swagger20Object
 	resource *swagger20Resource
+	pathItem swagger20PathItem
 	path     string
 	method   string
 }

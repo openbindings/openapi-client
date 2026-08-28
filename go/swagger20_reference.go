@@ -205,8 +205,10 @@ func (g *swagger20ReferenceGraph) resolvePathItem(item swagger20PathItem, method
 	}
 
 	merged := make(swagger20Object, len(target.raw)+len(item.raw))
+	memberResources := make(map[string]*swagger20Resource, len(target.raw)+len(item.raw))
 	for name, value := range target.raw {
 		merged[name] = value
+		memberResources[name] = target.resourceFor(name)
 	}
 	for name, value := range item.raw {
 		if name == "$ref" {
@@ -219,6 +221,7 @@ func (g *swagger20ReferenceGraph) resolvePathItem(item swagger20PathItem, method
 			continue
 		}
 		merged[name] = value
+		memberResources[name] = item.resourceFor(name)
 	}
-	return swagger20PathItem{raw: merged, resource: target.resource}, nil
+	return swagger20PathItem{raw: merged, resource: target.resource, memberResources: memberResources}, nil
 }
