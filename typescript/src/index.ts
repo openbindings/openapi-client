@@ -36,6 +36,8 @@ export {
   selectOpenAPI32Response,
 } from "./openapi32-response.js";
 export type { OpenAPI32ResponseSelection } from "./openapi32-response.js";
+export { classifyOpenAPI32SequentialResponse } from "./openapi32-sequential-response.js";
+export type { OpenAPI32SequentialResponseKind } from "./openapi32-sequential-response.js";
 export type {
   OpenAPIArtifactLoadOptions,
   OpenAPIArtifactSource,

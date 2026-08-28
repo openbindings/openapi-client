@@ -5,6 +5,7 @@ import {
   parseMediaType,
 } from "./media.js";
 import { resolveDeclaration, type SchemaDeclaration } from "./resolved-declaration.js";
+import { classifyOpenAPI32SequentialResponse } from "./openapi32-sequential-response.js";
 import type {
   OpenAPIDocument,
   OpenAPIMediaType,
@@ -116,6 +117,40 @@ export async function governOpenAPIResponse(
 ): Promise<Response> {
   const governing = governingResponse(model.operation, response.status);
   if (governing) requireGovernedResponseHeaders(governing.response, response.headers);
+
+  // A native 3.2 sequential response must remain a stream: the invocation
+  // layer owns framing and applies the delivery-unit limit per item. An
+  // encoded representation is decoded below before it can be item-framed.
+  const sourceContentType = response.headers.get("Content-Type");
+  const sourceCoding = response.headers.get("Content-Encoding") ?? "";
+  if (
+    model.document.openapi === "3.2.0"
+    && model.method.toLowerCase() !== "head"
+    && response.body
+    && sourceContentType !== null
+    && sourceCoding === ""
+    && governing
+  ) {
+    let match: ReturnType<typeof governingResponseMediaMatch>;
+    try {
+      match = governingResponseMediaMatch(governing.response, sourceContentType, true, true);
+    } catch {
+      responseError("actual response media does not match its governing declaration");
+    }
+    if (!match) responseError("actual response media does not match its governing declaration");
+    let sequential;
+    try {
+      sequential = classifyOpenAPI32SequentialResponse(sourceContentType, match.media);
+    } catch {
+      responseError("response itemSchema has no incorporated sequential framing");
+    }
+    if (sequential) {
+      if (sequential === "sse") {
+        validateResponseMediaLane(match.media, sourceContentType, false);
+      }
+      return response;
+    }
+  }
 
   let bytes: Uint8Array;
   const deliveryLimit = resolveOpenAPIDeliveryUnitLimit(model.maxDeliveryUnitBytes);

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { loadOpenAPIArtifact } from "./openapi32-artifact.js";
 import { admittedOpenAPI32ResponseKey } from "./openapi32-response.js";
+import { classifyOpenAPI32SequentialResponse } from "./openapi32-sequential-response.js";
 
 function document(responses: Record<string, unknown>): Record<string, unknown> {
   return {
@@ -57,5 +58,21 @@ describe("OpenAPI 3.2 response governance", () => {
         kind: "excluded",
       });
     }
+  });
+
+  it("classifies incorporated sequential response framing and rejects unframed itemSchema", () => {
+    expect(classifyOpenAPI32SequentialResponse("application/jsonl", { itemSchema: {} }))
+      .toBe("json-lines");
+    expect(classifyOpenAPI32SequentialResponse("application/problem+json-seq", { itemSchema: {} }))
+      .toBe("json-seq");
+    expect(classifyOpenAPI32SequentialResponse("text/event-stream; charset=utf-8", { itemSchema: {} }))
+      .toBe("sse");
+    expect(classifyOpenAPI32SequentialResponse("multipart/mixed; boundary=b", {
+      schema: { type: "array" },
+    })).toBe("multipart");
+    expect(classifyOpenAPI32SequentialResponse("application/json", { schema: {} }))
+      .toBeUndefined();
+    expect(() => classifyOpenAPI32SequentialResponse("application/x-private", { itemSchema: {} }))
+      .toThrow(/no incorporated sequential framing/u);
   });
 });

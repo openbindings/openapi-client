@@ -88,6 +88,10 @@ import {
 import type { OpenAPIExecutionProfile } from "./profile.js";
 import type { OpenAPIResolvedOperation } from "./openapi32-operations.js";
 import { validateOpenAPI32ParameterSerialization } from "./openapi32-parameters.js";
+import {
+  classifyOpenAPI32SequentialResponse,
+  streamOpenAPI32SequentialResponse,
+} from "./openapi32-sequential-response.js";
 
 interface OpenAPIBindingRunArgs extends BindingInvocationArgs {
   openAPITarget?: OpenAPIResolvedOperation;
@@ -597,10 +601,122 @@ export async function runBinding(
     return;
   }
 
+  // OpenAPI 3.2 response media can frame a sequence of operation values.
+  // Peek only far enough to preserve the empty-representation rule, then
+  // leave the replayed body streaming so each item owns its delivery bound.
+  if (doc.openapi === "3.2.0") {
+    try {
+      const peeked = await peekResponseBody(resp);
+      resp = peeked.response;
+      if (peeked.empty) {
+        const raw: RawResult = { status: resp.status, body: "", meta: invocationMeta };
+        const ok = await classifyThroughHooks(args.hooks, site, raw, builtinClassify);
+        if (!ok) {
+          inv.fireError(new InvocationError(
+            httpErrorCode(resp.status),
+            "Invocation completed unsuccessfully",
+            undefined,
+            openAPIFailureDetails(
+              resp,
+              new Uint8Array(),
+              "",
+              invocationMeta,
+              responseDeclaration,
+              contentType,
+              revision3,
+              responseFidelity,
+            ),
+          ));
+          return;
+        }
+        inv.setTrailer(decodeClassifyTrailer(args.hooks, "not-consulted/empty"));
+        inv.closeOutput();
+        return;
+      }
+    } catch (error: unknown) {
+      inv.fireError(toInvocationError(error));
+      return;
+    }
+
+    contentType ??= "application/octet-stream";
+    if (responseDeclaration) {
+      try {
+        const match = governingResponseMediaMatch(
+          responseDeclaration.response,
+          contentType,
+          revision3,
+          responseFidelity,
+        );
+        if (match) {
+          const kind = classifyOpenAPI32SequentialResponse(contentType, match.media);
+          if (kind) {
+            let ok: boolean;
+            try {
+              ok = await classifyThroughHooks(
+                args.hooks,
+                site,
+                { status: resp.status, body: "", meta: invocationMeta },
+                builtinClassify,
+              );
+            } catch (error: unknown) {
+              await resp.body?.cancel().catch(() => {});
+              inv.fireError(toInvocationError(error));
+              return;
+            }
+            if (!ok) {
+              let failureBody: Uint8Array;
+              try {
+                failureBody = await readResponseBytes(resp, resolveDeliveryUnitLimit(args));
+              } catch (error: unknown) {
+                if (!inv.signal.aborted) {
+                  inv.fireError(new InvocationError(ERR_RESPONSE_ERROR, errorMessage(error)));
+                }
+                return;
+              }
+              inv.fireError(new InvocationError(
+                httpErrorCode(resp.status),
+                "Invocation completed unsuccessfully",
+                undefined,
+                openAPIFailureDetails(
+                  resp,
+                  failureBody,
+                  new TextDecoder().decode(failureBody),
+                  invocationMeta,
+                  responseDeclaration,
+                  contentType,
+                  revision3,
+                  responseFidelity,
+                ),
+              ));
+              return;
+            }
+            const trailer = decodeClassifyTrailer(args.hooks, "header/content-type");
+            trailer["x-ob-governing-media"] = [match.declared.canonical];
+            inv.setTrailer(trailer);
+            await streamOpenAPI32SequentialResponse(
+              resp,
+              args,
+              site,
+              inv,
+              invocationMeta,
+              kind,
+              match.media,
+            );
+            return;
+          }
+        }
+      } catch (error: unknown) {
+        await resp.body?.cancel().catch(() => {});
+        inv.fireError(new InvocationError(ERR_PROTOCOL, errorMessage(error)));
+        return;
+      }
+    }
+  }
+
   // A truly empty 2xx carries no output regardless of a stray streaming
   // Content-Type. Peek without buffering the stream: a non-empty first
   // chunk is replayed into a replacement Response for normal SSE handling.
-  if (isSSEContentType(contentType)) {
+  if (doc.openapi !== "3.2.0" && isSSEContentType(contentType)) {
     try {
       const peeked = await peekResponseBody(resp);
       resp = peeked.response;
