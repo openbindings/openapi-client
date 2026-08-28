@@ -671,6 +671,13 @@ export {
   classifyOpenAPIEdition,
   loadOpenAPIArtifact,
 } from "./openapi32-artifact.js";
+export { documentInboundOperationInventory } from "./openapi-inbound-inventory.js";
+export type {
+  OpenAPIInboundOperationDisposition,
+  OpenAPIInboundOperationKind,
+  OpenAPIInboundOperationReference,
+  OpenAPIInboundOperationTarget,
+} from "./openapi-inbound-inventory.js";
 export type {
   OpenAPIArtifactLoadOptions,
   OpenAPIArtifactSource,

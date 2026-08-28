@@ -26,6 +26,13 @@ export type {
   OpenAPISuccessResult,
 } from "./client.js";
 export type { OpenAPIParameterConverter } from "./params.js";
+export { documentInboundOperationInventory } from "./openapi-inbound-inventory.js";
+export type {
+  OpenAPIInboundOperationDisposition,
+  OpenAPIInboundOperationKind,
+  OpenAPIInboundOperationReference,
+  OpenAPIInboundOperationTarget,
+} from "./openapi-inbound-inventory.js";
 export {
   OpenAPIArtifact,
   classifyOpenAPIEdition,

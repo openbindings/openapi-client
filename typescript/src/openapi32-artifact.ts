@@ -25,6 +25,10 @@ import {
   openAPI32SecuritySchemeReference,
 } from "./openapi32-security.js";
 import { admittedOpenAPI32ResponseKey, selectOpenAPI32Response, type OpenAPI32ResponseSelection } from "./openapi32-response.js";
+import {
+  documentInboundOperationInventory,
+  type OpenAPIInboundOperationDisposition,
+} from "./openapi-inbound-inventory.js";
 
 export type OpenAPIEdition =
   | "3.0.0" | "3.0.1" | "3.0.2" | "3.0.3" | "3.0.4"
@@ -191,6 +195,11 @@ export class OpenAPIArtifact {
       return result;
     }
     return this.overlay.operationInventory();
+  }
+
+  /** Inventories targetless callback and webhook operation declarations. */
+  inboundOperationInventory(): OpenAPIInboundOperationDisposition[] {
+    return documentInboundOperationInventory(this.document);
   }
 
   /** Selects the response declaration governing one final OpenAPI 3.2 status. */
