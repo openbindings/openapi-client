@@ -18,6 +18,9 @@ type Swagger20PrepareOptions struct {
 	Context                map[string]any
 	HTTPClient             *http.Client
 	Server                 string
+	ServerSchemeIndex      *int
+	SecurityAlternative    *int
+	SecurityCredentials    Swagger20SecurityCredentials
 	RequestMedia           string
 	PropertyMedia          map[string]string
 	ParameterConverter     ParameterConverter

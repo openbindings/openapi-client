@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 )
 
@@ -20,7 +19,12 @@ func (p *Swagger20PreparedOperation) Start(ctx context.Context) (*Execution, err
 	if err != nil {
 		return nil, err
 	}
-	if err := validateSwagger20ServerOverride(p.options.Server); err != nil {
+	serverBase, err := resolveSwagger20Server(p.document, p.operation, p.options.Server, p.options.ServerSchemeIndex)
+	if err != nil {
+		return nil, &ExecutionError{Code: CodeRefused, Message: err.Error(), Cause: err}
+	}
+	security, err := selectSwagger20Security(p.document, p.operation, parameters, p.options.SecurityAlternative, p.options.SecurityCredentials)
+	if err != nil {
 		return nil, &ExecutionError{Code: CodeRefused, Message: err.Error(), Cause: err}
 	}
 	if p.options.EmptyValueForm != "" && p.options.EmptyValueForm != Swagger20EmptyValueNameOnly && p.options.EmptyValueForm != Swagger20EmptyValueEmpty {
@@ -49,7 +53,7 @@ func (p *Swagger20PreparedOperation) Start(ctx context.Context) (*Execution, err
 		client = defaultInvocationHTTPClient()
 	}
 	go func() {
-		runSwagger20(execution.ctx, client, p, parameters, responses, execution)
+		runSwagger20(execution.ctx, client, p, parameters, responses, serverBase, security, execution)
 		execution.finishAfterRun()
 	}()
 	select {
@@ -75,7 +79,7 @@ func swagger20PayloadIsRequired(model swagger20PayloadModel) bool {
 	return false
 }
 
-func runSwagger20(ctx context.Context, client *http.Client, prepared *Swagger20PreparedOperation, parameters *swagger20ParameterSet, responses swagger20ResponseSet, execution *Execution) {
+func runSwagger20(ctx context.Context, client *http.Client, prepared *Swagger20PreparedOperation, parameters *swagger20ParameterSet, responses swagger20ResponseSet, serverBase string, security []swagger20CredentialPlacement, execution *Execution) {
 	input := Swagger20Input{}
 	// Even a parameter-free operation observes the optional caller envelope:
 	// an authored unknown member must refuse rather than race a dispatch. EOF
@@ -109,6 +113,7 @@ func runSwagger20(ctx context.Context, client *http.Client, prepared *Swagger20P
 		execution.failExecution(&ExecutionError{Code: CodeRefused, Message: err.Error(), Cause: err})
 		return
 	}
+	applySwagger20Security(&routed, security)
 	payloadPresent := routed.bodyPresent || routed.formPresent
 	if payloadPresent && swagger20MethodExcludesPayload(prepared.operation.method) {
 		execution.failExecution(&ExecutionError{Code: CodeRefused, Message: fmt.Sprintf("Swagger 2.0 %s operations exclude the payload lane", prepared.operation.method)})
@@ -138,7 +143,7 @@ func runSwagger20(ctx context.Context, client *http.Client, prepared *Swagger20P
 			return
 		}
 	}
-	requestURL, err := AssembleRequestURL(prepared.options.Server, routed.resolvedPath, swagger20RawQuery(routed.query))
+	requestURL, err := AssembleRequestURL(serverBase, routed.resolvedPath, swagger20RawQuery(routed.query))
 	if err != nil {
 		execution.failExecution(&ExecutionError{Code: CodeRefused, Message: err.Error(), Cause: err})
 		return
@@ -241,24 +246,4 @@ func swagger20HeaderParameter(parameters *swagger20ParameterSet, name string) *s
 		found = parameter
 	}
 	return found
-}
-
-func validateSwagger20ServerOverride(value string) error {
-	if value == "" {
-		return fmt.Errorf("Swagger 2.0 execution requires a complete consumer server override in this pass")
-	}
-	if err := validateServerBaseSpelling(value); err != nil {
-		return err
-	}
-	parsed, err := url.Parse(value)
-	if err != nil {
-		return err
-	}
-	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return fmt.Errorf("Swagger 2.0 consumer server scheme %q is not HTTP", parsed.Scheme)
-	}
-	if parsed.Host == "" {
-		return fmt.Errorf("Swagger 2.0 consumer server override is not an absolute authority URL")
-	}
-	return nil
 }
