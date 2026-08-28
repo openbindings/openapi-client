@@ -11,6 +11,17 @@ type Source struct {
 	Location string
 	Content  []byte
 	Document *openapi3.T
+	// Artifact carries a document together with edition-specific raw-resource
+	// state that a typed OpenAPI model cannot preserve. Callers that preload a
+	// 3.2 description must pass the Artifact, not only Document.
+	Artifact *Artifact
+}
+
+// ArtifactLoadOptions configures OpenAPI document retrieval without adding
+// binding- or OBI-specific policy to the native client.
+type ArtifactLoadOptions struct {
+	HTTPClient        *http.Client
+	AllowExternalRefs bool
 }
 
 type Requirement struct {
@@ -63,6 +74,11 @@ type SecurityHandler func(*http.Request, SecurityHandlerContext) error
 // consumed by OpenAPI parameter serialization. Strings pass through
 // unchanged. The function must be safe for concurrent calls.
 type ParameterConverter func(value any) (string, error)
+
+// ParameterInQueryString is the OpenAPI 3.2 Parameter Object location whose
+// application value supplies the complete query component. kin-openapi's
+// typed Parameter retains the literal but does not publish a constant for it.
+const ParameterInQueryString = "querystring"
 
 // ContentEncoder and ContentDecoder are deterministic whole-representation
 // HTTP content-coding capabilities. Request encoders run in field order;

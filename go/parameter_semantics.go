@@ -10,6 +10,7 @@ import (
 
 type parameterSerializationOptions struct {
 	edition   string
+	document  *openapi3.T
 	converter ParameterConverter
 }
 
@@ -17,10 +18,17 @@ type parameterSerializationOptions struct {
 // value mechanics before style expansion (openbindings.openapi-3.0@1 §§8.1–
 // 8.3; openbindings.openapi-3.1@1 §§8.1–8.3).
 func prepareParameterValue(parameter *openapi3.Parameter, value any, converter ParameterConverter) (any, bool, error) {
+	return prepareParameterValueForEdition(parameter, value, converter, "")
+}
+
+func prepareParameterValueForEdition(parameter *openapi3.Parameter, value any, converter ParameterConverter, edition string) (any, bool, error) {
 	if parameter == nil {
 		return nil, false, fmt.Errorf("parameter has no effective declaration")
 	}
 	if len(parameter.Content) > 0 {
+		if parameter.In == ParameterInQueryString {
+			return value, false, nil
+		}
 		serialized, err := serializeParamContentFor(parameter, value, profileFullCoordinate)
 		if err != nil {
 			return nil, false, err
@@ -31,7 +39,7 @@ func prepareParameterValue(parameter *openapi3.Parameter, value any, converter P
 		return value, parameter.In == openapi3.ParameterInCookie, nil
 	}
 
-	method, err := revision3ParameterSerializationMethod(parameter)
+	method, err := revision3ParameterSerializationMethodForEdition(parameter, edition)
 	if err != nil {
 		return nil, false, err
 	}
@@ -53,7 +61,7 @@ func prepareParameterValue(parameter *openapi3.Parameter, value any, converter P
 		if err != nil {
 			return nil, false, err
 		}
-		if len(units) > 1 {
+		if len(units) > 1 && method.Style == openapi3.SerializationForm {
 			return nil, false, fmt.Errorf("supplied value would produce multiple cookie pairs")
 		}
 		return prepared, len(units) > 0, nil
@@ -64,7 +72,7 @@ func prepareParameterValue(parameter *openapi3.Parameter, value any, converter P
 func prepareParameterStyleValue(name string, value any, style string, converter ParameterConverter) (any, error) {
 	if value == nil {
 		switch style {
-		case openapi3.SerializationMatrix, openapi3.SerializationLabel, openapi3.SerializationSimple, openapi3.SerializationForm:
+		case openapi3.SerializationMatrix, openapi3.SerializationLabel, openapi3.SerializationSimple, openapi3.SerializationForm, "cookie":
 			return nil, nil
 		default:
 			return nil, fmt.Errorf("JSON null has n/a in style %q's undefined cell", style)

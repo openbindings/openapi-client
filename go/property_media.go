@@ -144,17 +144,46 @@ func planWithPropertyMedia(plan *bodyPlan, contextValue map[string]any) (*bodyPl
 		encoding.ContentType = mediaType
 	}
 	copyPlan.media = &copyMedia
+	if plan.openAPI32 != nil {
+		copyOverlay := *plan.openAPI32
+		copyOverlay.encoding = make(map[string]*openAPI32EncodingOverlay, len(plan.openAPI32.encoding))
+		for name, encoding := range plan.openAPI32.encoding {
+			if encoding == nil {
+				copyOverlay.encoding[name] = nil
+				continue
+			}
+			copyEncoding := *encoding
+			copyOverlay.encoding[name] = &copyEncoding
+		}
+		for name, mediaType := range selected {
+			encoding := copyOverlay.encoding[name]
+			if encoding == nil {
+				encoding = &openAPI32EncodingOverlay{}
+				copyOverlay.encoding[name] = encoding
+			}
+			encoding.contentType = mediaType
+		}
+		copyPlan.openAPI32 = &copyOverlay
+	}
 	return &copyPlan, nil
 }
 
 func requiredPropertyMediaContext(document *openapi3.T, operation *openapi3.Operation, profile string, contextValue map[string]any) (*Prerequisites, error) {
+	return requiredPropertyMediaContextWithPlans(document, operation, profile, contextValue, nil)
+}
+
+func requiredPropertyMediaContextWithPlans(document *openapi3.T, operation *openapi3.Operation, profile string, contextValue map[string]any, plans []*bodyPlan) (*Prerequisites, error) {
 	if !hasMediaFidelity(profile) || operation == nil || operation.RequestBody == nil || operation.RequestBody.Value == nil || !operation.RequestBody.Value.Required {
 		return nil, nil
 	}
-	plans, err := planRequestBodiesFor(document, operation, profile)
-	if err != nil {
-		return nil, err
+	if plans == nil {
+		var err error
+		plans, err = planRequestBodiesFor(document, operation, profile)
+		if err != nil {
+			return nil, err
+		}
 	}
+	var err error
 	if requestMediaUnconfigured(contextValue) {
 		sole := soleConcreteRequestPlan(operation, plans)
 		if sole == nil {

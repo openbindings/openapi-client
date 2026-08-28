@@ -98,7 +98,7 @@ func classifyhttpFailureError(ctx context.Context, err error) string {
 // path parameters, unmatched input fields, credential collisions — terminate
 // the handle before any network side effect, and before consuming input where
 // knowable.
-func runBinding(ctx context.Context, client *http.Client, args *executionArgs, inv executionHandle[any, any], doc *openapi3.T) {
+func runBinding(ctx context.Context, client *http.Client, args *executionArgs, inv executionHandle[any, any], artifact *Artifact) {
 	// Bound all HTTP I/O to the invocation's lifetime: caller Cancel(), an
 	// abandoned output stream, or upstream ctx cancellation tears down the
 	// in-flight request or SSE stream.
@@ -107,28 +107,26 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 
 	// ----- Pre-side-effect resolution. -----
 
-	pathTemplate, method, err := parseRef(args.Ref)
+	if artifact == nil || artifact.Document == nil {
+		inv.failExecution(&ExecutionError{Code: CodeRefused, Message: "OpenAPI artifact is nil"})
+		return
+	}
+	target, err := artifact.ResolveOperation(args.Ref)
 	if err != nil {
-		inv.failExecution(&ExecutionError{Code: CodeInvalidRef, Message: err.Error()})
+		inv.failExecution(executionErrorForOperationResolution(err))
 		return
 	}
-
-	if doc.Paths == nil {
-		inv.failExecution(&ExecutionError{Code: CodeRefused, Message: "OpenAPI document has no paths defined"})
-		return
-	}
-	// Pointer evaluation follows OAS reference resolution (OAPI-D-03): the
-	// loader resolves path-item $refs (including 3.1 components.pathItems
-	// targets) at load, before this lookup.
-	pathItem := doc.Paths.Find(pathTemplate)
-	if pathItem == nil {
-		inv.failExecution(&ExecutionError{Code: CodeRefNotFound, Message: fmt.Sprintf("path %q not in OpenAPI doc", pathTemplate)})
-		return
-	}
-	op := pathItem.GetOperation(strings.ToUpper(method))
-	if op == nil {
-		inv.failExecution(&ExecutionError{Code: CodeRefNotFound, Message: fmt.Sprintf("method %q not in path %q", method, pathTemplate)})
-		return
+	target = requestTargetForEdition(target, artifact.Edition)
+	doc := target.Document
+	pathTemplate, method := target.Path, target.WireMethod()
+	pathItem, op := target.PathItem, target.Operation
+	var openAPI32Plans []*bodyPlan
+	if artifact.Edition.IsOpenAPI32() && hasRequestBody(op) && op.RequestBody.Value.Required {
+		openAPI32Plans, err = planRequestBodiesForArtifact(artifact, target, args.Source.Capability)
+		if err != nil {
+			inv.failExecution(&ExecutionError{Code: CodeRefused, Message: err.Error()})
+			return
+		}
 	}
 
 	routedRevision := usesRoutedInput(args.Source.Capability)
@@ -179,13 +177,13 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 		return
 	}
 	details := requiredContext(doc, op, args.Context, baseURL, params)
-	mediaDetails, mediaRequirementErr := requiredRequestMediaContext(doc, op, args.Source.Capability, args.Context)
+	mediaDetails, mediaRequirementErr := requiredRequestMediaContextWithPlans(doc, op, args.Source.Capability, args.Context, openAPI32Plans, artifact.Edition.IsOpenAPI32())
 	if mediaRequirementErr != nil {
 		inv.failExecution(&ExecutionError{Code: CodeRefused, Message: mediaRequirementErr.Error()})
 		return
 	}
 	details = mergeRequirements(details, mediaDetails)
-	propertyMediaDetails, propertyMediaRequirementErr := requiredPropertyMediaContext(doc, op, args.Source.Capability, args.Context)
+	propertyMediaDetails, propertyMediaRequirementErr := requiredPropertyMediaContextWithPlans(doc, op, args.Source.Capability, args.Context, openAPI32Plans)
 	if propertyMediaRequirementErr != nil {
 		inv.failExecution(&ExecutionError{Code: CodeRefused, Message: propertyMediaRequirementErr.Error()})
 		return
@@ -284,7 +282,11 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 		return
 	}
 	if willEmitBody || envelope != nil {
-		plans, err = planRequestBodiesFor(doc, op, args.Source.Capability)
+		if artifact.Edition.IsOpenAPI32() {
+			plans, err = planRequestBodiesForArtifact(artifact, target, args.Source.Capability)
+		} else {
+			plans, err = planRequestBodiesFor(doc, op, args.Source.Capability)
+		}
 		if err != nil {
 			inv.failExecution(&ExecutionError{Code: CodeRefused, Message: err.Error()})
 			return
@@ -303,7 +305,7 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 	var routed *routedInput
 	var bodyReader io.Reader
 	var contentType string
-	parameterOptions := parameterSerializationOptions{edition: doc.OpenAPI, converter: args.ParameterConverter}
+	parameterOptions := parameterSerializationOptions{edition: doc.OpenAPI, document: doc, converter: args.ParameterConverter}
 	if len(plans) == 0 {
 		if envelope != nil {
 			routed, err = routeEnvelopeWithParameterOptions(params, envelope, pathTemplate, &bodyPlan{}, args.Source.Capability, parameterOptions)
@@ -415,7 +417,7 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 		return
 	}
 
-	req, err := http.NewRequestWithContext(bctx, strings.ToUpper(method), completedURL.String(), bodyReader)
+	req, err := http.NewRequestWithContext(bctx, method, completedURL.String(), bodyReader)
 	if err != nil {
 		inv.failExecution(&ExecutionError{Code: CodeExecutionFailed, Message: err.Error()})
 		return
@@ -426,7 +428,7 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 	}
 	// The Accept header advertises only artifact-declared concrete success
 	// media. An empty membership set omits the header.
-	if accept := acceptHeaderFor(op, args.Source.Capability); accept != "" && !args.OmitAcceptHeader {
+	if accept := acceptHeaderFor(op, args.Source.Capability); accept != "" && !args.OmitAcceptHeader && !artifact.Edition.IsOpenAPI32() {
 		req.Header.Set("Accept", accept)
 	}
 
@@ -740,18 +742,25 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 }
 
 func requiredRequestMediaContext(doc *openapi3.T, op *openapi3.Operation, bindingSpec string, bindCtx map[string]any) (*Prerequisites, error) {
+	return requiredRequestMediaContextWithPlans(doc, op, bindingSpec, bindCtx, nil, false)
+}
+
+func requiredRequestMediaContextWithPlans(doc *openapi3.T, op *openapi3.Operation, bindingSpec string, bindCtx map[string]any, plans []*bodyPlan, openAPI32 bool) (*Prerequisites, error) {
 	if !hasMediaFidelity(bindingSpec) || op == nil || op.RequestBody == nil || op.RequestBody.Value == nil || !op.RequestBody.Value.Required {
 		return nil, nil
 	}
-	plans, err := planRequestBodiesFor(doc, op, bindingSpec)
-	if err != nil {
-		return nil, err
+	if plans == nil {
+		var err error
+		plans, err = planRequestBodiesFor(doc, op, bindingSpec)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if !requestMediaUnconfigured(bindCtx) {
 		_, err := configuredRequestPlansFor(doc, op, plans, bindCtx, bindingSpec)
 		return nil, err
 	}
-	if !onlyRangePlans(plans) {
+	if openAPI32 && soleConcreteRequestPlan(op, plans) != nil || !openAPI32 && !onlyRangePlans(plans) {
 		return nil, nil
 	}
 	requirement := newConfigValueRequirementCompat(
@@ -1114,6 +1123,12 @@ func securityConfigurationError(doc *openapi3.T, op *openapi3.Operation) error {
 	if requirements == nil || len(*requirements) == 0 {
 		return nil
 	}
+	if strings.HasPrefix(doc.OpenAPI, "3.2.") {
+		if len(securityPlans(doc, op, "")) > 0 {
+			return nil
+		}
+		return fmt.Errorf("the effective OpenAPI security list has no usable complete alternative")
+	}
 	missing := map[string]bool{}
 	for _, requirement := range *requirements {
 		for name := range requirement {
@@ -1175,8 +1190,15 @@ func securityPlans(doc *openapi3.T, op *openapi3.Operation, baseURL string) []se
 				expressible = false
 				break
 			}
+			if strings.HasPrefix(doc.OpenAPI, "3.2.") && malformedOpenAPI32SecurityScheme(ref.Value) {
+				expressible = false
+				break
+			}
 			requiredScopes := append([]string(nil), secReq[schemeName]...)
 			options := schemeRequirements(ref.Value, baseURL, requiredScopes)
+			if strings.HasPrefix(doc.OpenAPI, "3.2.") && !securitySchemeUsesScopes(ref.Value) && len(requiredScopes) > 0 {
+				options = requirementsWithSecurityRoles(options, requiredScopes)
+			}
 			if len(options) == 0 {
 				expressible = false
 				break
@@ -1207,6 +1229,21 @@ func securityPlans(doc *openapi3.T, op *openapi3.Operation, baseURL string) []se
 		}
 	}
 	return plans
+}
+
+func securitySchemeUsesScopes(scheme *openapi3.SecurityScheme) bool {
+	return scheme != nil && (scheme.Type == "oauth2" || scheme.Type == "openIdConnect")
+}
+
+func requirementsWithSecurityRoles(requirements []Requirement, roles []string) []Requirement {
+	result := append([]Requirement(nil), requirements...)
+	for index := range result {
+		if result[index].Extra == nil {
+			result[index].Extra = map[string]any{}
+		}
+		result[index].Extra["roles"] = append([]string(nil), roles...)
+	}
+	return result
 }
 
 func viableSecurityPlans(doc *openapi3.T, op *openapi3.Operation, baseURL string, params openapi3.Parameters) []securityPlan {
@@ -1744,7 +1781,7 @@ func credentialDestinations(plan securityPlan) []credentialPlacement {
 // channel is refused before dispatch — loud, never a silent overwrite in
 // either direction. Header names compare case-insensitively.
 func checkCredentialCollisions(placements []credentialPlacement, params openapi3.Parameters, populated map[string]map[string]bool) error {
-	declared := map[string]map[string]bool{"header": {}, "query": {}, "cookie": {}, "path": {}}
+	declared := map[string]map[string]bool{"header": {}, "query": {}, ParameterInQueryString: {}, "cookie": {}, "path": {}}
 	for _, ref := range params {
 		if ref == nil || ref.Value == nil {
 			continue
