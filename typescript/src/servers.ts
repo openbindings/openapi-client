@@ -2,34 +2,12 @@ import { contextConfiguration, contextMetadata } from "./internal/index.js";
 import { denotesTargetBase, hasURIScheme } from "./target-base.js";
 import type { OpenAPIDocument, OpenAPIOperation, OpenAPIPathItem } from "./types.js";
 
-// This file implements §9.3 of openbindings.openapi@1 (OAPI-P-05): the
-// target URL's server half. Server resolution is a named configuration
-// point; consultation order (§9.4) is per-invocation configuration →
-// consumer-level configuration → the default. Both configuration tiers
-// arrive merged in the binding context's `configuration` field (the
-// operation invoker resolves consumer-level context into the same carrier),
-// so this file consults one merged value. Mirrors the Go SDK's
-// formats/openapi/servers.go.
-
-/**
- * The typed signal server resolution throws when a value is absent (no
- * default, no supplied value) — a resolvable-missing value, not a malformed
- * one. The invoke path turns it into a config.value CONTEXT_REQUIRED challenge
- * (retryable after resolution, R1a) rather than a terminal
- * ERR_SOURCE_CONFIG_ERROR. Configuration may be sensitive according to its
- * meaning; consumers decide whether the challenge scope is sufficient for
- * stored-value release.
- */
+/** A missing value needed to resolve an OpenAPI server alternative. */
 export class ConfigRequired extends Error {
   constructor(
     readonly point: string,
     readonly path: string,
     message: string,
-    /**
-     * Engine-asserted JSON Schema for the value at (point, path); absent =
-     * unconstrained. An `enum` member is the closed admissible set, emitted
-     * only where the admissible set is already computed at the throw site.
-     */
     readonly schema?: Record<string, unknown>,
     readonly durable?: boolean,
   ) {
@@ -38,283 +16,360 @@ export class ConfigRequired extends Error {
   }
 }
 
-/** One declared server entry (url template + variables), as the OAS spells it. */
-interface ServerEntry {
-  url: string;
-  variables?: Record<string, { default?: string; enum?: string[]; [key: string]: unknown }>;
+export interface OpenAPIServerVariable {
+  default?: string;
+  enum?: string[];
+  [key: string]: unknown;
 }
 
-/**
- * Resolves the operation's server per OAPI-P-05:
- *
- *   - The effective server list is the OAS's: the operation's `servers`,
- *     else the path item's, else the document's, else the implied
- *     `url: "/"`.
- *
- *   - One effective entry is used directly. Several effective entries are
- *     preserved as alternatives and require explicit selection.
- *
- *   - Consumer configuration (context.configuration.server) may instead
- *     select another entry, supply variable values, or supply a complete
- *     base URL outright. Accepted shapes:
- *
- *     "https://api.example.com"               (absolute base URL outright)
- *     "https://{env}.example.com"             (string matching a declared entry's url)
- *     {"baseUrl": "https://api.example.com"}  (absolute base URL outright)
- *     {"url": "https://{env}.example.com"}    (select the declared entry with that url)
- *     {"index": 1}                            (select the effective list's Nth entry)
- *     {"variables": {"env": "staging"}}       (server-variable values, enum-validated)
- *
- *     `url`/`index` and `variables` compose; `baseUrl` stands alone.
- *
- *   - A relative effective-server URL (the implied "/" included) resolves
- *     against the artifact's base URI (§6: the source's location) per
- *     RFC 3986. The one pre-dispatch refusal is a server URL that cannot
- *     resolve to an absolute URL.
- *
- * The legacy context.metadata.baseURL override is honored below the
- * configuration point (the configuration point is the contract surface).
- */
+export interface OpenAPIServerEntry {
+  url: string;
+  variables?: Record<string, OpenAPIServerVariable>;
+  [key: string]: unknown;
+}
+
+export interface OpenAPIServerResolution {
+  url: string;
+  server?: OpenAPIServerEntry;
+}
+
+export type OpenAPIServerLocationResolver = (
+  server: OpenAPIServerEntry,
+) => string | undefined;
+
+/** Resolves the effective Server alternative without normalizing its spelling. */
 export function resolveServer(
   doc: OpenAPIDocument,
   pathItem: OpenAPIPathItem | null,
-  op: OpenAPIOperation | null,
-  bindCtx: Record<string, unknown> | undefined,
+  operation: OpenAPIOperation | null,
+  context: Record<string, unknown> | undefined,
   sourceLocation: string | undefined,
 ): string {
-  const servers = effectiveServers(doc, pathItem, op);
-
-  const cfg = contextConfiguration(bindCtx);
-  if (cfg["server"] != null) {
-    const resolved = resolveServerConfig(cfg["server"], servers);
-    return absolutizeServerURL(resolved, sourceLocation);
+  const version = typeof doc.openapi === "string" ? doc.openapi : "";
+  const servers = eligibleServers(effectiveServers(doc, pathItem, operation), version, sourceLocation);
+  const configuration = contextConfiguration(context);
+  if (configuration.server != null) {
+    const selected = resolveOpenAPIServerSelection(configuration.server, servers, version);
+    return joinableServerBase(absolutizeServerURL(selected.url, sourceLocation));
   }
 
-  const metaBase = contextMetadata(bindCtx)["baseURL"];
-  if (typeof metaBase === "string" && metaBase !== "") {
-    return absolutizeServerURL(metaBase, sourceLocation);
+  const metadataBase = contextMetadata(context).baseURL;
+  if (typeof metadataBase === "string" && metadataBase !== "") {
+    return joinableServerBase(absolutizeServerURL(metadataBase, sourceLocation));
   }
 
   if (servers.length !== 1) {
-    // Declared alternatives without a selection are missing consumer
-    // configuration, not source misconfiguration (ruled 2026-08-13, R1+R5):
-    // the invocation challenges CONTEXT_REQUIRED (config.value, point
-    // server) — the same retryable negotiation §9.2 gives the parallel
-    // missing-requestMedia case — instead of refusing terminally (Go twin:
-    // resolveServer).
     throw new ConfigRequired(
       "server",
       "/url",
-      `the effective server list has ${servers.length} alternatives; configuration.server must select one (openbindings.openapi@1 OAPI-P-05)`,
-      // The declared entries are the closed admissible set at /url (a
-      // not-declared url is refused by resolveServerConfig; an out-of-list
-      // base rides `baseUrl` instead), so the challenge asserts them as an
-      // enum schema.
-      { enum: servers.map((entry) => entry.url) },
+      `the effective server list has ${servers.length} alternatives; configuration.server must select one`,
+      { enum: servers.map((server) => server.url) },
       true,
     );
   }
-  const substituted = substituteServerVariables(servers[0], undefined);
-  return absolutizeServerURL(substituted, sourceLocation);
+  return joinableServerBase(absolutizeServerURL(
+    substituteServerVariables(servers[0], undefined, version),
+    sourceLocation,
+  ));
 }
 
-/**
- * The OAS effective server list: operation servers, else path-item servers,
- * else document servers, else the OAS-defined implied server of url "/".
- * The implied fallback makes the list never empty, which the return type
- * carries.
- */
+/** Returns the Operation, Path Item, root, or implied Server list. */
 export function effectiveServers(
   doc: OpenAPIDocument,
   pathItem: OpenAPIPathItem | null,
-  op: OpenAPIOperation | null,
-): [ServerEntry, ...ServerEntry[]] {
-  const opServers = asServerList(op?.servers);
-  if (isNonEmpty(opServers)) return opServers;
+  operation: OpenAPIOperation | null,
+): [OpenAPIServerEntry, ...OpenAPIServerEntry[]] {
+  const operationServers = asServerList(operation?.servers);
+  if (operationServers.length > 0) return operationServers as [OpenAPIServerEntry, ...OpenAPIServerEntry[]];
   const pathServers = asServerList(pathItem?.servers);
-  if (isNonEmpty(pathServers)) return pathServers;
-  const docServers = asServerList(doc?.servers);
-  if (isNonEmpty(docServers)) return docServers;
+  if (pathServers.length > 0) return pathServers as [OpenAPIServerEntry, ...OpenAPIServerEntry[]];
+  const rootServers = asServerList(doc.servers);
+  if (rootServers.length > 0) return rootServers as [OpenAPIServerEntry, ...OpenAPIServerEntry[]];
   return [{ url: "/" }];
 }
 
-function isNonEmpty<T>(list: T[]): list is [T, ...T[]] {
-  return list.length > 0;
-}
-
-function asServerList(raw: unknown): ServerEntry[] {
+function asServerList(raw: unknown): OpenAPIServerEntry[] {
   if (!Array.isArray(raw)) return [];
-  const out: ServerEntry[] = [];
-  for (const entry of raw) {
-    if (entry && typeof entry === "object" && typeof (entry as ServerEntry).url === "string") {
-      out.push(entry as ServerEntry);
-    }
-  }
-  return out;
+  return raw.filter((entry): entry is OpenAPIServerEntry =>
+    entry !== null && typeof entry === "object" && !Array.isArray(entry)
+      && typeof (entry as Record<string, unknown>).url === "string");
 }
 
 /**
- * Applies one configured `server` value against the effective list,
- * returning the (possibly still relative) server URL.
+ * Confines declaration defects to their Server alternatives. Missing runtime
+ * values and a missing relative base remain configurable; malformed template,
+ * enum, query, and fragment alternatives do not.
  */
-function resolveServerConfig(raw: unknown, servers: [ServerEntry, ...ServerEntry[]]): string {
-  if (typeof raw === "string") {
-    const srv = serverByURL(servers, raw);
-    if (srv) return substituteServerVariables(srv, undefined);
-    if (denotesTargetBase(raw)) return raw;
-    throw new Error(
-      `configuration.server "${raw}" matches no declared server entry and is not an absolute base URL`,
-    );
+export function eligibleServers(
+  servers: readonly OpenAPIServerEntry[],
+  version: string,
+  sourceLocation: string | undefined,
+  locationOf?: OpenAPIServerLocationResolver,
+): [OpenAPIServerEntry, ...OpenAPIServerEntry[]] {
+  const eligible: OpenAPIServerEntry[] = [];
+  let firstError: unknown;
+  for (const server of servers) {
+    try {
+      const expanded = substituteServerVariables(server, undefined, version);
+      absolutizeServerURL(expanded, locationOf?.(server) ?? sourceLocation);
+      eligible.push(server);
+    } catch (error: unknown) {
+      if (error instanceof ConfigRequired) eligible.push(server);
+      else firstError ??= error;
+    }
   }
-  if (raw !== null && typeof raw === "object" && !Array.isArray(raw)) {
-    const v = raw as Record<string, unknown>;
-    const base = v["baseUrl"];
-    if (typeof base === "string" && base !== "") {
-      if (!denotesTargetBase(base)) {
-        throw new Error(`configuration.server.baseUrl "${base}" is not an absolute URL`);
-      }
-      return base;
-    }
-    let srv: ServerEntry = servers[0];
-    let selected = servers.length === 1;
-    const entryURL = v["url"];
-    if (typeof entryURL === "string" && entryURL !== "") {
-      const found = serverByURL(servers, entryURL);
-      if (!found) {
-        throw new Error(`configuration.server.url "${entryURL}" matches no declared server entry`);
-      }
-      srv = found;
-      selected = true;
-    } else if ("index" in v) {
-      // The in-list existence check IS the bounds check: a non-integer, a
-      // negative, or an index past the end all leave `chosen` undefined.
-      const idx = configIndex(v["index"]);
-      const chosen = idx !== null && idx >= 0 ? servers[idx] : undefined;
-      if (chosen === undefined) {
-        throw new Error(
-          `configuration.server.index ${JSON.stringify(v["index"])} is not a valid index into the effective server list (${servers.length} entries)`,
-        );
-      }
-      srv = chosen;
-      selected = true;
-    }
-    if (!selected) {
-      throw new Error(
-        `the effective server list has ${servers.length} alternatives; configuration.server.url or configuration.server.index must select one (openbindings.openapi@1 OAPI-P-05)`,
-      );
-    }
-    let vars: Record<string, string> | undefined;
-    const rawVars = v["variables"];
-    if (rawVars !== null && typeof rawVars === "object" && !Array.isArray(rawVars)) {
-      vars = {};
-      for (const [name, val] of Object.entries(rawVars as Record<string, unknown>)) {
-        if (typeof val !== "string") {
-          throw new Error(`configuration.server.variables["${name}"] must be a string, got ${typeof val}`);
-        }
-        vars[name] = val;
-      }
-    }
-    return substituteServerVariables(srv, vars);
-  }
-  throw new Error(`configuration.server must be a string or an object, got ${typeof raw}`);
+  if (eligible.length > 0) return eligible as [OpenAPIServerEntry, ...OpenAPIServerEntry[]];
+  throw firstError instanceof Error
+    ? firstError
+    : new Error("the effective server list has no usable alternative");
 }
 
-/** Selects the declared entry whose url template matches exactly. */
-function serverByURL(servers: ServerEntry[], u: string): ServerEntry | null {
-  for (const srv of servers) {
-    if (srv.url === u) return srv;
+export function resolveOpenAPIServerSelection(
+  raw: unknown,
+  servers: [OpenAPIServerEntry, ...OpenAPIServerEntry[]],
+  version: string,
+): OpenAPIServerResolution {
+  if (typeof raw === "string") {
+    const selected = serverByURL(servers, raw);
+    if (selected) return { url: substituteServerVariables(selected, undefined, version), server: selected };
+    if (denotesTargetBase(raw)) return { url: raw };
+    throw new Error(
+      `configuration.server ${JSON.stringify(raw)} matches no declared server entry and is not an absolute base URL`,
+    );
   }
-  return null;
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error(`configuration.server must be a string or an object, got ${typeof raw}`);
+  }
+  const value = raw as Record<string, unknown>;
+  if (typeof value.baseUrl === "string" && value.baseUrl !== "") {
+    if (!denotesTargetBase(value.baseUrl)) {
+      throw new Error(`configuration.server.baseUrl ${JSON.stringify(value.baseUrl)} is not an absolute URL`);
+    }
+    return { url: value.baseUrl };
+  }
+
+  let selected = servers.length === 1 ? servers[0] : undefined;
+  if (typeof value.url === "string" && value.url !== "") {
+    selected = serverByURL(servers, value.url) ?? undefined;
+    if (!selected) {
+      throw new Error(`configuration.server.url ${JSON.stringify(value.url)} matches no declared server entry`);
+    }
+  } else if (Object.hasOwn(value, "index")) {
+    const index = configIndex(value.index);
+    selected = index === null || index < 0 ? undefined : servers[index];
+    if (!selected) {
+      throw new Error(
+        `configuration.server.index ${JSON.stringify(value.index)} is not a valid index into the effective server list (${servers.length} entries)`,
+      );
+    }
+  }
+  if (!selected) {
+    throw new Error(
+      `the effective server list has ${servers.length} alternatives; configuration.server.url or configuration.server.index must select one`,
+    );
+  }
+
+  let supplied: Record<string, string> | undefined;
+  if (value.variables !== undefined) {
+    if (value.variables === null || typeof value.variables !== "object" || Array.isArray(value.variables)) {
+      throw new Error("configuration.server.variables must be an object");
+    }
+    supplied = {};
+    for (const [name, member] of Object.entries(value.variables as Record<string, unknown>)) {
+      if (typeof member !== "string") {
+        throw new Error(`configuration.server.variables[${JSON.stringify(name)}] must be a string, got ${typeof member}`);
+      }
+      supplied[name] = member;
+    }
+  }
+  return { url: substituteServerVariables(selected, supplied, version), server: selected };
+}
+
+function serverByURL(servers: readonly OpenAPIServerEntry[], url: string): OpenAPIServerEntry | null {
+  return servers.find((server) => server.url === url) ?? null;
 }
 
 function configIndex(raw: unknown): number | null {
-  if (typeof raw === "number" && Number.isInteger(raw)) return raw;
-  return null;
+  return typeof raw === "number" && Number.isInteger(raw) ? raw : null;
 }
 
-/**
- * Substitutes each declared server variable with the supplied value
- * (validated against the variable's enum, per the OAS) or its declared
- * default. A variable with neither a supplied value nor a declared
- * default, and a supplied variable the entry does not declare, are loud
- * errors.
- */
-function substituteServerVariables(
-  srv: ServerEntry,
+/** Expands each declared variable exactly once and validates its declaration. */
+export function substituteServerVariables(
+  server: OpenAPIServerEntry,
   supplied: Record<string, string> | undefined,
+  version = "",
 ): string {
-  let u = srv.url;
-  const variables = srv.variables ?? {};
+  let result = server.url;
+  if (result.includes("?") || result.includes("#")) {
+    throw new Error(`server URL ${JSON.stringify(server.url)} contains a query or fragment`);
+  }
+  const variables = server.variables ?? {};
   for (const name of Object.keys(variables).sort()) {
-    const v = variables[name];
-    if (!v || typeof v !== "object") continue;
-    const declaredDefault = typeof v.default === "string" ? v.default : "";
-    const val = supplied?.[name] ?? declaredDefault;
-    if (val === "" && declaredDefault === "") {
-      // The artifact-declared enum (its string members — the set the
-      // substitution check below enforces) is the closed admissible set;
-      // asserted as an enum schema only where declared and non-empty.
-      const enumVals = Array.isArray(v.enum)
-        ? v.enum.filter((item): item is string => typeof item === "string")
-        : [];
-      throw new ConfigRequired(
-        "server",
-        `/variables/${escapeJSONPointerToken(name)}`,
-        `server "${srv.url}": variable "${name}" has no supplied value and no declared default`,
-        enumVals.length > 0 ? { enum: enumVals } : undefined,
-      );
+    const variable = variables[name];
+    if (variable === null || typeof variable !== "object" || Array.isArray(variable)) {
+      throw new Error(`server ${JSON.stringify(server.url)} variable ${JSON.stringify(name)} is not a Server Variable Object`);
     }
-    const enumValues = Array.isArray(v.enum) ? v.enum.filter((item): item is string => typeof item === "string") : [];
-    if (enumValues.length > 0 && !enumValues.includes(val)) {
+    const expression = `{${name}}`;
+    const occurrences = result.split(expression).length - 1;
+    if (occurrences !== 1) {
       throw new Error(
-        `server ${JSON.stringify(srv.url)} variable ${JSON.stringify(name)} value ${JSON.stringify(val)} is outside its declared enum`,
+        `server ${JSON.stringify(server.url)} variable ${JSON.stringify(name)} must occur exactly once in its URL template (found ${occurrences})`,
       );
     }
-    u = u.replaceAll(`{${name}}`, val);
+
+    const defaultPresent = Object.hasOwn(variable, "default") && typeof variable.default === "string";
+    const enumPresent = Object.hasOwn(variable, "enum");
+    if (enumPresent && (!Array.isArray(variable.enum) || variable.enum.some((member) => typeof member !== "string"))) {
+      throw new Error(`server ${JSON.stringify(server.url)} variable ${JSON.stringify(name)} has a malformed enum`);
+    }
+    const values = Array.isArray(variable.enum) ? variable.enum : [];
+    if (enumPresent && values.length === 0) {
+      throw new Error(`server ${JSON.stringify(server.url)} variable ${JSON.stringify(name)} declares an empty enum`);
+    }
+    if (version.startsWith("3.0.") && !defaultPresent) {
+      throw new Error(`server ${JSON.stringify(server.url)} variable ${JSON.stringify(name)} omits its required default`);
+    }
+    if (enumPresent && defaultPresent && !values.includes(variable.default!)) {
+      throw new Error(
+        `server ${JSON.stringify(server.url)} variable ${JSON.stringify(name)} default ${JSON.stringify(variable.default)} is outside its declared enum`,
+      );
+    }
+
+    let selected = supplied?.[name];
+    if (selected === undefined) {
+      if (!defaultPresent) {
+        throw new ConfigRequired(
+          "server",
+          `/variables/${escapeJSONPointerToken(name)}`,
+          `server ${JSON.stringify(server.url)}: variable ${JSON.stringify(name)} has no supplied value and no declared default`,
+          enumPresent ? { enum: values } : undefined,
+        );
+      }
+      selected = variable.default!;
+    }
+    if (enumPresent && !values.includes(selected)) {
+      throw new Error(
+        `server ${JSON.stringify(server.url)} variable ${JSON.stringify(name)} value ${JSON.stringify(selected)} is outside its declared enum`,
+      );
+    }
+    result = result.replace(expression, selected);
   }
   for (const name of Object.keys(supplied ?? {})) {
-    if (!(name in variables)) {
-      throw new Error(`server "${srv.url}" declares no variable "${name}"`);
+    if (!Object.hasOwn(variables, name)) {
+      throw new Error(`server ${JSON.stringify(server.url)} declares no variable ${JSON.stringify(name)}`);
     }
   }
-  return u;
+  if (result.includes("{") || result.includes("}")) {
+    throw new Error(`server URL ${JSON.stringify(server.url)} contains an unresolved template variable`);
+  }
+  return result;
 }
 
-/**
- * Resolves a (possibly relative) server URL to an absolute target base: a URL
- * that already denotes a target address passes through; a relative reference
- * resolves against the artifact's base URI — the source's location (§6) — per
- * RFC 3986. A server URL that cannot resolve to an absolute URL is the §9.3
- * pre-dispatch refusal. The returned URL carries no trailing slash, so joining
- * with the operation's path template is concatenation.
- *
- * Whether a string denotes a target address is decided by denotesTargetBase
- * (target-base.ts), which reads RFC 3986's URI production and RFC 9110's
- * non-empty-host requirement for the http and https schemes, rather than by the
- * WHATWG URL parser. See that file for why the host parser was the wrong
- * authority.
- */
+/** Resolves a relative Server URL while preserving the resulting trailing slash. */
 export function absolutizeServerURL(serverURL: string, sourceLocation: string | undefined): string {
-  if (denotesTargetBase(serverURL)) {
-    return serverURL.replace(/\/+$/, "");
-  }
-  // Only a relative reference can be completed by a base URI. A string carrying
-  // a scheme has already named an address, so failing the predicate means that
-  // address does not exist and no base can supply it.
+  validateServerBaseSpelling(serverURL);
+  if (denotesTargetBase(serverURL)) return serverURL;
   if (!hasURIScheme(serverURL) && sourceLocation && denotesTargetBase(sourceLocation)) {
     try {
-      return new URL(serverURL, sourceLocation).toString().replace(/\/+$/, "");
-    } catch {
-      // fall through to the refusal
+      const resolved = new URL(serverURL, sourceLocation).toString();
+      validateServerBaseSpelling(resolved);
+      if (denotesTargetBase(resolved)) return resolved;
+    } catch (error: unknown) {
+      if (!(error instanceof TypeError)) throw error;
     }
   }
   throw new ConfigRequired(
     "server",
     "/url",
-    `server URL "${serverURL}" cannot resolve to an absolute URL: supply a base URL at the server configuration point`,
+    `server URL ${JSON.stringify(serverURL)} cannot resolve to an absolute URL: supply a base URL at the server configuration point`,
   );
+}
+
+/** Replaces a serializer's temporary base without normalizing the wire suffix. */
+export function replaceSerializedServerBase(
+  current: string,
+  resolvedBase: string,
+  serializedBase: string,
+): string {
+  const parsed = new URL(current);
+  const basePath = serializedServerBasePath(serializedBase);
+  if (!parsed.pathname.startsWith(basePath)) {
+    throw new Error("serialized operation path does not retain the serialization server base");
+  }
+  const suffix = parsed.pathname.slice(basePath.length);
+  return `${resolvedBase}${suffix}${parsed.search}`;
+}
+
+/** Validates the completed OpenAPI 3.1 target under its RFC 3986 rules. */
+export function validateCompletedOpenAPIURL(raw: string): void {
+  let completed: URL;
+  try {
+    completed = new URL(raw);
+  } catch (error: unknown) {
+    throw new Error(
+      `completed OpenAPI 3.1 URL does not parse under RFC 3986: ${errorMessage(error)}`,
+      { cause: error },
+    );
+  }
+  for (const [name, component] of [
+    ["path", completed.pathname],
+    ["query", completed.search.slice(1)],
+    ["fragment", completed.hash.slice(1)],
+  ] as const) {
+    if (!hasValidPercentEscapes(component)) {
+      throw new Error(
+        `completed OpenAPI 3.1 URL ${name} does not percent-decode under RFC 3986`,
+      );
+    }
+  }
+}
+
+/** Clones a Request onto a completed OpenAPI target URL. */
+export function requestWithOpenAPIURL(request: Request, url: string): Request {
+  const init: RequestInit & { duplex?: "half" } = {
+    method: request.method,
+    headers: request.headers,
+    redirect: request.redirect,
+    signal: request.signal,
+  };
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    init.body = request.body;
+    init.duplex = "half";
+  }
+  return new Request(url, init);
+}
+
+function serializedServerBasePath(base: string): string {
+  const match = /^[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/]*(\/[^?#]*)?$/u.exec(base);
+  return match?.[1] ?? "";
+}
+
+function hasValidPercentEscapes(component: string): boolean {
+  for (let index = 0; index < component.length; index += 1) {
+    if (component[index] !== "%") continue;
+    if (!/^[0-9A-Fa-f]{2}$/.test(component.slice(index + 1, index + 3))) return false;
+    index += 2;
+  }
+  return true;
+}
+
+function validateServerBaseSpelling(value: string): void {
+  if (value.includes("?") || value.includes("#")) {
+    throw new Error(`server URL ${JSON.stringify(value)} contains a query or fragment`);
+  }
+  if (/[^\u0021-\u007e]/u.test(value) || /%(?![0-9A-Fa-f]{2})/u.test(value)) {
+    throw new Error(`server URL ${JSON.stringify(value)} does not parse under RFC 3986`);
+  }
 }
 
 function escapeJSONPointerToken(value: string): string {
   return value.replaceAll("~", "~0").replaceAll("/", "~1");
+}
+
+function joinableServerBase(value: string): string {
+  return value.replace(/\/+$/u, "");
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

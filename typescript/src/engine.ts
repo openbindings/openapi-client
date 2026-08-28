@@ -24,6 +24,7 @@ import {
 } from "./invoke.js";
 import { errorMessage, loadOpenAPIDocument, parseRef } from "./util.js";
 import { computeAcceptanceFloor, floorInvalidTargetMessage, floorOpVerdict, type AcceptanceFloor } from "./acceptance-floor.js";
+import type { OpenAPIParameterConverter } from "./params.js";
 
 /** Artifact source accepted by the SDK-neutral execution engine. */
 export interface OpenAPIEngineSource {
@@ -77,6 +78,7 @@ export interface OpenAPIEngineOptions {
   redirect?: RequestRedirect;
   hooks?: OpenAPIExecutionHooks;
   maxDeliveryUnitBytes?: number;
+  parameterConverter?: OpenAPIParameterConverter;
 }
 
 /** Inputs fixed before an operation is prepared. */
@@ -91,6 +93,7 @@ export interface OpenAPIPrepareOptions {
   hooks?: OpenAPIExecutionHooks;
   maxDeliveryUnitBytes?: number;
   securityHandlers?: Record<string, OpenAPIEngineSecurityHandler>;
+  parameterConverter?: OpenAPIParameterConverter;
   /** Disable external `$ref` retrieval for strictly side-effect-free inspection. */
   allowExternalRefs?: boolean;
 }
@@ -233,6 +236,7 @@ export class PreparedOpenAPIOperation {
           fetch: this.args.fetch,
           redirect: this.args.redirect,
           securityHandlers: this.args.securityHandlers as Record<string, ArtifactSecurityHandler> | undefined,
+          parameterConverter: this.args.parameterConverter,
           observeOutput: (_value, valueMetadata) => metadata.push(cloneMetadata(valueMetadata)),
           hooks,
           site,
@@ -292,6 +296,7 @@ export class OpenAPIEngine {
       hooks: options.hooks,
       defaultHooks: this.options.hooks,
       maxDeliveryUnitBytes: options.maxDeliveryUnitBytes ?? this.options.maxDeliveryUnitBytes,
+      parameterConverter: options.parameterConverter ?? this.options.parameterConverter,
     };
     let loaded: LoadedOpenAPIDocument;
     try {
@@ -324,6 +329,7 @@ export class OpenAPIEngine {
       hooks: options.hooks,
       defaultHooks: this.options.hooks,
       maxDeliveryUnitBytes: options.maxDeliveryUnitBytes ?? this.options.maxDeliveryUnitBytes,
+      parameterConverter: options.parameterConverter ?? this.options.parameterConverter,
     };
     return this.prepared(document, args);
   }
@@ -333,7 +339,7 @@ export class OpenAPIEngine {
     args: PreparedArguments,
   ): PreparedOpenAPIOperation {
     const document = loaded.document;
-    // The acceptance-floor inventory filter (openbindings.openapi@1 §3): a
+    // The family-document acceptance-floor inventory filter: a
     // ladder-invalid target is not addressed, and its invocation is refused
     // before dispatch -- provably no interaction side effect.
     const verdict = floorOpVerdict(loaded.floor, args.ref);

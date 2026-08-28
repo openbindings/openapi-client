@@ -11,7 +11,7 @@ import type {
   OpenAPIPathItem,
   OpenAPISecurityScheme,
 } from "./types.js";
-import { effectiveParameters } from "./params.js";
+import { effectiveParameters, type OpenAPIParameterConverter } from "./params.js";
 import { planAbstractInputRoutes } from "./input-routes-v2.js";
 import {
   configureRequestMedia,
@@ -92,6 +92,7 @@ export interface OpenAPICallOptions {
   fetch?: typeof globalThis.fetch;
   /** Defaults to `manual`, keeping redirect responses observable as the bound operation outcome. */
   redirect?: RequestRedirect;
+  parameterConverter?: OpenAPIParameterConverter;
 }
 
 export interface OpenAPIClientMiddlewareContext {
@@ -116,6 +117,7 @@ export interface OpenAPIClientOptions {
   redirect?: RequestRedirect;
   middleware?: OpenAPIClientMiddleware[];
   maxResponseBytes?: number;
+  parameterConverter?: OpenAPIParameterConverter;
 }
 
 export interface OpenAPIOperationInfo {
@@ -367,6 +369,7 @@ export class OpenAPIClient {
       fetch: doFetch,
       redirect: callOptions.redirect ?? this.options.redirect,
       securityHandlers: artifactSecurityHandlers(security.handlers, resolved.info),
+      parameterConverter: callOptions.parameterConverter ?? this.options.parameterConverter,
     });
     const execution = await prepared.start<unknown, unknown>();
 

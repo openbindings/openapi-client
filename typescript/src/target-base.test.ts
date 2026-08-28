@@ -4,13 +4,18 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { denotesTargetBase } from "./target-base.js";
-import { resolveServer } from "./servers.js";
+import {
+  absolutizeServerURL,
+  effectiveServers,
+  eligibleServers,
+  substituteServerVariables,
+} from "./servers.js";
 import type { OpenAPIDocument, OpenAPIOperation, OpenAPIPathItem } from "./types.js";
 
 // serverTargetBaseCasesDigest pins the frozen twin case table. The identical
 // file is executed by openbindings-go/formats/openapi and openapi-client/go;
 // changing it in one engine without the others fails here.
-const serverTargetBaseCasesDigest = "808708805f527a21c4e5012640245238637934e22dd177c3b5787f4f3eec7e5b";
+const serverTargetBaseCasesDigest = "5c87131c4db1b3e90381ae29d51948fdebb772a928648c4217fcfcb32386c68f";
 
 interface PredicateCase {
   name: string;
@@ -89,7 +94,16 @@ describe("server target base case table", () => {
       let base: string | null = null;
       let resolvable = true;
       try {
-        base = resolveServer(doc, pathItem ?? null, op ?? null, undefined, undefined);
+        const servers = eligibleServers(
+          effectiveServers(doc, pathItem ?? null, op ?? null),
+          c.openapi,
+          undefined,
+        );
+        if (servers.length !== 1) throw new Error("selection required");
+        base = absolutizeServerURL(
+          substituteServerVariables(servers[0], undefined, c.openapi),
+          undefined,
+        );
       } catch {
         resolvable = false;
       }

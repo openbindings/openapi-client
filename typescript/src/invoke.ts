@@ -76,6 +76,13 @@ import {
   type BodyPlan,
 } from "./media.js";
 import { ConfigRequired, resolveServer } from "./servers.js";
+import {
+  buildOpenAPICredentialPlacements,
+  encodeOpenAPICredentialQuery,
+  openAPICredentialCollision,
+  openAPICredentialDestinations,
+  type OpenAPICredentialPlacement,
+} from "./security-wire.js";
 import type { OpenAPIExecutionProfile } from "./profile.js";
 
 /**
@@ -370,8 +377,12 @@ export async function runBinding(
     }
     try {
       const candidateRouted = envelope
-        ? routeEnvelope(params, envelope, path, candidate, args.source.profile)
-        : routeInput(params, inputMap, path, candidate, args.source.profile);
+        ? routeEnvelope(params, envelope, path, candidate, args.source.profile, {
+          converter: args.parameterConverter,
+        })
+        : routeInput(params, inputMap, path, candidate, args.source.profile, {
+          converter: args.parameterConverter,
+        });
       const candidateWire = await finalizeRequestBody(
         buildRequestBody(doc, candidate, candidateRouted),
       );
@@ -413,7 +424,7 @@ export async function runBinding(
     inv.fireError(new InvocationError(ERR_REFUSED, collision));
     return;
   }
-  const contextCollision = contextChannelCollision(args.context, params, placements);
+  const contextCollision = contextChannelCollision(args.context, placements, routed.populated);
   if (contextCollision !== "") {
     inv.fireError(new InvocationError(ERR_REFUSED, contextCollision));
     return;
@@ -423,7 +434,7 @@ export async function runBinding(
   const cookieUnits = [...routed.cookieUnits];
   for (const pl of placements) {
     if (pl.channel === "query") {
-      queryUnits.push(queryEscape(pl.name, false) + "=" + queryEscape(pl.value, false));
+      queryUnits.push(encodeOpenAPICredentialQuery(pl.name) + "=" + encodeOpenAPICredentialQuery(pl.value));
     } else if (pl.channel === "cookie") {
       cookieUnits.push(pl.name + "=" + pl.value);
     }
@@ -1507,11 +1518,7 @@ function absolutize(url: string, baseURL: string): string {
  * One credential's wire application: which channel it rides (header,
  * query, or cookie) under which name.
  */
-export interface CredentialPlacement {
-  channel: "header" | "query" | "cookie";
-  name: string;
-  value: string;
-}
+export type CredentialPlacement = OpenAPICredentialPlacement;
 
 /** A securityScheme paired with its addressable name (the securitySchemes key). */
 interface NamedSecurityScheme {
@@ -1582,75 +1589,17 @@ function securityPlanSatisfied(
 }
 
 function credentialValues(plan: SecurityPlan, ctx: Record<string, unknown>): CredentialPlacement[] {
-  const placements: CredentialPlacement[] = [];
-  const add = (channel: CredentialPlacement["channel"], name: string, value: string): void => {
-    placements.push({ channel, name, value });
-  };
-
-  for (const { scheme, name: schemeName } of plan.schemes) {
-    switch (scheme.type) {
-      case "apiKey": {
-        // The requirement's addressable name (the securitySchemes key)
-        // resolves the credential — distinct from scheme.name, which is
-        // the WIRE placement name, not the lookup key.
-        const val = contextApiKeyFor(ctx, schemeName);
-        if (!val || !scheme.name) continue;
-        if (scheme.in === "header" || scheme.in === "query" || scheme.in === "cookie") {
-          add(scheme.in, scheme.name, val);
-        }
-        break;
-      }
-      case "http":
-        switch ((scheme.scheme ?? "").toLowerCase()) {
-          case "bearer": {
-            const token = contextBearerTokenFor(ctx, schemeName);
-            if (token) add("header", "Authorization", `Bearer ${token}`);
-            break;
-          }
-          case "basic": {
-            const basic = contextBasicAuthFor(ctx, schemeName);
-            if (basic) {
-              add("header", "Authorization", `Basic ${btoa(`${basic.username}:${basic.password}`)}`);
-            }
-            break;
-          }
-        }
-        break;
-      case "oauth2":
-      case "openIdConnect": {
-        const token = contextAccessTokenFor(ctx, schemeName) || contextBearerTokenFor(ctx, schemeName);
-        if (token) add("header", "Authorization", `Bearer ${token}`);
-        break;
-      }
-    }
-  }
-  return placements;
+  return buildOpenAPICredentialPlacements(plan.schemes, {
+    apiKey: (name) => contextApiKeyFor(ctx, name),
+    basic: (name) => contextBasicAuthFor(ctx, name) ?? undefined,
+    bearer: (name) => contextBearerTokenFor(ctx, name),
+    accessToken: (name) => contextAccessTokenFor(ctx, name),
+  });
 }
 
 /** Wire destinations for collision analysis before credential values exist. */
 function credentialDestinations(plan: SecurityPlan): CredentialPlacement[] {
-  const placements: CredentialPlacement[] = [];
-  for (const { scheme } of plan.schemes) {
-    if (
-      scheme.type === "apiKey"
-      && scheme.name
-      && (scheme.in === "header" || scheme.in === "query" || scheme.in === "cookie")
-    ) {
-      placements.push({ channel: scheme.in, name: scheme.name, value: "" });
-      continue;
-    }
-    if (scheme.type === "oauth2" || scheme.type === "openIdConnect") {
-      placements.push({ channel: "header", name: "Authorization", value: "" });
-      continue;
-    }
-    if (
-      scheme.type === "http"
-      && ["basic", "bearer"].includes((scheme.scheme ?? "").toLowerCase())
-    ) {
-      placements.push({ channel: "header", name: "Authorization", value: "" });
-    }
-  }
-  return placements;
+  return openAPICredentialDestinations(plan.schemes);
 }
 
 /**
@@ -1665,9 +1614,6 @@ export function parameterOwnershipConflict(params: OpenAPIParameter[]): string {
     if (name === "host" || name === "content-length") {
       return `effective header parameter "${name}" collides with a processor-owned request field (OAPI-P-10)`;
     }
-  }
-  if (headers.includes("cookie") && params.some((parameter) => parameter.in === "cookie")) {
-    return "effective raw Cookie header parameter collides with structured cookie parameters (OAPI-P-10)";
   }
   return "";
 }
@@ -1736,18 +1682,16 @@ function pathTemplateVariables(pathTemplate: string): string[] {
  */
 function contextChannelCollision(
   ctx: Record<string, unknown> | undefined,
-  params: OpenAPIParameter[],
   placements: CredentialPlacement[],
+  populated: { header: Set<string>; query: Set<string>; cookie: Set<string> },
 ): string {
   const rawCookieHints = Object.keys(contextHeaders(ctx)).filter(
     (name) => name.toLowerCase() === "cookie",
   );
-  const hasRawCookieOwner = params.some(
-    (parameter) => parameter.in === "header" && parameter.name?.toLowerCase() === "cookie",
-  ) || placements.some(
+  const hasRawCookieOwner = populated.header.has("cookie") || placements.some(
     (placement) => placement.channel === "header" && placement.name.toLowerCase() === "cookie",
   );
-  const hasStructuredCookie = params.some((parameter) => parameter.in === "cookie")
+  const hasStructuredCookie = populated.cookie.size > 0
     || placements.some((placement) => placement.channel === "cookie")
     || Object.keys(contextCookies(ctx)).length > 0;
 
@@ -1772,43 +1716,7 @@ export function credentialCollision(
   params: OpenAPIParameter[],
   populated: { header: Set<string>; query: Set<string>; cookie: Set<string> },
 ): string {
-  const declared = {
-    header: new Set<string>(),
-    query: new Set<string>(),
-    cookie: new Set<string>(),
-  };
-  for (const parameter of params) {
-    if (!parameter.name) continue;
-    if (parameter.in === "header") declared.header.add(parameter.name.toLowerCase());
-    else if (parameter.in === "query") declared.query.add(parameter.name);
-    else if (parameter.in === "cookie") declared.cookie.add(parameter.name);
-  }
-  const processorOwned = new Set(["host", "content-length", "content-type", "accept"]);
-  const hasRawCookieOwner = declared.header.has("cookie") || placements.some(
-    (placement) => placement.channel === "header" && placement.name.toLowerCase() === "cookie",
-  );
-  const hasStructuredCookieOwner = declared.cookie.size > 0
-    || placements.some((placement) => placement.channel === "cookie");
-  if (hasRawCookieOwner && hasStructuredCookieOwner) {
-    return "raw Cookie header source collides with structured cookie assembly (OAPI-P-10)";
-  }
-  const seen = new Set<string>();
-  for (const pl of placements) {
-    const name = pl.channel === "header" ? pl.name.toLowerCase() : pl.name;
-    if (pl.channel === "header" && processorOwned.has(name)) {
-      return `credential "${pl.name}" collides with processor-owned request field ${pl.name} (OAPI-P-10)`;
-    }
-    if (pl.channel === "cookie" && declared.header.has("cookie")) {
-      return `cookie credential "${pl.name}" collides with an effective raw Cookie header parameter (OAPI-P-10)`;
-    }
-    if (declared[pl.channel].has(name) || populated[pl.channel].has(name)) {
-      return `credential "${pl.name}" collides with an effective ${pl.channel} parameter of the same name (OAPI-P-10: refused before dispatch, never a silent overwrite in either direction)`;
-    }
-    const key = `${pl.channel}\0${name}`;
-    if (seen.has(key)) return `two credentials collide at ${pl.channel} "${pl.name}" (OAPI-P-10)`;
-    seen.add(key);
-  }
-  return "";
+  return openAPICredentialCollision(placements, params, populated);
 }
 
 // ---------------------------------------------------------------------------

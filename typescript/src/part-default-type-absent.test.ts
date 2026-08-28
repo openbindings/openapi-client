@@ -1,7 +1,12 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { buildMultipartBody, buildURLEncodedBody, planRequestBodies } from "./media.js";
+import { buildURLEncodedBody } from "./media.js";
+import {
+  buildResolvedMultipartBody,
+  planResolvedRequestBodies,
+  plansRequirePropertyMedia,
+} from "./resolved-media.js";
 import { OPENAPI_PROFILE_FULL } from "./profile.js";
 import { loadOpenAPIDocument } from "./util.js";
 import type { OpenAPIDocument, OpenAPIMediaType, OpenAPIOperation } from "./types.js";
@@ -11,7 +16,7 @@ import type { OpenAPIDocument, OpenAPIMediaType, OpenAPIOperation } from "./type
 // package's BUILT dist; changing it in one engine without the others fails
 // here.
 export const PART_DEFAULT_TYPE_ABSENT_CASES_DIGEST =
-  "2d871e381018d76ff8e4cce4c8cf4c70aa3e32278a2b003291aaef104ed07d75";
+  "c6494b3b833f03d13e1e7e5cb83547f484b0e20f8f77b70f5f893075eb04e46c";
 
 export interface PartDefaultTypeAbsentCase {
   name: string;
@@ -80,7 +85,7 @@ async function emission(
       const encoded = buildURLEncodedBody(media, fields, true, c.openapi, false);
       return encoded === "" ? "elided" : encoded;
     }
-    const form = buildMultipartBody(doc, media, fields, true, false);
+    const form = buildResolvedMultipartBody(doc, media, fields, true, false);
     const rendered: string[] = [];
     for (const entry of form.getAll(c.propertyName)) {
       if (typeof entry === "string") {
@@ -112,7 +117,11 @@ export async function partDefaultTypeAbsentDecision(c: PartDefaultTypeAbsentCase
   const op = (doc as unknown as Record<string, any>).paths?.["/form"]?.post as OpenAPIOperation | undefined;
   if (!op) throw new Error(`${c.name}: loaded document has no form operation`);
   try {
-    planRequestBodies(op, { profile: OPENAPI_PROFILE_FULL, openapiVersion: c.openapi });
+    const plans = planResolvedRequestBodies(op, {
+      profile: OPENAPI_PROFILE_FULL,
+      openapiVersion: c.openapi,
+    });
+    if (plansRequirePropertyMedia(plans)) return "missing-required-choice";
   } catch {
     return "refused";
   }
@@ -140,11 +149,9 @@ export async function assertTypeAbsentPartRefusesOnEveryAcceptedEdition(
   let checked = 0;
   for (const c of cases) {
     const got = await partDefaultTypeAbsentDecision(c);
-    const admitted = got.startsWith("admitted;");
-    const want = c.declaresType;
-    if (admitted !== want) {
+    if (got !== c.expect) {
       throw new Error(
-        `${c.name}: admitted = ${admitted}, want ${want} (decision ${JSON.stringify(got)})\nbasis: ${c.basis}`,
+        `${c.name}: decision ${JSON.stringify(got)}, want ${JSON.stringify(c.expect)}\nbasis: ${c.basis}`,
       );
     }
     checked += 1;

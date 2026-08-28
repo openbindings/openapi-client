@@ -1,7 +1,12 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { buildMultipartBody, buildRequestBody, buildURLEncodedBody, planRequestBodies } from "./media.js";
+import { buildRequestBody, buildURLEncodedBody, planRequestBodies } from "./media.js";
+import {
+  buildResolvedMultipartBody,
+  planResolvedRequestBodies,
+  plansRequirePropertyMedia,
+} from "./resolved-media.js";
 import { OPENAPI_PROFILE_FULL } from "./profile.js";
 import { loadOpenAPIDocument } from "./util.js";
 import type { OpenAPIDocument, OpenAPIMediaType, OpenAPIOperation } from "./types.js";
@@ -11,7 +16,7 @@ import type { OpenAPIDocument, OpenAPIMediaType, OpenAPIOperation } from "./type
 // package's BUILT dist; changing it in one engine without the others fails
 // here.
 export const PART_CONTENT_ENCODING_CASES_DIGEST =
-  "350a4d87e531218a0f189b754a91c6573eaf98d850c69546a044debdd36fa8b5";
+  "7715dd10e63e4fa2865c354325e3d15af7800fb6768fc4d4e9b5d060b46dd030";
 
 export interface PartContentEncodingCase {
   name: string;
@@ -87,7 +92,7 @@ async function emission(
       const encoded = buildURLEncodedBody(media, fields, true, c.openapi, false);
       return encoded === "" ? "elided" : encoded;
     }
-    const form = buildMultipartBody(doc, media, fields, true, false);
+    const form = buildResolvedMultipartBody(doc, media, fields, true, false);
     const rendered: string[] = [];
     for (const entry of form.getAll(c.propertyName)) {
       if (typeof entry === "string") {
@@ -118,7 +123,11 @@ export async function partContentEncodingDecision(c: PartContentEncodingCase): P
   const op = (doc as unknown as Record<string, any>).paths?.["/form"]?.post as OpenAPIOperation | undefined;
   if (!op) throw new Error(`${c.name}: loaded document has no form operation`);
   try {
-    planRequestBodies(op, { profile: OPENAPI_PROFILE_FULL, openapiVersion: c.openapi });
+    const plans = planResolvedRequestBodies(op, {
+      profile: OPENAPI_PROFILE_FULL,
+      openapiVersion: c.openapi,
+    });
+    if (plansRequirePropertyMedia(plans)) return "missing-required-choice";
   } catch {
     return "refused";
   }

@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { planRequestBodies, styleLaneUndefinedExpansionMember } from "./media.js";
-import { effectiveParameters, styleLaneUndefinedExpansionParam } from "./params.js";
+import {
+  effectiveParameters,
+  resolvedStyleLaneUndefinedExpansionMember,
+  resolvedStyleLaneUndefinedExpansionParam,
+} from "./params.js";
+import { planResolvedRequestBodies } from "./resolved-media.js";
 import { OPENAPI_PROFILE_FULL } from "./profile.js";
 import type { OpenAPIOperation, OpenAPIPathItem } from "./types.js";
 
@@ -24,7 +28,7 @@ import type { OpenAPIOperation, OpenAPIPathItem } from "./types.js";
  * table per edition. Package:
  * `design/openapi-style-lane-composite-member-ruling.md`, RULED 2026-08-18.
  */
-const CASES_DIGEST = "1ea1045c75039b00c1035a2e2c3d09e440644e32a5fa1c3689be6add1eac7673";
+const CASES_DIGEST = "ae6179681e8ba7c9700f05e250eec3fe05b3f5b27c6ec7658593a23495e3ab00";
 
 interface StyleLaneCase {
   readonly name: string;
@@ -110,7 +114,7 @@ describe("style-lane composite-member case table", () => {
         const template = testCase.in === "path" ? "/q/{filter}" : "/q";
         const pathItem = paths[template]!;
         const op = pathItem.get as OpenAPIOperation;
-        const member = styleLaneUndefinedExpansionParam(
+        const member = resolvedStyleLaneUndefinedExpansionParam(
           effectiveParameters(pathItem, op),
           OPENAPI_PROFILE_FULL,
           is30,
@@ -123,7 +127,7 @@ describe("style-lane composite-member case table", () => {
       const op = (paths["/form"] as OpenAPIPathItem).post as OpenAPIOperation;
       let decision = "admitted";
       try {
-        const plans = planRequestBodies(op, { profile: OPENAPI_PROFILE_FULL, openapiVersion: testCase.openapi });
+        const plans = planResolvedRequestBodies(op, { profile: OPENAPI_PROFILE_FULL, openapiVersion: testCase.openapi });
         if (plans.length === 0) decision = "refused";
       } catch {
         decision = "refused";
@@ -133,7 +137,7 @@ describe("style-lane composite-member case table", () => {
       // A cell with no Encoding Object is on the CONTENT path, where this
       // predicate is never consulted, so only the style-lane cells assert it.
       if (testCase.encoding === null) return;
-      expect(styleLaneUndefinedExpansionMember(testCase.schema, is30)).toBe(testCase.member);
+      expect(resolvedStyleLaneUndefinedExpansionMember(testCase.schema, is30)).toBe(testCase.member);
     });
   }
 });
