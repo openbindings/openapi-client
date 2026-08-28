@@ -42,6 +42,16 @@ export {
   OpenAPIOperationResolutionError,
   parseOpenAPI32OperationReference,
 } from "./openapi32-operations.js";
+export {
+  openAPI32ParameterSerializationMethod,
+  serializeOpenAPI32CookieValue,
+  serializeOpenAPI32QueryStringParameter,
+  serializeOpenAPI32QueryValue,
+  validateOpenAPI32CookieUnits,
+  validateOpenAPI32OperationParameters,
+  validateOpenAPI32ParameterSerialization,
+} from "./openapi32-parameters.js";
+export type { OpenAPI32ParameterSerializationMethod } from "./openapi32-parameters.js";
 export type {
   OpenAPIOperationReference,
   OpenAPIResolvedOperation,

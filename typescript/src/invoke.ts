@@ -86,6 +86,7 @@ import {
 } from "./security-wire.js";
 import type { OpenAPIExecutionProfile } from "./profile.js";
 import type { OpenAPIResolvedOperation } from "./openapi32-operations.js";
+import { validateOpenAPI32ParameterSerialization } from "./openapi32-parameters.js";
 
 interface OpenAPIBindingRunArgs extends BindingInvocationArgs {
   openAPITarget?: OpenAPIResolvedOperation;
@@ -211,7 +212,10 @@ export async function runBinding(
   }
   if (revision3) {
     try {
-      for (const parameter of params) validateParameterSerialization(parameter);
+      for (const parameter of params) {
+        if (doc.openapi === "3.2.0") validateOpenAPI32ParameterSerialization(parameter);
+        else validateParameterSerialization(parameter);
+      }
     } catch (error: unknown) {
       inv.fireError(new InvocationError(ERR_REFUSED, errorMessage(error)));
       return;
@@ -396,9 +400,11 @@ export async function runBinding(
       const candidateRouted = envelope
         ? routeEnvelope(params, envelope, path, candidate, args.source.profile, {
           converter: args.parameterConverter,
+          openapiVersion: doc.openapi,
         })
         : routeInput(params, inputMap, path, candidate, args.source.profile, {
           converter: args.parameterConverter,
+          openapiVersion: doc.openapi,
         });
       const candidateWire = await finalizeRequestBody(
         buildRequestBody(doc, candidate, candidateRouted),

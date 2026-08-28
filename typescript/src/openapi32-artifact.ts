@@ -16,6 +16,7 @@ import {
   type OpenAPIOperationReference,
   type OpenAPIResolvedOperation,
 } from "./openapi32-operations.js";
+import { validateOpenAPI32OperationParameters } from "./openapi32-parameters.js";
 
 export type OpenAPIEdition =
   | "3.0.0" | "3.0.1" | "3.0.2" | "3.0.3" | "3.0.4"
@@ -387,6 +388,7 @@ class OpenAPI32Overlay {
     const pathItem = await this.materializePathItem(selected, reference);
     const operation = openAPI32OperationValue(pathItem as Record<string, unknown>, reference) as OpenAPIOperation;
     const targetRoot = this.targetDocument(root, reference, pathItem);
+    validateOpenAPI32OperationParameters(root as OpenAPIDocument, reference.path, pathItem, operation);
     return { reference, document: targetRoot, pathItem, operation };
   }
 
