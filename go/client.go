@@ -879,12 +879,19 @@ func nativeResponseUsesRawBoundary(document *openapi3.T, operation *openapi3.Ope
 	if response == nil {
 		return false
 	}
+	contentType := response.Header.Get("Content-Type")
+	if contentType == "" && document != nil && document.OpenAPI == string(EditionOpenAPI320) {
+		// A 3.2 non-empty response without Content-Type is governed as
+		// application/octet-stream. This predicate is consulted only for an
+		// emitted value; an empty response emits nothing regardless.
+		contentType = "application/octet-stream"
+	}
 	declaration := governingResponse(operation, response.StatusCode)
 	if declaration == nil {
 		return false
 	}
-	match, err := governingResponseMediaMatchFor(declaration.response, response.Header.Get("Content-Type"), profileFullCoordinate)
-	return err == nil && responseUsesRawBoundary(document, match.media, response.Header.Get("Content-Type"), profileFullCoordinate, match.declared.rangeSpecificity == 2)
+	match, err := governingResponseMediaMatchFor(declaration.response, contentType, profileFullCoordinate)
+	return err == nil && responseUsesRawBoundary(document, match.media, contentType, profileFullCoordinate, match.declared.rangeSpecificity == 2)
 }
 
 func responseBody(response *http.Response) []byte {

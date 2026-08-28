@@ -524,6 +524,15 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 		}
 		resp.Body = bufferedResponseBody{Reader: buffered, Closer: resp.Body}
 		actualContentType, revision3ContentTypeErr = singletonResponseHeader(resp.Header, "Content-Type")
+		if revision3ContentTypeErr == nil && actualContentType == "" && artifact.Edition.IsOpenAPI32() {
+			actualContentType = "application/octet-stream"
+			resp.Header.Set("Content-Type", actualContentType)
+		}
+		if revision3ContentTypeErr == nil && responseMatch == nil {
+			_ = resp.Body.Close()
+			inv.failExecution(&ExecutionError{Code: CodeProtocol, Message: "non-empty response has no governing Response Object"})
+			return
+		}
 		if revision3ContentTypeErr == nil && isSSEContentTypeFor(actualContentType, args.Source.Capability) {
 			// A stream cannot be buffered without destroying its lifecycle. Its
 			// classifier sees the real status/headers and no invented body, as in
