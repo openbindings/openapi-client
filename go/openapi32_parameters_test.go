@@ -101,7 +101,6 @@ func TestOpenAPI32StyleAndUndefinedCells(t *testing.T) {
         - name: parts
           in: cookie
           style: cookie
-          explode: true
           schema: {type: array, items: {type: string}}
       responses: {'204': {description: ok}}
   /cookie-null:

@@ -718,3 +718,50 @@ export type {
   OpenAPI32RoutedBody,
   OpenAPI32SequentialRequestKind,
 } from "./openapi32-media.js";
+export {
+  PreparedSwagger20Operation,
+  Swagger20ExecutionError,
+  listSwagger20Operations,
+  prepareSwagger20,
+  validateSwagger20Selector,
+  type Swagger20PrepareOptions,
+  type Swagger20ContentCodec,
+  type Swagger20ContentCodingResult,
+} from "./swagger20-engine.js";
+export {
+  Swagger20Client,
+  loadSwagger20,
+} from "./swagger20-loader.js";
+export {
+  Swagger20Document,
+  Swagger20Number,
+  SWAGGER20_METHODS,
+  type Swagger20LoadOptions,
+  type Swagger20Method,
+  type Swagger20OperationInfo,
+  type Swagger20Source,
+} from "./swagger20-model.js";
+export type {
+  Swagger20EmptyValueForm,
+  Swagger20Input,
+  Swagger20ParameterConverter,
+  Swagger20ParameterInfo,
+  Swagger20ParameterLocation,
+  Swagger20Parameters,
+} from "./swagger20-parameters.js";
+export type {
+  Swagger20BasicCredential,
+  Swagger20OAuth2Credential,
+  Swagger20SecurityCredentials,
+} from "./swagger20-security.js";
+export type {
+  Swagger20SynthesisAlternative,
+  Swagger20SynthesisBody,
+  Swagger20SynthesisDocument,
+  Swagger20SynthesisOperation,
+  Swagger20SynthesisParameter,
+  Swagger20SynthesisResponse,
+  Swagger20SynthesisResponseHeader,
+  Swagger20SynthesisSecurityAlternative,
+  Swagger20SynthesisSecurityScheme,
+} from "./swagger20-synthesis.js";
