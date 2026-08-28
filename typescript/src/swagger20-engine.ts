@@ -24,6 +24,11 @@ import {
 } from "./swagger20-parameters.js";
 import { executeSwagger20, type Swagger20ExecutionResult } from "./swagger20-execution.js";
 
+export type Swagger20ContentCodingResult = Uint8Array | ArrayBuffer | ArrayBufferView;
+export type Swagger20ContentCodec = (
+  bytes: Uint8Array,
+) => Swagger20ContentCodingResult | Promise<Swagger20ContentCodingResult>;
+
 export interface Swagger20PrepareOptions extends Swagger20LoadOptions {
   source: Swagger20Source;
   ref: string;
@@ -33,6 +38,14 @@ export interface Swagger20PrepareOptions extends Swagger20LoadOptions {
   server?: string;
   parameterConverter?: Swagger20ParameterConverter;
   emptyValueForm?: Swagger20EmptyValueForm;
+  /** Concrete request representation used to elect one effective consumes declaration. */
+  requestMedia?: string;
+  /** Concrete media type for each file-valued multipart form property. */
+  propertyMedia?: Record<string, string>;
+  /** Whole-representation request encoders keyed by normalized content-coding token. */
+  requestContentCodings?: ReadonlyMap<string, Swagger20ContentCodec>;
+  /** Whole-representation response decoders keyed by normalized content-coding token. */
+  responseContentCodings?: ReadonlyMap<string, Swagger20ContentCodec>;
 }
 
 /** A failure produced by the exact Swagger 2.0 engine lane. */

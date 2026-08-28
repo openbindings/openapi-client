@@ -16,6 +16,7 @@ describe("native Swagger 2.0 parameter execution", () => {
             { name: "id", in: "query", type: "string" },
             { name: "X-Ready", in: "header", type: "boolean" },
           ],
+          responses: { 204: { description: "empty" } },
         } } },
       } },
       ref: "#/paths/~1pets~1{id}/get",
@@ -41,6 +42,7 @@ describe("native Swagger 2.0 parameter execution", () => {
         swagger: "2.0",
         paths: { "/pets": { get: {
           parameters: [{ name: "tag", in: "query", type: "array", collectionFormat: "multi", items: { type: "string" } }],
+          responses: { 204: { description: "empty" } },
         } } },
       } },
       ref: "#/paths/~1pets/get",
@@ -58,6 +60,7 @@ describe("native Swagger 2.0 parameter execution", () => {
         swagger: "2.0",
         paths: { "/pets": { get: {
           parameters: [{ name: "count", in: "query", type: "integer" }],
+          responses: { 204: { description: "empty" } },
         } } },
       } },
       ref: "#/paths/~1pets/get",
