@@ -67,6 +67,17 @@ type OperationTarget struct {
 	PathItem                 *openapi3.PathItem
 	Operation                *openapi3.Operation
 	ReferringSecuritySchemes openapi3.SecuritySchemes
+	ResponseMediaExclusions  []OpenAPI32ResponseMediaExclusion
+}
+
+// OpenAPI32ResponseMediaExclusion records one response media alternative
+// removed from a target-local typed image because its Media Type or Schema
+// reference is unresolvable under OpenAPI 3.2 reference identity. Sibling
+// media remain selectable.
+type OpenAPI32ResponseMediaExclusion struct {
+	ResponseKey string
+	MediaType   string
+	Reason      string
 }
 
 // OperationDisposition is one edition-native inventory position. Target is
