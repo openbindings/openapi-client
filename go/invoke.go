@@ -293,7 +293,7 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 	var routed *routedInput
 	var bodyReader io.Reader
 	var contentType string
-	parameterOptions := parameterSerializationOptions{edition: doc.OpenAPI, converter: args.ParameterConverter}
+	parameterOptions := parameterSerializationOptions{edition: doc.OpenAPI, document: doc, converter: args.ParameterConverter}
 	if len(plans) == 0 {
 		if envelope != nil {
 			routed, err = routeEnvelopeWithParameterOptions(params, envelope, pathTemplate, &bodyPlan{}, args.Source.Capability, parameterOptions)
@@ -1734,7 +1734,7 @@ func credentialDestinations(plan securityPlan) []credentialPlacement {
 // channel is refused before dispatch — loud, never a silent overwrite in
 // either direction. Header names compare case-insensitively.
 func checkCredentialCollisions(placements []credentialPlacement, params openapi3.Parameters, populated map[string]map[string]bool) error {
-	declared := map[string]map[string]bool{"header": {}, "query": {}, "cookie": {}, "path": {}}
+	declared := map[string]map[string]bool{"header": {}, "query": {}, ParameterInQueryString: {}, "cookie": {}, "path": {}}
 	for _, ref := range params {
 		if ref == nil || ref.Value == nil {
 			continue

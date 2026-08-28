@@ -513,6 +513,8 @@ openapi: 3.2.0
 info: {title: selectors, version: "1"}
 paths:
   /pets/{petId}:
+    parameters:
+      - {name: petId, in: path, required: true, schema: {type: string}}
     query: {}
     connect: {operationId: ignoredKinFixedField}
     additionalOperations:

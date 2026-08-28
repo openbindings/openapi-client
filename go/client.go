@@ -51,10 +51,11 @@ type OperationInfo struct {
 }
 
 type Parameters struct {
-	Path   map[string]any
-	Query  map[string]any
-	Header map[string]any
-	Cookie map[string]any
+	Path        map[string]any
+	Query       map[string]any
+	QueryString map[string]any
+	Header      map[string]any
+	Cookie      map[string]any
 }
 
 type Input struct {
@@ -495,7 +496,7 @@ func nativeInput(document *openapi3.T, pathItem *openapi3.PathItem, operation *o
 	locations := []struct {
 		name   string
 		values map[string]any
-	}{{"path", input.Parameters.Path}, {"query", input.Parameters.Query}, {"header", input.Parameters.Header}, {"cookie", input.Parameters.Cookie}}
+	}{{"path", input.Parameters.Path}, {"query", input.Parameters.Query}, {ParameterInQueryString, input.Parameters.QueryString}, {"header", input.Parameters.Header}, {"cookie", input.Parameters.Cookie}}
 	for _, location := range locations {
 		for name, member := range location.values {
 			found := false

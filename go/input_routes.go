@@ -428,11 +428,11 @@ func routeEnvelopeWithParameterOptions(params openapi3.Parameters, envelope *rou
 		resolvedPath: pathTemplate,
 		bodyFields:   map[string]any{},
 		populated: map[string]map[string]bool{
-			"header": {}, "query": {}, "cookie": {},
+			"header": {}, "query": {}, ParameterInQueryString: {}, "cookie": {},
 		},
 	}
 	consumed := map[string]bool{}
-	var missingPath []string
+	var missingPath, missingRequired []string
 
 	for _, pref := range params {
 		if pref == nil || pref.Value == nil {
@@ -443,6 +443,8 @@ func routeEnvelopeWithParameterOptions(params openapi3.Parameters, envelope *rou
 		if !mapped {
 			if p.In == openapi3.ParameterInPath {
 				missingPath = append(missingPath, p.Name)
+			} else if strings.HasPrefix(options.edition, "3.2.") && p.Required {
+				missingRequired = append(missingRequired, p.In+"/"+p.Name)
 			}
 			continue
 		}
@@ -450,6 +452,8 @@ func routeEnvelopeWithParameterOptions(params openapi3.Parameters, envelope *rou
 		if !present {
 			if p.In == openapi3.ParameterInPath {
 				missingPath = append(missingPath, p.Name)
+			} else if strings.HasPrefix(options.edition, "3.2.") && p.Required {
+				missingRequired = append(missingRequired, p.In+"/"+p.Name)
 			}
 			continue
 		}
@@ -461,6 +465,10 @@ func routeEnvelopeWithParameterOptions(params openapi3.Parameters, envelope *rou
 	if len(missingPath) > 0 {
 		sort.Strings(missingPath)
 		return nil, fmt.Errorf("%w(s) %s: the URL cannot be built without them", errMissingPathParam, strings.Join(missingPath, ", "))
+	}
+	if len(missingRequired) > 0 {
+		sort.Strings(missingRequired)
+		return nil, fmt.Errorf("missing required parameter(s) %s", strings.Join(missingRequired, ", "))
 	}
 
 	if plan != nil && plan.declared {

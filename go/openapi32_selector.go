@@ -144,7 +144,7 @@ func (a *Artifact) ResolveOperation(ref string) (*OperationTarget, error) {
 		if target.Operation.Responses != nil && target.Operation.Responses.Len() == 0 {
 			return nil, operationResolutionError(OperationTargetExcluded, "operation %q has a present empty Responses Object", ref)
 		}
-		return target, nil
+		return a.validateOpenAPI32Target(target)
 	}
 	if resolutionErr := a.operationErrors[reference.Ref]; resolutionErr != nil {
 		return nil, resolutionErr
@@ -172,5 +172,5 @@ func (a *Artifact) ResolveOperation(ref string) (*OperationTarget, error) {
 	if a.Edition.IsOpenAPI32() && operation.Responses != nil && operation.Responses.Len() == 0 {
 		return nil, operationResolutionError(OperationTargetExcluded, "operation %q has a present empty Responses Object", ref)
 	}
-	return &OperationTarget{OperationReference: reference, Document: a.Document, PathItem: pathItem, Operation: operation}, nil
+	return a.validateOpenAPI32Target(&OperationTarget{OperationReference: reference, Document: a.Document, PathItem: pathItem, Operation: operation})
 }

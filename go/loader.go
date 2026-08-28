@@ -314,21 +314,11 @@ func loadArtifact(ctx context.Context, client *http.Client, source Source, allow
 		sourceRefusal:    sourceRefusal,
 		sourceExclusion:  sourceExclusion,
 	}
-	if edition.IsOpenAPI32() && artifact.sourceRefusal == "" && artifact.sourceExclusion == "" {
-		references := artifactOverlay.operationReferences()
-		if len(references) > 0 {
-			surviving := false
-			for _, reference := range references {
-				if _, resolveErr := artifact.ResolveOperation(reference.Ref); resolveErr == nil {
-					surviving = true
-					break
-				}
-			}
-			if !surviving {
-				artifact.sourceRefusal = "every addressable OpenAPI 3.2 operation target is excluded"
-			}
-		}
-	}
+	// Do not fold target-local 3.2 exclusions into a whole-source refusal.
+	// Once an operation position is addressable, its parameter, media, server,
+	// security, and response defects remain confined to that selected target.
+	// Only the raw inventory/fallback path above can establish that every
+	// position which could contain a target is itself defective.
 	return artifact, floor, nil
 }
 

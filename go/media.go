@@ -3241,7 +3241,7 @@ func buildURLEncodedBodyForRevision(doc *openapi3.T, media *openapi3.MediaType, 
 			style, explode = sm.Style, sm.Explode
 			allowReserved = enc.AllowReserved
 		}
-		u, err := serializeQueryValueForRevision(name, fields[name], style, explode, allowReserved, bindingSpec, true)
+		u, err := serializeQueryValueForRevision(name, fields[name], style, explode, allowReserved, bindingSpec, true, false)
 		if err != nil {
 			return "", fmt.Errorf("form field %q: %w", name, err)
 		}

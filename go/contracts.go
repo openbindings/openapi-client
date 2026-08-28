@@ -75,6 +75,11 @@ type SecurityHandler func(*http.Request, SecurityHandlerContext) error
 // unchanged. The function must be safe for concurrent calls.
 type ParameterConverter func(value any) (string, error)
 
+// ParameterInQueryString is the OpenAPI 3.2 Parameter Object location whose
+// application value supplies the complete query component. kin-openapi's
+// typed Parameter retains the literal but does not publish a constant for it.
+const ParameterInQueryString = "querystring"
+
 // ContentEncoder and ContentDecoder are deterministic whole-representation
 // HTTP content-coding capabilities. Request encoders run in field order;
 // response decoders run in reverse field order.

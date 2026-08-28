@@ -52,7 +52,7 @@ func TestParameterConverterAndUndefinedCells(t *testing.T) {
 		}
 		var wire string
 		if testCase.style == openapi3.SerializationForm {
-			units, err := serializeQueryValueForRevision("id", prepared, testCase.style, true, false, profileFullCoordinate, false)
+			units, err := serializeQueryValueForRevision("id", prepared, testCase.style, true, false, profileFullCoordinate, false, false)
 			if err != nil {
 				t.Fatal(err)
 			}

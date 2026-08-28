@@ -234,12 +234,12 @@ func routeInputWithParameterOptions(params openapi3.Parameters, input map[string
 		resolvedPath: pathTemplate,
 		bodyFields:   map[string]any{},
 		populated: map[string]map[string]bool{
-			"header": {}, "query": {}, "cookie": {},
+			"header": {}, "query": {}, ParameterInQueryString: {}, "cookie": {},
 		},
 	}
 
 	consumed := map[string]bool{}
-	var missingPath []string
+	var missingPath, missingRequired []string
 
 	for _, pref := range params {
 		if pref == nil || pref.Value == nil {
@@ -250,6 +250,8 @@ func routeInputWithParameterOptions(params openapi3.Parameters, input map[string
 		if !ok {
 			if p.In == openapi3.ParameterInPath {
 				missingPath = append(missingPath, p.Name)
+			} else if strings.HasPrefix(options.edition, "3.2.") && p.Required {
+				missingRequired = append(missingRequired, p.In+"/"+p.Name)
 			}
 			continue
 		}
@@ -264,6 +266,10 @@ func routeInputWithParameterOptions(params openapi3.Parameters, input map[string
 	if len(missingPath) > 0 {
 		sort.Strings(missingPath)
 		return nil, fmt.Errorf("%w(s) %s: the URL cannot be built without them", errMissingPathParam, strings.Join(missingPath, ", "))
+	}
+	if len(missingRequired) > 0 {
+		sort.Strings(missingRequired)
+		return nil, fmt.Errorf("missing required parameter(s) %s", strings.Join(missingRequired, ", "))
 	}
 
 	// Fields matching no declared parameter.
@@ -341,10 +347,10 @@ func routeParameterFor(r *routedInput, p *openapi3.Parameter, value any, binding
 
 func routeParameterWithOptions(r *routedInput, p *openapi3.Parameter, value any, bindingSpec string, options parameterSerializationOptions) error {
 	if hasMediaFidelity(bindingSpec) {
-		if err := validateRevision3ParameterSerialization(p, strings.HasPrefix(options.edition, "3.0.")); err != nil {
+		if err := validateRevision3ParameterSerializationForEdition(p, strings.HasPrefix(options.edition, "3.0."), options.edition); err != nil {
 			return fmt.Errorf("parameter %q: %w", p.Name, err)
 		}
-		prepared, _, err := prepareParameterValue(p, value, options.converter)
+		prepared, _, err := prepareParameterValueForEdition(p, value, options.converter, options.edition)
 		if err != nil {
 			return fmt.Errorf("parameter %q: %w", p.Name, err)
 		}
@@ -355,6 +361,15 @@ func routeParameterWithOptions(r *routedInput, p *openapi3.Parameter, value any,
 	// that serialized string (openbindings.openapi-3.0@1 §8.3;
 	// openbindings.openapi-3.1@1 §8.3).
 	if len(p.Content) > 0 {
+		if p.In == ParameterInQueryString {
+			serialized, serializeErr := serializeQueryStringParameter(options.document, p, value, bindingSpec)
+			if serializeErr != nil {
+				return serializeErr
+			}
+			r.queryUnits = append(r.queryUnits, serialized)
+			r.populated[ParameterInQueryString][p.Name] = true
+			return nil
+		}
 		serialized, err := serializeParamContentFor(p, value, bindingSpec)
 		if err != nil {
 			return err
@@ -368,7 +383,8 @@ func routeParameterWithOptions(r *routedInput, p *openapi3.Parameter, value any,
 			r.resolvedPath = strings.ReplaceAll(r.resolvedPath, "{"+p.Name+"}", escaped)
 		case openapi3.ParameterInQuery:
 			if hasMediaFidelity(bindingSpec) {
-				r.queryUnits = append(r.queryUnits, revision3URIEscape(p.Name, false, false)+"="+revision3URIEscape(serialized, p.AllowReserved, false))
+				querySafe := strings.HasPrefix(options.edition, "3.2.")
+				r.queryUnits = append(r.queryUnits, revision3URIEscape(p.Name, false, querySafe)+"="+revision3URIEscape(serialized, p.AllowReserved, querySafe))
 			} else {
 				r.queryUnits = append(r.queryUnits, queryEscape(p.Name, false)+"="+queryEscape(serialized, p.AllowReserved))
 			}
@@ -377,7 +393,13 @@ func routeParameterWithOptions(r *routedInput, p *openapi3.Parameter, value any,
 			r.headers = append(r.headers, [2]string{p.Name, serialized})
 			r.populated["header"][http.CanonicalHeaderKey(p.Name)] = true
 		case openapi3.ParameterInCookie:
-			r.cookieUnits = append(r.cookieUnits, p.Name+"="+serialized)
+			unit := p.Name + "=" + serialized
+			if strings.HasPrefix(options.edition, "3.2.") {
+				if err := validateOpenAPI32CookieUnits([]string{unit}); err != nil {
+					return fmt.Errorf("cookie parameter %q: %w", p.Name, err)
+				}
+			}
+			r.cookieUnits = append(r.cookieUnits, unit)
 			r.populated["cookie"][p.Name] = true
 		}
 		return nil
@@ -385,7 +407,7 @@ func routeParameterWithOptions(r *routedInput, p *openapi3.Parameter, value any,
 
 	sm, err := p.SerializationMethod() // compatibility defaults
 	if hasMediaFidelity(bindingSpec) {
-		sm, err = revision3ParameterSerializationMethod(p)
+		sm, err = revision3ParameterSerializationMethodForEdition(p, options.edition)
 	}
 	if err != nil {
 		return fmt.Errorf("parameter %q: %w", p.Name, err)
@@ -399,7 +421,8 @@ func routeParameterWithOptions(r *routedInput, p *openapi3.Parameter, value any,
 		}
 		r.resolvedPath = strings.ReplaceAll(r.resolvedPath, "{"+p.Name+"}", expanded)
 	case openapi3.ParameterInQuery:
-		units, err := serializeQueryValueForRevision(p.Name, value, sm.Style, sm.Explode, p.AllowReserved, bindingSpec, false)
+		querySafe := strings.HasPrefix(options.edition, "3.2.")
+		units, err := serializeQueryValueForRevision(p.Name, value, sm.Style, sm.Explode, p.AllowReserved, bindingSpec, querySafe, querySafe)
 		if err != nil {
 			return fmt.Errorf("query parameter %q: %w", p.Name, err)
 		}
@@ -417,6 +440,11 @@ func routeParameterWithOptions(r *routedInput, p *openapi3.Parameter, value any,
 		if err != nil {
 			return fmt.Errorf("cookie parameter %q: %w", p.Name, err)
 		}
+		if strings.HasPrefix(options.edition, "3.2.") {
+			if err := validateOpenAPI32CookieUnits(units); err != nil {
+				return fmt.Errorf("cookie parameter %q: %w", p.Name, err)
+			}
+		}
 		r.cookieUnits = append(r.cookieUnits, units...)
 		r.populated["cookie"][p.Name] = true
 	default:
@@ -426,10 +454,14 @@ func routeParameterWithOptions(r *routedInput, p *openapi3.Parameter, value any,
 }
 
 func validateRevision3ParameterSerialization(p *openapi3.Parameter, is30 bool) error {
+	return validateRevision3ParameterSerializationForEdition(p, is30, "")
+}
+
+func validateRevision3ParameterSerializationForEdition(p *openapi3.Parameter, is30 bool, edition string) error {
 	if p == nil || len(p.Content) > 0 {
 		return nil
 	}
-	method, err := revision3ParameterSerializationMethod(p)
+	method, err := revision3ParameterSerializationMethodForEdition(p, edition)
 	if err != nil {
 		return err
 	}
@@ -448,7 +480,7 @@ func validateRevision3ParameterSerialization(p *openapi3.Parameter, is30 bool) e
 			return fmt.Errorf("style %q is not defined for header parameters", method.Style)
 		}
 	case openapi3.ParameterInCookie:
-		if method.Style != openapi3.SerializationForm {
+		if method.Style != openapi3.SerializationForm && !(strings.HasPrefix(edition, "3.2.") && method.Style == "cookie") {
 			return fmt.Errorf("style %q is not defined for cookie parameters", method.Style)
 		}
 	case openapi3.ParameterInQuery:
@@ -477,6 +509,10 @@ func validateRevision3ParameterSerialization(p *openapi3.Parameter, is30 bool) e
 }
 
 func revision3ParameterSerializationMethod(p *openapi3.Parameter) (*openapi3.SerializationMethod, error) {
+	return revision3ParameterSerializationMethodForEdition(p, "")
+}
+
+func revision3ParameterSerializationMethodForEdition(p *openapi3.Parameter, edition string) (*openapi3.SerializationMethod, error) {
 	if p == nil {
 		return nil, fmt.Errorf("nil parameter")
 	}
@@ -496,6 +532,9 @@ func revision3ParameterSerializationMethod(p *openapi3.Parameter) (*openapi3.Ser
 	explode := style == openapi3.SerializationForm
 	if p.Explode != nil {
 		explode = *p.Explode
+	}
+	if strings.HasPrefix(edition, "3.2.") && style == openapi3.SerializationDeepObject {
+		explode = true // the 3.2 field explicitly has no effect for deepObject
 	}
 	return &openapi3.SerializationMethod{Style: style, Explode: explode}, nil
 }
@@ -595,10 +634,10 @@ func serializeHeaderValue(value any, style string, explode bool) (string, error)
 // name=value units, per the OAS query styles. allowReserved lets RFC 3986
 // reserved characters in VALUES pass unescaped.
 func serializeQueryValue(name string, value any, style string, explode bool, allowReserved bool) ([]string, error) {
-	return serializeQueryValueForRevision(name, value, style, explode, allowReserved, profileRoutedCoordinate, false)
+	return serializeQueryValueForRevision(name, value, style, explode, allowReserved, profileRoutedCoordinate, false, false)
 }
 
-func serializeQueryValueForRevision(name string, value any, style string, explode bool, allowReserved bool, bindingSpec string, formSafe bool) ([]string, error) {
+func serializeQueryValueForRevision(name string, value any, style string, explode bool, allowReserved bool, bindingSpec string, formSafe, encodeStyleDelimiters bool) ([]string, error) {
 	n := queryEscape(name, false)
 	esc := func(s string) string { return queryEscape(s, allowReserved) }
 	keyEsc := func(s string) string { return queryEscape(s, false) }
@@ -613,7 +652,11 @@ func serializeQueryValueForRevision(name string, value any, style string, explod
 	case openapi3.SerializationSpaceDelimited:
 		return expandDelimited(n, value, explode, "%20", esc)
 	case openapi3.SerializationPipeDelimited:
-		return expandDelimited(n, value, explode, "|", esc)
+		delimiter := "|"
+		if encodeStyleDelimiters {
+			delimiter = "%7C"
+		}
+		return expandDelimited(n, value, explode, delimiter, esc)
 	case openapi3.SerializationDeepObject:
 		obj, ok := asObject(value)
 		if !ok {
@@ -624,8 +667,12 @@ func serializeQueryValueForRevision(name string, value any, style string, explod
 			return nil, err
 		}
 		units := make([]string, 0, len(pairs))
+		leftBracket, rightBracket := "[", "]"
+		if encodeStyleDelimiters {
+			leftBracket, rightBracket = "%5B", "%5D"
+		}
 		for _, kv := range pairs {
-			units = append(units, n+"["+keyEsc(kv[0])+"]="+esc(kv[1]))
+			units = append(units, n+leftBracket+keyEsc(kv[0])+rightBracket+"="+esc(kv[1]))
 		}
 		return units, nil
 	default:
@@ -662,7 +709,7 @@ func revision3URIEscape(value string, allowReserved, formSafe bool) string {
 // the cookie header's own pair separator rather than form's "&", which has
 // no meaning inside a Cookie header.
 func serializeCookieValue(name string, value any, style string, explode bool) ([]string, error) {
-	if style != openapi3.SerializationForm {
+	if style != openapi3.SerializationForm && style != "cookie" {
 		return nil, fmt.Errorf("style %q is not defined for cookie parameters", style)
 	}
 	return expandFormPairs(name, value, explode, func(s string) string { return s })
