@@ -26,11 +26,11 @@ import {
 } from "./swagger20-schema.js";
 import { newSwagger20ResolutionMemo } from "./swagger20-reference.js";
 
-interface Swagger20ParsedMedia extends ParsedMediaType {
+export interface Swagger20ParsedMedia extends ParsedMediaType {
   specificity: 0 | 1 | 2;
 }
 
-interface Swagger20MediaEntry {
+export interface Swagger20MediaEntry {
   raw: string;
   parsed?: Swagger20ParsedMedia;
   error?: Error;
@@ -111,16 +111,16 @@ export function selectSwagger20RequestMedia(
     const matches = bestMatches(set, wanted);
     if (matches.length === 0) throw new Error(`configuration.requestMedia ${JSON.stringify(wanted.canonical)} matches no non-colliding effective consumes declaration`);
     if (matches.length !== 1) throw new Error(`configuration.requestMedia ${JSON.stringify(wanted.canonical)} ambiguously matches effective consumes`);
-    return { media: wanted, declaration: matches[0]!, lane: requestLane(wanted, model) };
+    return { media: wanted, declaration: matches[0]!, lane: swagger20RequestLane(wanted, model) };
   }
   const candidates: Array<{ declaration: Swagger20ParsedMedia; lane?: Swagger20MediaLane }> = [];
   for (const entry of set.entries) {
     if (!entry.parsed || entry.colliding) continue;
     if (entry.parsed.specificity < 2) {
-      if (rangeHasUsableLane(entry.parsed, model)) candidates.push({ declaration: entry.parsed });
+      if (swagger20RangeHasUsableLane(entry.parsed, model)) candidates.push({ declaration: entry.parsed });
       continue;
     }
-    try { candidates.push({ declaration: entry.parsed, lane: requestLane(entry.parsed, model) }); }
+    try { candidates.push({ declaration: entry.parsed, lane: swagger20RequestLane(entry.parsed, model) }); }
     catch { /* this smallest media lane is unusable */ }
   }
   if (candidates.length === 1 && candidates[0]!.lane) {
@@ -161,7 +161,7 @@ export function encodeSwagger20RequestPayload(
   return multipart(routed.formData, selection.media, propertyMedia);
 }
 
-function requestLane(media: Swagger20ParsedMedia, model: Swagger20PayloadModel): Swagger20MediaLane {
+export function swagger20RequestLane(media: Swagger20ParsedMedia, model: Swagger20PayloadModel): Swagger20MediaLane {
   if (media.specificity !== 2) throw new Error("media type is not concrete");
   if (model.kind === "formData") {
     if (media.base === "application/x-www-form-urlencoded") {
@@ -185,14 +185,14 @@ function requestLane(media: Swagger20ParsedMedia, model: Swagger20PayloadModel):
   throw new Error("selected media and resolved declaration define no request byte carriage");
 }
 
-function rangeHasUsableLane(range: Swagger20ParsedMedia, model: Swagger20PayloadModel): boolean {
+export function swagger20RangeHasUsableLane(range: Swagger20ParsedMedia, model: Swagger20PayloadModel): boolean {
   const candidates = model.kind === "formData"
     ? ["application/x-www-form-urlencoded", "multipart/form-data"]
     : ["application/json", "text/plain", "application/octet-stream", "image/png"];
   return candidates.some((candidate) => {
     const media = parseConcrete(candidate);
     if (!declarationMatches(range, media)) return false;
-    try { requestLane(media, model); return true; } catch { return false; }
+    try { swagger20RequestLane(media, model); return true; } catch { return false; }
   });
 }
 
@@ -219,6 +219,16 @@ export async function governingSwagger20Response(
   const key = Object.hasOwn(responses, exact) ? exact : Object.hasOwn(responses, "default") ? "default" : undefined;
   if (!key) return undefined;
   return resolveResponse(operation, responses[key], operation.resource, key, new Set());
+}
+
+/** @internal - resolves one authored Response/Reference position for native analysis. */
+export function resolveSwagger20ResponseValue(
+  operation: Swagger20ResolvedOperation,
+  value: unknown,
+  resource: Swagger20Resource,
+  key: string,
+): Promise<Swagger20ResolvedResponse> {
+  return resolveResponse(operation, value, resource, key, new Set());
 }
 
 async function resolveResponse(
@@ -262,12 +272,7 @@ export async function decodeSwagger20Response(
   const matches = bestMatches(produces, media);
   if (matches.length === 0) throw new Error(`response media ${JSON.stringify(media.canonical)} matches no non-colliding effective produces declaration`);
   if (matches.length !== 1) throw new Error(`response media ${JSON.stringify(media.canonical)} ambiguously matches effective produces`);
-  let lane: Swagger20MediaLane;
-  if (isJSONMedia(media.base)) lane = "json";
-  else if (swagger20ByteString(declaration)) lane = "byte";
-  else if (swagger20RawOctets(declaration)) lane = "octets";
-  else if (isCharacterMedia(media.base) && swagger20SoleString(declaration)) { requireUTF8(media); lane = "text"; }
-  else throw new Error(`response media ${JSON.stringify(media.canonical)} and declaration define no byte carriage`);
+  const lane = swagger20ResponseLane(media, declaration);
   if (lane === "json") {
     try { return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body)) as unknown; }
     catch (error: unknown) { throw new Error("response body is not strict JSON", { cause: error }); }
@@ -279,6 +284,20 @@ export async function decodeSwagger20Response(
     return text;
   }
   return bytesToBase64(body);
+}
+
+export function swagger20ResponseLane(
+  media: Swagger20ParsedMedia,
+  declaration: Swagger20SchemaDeclaration,
+): Swagger20MediaLane {
+  if (isJSONMedia(media.base)) return "json";
+  if (swagger20ByteString(declaration)) return "byte";
+  if (swagger20RawOctets(declaration)) return "octets";
+  if (isCharacterMedia(media.base) && swagger20SoleString(declaration)) {
+    requireUTF8(media);
+    return "text";
+  }
+  throw new Error(`response media ${JSON.stringify(media.canonical)} and declaration define no byte carriage`);
 }
 
 export function contentCodingTokens(value: string): string[] {
@@ -323,6 +342,10 @@ function parseConcrete(raw: string): Swagger20ParsedMedia {
   return { ...parseMediaType(raw, true), specificity: 2 };
 }
 
+export function parseSwagger20ConcreteMedia(raw: string): Swagger20ParsedMedia {
+  return parseConcrete(raw);
+}
+
 function isJSONMedia(base: string): boolean {
   return base === "application/json" || base.split("/")[1]?.endsWith("+json") === true;
 }
@@ -356,10 +379,10 @@ function multipart(
   media: Swagger20ParsedMedia,
   propertyMedia: Record<string, string>,
 ): { body: Uint8Array; contentType: string } {
-  let boundary = media.params.boundary ?? `openbindings-swagger20-${Math.random().toString(16).slice(2)}`;
+  let boundary = media.params.boundary ?? `swagger20-boundary-${Math.random().toString(16).slice(2)}`;
   for (let attempt = 0; contributions.some((item) => multipartContent(item).includes(boundary)); attempt++) {
     if (attempt >= 31 || media.params.boundary) throw new Error("multipart boundary occurs in representation content");
-    boundary = `openbindings-swagger20-${Math.random().toString(16).slice(2)}`;
+    boundary = `swagger20-boundary-${Math.random().toString(16).slice(2)}`;
   }
   const chunks: Uint8Array[] = [];
   const text = (value: string) => new TextEncoder().encode(value);

@@ -626,3 +626,14 @@ export type {
   Swagger20OAuth2Credential,
   Swagger20SecurityCredentials,
 } from "./swagger20-security.js";
+export type {
+  Swagger20SynthesisAlternative,
+  Swagger20SynthesisBody,
+  Swagger20SynthesisDocument,
+  Swagger20SynthesisOperation,
+  Swagger20SynthesisParameter,
+  Swagger20SynthesisResponse,
+  Swagger20SynthesisResponseHeader,
+  Swagger20SynthesisSecurityAlternative,
+  Swagger20SynthesisSecurityScheme,
+} from "./swagger20-synthesis.js";

@@ -95,6 +95,12 @@ export class PreparedSwagger20Operation {
     return executeSwagger20(this, await this.resolvedParameters(), input);
   }
 
+  /** Detached declaration analysis for side-effect-free preflight and synthesis. */
+  async synthesisOperation(): Promise<import("./swagger20-synthesis.js").Swagger20SynthesisOperation> {
+    const { analyzePreparedSwagger20Operation } = await import("./swagger20-synthesis.js");
+    return analyzePreparedSwagger20Operation(this.document, this.operation, this.info.ref);
+  }
+
   /** @internal */
   resolvedParameters(): Promise<Swagger20ParameterSet> {
     this.parameterSet ??= effectiveSwagger20Parameters(this.operation).catch((error: unknown) => {

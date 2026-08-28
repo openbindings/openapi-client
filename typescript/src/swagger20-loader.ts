@@ -23,6 +23,12 @@ export class Swagger20Client {
     const { listSwagger20Operations } = await import("./swagger20-engine.js");
     return listSwagger20Operations(this.document);
   }
+
+  /** Detached native declaration analysis for thin binding adapters. */
+  async synthesisModel(): Promise<import("./swagger20-synthesis.js").Swagger20SynthesisDocument> {
+    const { swagger20SynthesisModel } = await import("./swagger20-synthesis.js");
+    return swagger20SynthesisModel(this.document);
+  }
 }
 
 /** Loads only the exact Swagger 2.0 family, with no cross-edition fallback. */
