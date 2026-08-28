@@ -597,6 +597,8 @@ export {
   prepareSwagger20,
   validateSwagger20Selector,
   type Swagger20PrepareOptions,
+  type Swagger20ContentCodec,
+  type Swagger20ContentCodingResult,
 } from "./swagger20-engine.js";
 export {
   Swagger20Client,
@@ -619,3 +621,8 @@ export type {
   Swagger20ParameterLocation,
   Swagger20Parameters,
 } from "./swagger20-parameters.js";
+export type {
+  Swagger20BasicCredential,
+  Swagger20OAuth2Credential,
+  Swagger20SecurityCredentials,
+} from "./swagger20-security.js";

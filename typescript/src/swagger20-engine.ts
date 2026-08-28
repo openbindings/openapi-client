@@ -23,6 +23,7 @@ import {
   type Swagger20ParameterSet,
 } from "./swagger20-parameters.js";
 import { executeSwagger20, type Swagger20ExecutionResult } from "./swagger20-execution.js";
+import type { Swagger20SecurityCredentials } from "./swagger20-security.js";
 
 export type Swagger20ContentCodingResult = Uint8Array | ArrayBuffer | ArrayBufferView;
 export type Swagger20ContentCodec = (
@@ -36,6 +37,11 @@ export interface Swagger20PrepareOptions extends Swagger20LoadOptions {
   context?: Record<string, unknown>;
   /** Complete HTTP target URL, replacing the artifact target base. */
   server?: string;
+  /** Zero-based index into the authored effective schemes list. */
+  serverSchemeIndex?: number;
+  /** Zero-based index into the effective security requirement alternatives. */
+  securityAlternative?: number;
+  securityCredentials?: Swagger20SecurityCredentials;
   parameterConverter?: Swagger20ParameterConverter;
   emptyValueForm?: Swagger20EmptyValueForm;
   /** Concrete request representation used to elect one effective consumes declaration. */

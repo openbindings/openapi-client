@@ -73,7 +73,7 @@ export interface Swagger20WireContribution {
   value: string;
   valuePresent: boolean;
   structuralDelimiter?: string;
-  parameter: Swagger20Parameter;
+  parameter?: Swagger20Parameter;
   octets?: Uint8Array;
 }
 

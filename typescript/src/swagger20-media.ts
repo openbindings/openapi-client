@@ -364,7 +364,7 @@ function multipart(
   const chunks: Uint8Array[] = [];
   const text = (value: string) => new TextEncoder().encode(value);
   for (const contribution of contributions) {
-    const file = contribution.parameter.typeName === "file";
+    const file = contribution.parameter?.typeName === "file";
     let contentType = "text/plain; charset=utf-8";
     if (file) {
       const configured = propertyMedia[contribution.name];

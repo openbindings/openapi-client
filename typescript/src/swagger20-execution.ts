@@ -22,6 +22,8 @@ import {
   type Swagger20ResolvedResponse,
 } from "./swagger20-media.js";
 import { booleanMember, objectMember, stringMember, type Swagger20Object } from "./swagger20-model.js";
+import { resolveSwagger20Server } from "./swagger20-server.js";
+import { applySwagger20Security, selectSwagger20Security } from "./swagger20-security.js";
 
 export interface Swagger20ExecutionResult {
   outputPresent: boolean;
@@ -43,7 +45,22 @@ export async function executeSwagger20(
     throw refused(error);
   }
   let routed;
+  let server: string;
+  let security;
   try {
+    server = resolveSwagger20Server(
+      prepared.document,
+      prepared.operation,
+      prepared.options.server,
+      prepared.options.serverSchemeIndex,
+    );
+    security = selectSwagger20Security(
+      prepared.document,
+      prepared.operation,
+      parameters,
+      prepared.options.securityAlternative,
+      prepared.options.securityCredentials,
+    );
     routed = routeSwagger20Input(
       parameters,
       prepared.operation.path,
@@ -54,6 +71,7 @@ export async function executeSwagger20(
   } catch (error: unknown) {
     throw refused(error);
   }
+  applySwagger20Security(routed, security);
   const payloadPresent = routed.bodyPresent || routed.formPresent;
   if (payloadPresent && ["get", "head", "delete", "options"].includes(prepared.operation.method)) {
     throw new Swagger20ExecutionError(
@@ -75,7 +93,6 @@ export async function executeSwagger20(
       throw refused(error);
     }
   }
-  const server = configuredServer(prepared.options.server);
   const query = swagger20RawQuery(routed.query);
   const url = `${server}${routed.resolvedPath}${query === "" ? "" : `?${query}`}`;
   try {
@@ -246,17 +263,6 @@ function httpFailure(response: Response, governing: Swagger20ResolvedResponse | 
 
 function responseError(error: unknown): Swagger20ExecutionError {
   return new Swagger20ExecutionError("ERR_RESPONSE_ERROR", errorMessage(error), { cause: error });
-}
-
-function configuredServer(value: string | undefined): string {
-  if (!value) throw new Swagger20ExecutionError("ERR_REFUSED", "Swagger 2.0 target requires a complete server URL");
-  let parsed: URL;
-  try { parsed = new URL(value); }
-  catch (error: unknown) { throw refused(error); }
-  if ((parsed.protocol !== "http:" && parsed.protocol !== "https:") || parsed.host === "" || parsed.search !== "" || parsed.hash !== "") {
-    throw new Swagger20ExecutionError("ERR_REFUSED", "Swagger 2.0 consumer server is not a complete HTTP target URL");
-  }
-  return value;
 }
 
 function refused(error: unknown): Swagger20ExecutionError {
