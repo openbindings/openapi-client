@@ -116,8 +116,9 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 		inv.failExecution(executionErrorForOperationResolution(err))
 		return
 	}
+	target = requestTargetForEdition(target, artifact.Edition)
 	doc := target.Document
-	pathTemplate, method := target.Path, target.Method
+	pathTemplate, method := target.Path, target.WireMethod()
 	pathItem, op := target.PathItem, target.Operation
 
 	routedRevision := usesRoutedInput(args.Source.Capability)
@@ -404,7 +405,7 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 		return
 	}
 
-	req, err := http.NewRequestWithContext(bctx, strings.ToUpper(method), completedURL.String(), bodyReader)
+	req, err := http.NewRequestWithContext(bctx, method, completedURL.String(), bodyReader)
 	if err != nil {
 		inv.failExecution(&ExecutionError{Code: CodeExecutionFailed, Message: err.Error()})
 		return

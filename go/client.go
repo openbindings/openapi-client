@@ -277,6 +277,11 @@ func (c *Client) Stream(ctx context.Context, selector OperationSelector, input I
 	if err != nil {
 		return nil, err
 	}
+	if c.artifact.Edition.IsOpenAPI32() && !resolved.additional && resolved.info.Method == TRACE {
+		operation := *resolved.operation
+		operation.RequestBody = nil
+		resolved.operation = &operation
+	}
 	native, err := nativeInput(resolved.document, resolved.pathItem, resolved.operation, input)
 	if err != nil {
 		return nil, err
@@ -331,10 +336,11 @@ func (c *Client) Stream(ctx context.Context, selector OperationSelector, input I
 }
 
 type resolvedOperation struct {
-	info      OperationInfo
-	document  *openapi3.T
-	pathItem  *openapi3.PathItem
-	operation *openapi3.Operation
+	info       OperationInfo
+	document   *openapi3.T
+	pathItem   *openapi3.PathItem
+	operation  *openapi3.Operation
+	additional bool
 }
 
 func enumerateOperations(document *openapi3.T) []resolvedOperation {
@@ -370,6 +376,7 @@ func enumerateOperationsWithFloor(artifact *Artifact, floor *acceptanceFloor) []
 			}
 			result = append(result, resolvedOperation{
 				document: target.Document, pathItem: target.PathItem, operation: target.Operation,
+				additional: reference.Additional,
 				info: OperationInfo{
 					Ref: reference.Ref, Path: reference.Path, Method: Method(reference.Method),
 					OperationID: target.Operation.OperationID, Summary: target.Operation.Summary,

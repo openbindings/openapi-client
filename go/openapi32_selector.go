@@ -49,6 +49,16 @@ type OperationReference struct {
 	Additional bool
 }
 
+// WireMethod returns the HTTP method exactly as the selected operation sends
+// it. Fixed Operation fields use their registered uppercase spelling;
+// additionalOperations keys retain their authored capitalization.
+func (r OperationReference) WireMethod() string {
+	if r.Additional {
+		return r.Method
+	}
+	return strings.ToUpper(r.Method)
+}
+
 // OperationTarget pairs an operation address with the resolved typed model.
 type OperationTarget struct {
 	OperationReference
@@ -102,6 +112,17 @@ func parseOperationReference(ref string, edition Edition) (OperationReference, e
 // exact OpenAPI edition without requiring a loaded document.
 func ParseOperationReference(ref string, edition Edition) (OperationReference, error) {
 	return parseOperationReference(ref, edition)
+}
+
+func requestTargetForEdition(target *OperationTarget, edition Edition) *OperationTarget {
+	if target == nil || target.Operation == nil || !edition.IsOpenAPI32() || target.Additional || target.Method != "trace" {
+		return target
+	}
+	operation := *target.Operation
+	operation.RequestBody = nil
+	requestTarget := *target
+	requestTarget.Operation = &operation
+	return &requestTarget
 }
 
 // ResolveOperation resolves an exact selector under the artifact's edition.

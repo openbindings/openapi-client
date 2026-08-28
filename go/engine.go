@@ -169,6 +169,7 @@ func prepareArtifactWithFloor(artifact *Artifact, floor *acceptanceFloor, option
 	if err != nil {
 		return nil, executionErrorForOperationResolution(err)
 	}
+	target = requestTargetForEdition(target, artifact.Edition)
 	prerequisites, err := preflightPrerequisitesForTarget(target.Document, target, options)
 	if err != nil {
 		return nil, err
