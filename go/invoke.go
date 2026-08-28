@@ -1123,6 +1123,12 @@ func securityConfigurationError(doc *openapi3.T, op *openapi3.Operation) error {
 	if requirements == nil || len(*requirements) == 0 {
 		return nil
 	}
+	if strings.HasPrefix(doc.OpenAPI, "3.2.") {
+		if len(securityPlans(doc, op, "")) > 0 {
+			return nil
+		}
+		return fmt.Errorf("the effective OpenAPI security list has no usable complete alternative")
+	}
 	missing := map[string]bool{}
 	for _, requirement := range *requirements {
 		for name := range requirement {
@@ -1184,8 +1190,15 @@ func securityPlans(doc *openapi3.T, op *openapi3.Operation, baseURL string) []se
 				expressible = false
 				break
 			}
+			if strings.HasPrefix(doc.OpenAPI, "3.2.") && malformedOpenAPI32SecurityScheme(ref.Value) {
+				expressible = false
+				break
+			}
 			requiredScopes := append([]string(nil), secReq[schemeName]...)
 			options := schemeRequirements(ref.Value, baseURL, requiredScopes)
+			if strings.HasPrefix(doc.OpenAPI, "3.2.") && !securitySchemeUsesScopes(ref.Value) && len(requiredScopes) > 0 {
+				options = requirementsWithSecurityRoles(options, requiredScopes)
+			}
 			if len(options) == 0 {
 				expressible = false
 				break
@@ -1216,6 +1229,21 @@ func securityPlans(doc *openapi3.T, op *openapi3.Operation, baseURL string) []se
 		}
 	}
 	return plans
+}
+
+func securitySchemeUsesScopes(scheme *openapi3.SecurityScheme) bool {
+	return scheme != nil && (scheme.Type == "oauth2" || scheme.Type == "openIdConnect")
+}
+
+func requirementsWithSecurityRoles(requirements []Requirement, roles []string) []Requirement {
+	result := append([]Requirement(nil), requirements...)
+	for index := range result {
+		if result[index].Extra == nil {
+			result[index].Extra = map[string]any{}
+		}
+		result[index].Extra["roles"] = append([]string(nil), roles...)
+	}
+	return result
 }
 
 func viableSecurityPlans(doc *openapi3.T, op *openapi3.Operation, baseURL string, params openapi3.Parameters) []securityPlan {

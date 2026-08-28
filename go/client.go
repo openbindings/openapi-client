@@ -233,6 +233,22 @@ func (c *Client) Operations() []OperationInfo {
 	return result
 }
 
+// Operations returns every addressable operation in the artifact in stable
+// OpenAPI order. OpenAPI 3.2 enumeration includes the fixed QUERY field and
+// case-exact additionalOperations entries; excluded targets are omitted.
+//
+// This artifact-level surface lets native adapters synthesize from the same
+// edition-aware inventory the execution engine resolves, without exposing the
+// private raw-resource overlay or request-body planning types.
+func (a *Artifact) Operations() []OperationInfo {
+	operations := enumerateOperationsWithFloor(a, nil)
+	result := make([]OperationInfo, len(operations))
+	for index := range operations {
+		result[index] = operations[index].info
+	}
+	return result
+}
+
 func (c *Client) Call(ctx context.Context, selector OperationSelector, input Input, options ...CallOptions) (*Result, error) {
 	streamResult, err := c.Stream(ctx, selector, input, options...)
 	if err != nil {

@@ -103,6 +103,13 @@ func loadArtifact(ctx context.Context, client *http.Client, source Source, allow
 		}
 		normalizer := newRawRefSiblingNormalizer(loader.JoinFunc)
 		read := artifactReadFunc(client, source.Content != nil && source.Location == "", retrievalURIs, &retrievalMu)
+		hydrateSecurityResource := func(resource *url.URL) ([]byte, *url.URL, error) {
+			data, readErr := read(loader, resource)
+			if readErr != nil {
+				return nil, nil, readErr
+			}
+			return data, artifactRetrievalURI(resource, retrievalURIs, &retrievalMu), nil
+		}
 		composition := newExternalComposition(
 			func(resource *url.URL) ([]byte, error) { return read(loader, resource) },
 			loader.JoinFunc,
@@ -147,10 +154,12 @@ func loadArtifact(ctx context.Context, client *http.Client, source Source, allow
 				if captureErr := laneOverlay.capture(data, resource, retrieval, isEntry); captureErr != nil {
 					return nil, captureErr
 				}
+				laneOverlay.hydrateSecurityRequirementURIs(resource, allowExternalRefs, hydrateSecurityResource)
 				if !isEntry && artifactOverlay != nil && artifactOverlay != laneOverlay {
 					if captureErr := artifactOverlay.capture(data, resource, retrieval, false); captureErr != nil {
 						return nil, captureErr
 					}
+					artifactOverlay.hydrateSecurityRequirementURIs(resource, allowExternalRefs, hydrateSecurityResource)
 				}
 			}
 			data = composition.prune(resource, data)
@@ -181,6 +190,7 @@ func loadArtifact(ctx context.Context, client *http.Client, source Source, allow
 				if captureErr := laneOverlay.capture(entry, resource, resource, true); captureErr != nil {
 					return nil, captureErr
 				}
+				laneOverlay.hydrateSecurityRequirementURIs(resource, allowExternalRefs, hydrateSecurityResource)
 			}
 			data, normalizeErr := normalizer.normalizeResource(entry, resource)
 			if normalizeErr != nil {

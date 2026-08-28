@@ -659,6 +659,20 @@ func markRawPathItemServerOrigins(object map[string]any, base *url.URL) bool {
 			changed = markRawServers(operation["servers"], base) || changed
 		}
 	}
+	// OpenAPI 3.2 additions stay outside the shared legacy method table. Their
+	// presence is itself edition-specific raw syntax; older editions never
+	// reach these members as operations.
+	if operation, _ := object["query"].(map[string]any); operation != nil {
+		changed = markRawServers(operation["servers"], base) || changed
+	}
+	if additional, _ := object["additionalOperations"].(map[string]any); additional != nil {
+		for _, rawOperation := range additional {
+			operation, _ := rawOperation.(map[string]any)
+			if operation != nil {
+				changed = markRawServers(operation["servers"], base) || changed
+			}
+		}
+	}
 	return changed
 }
 

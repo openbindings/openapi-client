@@ -3,6 +3,7 @@ package openapiclient
 import (
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/getkin/kin-openapi/openapi3"
@@ -62,9 +63,86 @@ func (r OperationReference) WireMethod() string {
 // OperationTarget pairs an operation address with the resolved typed model.
 type OperationTarget struct {
 	OperationReference
-	Document  *openapi3.T
-	PathItem  *openapi3.PathItem
-	Operation *openapi3.Operation
+	Document                 *openapi3.T
+	PathItem                 *openapi3.PathItem
+	Operation                *openapi3.Operation
+	ReferringSecuritySchemes openapi3.SecuritySchemes
+}
+
+// OperationDisposition is one edition-native inventory position. Target is
+// populated when the operation is addressable; Err records the exact
+// operation-scoped exclusion otherwise.
+type OperationDisposition struct {
+	Reference OperationReference
+	Target    *OperationTarget
+	Err       error
+}
+
+// OperationInventory returns every fixed and additional operation position
+// observed by the edition-specific artifact model in deterministic order.
+// Unlike Artifact.Operations, it retains excluded positions for synthesis
+// coverage.
+func (a *Artifact) OperationInventory() []OperationDisposition {
+	if a == nil || a.Document == nil {
+		return nil
+	}
+	if a.Edition.IsOpenAPI32() && a.openAPI32 != nil {
+		references := a.openAPI32.operationReferences()
+		result := make([]OperationDisposition, 0, len(references))
+		for _, reference := range references {
+			target, err := a.ResolveOperation(reference.Ref)
+			result = append(result, OperationDisposition{Reference: reference, Target: target, Err: err})
+		}
+		return result
+	}
+	if a.Document.Paths == nil {
+		return nil
+	}
+	paths := make([]string, 0, a.Document.Paths.Len())
+	for path := range a.Document.Paths.Map() {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	var result []OperationDisposition
+	for _, path := range paths {
+		pathItem := a.Document.Paths.Find(path)
+		if pathItem == nil {
+			continue
+		}
+		for _, method := range httpMethods {
+			if pathItem.GetOperation(strings.ToUpper(method)) == nil {
+				continue
+			}
+			ref := "#/paths/" + escapeJSONPointerSegment(path) + "/" + method
+			reference, _ := parseOperationReference(ref, a.Edition)
+			target, err := a.ResolveOperation(ref)
+			result = append(result, OperationDisposition{Reference: reference, Target: target, Err: err})
+		}
+	}
+	return result
+}
+
+// WithOperationTarget returns an artifact-local prepared view in which one
+// already-resolved operation target replaces the corresponding inventory
+// entry. It is used by adapters after resolving configuration points such as
+// server and security while preserving the same 3.2 raw-resource overlay for
+// request planning. The receiver is never mutated.
+func (a *Artifact) WithOperationTarget(target *OperationTarget) (*Artifact, error) {
+	if a == nil || target == nil || target.Ref == "" || target.Operation == nil {
+		return nil, operationResolutionError(OperationReferenceInvalid, "prepared operation target is incomplete")
+	}
+	copyArtifact := *a
+	copyArtifact.operationTargets = make(map[string]*OperationTarget, len(a.operationTargets)+1)
+	for ref, current := range a.operationTargets {
+		copyArtifact.operationTargets[ref] = current
+	}
+	copyArtifact.operationTargets[target.Ref] = target
+	copyArtifact.operationErrors = make(map[string]error, len(a.operationErrors))
+	for ref, current := range a.operationErrors {
+		copyArtifact.operationErrors[ref] = current
+	}
+	delete(copyArtifact.operationErrors, target.Ref)
+	return &copyArtifact, nil
 }
 
 // AdditionalOperation creates a selector for a 3.2 additionalOperations key.

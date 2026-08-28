@@ -20,6 +20,8 @@ func (a *Artifact) validateOpenAPI32Target(target *OperationTarget) (*OperationT
 	if a.openAPI32 == nil {
 		return nil, operationResolutionError(OperationTargetExcluded, "OpenAPI 3.2 artifact has no raw-resource overlay")
 	}
+	target = a.materializeOpenAPI32ServerTarget(target)
+	target = a.materializeOpenAPI32SecurityTarget(target)
 	if err := a.openAPI32.validateSelectedParameterDeclarations(target.OperationReference); err != nil {
 		return nil, &OperationResolutionError{Kind: OperationTargetExcluded, Message: err.Error(), Cause: err}
 	}
