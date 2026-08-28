@@ -23,6 +23,16 @@ import {
   OPENAPI_PROFILE_ROUTED,
   type OpenAPIExecutionProfile,
 } from "./profile.js";
+import {
+  buildOpenAPI32MultipartBody,
+  buildOpenAPI32SequentialBody,
+  openAPI32MultipartNeedsNativeBuilder,
+  openAPI32RequestMediaAdmission,
+  serializeOpenAPI32NonJSONText,
+  validateOpenAPI32MultipartFields,
+  type OpenAPI32SequentialRequestKind,
+} from "./openapi32-media.js";
+import { resolveDeclaration } from "./resolved-declaration.js";
 
 // This file implements the family documents' request-media and body rules:
 // media selection with its deterministic tiebreaks and pre-dispatch
@@ -242,6 +252,7 @@ export const FAMILY_MULTIPART = "multipart";
 export const FAMILY_URLENCODED = "urlencoded";
 export const FAMILY_TEXT = "text";
 export const FAMILY_RAW = "raw";
+export const FAMILY_SEQUENTIAL = "sequential";
 
 type MediaSchema = Record<string, unknown> | boolean | null;
 
@@ -281,6 +292,10 @@ export interface BodyPlan {
   /** Threads the additive multipart semantics without changing direct legacy helper defaults. */
   revision3?: boolean;
   openapiVersion?: string;
+  /** OpenAPI 3.2 sequential framing selected by the concrete media type. */
+  sequentialKind?: OpenAPI32SequentialRequestKind;
+  /** OpenAPI 3.2 positional multipart consumes one complete caller array. */
+  positionalMultipart?: boolean;
   /** Declared top-level body property names (object mode). */
   props?: Set<string>;
 }
@@ -412,6 +427,8 @@ export function planRequestBodies(
     range: boolean;
     rawOnlyRange?: boolean;
     unsupported?: boolean;
+    sequentialKind?: OpenAPI32SequentialRequestKind;
+    positionalMultipart?: boolean;
   }
   const candidates: Candidate[] = [];
   const declared: string[] = [];
@@ -469,6 +486,24 @@ export function planRequestBodies(
       continue;
     }
     const media = content[key] ?? null;
+    const openapi32 = openapiVersion === "3.2.0"
+      ? openAPI32RequestMediaAdmission(parsed.base, media)
+      : { handled: false };
+    if (openapi32.handled) {
+      if (!openapi32.error && openapi32.family) {
+        candidates.push({
+          key,
+          parsed,
+          family: openapi32.family,
+          range: false,
+          ...(openapi32.sequentialKind ? { sequentialKind: openapi32.sequentialKind } : {}),
+          ...(openapi32.positionalMultipart ? { positionalMultipart: true } : {}),
+        });
+      } else if (options.inventoryUnsupported) {
+        candidates.push({ key, parsed, family: "", range: false, unsupported: true });
+      }
+      continue;
+    }
     const family = concreteBodyFamily(
       parsed.base,
       mediaSchema(media),
@@ -579,7 +614,13 @@ function supportedRangeCarriageFamilies(
   const bases = representativeRangeMembers(range);
   const supported = new Set<string>();
   for (const base of bases) {
-    const family = concreteBodyFamily(base, schema, openapiVersion, true, true);
+    const openapi32 = openapiVersion === "3.2.0"
+      ? openAPI32RequestMediaAdmission(base, media)
+      : { handled: false };
+    if (openapi32.handled && (openapi32.error || !openapi32.family)) continue;
+    const family = openapi32.handled
+      ? openapi32.family!
+      : concreteBodyFamily(base, schema, openapiVersion, true, true);
     if (!family) continue;
     const suffix = range.canonical.slice(range.base.length);
     let parsed: ParsedMediaType;
@@ -588,7 +629,14 @@ function supportedRangeCarriageFamilies(
       buildBodyPlan(
         false,
         { [range.canonical]: media ?? {} },
-        { key: range.canonical, parsed, family, range: false },
+        {
+          key: range.canonical,
+          parsed,
+          family,
+          range: false,
+          ...(openapi32.sequentialKind ? { sequentialKind: openapi32.sequentialKind } : {}),
+          ...(openapi32.positionalMultipart ? { positionalMultipart: true } : {}),
+        },
         openapiVersion,
         true,
       );
@@ -609,6 +657,8 @@ function representativeRangeMembers(range: ParsedMediaRange): string[] {
     }
   };
   add("application/json");
+  add("application/jsonl");
+  add("application/json-seq");
   add("multipart/form-data");
   add("application/x-www-form-urlencoded");
   add("text/plain");
@@ -620,7 +670,16 @@ function representativeRangeMembers(range: ParsedMediaRange): string[] {
 function buildBodyPlan(
   required: boolean,
   content: Record<string, OpenAPIMediaType>,
-  candidate: { key: string; parsed: ParsedMediaType | ParsedMediaRange; family: string; range: boolean; rawOnlyRange?: boolean; unsupported?: boolean },
+  candidate: {
+    key: string;
+    parsed: ParsedMediaType | ParsedMediaRange;
+    family: string;
+    range: boolean;
+    rawOnlyRange?: boolean;
+    unsupported?: boolean;
+    sequentialKind?: OpenAPI32SequentialRequestKind;
+    positionalMultipart?: boolean;
+  },
   openapiVersion: string,
   revision3: boolean,
   wholeJSON = false,
@@ -637,6 +696,8 @@ function buildBodyPlan(
     unsupported: candidate.unsupported === true,
     revision3,
     openapiVersion,
+    ...(candidate.sequentialKind ? { sequentialKind: candidate.sequentialKind } : {}),
+    ...(candidate.positionalMultipart ? { positionalMultipart: true } : {}),
   };
   const schema = mediaSchema(plan.media);
   const objectSchema = schema && typeof schema === "object" ? schema : null;
@@ -663,6 +724,14 @@ function buildBodyPlan(
     if (!plan.synthetic && shape.props.size > 0) plan.props = shape.props;
     return plan;
   }
+  if (candidate.family === FAMILY_SEQUENTIAL) {
+    plan.synthetic = true;
+    return plan;
+  }
+  if (candidate.family === FAMILY_MULTIPART && candidate.positionalMultipart) {
+    plan.synthetic = true;
+    return plan;
+  }
   if (revision3 && candidate.family === FAMILY_TEXT) {
     requireSupportedCharset(candidate.parsed, `request media ${plan.mediaType}`);
   }
@@ -683,9 +752,9 @@ function buildBodyPlan(
     if (schema !== null && !shape.object) {
       throw new Error(`request media candidate ${plan.mediaType} has a non-object body schema and is inadmissible`);
     }
-    if (revision3 && candidate.family === FAMILY_MULTIPART) {
+    if (revision3 && candidate.family === FAMILY_MULTIPART && openapiVersion !== "3.2.0") {
       validateRevision3Multipart(plan.media, objectSchema, openapiVersion);
-    } else if (revision3 && candidate.family === FAMILY_URLENCODED) {
+    } else if (revision3 && candidate.family === FAMILY_URLENCODED && openapiVersion !== "3.2.0") {
       validateRevision3URLEncoded(plan.media, objectSchema, openapiVersion);
     }
   } else if (candidate.family === FAMILY_TEXT) {
@@ -1680,20 +1749,28 @@ export function configureRequestMedia(
   if (!plan.range) return [{ ...plan, mediaType: concrete.canonical }];
 
   const schema = mediaSchema(plan.media);
-  const family = concreteBodyFamily(
-    concrete.base,
-    schema,
-    options.openapiVersion ?? "3.0",
-    true,
-    true,
-  );
+  const openapiVersion = options.openapiVersion ?? "3.0";
+  const openapi32 = openapiVersion === "3.2.0"
+    ? openAPI32RequestMediaAdmission(concrete.base, plan.media)
+    : { handled: false };
+  if (openapi32.handled && (openapi32.error || !openapi32.family)) return [];
+  const family = openapi32.handled
+    ? openapi32.family!
+    : concreteBodyFamily(concrete.base, schema, openapiVersion, true, true);
   if (!family) return [];
   try {
     return [buildBodyPlan(
       plan.required,
       { [plan.mediaKey]: plan.media ?? {} },
-      { key: plan.mediaKey, parsed: concrete, family, range: false },
-      options.openapiVersion ?? "3.0",
+      {
+        key: plan.mediaKey,
+        parsed: concrete,
+        family,
+        range: false,
+        ...(openapi32.sequentialKind ? { sequentialKind: openapi32.sequentialKind } : {}),
+        ...(openapi32.positionalMultipart ? { positionalMultipart: true } : {}),
+      },
+      openapiVersion,
       true,
     )].map((resolved) => ({
       ...resolved,
@@ -1861,6 +1938,21 @@ export function buildRequestBody(
       return { body: JSON.stringify(routed.bodyFields), contentType: plan.mediaType };
     }
     case FAMILY_MULTIPART: {
+      if (plan.openapiVersion === "3.2.0") {
+        if (plan.positionalMultipart) {
+          if (!routed.bodySet && !plan.required) return { body: undefined, contentType: "" };
+          return buildOpenAPI32MultipartBody(plan.mediaType, plan.media, routed);
+        }
+        const openAPI32Fields = objectBodyFields(plan, routed);
+        validateOpenAPI32MultipartFields(plan.media, openAPI32Fields);
+        if (openAPI32MultipartNeedsNativeBuilder(plan.media)) {
+          return buildOpenAPI32MultipartBody(
+            plan.mediaType,
+            plan.media,
+            { ...routed, bodyFields: openAPI32Fields },
+          );
+        }
+      }
       const fields = objectBodyFields(plan, routed);
       if (Object.keys(fields).length === 0 && !plan.required && !routed.bodySet) {
         return { body: undefined, contentType: "" };
@@ -1899,7 +1991,7 @@ export function buildRequestBody(
     }
     case FAMILY_TEXT: {
       if (!routed.bodySet) return { body: undefined, contentType: "" };
-      if (typeof routed.bodyValue !== "string") {
+      if (plan.openapiVersion !== "3.2.0" && typeof routed.bodyValue !== "string") {
         // §9.2 selects this lane from the declaration alone, so a non-string
         // value is a pre-dispatch refusal against the artifact's own type,
         // not a change of candidate set (OAPI-P-04).
@@ -1907,10 +1999,13 @@ export function buildRequestBody(
           `request media ${plan.mediaType} declares a string body but the supplied value is ${typeof routed.bodyValue}, not a string`,
         );
       }
+      const text = plan.openapiVersion === "3.2.0"
+        ? serializeOpenAPI32NonJSONText(mediaSchema(plan.media), routed.bodyValue)
+        : routed.bodyValue as string;
       return {
         body: plan.revision3 === true && Object.hasOwn(parseMediaType(plan.mediaType, true).params, "charset")
-          ? encodeTextForMedia(routed.bodyValue, plan.mediaType, "request body")
-          : routed.bodyValue,
+          ? encodeTextForMedia(text, plan.mediaType, "request body")
+          : text,
         contentType: plan.mediaType,
       };
     }
@@ -1918,6 +2013,14 @@ export function buildRequestBody(
       if (!routed.bodySet) return { body: undefined, contentType: "" };
       return {
         body: decodeBoundaryBase64(routed.bodyValue, plan.mediaType),
+        contentType: plan.mediaType,
+      };
+    }
+    case FAMILY_SEQUENTIAL: {
+      if (!routed.bodySet) return { body: undefined, contentType: "" };
+      if (!plan.sequentialKind) throw new Error("sequential request plan has no framing kind");
+      return {
+        body: buildOpenAPI32SequentialBody(plan.sequentialKind, routed.bodyValue),
         contentType: plan.mediaType,
       };
     }
@@ -2932,6 +3035,12 @@ function buildRevision3URLEncodedBody(
     }
     const effective = effectiveRevision3PartSchema(property, openapiVersion.startsWith("3.0"));
     if (effective.nullable && fields[name] === null) {
+      if (
+        openapiVersion === "3.2.0"
+        && resolveDeclaration(schema, false).requiresProperty(name)
+      ) {
+        throw new Error(`urlencoded property ${JSON.stringify(name)} is required and cannot be elided for null content-based encoding`);
+      }
       continue; // §9.2: a JSON null value elides the nullable optional field
     }
     if (effective.schema !== null && effective.schema !== false) property = effective.schema;
@@ -2961,6 +3070,16 @@ function buildRevision3URLEncodedBody(
       continue;
     }
 
+    if (
+      openapiVersion === "3.2.0"
+      && !hasDeclaredSchemaType(property)
+      && partSchemaDeclaresNoType(property, false)
+    ) {
+      const bytes = decodeBoundaryBase64(fields[name], `urlencoded property ${JSON.stringify(name)}`);
+      units.push(`${formEncodeBytes(new TextEncoder().encode(name))}=${formEncodeBytes(bytes)}`);
+      continue;
+    }
+
     const declaredCT = typeof enc?.contentType === "string"
       ? parseSingleMultipartContentType(enc.contentType, name)
       : null;
@@ -2980,7 +3099,9 @@ function buildRevision3URLEncodedBody(
     } else if (isJSONMediaType(selected.base)) {
       text = JSON.stringify(fields[name] ?? null);
     } else if (selected.base === "text/plain") {
-      text = primitiveString(fields[name]);
+      text = openapiVersion === "3.2.0"
+        ? serializeOpenAPI32NonJSONText(property, fields[name])
+        : primitiveString(fields[name]);
     } else {
       throw new Error(
         `urlencoded property ${JSON.stringify(name)} has no serializer for ${selected.canonical}`,

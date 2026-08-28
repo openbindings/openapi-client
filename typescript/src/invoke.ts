@@ -38,6 +38,7 @@ import type {
   OpenAPIDocument,
   OpenAPIOperation,
   OpenAPIParameter,
+  OpenAPIPathItem,
   OpenAPISecurityScheme,
   OpenAPIOAuthFlow,
 } from "./types.js";
@@ -84,6 +85,12 @@ import {
   type OpenAPICredentialPlacement,
 } from "./security-wire.js";
 import type { OpenAPIExecutionProfile } from "./profile.js";
+import type { OpenAPIResolvedOperation } from "./openapi32-operations.js";
+import { validateOpenAPI32ParameterSerialization } from "./openapi32-parameters.js";
+
+interface OpenAPIBindingRunArgs extends BindingInvocationArgs {
+  openAPITarget?: OpenAPIResolvedOperation;
+}
 
 /**
  * Maps a server-resolution failure to the right terminal: a resolvable-missing
@@ -122,19 +129,30 @@ import { isSSEContentType, streamSSE } from "./sse.js";
  * before consuming input where knowable.
  */
 export async function runBinding(
-  args: BindingInvocationArgs,
+  args: OpenAPIBindingRunArgs,
   inv: BindingHandle<unknown, unknown>,
   doc: OpenAPIDocument,
   onReady?: () => void,
 ): Promise<void> {
   // ----- Pre-side-effect resolution. -----
 
-  let path: string, method: string;
-  try {
-    ({ path, method } = parseRef(args.ref));
-  } catch (e: unknown) {
-    inv.fireError(new InvocationError(ERR_INVALID_REF, errorMessage(e)));
-    return;
+  let path: string, method: string, wireMethod: string;
+  let pathItem: OpenAPIPathItem | undefined;
+  let op: OpenAPIOperation | undefined;
+  if (args.openAPITarget) {
+    path = args.openAPITarget.reference.path;
+    method = args.openAPITarget.reference.method;
+    wireMethod = args.openAPITarget.reference.wireMethod;
+    pathItem = args.openAPITarget.pathItem;
+    op = args.openAPITarget.operation;
+  } else {
+    try {
+      ({ path, method } = parseRef(args.ref));
+    } catch (e: unknown) {
+      inv.fireError(new InvocationError(ERR_INVALID_REF, errorMessage(e)));
+      return;
+    }
+    wireMethod = method.toUpperCase();
   }
 
   if (!doc.paths) {
@@ -146,12 +164,12 @@ export async function runBinding(
   // Pointer evaluation follows OAS reference resolution (OAPI-D-03): the
   // loader dereferences path-item $refs (including 3.1 components.pathItems
   // targets) at load, before this lookup.
-  const pathItem = doc.paths[path];
+  pathItem ??= doc.paths[path];
   if (!pathItem) {
     inv.fireError(new InvocationError(ERR_REF_NOT_FOUND, `path "${path}" not in OpenAPI doc`));
     return;
   }
-  const op = pathItem[method] as OpenAPIOperation | undefined;
+  op ??= pathItem[method] as OpenAPIOperation | undefined;
   if (!op) {
     inv.fireError(
       new InvocationError(ERR_REF_NOT_FOUND, `method "${method}" not in path "${path}"`),
@@ -194,7 +212,10 @@ export async function runBinding(
   }
   if (revision3) {
     try {
-      for (const parameter of params) validateParameterSerialization(parameter);
+      for (const parameter of params) {
+        if (doc.openapi === "3.2.0") validateOpenAPI32ParameterSerialization(parameter);
+        else validateParameterSerialization(parameter);
+      }
     } catch (error: unknown) {
       inv.fireError(new InvocationError(ERR_REFUSED, errorMessage(error)));
       return;
@@ -379,9 +400,11 @@ export async function runBinding(
       const candidateRouted = envelope
         ? routeEnvelope(params, envelope, path, candidate, args.source.profile, {
           converter: args.parameterConverter,
+          openapiVersion: doc.openapi,
         })
         : routeInput(params, inputMap, path, candidate, args.source.profile, {
           converter: args.parameterConverter,
+          openapiVersion: doc.openapi,
         });
       const candidateWire = await finalizeRequestBody(
         buildRequestBody(doc, candidate, candidateRouted),
@@ -482,7 +505,7 @@ export async function runBinding(
   const doFetch = args.fetch ?? fetch;
   let resp: Response;
   const requestInit: RequestInit = {
-    method: method.toUpperCase(),
+    method: wireMethod,
     headers: fetchHeaders,
     body: wire.body,
     signal: inv.signal,
@@ -1833,15 +1856,23 @@ export function preflightTarget(
   ref: string,
   ctx: Record<string, unknown> | undefined,
   sourceLocation: string | undefined,
+  resolved?: OpenAPIResolvedOperation,
 ): { op: OpenAPIOperation; params: OpenAPIParameter[]; baseURL: string } | null {
-  let path: string, method: string;
-  try {
-    ({ path, method } = parseRef(ref));
-  } catch {
-    return null;
+  let pathItem: OpenAPIPathItem | undefined;
+  let op: OpenAPIOperation | undefined;
+  if (resolved) {
+    pathItem = resolved.pathItem;
+    op = resolved.operation;
+  } else {
+    let path: string, method: string;
+    try {
+      ({ path, method } = parseRef(ref));
+    } catch {
+      return null;
+    }
+    pathItem = doc.paths?.[path];
+    op = pathItem?.[method] as OpenAPIOperation | undefined;
   }
-  const pathItem = doc.paths?.[path];
-  const op = pathItem?.[method] as OpenAPIOperation | undefined;
   if (!pathItem || !op) return null;
   try {
     const params = effectiveParameters(pathItem, op);

@@ -323,6 +323,7 @@ export function routeEnvelope(
   };
   const consumed = new Set<string>();
   const missingPath: string[] = [];
+  const missingRequired: string[] = [];
 
   for (const parameter of params) {
     if (!parameter.name || !parameter.in) continue;
@@ -331,6 +332,9 @@ export function routeEnvelope(
     );
     if (!mapping || !(mapping.field in envelope.value)) {
       if (parameter.in === "path") missingPath.push(parameter.name);
+      else if (options.openapiVersion === "3.2.0" && parameter.required === true) {
+        missingRequired.push(`${parameter.in}/${parameter.name}`);
+      }
       continue;
     }
     consumed.add(mapping.field);
@@ -341,6 +345,10 @@ export function routeEnvelope(
     throw new MissingPathParamError(
       `missing path parameter(s) ${missingPath.join(", ")}: the URL cannot be built without them`,
     );
+  }
+  if (missingRequired.length > 0) {
+    missingRequired.sort(codePointCompare);
+    throw new Error(`missing required parameter(s) ${missingRequired.join(", ")}`);
   }
 
   if (plan?.declared) {

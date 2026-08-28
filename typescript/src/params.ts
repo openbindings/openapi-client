@@ -4,6 +4,13 @@ import { isJSONMediaType, normalizeMediaType, parseMediaType, styleLaneUndefined
 import { hasMediaFidelity, hasRoutedInputs } from "./constants.js";
 import { OPENAPI_PROFILE_BASE, type OpenAPIExecutionProfile } from "./profile.js";
 import { resolveDeclaration } from "./resolved-declaration.js";
+import {
+  openAPI32ParameterSerializationMethod,
+  serializeOpenAPI32CookieValue,
+  serializeOpenAPI32QueryStringParameter,
+  serializeOpenAPI32QueryValue,
+  validateOpenAPI32CookieUnits,
+} from "./openapi32-parameters.js";
 
 // This file implements OpenAPI parameter serialization and the engine's
 // flattened input model. The caller-facing input value is one JSON
@@ -24,6 +31,8 @@ export type OpenAPIParameterConverter = (value: boolean | number) => string;
 export interface OpenAPIParameterSerializationOptions {
   /** Overrides the native JSON spelling of boolean and number parameter cells. */
   converter?: OpenAPIParameterConverter;
+  /** Selects edition-local serialization rules without changing legacy defaults. */
+  openapiVersion?: string;
 }
 
 export interface PreparedOpenAPIParameterValue {
@@ -212,11 +221,13 @@ export function routeInput(
 
   const consumed = new Set<string>();
   const missingPath: string[] = [];
+  const missingRequired: string[] = [];
 
   for (const p of params) {
     if (!p?.name || !p?.in) continue;
     if (!(p.name in input)) {
       if (p.in === "path") missingPath.push(p.name);
+      else if (options.openapiVersion === "3.2.0" && p.required === true) missingRequired.push(`${p.in}/${p.name}`);
       continue;
     }
     consumed.add(p.name);
@@ -230,6 +241,10 @@ export function routeInput(
     throw new MissingPathParamError(
       `missing path parameter(s) ${missingPath.join(", ")}: the URL cannot be built without them`,
     );
+  }
+  if (missingRequired.length > 0) {
+    missingRequired.sort(codePointCompare);
+    throw new Error(`missing required parameter(s) ${missingRequired.join(", ")}`);
   }
 
   // Fields matching no declared parameter.
@@ -562,12 +577,17 @@ export function routeParameter(
   const name = p.name ?? "";
   const allowReserved = p.allowReserved === true;
   const revision3 = hasMediaFidelity(profile);
+  const openapi32 = options.openapiVersion === "3.2.0";
 
   // A `content`-form parameter (schema-less, a single-entry content map)
   // serializes its value per its declared media type and rides its location
   // as that serialized string (OAPI-P-02).
   const content = p.content as Record<string, unknown> | undefined;
   if (content && Object.keys(content).length > 0) {
+    if (openapi32 && p.in === "querystring") {
+      r.queryUnits.push(serializeOpenAPI32QueryStringParameter(p, value));
+      return;
+    }
     const serialized = serializeParamContentValue(p, value, profile);
     switch (p.in) {
       case "path":
@@ -578,10 +598,10 @@ export function routeParameter(
         break;
       case "query":
         r.queryUnits.push(
-          queryEscape(name, false, revision3) + "=" + (
+          queryEscape(name, false, revision3, openapi32) + "=" + (
             serialized.bytes
               ? percentEncodeBytes(serialized.bytes, allowReserved)
-              : queryEscape(serialized.text, allowReserved, revision3)
+              : queryEscape(serialized.text, allowReserved, revision3, openapi32)
           ),
         );
         r.populated.query.add(name);
@@ -592,6 +612,7 @@ export function routeParameter(
         break;
       case "cookie":
         r.cookieUnits.push(name + "=" + (serialized.bytes ? bytesAsLatin1(serialized.bytes) : serialized.text));
+        if (openapi32) validateOpenAPI32CookieUnits(r.cookieUnits.slice(-1));
         r.populated.cookie.add(name);
         break;
       default:
@@ -600,7 +621,9 @@ export function routeParameter(
     return;
   }
 
-  const { style, explode } = serializationMethod(p);
+  const { style, explode } = openapi32
+    ? openAPI32ParameterSerializationMethod(p)
+    : serializationMethod(p);
   const prepared = prepareParameterStyleValue(name, value, style, options.converter);
   const engineValue = delimitedObjectAsSequence(prepared, style);
 
@@ -618,7 +641,9 @@ export function routeParameter(
     case "query": {
       let units: string[];
       try {
-        units = serializeQueryValue(name, engineValue, style, explode, allowReserved, revision3);
+        units = openapi32
+          ? serializeOpenAPI32QueryValue(name, engineValue, style, explode, allowReserved)
+          : serializeQueryValue(name, engineValue, style, explode, allowReserved, revision3);
       } catch (e) {
         throw new Error(`query parameter "${name}": ${(e as Error).message}`, { cause: e });
       }
@@ -641,7 +666,9 @@ export function routeParameter(
     case "cookie": {
       let units: string[];
       try {
-        units = serializeCookieValue(name, engineValue, style, explode);
+        units = openapi32
+          ? serializeOpenAPI32CookieValue(name, engineValue, style, explode)
+          : serializeCookieValue(name, engineValue, style, explode);
       } catch (e) {
         throw new Error(`cookie parameter "${name}": ${(e as Error).message}`, { cause: e });
       }
@@ -790,9 +817,13 @@ export function prepareSchemaParameterValue(
   parameter: OpenAPIParameter | undefined,
   value: unknown,
   converter: OpenAPIParameterConverter | undefined,
+  openapiVersion?: string,
 ): PreparedOpenAPIParameterValue {
   if (!parameter) throw new Error("has no effective declaration");
   if (asObject(parameter.content)) {
+    if (openapiVersion === "3.2.0" && parameter.in === "querystring") {
+      return { value, cookieEmits: false };
+    }
     const serialized = serializeParamContent(parameter, value);
     if (parameter.in === "header" && !validHeaderFieldValue(serialized)) {
       throw new Error("serialized header contains an invalid HTTP field byte");
@@ -800,7 +831,9 @@ export function prepareSchemaParameterValue(
     return { value, cookieEmits: parameter.in === "cookie" };
   }
 
-  const method = serializationMethod(parameter);
+  const method = openapiVersion === "3.2.0"
+    ? openAPI32ParameterSerializationMethod(parameter)
+    : serializationMethod(parameter);
   const prepared = prepareStrictParameterStyleValue(
     parameter.name ?? "",
     value,
@@ -815,8 +848,12 @@ export function prepareSchemaParameterValue(
     }
   }
   if (parameter.in === "cookie") {
-    const units = serializeCookieValue(parameter.name ?? "", engineValue, method.style, method.explode);
-    if (units.length > 1) throw new Error("supplied value would produce multiple cookie pairs");
+    const units = openapiVersion === "3.2.0"
+      ? serializeOpenAPI32CookieValue(parameter.name ?? "", engineValue, method.style, method.explode)
+      : serializeCookieValue(parameter.name ?? "", engineValue, method.style, method.explode);
+    if (units.length > 1 && !(openapiVersion === "3.2.0" && method.style === "cookie")) {
+      throw new Error("supplied value would produce multiple cookie pairs");
+    }
     return { value: engineValue, cookieEmits: units.length > 0 };
   }
   return { value: engineValue, cookieEmits: false };
@@ -829,7 +866,7 @@ function prepareStrictParameterStyleValue(
   converter: OpenAPIParameterConverter | undefined,
 ): unknown {
   if (value === null) {
-    if (["matrix", "label", "simple", "form"].includes(style)) return null;
+    if (["matrix", "label", "simple", "form", "cookie"].includes(style)) return null;
     throw new Error(`JSON null has n/a in style ${JSON.stringify(style)}'s undefined cell`);
   }
   const prepared = convertParameterScalars(value, converter);
