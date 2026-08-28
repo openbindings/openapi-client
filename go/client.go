@@ -713,6 +713,10 @@ func (c *Client) prepareOptions(operation resolvedOperation, input nativeInvocat
 	if responseCodings == nil {
 		responseCodings = c.options.ResponseContentCodings
 	}
+	responseCodings, err := normalizeContentDecoders(responseCodings)
+	if err != nil {
+		return PrepareOptions{}, &ClientError{Kind: ErrorConfiguration, Code: "INVALID_RESPONSE_CONTENT_CODINGS", Message: err.Error(), Cause: err}
+	}
 	contextValue = contextWithSecurityHandlers(contextValue, handlers)
 	return PrepareOptions{
 		Source: c.source, Ref: operation.info.Ref, Profile: FullProfile(), Context: contextValue,
