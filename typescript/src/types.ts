@@ -57,7 +57,9 @@ export interface OpenAPIRequestBody {
 
 /** Represents a single response definition for an API operation. */
 export interface OpenAPIResponse {
+  summary?: string;
   description?: string;
+  headers?: Record<string, Record<string, unknown>>;
   content?: Record<string, OpenAPIMediaType>;
   [key: string]: unknown;
 }

@@ -39,6 +39,7 @@ import type {
   OpenAPIOperation,
   OpenAPIParameter,
   OpenAPIPathItem,
+  OpenAPIResponse,
   OpenAPISecurityScheme,
   OpenAPIOAuthFlow,
 } from "./types.js";
@@ -542,9 +543,59 @@ export async function runBinding(
   const invocationMeta = responseMetadata(resp);
   inv.setHeader(invocationMeta);
 
-  const contentType = resp.headers.get("content-type");
+  let contentType = resp.headers.get("content-type");
   const site = siteFor(args, baseURL);
   const responseDeclaration = governingResponse(op, resp.status);
+
+  if (doc.openapi === "3.2.0" && responseDeclaration) {
+    try {
+      validateOpenAPI32RequiredResponseHeaders(responseDeclaration.response, resp.headers);
+    } catch (error: unknown) {
+      await resp.body?.cancel().catch(() => {});
+      inv.fireError(new InvocationError(ERR_PROTOCOL, errorMessage(error)));
+      return;
+    }
+  }
+
+  // A response to HEAD has zero content octets by definition, even when a
+  // scripted transport exposes bytes. Required response headers above still
+  // govern, and native final-status classification remains authoritative.
+  if (wireMethod.toUpperCase() === "HEAD") {
+    await resp.body?.cancel().catch(() => {});
+    let ok: boolean;
+    try {
+      ok = await classifyThroughHooks(
+        args.hooks,
+        site,
+        { status: resp.status, body: "", meta: invocationMeta },
+        builtinClassify,
+      );
+    } catch (error: unknown) {
+      inv.fireError(toInvocationError(error));
+      return;
+    }
+    if (!ok) {
+      inv.fireError(new InvocationError(
+        httpErrorCode(resp.status),
+        "Invocation completed unsuccessfully",
+        undefined,
+        openAPIFailureDetails(
+          resp,
+          new Uint8Array(),
+          "",
+          invocationMeta,
+          responseDeclaration,
+          contentType,
+          revision3,
+          responseFidelity,
+        ),
+      ));
+      return;
+    }
+    inv.setTrailer(decodeClassifyTrailer(args.hooks, "not-consulted/empty"));
+    inv.closeOutput();
+    return;
+  }
 
   // A truly empty 2xx carries no output regardless of a stray streaming
   // Content-Type. Peek without buffering the stream: a non-empty first
@@ -690,6 +741,13 @@ export async function runBinding(
   // Cancelled while in flight: the handle is already terminal.
   if (inv.signal.aborted) return;
 
+  // RFC 9110 permits application/octet-stream to be assumed for a non-empty
+  // representation whose response omits Content-Type. OpenAPI 3.2 still
+  // requires that concrete type to match the governing content declaration.
+  if (doc.openapi === "3.2.0" && bodyBytes.length > 0 && contentType === null) {
+    contentType = "application/octet-stream";
+  }
+
   // Classify, then decode — both through the consultation seam
   // (per-invocation hook → invoker-level hook → the format builtins
   // below). The binding specification's defaults (OAPI-P-07/P-08),
@@ -807,6 +865,26 @@ export async function runBinding(
   args.observeOutput?.(output, invocationMeta);
   await inv.emitOutput(output);
   inv.closeOutput();
+}
+
+/** Enforces governing OpenAPI 3.2 response Header Object requirements. */
+function validateOpenAPI32RequiredResponseHeaders(
+  response: OpenAPIResponse,
+  actual: Headers,
+): void {
+  for (const [name, declaration] of Object.entries(response.headers ?? {})) {
+    // OAS explicitly ignores a Response Header Object named Content-Type.
+    if (name.toLowerCase() === "content-type") continue;
+    if (
+      declaration !== null
+      && typeof declaration === "object"
+      && !Array.isArray(declaration)
+      && declaration.required === true
+      && !actual.has(name)
+    ) {
+      throw new Error(`response is missing required header ${JSON.stringify(name)}`);
+    }
+  }
 }
 
 /** Reads the first input message from the handle, or undefined when the input side closed bare. */

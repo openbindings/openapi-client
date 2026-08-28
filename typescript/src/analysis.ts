@@ -12,6 +12,7 @@ export * from "./openapi32-artifact.js";
 export * from "./openapi32-media.js";
 export * from "./openapi32-operations.js";
 export * from "./openapi32-parameters.js";
+export * from "./openapi32-response.js";
 export * from "./openapi32-security.js";
 export * from "./params.js";
 export * from "./profile.js";

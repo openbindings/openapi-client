@@ -31,6 +31,11 @@ export {
   classifyOpenAPIEdition,
   loadOpenAPIArtifact,
 } from "./openapi32-artifact.js";
+export {
+  admittedOpenAPI32ResponseKey,
+  selectOpenAPI32Response,
+} from "./openapi32-response.js";
+export type { OpenAPI32ResponseSelection } from "./openapi32-response.js";
 export type {
   OpenAPIArtifactLoadOptions,
   OpenAPIArtifactSource,
