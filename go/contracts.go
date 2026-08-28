@@ -63,17 +63,31 @@ type SecurityHandler func(*http.Request, SecurityHandlerContext) error
 // pass through unchanged. The function must be safe for concurrent calls.
 type ParameterConverter func(value any) (string, error)
 
+// ContentEncoder and ContentDecoder are deterministic whole-representation
+// HTTP content-coding capabilities. Request encoders run in field order;
+// response decoders run in reverse field order.
+type ContentEncoder func([]byte) ([]byte, error)
+type ContentDecoder func([]byte) ([]byte, error)
+
 type PrepareOptions struct {
-	Source               Source
-	Ref                  string
-	Profile              Profile
-	Context              map[string]any
-	HTTPClient           *http.Client
-	Hooks                *Hooks
-	MaxDeliveryUnitBytes int64
-	SecurityHandlers     map[string]SecurityHandler
-	ParameterConverter   ParameterConverter
-	AllowExternalRefs    *bool
+	Source                 Source
+	Ref                    string
+	Profile                Profile
+	Context                map[string]any
+	HTTPClient             *http.Client
+	Hooks                  *Hooks
+	MaxDeliveryUnitBytes   int64
+	SecurityHandlers       map[string]SecurityHandler
+	ParameterConverter     ParameterConverter
+	RequestContentCodings  map[string]ContentEncoder
+	ResponseContentCodings map[string]ContentDecoder
+	// BufferEventStreams selects unary buffering for a caller that needs the
+	// complete text/event-stream representation instead of incremental events.
+	BufferEventStreams bool
+	// OmitAcceptHeader suppresses the client's artifact-derived response media
+	// preference while leaving response selection and decoding unchanged.
+	OmitAcceptHeader  bool
+	AllowExternalRefs *bool
 }
 
 type Event struct {

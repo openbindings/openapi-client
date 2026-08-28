@@ -305,7 +305,15 @@ func defaultHTTPClient() *http.Client {
 // rewrite POST to GET or replay a body at another target. Standalone callers
 // can opt into that behavior by supplying their own *http.Client.
 func defaultInvocationHTTPClient() *http.Client {
-	return &http.Client{CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-		return http.ErrUseLastResponse
-	}}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	// Preserve Content-Encoding for declaration governance and configured
+	// response decoders; the standard transport's implicit gzip decoder would
+	// otherwise erase the field before the OpenAPI response is selected.
+	transport.DisableCompression = true
+	return &http.Client{
+		Transport: transport,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 }

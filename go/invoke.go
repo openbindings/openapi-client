@@ -200,6 +200,13 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 			message, details))
 		return
 	}
+	// Credential syntax and static wire ownership are knowable before input.
+	// Validate them here so an invalid RFC 7617/6750/6265 value cannot consume
+	// application input before the pre-dispatch refusal.
+	if _, _, _, err := selectCredentialPlacements(doc, op, args.Context, baseURL, params, nil); err != nil {
+		inv.failExecution(&ExecutionError{Code: CodeRefused, Message: err.Error()})
+		return
+	}
 
 	// ----- Input flows through the handle, not the args. Whether this
 	// interaction carries an input value is decided by the ARTIFACT and by
@@ -382,7 +389,7 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 	for _, pl := range placements {
 		switch pl.channel {
 		case "query":
-			queryUnits = append(queryUnits, queryEscape(pl.name, false)+"="+queryEscape(pl.value, false))
+			queryUnits = append(queryUnits, percentEncodeCredentialQuery(pl.name)+"="+percentEncodeCredentialQuery(pl.value))
 		case "cookie":
 			cookieUnits = append(cookieUnits, pl.name+"="+pl.value)
 		}
@@ -401,12 +408,14 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 		}
 	}
 
-	reqURL := baseURL + routed.resolvedPath
-	if len(queryUnits) > 0 {
-		reqURL += "?" + strings.Join(queryUnits, "&")
+	rawQuery := strings.Join(queryUnits, "&")
+	completedURL, err := AssembleRequestURL(baseURL, routed.resolvedPath, rawQuery)
+	if err != nil {
+		inv.failExecution(&ExecutionError{Code: CodeRefused, Message: err.Error()})
+		return
 	}
 
-	req, err := http.NewRequestWithContext(bctx, strings.ToUpper(method), reqURL, bodyReader)
+	req, err := http.NewRequestWithContext(bctx, strings.ToUpper(method), completedURL.String(), bodyReader)
 	if err != nil {
 		inv.failExecution(&ExecutionError{Code: CodeExecutionFailed, Message: err.Error()})
 		return
@@ -417,7 +426,7 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 	}
 	// The Accept header advertises only artifact-declared concrete success
 	// media. An empty membership set omits the header.
-	if accept := acceptHeaderFor(op, args.Source.Capability); accept != "" {
+	if accept := acceptHeaderFor(op, args.Source.Capability); accept != "" && !args.OmitAcceptHeader {
 		req.Header.Set("Accept", accept)
 	}
 
@@ -451,6 +460,10 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 			return
 		}
 	}
+	if err := applyRequestContentCodings(req, params, doc.OpenAPI, args.RequestContentCodings); err != nil {
+		inv.failExecution(&ExecutionError{Code: CodeRefused, Message: err.Error(), Cause: err})
+		return
+	}
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -458,6 +471,11 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 			return // cancelled; the handle is already terminal
 		}
 		inv.failExecution(&ExecutionError{Code: classifyhttpFailureError(bctx, err), Message: err.Error()})
+		return
+	}
+	resp, err = applyResponseMechanics(req, resp, doc, op, args.Source.Capability, args.ResponseContentCodings, args.BufferEventStreams)
+	if err != nil {
+		inv.failExecution(&ExecutionError{Code: CodeProtocol, Message: err.Error(), Cause: err})
 		return
 	}
 	inv.setHTTPResponse(resp)
@@ -534,7 +552,8 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 		}
 	}
 
-	// Interaction-shape dispatch (§8, OAPI-P-06): the shape is bounded by
+	// Interaction-shape dispatch (openbindings.openapi-3.0@1 §7 /
+	// openbindings.openapi-3.1@1 §7): the shape is bounded by
 	// declaration and selected by framing. An operation is streaming-capable
 	// iff a declared success response declares text/event-stream; for a
 	// streaming-capable operation the response's Content-Type header — never
@@ -542,7 +561,7 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 	// text/event-stream response on an operation that is NOT
 	// streaming-capable contradicts the declaration: a protocol error, never
 	// a silent reclassification.
-	if isSSEContentTypeFor(actualContentType, args.Source.Capability) {
+	if isSSEContentTypeFor(actualContentType, args.Source.Capability) && !args.BufferEventStreams {
 		// Classification is independent of declaration lookup. A non-success
 		// final status remains the native HTTP failure even when its body uses
 		// event-stream framing.
@@ -591,8 +610,8 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 			})
 			return
 		}
-		matched, mediaErr := governingResponseMediaFor(responseDecl, actualContentType, args.Source.Capability)
-		if mediaErr != nil || (!hasResponseFidelity(args.Source.Capability) && matched.base != "text/event-stream") {
+		matched, mediaErr := governingResponseMediaMatchFor(responseDecl, actualContentType, args.Source.Capability)
+		if mediaErr != nil || (!hasResponseFidelity(args.Source.Capability) && matched.declared.base != "text/event-stream") {
 			_ = resp.Body.Close()
 			message := "response arrived as text/event-stream, but the governing response does not declare that media type"
 			if mediaErr != nil {
@@ -604,7 +623,12 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 			})
 			return
 		}
-		inv.setTrailingMetadata(Metadata{"x-ob-governing-media": {matched.canonical}})
+		if laneErr := validateResponseMediaLane(doc, matched.media, actualContentType, args.Source.Capability); laneErr != nil {
+			_ = resp.Body.Close()
+			inv.failExecution(&ExecutionError{Code: CodeProtocol, Message: laneErr.Error(), Cause: laneErr})
+			return
+		}
+		inv.setTrailingMetadata(Metadata{"x-ob-governing-media": {matched.declared.canonical}})
 		streamSSE(bctx, resp, args, site, inv)
 		return
 	}
@@ -634,7 +658,9 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 
 	// Classify, then decode — both through the consultation seam
 	// (per-invocation hook → invoker-level hook → the format builtins
-	// below). The binding specification's defaults (OAPI-P-07/P-08),
+	// below). The family specifications' response defaults
+	// (openbindings.openapi-3.0@1 §9.5 /
+	// openbindings.openapi-3.1@1 §9.5),
 	// content-independent throughout: classify = success iff status ∈ 2xx
 	// (declared `responses` never change classification — they can identify
 	// application-authored failure data); decode = the response's Content-Type HEADER decides
@@ -681,6 +707,10 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 	matched, mediaErr := governingResponseMediaMatchFor(responseDecl, actualContentType, args.Source.Capability)
 	if mediaErr != nil {
 		inv.failExecution(&ExecutionError{Code: CodeProtocol, Message: mediaErr.Error()})
+		return
+	}
+	if laneErr := validateResponseMediaLane(doc, matched.media, actualContentType, args.Source.Capability); laneErr != nil {
+		inv.failExecution(&ExecutionError{Code: CodeProtocol, Message: laneErr.Error(), Cause: laneErr})
 		return
 	}
 
@@ -777,15 +807,17 @@ func decodeClassifyTrailer(hooks *invokeHooks, builtinDecode string) Metadata {
 	}
 }
 
-// builtinClassify is the openapi builtin result classifier (OAPI-P-08):
-// success iff the final HTTP status is 2xx (declared responses refine
-// application failure data only, never classification).
+// builtinClassify is the OpenAPI builtin result classifier: success iff the
+// final HTTP status is 2xx; declared responses refine application failure data
+// only, never classification (openbindings.openapi-3.0@1 §9.5 /
+// openbindings.openapi-3.1@1 §9.5).
 func builtinClassify(_ HookSite, raw RawResult) (bool, error) {
 	return raw.Status != nil && *raw.Status >= 200 && *raw.Status < 300, nil
 }
 
 // decodeByContentType returns the builtin decoder implementing the header
-// rule (OAPI-P-07): strict JSON for application/json and +json suffixes (a
+// rule in openbindings.openapi-3.0@1 §9.5 and
+// openbindings.openapi-3.1@1 §9.5: strict JSON for application/json and +json suffixes (a
 // declared-JSON body that fails to parse is a lying server — a loud
 // CodeResponseError, never a silent string); the text lane otherwise —
 // bytes become a string per the header's charset parameter, defaulting to
@@ -793,6 +825,13 @@ func builtinClassify(_ HookSite, raw RawResult) (bool, error) {
 // included) yields null.
 func decodeByContentType(contentType string) outputDecoder {
 	return decodeByContentTypeFor(contentType, profileRoutedCoordinate)
+}
+
+// DecodeResponseBody applies the OpenAPI client's builtin Content-Type lane:
+// JSON media decode strictly as JSON; other represented media decode through
+// the declared/default character set. An empty representation returns nil.
+func DecodeResponseBody(contentType string, body []byte) (any, error) {
+	return decodeByContentTypeFor(contentType, profileFullCoordinate)(HookSite{}, RawResult{Body: body})
 }
 
 func decodeByContentTypeFor(contentType, bindingSpec string) outputDecoder {
@@ -815,8 +854,8 @@ func decodeByContentTypeFor(contentType, bindingSpec string) outputDecoder {
 	}
 }
 
-// decodePerEventTextFor is the SSE per-event builtin lane (OAPI-P-07's
-// per-event text default): the event's U+000A-joined data text, decoded
+// decodePerEventTextFor is the SSE per-event builtin lane: the event's
+// U+000A-joined data text, decoded
 // under the fixed UTF-8 charset. Unlike decodeByContentTypeFor it carries
 // no empty-body rule — a DISPATCHED event whose data text is empty (a lone
 // empty `data:` line, §8/WHATWG) is the empty-string value; the
@@ -828,7 +867,8 @@ func decodePerEventTextFor(contentType, bindingSpec string) outputDecoder {
 }
 
 // decodeTextLane decodes response bytes as text per the Content-Type
-// header's charset parameter, defaulting to UTF-8 (OAPI-P-07). Invalid
+// header's charset parameter, defaulting to UTF-8
+// (openbindings.openapi-3.0@1 §9.5 / openbindings.openapi-3.1@1 §9.5). Invalid
 // sequences, and charsets this implementation cannot decode, are loud
 // decode errors — a consumer needing another charset overrides at the
 // decode configuration point.
@@ -1183,6 +1223,27 @@ func viableSecurityPlans(doc *openapi3.T, op *openapi3.Operation, baseURL string
 	return viable
 }
 
+// ValidateSecurityRequirementCarriage checks the wire destinations owned by
+// one complete OpenAPI Security Requirement Object against each other,
+// processor-owned request fields, and the operation's effective parameters.
+// It does not choose among alternative Security Requirement Objects.
+func ValidateSecurityRequirementCarriage(requirement openapi3.SecurityRequirement, schemes openapi3.SecuritySchemes, parameters openapi3.Parameters) error {
+	plan := securityPlan{}
+	names := make([]string, 0, len(requirement))
+	for name := range requirement {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		ref := schemes[name]
+		if ref == nil || ref.Value == nil {
+			return fmt.Errorf("OpenAPI security requirement references undefined security scheme %q", name)
+		}
+		plan.schemes = append(plan.schemes, namedSecurityScheme{name: name, scheme: ref.Value})
+	}
+	return checkCredentialCollisions(credentialDestinations(plan), parameters, nil)
+}
+
 // securityAlternativesCollision reports an ownership conflict only when every
 // complete runtime alternative is unusable. A later channel-safe alternative
 // remains selectable and is the only one surfaced during context negotiation.
@@ -1496,6 +1557,9 @@ func selectCredentialPlacements(doc *openapi3.T, op *openapi3.Operation, bindCtx
 			continue
 		}
 		placements := credentialValues(plan, bindCtx)
+		if err := validateCredentialWireValues(plan, bindCtx, placements); err != nil {
+			return nil, nil, nil, err
+		}
 		ownership := credentialDestinations(plan)
 		if err := checkCredentialCollisions(ownership, params, populated); err != nil {
 			return nil, nil, nil, err
@@ -1506,6 +1570,103 @@ func selectCredentialPlacements(doc *openapi3.T, op *openapi3.Operation, bindCtx
 	// path is therefore defensive for invalid or extension-only artifacts; it
 	// must still not leak unrelated credentials onto the wire.
 	return nil, nil, nil, nil
+}
+
+// validateCredentialWireValues applies the incorporated HTTP authentication
+// and cookie grammars before any request is dispatched: RFC 7617 for Basic,
+// RFC 6750 for Bearer/access tokens, and RFC 6265 for cookie carriage.
+func validateCredentialWireValues(plan securityPlan, bindCtx map[string]any, placements []credentialPlacement) error {
+	for _, named := range plan.schemes {
+		scheme := named.scheme
+		switch scheme.Type {
+		case "http":
+			switch strings.ToLower(scheme.Scheme) {
+			case "basic":
+				username, password, ok := contextBasicAuthFor(bindCtx, named.name)
+				if ok && (strings.Contains(username, ":") || !validBasicCredentialText(username) || !validBasicCredentialText(password)) {
+					return fmt.Errorf("basic credential %q violates RFC 7617 user-id or character-encoding constraints", named.name)
+				}
+			case "bearer":
+				if token := contextBearerTokenFor(bindCtx, named.name); token != "" && !validBearerToken(token) {
+					return fmt.Errorf("bearer credential %q is not an RFC 6750 b64token", named.name)
+				}
+			}
+		case "oauth2", "openIdConnect":
+			token := contextAccessTokenFor(bindCtx, named.name)
+			if token == "" {
+				token = contextBearerTokenFor(bindCtx, named.name)
+			}
+			if token != "" && !validBearerToken(token) {
+				return fmt.Errorf("access token for %q is not an RFC 6750 b64token", named.name)
+			}
+		}
+	}
+	for _, placement := range placements {
+		if placement.channel == "cookie" && !validRFC6265CookieValue(placement.value) {
+			return fmt.Errorf("cookie credential %q cannot be carried as an RFC 6265 cookie-value", placement.name)
+		}
+	}
+	return nil
+}
+
+func validBasicCredentialText(value string) bool {
+	for index := 0; index < len(value); index++ {
+		if value[index] < 0x20 || value[index] > 0x7e {
+			return false
+		}
+	}
+	return true
+}
+
+func validBearerToken(value string) bool {
+	if value == "" {
+		return false
+	}
+	padding := false
+	payload := false
+	for _, char := range value {
+		if char == '=' {
+			padding = true
+			continue
+		}
+		if padding {
+			return false
+		}
+		if !((char >= 'A' && char <= 'Z') || (char >= 'a' && char <= 'z') || (char >= '0' && char <= '9') || strings.ContainsRune("-._~+/", char)) {
+			return false
+		}
+		payload = true
+	}
+	return payload
+}
+
+func validRFC6265CookieValue(value string) bool {
+	for index := 0; index < len(value); index++ {
+		char := value[index]
+		if char != 0x21 && !(char >= 0x23 && char <= 0x2b) && !(char >= 0x2d && char <= 0x3a) && !(char >= 0x3c && char <= 0x5b) && !(char >= 0x5d && char <= 0x7e) {
+			return false
+		}
+	}
+	return true
+}
+
+// percentEncodeCredentialQuery uses RFC 3986 unreserved bytes only. API-key
+// query carriage is not OpenAPI Parameter Object serialization and therefore
+// does not inherit style or allowReserved behavior.
+func percentEncodeCredentialQuery(value string) string {
+	var encoded strings.Builder
+	for index := 0; index < len(value); index++ {
+		char := value[index]
+		if (char >= 'A' && char <= 'Z') || (char >= 'a' && char <= 'z') || (char >= '0' && char <= '9') || char == '-' || char == '.' || char == '_' || char == '~' {
+			encoded.WriteByte(char)
+			continue
+		}
+		const hex = "0123456789ABCDEF"
+		encoded.WriteByte('%')
+		encoded.WriteByte(hex[char>>4])
+		encoded.WriteByte(hex[char&0x0f])
+	}
+	return encoded.String()
 }
 
 // credentialValues applies every scheme in exactly one selected security

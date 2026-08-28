@@ -48,7 +48,12 @@ const (
 
 type rawRefSemantics uint8
 
-const referenceMetadataMarker = "x-openapi-client-internal-reference-metadata"
+const (
+	referenceMetadataMarker     = "x-openapi-client-internal-reference-metadata"
+	serverDocumentMarker        = "x-openapi-client-internal-server-document"
+	serverVariableDefaultMarker = "x-openapi-client-internal-server-default-present"
+	serverVariableEnumMarker    = "x-openapi-client-internal-server-enum-present"
+)
 
 const (
 	rawRefSemanticsUnknown rawRefSemantics = iota
@@ -469,7 +474,7 @@ func supportedComposingDialect(dialect string) bool {
 }
 
 func (n *rawRefSiblingNormalizer) normalizeOpenAPIDocument(root map[string]any, semantics rawRefSemantics, base *url.URL) (bool, error) {
-	changed := false
+	changed := markRawServers(root["servers"], base)
 	components, _ := root["components"].(map[string]any)
 	if components != nil {
 		for _, item := range rawMapValues(components["schemas"]) {
@@ -578,6 +583,7 @@ func (n *rawRefSiblingNormalizer) normalizeTarget(value any, kind rawRefTargetKi
 
 	switch kind {
 	case rawPathItemTarget:
+		changed = markRawPathItemServerOrigins(object, base) || changed
 		if parameters, ok := object["parameters"].([]any); ok {
 			for _, parameter := range parameters {
 				if err := apply(parameter, rawParameterTarget); err != nil {
@@ -637,6 +643,54 @@ func (n *rawRefSiblingNormalizer) normalizeTarget(value any, kind rawRefTargetKi
 		}
 	}
 	return changed, nil
+}
+
+// markRawPathItemServerOrigins retains the declaring document of relative
+// Server Objects after kin-openapi resolves a referenced Path Item into the
+// entry document.
+func markRawPathItemServerOrigins(object map[string]any, base *url.URL) bool {
+	if object == nil {
+		return false
+	}
+	changed := markRawServers(object["servers"], base)
+	for _, method := range httpMethods {
+		operation, _ := object[method].(map[string]any)
+		if operation != nil {
+			changed = markRawServers(operation["servers"], base) || changed
+		}
+	}
+	return changed
+}
+
+func markRawServers(value any, base *url.URL) bool {
+	servers, _ := value.([]any)
+	changed := false
+	for _, rawServer := range servers {
+		server, _ := rawServer.(map[string]any)
+		if server == nil {
+			continue
+		}
+		if document := artifactResourceKey(base); document != "" {
+			server[serverDocumentMarker] = document
+			changed = true
+		}
+		variables, _ := server["variables"].(map[string]any)
+		for _, rawVariable := range variables {
+			variable, _ := rawVariable.(map[string]any)
+			if variable == nil {
+				continue
+			}
+			if _, present := variable["default"]; present {
+				variable[serverVariableDefaultMarker] = true
+				changed = true
+			}
+			if _, present := variable["enum"]; present {
+				variable[serverVariableEnumMarker] = true
+				changed = true
+			}
+		}
+	}
+	return changed
 }
 
 func referenceMetadataCanMutateTarget(kind rawRefTargetKind) bool {

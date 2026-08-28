@@ -62,17 +62,21 @@ type executionSource struct {
 }
 
 type executionArgs struct {
-	Source               executionSource
-	Ref                  string
-	Profile              string
-	InputRouteKey        string
-	InputRouteMarker     string
-	Context              map[string]any
-	Hooks                *invokeHooks
-	Site                 *HookSite
-	MaxDeliveryUnitBytes int64
-	SecurityHandlers     map[string]SecurityHandler
-	ParameterConverter   ParameterConverter
+	Source                 executionSource
+	Ref                    string
+	Profile                string
+	InputRouteKey          string
+	InputRouteMarker       string
+	Context                map[string]any
+	Hooks                  *invokeHooks
+	Site                   *HookSite
+	MaxDeliveryUnitBytes   int64
+	SecurityHandlers       map[string]SecurityHandler
+	ParameterConverter     ParameterConverter
+	RequestContentCodings  map[string]ContentEncoder
+	ResponseContentCodings map[string]ContentDecoder
+	BufferEventStreams     bool
+	OmitAcceptHeader       bool
 }
 
 func newExecutionArgs(options PrepareOptions) *executionArgs {
@@ -83,15 +87,19 @@ func newExecutionArgs(options PrepareOptions) *executionArgs {
 			Location:   options.Source.Location,
 			Content:    options.Source.Content,
 		},
-		Ref:                  options.Ref,
-		Profile:              profile.Name,
-		InputRouteKey:        profile.InputRouteKey,
-		InputRouteMarker:     profile.InputRouteMarker,
-		Context:              options.Context,
-		Hooks:                newInvokeHooks(options.Hooks),
-		MaxDeliveryUnitBytes: options.MaxDeliveryUnitBytes,
-		SecurityHandlers:     options.SecurityHandlers,
-		ParameterConverter:   options.ParameterConverter,
+		Ref:                    options.Ref,
+		Profile:                profile.Name,
+		InputRouteKey:          profile.InputRouteKey,
+		InputRouteMarker:       profile.InputRouteMarker,
+		Context:                options.Context,
+		Hooks:                  newInvokeHooks(options.Hooks),
+		MaxDeliveryUnitBytes:   options.MaxDeliveryUnitBytes,
+		SecurityHandlers:       options.SecurityHandlers,
+		ParameterConverter:     options.ParameterConverter,
+		RequestContentCodings:  options.RequestContentCodings,
+		ResponseContentCodings: options.ResponseContentCodings,
+		BufferEventStreams:     options.BufferEventStreams,
+		OmitAcceptHeader:       options.OmitAcceptHeader,
 	}
 }
 
