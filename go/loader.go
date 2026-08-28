@@ -4,11 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
-	"os"
-	"strings"
 	"sync"
 
 	"github.com/getkin/kin-openapi/openapi3"
@@ -203,48 +200,11 @@ func artifactReadFunc(client *http.Client, selfContained bool, retrievalURIs map
 		if found {
 			return append([]byte(nil), cached...), nil
 		}
-		var data []byte
-		var err error
-		switch strings.ToLower(resource.Scheme) {
-		case "http", "https":
-			if !resource.IsAbs() || resource.Host == "" {
-				return nil, fmt.Errorf("reference %q is not an absolute HTTP URI", resource)
-			}
-			ctx := loader.Context
-			if ctx == nil {
-				ctx = context.Background()
-			}
-			request, requestErr := http.NewRequestWithContext(ctx, http.MethodGet, resource.String(), nil)
-			if requestErr != nil {
-				return nil, requestErr
-			}
-			response, requestErr := client.Do(request)
-			if requestErr != nil {
-				return nil, requestErr
-			}
-			defer response.Body.Close()
-			if response.StatusCode < 200 || response.StatusCode >= 300 {
-				return nil, fmt.Errorf("load %s: %s", resource, response.Status)
-			}
-			finalURI := resource
-			if response.Request != nil && response.Request.URL != nil {
-				finalURI = response.Request.URL
-			}
-			retrievalMu.Lock()
-			retrievalURIs[artifactResourceKey(resource)] = cloneURL(finalURI)
-			retrievalMu.Unlock()
-			data, err = io.ReadAll(response.Body)
-		case "", "file":
-			if selfContained {
-				return nil, fmt.Errorf("reference %q cannot resolve: embedded content with no co-present location has no base URI and must be self-contained", resource)
-			}
-			if resource.Scheme == "" {
-				return nil, fmt.Errorf("relative reference %q has no absolute artifact base", resource)
-			}
-			data, err = os.ReadFile(resource.Path)
-		default:
-			return nil, fmt.Errorf("unsupported OpenAPI artifact URI scheme %q", resource.Scheme)
+		ctx := loader.Context
+		if ctx == nil {
+			ctx = context.Background()
 		}
+		data, err := readArtifactResource(ctx, client, resource, selfContained, retrievalURIs, retrievalMu)
 		if err != nil {
 			return nil, err
 		}

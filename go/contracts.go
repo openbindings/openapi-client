@@ -58,9 +58,10 @@ type SecurityHandlerContext struct {
 
 type SecurityHandler func(*http.Request, SecurityHandlerContext) error
 
-// ParameterConverter deterministically converts a JSON boolean or number to
-// the string consumed by OpenAPI schema-form parameter serialization. Strings
-// pass through unchanged. The function must be safe for concurrent calls.
+// ParameterConverter deterministically converts a JSON boolean, number, or
+// (where the governing edition admits a conversion seam) null to the string
+// consumed by OpenAPI parameter serialization. Strings pass through
+// unchanged. The function must be safe for concurrent calls.
 type ParameterConverter func(value any) (string, error)
 
 // ContentEncoder and ContentDecoder are deterministic whole-representation
