@@ -13,12 +13,26 @@ import {
 } from "./swagger20-model.js";
 import { loadSwagger20Document } from "./swagger20-loader.js";
 import { decodePointerToken, escapePointerToken, newSwagger20ResolutionMemo, wellFormedPointerToken } from "./swagger20-reference.js";
+import {
+  effectiveSwagger20Parameters,
+  swagger20ParameterInfos,
+  type Swagger20EmptyValueForm,
+  type Swagger20Input,
+  type Swagger20ParameterConverter,
+  type Swagger20ParameterInfo,
+  type Swagger20ParameterSet,
+} from "./swagger20-parameters.js";
+import { executeSwagger20, type Swagger20ExecutionResult } from "./swagger20-execution.js";
 
 export interface Swagger20PrepareOptions extends Swagger20LoadOptions {
   source: Swagger20Source;
   ref: string;
   /** OpenAPI-native execution configuration; later passes fill this surface. */
   context?: Record<string, unknown>;
+  /** Complete HTTP target URL, replacing the artifact target base. */
+  server?: string;
+  parameterConverter?: Swagger20ParameterConverter;
+  emptyValueForm?: Swagger20EmptyValueForm;
 }
 
 /** A failure produced by the exact Swagger 2.0 engine lane. */
@@ -42,6 +56,7 @@ export class PreparedSwagger20Operation {
   readonly operation: Swagger20ResolvedOperation;
   readonly info: Swagger20OperationInfo;
   /** @internal */ readonly options: Swagger20PrepareOptions;
+  private parameterSet?: Promise<Swagger20ParameterSet>;
 
   /** @internal */
   constructor(document: Swagger20Document, operation: Swagger20ResolvedOperation, info: Swagger20OperationInfo, options: Swagger20PrepareOptions) {
@@ -51,9 +66,22 @@ export class PreparedSwagger20Operation {
     this.options = options;
   }
 
-  /** Pass-one boundary: later edition files add native request execution. */
-  async execute(_input?: unknown): Promise<{ outputPresent: boolean; output?: unknown }> {
-    throw new Swagger20ExecutionError("ERR_REFUSED", "Swagger 2.0 operation execution requires request-surface preparation");
+  /** Effective native parameter identities after reference and override resolution. */
+  async parameters(): Promise<Swagger20ParameterInfo[]> {
+    return swagger20ParameterInfos(await this.resolvedParameters());
+  }
+
+  /** Executes one unary Swagger 2.0 HTTP interaction. */
+  async execute(input: Swagger20Input = {}): Promise<Swagger20ExecutionResult> {
+    return executeSwagger20(this, await this.resolvedParameters(), input);
+  }
+
+  /** @internal */
+  resolvedParameters(): Promise<Swagger20ParameterSet> {
+    this.parameterSet ??= effectiveSwagger20Parameters(this.operation).catch((error: unknown) => {
+      throw new Swagger20ExecutionError("ERR_REFUSED", errorMessage(error), { cause: error });
+    });
+    return this.parameterSet;
   }
 }
 
@@ -123,6 +151,7 @@ export async function resolveSwagger20Operation(
   return {
     raw: rawOperation,
     resource: pathItemMemberResource(item, parsed.method),
+    graph: document.graph,
     pathItem: item,
     path: parsed.path,
     method: parsed.method,

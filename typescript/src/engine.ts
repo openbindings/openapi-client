@@ -604,9 +604,18 @@ export {
 } from "./swagger20-loader.js";
 export {
   Swagger20Document,
+  Swagger20Number,
   SWAGGER20_METHODS,
   type Swagger20LoadOptions,
   type Swagger20Method,
   type Swagger20OperationInfo,
   type Swagger20Source,
 } from "./swagger20-model.js";
+export type {
+  Swagger20EmptyValueForm,
+  Swagger20Input,
+  Swagger20ParameterConverter,
+  Swagger20ParameterInfo,
+  Swagger20ParameterLocation,
+  Swagger20Parameters,
+} from "./swagger20-parameters.js";

@@ -30,6 +30,34 @@ export interface Swagger20OperationInfo {
 
 export type Swagger20Method = "get" | "put" | "post" | "delete" | "options" | "head" | "patch";
 
+/**
+ * Exact JSON-number carrier for hosts that preserve the source token. Plain
+ * JavaScript numbers remain accepted, but this form keeps distinctions such
+ * as `1` versus `1.0` available to draft-04's literal-integer rule.
+ */
+export class Swagger20Number {
+  readonly lexeme: string;
+  readonly value: number;
+
+  constructor(lexeme: string) {
+    if (!/^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$/u.test(lexeme)) {
+      throw new Error(`invalid JSON number token ${JSON.stringify(lexeme)}`);
+    }
+    const value = Number(lexeme);
+    if (!Number.isFinite(value)) throw new Error(`JSON number token ${JSON.stringify(lexeme)} is not finite`);
+    this.lexeme = lexeme;
+    this.value = value;
+  }
+
+  toJSON(): number {
+    return this.value;
+  }
+
+  toString(): string {
+    return this.lexeme;
+  }
+}
+
 export const SWAGGER20_METHODS: readonly Swagger20Method[] =
   Object.freeze(["get", "put", "post", "delete", "options", "head", "patch"]);
 
@@ -44,6 +72,7 @@ export interface Swagger20Resource {
 export interface Swagger20ResolvedOperation {
   raw: Swagger20Object;
   resource: Swagger20Resource;
+  graph: Swagger20ReferenceGraphContract;
   pathItem: Swagger20PathItem;
   path: string;
   method: Swagger20Method;
