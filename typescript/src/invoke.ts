@@ -39,6 +39,7 @@ import type {
   OpenAPIOperation,
   OpenAPIParameter,
   OpenAPIPathItem,
+  OpenAPIResponse,
   OpenAPISecurityScheme,
   OpenAPIOAuthFlow,
 } from "./types.js";
@@ -87,6 +88,10 @@ import {
 import type { OpenAPIExecutionProfile } from "./profile.js";
 import type { OpenAPIResolvedOperation } from "./openapi32-operations.js";
 import { validateOpenAPI32ParameterSerialization } from "./openapi32-parameters.js";
+import {
+  classifyOpenAPI32SequentialResponse,
+  streamOpenAPI32SequentialResponse,
+} from "./openapi32-sequential-response.js";
 
 interface OpenAPIBindingRunArgs extends BindingInvocationArgs {
   openAPITarget?: OpenAPIResolvedOperation;
@@ -542,14 +547,176 @@ export async function runBinding(
   const invocationMeta = responseMetadata(resp);
   inv.setHeader(invocationMeta);
 
-  const contentType = resp.headers.get("content-type");
+  let contentType = resp.headers.get("content-type");
   const site = siteFor(args, baseURL);
   const responseDeclaration = governingResponse(op, resp.status);
+
+  if (doc.openapi === "3.2.0" && responseDeclaration) {
+    try {
+      validateOpenAPI32RequiredResponseHeaders(responseDeclaration.response, resp.headers);
+    } catch (error: unknown) {
+      await resp.body?.cancel().catch(() => {});
+      inv.fireError(new InvocationError(ERR_PROTOCOL, errorMessage(error)));
+      return;
+    }
+  }
+
+  // A response to HEAD has zero content octets by definition, even when a
+  // scripted transport exposes bytes. Required response headers above still
+  // govern, and native final-status classification remains authoritative.
+  if (wireMethod.toUpperCase() === "HEAD") {
+    await resp.body?.cancel().catch(() => {});
+    let ok: boolean;
+    try {
+      ok = await classifyThroughHooks(
+        args.hooks,
+        site,
+        { status: resp.status, body: "", meta: invocationMeta },
+        builtinClassify,
+      );
+    } catch (error: unknown) {
+      inv.fireError(toInvocationError(error));
+      return;
+    }
+    if (!ok) {
+      inv.fireError(new InvocationError(
+        httpErrorCode(resp.status),
+        "Invocation completed unsuccessfully",
+        undefined,
+        openAPIFailureDetails(
+          resp,
+          new Uint8Array(),
+          "",
+          invocationMeta,
+          responseDeclaration,
+          contentType,
+          revision3,
+          responseFidelity,
+        ),
+      ));
+      return;
+    }
+    inv.setTrailer(decodeClassifyTrailer(args.hooks, "not-consulted/empty"));
+    inv.closeOutput();
+    return;
+  }
+
+  // OpenAPI 3.2 response media can frame a sequence of operation values.
+  // Peek only far enough to preserve the empty-representation rule, then
+  // leave the replayed body streaming so each item owns its delivery bound.
+  if (doc.openapi === "3.2.0") {
+    try {
+      const peeked = await peekResponseBody(resp);
+      resp = peeked.response;
+      if (peeked.empty) {
+        const raw: RawResult = { status: resp.status, body: "", meta: invocationMeta };
+        const ok = await classifyThroughHooks(args.hooks, site, raw, builtinClassify);
+        if (!ok) {
+          inv.fireError(new InvocationError(
+            httpErrorCode(resp.status),
+            "Invocation completed unsuccessfully",
+            undefined,
+            openAPIFailureDetails(
+              resp,
+              new Uint8Array(),
+              "",
+              invocationMeta,
+              responseDeclaration,
+              contentType,
+              revision3,
+              responseFidelity,
+            ),
+          ));
+          return;
+        }
+        inv.setTrailer(decodeClassifyTrailer(args.hooks, "not-consulted/empty"));
+        inv.closeOutput();
+        return;
+      }
+    } catch (error: unknown) {
+      inv.fireError(toInvocationError(error));
+      return;
+    }
+
+    contentType ??= "application/octet-stream";
+    if (responseDeclaration) {
+      try {
+        const match = governingResponseMediaMatch(
+          responseDeclaration.response,
+          contentType,
+          revision3,
+          responseFidelity,
+        );
+        if (match) {
+          const kind = classifyOpenAPI32SequentialResponse(contentType, match.media);
+          if (kind) {
+            let ok: boolean;
+            try {
+              ok = await classifyThroughHooks(
+                args.hooks,
+                site,
+                { status: resp.status, body: "", meta: invocationMeta },
+                builtinClassify,
+              );
+            } catch (error: unknown) {
+              await resp.body?.cancel().catch(() => {});
+              inv.fireError(toInvocationError(error));
+              return;
+            }
+            if (!ok) {
+              let failureBody: Uint8Array;
+              try {
+                failureBody = await readResponseBytes(resp, resolveDeliveryUnitLimit(args));
+              } catch (error: unknown) {
+                if (!inv.signal.aborted) {
+                  inv.fireError(new InvocationError(ERR_RESPONSE_ERROR, errorMessage(error)));
+                }
+                return;
+              }
+              inv.fireError(new InvocationError(
+                httpErrorCode(resp.status),
+                "Invocation completed unsuccessfully",
+                undefined,
+                openAPIFailureDetails(
+                  resp,
+                  failureBody,
+                  new TextDecoder().decode(failureBody),
+                  invocationMeta,
+                  responseDeclaration,
+                  contentType,
+                  revision3,
+                  responseFidelity,
+                ),
+              ));
+              return;
+            }
+            const trailer = decodeClassifyTrailer(args.hooks, "header/content-type");
+            trailer["x-ob-governing-media"] = [match.declared.canonical];
+            inv.setTrailer(trailer);
+            await streamOpenAPI32SequentialResponse(
+              resp,
+              args,
+              site,
+              inv,
+              invocationMeta,
+              kind,
+              match.media,
+            );
+            return;
+          }
+        }
+      } catch (error: unknown) {
+        await resp.body?.cancel().catch(() => {});
+        inv.fireError(new InvocationError(ERR_PROTOCOL, errorMessage(error)));
+        return;
+      }
+    }
+  }
 
   // A truly empty 2xx carries no output regardless of a stray streaming
   // Content-Type. Peek without buffering the stream: a non-empty first
   // chunk is replayed into a replacement Response for normal SSE handling.
-  if (isSSEContentType(contentType)) {
+  if (doc.openapi !== "3.2.0" && isSSEContentType(contentType)) {
     try {
       const peeked = await peekResponseBody(resp);
       resp = peeked.response;
@@ -690,6 +857,13 @@ export async function runBinding(
   // Cancelled while in flight: the handle is already terminal.
   if (inv.signal.aborted) return;
 
+  // RFC 9110 permits application/octet-stream to be assumed for a non-empty
+  // representation whose response omits Content-Type. OpenAPI 3.2 still
+  // requires that concrete type to match the governing content declaration.
+  if (doc.openapi === "3.2.0" && bodyBytes.length > 0 && contentType === null) {
+    contentType = "application/octet-stream";
+  }
+
   // Classify, then decode — both through the consultation seam
   // (per-invocation hook → invoker-level hook → the format builtins
   // below). The binding specification's defaults (OAPI-P-07/P-08),
@@ -807,6 +981,26 @@ export async function runBinding(
   args.observeOutput?.(output, invocationMeta);
   await inv.emitOutput(output);
   inv.closeOutput();
+}
+
+/** Enforces governing OpenAPI 3.2 response Header Object requirements. */
+function validateOpenAPI32RequiredResponseHeaders(
+  response: OpenAPIResponse,
+  actual: Headers,
+): void {
+  for (const [name, declaration] of Object.entries(response.headers ?? {})) {
+    // OAS explicitly ignores a Response Header Object named Content-Type.
+    if (name.toLowerCase() === "content-type") continue;
+    if (
+      declaration !== null
+      && typeof declaration === "object"
+      && !Array.isArray(declaration)
+      && declaration.required === true
+      && !actual.has(name)
+    ) {
+      throw new Error(`response is missing required header ${JSON.stringify(name)}`);
+    }
+  }
 }
 
 /** Reads the first input message from the handle, or undefined when the input side closed bare. */

@@ -671,6 +671,13 @@ export {
   classifyOpenAPIEdition,
   loadOpenAPIArtifact,
 } from "./openapi32-artifact.js";
+export { documentInboundOperationInventory } from "./openapi-inbound-inventory.js";
+export type {
+  OpenAPIInboundOperationDisposition,
+  OpenAPIInboundOperationKind,
+  OpenAPIInboundOperationReference,
+  OpenAPIInboundOperationTarget,
+} from "./openapi-inbound-inventory.js";
 export type {
   OpenAPIArtifactLoadOptions,
   OpenAPIArtifactSource,
@@ -679,10 +686,18 @@ export type {
   OpenAPIOperationDisposition,
 } from "./openapi32-artifact.js";
 export {
+  admittedOpenAPI32ResponseKey,
+  selectOpenAPI32Response,
+} from "./openapi32-response.js";
+export type { OpenAPI32ResponseSelection } from "./openapi32-response.js";
+export { classifyOpenAPI32SequentialResponse } from "./openapi32-sequential-response.js";
+export type { OpenAPI32SequentialResponseKind } from "./openapi32-sequential-response.js";
+export {
   OpenAPIOperationResolutionError,
   parseOpenAPI32OperationReference,
 } from "./openapi32-operations.js";
 export type {
+  OpenAPI32ResponseMediaExclusion,
   OpenAPIOperationReference,
   OpenAPIResolvedOperation,
 } from "./openapi32-operations.js";

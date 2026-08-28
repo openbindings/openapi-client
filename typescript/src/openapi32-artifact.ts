@@ -14,6 +14,7 @@ import {
   openAPI32OperationValue,
   parseOpenAPI32OperationReference,
   type OpenAPIOperationReference,
+  type OpenAPI32ResponseMediaExclusion,
   type OpenAPIResolvedOperation,
 } from "./openapi32-operations.js";
 import { validateOpenAPI32OperationParameters } from "./openapi32-parameters.js";
@@ -23,6 +24,11 @@ import {
   openAPI32SecurityScheme,
   openAPI32SecuritySchemeReference,
 } from "./openapi32-security.js";
+import { admittedOpenAPI32ResponseKey, selectOpenAPI32Response, type OpenAPI32ResponseSelection } from "./openapi32-response.js";
+import {
+  documentInboundOperationInventory,
+  type OpenAPIInboundOperationDisposition,
+} from "./openapi-inbound-inventory.js";
 
 export type OpenAPIEdition =
   | "3.0.0" | "3.0.1" | "3.0.2" | "3.0.3" | "3.0.4"
@@ -189,6 +195,19 @@ export class OpenAPIArtifact {
       return result;
     }
     return this.overlay.operationInventory();
+  }
+
+  /** Inventories targetless callback and webhook operation declarations. */
+  inboundOperationInventory(): OpenAPIInboundOperationDisposition[] {
+    return documentInboundOperationInventory(this.document);
+  }
+
+  /** Selects the response declaration governing one final OpenAPI 3.2 status. */
+  selectOpenAPI32Response(
+    target: OpenAPIResolvedOperation,
+    statusCode: number,
+  ): OpenAPI32ResponseSelection {
+    return selectOpenAPI32Response(this, target, statusCode);
   }
 
   /**
@@ -386,12 +405,27 @@ class OpenAPI32Overlay {
     if (!asRecord(rawOperation)) {
       throw new OpenAPIOperationResolutionError("not-found", `operation ${JSON.stringify(ref)} was not found`);
     }
-    const rawResponses = asRecord(asRecord(rawOperation)?.responses);
-    if (rawResponses && Object.keys(rawResponses).length === 0) {
-      throw new OpenAPIOperationResolutionError("excluded", `operation ${JSON.stringify(ref)} has a present empty Responses Object`);
+    const operationRecord = asRecord(rawOperation)!;
+    if (Object.hasOwn(operationRecord, "responses")) {
+      const rawResponses = asRecord(operationRecord.responses);
+      if (!rawResponses) {
+        throw new OpenAPIOperationResolutionError("excluded", `operation ${JSON.stringify(ref)} Responses declaration is not an object`);
+      }
+      if (Object.keys(rawResponses).length === 0) {
+        throw new OpenAPIOperationResolutionError("excluded", `operation ${JSON.stringify(ref)} has a present empty Responses Object`);
+      }
+      for (const key of Object.keys(rawResponses)) {
+        if (!admittedOpenAPI32ResponseKey(key)) {
+          throw new OpenAPIOperationResolutionError(
+            "excluded",
+            `operation ${JSON.stringify(ref)} has inadmissible Responses key ${JSON.stringify(key)}`,
+          );
+        }
+      }
     }
 
-    const pathItem = await this.materializePathItem(selected, reference);
+    const materialized = await this.materializePathItem(selected, reference);
+    const pathItem = materialized.pathItem;
     const operation = openAPI32OperationValue(pathItem as Record<string, unknown>, reference) as OpenAPIOperation;
     const targetRoot = this.targetDocument(root, reference, pathItem);
     const referringSecuritySchemes = await this.materializeSecurityTarget(
@@ -406,6 +440,9 @@ class OpenAPI32Overlay {
       pathItem,
       operation,
       ...(Object.keys(referringSecuritySchemes).length > 0 ? { referringSecuritySchemes } : {}),
+      ...(materialized.responseMediaExclusions.length > 0
+        ? { responseMediaExclusions: materialized.responseMediaExclusions }
+        : {}),
     };
   }
 
@@ -537,7 +574,10 @@ class OpenAPI32Overlay {
   private async materializePathItem(
     selected: ResolvedPathItem,
     reference: OpenAPIOperationReference,
-  ): Promise<OpenAPIPathItem> {
+  ): Promise<{
+    pathItem: OpenAPIPathItem;
+    responseMediaExclusions: OpenAPI32ResponseMediaExclusion[];
+  }> {
     const result: Record<string, unknown> = {};
     for (const field of ["summary", "description"]) {
       if (Object.hasOwn(selected.value, field)) result[field] = cloneJSON(selected.value[field]);
@@ -548,20 +588,26 @@ class OpenAPI32Overlay {
     if (Object.hasOwn(selected.value, "servers")) {
       result.servers = this.materializeServers(selected.value.servers, selected.serverOwner);
     }
-    const operation = await this.materializeOperation(selected.operation, selected.operationOwner, reference);
+    const materialized = await this.materializeOperation(selected.operation, selected.operationOwner, reference);
     if (reference.additional) {
-      result.additionalOperations = { [reference.method]: operation };
+      result.additionalOperations = { [reference.method]: materialized.operation };
     } else {
-      result[reference.method] = operation;
+      result[reference.method] = materialized.operation;
     }
-    return result as OpenAPIPathItem;
+    return {
+      pathItem: result as OpenAPIPathItem,
+      responseMediaExclusions: materialized.responseMediaExclusions,
+    };
   }
 
   private async materializeOperation(
     raw: unknown,
     owner: RawResource,
     reference: OpenAPIOperationReference,
-  ): Promise<OpenAPIOperation> {
+  ): Promise<{
+    operation: OpenAPIOperation;
+    responseMediaExclusions: OpenAPI32ResponseMediaExclusion[];
+  }> {
     const source = asRecord(raw);
     if (!source) throw new Error("selected operation is not an object");
     const result: Record<string, unknown> = {};
@@ -575,10 +621,13 @@ class OpenAPI32Overlay {
     if (Object.hasOwn(source, "requestBody") && !(reference.method === "trace" && !reference.additional)) {
       result.requestBody = await this.materializeRequestBody(source.requestBody, owner);
     }
+    let responseMediaExclusions: OpenAPI32ResponseMediaExclusion[] = [];
     if (Object.hasOwn(source, "responses")) {
-      result.responses = this.unaryResponseBridge(source.responses);
+      const materialized = await this.materializeResponses(source.responses, owner);
+      result.responses = materialized.responses;
+      responseMediaExclusions = materialized.exclusions;
     }
-    return result as OpenAPIOperation;
+    return { operation: result as OpenAPIOperation, responseMediaExclusions };
   }
 
   private async materializeParameters(raw: unknown, owner: RawResource): Promise<OpenAPIParameter[]> {
@@ -717,34 +766,155 @@ class OpenAPI32Overlay {
     });
   }
 
-  private unaryResponseBridge(raw: unknown): Record<string, unknown> {
+  private async materializeResponses(
+    raw: unknown,
+    owner: RawResource,
+  ): Promise<{
+    responses: Record<string, unknown>;
+    exclusions: OpenAPI32ResponseMediaExclusion[];
+  }> {
     const responses = asRecord(raw);
-    if (!responses) return {};
+    if (!responses) throw new Error("selected Responses declaration is not an object");
     const result: Record<string, unknown> = {};
+    const exclusions: OpenAPI32ResponseMediaExclusion[] = [];
     for (const [key, value] of Object.entries(responses)) {
-      if (key !== "default" && !/^\d{3}$/u.test(key)) continue;
-      const response = asRecord(value);
-      if (!response || typeof response.$ref === "string" || typeof response.description !== "string") continue;
-      const headers = asRecord(response.headers);
-      if (Object.keys(headers ?? {}).some((name) => name.toLowerCase() === "content-encoding")) continue;
+      if (key.startsWith("x-")) continue;
+      const resolved = await this.resolveReferenceOnlyObject(
+        value,
+        owner,
+        "response",
+        "Response Object",
+      );
+      const response = asRecord(resolved.value)!;
       const clone = cloneJSON(response) as Record<string, unknown>;
-      const content = asRecord(response.content);
-      if (content) {
-        clone.content = Object.fromEntries(Object.entries(content).filter(([mediaType, media]) => {
-          const base = mediaType.split(";", 1)[0]!.trim().toLowerCase();
-          const sequential = base === "text/event-stream"
-            || base === "application/jsonl"
-            || base === "application/x-ndjson"
-            || base === "application/json-seq"
-            || base.endsWith("+json-seq")
-            || Object.hasOwn(asRecord(media) ?? {}, "itemSchema");
-          return !sequential;
-        }));
-        if (Object.keys(content).length > 0 && Object.keys(clone.content as object).length === 0) continue;
+      if (Object.hasOwn(response, "headers")) {
+        const headers = asRecord(response.headers);
+        if (!headers) throw new Error(`selected Response ${JSON.stringify(key)} headers is not an object`);
+        const materialized: Record<string, unknown> = {};
+        for (const [name, header] of Object.entries(headers)) {
+          const headerNode = await this.resolveReferenceOnlyObject(
+            header,
+            resolved.resource,
+            "header",
+            "Header Object",
+          );
+          materialized[name] = await this.materializeResponseHeader(headerNode);
+        }
+        clone.headers = materialized;
+      }
+      if (Object.hasOwn(response, "links")) {
+        const links = asRecord(response.links);
+        if (!links) throw new Error(`selected Response ${JSON.stringify(key)} links is not an object`);
+        const materialized: Record<string, unknown> = {};
+        for (const [name, link] of Object.entries(links)) {
+          const linkNode = await this.resolveReferenceOnlyObject(
+            link,
+            resolved.resource,
+            "link",
+            "Link Object",
+          );
+          materialized[name] = cloneJSON(linkNode.value);
+        }
+        clone.links = materialized;
+      }
+      if (Object.hasOwn(response, "content")) {
+        const content = asRecord(response.content);
+        if (!content) throw new Error(`selected Response ${JSON.stringify(key)} content is not an object`);
+        clone.content = await this.materializeResponseContent(
+          key,
+          content,
+          resolved.resource,
+          exclusions,
+        );
       }
       result[key] = clone;
     }
+    return { responses: result, exclusions };
+  }
+
+  /** Response-media defects own only their alternative, never a sibling. */
+  private async materializeResponseContent(
+    responseKey: string,
+    content: Record<string, unknown>,
+    owner: RawResource,
+    exclusions: OpenAPI32ResponseMediaExclusion[],
+  ): Promise<Record<string, OpenAPIMediaType>> {
+    const result: Record<string, OpenAPIMediaType> = {};
+    for (const [mediaType, raw] of Object.entries(content)) {
+      try {
+        result[mediaType] = await this.materializeResponseMedia(raw, owner);
+      } catch (error: unknown) {
+        exclusions.push({ responseKey, mediaType, reason: errorMessage(error) });
+        // The authored key stays absent from the executable view. An actual
+        // response selecting it then matches nothing and fails loudly.
+      }
+    }
     return result;
+  }
+
+  private async materializeResponseMedia(
+    raw: unknown,
+    owner: RawResource,
+  ): Promise<OpenAPIMediaType> {
+    const resolved = await this.resolveReferenceOnlyObject(
+      raw,
+      owner,
+      "mediaType",
+      "Media Type Object",
+    );
+    const media = asRecord(resolved.value)!;
+    const clone = cloneJSON(media) as OpenAPIMediaType;
+    if (Object.hasOwn(media, "schema")) {
+      clone.schema = await this.materializeSchema(media.schema, resolved.resource);
+    }
+    if (Object.hasOwn(media, "itemSchema")) {
+      clone.itemSchema = await this.materializeSchema(media.itemSchema, resolved.resource);
+    }
+    for (const field of ["encoding", "prefixEncoding", "itemEncoding"]) {
+      if (Object.hasOwn(media, field)) {
+        clone[field] = await this.materializeEncoding(media[field], resolved.resource, 0);
+      }
+    }
+    return clone;
+  }
+
+  private async materializeResponseHeader(node: ResolvedRawNode): Promise<Record<string, unknown>> {
+    const header = asRecord(node.value)!;
+    const clone = cloneJSON(header) as Record<string, unknown>;
+    if (Object.hasOwn(header, "schema")) {
+      clone.schema = await this.materializeSchema(header.schema, node.resource);
+    }
+    if (Object.hasOwn(header, "content")) {
+      const content = asRecord(header.content);
+      if (!content) throw new Error("selected response Header content is not an object");
+      const materialized: Record<string, OpenAPIMediaType> = {};
+      for (const [mediaType, raw] of Object.entries(content)) {
+        materialized[mediaType] = await this.materializeResponseMedia(raw, node.resource);
+      }
+      clone.content = materialized;
+    }
+    return clone;
+  }
+
+  /** Follows an OAS Reference Object and ignores every adjacent sibling. */
+  private async resolveReferenceOnlyObject(
+    raw: unknown,
+    owner: RawResource,
+    kind: "response" | "mediaType" | "header" | "link",
+    label: string,
+    seen = new Set<string>(),
+  ): Promise<ResolvedRawNode> {
+    const object = asRecord(raw);
+    if (!object) throw new Error(`selected ${label} is not an object`);
+    if (typeof object.$ref !== "string") {
+      return { value: object, resource: owner, identity: objectIdentity(owner, object) };
+    }
+    const target = await this.resolveReference(object.$ref, owner, kind);
+    if (seen.has(target.identity)) {
+      return { value: {}, resource: target.resource, identity: target.identity };
+    }
+    seen.add(target.identity);
+    return this.resolveReferenceOnlyObject(target.value, target.resource, kind, label, seen);
   }
 
   private targetDocument(
@@ -784,7 +954,7 @@ class OpenAPI32Overlay {
   private async resolveReference(
     refText: string,
     owner: RawResource,
-    kind: "pathItem" | "parameter" | "requestBody" | "mediaType" | "header" | "schema" | "securityScheme",
+    kind: "pathItem" | "parameter" | "requestBody" | "response" | "mediaType" | "header" | "link" | "schema" | "securityScheme",
     baseOverride?: string,
   ): Promise<ResolvedRawNode> {
     const resolved = resolveReferenceURL(refText, baseOverride ?? owner.base);

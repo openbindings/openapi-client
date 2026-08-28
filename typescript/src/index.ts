@@ -26,11 +26,25 @@ export type {
   OpenAPISuccessResult,
 } from "./client.js";
 export type { OpenAPIParameterConverter } from "./params.js";
+export { documentInboundOperationInventory } from "./openapi-inbound-inventory.js";
+export type {
+  OpenAPIInboundOperationDisposition,
+  OpenAPIInboundOperationKind,
+  OpenAPIInboundOperationReference,
+  OpenAPIInboundOperationTarget,
+} from "./openapi-inbound-inventory.js";
 export {
   OpenAPIArtifact,
   classifyOpenAPIEdition,
   loadOpenAPIArtifact,
 } from "./openapi32-artifact.js";
+export {
+  admittedOpenAPI32ResponseKey,
+  selectOpenAPI32Response,
+} from "./openapi32-response.js";
+export type { OpenAPI32ResponseSelection } from "./openapi32-response.js";
+export { classifyOpenAPI32SequentialResponse } from "./openapi32-sequential-response.js";
+export type { OpenAPI32SequentialResponseKind } from "./openapi32-sequential-response.js";
 export type {
   OpenAPIArtifactLoadOptions,
   OpenAPIArtifactSource,
@@ -75,6 +89,7 @@ export type {
   OpenAPI32SequentialRequestKind,
 } from "./openapi32-media.js";
 export type {
+  OpenAPI32ResponseMediaExclusion,
   OpenAPIOperationReference,
   OpenAPIResolvedOperation,
 } from "./openapi32-operations.js";

@@ -79,11 +79,14 @@ export async function streamSSE(
   inv: BindingHandle<unknown, unknown>,
   invocationMeta: Metadata,
   builtinDecode: OutputDecoder,
+  openAPI32Object = false,
 ): Promise<void> {
   let eventName = "";
   let lastEventID = "";
+  let eventID: string | undefined;
   let dataLines: string[] = [];
   let retryMs = 0;
+  let retrySet = false;
   let eventBytes = 0;
   let firstLine = true;
 
@@ -102,7 +105,9 @@ export async function streamSSE(
     const hadDataLine = dataLines.length > 0;
     const rawData = dataLines.join("\n");
     const name = eventName;
+    const id = eventID;
     eventName = "";
+    eventID = undefined;
     dataLines = [];
     // A block that carried no data line dispatches nothing (WHATWG dispatch
     // step 2: the data buffer is the empty string; comment-only and
@@ -117,22 +122,33 @@ export async function streamSSE(
     const meta: Metadata = { ...invocationMeta };
     if (name !== "") meta["x-sse-event"] = [name];
     if (lastEventID !== "") meta["x-sse-id"] = [lastEventID];
-    if (retryMs !== 0) {
+    const hadRetry = retrySet;
+    if (hadRetry) {
       meta["x-sse-retry"] = [String(retryMs)];
-      retryMs = 0;
     }
+    const retry = retryMs;
+    retryMs = 0;
+    retrySet = false;
 
     const raw: RawResult = { status, body: rawData, meta };
     let data: unknown;
-    try {
-      data = await decodeThroughHooks(args.hooks, site, raw, builtinDecode);
-    } catch (e: unknown) {
-      // A decode error mid-stream is terminal; already-emitted outputs
-      // stand (drain-before-terminal).
-      inv.fireError(
-        e instanceof InvocationError ? e : new InvocationError(ERR_STREAM_ERROR, errorMessage(e)),
-      );
-      return false;
+    if (openAPI32Object) {
+      const item: Record<string, unknown> = { data: rawData };
+      if (name !== "") item.event = name;
+      if (id !== undefined) item.id = id;
+      if (hadRetry) item.retry = retry;
+      data = item;
+    } else {
+      try {
+        data = await decodeThroughHooks(args.hooks, site, raw, builtinDecode);
+      } catch (e: unknown) {
+        // A decode error mid-stream is terminal; already-emitted outputs
+        // stand (drain-before-terminal).
+        inv.fireError(
+          e instanceof InvocationError ? e : new InvocationError(ERR_STREAM_ERROR, errorMessage(e)),
+        );
+        return false;
+      }
     }
 
     try {
@@ -193,14 +209,20 @@ export async function streamSSE(
       case "id":
         // A value containing U+0000 NULL is ignored; otherwise it sets the
         // last event ID (an empty value resets it), per WHATWG.
-        if (!value.includes("\0")) lastEventID = value;
+        if (!value.includes("\0")) {
+          lastEventID = value;
+          eventID = value;
+        }
         break;
       case "data":
         dataLines.push(value);
         break;
       case "retry":
         // ASCII digits only, per WHATWG; anything else is ignored.
-        if (/^[0-9]+$/.test(value)) retryMs = Number.parseInt(value, 10);
+        if (/^[0-9]+$/.test(value)) {
+          retryMs = Number.parseInt(value, 10);
+          retrySet = true;
+        }
         break;
       // Unknown fields are ignored per spec.
     }
