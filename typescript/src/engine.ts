@@ -590,3 +590,23 @@ export {
   withInputRouteMarker,
   type OpenAPIExecutionProfile,
 } from "./profile.js";
+export {
+  PreparedSwagger20Operation,
+  Swagger20ExecutionError,
+  listSwagger20Operations,
+  prepareSwagger20,
+  validateSwagger20Selector,
+  type Swagger20PrepareOptions,
+} from "./swagger20-engine.js";
+export {
+  Swagger20Client,
+  loadSwagger20,
+} from "./swagger20-loader.js";
+export {
+  Swagger20Document,
+  SWAGGER20_METHODS,
+  type Swagger20LoadOptions,
+  type Swagger20Method,
+  type Swagger20OperationInfo,
+  type Swagger20Source,
+} from "./swagger20-model.js";
