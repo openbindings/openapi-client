@@ -110,6 +110,15 @@ func loadArtifact(ctx context.Context, client *http.Client, source Source, allow
 			}
 			return data, artifactRetrievalURI(resource, retrievalURIs, &retrievalMu), nil
 		}
+		installOverlayResolver := func() {
+			if laneOverlay != nil {
+				laneOverlay.setResolver(hydrateSecurityResource)
+			}
+			if artifactOverlay != nil && artifactOverlay != laneOverlay {
+				artifactOverlay.setResolver(hydrateSecurityResource)
+			}
+		}
+		installOverlayResolver()
 		composition := newExternalComposition(
 			func(resource *url.URL) ([]byte, error) { return read(loader, resource) },
 			loader.JoinFunc,
@@ -144,6 +153,7 @@ func loadArtifact(ctx context.Context, client *http.Client, source Source, allow
 					if artifactOverlay == nil {
 						artifactOverlay = laneOverlay
 					}
+					installOverlayResolver()
 				}
 				if entryOverride != nil {
 					data = append([]byte(nil), entryOverride...)

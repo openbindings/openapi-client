@@ -1,6 +1,6 @@
 # OpenBindings OpenAPI Client
 
-A document-driven OpenAPI 2.0, 3.0, and 3.1 client for invoking brownfield APIs directly from their OpenAPI documents. Swagger 2.0 has raw-preserving, edition-specific lanes in both Go and TypeScript.
+A document-driven OpenAPI 2.0, 3.0, 3.1, and 3.2 client for invoking brownfield APIs directly from their OpenAPI documents. Swagger 2.0 has raw-preserving, edition-specific lanes in both Go and TypeScript; OpenAPI 3.2 is complete in the Go engine, with its TypeScript twin following separately.
 
 The client does not generate source code and does not require an OpenBindings Interface (OBI). Load a document, select an authored operation, and call it. This client's contract deliberately follows the document and incorporated OpenAPI/HTTP rules for server resolution, parameter serialization, request-body carriage, security placement, response selection, decoding, and streaming.
 
@@ -89,6 +89,14 @@ Security Requirement Object. `RequestContentCodings` and
 `DecodeResponseBody` applies the built-in response media lane. Engine callers
 can select unary event-stream buffering with `BufferEventStreams` or suppress
 the artifact-derived `Accept` preference with `OmitAcceptHeader`.
+
+The Go OpenAPI 3.2 lane is request- and response-complete: fixed QUERY and
+case-exact additional operations, 3.2 parameter and request-media rules,
+response ranges and media election, declared content-coding stacks,
+JSONL/NDJSON/JSON-seq, positional multipart and SSE delivery, and 3.2
+reference identity all run through the native artifact model. Callback and
+webhook operations are exposed through `Artifact.InboundOperationInventory`
+for adapters that synthesize targetless dependency contracts.
 
 The grouped parameter shape preserves identities that OpenAPI treats as distinct. A path parameter, query parameter, header parameter, cookie parameter, and body property may legally share a name without overwriting one another.
 
@@ -240,7 +248,7 @@ final retrieval URI.
 
 The invocation-complete scope is:
 
-- native Swagger 2.0 plus OpenAPI 3.0.x and 3.1.x document loading and reference resolution;
+- native Swagger 2.0 plus OpenAPI 3.0.x, 3.1.x, and Go 3.2.0 document loading and reference resolution;
 - operation discovery and exact selection;
 - document/path/operation server resolution and variables;
 - path, query, header, and cookie parameter serialization;

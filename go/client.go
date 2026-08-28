@@ -166,6 +166,7 @@ type StreamResult struct {
 	Response    *http.Response
 	OpenAPI     DeclarationMatch
 	rawBoundary bool
+	sequential  bool
 }
 
 type ErrorKind string
@@ -257,9 +258,9 @@ func (c *Client) Call(ctx context.Context, selector OperationSelector, input Inp
 	if !streamResult.OK {
 		return &Result{OK: false, Error: streamResult.Error, Response: streamResult.Response, OpenAPI: streamResult.OpenAPI}, nil
 	}
-	if isSSEContentTypeFor(streamResult.Response.Header.Get("Content-Type"), profileFullCoordinate) {
+	if streamResult.sequential || isSSEContentTypeFor(streamResult.Response.Header.Get("Content-Type"), profileFullCoordinate) {
 		streamResult.Stream.Cancel()
-		return nil, &ClientError{Kind: ErrorResponse, Code: "STREAMING_RESPONSE", Message: "operation returned text/event-stream; use Client.Stream"}
+		return nil, &ClientError{Kind: ErrorResponse, Code: "STREAMING_RESPONSE", Message: "operation returned sequential media; use Client.Stream"}
 	}
 	var values []any
 	for {
@@ -349,7 +350,27 @@ func (c *Client) Stream(ctx context.Context, selector OperationSelector, input I
 		}
 		return &StreamResult{OK: false, Error: failure, Response: response, OpenAPI: declaration}, nil
 	}
-	return &StreamResult{OK: true, Stream: &Stream{execution: execution}, Response: response, OpenAPI: declaration, rawBoundary: nativeResponseUsesRawBoundary(resolved.document, resolved.operation, response)}, nil
+	return &StreamResult{
+		OK: true, Stream: &Stream{execution: execution}, Response: response, OpenAPI: declaration,
+		rawBoundary: nativeResponseUsesRawBoundary(resolved.document, resolved.operation, response),
+		sequential:  nativeOpenAPI32SequentialResponse(c.artifact, resolved.operation, response),
+	}, nil
+}
+
+func nativeOpenAPI32SequentialResponse(artifact *Artifact, operation *openapi3.Operation, response *http.Response) bool {
+	if artifact == nil || !artifact.Edition.IsOpenAPI32() || response == nil {
+		return false
+	}
+	governing := governingResponse(operation, response.StatusCode)
+	if governing == nil {
+		return false
+	}
+	matched, err := governingResponseMediaMatchFor(governing.response, response.Header.Get("Content-Type"), profileFullCoordinate)
+	if err != nil {
+		return false
+	}
+	kind, err := ClassifyOpenAPI32SequentialResponse(response.Header.Get("Content-Type"), matched.media)
+	return err == nil && kind != ""
 }
 
 type resolvedOperation struct {
@@ -713,6 +734,10 @@ func (c *Client) prepareOptions(operation resolvedOperation, input nativeInvocat
 	if responseCodings == nil {
 		responseCodings = c.options.ResponseContentCodings
 	}
+	responseCodings, err := normalizeContentDecoders(responseCodings)
+	if err != nil {
+		return PrepareOptions{}, &ClientError{Kind: ErrorConfiguration, Code: "INVALID_RESPONSE_CONTENT_CODINGS", Message: err.Error(), Cause: err}
+	}
 	contextValue = contextWithSecurityHandlers(contextValue, handlers)
 	return PrepareOptions{
 		Source: c.source, Ref: operation.info.Ref, Profile: FullProfile(), Context: contextValue,
@@ -879,12 +904,19 @@ func nativeResponseUsesRawBoundary(document *openapi3.T, operation *openapi3.Ope
 	if response == nil {
 		return false
 	}
+	contentType := response.Header.Get("Content-Type")
+	if contentType == "" && document != nil && document.OpenAPI == string(EditionOpenAPI320) {
+		// A 3.2 non-empty response without Content-Type is governed as
+		// application/octet-stream. This predicate is consulted only for an
+		// emitted value; an empty response emits nothing regardless.
+		contentType = "application/octet-stream"
+	}
 	declaration := governingResponse(operation, response.StatusCode)
 	if declaration == nil {
 		return false
 	}
-	match, err := governingResponseMediaMatchFor(declaration.response, response.Header.Get("Content-Type"), profileFullCoordinate)
-	return err == nil && responseUsesRawBoundary(document, match.media, response.Header.Get("Content-Type"), profileFullCoordinate, match.declared.rangeSpecificity == 2)
+	match, err := governingResponseMediaMatchFor(declaration.response, contentType, profileFullCoordinate)
+	return err == nil && responseUsesRawBoundary(document, match.media, contentType, profileFullCoordinate, match.declared.rangeSpecificity == 2)
 }
 
 func responseBody(response *http.Response) []byte {

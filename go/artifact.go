@@ -151,6 +151,7 @@ type OpenAPI32Overlay struct {
 	entry        *openAPI32RawResource
 	resources    map[string]*openAPI32RawResource
 	schemaScopes map[string]*rawSchemaResourceScope
+	resolve      func(*url.URL) ([]byte, *url.URL, error)
 }
 
 func newOpenAPI32Overlay() *OpenAPI32Overlay {
@@ -158,6 +159,15 @@ func newOpenAPI32Overlay() *OpenAPI32Overlay {
 		resources:    map[string]*openAPI32RawResource{},
 		schemaScopes: map[string]*rawSchemaResourceScope{},
 	}
+}
+
+func (o *OpenAPI32Overlay) setResolver(resolve func(*url.URL) ([]byte, *url.URL, error)) {
+	if o == nil {
+		return
+	}
+	o.mu.Lock()
+	o.resolve = resolve
+	o.mu.Unlock()
 }
 
 // Entry returns the entry resource's 3.2 identity facts.

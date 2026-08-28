@@ -445,7 +445,7 @@ paths:
 	})
 }
 
-func TestOpenAPI32ResponseOnlyIdentityDivergenceRemainsAnM6Seam(t *testing.T) {
+func TestOpenAPI32ResponseReferenceRequiresDeclaredSelfIdentity(t *testing.T) {
 	transport := &openAPI32ResourceTransport{resources: map[string]string{
 		"https://retrieval.example/responses.yaml": `
 openapi: 3.2.0
@@ -468,8 +468,212 @@ paths:
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := artifact.ResolveOperation("#/paths/~1x/get"); err == nil || !strings.Contains(err.Error(), "retrieval alias") {
+		t.Fatalf("response identity error = %v", err)
+	}
+}
+
+func TestOpenAPI32ResponseClosureMaterializesCanonicalExternalResources(t *testing.T) {
+	transport := &openAPI32ResourceTransport{resources: map[string]string{
+		"https://identity.example/responses.yaml": `
+openapi: 3.2.0
+$self: https://identity.example/responses.yaml
+info: {title: responses, version: "1"}
+components:
+  responses:
+    Value:
+      content:
+        application/json:
+          schema: {type: string}
+`,
+	}}
+	artifact, err := LoadArtifact(context.Background(), Source{Content: []byte(`
+openapi: 3.2.0
+info: {title: response closure, version: "1"}
+paths:
+  /x:
+    get:
+      responses:
+        '200': {$ref: 'https://identity.example/responses.yaml#/components/responses/Value'}
+`)}, ArtifactLoadOptions{HTTPClient: &http.Client{Transport: transport}, AllowExternalRefs: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := artifact.ResolveOperation("#/paths/~1x/get")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := target.Operation.Responses.Value("200")
+	media := response.Value.Content["application/json"]
+	if media == nil || media.Schema == nil || media.Schema.Value == nil || !media.Schema.Value.Type.Is("string") {
+		t.Fatalf("materialized response media = %#v", media)
+	}
+}
+
+func TestOpenAPI32ResponseMediaReferenceIdentityConfinesToAlternative(t *testing.T) {
+	transport := &openAPI32ResourceTransport{resources: map[string]string{
+		"https://retrieval.example/media.yaml": `
+openapi: 3.2.0
+$self: https://identity.example/media.yaml
+info: {title: media, version: "1"}
+components:
+  mediaTypes:
+    Value: {schema: {type: object}}
+`,
+	}}
+	artifact, err := LoadArtifact(context.Background(), Source{Content: []byte(`
+openapi: 3.2.0
+info: {title: response media closure, version: "1"}
+paths:
+  /x:
+    get:
+      responses:
+        '200':
+          content:
+            application/json: {$ref: 'https://retrieval.example/media.yaml#/components/mediaTypes/Value'}
+            text/plain: {schema: {type: string}}
+`)}, ArtifactLoadOptions{HTTPClient: &http.Client{Transport: transport}, AllowExternalRefs: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := artifact.ResolveOperation("#/paths/~1x/get")
+	if err != nil {
+		t.Fatalf("media-local identity failure excluded target: %v", err)
+	}
+	response := target.Operation.Responses.Value("200").Value
+	if response.Content["application/json"] != nil || response.Content["text/plain"] == nil {
+		t.Fatalf("confined response content = %#v", response.Content)
+	}
+	if len(target.ResponseMediaExclusions) != 1 || target.ResponseMediaExclusions[0].MediaType != "application/json" ||
+		!strings.Contains(target.ResponseMediaExclusions[0].Reason, "retrieval alias") {
+		t.Fatalf("response media exclusions = %#v", target.ResponseMediaExclusions)
+	}
+}
+
+func TestOpenAPI32ResponseSchemaIdentityConfinesToAlternative(t *testing.T) {
+	artifact, err := LoadArtifact(context.Background(), Source{Content: []byte(`
+openapi: 3.2.0
+info: {title: response schema identity, version: "1"}
+components:
+  schemas:
+    Resource:
+      $id: https://schemas.example/resource
+      type: object
+      properties:
+        name: {type: string}
+paths:
+  /x:
+    get:
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Resource/properties/name'}
+            text/plain: {schema: {type: string}}
+`)}, ArtifactLoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := artifact.ResolveOperation("#/paths/~1x/get")
+	if err != nil {
+		t.Fatalf("schema-local identity failure excluded target: %v", err)
+	}
+	response := target.Operation.Responses.Value("200").Value
+	if response.Content["application/json"] != nil || response.Content["text/plain"] == nil {
+		t.Fatalf("confined response content = %#v", response.Content)
+	}
+	if len(target.ResponseMediaExclusions) != 1 || !strings.Contains(target.ResponseMediaExclusions[0].Reason, "$id") {
+		t.Fatalf("response media exclusions = %#v", target.ResponseMediaExclusions)
+	}
+}
+
+func TestOpenAPI32ResponseReferenceIgnoresAddedSiblings(t *testing.T) {
+	artifact, err := LoadArtifact(context.Background(), Source{Content: []byte(`
+openapi: 3.2.0
+info: {title: response reference siblings, version: "1"}
+components:
+  responses:
+    Empty: {}
+paths:
+  /x:
+    get:
+      responses:
+        '204':
+          $ref: '#/components/responses/Empty'
+          content:
+            application/json:
+              schema: {$ref: 'https://unused.example/schema'}
+`)}, ArtifactLoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := artifact.ResolveOperation("#/paths/~1x/get")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response := target.Operation.Responses.Value("204"); response == nil || response.Value == nil || len(response.Value.Content) != 0 {
+		t.Fatalf("Reference Object sibling became response behavior: %#v", response)
+	}
+}
+
+func TestOpenAPI32ResponseReferenceCycleTerminates(t *testing.T) {
+	artifact, err := LoadArtifact(context.Background(), Source{Content: []byte(`
+openapi: 3.2.0
+info: {title: response cycle, version: "1"}
+components:
+  responses:
+    A: {$ref: '#/components/responses/B'}
+    B: {$ref: '#/components/responses/A'}
+paths:
+  /x: {get: {responses: {'204': {$ref: '#/components/responses/A'}}}}
+`)}, ArtifactLoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := artifact.ResolveOperation("#/paths/~1x/get"); err != nil {
-		t.Fatalf("response-only 3.2 identity rule leaked into the M5 request gate: %v", err)
+		t.Fatalf("resolvable response cycle refused: %v", err)
+	}
+}
+
+func TestOpenAPI32ResponseHeaderAndLinkReferencesShareResponseIdentity(t *testing.T) {
+	for _, testCase := range []struct {
+		name        string
+		component   string
+		declaration string
+		target      string
+	}{
+		{name: "header", component: "headers", declaration: "headers: {X-Trace: {$ref: 'https://retrieval.example/library.yaml#/components/headers/Target'}}", target: "required: true\n      schema: {type: string}"},
+		{name: "link", component: "links", declaration: "links: {next: {$ref: 'https://retrieval.example/library.yaml#/components/links/Target'}}", target: "operationId: next"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			transport := &openAPI32ResourceTransport{resources: map[string]string{
+				"https://retrieval.example/library.yaml": `
+openapi: 3.2.0
+$self: https://identity.example/library.yaml
+info: {title: response library, version: "1"}
+components:
+  ` + testCase.component + `:
+    Target:
+      ` + testCase.target + `
+`,
+			}}
+			artifact, err := LoadArtifact(context.Background(), Source{Content: []byte(`
+openapi: 3.2.0
+info: {title: response nested identity, version: "1"}
+paths:
+  /x:
+    get:
+      responses:
+        '204':
+          ` + testCase.declaration + `
+`)}, ArtifactLoadOptions{HTTPClient: &http.Client{Transport: transport}, AllowExternalRefs: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := artifact.ResolveOperation("#/paths/~1x/get"); err == nil || !strings.Contains(err.Error(), "retrieval alias") {
+				t.Fatalf("%s response identity error = %v", testCase.name, err)
+			}
+		})
 	}
 }
 

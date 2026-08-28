@@ -100,7 +100,7 @@ func scanSSELines(data []byte, atEOF bool) (advance int, token []byte, err error
 // configuration at the decode point. Status carries the initial response's
 // status on every unit (it is real and invocation-scoped, never fabricated);
 // classification ran once, at dispatch.
-func streamSSE(ctx context.Context, resp *http.Response, args *executionArgs, site HookSite, inv executionHandle[any, any]) {
+func streamSSE(ctx context.Context, resp *http.Response, args *executionArgs, site HookSite, inv executionHandle[any, any], openAPI32Object bool) {
 	defer resp.Body.Close()
 
 	scanner := bufio.NewScanner(resp.Body)
@@ -111,8 +111,10 @@ func streamSSE(ctx context.Context, resp *http.Response, args *executionArgs, si
 	var (
 		eventName   string
 		lastEventID string
+		eventID     *string
 		dataLines   []string
 		retryMs     int
+		retrySet    bool
 		eventBytes  int64
 		firstLine   = true
 	)
@@ -128,6 +130,8 @@ func streamSSE(ctx context.Context, resp *http.Response, args *executionArgs, si
 		rawData := strings.Join(dataLines, "\n")
 		name := eventName
 		eventName = ""
+		id := eventID
+		eventID = nil
 		dataLines = nil
 		// A block that carried no data line dispatches nothing (WHATWG
 		// dispatch step 2: the data buffer is the empty string; comment-only
@@ -152,10 +156,13 @@ func streamSSE(ctx context.Context, resp *http.Response, args *executionArgs, si
 		if lastEventID != "" {
 			meta["x-sse-id"] = []string{lastEventID}
 		}
-		if retryMs != 0 {
+		hadRetry := retrySet
+		if hadRetry {
 			meta["x-sse-retry"] = []string{strconv.Itoa(retryMs)}
-			retryMs = 0
 		}
+		retry := retryMs
+		retryMs = 0
+		retrySet = false
 
 		raw := RawResult{
 			Status: &status,
@@ -164,12 +171,28 @@ func streamSSE(ctx context.Context, resp *http.Response, args *executionArgs, si
 		}
 		// WHATWG event data is already a formed UTF-8 text value. The HTTP
 		// response's charset parameter cannot reinterpret individual events.
-		data, derr := args.Hooks.DecodeOutput(site, raw, decodePerEventTextFor("text/plain; charset=utf-8", args.Source.Capability))
-		if derr != nil {
-			// A decode error mid-stream is terminal; already-emitted
-			// outputs stand (drain-before-terminal).
-			inv.failExecution(normalizeExecutionError(derr))
-			return false
+		var data any
+		if openAPI32Object {
+			item := map[string]any{"data": rawData}
+			if name != "" {
+				item["event"] = name
+			}
+			if id != nil {
+				item["id"] = *id
+			}
+			if hadRetry {
+				item["retry"] = retry
+			}
+			data = item
+		} else {
+			var derr error
+			data, derr = args.Hooks.DecodeOutput(site, raw, decodePerEventTextFor("text/plain; charset=utf-8", args.Source.Capability))
+			if derr != nil {
+				// A decode error mid-stream is terminal; already-emitted
+				// outputs stand (drain-before-terminal).
+				inv.failExecution(normalizeExecutionError(derr))
+				return false
+			}
 		}
 
 		return inv.emitOutputWithMetadata(data, meta) == nil
@@ -244,6 +267,8 @@ func streamSSE(ctx context.Context, resp *http.Response, args *executionArgs, si
 			// the last event ID (an empty value resets it), per WHATWG.
 			if !strings.ContainsRune(value, '\x00') {
 				lastEventID = value
+				copy := value
+				eventID = &copy
 			}
 		case "data":
 			dataLines = append(dataLines, value)
@@ -252,6 +277,7 @@ func streamSSE(ctx context.Context, resp *http.Response, args *executionArgs, si
 			if value != "" && strings.IndexFunc(value, func(r rune) bool { return r < '0' || r > '9' }) < 0 {
 				if ms, err := strconv.Atoi(value); err == nil {
 					retryMs = ms
+					retrySet = true
 				}
 			}
 		}
