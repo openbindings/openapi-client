@@ -563,6 +563,62 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 		}
 	}
 
+	// OpenAPI 3.2 sequential responses are selected by the actual media and
+	// the governing Response Object. Every incorporated framing emits one
+	// operation value per parsed item; declarations for other statuses affect
+	// only the static capability bound and cannot reclassify this response.
+	if artifact.Edition.IsOpenAPI32() && revision3ContentTypeErr == nil {
+		matched, mediaErr := governingResponseMediaMatchFor(responseDecl, actualContentType, args.Source.Capability)
+		if mediaErr == nil {
+			kind, kindErr := ClassifyOpenAPI32SequentialResponse(actualContentType, matched.media)
+			if kindErr != nil {
+				_ = resp.Body.Close()
+				inv.failExecution(&ExecutionError{Code: CodeProtocol, Message: kindErr.Error(), Cause: kindErr})
+				return
+			}
+			if kind != "" {
+				ok := revision3ClassifiedSuccess
+				if !ok {
+					status := resp.StatusCode
+					var classifyErr error
+					ok, classifyErr = args.Hooks.Classify(site, RawResult{Status: &status, Meta: headerMetadata(resp.Header)}, builtinClassify)
+					if classifyErr != nil {
+						_ = resp.Body.Close()
+						inv.failExecution(normalizeExecutionError(classifyErr))
+						return
+					}
+				}
+				if !ok {
+					maxUnit := args.DeliveryUnitLimit()
+					failureBody, readErr := io.ReadAll(io.LimitReader(resp.Body, maxUnit+1))
+					_ = resp.Body.Close()
+					if readErr != nil {
+						inv.failExecution(&ExecutionError{Code: CodeResponseError, Message: readErr.Error(), Cause: readErr})
+						return
+					}
+					if int64(len(failureBody)) > maxUnit {
+						inv.failExecution(&ExecutionError{Code: CodeResponseError, Message: fmt.Sprintf("response exceeds %d byte limit", maxUnit)})
+						return
+					}
+					inv.failExecution(openAPIFailureError(resp, failureBody, responseMatch, args.Source.Capability, doc))
+					return
+				}
+				if kind == OpenAPI32SequentialSSE {
+					if laneErr := validateResponseMediaLane(doc, matched.media, actualContentType, args.Source.Capability); laneErr != nil {
+						_ = resp.Body.Close()
+						inv.failExecution(&ExecutionError{Code: CodeProtocol, Message: laneErr.Error(), Cause: laneErr})
+						return
+					}
+				}
+				trailer := decodeClassifyTrailer(args.Hooks, "header/content-type")
+				trailer["x-ob-governing-media"] = []string{matched.declared.canonical}
+				inv.setTrailingMetadata(trailer)
+				streamOpenAPI32Sequential(bctx, resp, args, site, inv, kind, matched.media)
+				return
+			}
+		}
+	}
+
 	// Interaction-shape dispatch (openbindings.openapi-3.0@1 §7 /
 	// openbindings.openapi-3.1@1 §7): the shape is bounded by
 	// declaration and selected by framing. An operation is streaming-capable
@@ -640,7 +696,7 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 			return
 		}
 		inv.setTrailingMetadata(Metadata{"x-ob-governing-media": {matched.declared.canonical}})
-		streamSSE(bctx, resp, args, site, inv)
+		streamSSE(bctx, resp, args, site, inv, false)
 		return
 	}
 

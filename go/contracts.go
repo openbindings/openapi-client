@@ -98,8 +98,8 @@ type PrepareOptions struct {
 	ParameterConverter     ParameterConverter
 	RequestContentCodings  map[string]ContentEncoder
 	ResponseContentCodings map[string]ContentDecoder
-	// BufferEventStreams selects unary buffering for a caller that needs the
-	// complete text/event-stream representation instead of incremental events.
+	// BufferEventStreams selects unary buffering for the OpenAPI 3.0/3.1 SSE
+	// compatibility lane. OpenAPI 3.2 sequential responses always stream.
 	BufferEventStreams bool
 	// OmitAcceptHeader suppresses the client's artifact-derived response media
 	// preference while leaving response selection and decoding unchanged.

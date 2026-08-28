@@ -166,6 +166,7 @@ type StreamResult struct {
 	Response    *http.Response
 	OpenAPI     DeclarationMatch
 	rawBoundary bool
+	sequential  bool
 }
 
 type ErrorKind string
@@ -257,9 +258,9 @@ func (c *Client) Call(ctx context.Context, selector OperationSelector, input Inp
 	if !streamResult.OK {
 		return &Result{OK: false, Error: streamResult.Error, Response: streamResult.Response, OpenAPI: streamResult.OpenAPI}, nil
 	}
-	if isSSEContentTypeFor(streamResult.Response.Header.Get("Content-Type"), profileFullCoordinate) {
+	if streamResult.sequential || isSSEContentTypeFor(streamResult.Response.Header.Get("Content-Type"), profileFullCoordinate) {
 		streamResult.Stream.Cancel()
-		return nil, &ClientError{Kind: ErrorResponse, Code: "STREAMING_RESPONSE", Message: "operation returned text/event-stream; use Client.Stream"}
+		return nil, &ClientError{Kind: ErrorResponse, Code: "STREAMING_RESPONSE", Message: "operation returned sequential media; use Client.Stream"}
 	}
 	var values []any
 	for {
@@ -349,7 +350,27 @@ func (c *Client) Stream(ctx context.Context, selector OperationSelector, input I
 		}
 		return &StreamResult{OK: false, Error: failure, Response: response, OpenAPI: declaration}, nil
 	}
-	return &StreamResult{OK: true, Stream: &Stream{execution: execution}, Response: response, OpenAPI: declaration, rawBoundary: nativeResponseUsesRawBoundary(resolved.document, resolved.operation, response)}, nil
+	return &StreamResult{
+		OK: true, Stream: &Stream{execution: execution}, Response: response, OpenAPI: declaration,
+		rawBoundary: nativeResponseUsesRawBoundary(resolved.document, resolved.operation, response),
+		sequential:  nativeOpenAPI32SequentialResponse(c.artifact, resolved.operation, response),
+	}, nil
+}
+
+func nativeOpenAPI32SequentialResponse(artifact *Artifact, operation *openapi3.Operation, response *http.Response) bool {
+	if artifact == nil || !artifact.Edition.IsOpenAPI32() || response == nil {
+		return false
+	}
+	governing := governingResponse(operation, response.StatusCode)
+	if governing == nil {
+		return false
+	}
+	matched, err := governingResponseMediaMatchFor(governing.response, response.Header.Get("Content-Type"), profileFullCoordinate)
+	if err != nil {
+		return false
+	}
+	kind, err := ClassifyOpenAPI32SequentialResponse(response.Header.Get("Content-Type"), matched.media)
+	return err == nil && kind != ""
 }
 
 type resolvedOperation struct {
