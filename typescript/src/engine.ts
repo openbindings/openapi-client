@@ -25,6 +25,14 @@ import {
 import { errorMessage, loadOpenAPIDocument, parseRef } from "./util.js";
 import { computeAcceptanceFloor, floorInvalidTargetMessage, floorOpVerdict, type AcceptanceFloor } from "./acceptance-floor.js";
 import type { OpenAPIParameterConverter } from "./params.js";
+import {
+  loadOpenAPIArtifact,
+  type OpenAPIArtifact,
+} from "./openapi32-artifact.js";
+import {
+  OpenAPIOperationResolutionError,
+  type OpenAPIResolvedOperation,
+} from "./openapi32-operations.js";
 
 /** Artifact source accepted by the SDK-neutral execution engine. */
 export interface OpenAPIEngineSource {
@@ -32,6 +40,8 @@ export interface OpenAPIEngineSource {
   location?: string;
   /** Parsed object, JSON text, YAML text, or UTF-8 bytes. */
   content?: unknown;
+  /** A preclassified artifact. Required to preserve the OpenAPI 3.2 raw-resource overlay across adapter layers. */
+  artifact?: OpenAPIArtifact;
 }
 
 export interface OpenAPISecurityHandlerContext {
@@ -193,14 +203,21 @@ export class PreparedOpenAPIOperation {
 
   private readonly document: OpenAPIDocument;
   private readonly args: PreparedArguments;
+  private readonly target?: OpenAPIResolvedOperation;
 
   /** @internal */
-  constructor(document: OpenAPIDocument, args: PreparedArguments, prerequisites: OpenAPIPrerequisites | null) {
+  constructor(
+    document: OpenAPIDocument,
+    args: PreparedArguments,
+    prerequisites: OpenAPIPrerequisites | null,
+    target?: OpenAPIResolvedOperation,
+  ) {
     this.document = document;
     this.args = args;
     this.ref = args.ref;
     this.profile = args.profile;
     this.prerequisites = prerequisites;
+    this.target = target;
   }
 
   /**
@@ -240,6 +257,7 @@ export class PreparedOpenAPIOperation {
           observeOutput: (_value, valueMetadata) => metadata.push(cloneMetadata(valueMetadata)),
           hooks,
           site,
+          openAPITarget: this.target,
         },
         invocation,
         this.document,
@@ -275,6 +293,7 @@ type RequiredByKey<T, K extends keyof T> = T & Required<Pick<T, K>>;
 interface LoadedOpenAPIDocument {
   document: OpenAPIDocument;
   floor: AcceptanceFloor | undefined;
+  artifact?: OpenAPIArtifact;
 }
 
 export class OpenAPIEngine {
@@ -334,11 +353,27 @@ export class OpenAPIEngine {
     return this.prepared(document, args);
   }
 
-  private prepared(
+  private async prepared(
     loaded: LoadedOpenAPIDocument,
     args: PreparedArguments,
-  ): PreparedOpenAPIOperation {
-    const document = loaded.document;
+  ): Promise<PreparedOpenAPIOperation> {
+    let target: OpenAPIResolvedOperation | undefined;
+    try {
+      target = loaded.artifact?.edition === "3.2.0"
+        ? await loaded.artifact.resolveOperation(args.ref)
+        : undefined;
+    } catch (error: unknown) {
+      if (error instanceof OpenAPIOperationResolutionError) {
+        const code = error.kind === "invalid-reference"
+          ? "INVALID_OPERATION_REF"
+          : error.kind === "not-found"
+            ? "OPERATION_NOT_FOUND"
+            : "ERR_REFUSED";
+        throw new OpenAPIExecutionError(code, error.message, { cause: error });
+      }
+      throw error;
+    }
+    const document = target?.document ?? loaded.document;
     // The family-document acceptance-floor inventory filter: a
     // ladder-invalid target is not addressed, and its invocation is refused
     // before dispatch -- provably no interaction side effect.
@@ -346,16 +381,16 @@ export class OpenAPIEngine {
     if (verdict && verdict.disposition === "invalid") {
       throw new OpenAPIExecutionError("ERR_REFUSED", `${floorInvalidTargetMessage(verdict.defects.length)} (${args.ref})`);
     }
-    assertOperation(document, args.ref);
+    if (!target) assertOperation(document, args.ref);
     let prerequisites: ContextRequiredDetails | null = null;
-    const target = preflightTarget(document, args.ref, args.context, args.source.location);
-    if (target) {
+    const preflight = preflightTarget(document, args.ref, args.context, args.source.location, target);
+    if (preflight) {
       prerequisites = composeRequirements(
-        requiredContext(document, target.op, args.context, target.baseURL, target.params),
-        requiredRequestMediaContext(document, target.op, args.profile, args.context, target.baseURL),
+        requiredContext(document, preflight.op, args.context, preflight.baseURL, preflight.params),
+        requiredRequestMediaContext(document, preflight.op, args.profile, args.context, preflight.baseURL),
       );
     }
-    return new PreparedOpenAPIOperation(document, args, prerequisites);
+    return new PreparedOpenAPIOperation(document, args, prerequisites, target);
   }
 
   private async load(
@@ -364,6 +399,39 @@ export class OpenAPIEngine {
     fetchFn: typeof globalThis.fetch | undefined,
     allowExternalRefs: boolean | undefined,
   ): Promise<LoadedOpenAPIDocument> {
+    if (source.artifact) {
+      return { document: source.artifact.document, floor: undefined, artifact: source.artifact };
+    }
+    if (source.content !== undefined && declaresOpenAPI32(source.content)) {
+      const artifact = await loadOpenAPIArtifact(
+        { location: source.location, content: source.content },
+        { signal, fetch: fetchFn, allowExternalRefs },
+      );
+      return { document: artifact.document, floor: undefined, artifact };
+    }
+    if (source.content === undefined && source.location) {
+      const cached = this.cache.get(source.location);
+      if (cached) return cached;
+      let floor: AcceptanceFloor | undefined;
+      const artifact = await loadOpenAPIArtifact(
+        { location: source.location },
+        {
+          ...(signal ? { signal } : {}),
+          ...(fetchFn ? { fetch: fetchFn } : {}),
+          ...(allowExternalRefs !== undefined ? { allowExternalRefs } : {}),
+          onRawDocument: (raw) => { floor = computeAcceptanceFloor(raw); },
+        },
+      );
+      if (artifact.edition === "3.2.0") {
+        const loaded = { document: artifact.document, floor: undefined, artifact };
+        this.cache.set(source.location, loaded);
+        return loaded;
+      }
+      if (floor?.refusal) throw new Error(floor.refusal);
+      const loaded = { document: artifact.document, floor };
+      this.cache.set(source.location, loaded);
+      return loaded;
+    }
     let floor: AcceptanceFloor | undefined;
     const floorOptions = {
       onRawDocument: (raw: unknown) => {
@@ -392,13 +460,21 @@ export class OpenAPIEngine {
       refuseWholeSource();
       return { document, floor };
     }
-    const cached = this.cache.get(source.location);
-    if (cached) return cached;
-    const document = await loadOpenAPIDocument(source.location, undefined, { signal, allowExternalRefs, ...floorOptions }, fetchFn);
-    refuseWholeSource();
-    const loaded = { document, floor };
-    this.cache.set(source.location, loaded);
-    return loaded;
+    throw new Error("source must have location or content");
+  }
+}
+
+function declaresOpenAPI32(content: unknown): boolean {
+  if (content !== null && typeof content === "object" && !Array.isArray(content)) {
+    return (content as Record<string, unknown>).openapi === "3.2.0";
+  }
+  if (typeof content !== "string") return false;
+  try {
+    const parsed = JSON.parse(content) as unknown;
+    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
+      && (parsed as Record<string, unknown>).openapi === "3.2.0";
+  } catch {
+    return /^\s*openapi\s*:\s*["']?3\.2\.0["']?\s*(?:#.*)?$/mu.test(content);
   }
 }
 
@@ -590,3 +666,23 @@ export {
   withInputRouteMarker,
   type OpenAPIExecutionProfile,
 } from "./profile.js";
+export {
+  OpenAPIArtifact,
+  classifyOpenAPIEdition,
+  loadOpenAPIArtifact,
+} from "./openapi32-artifact.js";
+export type {
+  OpenAPIArtifactLoadOptions,
+  OpenAPIArtifactSource,
+  OpenAPIEdition,
+  OpenAPI32Resource,
+  OpenAPIOperationDisposition,
+} from "./openapi32-artifact.js";
+export {
+  OpenAPIOperationResolutionError,
+  parseOpenAPI32OperationReference,
+} from "./openapi32-operations.js";
+export type {
+  OpenAPIOperationReference,
+  OpenAPIResolvedOperation,
+} from "./openapi32-operations.js";

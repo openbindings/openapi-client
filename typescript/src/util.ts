@@ -523,7 +523,7 @@ export function errorMessage(e: unknown): string {
  * client already parses under). Duplicate mapping keys stay loud under it
  * — in the JSON spelling too, which JSON.parse would silently last-wins.
  */
-function parseJSONOrYAML(text: string): unknown {
+export function parseJSONOrYAML(text: string): unknown {
   return assertJSONDomain(yaml.load(text.trim(), { schema: yaml.CORE_SCHEMA }));
 }
 

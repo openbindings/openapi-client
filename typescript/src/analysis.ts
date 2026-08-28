@@ -8,6 +8,8 @@ export * from "./failure.js";
 export { VALID_METHODS } from "./constants.js";
 export * from "./input-routes-v2.js";
 export * from "./media.js";
+export * from "./openapi32-artifact.js";
+export * from "./openapi32-operations.js";
 export * from "./params.js";
 export * from "./profile.js";
 export * from "./ref-siblings.js";
