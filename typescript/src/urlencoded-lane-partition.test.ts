@@ -7,7 +7,7 @@ import type { OpenAPIMediaType, OpenAPIOperation } from "./types.js";
 
 // The identical file is executed by openbindings-go/formats/openapi and by
 // openapi-client/go; changing it in one engine without the others fails here.
-const CASES_DIGEST = "254966b36a9ee291416330518bbc2af341a2f54c2fe547f58e946ceb4e0d1e09";
+const CASES_DIGEST = "d74cecd90efc7feb4d487b14afb71f24ed9eb581ce764f77beff9972a5bc4e58";
 
 const EDITIONS = ["3.0.0", "3.0.1", "3.0.2", "3.0.3", "3.0.4", "3.1.0", "3.1.1", "3.1.2"];
 const VARIANTS = [

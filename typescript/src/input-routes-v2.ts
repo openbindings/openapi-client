@@ -7,6 +7,7 @@ import {
 import {
   MissingPathParamError,
   routeParameter,
+  type OpenAPIParameterSerializationOptions,
   type RoutedInput,
 } from "./params.js";
 import { codePointCompare } from "./util.js";
@@ -308,6 +309,7 @@ export function routeEnvelope(
   pathTemplate: string,
   plan: BodyPlan | null,
   profile: OpenAPIExecutionProfile = OPENAPI_PROFILE_ROUTED,
+  options: OpenAPIParameterSerializationOptions = {},
 ): RoutedInput {
   const routed: RoutedInput = {
     resolvedPath: pathTemplate,
@@ -332,7 +334,7 @@ export function routeEnvelope(
       continue;
     }
     consumed.add(mapping.field);
-    routeParameter(routed, parameter, envelope.value[mapping.field], profile);
+    routeParameter(routed, parameter, envelope.value[mapping.field], profile, options);
   }
   if (missingPath.length > 0) {
     missingPath.sort(codePointCompare);

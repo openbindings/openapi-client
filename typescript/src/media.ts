@@ -24,7 +24,7 @@ import {
   type OpenAPIExecutionProfile,
 } from "./profile.js";
 
-// This file implements §9.2 of openbindings.openapi@1 (OAPI-P-04): request
+// This file implements the family documents' request-media and body rules:
 // media selection with its deterministic tiebreaks and pre-dispatch
 // refusals, multipart part encoding (including the Base64 boundary encoding
 // for binary-signaled parts), urlencoded field serialization, and the
@@ -825,7 +825,7 @@ function requireSupportedCharset(
 // switch in the three engines; it discarded an explicitly written
 // encoding.contentType, collided sibling field names, and refused at dispatch
 // for values the artifact had fully declared. It is deleted, and
-// openbindings.openapi@1 section 2 now states the patch-uniformity reading
+// The family documents' edition surface states the patch-uniformity reading
 // once. Package: design/openapi-30-urlencoded-default-lane-ruling.md.
 //
 // Reproduce the per-edition presence pattern (edition order 3.0.0, 3.0.1,
@@ -1005,7 +1005,8 @@ export function styleLaneUndefinedExpansionMember(
  */
 function styleLaneCompositeMember(schema: Record<string, unknown> | null): boolean {
   if (schema === null) return false;
-  return schemaTypeIs(schema, "object") || schemaTypeIs(schema, "array");
+  const types = declaredSchemaTypes(schema);
+  return types.length > 0 && types.every((type) => type === "object" || type === "array");
 }
 
 /**
@@ -1080,7 +1081,7 @@ function validateRevision3Multipart(
     if (property === false || property === null) continue; // an unsatisfiable property has no admissible runtime value
     validateContentTransferEncoding(name, property);
     const enc = asObject(encoding[name]);
-    if (hasExplicitMultipartExpansion(enc)) {
+    if (!openapiVersion.startsWith("3.0") && hasExplicitMultipartExpansion(enc)) {
       validateFormStyle(name, property, enc, "multipart", openapiVersion.startsWith("3.0"));
     }
     let contentSchema = property;
@@ -2682,7 +2683,7 @@ function resolvedMultipartItems(schema: Record<string, unknown>): Record<string,
 /**
  * §9.2's artifact-encoded string cell, under the governing edition's own
  * vocabulary: a string the ARTIFACT declares to be already-encoded text, so
- * the characters ride the wire unchanged and the OpenBindings boundary decode
+ * the characters ride the wire unchanged and the OpenAPI raw-boundary decode
  * never runs. The 3.1 line spells it with `contentEncoding` on a declared
  * string; the 3.0 line spells it with `format: byte`, which every accepted
  * 3.0 edition's own format registry defines as "base64 encoded characters"
@@ -2995,7 +2996,7 @@ function buildRevision3URLEncodedBody(
 // application/x-www-form-urlencoded body for the CONTENT lane — the lane the
 // OAS reaches when an Encoding Object declares none of style, explode or
 // allowReserved, and which it assigns to RFC 1866 Section 8.2.1 rather than to
-// RFC 6570. The twin of openbindings-go's and openapi-client/go's
+// RFC 6570. The twin Go implementations'
 // formURLEncodedEscape; the two lanes are SUPPOSED to spell a space
 // differently, so nothing here should be converged onto the style lane.
 //
@@ -3013,7 +3014,7 @@ function buildRevision3URLEncodedBody(
 // gives a SHOULD for.
 //
 // Which member of the permitted set to emit is this implementation's
-// convention, not openbindings.openapi@1's, and it is pinned by the shared twin
+// convention, not an OpenAPI family rule, and it is pinned by the shared twin
 // case table (testdata/urlencoded-escaper-cases.json).
 function formEncodeBytes(bytes: Uint8Array): string {
   let result = "";

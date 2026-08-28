@@ -7,7 +7,7 @@
 // `projectLadder`; per-class routing from
 // `corpus-lab/scripts/oas-owning-units-policy.mjs`, block 8b record), not a
 // re-derivation, and the byte-for-byte twin of `acceptance_floor.go` in
-// `openbindings-go/formats/openapi` and `openapi-client/go`. The ladder, its
+// the adapter and standalone Go implementations. The ladder, its
 // three propagation predicates, and the per-class answers are the ratified
 // Scenario-B ruling: every defect confines to the smallest unit that owns it.
 //
@@ -29,7 +29,7 @@
 // Nothing else climbs. A defective REQUEST media alternative owns its own
 // entry and never invalidates its operation.
 //
-// Whole-source refusal is `openbindings.openapi@1` §3's three-part text:
+// Whole-source refusal follows the family document's three-part acceptance floor:
 // part 1 (the closed load gates) is owned by the load path and never asked
 // here; part 2 -- exactly one derived refusal -- is computed by this
 // instrument: the source refuses only when no addressable target remains.

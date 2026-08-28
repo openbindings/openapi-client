@@ -1,13 +1,18 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { buildMultipartBody, buildURLEncodedBody, planRequestBodies } from "./media.js";
+import { buildURLEncodedBody } from "./media.js";
+import {
+  buildResolvedMultipartBody,
+  planResolvedRequestBodies,
+  plansRequirePropertyMedia,
+} from "./resolved-media.js";
 import { OPENAPI_PROFILE_FULL } from "./profile.js";
 import type { OpenAPIDocument, OpenAPIMediaType, OpenAPIOperation } from "./types.js";
 
 // The identical file is executed by openbindings-go/formats/openapi and by
 // openapi-client/go; changing it in one engine without the others fails here.
-const CASES_DIGEST = "334169f20f73f42159fcdd45e3b11bdfa87957add143df5bb4ef4fccd30d00e1";
+const CASES_DIGEST = "6ebde01f9b2dac385b1e123b43592dbb79177e2051f3bb75cbedef7edd64fd87";
 
 interface PartDefaultCase {
   name: string;
@@ -67,7 +72,7 @@ async function rendering(c: PartDefaultCase, fields: Record<string, unknown>): P
       const encoded = buildURLEncodedBody(bodyMedia(c), fields, true, c.openapi, false);
       return encoded === "" ? "elided" : encoded;
     }
-    const form = buildMultipartBody(doc, bodyMedia(c), fields, true, false);
+    const form = buildResolvedMultipartBody(doc, bodyMedia(c), fields, true, false);
     const rendered: string[] = [];
     for (const entry of form.getAll(c.propertyName)) {
       if (typeof entry === "string") {
@@ -92,7 +97,11 @@ async function rendering(c: PartDefaultCase, fields: Record<string, unknown>): P
 // itself crosses the twin boundary.
 async function decision(c: PartDefaultCase): Promise<string> {
   try {
-    planRequestBodies(operation(c), { profile: OPENAPI_PROFILE_FULL, openapiVersion: c.openapi });
+    const plans = planResolvedRequestBodies(operation(c), {
+      profile: OPENAPI_PROFILE_FULL,
+      openapiVersion: c.openapi,
+    });
+    if (plansRequirePropertyMedia(plans)) return "missing-required-choice";
   } catch {
     return "refused";
   }
@@ -133,8 +142,15 @@ describe("array-items part default — the twin case table", () => {
       expect(c.media).toBe("multipart/form-data");
       let got = "refused";
       try {
-        planRequestBodies(operation(c), { profile: OPENAPI_PROFILE_FULL, openapiVersion: c.openapi });
+        const plans = planResolvedRequestBodies(operation(c), {
+          profile: OPENAPI_PROFILE_FULL,
+          openapiVersion: c.openapi,
+        });
+        if (plansRequirePropertyMedia(plans)) {
+          got = "missing-required-choice";
+        } else {
         got = `admitted;emit=${await rendering(c, { [c.propertyName]: c.nonArrayValue })}`;
+        }
       } catch {
         got = "refused";
       }
@@ -168,7 +184,12 @@ describe("array-items part default — the twin case table", () => {
       const doc = { openapi: c.openapi } as OpenAPIDocument;
       let got = "admitted";
       try {
-        buildMultipartBody(doc, bodyMedia(c), { [c.propertyName]: c.value }, true, false);
+        const plans = planResolvedRequestBodies(operation(c), {
+          profile: OPENAPI_PROFILE_FULL,
+          openapiVersion: c.openapi,
+        });
+        if (plansRequirePropertyMedia(plans)) got = "missing-required-choice";
+        else buildResolvedMultipartBody(doc, bodyMedia(c), { [c.propertyName]: c.value }, true, false);
       } catch {
         got = "refused";
       }
@@ -209,7 +230,7 @@ describe("array-items part default — the twin case table", () => {
       if (c.media !== "multipart/form-data" || c.items !== "unconstrained") continue;
       if (!c.openapi.startsWith("3.0")) continue;
       seen += 1;
-      if (c.expect !== "refused" || c.writeLane !== "refused") {
+      if (c.expect !== "missing-required-choice" || c.writeLane !== "missing-required-choice") {
         throw new Error(
           `${c.name}: expect = ${c.expect}, writeLane = ${c.writeLane}; both lanes must refuse a typeless items declaration`,
         );

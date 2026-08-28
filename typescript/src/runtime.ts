@@ -19,6 +19,7 @@ import {
   runBinding,
 } from "./invoke.js";
 import { errorMessage, loadOpenAPIDocument } from "./util.js";
+import type { OpenAPIParameterConverter } from "./params.js";
 
 /** OpenAPI source accepted by the standalone runtime. */
 export interface OpenAPIRuntimeSource {
@@ -45,6 +46,7 @@ export interface OpenAPIRuntimeInvocationArgs {
   /** Defaults to `manual`, keeping redirect responses observable. */
   redirect?: RequestRedirect;
   securityHandlers?: Record<string, ArtifactSecurityHandler>;
+  parameterConverter?: OpenAPIParameterConverter;
   observeOutput?: (value: unknown, metadata: Record<string, string[]>) => void;
   hooks?: InvokeHooks | null;
   site?: InvokeSite;
@@ -170,6 +172,7 @@ function toBindingArgs(args: OpenAPIRuntimeInvocationArgs): BindingInvocationArg
     fetch: args.fetch,
     redirect: args.redirect,
     securityHandlers: args.securityHandlers,
+    parameterConverter: args.parameterConverter,
     observeOutput: args.observeOutput,
     hooks: args.hooks,
     site: args.site,

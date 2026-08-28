@@ -15,7 +15,7 @@ import type { OpenAPIDocument, OpenAPIMediaType, OpenAPIOperation } from "./type
 // the whole body of an exact non-JSON, non-form selection, a multipart part,
 // and an urlencoded property.
 export const FORMAT_BYTE_CARRIAGE_CASES_DIGEST =
-  "fd1b8f260712957bd96398cbe48787b56c9d14f51f3cd52d1ea5f33fd0e5c0c0";
+  "37b2cf5eece416504551780469e934a17627b90f1be3e282c7826308ca8d4c0a";
 
 export interface FormatByteCarriageCase {
   name: string;

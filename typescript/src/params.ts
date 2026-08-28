@@ -1,11 +1,12 @@
 import type { OpenAPIParameter, OpenAPIPathItem, OpenAPIOperation } from "./types.js";
-import { mergeParameters } from "./util.js";
+import { codePointCompare, errorMessage, mergeParameters } from "./util.js";
 import { isJSONMediaType, normalizeMediaType, parseMediaType, styleLaneUndefinedExpansionMember, type BodyPlan } from "./media.js";
 import { hasMediaFidelity, hasRoutedInputs } from "./constants.js";
 import { OPENAPI_PROFILE_BASE, type OpenAPIExecutionProfile } from "./profile.js";
+import { resolveDeclaration } from "./resolved-declaration.js";
 
-// This file implements the flattened input model of openbindings.openapi@1
-// §9.1 (OAPI-P-02, OAPI-P-03): the caller-facing input value is one JSON
+// This file implements OpenAPI parameter serialization and the engine's
+// flattened input model. The caller-facing input value is one JSON
 // object — parameters from every location and the request body merged into
 // one object — and parameter serialization follows the OAS
 // style/explode/allowReserved rules, incorporated wholesale. Mirrors the Go
@@ -16,6 +17,19 @@ import { OPENAPI_PROFILE_BASE, type OpenAPIExecutionProfile } from "./profile.js
 // ---------------------------------------------------------------------------
 
 const IGNORED_HEADER_PARAMS = new Set(["accept", "content-type", "authorization"]);
+
+/** Deterministically converts a JSON boolean or number for parameter carriage. */
+export type OpenAPIParameterConverter = (value: boolean | number) => string;
+
+export interface OpenAPIParameterSerializationOptions {
+  /** Overrides the native JSON spelling of boolean and number parameter cells. */
+  converter?: OpenAPIParameterConverter;
+}
+
+export interface PreparedOpenAPIParameterValue {
+  value: unknown;
+  cookieEmits: boolean;
+}
 
 /**
  * Merges path-item and operation `parameters` (operation winning on same
@@ -33,6 +47,65 @@ export function effectiveParameters(
     if (p.in === "header" && IGNORED_HEADER_PARAMS.has(p.name.toLowerCase())) return false;
     return true;
   });
+}
+
+/** Effective Parameter Object rows before malformed declarations are filtered. */
+export function effectiveParameterDeclarationRows(
+  pathItem: OpenAPIPathItem,
+  operation: OpenAPIOperation,
+): OpenAPIParameter[] {
+  const pathRows = Array.isArray(pathItem.parameters) ? pathItem.parameters : [];
+  const operationRows = Array.isArray(operation.parameters) ? operation.parameters : [];
+  const overridden = new Set<string>();
+  for (const parameter of operationRows) {
+    const identity = parameterIdentity(parameter);
+    if (identity !== undefined) overridden.add(identity);
+  }
+  return [
+    ...pathRows.filter((parameter) => {
+      const identity = parameterIdentity(parameter);
+      return identity === undefined || !overridden.has(identity);
+    }),
+    ...operationRows,
+  ].filter((parameter) => !ignoredHeaderParameter(parameter));
+}
+
+/** Returns the first effective Parameter Object outside the OpenAPI 3.x gate. */
+export function malformedEffectiveParameter(parameters: OpenAPIParameter[]): string | undefined {
+  for (const parameter of parameters) {
+    const name = typeof parameter?.name === "string" && parameter.name !== ""
+      ? parameter.name
+      : "<unnamed>";
+    if (
+      !parameter
+      || typeof parameter.name !== "string"
+      || parameter.name === ""
+      || !["path", "query", "header", "cookie"].includes(parameter.in ?? "")
+    ) return name;
+    const hasSchema = Object.hasOwn(parameter, "schema");
+    const hasContent = Object.hasOwn(parameter, "content");
+    if (hasSchema === hasContent) return name;
+    if (parameter.in === "path" && parameter.required !== true) return name;
+    if (hasContent) {
+      const content = asObject(parameter.content);
+      if (!content || Object.keys(content).length !== 1) return name;
+    }
+  }
+  return undefined;
+}
+
+function ignoredHeaderParameter(parameter: OpenAPIParameter): boolean {
+  return parameter?.in === "header"
+    && typeof parameter.name === "string"
+    && IGNORED_HEADER_PARAMS.has(parameter.name.toLowerCase());
+}
+
+function parameterIdentity(parameter: OpenAPIParameter): string | undefined {
+  return parameter
+    && typeof parameter.name === "string"
+    && typeof parameter.in === "string"
+    ? `${parameter.in}\u0000${parameter.name}`
+    : undefined;
 }
 
 /**
@@ -124,6 +197,7 @@ export function routeInput(
   pathTemplate: string,
   plan: BodyPlan | null,
   profile: OpenAPIExecutionProfile = OPENAPI_PROFILE_BASE,
+  options: OpenAPIParameterSerializationOptions = {},
 ): RoutedInput {
   const r: RoutedInput = {
     resolvedPath: pathTemplate,
@@ -148,7 +222,7 @@ export function routeInput(
     consumed.add(p.name);
     const value = input[p.name];
 
-    routeParameter(r, p, value, profile);
+    routeParameter(r, p, value, profile, options);
   }
 
   if (missingPath.length > 0) {
@@ -257,17 +331,76 @@ export function validateParameterSerialization(p: OpenAPIParameter): void {
   }
 }
 
+/** Validates style cells against a declaration resolved across composition. */
+export function validateResolvedParameterSerialization(p: OpenAPIParameter, oas30 = false): void {
+  if (p.content && typeof p.content === "object") return;
+  if (Object.hasOwn(p, "style") && (typeof p.style !== "string" || p.style === "")) {
+    throw new Error(`parameter ${JSON.stringify(p.name)} declares an invalid style`);
+  }
+  if (Object.hasOwn(p, "explode") && typeof p.explode !== "boolean") {
+    throw new Error(`parameter ${JSON.stringify(p.name)} declares a non-boolean explode`);
+  }
+  const { style, explode } = serializationMethod(p);
+  const resolved = resolveDeclaration(p.schema as Record<string, unknown> | boolean | undefined, oas30);
+  switch (p.in) {
+    case "path":
+      if (!["simple", "label", "matrix"].includes(style)) {
+        throw new Error(`path parameter ${JSON.stringify(p.name)} declares unsupported style ${JSON.stringify(style)}`);
+      }
+      return;
+    case "header":
+      if (style !== "simple") throw new Error(`header parameter ${JSON.stringify(p.name)} requires simple style`);
+      return;
+    case "cookie":
+      if (style !== "form") throw new Error(`cookie parameter ${JSON.stringify(p.name)} requires form style`);
+      return;
+    case "query":
+      if (style === "form") return;
+      if (style === "spaceDelimited" || style === "pipeDelimited") {
+        if (explode) throw new Error(`query style ${JSON.stringify(style)} has no explode=true cell`);
+        if (resolved.declaresOnly("null", "boolean", "number", "integer", "string")) {
+          throw new Error(
+            `query style ${JSON.stringify(style)} is defined only for arrays or objects`,
+          );
+        }
+        return;
+      }
+      if (style === "deepObject") {
+        if (!explode) throw new Error("query style deepObject has no explode=false cell");
+        if (resolved.declaresOnly("null", "boolean", "number", "integer", "string", "array")) {
+          throw new Error("query style deepObject is defined only for objects");
+        }
+        return;
+      }
+      throw new Error(`query parameter ${JSON.stringify(p.name)} declares unsupported style ${JSON.stringify(style)}`);
+    default:
+      throw new Error(`parameter ${JSON.stringify(p.name)} declares unsupported location ${JSON.stringify(p.in)}`);
+  }
+}
+
+function parameterSchemaTypes(schema: Record<string, unknown>): string[] {
+  const result = new Set<string>();
+  if (typeof schema.type === "string") result.add(schema.type);
+  else if (Array.isArray(schema.type)) {
+    for (const type of schema.type) if (typeof type === "string") result.add(type);
+  }
+  if (Array.isArray(schema.allOf)) {
+    for (const member of schema.allOf) {
+      const nested = asObject(member);
+      if (nested) for (const type of parameterSchemaTypes(nested)) result.add(type);
+    }
+  }
+  return [...result];
+}
+
 /**
  * Reports a style-lane parameter's first offending declared member as
  * "<parameter><member path>", or null when the parameter is not on the style
  * lane or declares no offending member. See styleLaneUndefinedExpansionMember
  * in media.ts for the per-edition authority reading.
  *
- * The four styles below are the ones the ruling covers: they are the query and
- * cookie styles, and they are where the corpus population lives. The path and
- * header styles (simple, label, matrix) carry the same structural question and
- * are deliberately NOT decided here — see the residue note in
- * corpus-lab/openapi-runtime/70-*.md.
+ * All seven OpenAPI style cells use the same declaration-only composite-member
+ * proof; location validation remains separate.
  */
 export function parameterStyleLaneUndefinedExpansionMember(
   p: OpenAPIParameter,
@@ -275,7 +408,7 @@ export function parameterStyleLaneUndefinedExpansionMember(
 ): string | null {
   if (!p || (p.content !== undefined && typeof p.content === "object") || p.schema === undefined) return null;
   const { style } = serializationMethod(p);
-  if (style !== "form" && style !== "spaceDelimited" && style !== "pipeDelimited" && style !== "deepObject") {
+  if (!["form", "spaceDelimited", "pipeDelimited", "deepObject", "simple", "label", "matrix"].includes(style)) {
     return null;
   }
   const member = styleLaneUndefinedExpansionMember(p.schema, is30);
@@ -300,19 +433,122 @@ export function styleLaneUndefinedExpansionParam(
   return null;
 }
 
-function parameterSchemaTypes(schema: Record<string, unknown>): string[] {
-  const result = new Set<string>();
-  if (typeof schema.type === "string") result.add(schema.type);
-  else if (Array.isArray(schema.type)) {
-    for (const type of schema.type) if (typeof type === "string") result.add(type);
+/** Resolved-declaration variant used by strict OpenAPI 3.0/3.1 carriers. */
+export function resolvedStyleLaneUndefinedExpansionMember(
+  schema: Record<string, unknown> | boolean | null | undefined,
+  oas30: boolean,
+): string | null {
+  const resolved = resolveDeclaration(schema, oas30);
+  if (resolved.declaresOnly("array")) {
+    return resolved.items().declaresOnly("object", "array") ? "[]" : null;
   }
-  if (Array.isArray(schema.allOf)) {
-    for (const member of schema.allOf) {
-      const nested = asObject(member);
-      if (nested) for (const type of parameterSchemaTypes(nested)) result.add(type);
-    }
+  if (!resolved.declaresOnly("object")) return null;
+  for (const name of resolved.propertyNames()) {
+    if (resolved.property(name).declaresOnly("object", "array")) return `.${name}`;
   }
-  return [...result];
+  return null;
+}
+
+export function resolvedParameterStyleLaneUndefinedExpansionMember(
+  parameter: OpenAPIParameter,
+  oas30: boolean,
+): string | null {
+  if (!parameter || asObject(parameter.content) || !Object.hasOwn(parameter, "schema")) return null;
+  const { style } = serializationMethod(parameter);
+  if (!["form", "spaceDelimited", "pipeDelimited", "deepObject", "simple", "label", "matrix"].includes(style)) {
+    return null;
+  }
+  const member = resolvedStyleLaneUndefinedExpansionMember(
+    parameter.schema as Record<string, unknown> | boolean | null | undefined,
+    oas30,
+  );
+  return member === null ? null : `${parameter.name ?? ""}${member}`;
+}
+
+export function resolvedStyleLaneUndefinedExpansionParam(
+  parameters: OpenAPIParameter[],
+  profile: OpenAPIExecutionProfile,
+  oas30: boolean,
+): string | null {
+  if (!profile.mediaFidelity) return null;
+  for (const parameter of parameters) {
+    const member = resolvedParameterStyleLaneUndefinedExpansionMember(parameter, oas30);
+    if (member !== null) return member;
+  }
+  return null;
+}
+
+export function formStyleCookieMultiValueProof(
+  parameter: OpenAPIParameter,
+  oas30: boolean,
+): boolean {
+  if (
+    parameter.in !== "cookie"
+    || asObject(parameter.content)
+    || !Object.hasOwn(parameter, "schema")
+  ) return false;
+  const method = serializationMethod(parameter);
+  if (method.style !== "form" || !method.explode) return false;
+  const resolved = resolveDeclaration(
+    parameter.schema as Record<string, unknown> | boolean | undefined,
+    oas30,
+  );
+  return resolved.declaresOnly("array")
+    || (resolved.declaresOnly("object") && resolved.propertyNames().length > 0);
+}
+
+export function formStyleCookieMultiValueParameter(
+  parameters: OpenAPIParameter[],
+  oas30: boolean,
+): string | undefined {
+  return parameters.find((parameter) => formStyleCookieMultiValueProof(parameter, oas30))?.name;
+}
+
+/** Validates path-template and path-parameter correspondence for one edition. */
+export function checkPathTemplateDeclaration(
+  pathTemplate: string,
+  parameters: OpenAPIParameter[],
+  oas31: boolean,
+): string | undefined {
+  const declared = new Set(
+    parameters.filter((parameter) => parameter.in === "path" && typeof parameter.name === "string")
+      .map((parameter) => parameter.name!),
+  );
+  const expressions = pathTemplateVariables(pathTemplate);
+  const seen = new Set<string>();
+  const missing: string[] = [];
+  const duplicates: string[] = [];
+  for (const expression of expressions) {
+    if (seen.has(expression)) duplicates.push(expression);
+    seen.add(expression);
+    if (!declared.has(expression)) missing.push(expression);
+  }
+  if (missing.length > 0) {
+    return `path template variable(s) ${uniqueSorted(missing).join(", ")} have no declared path parameter`;
+  }
+  if (oas31 && duplicates.length > 0) {
+    return `path template expression(s) ${uniqueSorted(duplicates).join(", ")} occur more than once`;
+  }
+  const unmatched = [...declared].filter((name) => !seen.has(name)).sort(codePointCompare);
+  if (unmatched.length > 0) {
+    return `declared path parameter(s) ${unmatched.join(", ")} have no path template expression`;
+  }
+  return undefined;
+}
+
+export function equivalentPathTemplateCollision(
+  paths: Record<string, OpenAPIPathItem> | undefined,
+  selected: string,
+): string | undefined {
+  if (!paths) return undefined;
+  const wanted = normalizedPathTemplateHierarchy(selected);
+  if (!wanted.templated) return undefined;
+  for (const candidate of Object.keys(paths)) {
+    if (candidate === selected) continue;
+    const normalized = normalizedPathTemplateHierarchy(candidate);
+    if (normalized.templated && normalized.value === wanted.value) return candidate;
+  }
+  return undefined;
 }
 
 /** Serializes one populated parameter onto its wire location. */
@@ -321,6 +557,7 @@ export function routeParameter(
   p: OpenAPIParameter,
   value: unknown,
   profile: OpenAPIExecutionProfile = OPENAPI_PROFILE_BASE,
+  options: OpenAPIParameterSerializationOptions = {},
 ): void {
   const name = p.name ?? "";
   const allowReserved = p.allowReserved === true;
@@ -364,12 +601,14 @@ export function routeParameter(
   }
 
   const { style, explode } = serializationMethod(p);
+  const prepared = prepareParameterStyleValue(name, value, style, options.converter);
+  const engineValue = delimitedObjectAsSequence(prepared, style);
 
   switch (p.in) {
     case "path": {
       let expanded: string;
       try {
-        expanded = serializePathValue(name, value, style, explode, revision3);
+        expanded = serializePathValue(name, engineValue, style, explode, revision3);
       } catch (e) {
         throw new Error(`path parameter "${name}": ${(e as Error).message}`, { cause: e });
       }
@@ -379,7 +618,7 @@ export function routeParameter(
     case "query": {
       let units: string[];
       try {
-        units = serializeQueryValue(name, value, style, explode, allowReserved, revision3);
+        units = serializeQueryValue(name, engineValue, style, explode, allowReserved, revision3);
       } catch (e) {
         throw new Error(`query parameter "${name}": ${(e as Error).message}`, { cause: e });
       }
@@ -390,7 +629,8 @@ export function routeParameter(
     case "header": {
       let v: string;
       try {
-        v = serializeHeaderValue(value, style, explode);
+        v = serializeHeaderValue(engineValue, style, explode);
+        if (!validHeaderFieldValue(v)) throw new Error("serialized header contains an invalid HTTP field byte");
       } catch (e) {
         throw new Error(`header parameter "${name}": ${(e as Error).message}`, { cause: e });
       }
@@ -401,7 +641,7 @@ export function routeParameter(
     case "cookie": {
       let units: string[];
       try {
-        units = serializeCookieValue(name, value, style, explode);
+        units = serializeCookieValue(name, engineValue, style, explode);
       } catch (e) {
         throw new Error(`cookie parameter "${name}": ${(e as Error).message}`, { cause: e });
       }
@@ -506,8 +746,200 @@ function bytesAsLatin1(bytes: Uint8Array): string {
   return Array.from(bytes, (byte) => String.fromCharCode(byte)).join("");
 }
 
+/** Recursively converts the scalar cells admitted by OpenAPI style expansion. */
+export function convertParameterScalars(
+  value: unknown,
+  converter: OpenAPIParameterConverter | undefined,
+  member = false,
+): unknown {
+  if (value === null) {
+    if (member) throw new Error("null array/object member has no RFC 6570 representation");
+    return null;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item, index) => {
+      try {
+        return convertParameterScalars(item, converter, true);
+      } catch (error: unknown) {
+        throw new Error(`array member ${index}: ${errorMessage(error)}`, { cause: error });
+      }
+    });
+  }
+  const object = asObject(value);
+  if (object) {
+    return Object.fromEntries(Object.entries(object).map(([name, item]) => {
+      try {
+        return [name, convertParameterScalars(item, converter, true)];
+      } catch (error: unknown) {
+        throw new Error(`object member ${JSON.stringify(name)}: ${errorMessage(error)}`, { cause: error });
+      }
+    }));
+  }
+  if (typeof value === "string") return value;
+  if (typeof value !== "boolean" && (typeof value !== "number" || !Number.isFinite(value))) {
+    throw new Error(`value of type ${typeof value} is outside the JSON scalar conversion domain`);
+  }
+  if (!converter) throw new Error("JSON boolean or number requires parameterConversion");
+  const converted = converter(value);
+  if (typeof converted !== "string") throw new Error("parameterConversion must return a string");
+  return converted;
+}
+
+/** Prepares one caller-routed value for the standalone parameter carrier. */
+export function prepareSchemaParameterValue(
+  parameter: OpenAPIParameter | undefined,
+  value: unknown,
+  converter: OpenAPIParameterConverter | undefined,
+): PreparedOpenAPIParameterValue {
+  if (!parameter) throw new Error("has no effective declaration");
+  if (asObject(parameter.content)) {
+    const serialized = serializeParamContent(parameter, value);
+    if (parameter.in === "header" && !validHeaderFieldValue(serialized)) {
+      throw new Error("serialized header contains an invalid HTTP field byte");
+    }
+    return { value, cookieEmits: parameter.in === "cookie" };
+  }
+
+  const method = serializationMethod(parameter);
+  const prepared = prepareStrictParameterStyleValue(
+    parameter.name ?? "",
+    value,
+    method.style,
+    converter,
+  );
+  const engineValue = delimitedObjectAsSequence(prepared, method.style);
+  if (parameter.in === "header") {
+    const serialized = serializeHeaderValue(engineValue, method.style, method.explode);
+    if (!validHeaderFieldValue(serialized)) {
+      throw new Error("serialized header contains an invalid HTTP field byte");
+    }
+  }
+  if (parameter.in === "cookie") {
+    const units = serializeCookieValue(parameter.name ?? "", engineValue, method.style, method.explode);
+    if (units.length > 1) throw new Error("supplied value would produce multiple cookie pairs");
+    return { value: engineValue, cookieEmits: units.length > 0 };
+  }
+  return { value: engineValue, cookieEmits: false };
+}
+
+function prepareStrictParameterStyleValue(
+  name: string,
+  value: unknown,
+  style: string,
+  converter: OpenAPIParameterConverter | undefined,
+): unknown {
+  if (value === null) {
+    if (["matrix", "label", "simple", "form"].includes(style)) return null;
+    throw new Error(`JSON null has n/a in style ${JSON.stringify(style)}'s undefined cell`);
+  }
+  const prepared = convertParameterScalars(value, converter);
+  const delimiters = nonRFCStyleDelimiters(style);
+  if (delimiters !== "" && (
+    containsAnyDelimiter(name, delimiters)
+    || styleValueContainsDelimiter(prepared, delimiters)
+  )) {
+    throw new Error(`value or member name contains style ${JSON.stringify(style)}'s structural delimiter`);
+  }
+  if (style === "spaceDelimited" || style === "pipeDelimited") {
+    if (!Array.isArray(prepared) && !asObject(prepared)) {
+      throw new Error(`style ${JSON.stringify(style)} is defined only for arrays or objects`);
+    }
+  } else if (style === "deepObject" && !asObject(prepared)) {
+    throw new Error("style deepObject is defined only for objects");
+  }
+  return prepared;
+}
+
+function prepareParameterStyleValue(
+  name: string,
+  value: unknown,
+  style: string,
+  converter: OpenAPIParameterConverter | undefined,
+): unknown {
+  // The converter hook is additive for existing standalone callers: without
+  // one, retain the native JSON spelling already supplied by primitiveString.
+  if (!converter) return value;
+  return prepareStrictParameterStyleValue(name, value, style, converter);
+}
+
+function delimitedObjectAsSequence(value: unknown, style: string): unknown {
+  const object = asObject(value);
+  if (!object || (style !== "spaceDelimited" && style !== "pipeDelimited")) return value;
+  return Object.keys(object).sort(codePointCompare).flatMap((name) => [name, object[name]]);
+}
+
+function validHeaderFieldValue(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if ((code < 0x20 && code !== 0x09) || code === 0x7f) return false;
+  }
+  return true;
+}
+
+function nonRFCStyleDelimiters(style: string): string {
+  if (style === "spaceDelimited") return " ";
+  if (style === "pipeDelimited") return "|";
+  if (style === "deepObject") return "[]=&";
+  return "";
+}
+
+function containsAnyDelimiter(value: string, delimiters: string): boolean {
+  for (const delimiter of delimiters) if (value.includes(delimiter)) return true;
+  return false;
+}
+
+function styleValueContainsDelimiter(value: unknown, delimiters: string): boolean {
+  if (Array.isArray(value)) {
+    return value.some((member) => typeof member === "string" && containsAnyDelimiter(member, delimiters));
+  }
+  const object = asObject(value);
+  if (!object) return false;
+  return Object.entries(object).some(([name, member]) =>
+    containsAnyDelimiter(name, delimiters)
+    || (typeof member === "string" && containsAnyDelimiter(member, delimiters)));
+}
+
+function pathTemplateVariables(pathTemplate: string): string[] {
+  const names: string[] = [];
+  let open = -1;
+  for (let index = 0; index < pathTemplate.length; index += 1) {
+    if (pathTemplate[index] === "{") open = index;
+    else if (pathTemplate[index] === "}" && open >= 0) {
+      names.push(pathTemplate.slice(open + 1, index));
+      open = -1;
+    }
+  }
+  return names;
+}
+
+function normalizedPathTemplateHierarchy(path: string): { value: string; templated: boolean } {
+  let value = "";
+  let templated = false;
+  for (let index = 0; index < path.length;) {
+    if (path[index] !== "{") {
+      value += path[index];
+      index += 1;
+      continue;
+    }
+    const close = path.indexOf("}", index + 1);
+    if (close < 0) {
+      value += path[index];
+      index += 1;
+      continue;
+    }
+    value += "{}";
+    templated = true;
+    index = close + 1;
+  }
+  return { value, templated };
+}
+
+function uniqueSorted(values: string[]): string[] {
+  return [...new Set(values)].sort(codePointCompare);
+}
+
 // ---------------------------------------------------------------------------
-// Style/explode expansions (OAPI-P-02: the OAS tables, incorporated wholesale)
+// Style/explode expansions (the OAS Parameter Object tables)
 // ---------------------------------------------------------------------------
 
 type Escaper = (s: string) => string;

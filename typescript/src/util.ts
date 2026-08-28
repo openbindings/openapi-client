@@ -96,7 +96,7 @@ export function buildJsonPointerRef(path: string, method: string): string {
 }
 
 /**
- * Loads and discriminates an OpenAPI source per openbindings.openapi@1
+ * Loads and discriminates an OpenAPI source under the supported family editions.
  * §3–§6: `content`, when present, is the artifact (content primacy), with a
  * co-present `location` serving as the embedded artifact's BASE URI —
  * relative $refs resolve against it exactly as they would had the document
@@ -130,7 +130,7 @@ export async function loadOpenAPIDocument(
     /**
      * Receives the entry document's RAW parsed tree, before ref-sibling
      * normalization and dereference -- the artifact's own image, which the
-     * acceptance floor (openbindings.openapi@1 §3) classifies against.
+     * family-document acceptance floor classifies against.
      */
     onRawDocument?: (raw: unknown) => void;
     /**
@@ -359,7 +359,7 @@ const ACCEPTED_OPENAPI_VERSIONS = new Set([
  * `Real` and lands on `{type: string}`.
  *
  * THE ANSWER IS THE INCORPORATED AUTHORITY'S, AND IT DIFFERS BY EDITION LINE.
- * `openbindings.openapi@1` §2 accepts eight editions "each interpreted under
+ * The supported family accepts eight editions, each interpreted under
  * its own immutable official text", so the two lines are read separately rather
  * than averaged. Every quotation below is verified at the pinned bytes by
  * `corpus-lab/scripts/verify-pointer-below-reference-authorities.mjs`, which
@@ -878,7 +878,7 @@ function documentAddress(uri: string): DocumentAddress {
  * from a checkout or from a server.
  *
  * The three address cases are rule 3's; the Go twin
- * (openbindings-go/formats/openapi/cutpoint_names.go) reads an address the same
+ * The Go implementation reads an address the same
  * way, and cutpoint-names.test.ts pins the whole base x document matrix in both
  * engines.
  */

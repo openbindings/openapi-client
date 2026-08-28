@@ -1,5 +1,6 @@
 import type { InvokeHooks, InvokeSite } from "./hooks.js";
 import type { OpenAPIExecutionProfile } from "../profile.js";
+import type { OpenAPIParameterConverter } from "../params.js";
 
 export interface InvocationSource {
   profile: OpenAPIExecutionProfile;
@@ -27,6 +28,7 @@ export interface BindingInvocationArgs {
   /** Fetch redirect mode. Artifact engines default to `manual` to preserve the bound exchange. */
   redirect?: RequestRedirect;
   securityHandlers?: Record<string, ArtifactSecurityHandler>;
+  parameterConverter?: OpenAPIParameterConverter;
   observeOutput?: (value: unknown, metadata: Record<string, string[]>) => void;
   hooks?: InvokeHooks | null;
   site?: InvokeSite;

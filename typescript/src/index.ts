@@ -25,6 +25,7 @@ export type {
   OpenAPISource,
   OpenAPISuccessResult,
 } from "./client.js";
+export type { OpenAPIParameterConverter } from "./params.js";
 export type {
   OpenAPIDocument,
   OpenAPIOperation,
