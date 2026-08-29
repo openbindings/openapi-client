@@ -53,7 +53,7 @@ func TestSwagger20TargetSchemeSelectionAndSecurityCarriage(t *testing.T) {
 	}
 }
 
-func TestSwagger20RetrievalDefaultsPreservePortAndSlash(t *testing.T) {
+func TestSwagger20RetrievalDefaultsPreservePortAndOmitBasePath(t *testing.T) {
 	document, err := loadSwagger20Document(context.Background(), nil, Swagger20Source{
 		Location: "https://docs.example:8443/swagger.json",
 		Content:  []byte(`{"swagger":"2.0","info":{"title":"defaults","version":"1"},"paths":{"/x":{"get":{"responses":{"204":{"description":"ok"}}}}}}`),
@@ -69,7 +69,27 @@ func TestSwagger20RetrievalDefaultsPreservePortAndSlash(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := base, "https://docs.example:8443/"; got != want {
+	if got, want := base, "https://docs.example:8443"; got != want {
+		t.Fatalf("base = %q, want %q", got, want)
+	}
+}
+
+func TestSwagger20AuthoredRootBasePathKeepsItsSlash(t *testing.T) {
+	document, err := loadSwagger20Document(context.Background(), nil, Swagger20Source{
+		Content: []byte(`{"swagger":"2.0","info":{"title":"authored","version":"1"},"schemes":["https"],"host":"api.example","basePath":"/","paths":{"/x":{"get":{"responses":{"204":{"description":"ok"}}}}}}`),
+	}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation, _, err := resolveSwagger20Operation(document, "#/paths/~1x/get")
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, err := resolveSwagger20Server(document, operation, "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := base, "https://api.example/"; got != want {
 		t.Fatalf("base = %q, want %q", got, want)
 	}
 }

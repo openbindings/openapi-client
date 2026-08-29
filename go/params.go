@@ -111,6 +111,75 @@ func checkPathTemplateAddressability(pathTemplate string, params openapi3.Parame
 	return fmt.Errorf("path template variable(s) %s have no declared path parameter: the target URL cannot be built (OAPI-P-05: unresolvable target)", strings.Join(unaddressable, ", "))
 }
 
+// normalizedTemplatedPathHierarchy erases template NAMES while preserving the
+// literal hierarchy, so two Paths keys that differ only in what they call their
+// expressions normalize to the same string. It also reports whether the key was
+// templated at all: the OAS prohibition is on two TEMPLATED keys, and two
+// identical literal keys cannot co-exist in one Paths Object anyway.
+func normalizedTemplatedPathHierarchy(path string) (string, bool) {
+	var result strings.Builder
+	templated := false
+	for index := 0; index < len(path); {
+		if path[index] != '{' {
+			result.WriteByte(path[index])
+			index++
+			continue
+		}
+		close := strings.IndexByte(path[index+1:], '}')
+		if close < 0 {
+			result.WriteByte(path[index])
+			index++
+			continue
+		}
+		templated = true
+		result.WriteString("{}")
+		index += close + 2
+	}
+	return result.String(), templated
+}
+
+// equivalentTemplatedPathKey returns another Paths key whose templated
+// hierarchy is equivalent to the selected key, or "" when the selected key
+// participates in no such pair. OAS forbids the pair outright
+// (openbindings.openapi-3.0@1 §8.2, openbindings.openapi-3.1@1 §8.2,
+// openbindings.openapi-3.2@1 §8.2), and supplies no unique target mapping for
+// it, so every selected operation on a participating Path Item is excluded.
+// The result is deterministic under an unordered candidate set: the smallest
+// participating key other than the selected one.
+func equivalentTemplatedPathKey(selected string, candidates []string) string {
+	want, templated := normalizedTemplatedPathHierarchy(selected)
+	if !templated {
+		return ""
+	}
+	found := ""
+	for _, candidate := range candidates {
+		if candidate == selected {
+			continue
+		}
+		normalized, candidateTemplated := normalizedTemplatedPathHierarchy(candidate)
+		if !candidateTemplated || normalized != want {
+			continue
+		}
+		if found == "" || candidate < found {
+			found = candidate
+		}
+	}
+	return found
+}
+
+// equivalentTemplatedPathKey answers the same question for a typed 3.0/3.1
+// artifact, whose Paths keys are the ones the loader parsed.
+func (a *Artifact) equivalentTemplatedPathKey(selected string) string {
+	if a == nil || a.Document == nil || a.Document.Paths == nil {
+		return ""
+	}
+	keys := make([]string, 0, a.Document.Paths.Len())
+	for key := range a.Document.Paths.Map() {
+		keys = append(keys, key)
+	}
+	return equivalentTemplatedPathKey(selected, keys)
+}
+
 // pathTemplateVariables returns the names of the brace-delimited expressions in
 // a path template, in order. An unclosed "{" delimits nothing and is an
 // ordinary literal; an inner "{" restarts the expression, matching the

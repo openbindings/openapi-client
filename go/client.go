@@ -880,7 +880,10 @@ func decodeFailure(body []byte, contentType string) any {
 	}
 	if isJSONContentTypeFor(contentType, profileFullCoordinate) {
 		var value any
-		if json.Unmarshal(body, &value) == nil {
+		// Failure bodies ride the same lanes as success bodies, so they parse
+		// under the same §9.2 profile; what the profile will not decode stays
+		// opaque application-authored bytes rather than silently altered text.
+		if parseStrictJSON(body, &value) == nil {
 			return value
 		}
 		return append([]byte(nil), body...)

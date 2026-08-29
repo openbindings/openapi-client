@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"io"
 	"mime"
@@ -244,7 +243,10 @@ func errorsIsScannerTooLong(err error) bool {
 
 func decodeOpenAPI32JSONItem(item []byte, index int, framing string) (any, error) {
 	var value any
-	if err := json.Unmarshal(item, &value); err != nil {
+	// Each sequential item is one JSON text parsed under §9.2's strict-JSON
+	// profile, so the profile's duplicate-name, byte-order-mark, and lone-
+	// surrogate resolutions govern it exactly as they govern a unary body.
+	if err := parseStrictJSON(item, &value); err != nil {
 		return nil, fmt.Errorf("%s item %d is malformed JSON: %w", framing, index, err)
 	}
 	return value, nil
@@ -309,7 +311,7 @@ func decodeOpenAPI32SequentialPart(contentType string, body []byte, schema *open
 	}
 	if isJSONMediaType(parsed.base) {
 		var value any
-		if err := json.Unmarshal(body, &value); err != nil {
+		if err := parseStrictJSON(body, &value); err != nil {
 			return nil, fmt.Errorf("part declares %q but is not valid JSON: %w", contentType, err)
 		}
 		return value, nil

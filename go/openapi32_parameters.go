@@ -210,49 +210,22 @@ func checkOpenAPI32PathTemplateDeclaration(path string, params openapi3.Paramete
 	return nil
 }
 
-func normalizedOpenAPI32PathHierarchy(path string) (string, bool) {
-	var result strings.Builder
-	templated := false
-	for index := 0; index < len(path); {
-		if path[index] != '{' {
-			result.WriteByte(path[index])
-			index++
-			continue
-		}
-		close := strings.IndexByte(path[index+1:], '}')
-		if close < 0 {
-			result.WriteByte(path[index])
-			index++
-			continue
-		}
-		templated = true
-		result.WriteString("{}")
-		index += close + 2
-	}
-	return result.String(), templated
-}
-
 func (o *OpenAPI32Overlay) equivalentTemplatedPath(selected string) string {
 	if o == nil {
 		return ""
 	}
 	o.mu.RLock()
 	defer o.mu.RUnlock()
-	want, templated := normalizedOpenAPI32PathHierarchy(selected)
-	if !templated || o.entry == nil {
+	if o.entry == nil {
 		return ""
 	}
 	root, _ := o.entry.root.(map[string]any)
 	paths, _ := root["paths"].(map[string]any)
+	candidates := make([]string, 0, len(paths))
 	for candidate := range paths {
-		if candidate == selected {
-			continue
-		}
-		if normalized, candidateTemplated := normalizedOpenAPI32PathHierarchy(candidate); candidateTemplated && normalized == want {
-			return candidate
-		}
+		candidates = append(candidates, candidate)
 	}
-	return ""
+	return equivalentTemplatedPathKey(selected, candidates)
 }
 
 type openAPI32RawParameter struct {
