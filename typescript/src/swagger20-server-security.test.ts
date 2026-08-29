@@ -30,7 +30,7 @@ describe("native Swagger 2.0 server and security execution", () => {
     expect(new Headers(init?.headers).get("X-Good")).toBe("good");
   });
 
-  it("inherits retrieval authority and preserves both authored slashes", async () => {
+  it("inherits retrieval authority and port, and omits an absent basePath", async () => {
     const fetchMock = vi.fn<typeof fetch>(async () => new Response(null, { status: 204 }));
     const prepared = await prepareSwagger20({
       source: {
@@ -41,6 +41,24 @@ describe("native Swagger 2.0 server and security execution", () => {
       fetch: fetchMock,
     });
     await prepared.execute();
-    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://docs.example:8443//x");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://docs.example:8443/x");
+  });
+  it("keeps an authored root basePath and its resulting double slash", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(null, { status: 204 }));
+    const prepared = await prepareSwagger20({
+      source: {
+        content: {
+          swagger: "2.0",
+          schemes: ["https"],
+          host: "api.example",
+          basePath: "/",
+          paths: { "/x": { get: { responses: { 204: { description: "ok" } } } } },
+        },
+      },
+      ref: "#/paths/~1x/get",
+      fetch: fetchMock,
+    });
+    await prepared.execute();
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://api.example//x");
   });
 });

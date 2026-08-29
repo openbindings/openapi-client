@@ -52,7 +52,7 @@ export function resolveSwagger20Server(
     if (parsed.host === "") throw new Error("Swagger 2.0 target omits host without a document retrieval authority");
     effectiveHost = parsed.host;
   }
-  return `${selected}://${effectiveHost}${basePath.present ? basePath.value : "/"}`;
+  return `${selected}://${effectiveHost}${basePath.present ? basePath.value : ""}`;
 }
 
 function effectiveSchemes(
