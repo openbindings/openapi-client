@@ -160,6 +160,10 @@ function floorAuthority(cls: string, line: "3.0" | "3.1"): string {
       return is30
         ? "OAS 3.0 line, Schema Object: a keyword's value carries the JSON type the governing dialect declares for it -- `items` Value MUST be an object and not an array; `properties` definitions MUST be a Schema Object; `required` and `enum` are taken directly from JSON Schema, where `required` is an array of unique elements and `enum` is an array"
         : "OAS 3.1 line, §4.8.24.1: absent `jsonSchemaDialect` the OAS dialect schema id MUST be used for Schema Objects, and the value fails that dialect (https://spec.openapis.org/oas/3.1/dialect/base)";
+    case "D16":
+      return is30
+        ? "OAS 3.0 line, Response Object: `description` is a string, `content` is a map of Media Type Objects, `headers` a map of Header Objects, `links` a map of Link Objects; a fixed field carrying another JSON kind, or a `headers` member that is not a Header Object, violates the Response Object's fixed-field constraints"
+        : "OAS 3.1 line, Response Object: `description` is a string, `content` is a map of Media Type Objects, `headers` a map of Header Objects, `links` a map of Link Objects; a fixed field carrying another JSON kind, or a `headers` member that is not a Header Object, violates the Response Object's fixed-field constraints";
     case "URef":
       return is30
         ? "OAS 3.0 line, Reference Object: $ref follows JSON Reference; its fragment is a JSON Pointer (RFC 6901) and identifies no location in the entry document"
@@ -183,6 +187,58 @@ const refString = (v: unknown): string => (isObj(v) && typeof v["$ref"] === "str
 // A Response Object is REQUIRED to carry `description` in all eight accepted
 // editions; its absence is a decidable proof that a value is not one.
 const isResponseObject = (v: unknown): boolean => isObj(v) && typeof v["description"] === "string";
+
+// The Response Object's fixed fields other than `description`.
+const RESPONSE_OBJECT_FIXED_FIELDS = ["content", "headers", "links"] as const;
+
+// The D16 defects a Response Object owns: a fixed field carrying a JSON kind
+// the OAS does not declare for it, or a `headers` member that is not a Header
+// Object.
+//
+// A DECIDABLE test, deliberately not a validator. Each of `content`, `headers`,
+// and `links` is a MAP in every accepted edition, so a present non-map is a
+// violation no edition disjunction can rescue; a `headers` member is a Header
+// Object or a Reference Object, so a present non-object is the same kind of
+// proof. Nothing here inspects a Header Object's own fields: that is a
+// declaration question the response rungs already own, and a wrong answer
+// would cost a target its representation.
+//
+// `base` is the pointer of the Response Object itself -- the response member's
+// pointer for an inline response, the referenced object's pointer for a
+// `$ref`ed one -- so a defect is positioned where it actually is.
+function responseFixedFieldDefects(
+  value: unknown,
+  base: string,
+  line: "3.0" | "3.1",
+): FloorDefect[] {
+  if (!isObj(value)) return [];
+  const out: FloorDefect[] = [];
+  const authority = floorAuthority("D16", line);
+  // `description` is REQUIRED and its value MUST be a string. ABSENCE is D9's
+  // finding and keeps D9's declared-content gate -- that is the `{}` carve-out.
+  // A PRESENT `description` of another kind is not the carve-out: it is a
+  // fixed-field violation like any other and excludes the target.
+  if (Object.hasOwn(value, "description") && typeof value["description"] !== "string") {
+    out.push({ class: "D16", position: `${base}/description`, authority });
+  }
+  for (const field of RESPONSE_OBJECT_FIXED_FIELDS) {
+    if (!Object.hasOwn(value, field)) continue;
+    const raw = value[field];
+    if (!isObj(raw)) {
+      out.push({ class: "D16", position: `${base}/${field}`, authority });
+      continue;
+    }
+    if (field !== "headers") continue;
+    for (const name of sortedKeys(raw)) {
+      if (name.startsWith("x-")) continue;
+      if (!isObj(raw[name])) {
+        out.push({ class: "D16", position: `${base}/headers/${esc(name)}`, authority });
+      }
+    }
+  }
+  out.sort((a, b) => (a.position < b.position ? -1 : a.position > b.position ? 1 : 0));
+  return out;
+}
 
 const esc = (token: string): string => token.replaceAll("~", "~0").replaceAll("/", "~1");
 
@@ -268,9 +324,32 @@ export function computeAcceptanceFloor(raw: unknown): AcceptanceFloor | undefine
   let line: "3.0" | "3.1";
   if (EDITIONS_30.has(edition)) line = "3.0";
   else if (EDITIONS_31.has(edition)) line = "3.1";
-  else return undefined; // the edition gate (part 1) owns every other value
+  // The edition gate (part 1) owns every other value.
+  //
+  // THE 2.0 AND 3.2 LANES HAVE NO LADDER, and that is debt rather than design.
+  // Both reach their declaration verdicts ad hoc -- 3.2 over its raw overlay,
+  // 2.0 in its native lane -- so where they happen to agree with this instrument
+  // they agree for a different reason, and where an edition genuinely differs
+  // (OAS 3.2.0 dropped `REQUIRED` from the Response Object's `description`; see
+  // `openAPI32ResponseDescriptionGate` in `openapi32-artifact.ts`) nothing here
+  // records that it is an edition difference rather than an unexplained
+  // divergence. Round R measured the cost of the gap in both directions and
+  // queued Round R2 to close it: an acceptance floor for 2.0 and one for 3.2.
+  else return undefined;
 
   const floor: AcceptanceFloor = { edition, line, refusal: "", ops: new Map(), opOrder: [], externalPathItemMembers: 0 };
+  // The D16 defects a Responses Object member owns, keyed by that MEMBER's
+  // pointer rather than by the defective position, because the rung that reads
+  // them asks a question about the member: does this governing Response Object
+  // violate the Response Object's fixed-field constraints? The defects are
+  // positioned at the offending field (or, for a `$ref`ed response, inside the
+  // referenced Response Object), which is not derivable from the member
+  // pointer, so the two cannot be collapsed.
+  const responseFixedFields = new Map<string, FloorDefect[]>();
+  const addResponseFixedFields = (rptr: string, ds: FloorDefect[]): void => {
+    if (ds.length === 0) return;
+    responseFixedFields.set(rptr, [...(responseFixedFields.get(rptr) ?? []), ...ds]);
+  };
 
   const componentFields = line === "3.0" ? COMPONENT_FIELDS_30 : COMPONENT_FIELDS_31;
   const types = line === "3.0" ? TYPES_30 : TYPES_31;
@@ -369,7 +448,7 @@ export function computeAcceptanceFloor(raw: unknown): AcceptanceFloor | undefine
             if (!("name" in p) || !("in" in p)) addDefect(defect("D10", `${holder.ptr}/${i}`));
           });
         }
-        // Responses: D7 / D9 / D8 / D12.
+        // Responses: D7 / D9 / D16 / D8 / D12.
         const responses = opMap["responses"];
         if (isObj(responses)) {
           for (const code of sortedKeys(responses)) {
@@ -378,7 +457,19 @@ export function computeAcceptanceFloor(raw: unknown): AcceptanceFloor | undefine
             const rv = responses[code];
             if (isRefObj(rv)) {
               const r = resolveInternal(root, refString(rv));
-              if (r.resolved && !isResponseObject(r.value)) addDefect(defect("D7", rptr));
+              if (r.resolved && !isResponseObject(r.value)) {
+                addDefect(defect("D7", rptr));
+                continue;
+              }
+              // A `$ref`ed Response Object governs its referencing target
+              // exactly as an inline one does, so its fixed-field constraints
+              // are read at the position they actually occupy -- inside the
+              // referenced object -- and owned by every member that denotes it.
+              if (r.resolved) {
+                const ds = responseFixedFieldDefects(r.value, refString(rv), line);
+                for (const d of ds) addDefect(d);
+                addResponseFixedFields(rptr, ds);
+              }
               continue;
             }
             if (!isObj(rv)) {
@@ -386,6 +477,11 @@ export function computeAcceptanceFloor(raw: unknown): AcceptanceFloor | undefine
               continue;
             }
             if (!isResponseObject(rv)) addDefect(defect("D9", rptr));
+            {
+              const ds = responseFixedFieldDefects(rv, rptr, line);
+              for (const d of ds) addDefect(d);
+              addResponseFixedFields(rptr, ds);
+            }
             const content = rv["content"];
             if (isObj(content)) {
               for (const mediaKey of sortedKeys(content)) {
@@ -721,10 +817,12 @@ export function computeAcceptanceFloor(raw: unknown): AcceptanceFloor | undefine
       const rptr = `${op.ref}/responses/${esc(code)}`;
       const rv = responses![code];
       const respDefect = isDefective(rptr);
+      const fixedFieldDefects = responseFixedFields.get(rptr) ?? [];
       if (!isSuccess(code)) {
         // Non-success responses never climb; classification is the 2xx rule
         // (OAPI-P-08), so no success contract is lost.
         if (respDefect) addProjection(op.ref, respDefect);
+        for (const d of fixedFieldDefects) addProjection(op.ref, d);
         continue;
       }
       if (isRefObj(rv)) {
@@ -744,6 +842,33 @@ export function computeAcceptanceFloor(raw: unknown): AcceptanceFloor | undefine
       if (isObj(rv) && !isRefObj(rv) && isObj(rv["content"])) {
         rvContent = rv["content"] as Obj;
         declared = sortedKeys(rvContent);
+      }
+      // An upstream-invalid GOVERNING Response Object excludes the selected
+      // target before any actual response is inspected: response governance is
+      // target-level (`openbindings.openapi-3.1@1` §9.5 and its restored
+      // siblings). Two of the three response-rung classes are that defect, and
+      // they climb with no further question asked:
+      //
+      //   D7  -- the member is not a Response Object at all, so there is no
+      //          governing declaration to read.
+      //   D16 -- the member IS a Response Object and violates the fixed-field
+      //          constraints the same sentence names.
+      //
+      // D9 is deliberately NOT here, and its declared-content gate below is
+      // unchanged. A Response Object that omits its REQUIRED `description`
+      // while declaring no content loses no representation: nothing about the
+      // response body is misdeclared, so the target still carries everything it
+      // ever carried. That is the `{}` carve-out the documents state in the
+      // same sentence, and it is the whole difference between S1 (invalid) and
+      // a bare `{}` (represented).
+      if (respDefect && respDefect.class === "D7") {
+        addClimb(respDefect); // P2
+        continue;
+      }
+      if (fixedFieldDefects.length > 0) {
+        if (respDefect) addClimb(respDefect);
+        addClimb(...fixedFieldDefects); // P2
+        continue;
       }
       if (respDefect && declared.length === 0) {
         addProjection(op.ref, respDefect);
