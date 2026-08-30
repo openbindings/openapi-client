@@ -1017,7 +1017,31 @@ export function serializeHeaderValue(value: unknown, style: string, explode: boo
   if (style !== "simple") {
     throw new Error(`style "${style}" is not defined for header parameters`);
   }
-  return expandSimple(value, explode, identity);
+  return headerFieldOctets(expandSimple(value, explode, identity));
+}
+
+/**
+ * Closes the character-to-octet seam for a supplied header value: the
+ * characters are carried as UTF-8 octets, and the result is the octet string
+ * this substrate puts on the wire verbatim.
+ *
+ * A `fetch` header value is a ByteString — each code unit becomes exactly one
+ * octet. Handing it the raw characters would emit Latin-1 (U+00E9 as `e9`)
+ * and would throw outright above U+00FF. Encoding to UTF-8 first and carrying
+ * one octet per code unit makes the wire bytes the UTF-8 bytes and keeps
+ * every code point expressible. The field-invalid-byte check downstream then
+ * inspects the octets themselves, as the rule orders it.
+ */
+function headerFieldOctets(value: string): string {
+  let ascii = true;
+  for (let index = 0; index < value.length; index += 1) {
+    if (value.charCodeAt(index) > 0x7f) { ascii = false; break; }
+  }
+  if (ascii) return value;
+  const octets = new TextEncoder().encode(value);
+  let carried = "";
+  for (const octet of octets) carried += String.fromCharCode(octet);
+  return carried;
 }
 
 /**

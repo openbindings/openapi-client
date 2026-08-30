@@ -1341,3 +1341,48 @@ export function cycleSafeKey(value: unknown): string {
   };
   return JSON.stringify(walk(value));
 }
+
+/**
+ * A JSON text whose escapes could produce an unpaired surrogate. Raw unpaired
+ * surrogates cannot survive the fatal UTF-8 decode that precedes every
+ * response JSON parse, so only `\uD800`-`\uDFFF` escapes can reach a value.
+ * The test is the cheap gate in front of the walk below.
+ */
+const SURROGATE_ESCAPE = /\\u[dD][89abcdefABCDEF][0-9a-fA-F]{2}/u;
+
+function stringHasLoneSurrogate(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const unit = value.charCodeAt(index);
+    if (unit >= 0xd800 && unit <= 0xdbff) {
+      const next = index + 1 < value.length ? value.charCodeAt(index + 1) : 0;
+      if (next < 0xdc00 || next > 0xdfff) return true;
+      index += 1;
+    } else if (unit >= 0xdc00 && unit <= 0xdfff) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function valueHasLoneSurrogate(value: unknown): boolean {
+  if (typeof value === "string") return stringHasLoneSurrogate(value);
+  if (Array.isArray(value)) return value.some((member) => valueHasLoneSurrogate(member));
+  if (value !== null && typeof value === "object") {
+    for (const [name, member] of Object.entries(value as Record<string, unknown>)) {
+      if (stringHasLoneSurrogate(name) || valueHasLoneSurrogate(member)) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Reports whether a parsed response JSON value carries an unpaired surrogate.
+ * Neither silent U+FFFD replacement nor invalid-Unicode passthrough preserves
+ * the supplied text, so the caller raises a loud protocol error instead of
+ * emitting a value. `text` is the JSON source the value came from; when it
+ * holds no surrogate escape at all, the walk is skipped entirely.
+ */
+export function jsonCarriesLoneSurrogate(text: string, value: unknown): boolean {
+  if (!SURROGATE_ESCAPE.test(text)) return false;
+  return valueHasLoneSurrogate(value);
+}

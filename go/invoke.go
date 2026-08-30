@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -916,7 +915,7 @@ func decodeByContentTypeFor(contentType, bindingSpec string) outputDecoder {
 		}
 		if isJSON {
 			var parsed any
-			if err := json.Unmarshal(raw.Body, &parsed); err != nil {
+			if err := parseStrictJSON(raw.Body, &parsed); err != nil {
 				return nil, &ExecutionError{
 					Code:    CodeResponseError,
 					Message: fmt.Sprintf("response declares %q but the body is not valid JSON: %v", contentType, err),

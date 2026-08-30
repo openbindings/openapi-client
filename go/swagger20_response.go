@@ -2,7 +2,6 @@ package openapiclient
 
 import (
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -339,7 +338,7 @@ func decodeSwagger20ResponseValue(selection *swagger20ResponseMediaSelection, bo
 	switch selection.lane {
 	case swagger20LaneJSON:
 		var value any
-		if err := json.Unmarshal(body, &value); err != nil {
+		if err := parseStrictJSON(body, &value); err != nil {
 			return nil, fmt.Errorf("response declares %q but body is not strict JSON: %w", selection.media.canonical, err)
 		}
 		return value, nil

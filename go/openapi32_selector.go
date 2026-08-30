@@ -229,6 +229,20 @@ func (a *Artifact) ResolveOperation(ref string) (*OperationTarget, error) {
 	if err != nil {
 		return nil, err
 	}
+	// openbindings.openapi-3.0@1 §8.2 / openbindings.openapi-3.1@1 §8.2: two
+	// Paths keys with equivalent templated hierarchies but different template
+	// names are an OAS-forbidden declaration defect with no unique target
+	// mapping, so each selected operation on a participating Path Item is
+	// excluded before any caller value is inspected while non-conflicting
+	// targets survive. The 3.2 lane runs the same predicate over its raw
+	// overlay in validateOpenAPI32Target, which also sees Paths keys the typed
+	// document never carried.
+	if !a.Edition.IsOpenAPI32() {
+		if other := a.equivalentTemplatedPathKey(reference.Path); other != "" {
+			return nil, operationResolutionError(OperationTargetExcluded,
+				"path %q has the same templated hierarchy as %q", reference.Path, other)
+		}
+	}
 	if target := a.operationTargets[reference.Ref]; target != nil {
 		if target.Operation.Responses != nil && target.Operation.Responses.Len() == 0 {
 			return nil, operationResolutionError(OperationTargetExcluded, "operation %q has a present empty Responses Object", ref)

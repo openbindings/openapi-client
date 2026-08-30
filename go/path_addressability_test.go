@@ -2,6 +2,7 @@ package openapiclient
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -198,5 +199,46 @@ func TestPathTemplateVariablesReadsBraceDelimitedExpressions(t *testing.T) {
 		if got := pathTemplateVariables(testCase.template); !reflect.DeepEqual(got, testCase.want) {
 			t.Errorf("pathTemplateVariables(%q) = %#v, want %#v", testCase.template, got, testCase.want)
 		}
+	}
+}
+
+// openbindings.openapi-3.0@1 §8.2 / openbindings.openapi-3.1@1 §8.2: two Paths
+// keys with equivalent templated hierarchies but different template names are
+// an OAS-forbidden declaration defect that the authority supplies no unique
+// target mapping for. Each selected operation on a participating Path Item is
+// excluded before any caller value is inspected; a non-conflicting sibling
+// target in the same Paths Object survives, so the defect never climbs to the
+// whole source. Corpus pins: OAPI30-PS-130 and OAPI30-PS-131 (3.0). This test
+// covers the 3.1 edition on the same code path.
+func TestEquivalentTemplatedPathKeysExcludeOnlyParticipatingPathItems(t *testing.T) {
+	for _, edition := range []string{"3.0.4", "3.1.2"} {
+		t.Run(edition, func(t *testing.T) {
+			document := []byte(fmt.Sprintf(`{
+  "openapi":%q,
+  "info":{"title":"equivalent templates","version":"1"},
+  "servers":[{"url":"https://api.example"}],
+  "paths":{
+    "/pets/{petId}":{"get":{"parameters":[{"name":"petId","in":"path","required":true,"schema":{"type":"string"}}],
+      "responses":{"204":{"description":"ok"}}}},
+    "/pets/{name}":{"get":{"parameters":[{"name":"name","in":"path","required":true,"schema":{"type":"string"}}],
+      "responses":{"204":{"description":"ok"}}}},
+    "/other":{"get":{"responses":{"204":{"description":"ok"}}}}
+  }
+}`, edition))
+			artifact, err := LoadArtifact(context.Background(), Source{Content: document}, ArtifactLoadOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, participating := range []string{"#/paths/~1pets~1{petId}/get", "#/paths/~1pets~1{name}/get"} {
+				if _, err := artifact.ResolveOperation(participating); err == nil {
+					t.Fatalf("%s resolved, want exclusion", participating)
+				} else if !strings.Contains(err.Error(), "same templated hierarchy") {
+					t.Fatalf("%s error = %v, want the equivalent-hierarchy exclusion", participating, err)
+				}
+			}
+			if _, err := artifact.ResolveOperation("#/paths/~1other/get"); err != nil {
+				t.Fatalf("non-conflicting sibling target: %v", err)
+			}
+		})
 	}
 }

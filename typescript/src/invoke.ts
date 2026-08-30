@@ -43,14 +43,14 @@ import type {
   OpenAPISecurityScheme,
   OpenAPIOAuthFlow,
 } from "./types.js";
-import { codePointCompare, errorMessage, parseRef } from "./util.js";
+import { codePointCompare, errorMessage, jsonCarriesLoneSurrogate, parseRef } from "./util.js";
 import {
   MissingPathParamError,
   effectiveParameters,
   queryEscape,
   routeInput,
   unflattenableParam,
-  validateParameterSerialization,
+  validateResolvedParameterSerialization,
 } from "./params.js";
 import { hasMediaFidelity, hasResponseFidelity, hasRoutedInputs } from "./constants.js";
 import {
@@ -217,9 +217,15 @@ export async function runBinding(
   }
   if (revision3) {
     try {
+      // Style-table admission is a declaration question, and §8's table is
+      // keyed by the RESOLVED declaration: an `anyOf` branch declaring only
+      // `null` is skipped, so a compound-admitting branch still supplies the
+      // single member the non-RFC styles need. The raw-schema reading of
+      // `type` + `allOf` cannot see that and refuses a dispatchable target.
+      const oas30 = doc.openapi?.startsWith("3.0") ?? false;
       for (const parameter of params) {
         if (doc.openapi === "3.2.0") validateOpenAPI32ParameterSerialization(parameter);
-        else validateParameterSerialization(parameter);
+        else validateResolvedParameterSerialization(parameter, oas30);
       }
     } catch (error: unknown) {
       inv.fireError(new InvocationError(ERR_REFUSED, errorMessage(error)));
@@ -1113,6 +1119,19 @@ export function builtinClassify(_site: InvokeSite, raw: RawResult): boolean | ty
 }
 
 /**
+ * The response-JSON strictness pin: an unpaired surrogate in a decoded value
+ * yields no value at all. Silent U+FFFD replacement mutates the data and
+ * invalid passthrough emits text no consumer can re-encode, so the
+ * interaction completes unsuccessfully instead.
+ */
+function loneSurrogateResponse(contentType: string | null): InvocationError {
+  return new InvocationError(
+    ERR_RESPONSE_ERROR,
+    `response declares ${JSON.stringify(contentType)} but the body carries an unpaired surrogate`,
+  );
+}
+
+/**
  * Returns the builtin decoder implementing the header rule (OAPI-P-07)
  * over one delivery unit's TEXT (the SSE per-event lane): strict JSON for
  * application/json and +json suffixes (a declared-JSON body that fails to
@@ -1126,14 +1145,17 @@ export function decodeByContentType(contentType: string | null): OutputDecoder {
   const isJSON = isJSONMediaType(normalizeMediaType(contentType ?? ""));
   return (_site: InvokeSite, raw: RawResult): unknown => {
     if (isJSON) {
+      let value: unknown;
       try {
-        return JSON.parse(raw.body);
+        value = JSON.parse(raw.body);
       } catch (e: unknown) {
         throw new InvocationError(
           ERR_RESPONSE_ERROR,
           `response declares ${JSON.stringify(contentType)} but the body is not valid JSON: ${errorMessage(e)}`,
         );
       }
+      if (jsonCarriesLoneSurrogate(raw.body, value)) throw loneSurrogateResponse(contentType);
+      return value;
     }
     return raw.body;
   };
@@ -1155,14 +1177,19 @@ export function decodeBytesByContentType(
   return (_site: InvokeSite, _raw: RawResult): unknown => {
     if (bytes.length === 0) return null;
     if (isJSON) {
+      let text: string;
+      let value: unknown;
       try {
-        return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+        text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+        value = JSON.parse(text);
       } catch (e: unknown) {
         throw new InvocationError(
           ERR_RESPONSE_ERROR,
           `response declares ${JSON.stringify(contentType)} but the body is not valid JSON: ${errorMessage(e)}`,
         );
       }
+      if (jsonCarriesLoneSurrogate(text, value)) throw loneSurrogateResponse(contentType);
+      return value;
     }
     return decodeTextLane(contentType, bytes, revision3);
   };

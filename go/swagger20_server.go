@@ -69,7 +69,12 @@ func resolveSwagger20Server(document *Swagger20Document, operation swagger20Oper
 		}
 		effectiveHost = retrieval.Host
 	}
-	effectiveBasePath := "/"
+	// An absent basePath means the API is served directly under the host, so it
+	// contributes no path segment: the Paths key appends straight to the
+	// authority with no synthetic "/" and no "//" composition. An authored
+	// basePath keeps its exact bytes, including a lone "/", under the
+	// no-normalization rule.
+	effectiveBasePath := ""
 	if basePath.present {
 		effectiveBasePath = basePath.value
 	}
