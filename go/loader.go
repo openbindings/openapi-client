@@ -250,6 +250,7 @@ func loadArtifact(ctx context.Context, client *http.Client, source Source, allow
 	var operationTargets map[string]*OperationTarget
 	var operationErrors map[string]error
 	fallbackAllTargetsExcluded := false
+	restrictedAllTargetsExcluded := false
 	if err == nil && edition.IsOpenAPI32() && artifactOverlay != nil {
 		composed := buildOpenAPI32Targets(artifactOverlay, artifactOverlay.composedOperationReferences(), attempt)
 		operationTargets = composed.targets
@@ -282,17 +283,55 @@ func loadArtifact(ctx context.Context, client *http.Client, source Source, allow
 		// stands.
 		//
 		// The emission gate is nil here, and that is a decision rather than an
-		// omission. The URef round is the one mechanism that AUTHORS a value,
-		// and it may only be admitted by an engine that can show what it
-		// authored never reaches emitted content. This engine derives no
-		// interface from a document: it prepares one operation at a time and
-		// builds a request at execution, so it has no emission of its own to
-		// compare and cannot make that showing. It therefore declines the round
-		// and keeps the loader's original error -- the behaviour before the
-		// round existed. Every other mechanism is unaffected.
+		// omission. EVERY mechanism in that pass authors -- mechanism (a)
+		// deletes a mapping member, seam C's response branch removes one, and
+		// the URef round removes a `$ref` member -- and block 8h put all of them
+		// behind `confinementEmissionGate`, which may only be answered by an
+		// engine that can show what it authored never reaches emitted content.
+		// This engine derives no interface from a document: it prepares one
+		// operation at a time and builds a request at execution, so it has no
+		// emission of its own to compare and cannot make that showing. It
+		// therefore declines every authoring mechanism and keeps the loader's
+		// original error. Only seam C's SCHEMA branch, which denotes rather than
+		// authors, is admitted here.
+		//
+		// (This comment said "The URef round is the one mechanism that AUTHORS a
+		// value" until Round R. That sentence was written before block 8h moved
+		// mechanism (a) onto the same rail and has been FALSE since; it was
+		// false in the direction that understated how much the nil gate turns
+		// off, which is why the whole-source refusal on a garbage-shaped
+		// Response Object read as kin's behaviour rather than as this decision's
+		// consequence. Round R corrects the record and adds the per-target
+		// restriction below, which needs no gate because it authors nothing.)
 		confined, confinedErr, took := confineEntryDocument(entryBytes, attempt, err, nil)
 		switch {
 		case !took:
+			// Last fallback: load each operation in isolation, so a defect kin
+			// cannot represent costs its own target and no sibling. See
+			// `target_restriction.go` -- this is the 3.2 lane's ratified
+			// per-target load, generalized, and it never authors. It is reached
+			// only here, with the typed load already failed and the confinement
+			// pass already declined.
+			if raw, parsed := parseRawResource(entryBytes); parsed {
+				if rawRoot, isObject := raw.(map[string]any); isObject {
+					if floor := computeAcceptanceFloor(rawRoot); floor != nil {
+						restricted := buildRestrictedTargets(rawRoot, edition, floor, attempt)
+						if restricted.used {
+							document = restricted.document
+							if document == nil {
+								document = &openapi3.T{OpenAPI: string(edition), Paths: openapi3.NewPaths()}
+							}
+							operationTargets = restricted.targets
+							operationErrors = restricted.errors
+							// Every addressable position is defective, so no
+							// conformant selector resolves: §3.2's own part-2
+							// refusal, reached by its own rule.
+							restrictedAllTargetsExcluded = len(restricted.targets) == 0 && len(restricted.errors) > 0
+							break
+						}
+					}
+				}
+			}
 			// A load failure does not preempt the whole-source refusal: part 2's
 			// refusal is decided over the artifact's raw image, which is in hand,
 			// and it is the document's own reason. Block 8h: a confinement that
@@ -323,6 +362,9 @@ func loadArtifact(ctx context.Context, client *http.Client, source Source, allow
 	}
 	if fallbackAllTargetsExcluded {
 		sourceRefusal = "every addressable OpenAPI 3.2 operation target is excluded"
+	}
+	if restrictedAllTargetsExcluded {
+		sourceRefusal = "every addressable OpenAPI operation target is excluded"
 	}
 	artifact := &Artifact{
 		Document:         document,

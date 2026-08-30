@@ -68,6 +68,9 @@ func (o *OpenAPI32Overlay) materializeOpenAPI32Response(key string, node openAPI
 	if object == nil {
 		return nil, nil, fmt.Errorf("Response Object is not an object")
 	}
+	if err := openAPI32ResponseDescriptionDefect(object); err != nil {
+		return nil, nil, err
+	}
 	encoded, err := json.Marshal(object)
 	if err != nil {
 		return nil, nil, err
@@ -409,4 +412,56 @@ func (o *OpenAPI32Overlay) openAPI32ResponseSchemaTarget(refText string, resolve
 		return nil, nil, fmt.Errorf("Schema Object reference %q names no target", refText)
 	}
 	return target, cloneURL(resource.base), nil
+}
+
+// openAPI32ResponseDescriptionDefect applies the Response Object's `description`
+// KIND constraint on the 3.2 lane: a present `description` that is not a string
+// is a fixed-field violation and excludes the selected target.
+//
+// The 3.0/3.1 lanes reach this through the acceptance floor, which does not
+// accept the 3.2 edition at all: the 3.2 lane asks its declaration questions
+// over its own raw overlay, so a sibling rule has to be stated here or it is not
+// stated at all. Round R measured what that cost: `description: 123` excluded
+// the target on 3.0/3.1, excluded it in Go's 3.2 lane only by accident
+// (kin-openapi refusing the value), and COMPLETED THE INVOCATION in
+// TypeScript's. One rule, three answers, inside one family. This closes it.
+//
+// WHY OMISSION IS NOT CHECKED HERE, and it is an AUTHORITY difference rather
+// than a gap. OAS 3.2.0 DROPPED the `REQUIRED` marker that OAS 3.0.4 and OAS
+// 3.1.2 carry on the Response Object's `description`, and added an optional
+// `summary` beside it:
+//
+//	OAS 3.0.4 §4.7.17.1  description | string | REQUIRED. A description ...
+//	OAS 3.1.2 §4.8.17.1  description | string | REQUIRED. A description ...
+//	OAS 3.2.0 §4.17.1    summary     | string | A short summary ...
+//	                     description | string | A description ...   <- no REQUIRED
+//
+// So a 3.2 Response Object that omits `description` is CONFORMANT and governs
+// normally, while the same omission is upstream-invalid on the 3.0/3.1 lines
+// (the shared case table pins that as S1). The two lines answering differently
+// is correct, and `openbindings.openapi-3.2@1` §9.5 states it as the edition
+// difference it is. What 3.2 still fixes is the KIND -- `description` is typed
+// `string` -- which is the whole of what this function tests.
+//
+// Round R nearly got this wrong in the safe direction's opposite: it implemented
+// the omission check too, and 25 shipped tests in this package went red. They
+// were not stale fixtures. They were legal OAS 3.2 documents, and the authority
+// was refusing a rule it does not impose.
+//
+// ARCHITECTURAL DEBT, recorded where a reader of this rule will look: the 3.2
+// lane reaches the right answer here for the wrong reason. It has NO acceptance
+// floor at all -- `computeAcceptanceFloor` accepts only the 3.0 and 3.1 editions
+// -- so 3.2's correct outcome on an omitted `description` follows from the
+// absence of a ladder rather than from a rule, and every other declaration
+// question this lane owns is answered ad hoc, here, one function at a time. A
+// 3.2 acceptance floor is queued as Round R2 alongside 2.0's.
+func openAPI32ResponseDescriptionDefect(object map[string]any) error {
+	raw, present := object["description"]
+	if !present {
+		return nil
+	}
+	if _, isString := raw.(string); !isString {
+		return fmt.Errorf("Response Object `description` is not a string")
+	}
+	return nil
 }
