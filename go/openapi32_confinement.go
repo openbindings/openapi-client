@@ -40,9 +40,22 @@ func buildOpenAPI32Targets(overlay *OpenAPI32Overlay, references []OperationRefe
 	for _, reference := range references {
 		var document *openapi3.T
 		var err error
-		for _, pruneComponents := range []bool{false, true} {
+		// The attempt ladder, narrowest restriction first. `dropNonSuccess`
+		// removes the Responses members F1 exempts from the exclusion -- see
+		// `pruneOpenAPI32DefectiveNonSuccessResponses` -- and is tried before
+		// pruning components so that a target whose only obstacle is a failure
+		// declaration keeps the whole components map. The fourth rung exists for
+		// a `$ref`ed defective failure declaration: dropping the referencing
+		// member leaves the component unreferenced, and only the component prune
+		// then takes the value kin-openapi cannot decode out of the image.
+		for _, attempt := range []openAPI32ImageAttempt{
+			{},
+			{dropNonSuccess: true},
+			{pruneComponents: true},
+			{pruneComponents: true, dropNonSuccess: true},
+		} {
 			var image []byte
-			image, err = overlay.operationImage(reference, pruneComponents)
+			image, err = overlay.operationImage(reference, attempt)
 			if err != nil {
 				break
 			}
@@ -226,7 +239,71 @@ func (o *OpenAPI32Overlay) referencedPathItemLocked(adjacent map[string]any, bas
 	return referenced, resource.base, nil
 }
 
-func (o *OpenAPI32Overlay) operationImage(reference OperationReference, pruneComponents bool) ([]byte, error) {
+// openAPI32ImageAttempt selects how far one isolated-image attempt restricts
+// the artifact. Every field only ever REMOVES material; nothing is minted and
+// nothing is relocated, which is why this pass needs no emission gate for the
+// same reason `target_restriction.go` does not.
+type openAPI32ImageAttempt struct {
+	// pruneComponents keeps only the internal-reference closure the selected
+	// operation actually composes.
+	pruneComponents bool
+	// dropNonSuccess removes the Responses members Round R2's F1 ruling exempts
+	// from the exclusion: a defective declaration that can never govern a
+	// success. Without it kin-openapi's inability to decode a failure
+	// declaration costs the target its whole representation, which is the
+	// divergence F1 closes -- 3.0/3.1 keep such a target, and 3.2 did not.
+	dropNonSuccess bool
+}
+
+// pruneOpenAPI32DefectiveNonSuccessResponses removes, from ONE operation's own
+// cloned image, each Responses member that can never govern a success and that
+// the upstream-invalid rule attributes a defect to.
+//
+// IT ONLY EVER REMOVES, and that is the whole soundness argument. A removal
+// cannot substitute a value, so no reader of this image can be handed something
+// the artifact did not write. The one thing a removal can do is break a
+// reference INTO the removed subtree -- a success-side schema pointing at
+// `…/responses/404/content/…` -- and that makes the image FAIL TO LOAD, which
+// leaves the target excluded exactly as it is today. Every outcome this can
+// change is therefore "excluded -> represented" for a target nothing but the
+// failure declaration obstructed, never "excluded -> represented wrongly".
+//
+// It judges INLINE members and INTERNALLY REFERENCED ones, resolving the latter
+// over the entry document's own raw tree. An external reference is left
+// standing: unjudged means unpruned, which keeps the conservative answer.
+func pruneOpenAPI32DefectiveNonSuccessResponses(root map[string]any, operation any) {
+	operationMap, isMap := operation.(map[string]any)
+	if !isMap {
+		return
+	}
+	responses, hasResponses := operationMap["responses"].(map[string]any)
+	if !hasResponses {
+		return
+	}
+	success := openAPI32SuccessResponseKeys(responses)
+	for _, key := range floorKeys(responses) {
+		if strings.HasPrefix(key, "x-") || success[key] {
+			continue
+		}
+		value := responses[key]
+		if ref := refString(value); ref != "" {
+			if !strings.HasPrefix(ref, "#") {
+				continue
+			}
+			target, resolution := floorResolveInternal(root, ref)
+			if !resolution.resolved {
+				delete(responses, key)
+				continue
+			}
+			value = target
+		}
+		if openAPI32ResponseObjectDefect(value) != nil {
+			delete(responses, key)
+		}
+	}
+}
+
+func (o *OpenAPI32Overlay) operationImage(reference OperationReference, attempt openAPI32ImageAttempt) ([]byte, error) {
 	o.mu.RLock()
 	defer o.mu.RUnlock()
 	if o.entry == nil {
@@ -269,6 +346,9 @@ func (o *OpenAPI32Overlay) operationImage(reference OperationReference, pruneCom
 		}
 	}
 	operationCopy := cloneOverlayValue(rawOperation, map[uintptr]any{})
+	if attempt.dropNonSuccess {
+		pruneOpenAPI32DefectiveNonSuccessResponses(root, operationCopy)
+	}
 	if reference.Additional {
 		pathItem["additionalOperations"] = map[string]any{reference.Method: operationCopy}
 	} else {
@@ -282,7 +362,7 @@ func (o *OpenAPI32Overlay) operationImage(reference OperationReference, pruneCom
 		}
 	}
 	variant["paths"] = map[string]any{reference.Path: pathItem}
-	if !pruneComponents {
+	if !attempt.pruneComponents {
 		if components, present := root["components"]; present {
 			variant["components"] = cloneOverlayValue(components, map[uintptr]any{})
 		}

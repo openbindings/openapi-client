@@ -150,7 +150,7 @@ async function analyzeSwagger20Operation(
   let responses: Swagger20Object;
   try {
     parameters = await effectiveSwagger20Parameters(operation);
-    responses = swagger20ResponsesFor(operation);
+    responses = await swagger20ResponsesFor(operation);
   } catch (error: unknown) { return exclude(result, error); }
   try { resolveSwagger20Server(document, operation); }
   catch (error: unknown) {

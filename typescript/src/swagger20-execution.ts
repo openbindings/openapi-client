@@ -40,7 +40,7 @@ export async function executeSwagger20(
 ): Promise<Swagger20ExecutionResult> {
   let responses: Swagger20Object;
   try {
-    responses = swagger20ResponsesFor(prepared.operation);
+    responses = await swagger20ResponsesFor(prepared.operation);
   } catch (error: unknown) {
     throw refused(error);
   }

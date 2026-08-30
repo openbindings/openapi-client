@@ -182,7 +182,7 @@ func (c *Swagger20Client) analyzeSwagger20Operation(operation swagger20Operation
 		result.Excluded, result.Reason = true, err.Error()
 		return result
 	}
-	responses, err := swagger20ResponsesFor(operation)
+	responses, err := swagger20ResponsesFor(c.document.graph, operation)
 	if err != nil {
 		result.Excluded, result.Reason = true, err.Error()
 		return result

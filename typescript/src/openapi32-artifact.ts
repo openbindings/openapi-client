@@ -777,16 +777,32 @@ class OpenAPI32Overlay {
     if (!responses) throw new Error("selected Responses declaration is not an object");
     const result: Record<string, unknown> = {};
     const exclusions: OpenAPI32ResponseMediaExclusion[] = [];
+    const success = openAPI32SuccessResponseKeys(responses);
     for (const [key, value] of Object.entries(responses)) {
       if (key.startsWith("x-")) continue;
-      const resolved = await this.resolveReferenceOnlyObject(
-        value,
-        owner,
-        "response",
-        "Response Object",
-      );
-      const response = asRecord(resolved.value)!;
-      openAPI32ResponseDescriptionGate(key, response);
+      // F1: a defect in a declaration that can never govern a success loses no
+      // representation, so it must not destroy the target. Such a member is left
+      // OUT of the materialized Responses rather than reported: that is the same
+      // state the 3.0/3.1 confinement pass reaches when it neutralises the
+      // defective raw position, so an actual failure response then finds no
+      // governing declaration on every lane alike.
+      let resolved;
+      try {
+        resolved = await this.resolveReferenceOnlyObject(value, owner, "response", "Response Object");
+      } catch (error: unknown) {
+        if (!success.has(key)) continue;
+        throw error;
+      }
+      const response = asRecord(resolved.value);
+      if (!response) {
+        if (!success.has(key)) continue;
+        throw new Error(`selected Response ${JSON.stringify(key)} is not an object`);
+      }
+      const defect = openAPI32ResponseObjectDefect(response);
+      if (defect !== undefined) {
+        if (!success.has(key)) continue;
+        throw new Error(`selected Response ${JSON.stringify(key)} is upstream-invalid: ${defect}`);
+      }
       const clone = cloneJSON(response) as Record<string, unknown>;
       if (Object.hasOwn(response, "headers")) {
         const headers = asRecord(response.headers);
@@ -1175,17 +1191,24 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-// The Response Object's `description` KIND constraint on the 3.2 lane: a
-// present `description` that is not a string is a fixed-field violation and
-// excludes the selected target.
+// The upstream-invalid governing Response Object defects
+// `openbindings.openapi-3.2@1` §9.6 names: a `description` that is not a
+// string, a `content`, `headers`, or `links` value that is not a map, or a
+// `headers` member that is not a Header Object. It is the 3.0/3.1 floor's D16
+// predicate, stated on this lane in this edition's own terms.
 //
-// The 3.0/3.1 lanes reach this through the acceptance floor, which does not
+// The 3.0/3.1 lanes reach D16 through the acceptance floor, which does not
 // accept the 3.2 edition at all: the 3.2 lane asks its declaration questions
 // over its own raw overlay, so a sibling rule has to be stated here or it is
 // not stated at all. Round R measured what that cost: `description: 123`
 // excluded the target on 3.0/3.1, excluded it in Go's 3.2 lane only by accident
 // (kin-openapi refusing the value), and COMPLETED THE INVOCATION here. One
-// rule, three answers, inside one family. This closes it.
+// rule, three answers, inside one family.
+//
+// Round R2 finished the job for the other four kinds, which had the same
+// defect: they excluded, but for a parser's reasons rather than a rule's, and
+// that said nothing at all about the non-success declarations the same parser
+// also refused. See `openAPI32SuccessResponseKeys` for the scope.
 //
 // WHY OMISSION IS NOT CHECKED HERE, and it is an AUTHORITY difference rather
 // than a gap. OAS 3.2.0 DROPPED the `REQUIRED` marker that OAS 3.0.4 and OAS
@@ -1209,16 +1232,64 @@ function errorMessage(error: unknown): string {
 // were not stale fixtures. They were legal OAS 3.2 documents, and the authority
 // was refusing a rule it does not impose.
 //
-// ARCHITECTURAL DEBT, recorded where a reader of this rule will look: the 3.2
-// lane reaches the right answer here for the wrong reason. It has NO acceptance
-// floor at all -- `computeAcceptanceFloor` accepts only the 3.0 and 3.1 editions
-// -- so 3.2's correct outcome on an omitted `description` follows from the
-// absence of a ladder rather than from a rule, and every other declaration
-// question this lane owns is answered ad hoc, here, one function at a time. A
-// 3.2 acceptance floor is queued as Round R2 alongside 2.0's.
-function openAPI32ResponseDescriptionGate(key: string, response: Record<string, unknown>): void {
-  if (!Object.hasOwn(response, "description")) return;
-  if (typeof response["description"] !== "string") {
-    throw new Error(`selected Response ${JSON.stringify(key)} description is not a string`);
+// DECISION, recorded where a reader of this rule will look: THIS LANE GETS NO
+// ACCEPTANCE FLOOR, and that is a finding rather than deferred debt. Round R2
+// scouted one and measured why it would be the wrong instrument. The floor's
+// own primitive `isFloorResponseObject` DEFINES a Response Object by the
+// presence of `description` -- the exact constraint OAS 3.2.0 removed -- so D7
+// and D6 would both be wrong on this line before any other class fired; its
+// `httpMethods` inventory predates `query` and `additionalOperations`, so the
+// raw operation inventory would be wrong too; and fifteen further classes would
+// begin firing on a lane that reaches every verdict through the overlay,
+// changing coverage emission, the confinement pass's attribution and §3 part 2's
+// whole-source refusal, and forcing 3.2 cells into the digest-pinned shared case
+// table. A ladder built on a presence predicate the edition deleted is not a
+// smaller version of the right instrument; it is the wrong one. The complaint
+// the debt note recorded -- that the outcome followed from the absence of a rule
+// -- is discharged by STATING the rule here, which is what this does.
+function openAPI32ResponseObjectDefect(response: Record<string, unknown>): string | undefined {
+  if (Object.hasOwn(response, "description") && typeof response["description"] !== "string") {
+    return "`description` is not a string";
   }
+  for (const field of ["content", "headers", "links"] as const) {
+    if (!Object.hasOwn(response, field)) continue;
+    const members = asRecord(response[field]);
+    if (!members) return `${JSON.stringify(field)} is not a map`;
+    if (field !== "headers") continue;
+    for (const name of Object.keys(members).sort()) {
+      // Case-SENSITIVE, exactly as the 3.0/3.1 floor's test is: these keys are
+      // HEADER NAMES, and `X-Request-Id` is an ordinary header rather than a
+      // specification extension.
+      if (name.startsWith("x-")) continue;
+      if (!asRecord(members[name])) return `header ${JSON.stringify(name)} is not a Header Object`;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The Responses keys whose declaration can govern a SUCCESSFUL (2xx final
+ * status) response.
+ *
+ * Round R2's F1 ruling scopes the upstream-invalid Response Object exclusion to
+ * the governing SUCCESS declaration, family-wide: a failure body is opaque
+ * application-authored data (§9.6), so a defect in the declaration that governs
+ * one loses no representation and must not destroy a target whose success path
+ * is intact. It is what the 3.0/3.1 acceptance floor already performs by never
+ * climbing at a non-success response.
+ *
+ * `default` qualifies only when no `2XX` range key is declared: a `2XX` key
+ * covers the whole success class, so `default` can then never govern one. That
+ * is the same question `swagger20SuccessResponseKey` answers with an
+ * unconditional yes, because OAS 2.0 has no range keys at all.
+ */
+function openAPI32SuccessResponseKeys(responses: Record<string, unknown>): Set<string> {
+  const hasSuccessRange = Object.hasOwn(responses, "2XX");
+  const out = new Set<string>();
+  for (const key of Object.keys(responses)) {
+    if (key.startsWith("x-")) continue;
+    if (/^2[0-9][0-9]$/u.test(key) || key === "2XX") out.add(key);
+    else if (key === "default" && !hasSuccessRange) out.add(key);
+  }
+  return out;
 }
