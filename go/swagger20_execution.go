@@ -43,7 +43,7 @@ func (p *Swagger20PreparedOperation) Start(ctx context.Context) (*Execution, err
 			return nil, &ExecutionError{Code: CodeRefused, Message: mediaErr.Error(), Cause: mediaErr}
 		}
 	}
-	responses, err := swagger20ResponsesFor(p.operation)
+	responses, err := swagger20ResponsesFor(p.document.graph, p.operation)
 	if err != nil {
 		return nil, &ExecutionError{Code: CodeRefused, Message: err.Error(), Cause: err}
 	}

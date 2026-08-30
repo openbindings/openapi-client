@@ -196,15 +196,104 @@ export function swagger20RangeHasUsableLane(range: Swagger20ParsedMedia, model: 
   });
 }
 
-export function swagger20ResponsesFor(operation: Swagger20ResolvedOperation): Swagger20Object {
+/**
+ * Reports whether a Responses key names a declaration that can govern a
+ * SUCCESSFUL (2xx final status) response.
+ *
+ * Round R2's F1 ruling scopes the upstream-invalid Response Object exclusion to
+ * the governing SUCCESS declaration, family-wide: a failure body is opaque
+ * application-authored data, so a defect in the declaration that governs one
+ * loses no representation and must not destroy a target whose success path is
+ * intact. It is the same "loses no representation" reasoning that justifies the
+ * `{}` carve-out, and it is what the 3.0/3.1 acceptance floor already performs
+ * by never climbing at a non-success response.
+ *
+ * `default` ALWAYS qualifies on this edition, and that is the edition
+ * difference rather than an oversight. OAS 2.0's Responses Object has no range
+ * keys, so nothing can exhaustively declare the 2xx class; `default` can
+ * therefore always govern some 2xx status. The 3.x siblings qualify `default`
+ * on the absence of a `2XX` range key, which is the same question asked where
+ * ranges exist.
+ */
+export function swagger20SuccessResponseKey(key: string): boolean {
+  return key === "default" || /^2[0-9][0-9]$/u.test(key);
+}
+
+/**
+ * Reports the upstream-invalid governing Response Object defects
+ * `openbindings.openapi-2.0@1` §9.4 names, in this edition's own spelling: the
+ * member is not a Response Object at all, or it violates the Response Object's
+ * fixed-field constraints -- a `description` that is not a string, a `schema`
+ * that is not a Schema Object, a `headers` or `examples` value that is not a
+ * map, or a `headers` member that is not a Header Object.
+ *
+ * It is a DECIDABLE test and deliberately not a validator, exactly as the
+ * 3.0/3.1 floor's D16 is. Nothing here inspects a Header Object's or a Schema
+ * Object's own fields: those are declaration questions the response and schema
+ * rungs already own, and a wrong answer would cost a target its representation.
+ *
+ * A `$ref`ed Response Object governs its referencing target exactly as an
+ * inline one does, so the constraints are read at the position they actually
+ * occupy -- inside the referenced object -- which is why this resolves first.
+ */
+export async function swagger20ResponseObjectDefect(
+  operation: Swagger20ResolvedOperation,
+  value: unknown,
+  key: string,
+): Promise<void> {
+  const resolved = await resolveSwagger20ResponseValue(operation, value, operation.resource, key);
+  const raw = resolved.raw;
+  const descriptionDeclared = Object.hasOwn(raw, "description");
+  const schemaDeclared = Object.hasOwn(raw, "schema");
+  if (!descriptionDeclared && schemaDeclared) {
+    // D9's declared-content gate in this edition's spelling. Without a `schema`
+    // this is the carve-out and never reaches here.
+    throw new Error("Response Object omits its REQUIRED description while declaring a schema");
+  }
+  if (schemaDeclared && !isSwagger20Object(raw.schema)) {
+    throw new Error("Response Object `schema` is not a Schema Object");
+  }
+  for (const field of ["headers", "examples"] as const) {
+    if (!Object.hasOwn(raw, field)) continue;
+    const members = raw[field];
+    if (!isSwagger20Object(members)) throw new Error(`Response Object ${JSON.stringify(field)} is not a map`);
+    if (field !== "headers") continue;
+    for (const name of Object.keys(members).sort()) {
+      // The specification-extension prefix is lower-case `x-`, and the test is
+      // case-SENSITIVE for the same reason the 3.0/3.1 floor's is: these keys
+      // are HEADER NAMES, and `X-Request-Id` is an ordinary header rather than
+      // an extension. Lower-casing here would exempt most real custom headers.
+      if (name.startsWith("x-")) continue;
+      if (!isSwagger20Object(members[name])) {
+        throw new Error(`Response Object header ${JSON.stringify(name)} is not a Header Object`);
+      }
+    }
+  }
+}
+
+export async function swagger20ResponsesFor(operation: Swagger20ResolvedOperation): Promise<Swagger20Object> {
   const responses = objectMember(operation.raw, "responses");
   if (!responses.valid) throw new Error("selected Swagger 2.0 Operation requires a Responses Object");
   let count = 0;
   for (const [key, value] of Object.entries(responses.value!)) {
     if (key.toLowerCase().startsWith("x-")) continue;
     if (key !== "default" && !/^[1-5][0-9][0-9]$/u.test(key)) throw new Error(`selected Swagger 2.0 Responses Object contains inadmissible key ${JSON.stringify(key)}`);
-    if (!isSwagger20Object(value)) throw new Error(`selected Swagger 2.0 response ${JSON.stringify(key)} is not an object`);
     count++;
+    // The upstream-invalid governing Response Object exclusion, scoped to the
+    // declaration that can govern a SUCCESS response (F1; see
+    // `swagger20SuccessResponseKey`). A defective NON-SUCCESS declaration is
+    // left standing here: it destroys no representation, and if it actually
+    // governs an actual failure response the response rung reports it there.
+    if (!swagger20SuccessResponseKey(key)) continue;
+    try {
+      await swagger20ResponseObjectDefect(operation, value, key);
+    } catch (error: unknown) {
+      throw new Error(
+        `selected Swagger 2.0 response ${JSON.stringify(key)} is upstream-invalid: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
   }
   if (count === 0) throw new Error("selected Swagger 2.0 Responses Object has no exact status or default Response");
   return responses.value!;
@@ -251,8 +340,18 @@ async function resolveResponse(
       return resolveResponse(operation, resolved.node, resolved.resource, key, active);
     } finally { active.delete(identity); }
   }
+  // `description` is REQUIRED and its value MUST be a string. ABSENCE is the
+  // carve-out `openbindings.openapi-2.0@1` §9.4 states in the same breath as
+  // the exclusion: a governing Response Object that omits it while declaring no
+  // `schema` loses no representation -- nothing it says about a response body
+  // is misdeclared -- so it still GOVERNS, and the omission-with-`schema` case
+  // is excluded before dispatch by `swagger20ResponseObjectDefect` rather than
+  // refused here. A PRESENT `description` of another kind is not the carve-out:
+  // it is a fixed-field violation like any other.
   const description = stringMember(value, "description");
-  if (!description.valid) throw new Error("Response Object requires string description");
+  if (description.present && !description.valid) {
+    throw new Error("Response Object `description` is not a string");
+  }
   return { raw: value, resource, key };
 }
 

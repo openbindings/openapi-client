@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"sort"
 	"strings"
 
 	"github.com/getkin/kin-openapi/openapi3"
@@ -31,6 +32,7 @@ func (a *Artifact) materializeOpenAPI32ResponseTarget(target *OperationTarget) (
 	}
 
 	responses := openapi3.NewResponsesWithCapacity(len(rawResponses))
+	success := openAPI32SuccessResponseKeys(rawResponses)
 	var exclusions []OpenAPI32ResponseMediaExclusion
 	for key, raw := range rawResponses {
 		if strings.HasPrefix(key, "x-") {
@@ -40,12 +42,27 @@ func (a *Artifact) materializeOpenAPI32ResponseTarget(target *OperationTarget) (
 			responses.Extensions[key] = cloneOverlayValue(raw, map[uintptr]any{})
 			continue
 		}
+		// F1: a defect in a declaration that can never govern a success loses no
+		// representation, so it must not destroy the target. The member is left
+		// OUT of the materialized Responses rather than reported: that is the
+		// same state the 3.0/3.1 confinement pass reaches when it neutralises the
+		// defective raw position, so an actual failure response then finds no
+		// governing declaration on every lane alike. Only a declaration that can
+		// govern a SUCCESS is judged.
+		if !success[key] && openAPI32NonSuccessResponseIsDefective(o, raw, operationNode.resource) {
+			continue
+		}
 		node, err := o.resolveOpenAPI32ObjectNode(
 			openAPI32RawNode{value: raw, resource: operationNode.resource},
 			rawResponseTarget, "Response Object", map[string]bool{},
 		)
 		if err != nil {
 			return nil, fmt.Errorf("response %q reference is unresolvable: %w", key, err)
+		}
+		if success[key] {
+			if defect := openAPI32ResponseObjectDefect(node.value); defect != nil {
+				return nil, fmt.Errorf("response %q is upstream-invalid: %w", key, defect)
+			}
 		}
 		response, mediaExclusions, err := o.materializeOpenAPI32Response(key, node)
 		if err != nil {
@@ -68,9 +85,10 @@ func (o *OpenAPI32Overlay) materializeOpenAPI32Response(key string, node openAPI
 	if object == nil {
 		return nil, nil, fmt.Errorf("Response Object is not an object")
 	}
-	if err := openAPI32ResponseDescriptionDefect(object); err != nil {
-		return nil, nil, err
-	}
+	// The upstream-invalid test is NOT applied here. It is success-scoped (F1),
+	// and only the caller knows which key this Response Object is declared at;
+	// judging every materialized response here would re-impose the exclusion on
+	// the non-success declarations the ruling exempts.
 	encoded, err := json.Marshal(object)
 	if err != nil {
 		return nil, nil, err
@@ -137,6 +155,27 @@ func (o *OpenAPI32Overlay) materializeOpenAPI32Response(key string, node openAPI
 		}
 	}
 	return &response, exclusions, nil
+}
+
+// openAPI32NonSuccessResponseIsDefective reports whether a NON-SUCCESS
+// Responses member is one F1 exempts from the exclusion: a member that is not a
+// Response Object at all, one whose reference names none, or one violating the
+// fixed-field constraints. Such a member is dropped from the materialized
+// Responses instead of costing its target, which leaves every lane in the same
+// state -- an actual failure response with no governing declaration.
+//
+// A member this cannot judge (an unreachable external reference) is left
+// standing, which is the conservative direction: the ordinary path then reports
+// it exactly as it did before.
+func openAPI32NonSuccessResponseIsDefective(o *OpenAPI32Overlay, raw any, resource *openAPI32RawResource) bool {
+	node, err := o.resolveOpenAPI32ObjectNode(
+		openAPI32RawNode{value: raw, resource: resource},
+		rawResponseTarget, "Response Object", map[string]bool{},
+	)
+	if err != nil {
+		return true
+	}
+	return openAPI32ResponseObjectDefect(node.value) != nil
 }
 
 func (o *OpenAPI32Overlay) materializeOpenAPI32ResponseHeader(node openAPI32RawNode) (*openapi3.Header, error) {
@@ -414,19 +453,27 @@ func (o *OpenAPI32Overlay) openAPI32ResponseSchemaTarget(refText string, resolve
 	return target, cloneURL(resource.base), nil
 }
 
-// openAPI32ResponseDescriptionDefect applies the Response Object's `description`
-// KIND constraint on the 3.2 lane: a present `description` that is not a string
-// is a fixed-field violation and excludes the selected target.
+// openAPI32ResponseObjectDefect reports the upstream-invalid governing Response
+// Object defects `openbindings.openapi-3.2@1` §9.6 names: a `description` that
+// is not a string, a `content`, `headers`, or `links` value that is not a map,
+// or a `headers` member that is not a Header Object. It is the 3.0/3.1 floor's
+// D16 predicate, stated on this lane in this edition's own terms.
 //
-// The 3.0/3.1 lanes reach this through the acceptance floor, which does not
+// The 3.0/3.1 lanes reach D16 through the acceptance floor, which does not
 // accept the 3.2 edition at all: the 3.2 lane asks its declaration questions
 // over its own raw overlay, so a sibling rule has to be stated here or it is not
 // stated at all. Round R measured what that cost: `description: 123` excluded
 // the target on 3.0/3.1, excluded it in Go's 3.2 lane only by accident
 // (kin-openapi refusing the value), and COMPLETED THE INVOCATION in
-// TypeScript's. One rule, three answers, inside one family. This closes it.
+// TypeScript's. One rule, three answers, inside one family.
 //
-// WHY OMISSION IS NOT CHECKED HERE, and it is an AUTHORITY difference rather
+// Round R2 finished the job for the other four kinds, which had the same
+// defect: they excluded, but because kin-openapi could not decode the value and
+// the per-target fallback then isolated the target -- an outcome that followed
+// from a parser's limits rather than from a rule, and that said nothing at all
+// about the non-success declarations the same parser also refused.
+//
+// WHY OMISSION IS NOT A DEFECT HERE, and it is an AUTHORITY difference rather
 // than a gap. OAS 3.2.0 DROPPED the `REQUIRED` marker that OAS 3.0.4 and OAS
 // 3.1.2 carry on the Response Object's `description`, and added an optional
 // `summary` beside it:
@@ -439,29 +486,98 @@ func (o *OpenAPI32Overlay) openAPI32ResponseSchemaTarget(refText string, resolve
 // So a 3.2 Response Object that omits `description` is CONFORMANT and governs
 // normally, while the same omission is upstream-invalid on the 3.0/3.1 lines
 // (the shared case table pins that as S1). The two lines answering differently
-// is correct, and `openbindings.openapi-3.2@1` §9.5 states it as the edition
-// difference it is. What 3.2 still fixes is the KIND -- `description` is typed
-// `string` -- which is the whole of what this function tests.
+// is correct, and `openbindings.openapi-3.2@1` §9.6 states it as the edition
+// difference it is. What 3.2 still fixes is the KIND, which is the whole of what
+// this function tests.
 //
 // Round R nearly got this wrong in the safe direction's opposite: it implemented
 // the omission check too, and 25 shipped tests in this package went red. They
 // were not stale fixtures. They were legal OAS 3.2 documents, and the authority
 // was refusing a rule it does not impose.
 //
-// ARCHITECTURAL DEBT, recorded where a reader of this rule will look: the 3.2
-// lane reaches the right answer here for the wrong reason. It has NO acceptance
-// floor at all -- `computeAcceptanceFloor` accepts only the 3.0 and 3.1 editions
-// -- so 3.2's correct outcome on an omitted `description` follows from the
-// absence of a ladder rather than from a rule, and every other declaration
-// question this lane owns is answered ad hoc, here, one function at a time. A
-// 3.2 acceptance floor is queued as Round R2 alongside 2.0's.
-func openAPI32ResponseDescriptionDefect(object map[string]any) error {
-	raw, present := object["description"]
-	if !present {
-		return nil
+// DECISION, recorded where a reader of this rule will look: THIS LANE GETS NO
+// ACCEPTANCE FLOOR, and that is a finding rather than deferred debt. Round R2
+// scouted one and measured why it would be the wrong instrument. The floor's own
+// primitive `isFloorResponseObject` DEFINES a Response Object by the presence of
+// `description` -- the exact constraint OAS 3.2.0 removed -- so D7 and D6 would
+// both be wrong on this line before any other class fired; its `httpMethods`
+// inventory predates `query` and `additionalOperations`, so the raw operation
+// inventory would be wrong too; and fifteen further classes would begin firing
+// on a lane that reaches every verdict through the overlay, changing coverage
+// emission, the confinement pass's attribution and §3 part 2's whole-source
+// refusal, and forcing 3.2 cells into the digest-pinned shared case table. A
+// ladder built on a presence predicate the edition deleted is not a smaller
+// version of the right instrument; it is the wrong one. The complaint the debt
+// note recorded -- that the outcome followed from the absence of a rule -- is
+// discharged by STATING the rule here, which is what this function does.
+func openAPI32ResponseObjectDefect(value any) error {
+	object, isObject := value.(map[string]any)
+	if !isObject {
+		return fmt.Errorf("Response Object is not an object")
 	}
-	if _, isString := raw.(string); !isString {
-		return fmt.Errorf("Response Object `description` is not a string")
+	if raw, present := object["description"]; present {
+		if _, isString := raw.(string); !isString {
+			return fmt.Errorf("Response Object `description` is not a string")
+		}
+	}
+	for _, field := range []string{"content", "headers", "links"} {
+		raw, present := object[field]
+		if !present {
+			continue
+		}
+		members, isMap := raw.(map[string]any)
+		if !isMap {
+			return fmt.Errorf("Response Object %q is not a map", field)
+		}
+		if field != "headers" {
+			continue
+		}
+		names := make([]string, 0, len(members))
+		for name := range members {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			// Case-SENSITIVE, exactly as the 3.0/3.1 floor's test is: these keys
+			// are HEADER NAMES, and `X-Request-Id` is an ordinary header rather
+			// than a specification extension.
+			if strings.HasPrefix(name, "x-") {
+				continue
+			}
+			if _, isObject := members[name].(map[string]any); !isObject {
+				return fmt.Errorf("Response Object header %q is not a Header Object", name)
+			}
+		}
 	}
 	return nil
+}
+
+// openAPI32SuccessResponseKeys returns the Responses keys whose declaration can
+// govern a SUCCESSFUL (2xx final status) response.
+//
+// Round R2's F1 ruling scopes the upstream-invalid Response Object exclusion to
+// the governing SUCCESS declaration, family-wide: a failure body is opaque
+// application-authored data (§9.6), so a defect in the declaration that governs
+// one loses no representation and must not destroy a target whose success path
+// is intact. It is the same reasoning that carves out a Response Object which
+// declares no content, and it is what the 3.0/3.1 acceptance floor already
+// performs by never climbing at a non-success response.
+//
+// `default` qualifies only when no `2XX` range key is declared: a `2XX` key
+// covers the whole success class, so `default` can then never govern one. That
+// is the same question `swagger20SuccessResponseKey` answers with an
+// unconditional yes, because OAS 2.0 has no range keys at all.
+func openAPI32SuccessResponseKeys(responses map[string]any) map[string]bool {
+	_, hasSuccessRange := responses["2XX"]
+	out := make(map[string]bool, len(responses))
+	for key := range responses {
+		switch {
+		case strings.HasPrefix(key, "x-"):
+		case floorSuccessCodeRE.MatchString(key), key == "2XX":
+			out[key] = true
+		case key == "default" && !hasSuccessRange:
+			out[key] = true
+		}
+	}
+	return out
 }

@@ -131,20 +131,38 @@ export async function governOpenAPIResponse(
     && sourceCoding === ""
     && governing
   ) {
-    let match: ReturnType<typeof governingResponseMediaMatch>;
+    // THIS PRE-CHECK MAY NOT REFUSE, and Round R2's F2 finding is why. It runs
+    // before a single byte has been read, so it cannot yet know whether the
+    // response carries any content at all -- and §9.6 says an EMPTY response
+    // "has zero content octets" and "emit[s] no operation output value", so an
+    // empty body contradicts no media declaration whatever `Content-Type` the
+    // peer stamped on it. (`new Response("")` stamps `text/plain;charset=UTF-8`
+    // by itself, so this is the ordinary case rather than a contrived one.)
+    // Refusing here made an empty 2xx an ERR_PROTOCOL on this lane while Go's
+    // 3.2 lane and both engines on 3.0/3.1 completed it -- the one cell in the
+    // eight-shape matrix where the two engines still disagreed after Round R.
+    //
+    // A media mismatch therefore FALLS THROUGH to the byte-reading path below,
+    // which knows the body's length: it reports exactly this error for a
+    // NON-EMPTY body and returns absence for an empty one. Nothing is weakened;
+    // the same question is asked where it can be answered.
+    let match: ReturnType<typeof governingResponseMediaMatch> | undefined;
     try {
       match = governingResponseMediaMatch(governing.response, sourceContentType, true, true);
     } catch {
-      responseError("actual response media does not match its governing declaration");
+      match = undefined;
     }
-    if (!match) responseError("actual response media does not match its governing declaration");
     let sequential;
-    try {
-      sequential = classifyOpenAPI32SequentialResponse(sourceContentType, match.media);
-    } catch {
-      responseError("response itemSchema has no incorporated sequential framing");
+    if (match) {
+      try {
+        sequential = classifyOpenAPI32SequentialResponse(sourceContentType, match.media);
+      } catch {
+        responseError("response itemSchema has no incorporated sequential framing");
+      }
     }
-    if (sequential) {
+    // `sequential` is only ever set inside the `match` guard above, so a
+    // sequential classification always has the declaration it was derived from.
+    if (sequential && match) {
       if (sequential === "sse") {
         validateResponseMediaLane(match.media, sourceContentType, false);
       }

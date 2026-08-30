@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -26,7 +27,7 @@ type swagger20ResponseMediaSelection struct {
 	lane        swagger20MediaLane
 }
 
-func swagger20ResponsesFor(operation swagger20Operation) (swagger20ResponseSet, error) {
+func swagger20ResponsesFor(graph *swagger20ReferenceGraph, operation swagger20Operation) (swagger20ResponseSet, error) {
 	responses := operation.raw.object("responses")
 	if !responses.present || !responses.valid {
 		return swagger20ResponseSet{}, fmt.Errorf("selected Swagger 2.0 Operation requires a Responses Object")
@@ -39,10 +40,18 @@ func swagger20ResponsesFor(operation swagger20Operation) (swagger20ResponseSet, 
 		if key != "default" && !swagger20ExactStatusKey(key) {
 			return swagger20ResponseSet{}, fmt.Errorf("selected Swagger 2.0 Responses Object contains inadmissible key %q", key)
 		}
-		if _, ok := value.(map[string]any); !ok {
-			return swagger20ResponseSet{}, fmt.Errorf("selected Swagger 2.0 response %q is not a Response or Reference Object", key)
-		}
 		count++
+		// The upstream-invalid governing Response Object exclusion, scoped to the
+		// declaration that can govern a SUCCESS response (F1; see
+		// `swagger20SuccessResponseKey`). A defective NON-SUCCESS declaration is
+		// left standing here: it destroys no representation, and if it actually
+		// governs an actual failure response the response rung reports it there.
+		if !swagger20SuccessResponseKey(key) {
+			continue
+		}
+		if err := swagger20ResponseObjectDefect(graph, value, operation.resource); err != nil {
+			return swagger20ResponseSet{}, fmt.Errorf("selected Swagger 2.0 response %q is upstream-invalid: %w", key, err)
+		}
 	}
 	if count == 0 {
 		return swagger20ResponseSet{}, fmt.Errorf("selected Swagger 2.0 Responses Object has no exact status or default Response")
@@ -105,11 +114,116 @@ func resolveSwagger20Response(graph *swagger20ReferenceGraph, value any, resourc
 		}
 		return resolveSwagger20Response(graph, resolved.node, resolved.resource, active)
 	}
-	description := raw.string("description")
-	if !description.present || !description.valid {
-		return swagger20ResolvedResponse{}, fmt.Errorf("Response Object requires string description")
+	// `description` is REQUIRED and its value MUST be a string. ABSENCE is the
+	// carve-out `openbindings.openapi-2.0@1` §9.4 states in the same breath as
+	// the exclusion: a governing Response Object that omits it while declaring
+	// no `schema` loses no representation -- nothing it says about a response
+	// body is misdeclared -- so it still GOVERNS, and the omission-with-`schema`
+	// case is excluded before dispatch by `swagger20ResponseObjectDefect`
+	// rather than refused here. A PRESENT `description` of another kind is not
+	// the carve-out: it is a fixed-field violation like any other.
+	if description := raw.string("description"); description.present && !description.valid {
+		return swagger20ResolvedResponse{}, fmt.Errorf("Response Object `description` is not a string")
 	}
 	return swagger20ResolvedResponse{raw: raw, resource: resource}, nil
+}
+
+// swagger20SuccessResponseKey reports whether a Responses key names a
+// declaration that can govern a SUCCESSFUL (2xx final status) response.
+//
+// Round R2's F1 ruling scopes the upstream-invalid Response Object exclusion to
+// the governing SUCCESS declaration, family-wide: a failure body is opaque
+// application-authored data, so a defect in the declaration that governs one
+// loses no representation and must not destroy a target whose success path is
+// intact. It is the same "loses no representation" reasoning that justifies the
+// `{}` carve-out, and it is what the 3.0/3.1 acceptance floor already performs
+// by never climbing at a non-success response.
+//
+// `default` ALWAYS qualifies on this edition, and that is the edition
+// difference rather than an oversight. OAS 2.0's Responses Object has no range
+// keys, so nothing can exhaustively declare the 2xx class; `default` can
+// therefore always govern some 2xx status and is always a potential governing
+// success declaration. The 3.x siblings qualify `default` on the absence of a
+// `2XX` range key, which is the same question asked where ranges exist.
+func swagger20SuccessResponseKey(key string) bool {
+	if key == "default" {
+		return true
+	}
+	return swagger20ExactStatusKey(key) && key[0] == '2'
+}
+
+// swagger20ResponseObjectDefect reports the upstream-invalid governing Response
+// Object defects `openbindings.openapi-2.0@1` §9.4 names, in this edition's own
+// spelling: the member is not a Response Object at all, or it violates the
+// Response Object's fixed-field constraints -- a `description` that is not a
+// string, a `schema` that is not a Schema Object, a `headers` or `examples`
+// value that is not a map, or a `headers` member that is not a Header Object.
+//
+// It is a DECIDABLE test and deliberately not a validator, exactly as the
+// 3.0/3.1 floor's D16 is. Each of `headers` and `examples` is a map in this
+// edition, so a present non-map is a violation no reading can rescue; a
+// `headers` member is a Header Object, and OAS 2.0 names no Reference Object
+// alternative at that position, so a present non-object is the same kind of
+// proof. A `schema` is a Schema Object, and this edition has no boolean-literal
+// schemas, so a present non-object is likewise decidable. Nothing here inspects
+// a Header Object's or a Schema Object's own fields: those are declaration
+// questions the response and schema rungs already own, and a wrong answer would
+// cost a target its representation.
+//
+// A `$ref`ed Response Object governs its referencing target exactly as an
+// inline one does, so the constraints are read at the position they actually
+// occupy -- inside the referenced object -- which is why this resolves first.
+// The 3.0/3.1 floor reads D16 inside a `$ref`ed response for the same reason.
+func swagger20ResponseObjectDefect(graph *swagger20ReferenceGraph, value any, resource *swagger20Resource) error {
+	resolved, err := resolveSwagger20Response(graph, value, resource, map[string]bool{})
+	if err != nil {
+		return err
+	}
+	raw := resolved.raw
+	_, descriptionDeclared := raw.member("description")
+	schema, schemaDeclared := raw.member("schema")
+	if !descriptionDeclared && schemaDeclared {
+		// D9's declared-content gate in this edition's spelling. Without a
+		// `schema` this is the carve-out and never reaches here.
+		return fmt.Errorf("Response Object omits its REQUIRED description while declaring a schema")
+	}
+	if schemaDeclared {
+		if _, isObject := schema.(map[string]any); !isObject {
+			return fmt.Errorf("Response Object `schema` is not a Schema Object")
+		}
+	}
+	for _, field := range []string{"headers", "examples"} {
+		raw, present := raw.member(field)
+		if !present {
+			continue
+		}
+		members, isMap := raw.(map[string]any)
+		if !isMap {
+			return fmt.Errorf("Response Object %q is not a map", field)
+		}
+		if field != "headers" {
+			continue
+		}
+		names := make([]string, 0, len(members))
+		for name := range members {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			// The specification-extension prefix is lower-case `x-`, and the
+			// test is case-SENSITIVE for the same reason the 3.0/3.1 floor's is:
+			// these keys are HEADER NAMES, and `X-Request-Id` is an ordinary
+			// header rather than an extension. Lower-casing here would exempt
+			// most real custom headers from the rule.
+			if strings.HasPrefix(name, "x-") {
+				continue
+			}
+			if _, isObject := members[name].(map[string]any); !isObject {
+				return fmt.Errorf("Response Object header %q is not a Header Object", name)
+			}
+		}
+	}
+	return nil
 }
 
 func selectSwagger20ResponseMedia(set swagger20MediaSet, actual string, declaration swagger20SchemaDeclaration) (*swagger20ResponseMediaSelection, error) {
