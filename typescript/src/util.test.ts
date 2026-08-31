@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseRef, buildJsonPointerRef, sanitizeKey, uniqueKey, mergeParameters, loadOpenAPIDocument } from "./util.js";
+import { parseRef, buildJsonPointerRef, sanitizeKey, uniqueKey, mergeParameters, loadOpenAPIDocument, parseJSONOrYAML } from "./util.js";
 
 describe("parseRef", () => {
   it("parses a standard JSON pointer ref", () => {
@@ -297,6 +297,19 @@ paths:
 
   // §3's duplicate-key pin is unaffected by the schema restriction, in the
   // JSON spelling too — which JSON.parse would silently last-wins.
+  it("refuses a collection in key position on every lane", async () => {
+    // The gate used to live in the 3.2 lane alone, so 2.0, 3.0 and 3.1
+    // accepted a sequence key and refused later at resolution.
+    for (const version of ["3.0.4", "3.1.2", "3.2.0"]) {
+      expect(() => parseJSONOrYAML(
+        `openapi: ${version}\ninfo: {title: t, version: '1'}\npaths: {}\nx-bad:\n  ? [a, b]\n  : value\n`,
+      )).toThrow(/member-name image/u);
+    }
+    expect(parseJSONOrYAML("openapi: 3.0.4\nx-ok:\n  204: a\n  true: b\n")).toEqual({
+      openapi: "3.0.4", "x-ok": { 204: "a", true: "b" },
+    });
+  });
+
   it("still refuses duplicate mapping keys", async () => {
     await expect(loadOpenAPIDocument(
       undefined,

@@ -84,7 +84,7 @@ func TestLoadSwagger20ClosedLoadGates(t *testing.T) {
 		{"nearby swagger", `{"swagger":"2.0.0","info":{"title":"t","version":"1"},"paths":{}}`},
 		{"openapi marker only", `{"openapi":"3.0.4","info":{"title":"t","version":"1"},"paths":{}}`},
 		{"duplicate key", "swagger: \"2.0\"\ninfo: {title: t, version: '1'}\npaths: {}\nswagger: \"2.0\"\n"},
-		{"non-string key", "swagger: \"2.0\"\ninfo: {title: t, version: '1'}\npaths: {}\ntrue: value\n"},
+		{"non-scalar key", "swagger: \"2.0\"\ninfo: {title: t, version: '1'}\npaths: {}\nx-bad:\n  ? [a, b]\n  : value\n"},
 		{"non-json tag", "swagger: \"2.0\"\ninfo: {title: !duration 10m, version: '1'}\npaths: {}\n"},
 		{"non-json scalar", "swagger: \"2.0\"\ninfo: {title: .nan, version: '1'}\npaths: {}\n"},
 		{"multiple documents", "swagger: \"2.0\"\ninfo: {title: t, version: '1'}\npaths: {}\n---\n{}\n"},
@@ -93,6 +93,23 @@ func TestLoadSwagger20ClosedLoadGates(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			if _, err := LoadSwagger20(context.Background(), Swagger20Source{Content: []byte(test.content)}, ClientOptions{}); err == nil {
 				t.Fatal("expected load refusal")
+			}
+		})
+	}
+}
+
+func TestLoadSwagger20ScalarKeysAreMemberNames(t *testing.T) {
+	// A Swagger 2.0 artifact is itself a JSON object that YAML represents, so a
+	// scalar key is the member name it spells whatever tag Core Schema
+	// resolution would assign the same characters in value position.
+	tests := []struct{ name, content string }{
+		{"unquoted status key", "swagger: \"2.0\"\ninfo: {title: t, version: '1'}\npaths:\n  /x:\n    get:\n      responses:\n        204:\n          description: ok\n"},
+		{"unquoted boolean key", "swagger: \"2.0\"\ninfo: {title: t, version: '1'}\npaths: {}\nx-vendor:\n  true: 1\n"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := LoadSwagger20(context.Background(), Swagger20Source{Content: []byte(test.content)}, ClientOptions{}); err != nil {
+				t.Fatalf("expected load, got %v", err)
 			}
 		})
 	}

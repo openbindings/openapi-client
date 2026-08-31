@@ -524,7 +524,36 @@ export function errorMessage(e: unknown): string {
  * — in the JSON spelling too, which JSON.parse would silently last-wins.
  */
 export function parseJSONOrYAML(text: string): unknown {
+  assertScalarMappingKeys(text);
   return assertJSONDomain(yaml.load(text.trim(), { schema: yaml.CORE_SCHEMA }));
+}
+
+/**
+ * Refuses a mapping key that is no scalar at all — a sequence or a mapping in
+ * key position.
+ *
+ * An OpenAPI document is itself a JSON object that YAML represents, so a
+ * scalar key is the member name it spells whatever tag Core Schema resolution
+ * would assign the same characters in value position; a collection in key
+ * position is no member name and refuses at the load gate. Every binding
+ * document names "scalar/tag/key resolution" in its closed ordered set of load
+ * gates, so this refusal belongs here and not later at resolution.
+ *
+ * The test is over the raw text because js-yaml stringifies a collection key
+ * (`[a, b]` becomes `"a,b"`, `{a: b}` becomes `"[object Object]"`) before its
+ * value reaches any structural guard, and js-yaml 4 exposes no node-level hook
+ * to see the key's kind. The Go twin decides this from the key node directly.
+ * This is the gate the 3.2 lane already applied; it is shared here so that all
+ * four lanes refuse the same input at the same phase.
+ */
+export function assertScalarMappingKeys(text: string): void {
+  if (
+    /^\s*\?\s*[[{]/mu.test(text)
+    || /^\s*\?\s*(?:#.*)?\r?\n\s+[-?]\s/mu.test(text)
+    || /^\s*[[{].*[\]}]\s*:/mu.test(text)
+  ) {
+    throw new Error("OpenAPI YAML mapping key has no JSON object-member-name image");
+  }
 }
 
 /**

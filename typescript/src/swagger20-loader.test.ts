@@ -21,6 +21,20 @@ describe("native Swagger 2.0 load, reference, and selector lane", () => {
     })).rejects.toMatchObject({ code: "ERR_REFUSED" });
   });
 
+  it("takes a scalar mapping key as the member name it spells", async () => {
+    // A Swagger 2.0 artifact is itself a JSON object that YAML represents, so
+    // an unquoted 204: Responses key is the member name "204" whatever tag
+    // Core Schema resolution would assign the same characters in value
+    // position. Only a key that is no scalar at all refuses.
+    const loaded = await loadSwagger20({
+      content: 'swagger: "2.0"\ninfo: {title: t, version: \'1\'}\npaths:\n  /x:\n    get:\n      responses:\n        204:\n          description: ok\nx-vendor:\n  true: 1\n',
+    });
+    expect(loaded.document.swagger).toBe("2.0");
+    await expect(loadSwagger20({
+      content: 'swagger: "2.0"\ninfo: {title: t, version: \'1\'}\npaths: {}\nx-bad:\n  ? [a, b]\n  : value\n',
+    })).rejects.toThrow(/member-name image/u);
+  });
+
   it("rejects a multi-document YAML stream", async () => {
     await expect(loadSwagger20({ content: 'swagger: "2.0"\npaths: {}\n---\n{}\n' }))
       .rejects.toThrow(/exactly one YAML document/);
