@@ -74,6 +74,55 @@ func TestParameterConverterAndUndefinedCells(t *testing.T) {
 	}
 }
 
+// RFC 6570 §2.3's undefined set has three JSON images here, not one: JSON
+// null, a zero-member array and a zero-member object. All three take the
+// effective style's undefined cell, on both explode rows.
+func TestUndefinedValueSetIsThreeJSONImages(t *testing.T) {
+	esc := func(value string) string { return value }
+	for _, supplied := range []struct {
+		name  string
+		value any
+	}{
+		{"null", nil},
+		{"empty array", []any{}},
+		{"empty object", map[string]any{}},
+	} {
+		for _, explode := range []bool{false, true} {
+			prepared, err := prepareParameterStyleValue("q", supplied.value, openapi3.SerializationForm, nil)
+			if err != nil {
+				t.Fatalf("%s form: %v", supplied.name, err)
+			}
+			units, err := expandFormPairs("q", prepared, explode, esc)
+			if err != nil || len(units) != 1 || units[0] != "q=" {
+				t.Fatalf("%s form explode=%v: units=%q err=%v, want [q=]", supplied.name, explode, units, err)
+			}
+			prepared, err = prepareParameterStyleValue("p", supplied.value, openapi3.SerializationMatrix, nil)
+			if err != nil {
+				t.Fatalf("%s matrix: %v", supplied.name, err)
+			}
+			wire, err := expandMatrix("p", prepared, explode, esc)
+			if err != nil || wire != ";p" {
+				t.Fatalf("%s matrix explode=%v: wire=%q err=%v, want ;p", supplied.name, explode, wire, err)
+			}
+		}
+		// A style whose undefined cell is n/a refuses before dispatch.
+		for _, style := range []string{
+			openapi3.SerializationSpaceDelimited,
+			openapi3.SerializationPipeDelimited,
+			openapi3.SerializationDeepObject,
+		} {
+			if _, err := prepareParameterStyleValue("q", supplied.value, style, nil); err == nil ||
+				!strings.Contains(err.Error(), "undefined cell") {
+				t.Fatalf("%s style %s: err = %v, want an n/a undefined-cell refusal", supplied.name, style, err)
+			}
+		}
+	}
+	// The empty string is expressly NOT undefined.
+	if undefinedStyleValue("") {
+		t.Fatal("the empty string must not be an undefined value")
+	}
+}
+
 func TestParameterDelimiterHeaderAndCookieRefusals(t *testing.T) {
 	for _, testCase := range []struct {
 		style string

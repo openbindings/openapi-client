@@ -108,8 +108,21 @@ func (p *swagger20Parameter) serialize(value any, converter ParameterConverter, 
 	if err != nil {
 		return nil, err
 	}
-	if p.typeName != "array" && len(converted) == 1 && converted[0] == "" {
+	// A supplied array with zero members is an empty value under every
+	// collectionFormat, `multi` included: the four join formats join over no
+	// members and `multi` contributes one instance carrying no value, so a
+	// zero-member array never becomes indistinguishable from absence. Where
+	// the flag reaches -- `query` and `formData` -- it is the same empty value
+	// a supplied empty string is, and `emptyValueForm` selects its spelling.
+	// At `path` and `header` the flag is inapplicable and the join below
+	// substitutes zero characters (openbindings.openapi-2.0@1 §§8.1-8.2).
+	emptyArray := p.typeName == "array" && len(converted) == 0 &&
+		(p.in == Swagger20ParameterQuery || p.in == Swagger20ParameterFormData)
+	if emptyArray || (p.typeName != "array" && len(converted) == 1 && converted[0] == "") {
 		if !p.allowEmptyValue {
+			if emptyArray {
+				return nil, fmt.Errorf("parameter %q does not admit an empty value", p.name)
+			}
 			return nil, fmt.Errorf("parameter %q does not admit an empty string", p.name)
 		}
 		switch emptyForm {

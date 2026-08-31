@@ -35,6 +35,53 @@ describe("native Swagger 2.0 parameter execution", () => {
     expect(new Headers(init?.headers).get("X-Ready")).toBe("ready");
   });
 
+  // A supplied array with ZERO members is an empty value under every
+  // collectionFormat, `multi` included -- not an omission -- so it reaches the
+  // same emptyValueForm choice a supplied empty string does.
+  it("treats a zero-member array as an empty value under every collectionFormat", async () => {
+    for (const [collectionFormat, form, want] of [
+      ["csv", "name-only", "https://peer.example/pets?tags"],
+      ["csv", "empty", "https://peer.example/pets?tags="],
+      ["multi", "name-only", "https://peer.example/pets?tags"],
+      ["multi", "empty", "https://peer.example/pets?tags="],
+    ] as const) {
+      const fetchMock = vi.fn<typeof fetch>(async () => response204());
+      const prepared = await prepareSwagger20({
+        source: { content: {
+          swagger: "2.0",
+          paths: { "/pets": { get: {
+            parameters: [{ name: "tags", in: "query", type: "array", collectionFormat, allowEmptyValue: true, items: { type: "string" } }],
+            responses: { 204: { description: "empty" } },
+          } } },
+        } },
+        ref: "#/paths/~1pets/get",
+        server: "https://peer.example",
+        fetch: fetchMock,
+        emptyValueForm: form,
+      });
+      await prepared.execute({ parameters: { query: { tags: [] } } });
+      expect(fetchMock.mock.calls[0]?.[0]).toBe(want);
+    }
+  });
+
+  it("refuses a zero-member array without allowEmptyValue rather than dropping it", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => response204());
+    const prepared = await prepareSwagger20({
+      source: { content: {
+        swagger: "2.0",
+        paths: { "/pets": { get: {
+          parameters: [{ name: "tags", in: "query", type: "array", collectionFormat: "csv", items: { type: "string" } }],
+          responses: { 204: { description: "empty" } },
+        } } },
+      } },
+      ref: "#/paths/~1pets/get",
+      server: "https://peer.example",
+      fetch: fetchMock,
+    });
+    await expect(prepared.execute({ parameters: { query: { tags: [] } } })).rejects.toThrow(/empty value/u);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("preserves multi member order and structural delimiters", async () => {
     const fetchMock = vi.fn<typeof fetch>(async () => response204());
     const prepared = await prepareSwagger20({

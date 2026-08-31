@@ -22,6 +22,7 @@ import {
 import {
   convertParameterScalars,
   type OpenAPIParameterConverter,
+  isUndefinedStyleValue,
 } from "./params.js";
 
 interface PropertyMediaFacts {
@@ -411,9 +412,9 @@ function prepareBodyStyleValue(
   style: string,
   converter: OpenAPIParameterConverter | undefined,
 ): unknown {
-  if (value === null) {
+  if (isUndefinedStyleValue(value)) {
     if (["matrix", "label", "simple", "form"].includes(style)) return null;
-    throw new Error(`JSON null has n/a in style ${JSON.stringify(style)}'s undefined cell`);
+    throw new Error(`undefined value has n/a in style ${JSON.stringify(style)}'s undefined cell`);
   }
   const prepared = convertParameterScalars(value, converter);
   const delimiters = nonRFCStyleDelimiters(style);

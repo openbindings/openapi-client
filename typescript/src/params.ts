@@ -859,15 +859,32 @@ export function prepareSchemaParameterValue(
   return { value: engineValue, cookieEmits: false };
 }
 
+/**
+ * Reports whether a supplied JSON value is one of RFC 6570 §2.3's undefined
+ * values as this binding maps them: JSON null, an array with zero members, or
+ * an object with zero members. The empty string is expressly not undefined.
+ * All three take the effective style's `undefined` cell, which is the same on
+ * both explode rows (openbindings.openapi-3.0@1 §8.2, and its 3.1 and 3.2
+ * siblings).
+ */
+export function isUndefinedStyleValue(value: unknown): boolean {
+  if (value === null) return true;
+  if (Array.isArray(value)) return value.length === 0;
+  if (typeof value === "object" && value !== undefined) {
+    return Object.keys(value as Record<string, unknown>).length === 0;
+  }
+  return false;
+}
+
 function prepareStrictParameterStyleValue(
   name: string,
   value: unknown,
   style: string,
   converter: OpenAPIParameterConverter | undefined,
 ): unknown {
-  if (value === null) {
+  if (isUndefinedStyleValue(value)) {
     if (["matrix", "label", "simple", "form", "cookie"].includes(style)) return null;
-    throw new Error(`JSON null has n/a in style ${JSON.stringify(style)}'s undefined cell`);
+    throw new Error(`undefined value has n/a in style ${JSON.stringify(style)}'s undefined cell`);
   }
   const prepared = convertParameterScalars(value, converter);
   const delimiters = nonRFCStyleDelimiters(style);
