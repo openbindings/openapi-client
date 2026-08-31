@@ -69,13 +69,37 @@ func prepareParameterValueForEdition(parameter *openapi3.Parameter, value any, c
 	return prepared, false, nil
 }
 
-func prepareParameterStyleValue(name string, value any, style string, converter ParameterConverter) (any, error) {
+// undefinedStyleValue reports whether a supplied JSON value is one of RFC 6570
+// §2.3's undefined values as this binding maps them: JSON null, an array with
+// zero members, or an object with zero members. The empty string is expressly
+// not undefined.
+func undefinedStyleValue(value any) bool {
 	if value == nil {
+		return true
+	}
+	if arr, ok := asArray(value); ok {
+		return len(arr) == 0
+	}
+	if obj, ok := asObject(value); ok {
+		return len(obj) == 0
+	}
+	return false
+}
+
+func prepareParameterStyleValue(name string, value any, style string, converter ParameterConverter) (any, error) {
+	// RFC 6570 §2.3's undefined values, mapped onto this binding's supplied
+	// JSON values, are exactly three: JSON null, an array with zero members,
+	// and an object with zero members. All three take the effective style's
+	// `undefined` cell, which is the same on both explode rows, so they are
+	// normalised to one representation here and expanded once below
+	// (openbindings.openapi-3.0@1 §8.2; openbindings.openapi-3.1@1 §8.2;
+	// openbindings.openapi-3.2@1 §8.2).
+	if undefinedStyleValue(value) {
 		switch style {
 		case openapi3.SerializationMatrix, openapi3.SerializationLabel, openapi3.SerializationSimple, openapi3.SerializationForm, "cookie":
 			return nil, nil
 		default:
-			return nil, fmt.Errorf("JSON null has n/a in style %q's undefined cell", style)
+			return nil, fmt.Errorf("undefined value has n/a in style %q's undefined cell", style)
 		}
 	}
 	converted, err := convertParameterScalars(value, converter, false)

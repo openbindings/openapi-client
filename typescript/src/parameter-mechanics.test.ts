@@ -26,6 +26,33 @@ describe("OpenAPI parameter wire mechanics", () => {
     }, "safe\r\nInjected: yes", undefined)).toThrow(/invalid HTTP field byte/);
   });
 
+  // RFC 6570 §2.3's undefined set has three JSON images here, not one: JSON
+  // null, a zero-member array and a zero-member object. All three take the
+  // effective style's undefined cell, which is the same on both explode rows.
+  it("treats null, a zero-member array and a zero-member object alike as undefined", () => {
+    for (const supplied of [null, [], {}] as const) {
+      expect(prepareSchemaParameterValue(
+        { name: "q", in: "query", schema: { type: "array", items: { type: "string" } } },
+        supplied, undefined,
+      ).value).toBeNull();
+      expect(prepareSchemaParameterValue(
+        { name: "p", in: "path", required: true, style: "matrix", schema: { type: "array", items: { type: "string" } } },
+        supplied, undefined,
+      ).value).toBeNull();
+      // A style whose undefined cell is n/a refuses before dispatch.
+      for (const style of ["spaceDelimited", "pipeDelimited", "deepObject"] as const) {
+        expect(() => prepareSchemaParameterValue(
+          { name: "q", in: "query", style, schema: { type: "object" } },
+          supplied, undefined,
+        )).toThrow(/undefined cell/u);
+      }
+    }
+    // The empty string is expressly NOT undefined.
+    expect(prepareSchemaParameterValue(
+      { name: "q", in: "query", schema: { type: "string" } }, "", undefined,
+    ).value).toBe("");
+  });
+
   it("uses the public converter hook during native execution", async () => {
     const requests: Request[] = [];
     const prepared = await new OpenAPIEngine({ parameterConverter: () => "configured-seven" }).prepare({

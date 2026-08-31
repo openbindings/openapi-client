@@ -146,6 +146,62 @@ func TestSwagger20EmptyValueForms(t *testing.T) {
 	}
 }
 
+// A supplied array with ZERO members is an empty value under every
+// collectionFormat, `multi` included -- not an omission -- so it reaches the
+// same emptyValueForm choice a supplied empty string does.
+func TestSwagger20ZeroMemberArrayIsAnEmptyValue(t *testing.T) {
+	for _, testCase := range []struct {
+		name             string
+		collectionFormat string
+		form             Swagger20EmptyValueForm
+		want             string
+	}{
+		{name: "csv name-only", collectionFormat: "csv", form: Swagger20EmptyValueNameOnly, want: "https://peer.example/root/pets/x?tags"},
+		{name: "csv empty", collectionFormat: "csv", form: Swagger20EmptyValueEmpty, want: "https://peer.example/root/pets/x?tags="},
+		{name: "multi name-only", collectionFormat: "multi", form: Swagger20EmptyValueNameOnly, want: "https://peer.example/root/pets/x?tags"},
+		{name: "multi empty", collectionFormat: "multi", form: Swagger20EmptyValueEmpty, want: "https://peer.example/root/pets/x?tags="},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			transport := &swagger20CaptureTransport{}
+			prepared := prepareSwagger20TestOperation(t, `{
+  "swagger":"2.0","info":{"title":"empty array","version":"1"},
+  "paths":{"/pets/{id}":{"get":{"parameters":[
+    {"name":"id","in":"path","required":true,"type":"string"},
+    {"name":"tags","in":"query","type":"array","items":{"type":"string"},"collectionFormat":"`+testCase.collectionFormat+`","allowEmptyValue":true}
+  ],"responses":{"204":{"description":"ok"}}}}}
+}`, transport, func(options *Swagger20PrepareOptions) { options.EmptyValueForm = testCase.form })
+			if err := runSwagger20TestInput(t, prepared, Swagger20Input{Parameters: Swagger20Parameters{
+				Path: map[string]any{"id": "x"}, Query: map[string]any{"tags": []any{}},
+			}}); err != nil {
+				t.Fatal(err)
+			}
+			if got := transport.requests[0].URL.String(); got != testCase.want {
+				t.Fatalf("URL = %q, want %q", got, testCase.want)
+			}
+		})
+	}
+
+	// Without allowEmptyValue the same supplied value refuses before dispatch
+	// rather than vanishing.
+	transport := &swagger20CaptureTransport{}
+	prepared := prepareSwagger20TestOperation(t, `{
+  "swagger":"2.0","info":{"title":"empty array","version":"1"},
+  "paths":{"/pets/{id}":{"get":{"parameters":[
+    {"name":"id","in":"path","required":true,"type":"string"},
+    {"name":"tags","in":"query","type":"array","items":{"type":"string"},"collectionFormat":"csv"}
+  ],"responses":{"204":{"description":"ok"}}}}}
+}`, transport, nil)
+	err := runSwagger20TestInput(t, prepared, Swagger20Input{Parameters: Swagger20Parameters{
+		Path: map[string]any{"id": "x"}, Query: map[string]any{"tags": []any{}},
+	}})
+	if err == nil || !strings.Contains(err.Error(), "empty value") {
+		t.Fatalf("err = %v, want an empty-value refusal", err)
+	}
+	if len(transport.requests) != 0 {
+		t.Fatalf("dispatched %d requests, want 0", len(transport.requests))
+	}
+}
+
 func TestSwagger20ValueRefusalsPrecedeDispatch(t *testing.T) {
 	document := `{
   "swagger":"2.0","info":{"title":"refusal","version":"1"},

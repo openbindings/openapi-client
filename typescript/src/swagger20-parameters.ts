@@ -347,8 +347,20 @@ function serializeParameter(
     return [{ name: parameter.name, value: "", valuePresent: true, parameter, octets: canonicalBase64Bytes(value) }];
   }
   const converted = validateAndConvert(parameter, value, converter);
-  if (parameter.typeName !== "array" && converted[0] === "") {
-    if (!parameter.allowEmptyValue) throw new Error(`parameter ${JSON.stringify(parameter.name)} does not admit an empty string`);
+  // A supplied array with zero members is an empty value under every
+  // collectionFormat, `multi` included: the four join formats join over no
+  // members and `multi` contributes one instance carrying no value, so a
+  // zero-member array never becomes indistinguishable from absence. Where the
+  // flag reaches -- `query` and `formData` -- it is the same empty value a
+  // supplied empty string is, and `emptyValueForm` selects its spelling. At
+  // `path` and `header` the flag is inapplicable and the join below
+  // substitutes zero characters (openbindings.openapi-2.0@1 §§8.1-8.2).
+  const emptyArray = parameter.typeName === "array" && converted.length === 0
+    && (parameter.in === "query" || parameter.in === "formData");
+  if (emptyArray || (parameter.typeName !== "array" && converted[0] === "")) {
+    if (!parameter.allowEmptyValue) {
+      throw new Error(`parameter ${JSON.stringify(parameter.name)} does not admit an ${emptyArray ? "empty value" : "empty string"}`);
+    }
     if (emptyValueForm === "name-only") return [{ name: parameter.name, value: "", valuePresent: false, parameter }];
     if (emptyValueForm === "empty") return [{ name: parameter.name, value: "", valuePresent: true, parameter }];
     throw new Error(`parameter ${JSON.stringify(parameter.name)} requires emptyValueForm name-only or empty`);
