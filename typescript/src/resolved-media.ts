@@ -164,9 +164,15 @@ export function decodeBase64MultipartParts(body: BodyInit, names: readonly strin
     let decoded: string;
     try {
       decoded = atob(encoded);
-      if (btoa(decoded) !== encoded) continue;
     } catch {
-      continue;
+      // The raw-octet lane's caller boundary is canonical Base64; a string
+      // that does not decode refuses the whole invocation before dispatch
+      // rather than riding the wire undecoded
+      // (openbindings.openapi-3.1@1 / -3.2@1 SS9.2-9.3).
+      throw new Error(`multipart property ${JSON.stringify(name)} requires a canonical Base64 string`);
+    }
+    if (btoa(decoded) !== encoded) {
+      throw new Error(`multipart property ${JSON.stringify(name)} requires a canonical Base64 string`);
     }
     const headers = binary.slice(headerStart, bodyStart)
       .replace("\r\nContent-Transfer-Encoding: base64", "");
