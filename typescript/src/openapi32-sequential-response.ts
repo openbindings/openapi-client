@@ -242,12 +242,10 @@ async function streamMultipart(
   const limit = resolveDeliveryUnitLimit(args);
   try {
     await stream.readUntil(marker, 64 * 1024);
-    let suffix = await stream.readExact(2);
-    if (asciiText(suffix) === "--") {
+    if (await readBoundaryEnding(stream) === "close") {
       inv.closeOutput();
       return;
     }
-    if (asciiText(suffix) !== "\r\n") throw new Error("invalid initial multipart boundary");
     for (let index = 0; ; index += 1) {
       const headerBytes = await stream.readUntil(asciiBytes("\r\n\r\n"), 64 * 1024);
       const headers = parsePartHeaders(asciiText(headerBytes));
@@ -261,13 +259,10 @@ async function streamMultipart(
       const value = decodeSequentialPart(contentType, body, schema);
       if (!await emitSequentialValue(value, args, inv, metadata)) return;
 
-      suffix = await stream.readExact(2);
-      const ending = asciiText(suffix);
-      if (ending === "--") {
+      if (await readBoundaryEnding(stream, index) === "close") {
         inv.closeOutput();
         return;
       }
-      if (ending !== "\r\n") throw new Error(`invalid multipart boundary after item ${index}`);
     }
   } catch (error: unknown) {
     if (!inv.signal.aborted) failSequential(inv, `positional multipart response: ${errorMessage(error)}`);
@@ -275,6 +270,26 @@ async function streamMultipart(
   } finally {
     reader.releaseLock();
   }
+}
+
+
+// readBoundaryEnding consumes what follows a boundary delimiter: "--" closes
+// the stream, and otherwise optional linear whitespace precedes the CRLF.
+// RFC 2046 SS5.1.1 permits transport padding after the delimiter line, so the
+// comparison takes the boundary at the beginning of the line and does not
+// require an exact match of the entire candidate line
+// (openbindings.openapi-3.2@1 SS9.5). The Go twin inherits this from
+// mime/multipart.
+async function readBoundaryEnding(stream: MultipartByteReader, index?: number): Promise<"close" | "part"> {
+  const where = index === undefined ? "initial multipart boundary" : `multipart boundary after item ${index}`;
+  let byte = asciiText(await stream.readExact(1));
+  if (byte === "-") {
+    if (asciiText(await stream.readExact(1)) !== "-") throw new Error(`invalid ${where}`);
+    return "close";
+  }
+  while (byte === " " || byte === "\t") byte = asciiText(await stream.readExact(1));
+  if (byte === "\r" && asciiText(await stream.readExact(1)) === "\n") return "part";
+  throw new Error(`invalid ${where}`);
 }
 
 class MultipartByteReader {
