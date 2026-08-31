@@ -1030,16 +1030,8 @@ async function readEntry(
 }
 
 function parseOpenAPI32Text(text: string): unknown {
-  // js-yaml stringifies collection-valued YAML mapping keys before its value
-  // reaches the JSON-domain guard. Refuse those representation-only keys at
-  // the 3.2 lane's compatibility gate instead of admitting a changed image.
-  if (
-    /^\s*\?\s*[\[{]/mu.test(text)
-    || /^\s*\?\s*(?:#.*)?\r?\n\s+[-?]\s/mu.test(text)
-    || /^\s*[\[{].*[\]}]\s*:/mu.test(text)
-  ) {
-    throw new Error("OpenAPI YAML mapping key has no JSON object-member-name image");
-  }
+  // The collection-key gate moved into parseJSONOrYAML so that every lane
+  // refuses the same input at the same phase; this lane behaves as before.
   return parseJSONOrYAML(text);
 }
 

@@ -156,6 +156,20 @@ func decodeSwagger20YAMLDocument(data []byte) (*yaml3.Node, error) {
 	return &document, nil
 }
 
+// swagger20EffectiveNode follows alias nodes to the node they name, so that a
+// mapping key written as an alias is judged by the node it resolves to. The
+// bound is defensive: swagger20YAMLValue rejects cyclic alias graphs before a
+// key reaches here.
+func swagger20EffectiveNode(node *yaml3.Node) *yaml3.Node {
+	for hops := 0; hops < 100; hops++ {
+		if node == nil || node.Kind != yaml3.AliasNode {
+			return node
+		}
+		node = node.Alias
+	}
+	return nil
+}
+
 func swagger20YAMLValue(node *yaml3.Node, active map[*yaml3.Node]bool, memo map[*yaml3.Node]any, done map[*yaml3.Node]bool) (any, error) {
 	if node == nil {
 		return nil, fmt.Errorf("empty YAML node")
@@ -196,7 +210,18 @@ func swagger20YAMLValue(node *yaml3.Node, active map[*yaml3.Node]bool, memo map[
 			}
 			key, ok := keyValue.(string)
 			if !ok {
-				return nil, fmt.Errorf("mapping key at line %d is not a scalar string", node.Content[index].Line)
+				// A Swagger 2.0 artifact is itself a JSON object that YAML
+				// represents, so a scalar key is the JSON member name it
+				// spells whatever tag Core Schema resolution would assign the
+				// same characters in value position: an unquoted 200: key is
+				// the member name "200". Only a key that is no scalar at all,
+				// a sequence or a mapping in key position, is no member name
+				// and refuses here.
+				effective := swagger20EffectiveNode(node.Content[index])
+				if effective == nil || effective.Kind != yaml3.ScalarNode {
+					return nil, fmt.Errorf("mapping key at line %d is not a scalar string", node.Content[index].Line)
+				}
+				key = effective.Value
 			}
 			if _, duplicate := object[key]; duplicate {
 				return nil, fmt.Errorf("duplicate mapping key %q at line %d", key, node.Content[index].Line)

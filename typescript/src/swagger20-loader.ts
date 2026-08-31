@@ -1,4 +1,5 @@
 import { CORE_SCHEMA, loadAll } from "js-yaml";
+import { assertScalarMappingKeys } from "./util.js";
 import {
   Swagger20Document,
   isSwagger20Object,
@@ -94,6 +95,9 @@ export function parseSwagger20Resource(content: unknown): unknown {
   if (isSwagger20Object(content)) return cloneAndCheckJSONImage(content);
   if (content instanceof Uint8Array) content = new TextDecoder("utf-8", { fatal: true }).decode(content);
   if (typeof content !== "string") throw new Error("Swagger 2.0 content must be an object, string, or UTF-8 bytes");
+  // Outside the try: the key gate names its own refusal, and rewrapping it as
+  // a parse failure would hide which load gate refused.
+  assertScalarMappingKeys(content);
   const documents: unknown[] = [];
   try {
     loadAll(content, (document) => documents.push(document), {
