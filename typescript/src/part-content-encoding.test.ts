@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { buildRequestBody, buildURLEncodedBody, planRequestBodies } from "./media.js";
+import { buildRequestBody, buildURLEncodedBody, finalizeRequestBody, planRequestBodies } from "./media.js";
 import {
   buildResolvedMultipartBody,
   planResolvedRequestBodies,
@@ -16,7 +16,7 @@ import type { OpenAPIDocument, OpenAPIMediaType, OpenAPIOperation } from "./type
 // package's BUILT dist; changing it in one engine without the others fails
 // here.
 export const PART_CONTENT_ENCODING_CASES_DIGEST =
-  "7715dd10e63e4fa2865c354325e3d15af7800fb6768fc4d4e9b5d060b46dd030";
+  "0af069f3d6569ebb8750547ac53f07acae305057091a0a5c05a66617e58e2721";
 
 export interface PartContentEncodingCase {
   name: string;
@@ -208,14 +208,16 @@ describe("part content-encoding case table", () => {
   }
 
   // The one part header the shared table deliberately excludes, because it is
-  // not reachable through FormData: the wire body's own
-  // `multipartTransferEncodings` map, which the dispatch layer writes out as
-  // Content-Transfer-Encoding. [JSON Schema 2020-12] Section 8.3 derives the
-  // keyword from that header and conditions it on the instance being a string,
-  // so a declared non-string part carrying `contentEncoding` emits no such
-  // header even though it is now admitted. The Go twins pin the same rule in
-  // TestRevision3PartContentTransferEncoding.
-  it("emits Content-Transfer-Encoding only for a declared string part", async () => {
+  // not reachable through FormData: Content-Transfer-Encoding. R5 (ratified
+  // 2026-09-01) settles it for every declared type at once. OAS states the
+  // `contentEncoding` ⇄ Content-Transfer-Encoding relation as an equivalence
+  // describing what the declaration MEANS, not as an instruction to a sender,
+  // and RFC 7578 Section 4.7 — incorporated by all three 3.x documents — says
+  // "Senders SHOULD NOT generate any parts with a Content-Transfer-Encoding
+  // header field". So no part carries the field regardless of the declared
+  // type. Before R5 this lane emitted it and the Go twin did not; the ruling
+  // closed the divergence in the direction RFC 7578 requires.
+  it("never emits Content-Transfer-Encoding from contentEncoding", async () => {
     const doc = await loadOpenAPIDocument(undefined, {
       openapi: "3.1.1",
       info: { title: "content transfer encoding", version: "1.0.0" },
@@ -251,8 +253,14 @@ describe("part content-encoding case table", () => {
       bodySet: true,
       bodyValue: undefined,
       bodyFields: { text: "YWJj", count: 7, shape: { k: "v" }, many: ["YWJj"] },
-    }) as { multipartTransferEncodings?: Record<string, string> };
-    expect(wire.multipartTransferEncodings).toEqual({ text: "base64", many: "base64" });
+    });
+    const finalized = await finalizeRequestBody(wire);
+    const bytes = finalized.body instanceof Uint8Array
+      ? finalized.body
+      : new Uint8Array(await new Response(finalized.body as BodyInit).arrayBuffer());
+    const rendered = new TextDecoder().decode(bytes);
+    expect(rendered).toContain('name="text"');
+    expect(rendered.toLowerCase()).not.toContain("content-transfer-encoding");
   });
 
   it("lets contentEncoding change only the declared-string row", async () => {

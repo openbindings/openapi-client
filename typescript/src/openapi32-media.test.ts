@@ -64,7 +64,10 @@ describe("OpenAPI 3.2 request media", () => {
     const positionalBody = new TextDecoder().decode(positionalWire.body);
     expect(positionalBody).toContain("Content-Disposition: form-data; name=first");
     expect(positionalBody).toContain("Content-Disposition: form-data; name=rest");
-    expect(positionalBody).toContain("Content-Transfer-Encoding: base64");
+    // R5 (2026-09-01): `contentEncoding` never produces the field. OAS 3.2.0
+    // §4.15.4.2 states the equivalence descriptively and RFC 7578 §4.7 says
+    // senders SHOULD NOT generate a Content-Transfer-Encoding header field.
+    expect(positionalBody).not.toContain("Content-Transfer-Encoding");
     expect(positionalBody).toContain("X-Part: prefix");
 
     const nested: OpenAPIMediaType = {

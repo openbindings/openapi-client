@@ -332,7 +332,11 @@ export function routeEnvelope(
     );
     if (!mapping || !(mapping.field in envelope.value)) {
       if (parameter.in === "path") missingPath.push(parameter.name);
-      else if (options.openapiVersion === "3.2.0" && parameter.required === true) {
+      // R2 (2026-09-01): `required` means mandatory in every accepted edition
+      // and every document of the family incorporates the refusal;
+      // minimality-audit M9 briefly gated this to 3.2 and it was reversed
+      // as drift.
+      else if (parameter.required === true) {
         missingRequired.push(`${parameter.in}/${parameter.name}`);
       }
       continue;

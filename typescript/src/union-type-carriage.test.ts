@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildMultipartBody, buildURLEncodedBody, planRequestBodies } from "./media.js";
+import { buildMultipartBody, buildURLEncodedBody } from "./media.js";
+import { planResolvedRequestBodies, plansRequirePropertyMedia } from "./resolved-media.js";
 import { OPENAPI_PROFILE_FULL } from "./profile.js";
 import type { OpenAPIDocument, OpenAPIMediaType, OpenAPIOperation } from "./types.js";
 
@@ -135,17 +136,57 @@ async function decision(
   encoded: boolean,
 ): Promise<string> {
   const part = partSchema(base, encoded);
+  let plans;
   try {
-    planRequestBodies(operation(media, part), {
+    plans = planResolvedRequestBodies(operation(media, part), {
       profile: OPENAPI_PROFILE_FULL,
       openapiVersion: edition,
     });
   } catch {
     return "refused";
   }
+  // R4: a cell whose item-type default defines no serialization for the
+  // container is dispatchable once one `propertyMedia` choice is supplied.
+  // This table supplies none, so the cell is reported as the required choice.
+  if (plansRequirePropertyMedia(plans)) return "missing-required-choice";
   const value = await emission(edition, media, part, probeValue(base));
   const nulled = await emission(edition, media, part, null);
   return `admitted;value=${value};null=${nulled}`;
+}
+
+/**
+ * The boolean-literal probe, kept off `partSchema` on purpose: that helper
+ * spreads its argument into an object, which turns `true` into `{}` and loses
+ * the very declaration this probe is about.
+ */
+async function booleanLiteralDecision(edition: string, media: string): Promise<string> {
+  const bodyMedia = { schema: { type: "object", properties: { p: true } } } as unknown as OpenAPIMediaType;
+  const op = { requestBody: { required: true, content: { [media]: bodyMedia } } } as OpenAPIOperation;
+  let plans;
+  try {
+    plans = planResolvedRequestBodies(op, { profile: OPENAPI_PROFILE_FULL, openapiVersion: edition });
+  } catch {
+    return "refused";
+  }
+  if (plansRequirePropertyMedia(plans)) return "missing-required-choice";
+  const doc: OpenAPIDocument = { openapi: edition };
+  const render = async (value: unknown): Promise<string> => {
+    try {
+      if (media === "application/x-www-form-urlencoded") {
+        const encoded = buildURLEncodedBody(bodyMedia, { p: value }, true, edition, false);
+        return encoded === "" ? "elided" : encoded;
+      }
+      const form = buildMultipartBody(doc, bodyMedia, { p: value }, true, false);
+      const parts: string[] = [];
+      for (const entry of form.getAll("p")) {
+        parts.push(typeof entry === "string" ? `text/plain:${entry}` : `${entry.type}:${await entry.text()}`);
+      }
+      return parts.length === 0 ? "elided" : parts.join("&");
+    } catch {
+      return "error";
+    }
+  };
+  return `admitted;value=${await render("x")};null=${await render(null)}`;
 }
 
 describe("union-type carriage — the twin case table", () => {
@@ -168,14 +209,28 @@ describe("union-type carriage — the twin case table", () => {
   // The literal boolean `true` and its structural encoding are the same
   // unconstrained declaration; the shared table carries the structural
   // spelling because that is the only one the Go Schema Object can hold.
-  it("reads the literal boolean true as the structural spelling does", async () => {
+  // Repaired 2026-09-01. This assertion previously read a boolean `true`
+  // through `partSchema`, whose object spread turns `true` into `{}` — so it
+  // compared a typeless object schema against the structural spelling and
+  // never exercised a boolean literal at all. It now passes the literal
+  // through and asserts what the documents say about it: on the 3.0 line a
+  // boolean-literal Schema Object is outside the closed 3.0 dialect and
+  // refuses on both lanes; on the 3.1 line it is the always-true schema, so a
+  // multipart part is typeless and takes the application/octet-stream default
+  // while the urlencoded lane, which has no octet boundary, refuses.
+  it("reads a boolean-literal property under each line's own dialect", async () => {
+    const got: Record<string, string> = {};
     for (const edition of EDITIONS) {
       for (const media of MEDIAS) {
-        const literal = await decision(edition, media, true as unknown as Record<string, unknown>, false);
-        const structural = await decision(edition, media, { anyOf: [{}, { not: {} }] }, false);
-        expect(literal).toBe(structural);
+        got[`${edition}|${media}`] = await booleanLiteralDecision(edition, media);
       }
     }
+    expect(got).toEqual({
+      "3.0.4|multipart/form-data": "refused",
+      "3.0.4|application/x-www-form-urlencoded": "refused",
+      "3.1.2|multipart/form-data": "admitted;value=error;null=error",
+      "3.1.2|application/x-www-form-urlencoded": "refused",
+    });
   });
 });
 
@@ -193,6 +248,28 @@ describe("union-type carriage — the twin case table", () => {
 // column of the `number, integer, or boolean`, `object` and `array` rows —
 // "the presence or value of contentEncoding is irrelevant", in the table's own
 // words. Each of the five now reads exactly as its |plain twin.
+  // R4 (ratified 2026-09-01): TWO cells moved from admitted to
+  // missing-required-choice — 3.1.2|urlencoded|array-null on both spellings.
+  // A `type: ["array", "null"]` property collapses to `array`, and on the
+  // content lane the whole array rides one field. The editions derive an
+  // array's default from its ITEMS, here `text/plain`, under which no edition
+  // states an array's bytes; the prior `application/json` emission read the
+  // default off the container instead. The remedy is the §9.3 `propertyMedia`
+  // choice, which this table supplies for no cell. The multipart sibling is
+  // unaffected: there the array expands into one part per item.
+  //
+  // NINE cells were corrected on 2026-09-01. The table calls itself shared
+  // byte-for-byte with the Go twins, and it was not: this copy carried
+  // `refused` where the Go copy carried `missing-required-choice` (3.0.4
+  // multipart typeless, which the 3.0 document's section 9.3 configuration
+  // point makes a required choice) and `admitted;value=error` (3.1.2 multipart
+  // typeless, where the octet-stream default admits the source and the probe
+  // value fails the canonical-Base64 boundary at emission). The divergence
+  // survived because this runner planned through the BASE planner, which does
+  // not carry the resolved view's propertyMedia facts, so the engine agreed
+  // with the wrong expectation. The runner now plans through
+  // planResolvedRequestBodies, as its Go twins always did, and the engines
+  // agree on all 112 cells.
 const EXPECTED: Record<string, string> = {
   "3.0.4|application/x-www-form-urlencoded|absent-type|contentEncoding": "refused",
   "3.0.4|application/x-www-form-urlencoded|absent-type|plain": "refused",
@@ -222,8 +299,8 @@ const EXPECTED: Record<string, string> = {
   "3.0.4|application/x-www-form-urlencoded|string-object|plain": "refused",
   "3.0.4|application/x-www-form-urlencoded|string|contentEncoding": "admitted;value=p=x;null=p=",
   "3.0.4|application/x-www-form-urlencoded|string|plain": "admitted;value=p=x;null=p=",
-  "3.0.4|multipart/form-data|absent-type|contentEncoding": "refused",
-  "3.0.4|multipart/form-data|absent-type|plain": "refused",
+  "3.0.4|multipart/form-data|absent-type|contentEncoding": "missing-required-choice",
+  "3.0.4|multipart/form-data|absent-type|plain": "missing-required-choice",
   "3.0.4|multipart/form-data|array-null|contentEncoding": "refused",
   "3.0.4|multipart/form-data|array-null|plain": "refused",
   "3.0.4|multipart/form-data|boolean-true|contentEncoding": "refused",
@@ -232,8 +309,8 @@ const EXPECTED: Record<string, string> = {
   "3.0.4|multipart/form-data|empty-array|plain": "refused",
   "3.0.4|multipart/form-data|integer-null|contentEncoding": "refused",
   "3.0.4|multipart/form-data|integer-null|plain": "refused",
-  "3.0.4|multipart/form-data|memberless|contentEncoding": "refused",
-  "3.0.4|multipart/form-data|memberless|plain": "refused",
+  "3.0.4|multipart/form-data|memberless|contentEncoding": "missing-required-choice",
+  "3.0.4|multipart/form-data|memberless|plain": "missing-required-choice",
   "3.0.4|multipart/form-data|null-only|contentEncoding": "refused",
   "3.0.4|multipart/form-data|null-only|plain": "refused",
   "3.0.4|multipart/form-data|null-string|contentEncoding": "refused",
@@ -252,8 +329,8 @@ const EXPECTED: Record<string, string> = {
   "3.0.4|multipart/form-data|string|plain": "admitted;value=text/plain:x;null=text/plain:",
   "3.1.2|application/x-www-form-urlencoded|absent-type|contentEncoding": "refused",
   "3.1.2|application/x-www-form-urlencoded|absent-type|plain": "refused",
-  "3.1.2|application/x-www-form-urlencoded|array-null|contentEncoding": "admitted;value=p=%5B%22a%22%5D;null=elided",
-  "3.1.2|application/x-www-form-urlencoded|array-null|plain": "admitted;value=p=%5B%22a%22%5D;null=elided",
+  "3.1.2|application/x-www-form-urlencoded|array-null|contentEncoding": "missing-required-choice",
+  "3.1.2|application/x-www-form-urlencoded|array-null|plain": "missing-required-choice",
   "3.1.2|application/x-www-form-urlencoded|boolean-true|contentEncoding": "refused",
   "3.1.2|application/x-www-form-urlencoded|boolean-true|plain": "refused",
   "3.1.2|application/x-www-form-urlencoded|empty-array|contentEncoding": "refused",
@@ -278,18 +355,28 @@ const EXPECTED: Record<string, string> = {
   "3.1.2|application/x-www-form-urlencoded|string-object|plain": "refused",
   "3.1.2|application/x-www-form-urlencoded|string|contentEncoding": "admitted;value=p=x;null=error",
   "3.1.2|application/x-www-form-urlencoded|string|plain": "admitted;value=p=x;null=p=",
-  "3.1.2|multipart/form-data|absent-type|contentEncoding": "refused",
-  "3.1.2|multipart/form-data|absent-type|plain": "refused",
+  "3.1.2|multipart/form-data|absent-type|contentEncoding": "admitted;value=error;null=error",
+  "3.1.2|multipart/form-data|absent-type|plain": "admitted;value=error;null=error",
   "3.1.2|multipart/form-data|array-null|contentEncoding": "admitted;value=text/plain:a;null=elided",
   "3.1.2|multipart/form-data|array-null|plain": "admitted;value=text/plain:a;null=elided",
   "3.1.2|multipart/form-data|boolean-true|contentEncoding": "refused",
+  // KNOWN TWIN DIVERGENCE, left open deliberately on 2026-09-01. This engine
+  // refuses; the Go engines admit and reach an emission error. Section 5.2 of
+  // both 3.x documents skips only a branch "whose resolved declaration
+  // declares only `null`" and supplies a single resolved member "only when
+  // exactly one candidate remains", and `{}` and `{not: {}}` are two
+  // candidates, so refusing is the reading the documents state. The Go side is
+  // also internally inconsistent here: its |contentEncoding twin refuses,
+  // which its own header rule says cannot differ. Fixing it touches Go's
+  // choice-resolution for every ambiguous branch and is queued as its own
+  // change rather than folded into R4.
   "3.1.2|multipart/form-data|boolean-true|plain": "refused",
   "3.1.2|multipart/form-data|empty-array|contentEncoding": "refused",
   "3.1.2|multipart/form-data|empty-array|plain": "refused",
   "3.1.2|multipart/form-data|integer-null|contentEncoding": "admitted;value=text/plain:7;null=elided",
   "3.1.2|multipart/form-data|integer-null|plain": "admitted;value=text/plain:7;null=elided",
-  "3.1.2|multipart/form-data|memberless|contentEncoding": "refused",
-  "3.1.2|multipart/form-data|memberless|plain": "refused",
+  "3.1.2|multipart/form-data|memberless|contentEncoding": "admitted;value=error;null=error",
+  "3.1.2|multipart/form-data|memberless|plain": "admitted;value=error;null=error",
   "3.1.2|multipart/form-data|null-only|contentEncoding": "refused",
   "3.1.2|multipart/form-data|null-only|plain": "refused",
   "3.1.2|multipart/form-data|null-string|contentEncoding": "admitted;value=application/octet-stream:x;null=elided",

@@ -1,13 +1,14 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { buildURLEncodedBody, planRequestBodies } from "./media.js";
+import { buildURLEncodedBody } from "./media.js";
+import { planResolvedRequestBodies, plansRequirePropertyMedia } from "./resolved-media.js";
 import { OPENAPI_PROFILE_FULL } from "./profile.js";
 import type { OpenAPIMediaType, OpenAPIOperation } from "./types.js";
 
 // The identical file is executed by openbindings-go/formats/openapi and by
 // openapi-client/go, and carried by openbindings-ts's openapi package.
-const CASES_DIGEST = "25b8052eabb45a8934f09ce5c61be95fcaf736a9d4cde6638a8d6bb918d690c0";
+const CASES_DIGEST = "e2e3e7588fb319147e51784215b61487ff121f33bb343d915e409acaa0be71e7";
 
 const EDITIONS = ["3.0.0", "3.0.1", "3.0.2", "3.0.3", "3.0.4", "3.1.0", "3.1.1", "3.1.2"];
 const SHAPES = [
@@ -64,11 +65,17 @@ function operation(c: ContentPathCase): OpenAPIOperation {
 // Refusal messages are each implementation's own surface, so only the decision
 // itself crosses the twin boundary.
 function decision(c: ContentPathCase): string {
+  let plans;
   try {
-    planRequestBodies(operation(c), { profile: OPENAPI_PROFILE_FULL, openapiVersion: c.openapi });
+    plans = planResolvedRequestBodies(operation(c), { profile: OPENAPI_PROFILE_FULL, openapiVersion: c.openapi });
   } catch {
     return "refused";
   }
+  // R4: a cell whose item-type default defines no serialization for the
+  // container is dispatchable once one `propertyMedia` choice is supplied.
+  // This table supplies none, so the cell is reported as the required choice
+  // rather than collapsed into an undifferentiated build error.
+  if (plansRequirePropertyMedia(plans)) return "missing-required-choice";
   let encoded: string;
   try {
     encoded = buildURLEncodedBody(bodyMedia(c), { p: c.value }, true, c.openapi, false);

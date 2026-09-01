@@ -12,7 +12,7 @@ import type { OpenAPIDocument, OpenAPIMediaType, OpenAPIOperation } from "./type
 
 // The identical file is executed by openbindings-go/formats/openapi and by
 // openapi-client/go; changing it in one engine without the others fails here.
-const CASES_DIGEST = "6ebde01f9b2dac385b1e123b43592dbb79177e2051f3bb75cbedef7edd64fd87";
+const CASES_DIGEST = "2ae1e97577456cb1fc52e0b7df64feb8e2c7290ddf3323e335ff0ca2d2fc9fdc";
 
 interface PartDefaultCase {
   name: string;

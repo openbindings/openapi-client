@@ -5,6 +5,7 @@ import {
   parseMediaRange,
   parseMediaType,
   planRequestBodies as planRequestBodiesFromClient,
+  urlencodedArrayNeedsPropertyMedia,
   type BodyPlan,
   type ParsedMediaRange,
   type ParsedMediaType,
@@ -302,6 +303,24 @@ export function selectPropertyMedia(
   return wanted.canonical;
 }
 
+/**
+ * The authored schema object for one property, as the emission path sees it.
+ * `resolveDeclaration`'s view answers questions about a declaration; the
+ * default-`contentType` table is written against the schema object itself, so
+ * the R4 predicate is given the same input the serializer will read.
+ */
+function authoredPropertySchema(
+  root: SchemaDeclaration,
+  name: string,
+  oas30: boolean,
+): Record<string, unknown> | null {
+  for (const slot of resolvedPropertySlots(root, name, oas30)) {
+    const value = asRecord(slot.value);
+    if (value !== null) return value;
+  }
+  return null;
+}
+
 function requestPropertyMediaFacts(
   operation: OpenAPIOperation,
   oas30: boolean,
@@ -339,7 +358,16 @@ function requestPropertyMediaFacts(
       const contentType = typeof enc?.contentType === "string" ? enc.contentType : "";
       const contentPath = !encodingUsesStyleControls(enc);
       const mediaChoice = contentPath && contentType !== "" && !isSingleConcreteMediaType(contentType);
-      if ((oas30 && multipart && typeless) || mediaChoice) {
+      // R4: on the urlencoded content lane an array rides one field whole, so
+      // an item-derived default that defines no container serialization makes
+      // the property need a choice. The requirement is reported here, before
+      // dispatch, so a caller sees it in the same preflight as every other
+      // `propertyMedia` requirement rather than only on emission.
+      const compoundDefault = urlencoded
+        && contentPath
+        && contentType === ""
+        && urlencodedArrayNeedsPropertyMedia(authoredPropertySchema(root, name, oas30), oas30);
+      if ((oas30 && multipart && typeless) || mediaChoice || compoundDefault) {
         required.push(name);
         declarations[name] = contentType;
       }

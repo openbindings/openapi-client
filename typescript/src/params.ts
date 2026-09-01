@@ -227,7 +227,11 @@ export function routeInput(
     if (!p?.name || !p?.in) continue;
     if (!(p.name in input)) {
       if (p.in === "path") missingPath.push(p.name);
-      else if (options.openapiVersion === "3.2.0" && p.required === true) missingRequired.push(`${p.in}/${p.name}`);
+      // R2 (2026-09-01): `required` means mandatory in every accepted edition
+      // and every document of the family incorporates the refusal;
+      // minimality-audit M9 briefly gated this to 3.2 and the gate was
+      // reversed as drift.
+      else if (p.required === true) missingRequired.push(`${p.in}/${p.name}`);
       continue;
     }
     consumed.add(p.name);
@@ -597,11 +601,22 @@ export function routeParameter(
         );
         break;
       case "query":
+        // The CONTENT-form lane's byte rule is its own pin and is
+        // unconditional: "Percent-encoding a content-form parameter leaves RFC
+        // 3986 unreserved bytes literal and encodes every other UTF-8 byte as
+        // uppercase `%HH`" (§8.3 in all three 3.x documents). `allowReserved`
+        // is a `schema`-path control — Appendix C's reserved expansion and the
+        // C.3 manual-construction rule govern "a query mixing regular form
+        // EXPANSION" — and does not reach this lane. Honoring it here leaked
+        // the whole reserved set on every edition. The `formBody` argument is
+        // likewise unconditional: C.4.2's pre-encoding set is stated
+        // identically by all three documents, and gating it to 3.2 truncated
+        // data on 3.0 and 3.1.
         r.queryUnits.push(
-          queryEscape(name, false, revision3, openapi32) + "=" + (
+          queryEscape(name, false, revision3, true) + "=" + (
             serialized.bytes
-              ? percentEncodeBytes(serialized.bytes, allowReserved)
-              : queryEscape(serialized.text, allowReserved, revision3, openapi32)
+              ? percentEncodeBytes(serialized.bytes, false)
+              : queryEscape(serialized.text, false, revision3, true)
           ),
         );
         r.populated.query.add(name);
@@ -612,7 +627,11 @@ export function routeParameter(
         break;
       case "cookie":
         r.cookieUnits.push(name + "=" + (serialized.bytes ? bytesAsLatin1(serialized.bytes) : serialized.text));
-        if (openapi32) validateOpenAPI32CookieUnits(r.cookieUnits.slice(-1));
+        // A content-form cookie parameter carries its media-type
+        // serialization; §8.2's RFC 6570 rule governs the `schema` path only.
+        // The RFC 6265 cookie-value check belongs to `style: cookie`, whose
+        // contract is that values "MUST arrive already escaped".
+        if (openapi32 && (p.style ?? "") === "cookie") validateOpenAPI32CookieUnits(r.cookieUnits.slice(-1));
         r.populated.cookie.add(name);
         break;
       default:
@@ -641,9 +660,16 @@ export function routeParameter(
     case "query": {
       let units: string[];
       try {
+        // The last argument is Appendix C.4.2's pre-encoding set — `[`, `]`,
+        // `#`, `&`, `=`, `+` percent-encoded even under `allowReserved`. All
+        // three 3.x documents state it identically ("A query mixing regular
+        // form expansion with `allowReserved: true` MUST be constructed
+        // manually per parameter…"), so it is not a 3.2 addition. Passing
+        // false on 3.0/3.1 silently truncated data: a supplied "a#b" left the
+        // engine as "a", because the literal "#" made the rest a fragment.
         units = openapi32
           ? serializeOpenAPI32QueryValue(name, engineValue, style, explode, allowReserved)
-          : serializeQueryValue(name, engineValue, style, explode, allowReserved, revision3);
+          : serializeQueryValue(name, engineValue, style, explode, allowReserved, revision3, true, true);
       } catch (e) {
         throw new Error(`query parameter "${name}": ${(e as Error).message}`, { cause: e });
       }
@@ -1074,6 +1100,13 @@ export function serializeQueryValue(
   allowReserved: boolean,
   revision3 = false,
   formBody = false,
+  // Whether the non-RFC styles' STRUCTURAL delimiters ride percent-encoded.
+  // Separate from `formBody` on purpose, and defaulted off: the rule is a URI
+  // requirement — Appendix E says the delimiters "all MUST be percent-encoded
+  // to comply with [RFC3986]" — and a urlencoded BODY is not a URI. The Go
+  // twin passes the same two flags independently, `true, false` on its body
+  // paths.
+  encodeStyleDelimiters = false,
 ): string[] {
   const n = queryEscape(name, false, revision3, formBody);
   const esc: Escaper = (s) => queryEscape(s, allowReserved, revision3, formBody);
@@ -1087,14 +1120,27 @@ export function serializeQueryValue(
     case "pipeDelimited":
       if (explode) throw new Error("style pipeDelimited is defined only with explode=false");
       if (!asArray(value)) throw new Error("style pipeDelimited is defined for arrays only");
-      return expandDelimited(n, value, false, "|", esc);
+      // The non-RFC styles' structural delimiters are percent-encoded on the
+      // governed lane: "For `spaceDelimited`, `pipeDelimited`, and
+      // `deepObject`, the exact bytes are the corresponding OAS Style
+      // Examples: delimiters and deep-object brackets are percent-encoded"
+      // (§8.2 in all three 3.x documents, `[incorporated]` on the 3.2 line
+      // straight from the Style Examples). `spaceDelimited` beside this
+      // already wrote `%20` unconditionally; the pipe and the brackets were
+      // left literal on every lane, which is the same rule read two ways in
+      // one switch. The switch is the Go twin's encodeStyleDelimiters, which
+      // is a parameter there rather than a constant, so the base profile's
+      // bytes are unchanged.
+      return expandDelimited(n, value, false, encodeStyleDelimiters ? "%7C" : "|", esc);
     case "deepObject": {
       if (!explode) throw new Error("style deepObject is defined only with explode=true");
       const obj = asObject(value);
       if (!obj) {
         throw new Error(`style deepObject is defined for objects only, got ${typeof value}`);
       }
-      return objectPairs(obj).map(([k, v]) => `${n}[${queryEscape(k, false, revision3, formBody)}]=${esc(v)}`);
+      const [leftBracket, rightBracket] = encodeStyleDelimiters ? ["%5B", "%5D"] : ["[", "]"];
+      return objectPairs(obj).map(([k, v]) =>
+        `${n}${leftBracket}${queryEscape(k, false, revision3, formBody)}${rightBracket}=${esc(v)}`);
     }
     default:
       throw new Error(`style "${style}" is not defined for query parameters`);
@@ -1153,16 +1199,34 @@ export function serializeMultipartValue(
  * header's own pair separator rather than form's "&", which has no meaning
  * inside a Cookie header.
  */
+/**
+ * The `form` style PERCENT-ENCODES, on every accepted edition. This function
+ * previously used the identity escaper, on the ground that the OAS defines no
+ * cookie escaping — which is the sentence `openbindings.openapi-3.1@1` §8.2
+ * was written to refute: "No accepted edition extends that exemption to
+ * cookies, and this specification does not invent one: a declared cookie
+ * parameter serialized on the `schema` path is percent-encoded by ordinary RFC
+ * 6570 expansion, because `allowReserved` is valid only for query parameters
+ * and no cookie-specific exemption exists." It disposes of the Appendix D
+ * remark this code was reading as a rule: that remark is "advice to artifact
+ * authors rather than a serialization rule". Unencoded, a supplied ";" went
+ * straight into the Cookie header and split one contribution into several.
+ *
+ * OAS 3.2's `style: cookie` is the one exemption, and it belongs to that
+ * style rather than to the destination; serializeOpenAPI32CookieValue carries
+ * it.
+ */
 export function serializeCookieValue(
   name: string,
   value: unknown,
   style: string,
   explode: boolean,
+  escape: (raw: string) => string = (raw) => queryEscape(raw, false, true),
 ): string[] {
   if (style !== "form") {
     throw new Error(`style "${style}" is not defined for cookie parameters`);
   }
-  return expandFormPairs(name, value, explode, identity);
+  return expandFormPairs(name, value, explode, escape);
 }
 
 /**

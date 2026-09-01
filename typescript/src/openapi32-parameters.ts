@@ -164,20 +164,13 @@ export function serializeOpenAPI32QueryValue(
   allowReserved: boolean,
 ): string[] {
   const effectiveExplode = style === "deepObject" ? true : explode;
-  const units = serializeQueryValue(
-    name,
-    value,
-    style,
-    effectiveExplode,
-    allowReserved,
-    true,
-    true,
-  );
-  if (style === "pipeDelimited") return units.map((unit) => unit.replaceAll("|", "%7C"));
-  if (style === "deepObject") {
-    return units.map((unit) => unit.replaceAll("[", "%5B").replaceAll("]", "%5D"));
-  }
-  return units;
+  // The last argument is the style-delimiter encoding, which this function
+  // previously applied as a post-process string replacement over the finished
+  // units. Doing it in the serializer instead is what let the same rule reach
+  // the 3.0 and 3.1 lanes, which the replacement never did — and it removes a
+  // pass that could not tell a structural delimiter from one that a value
+  // legitimately contained.
+  return serializeQueryValue(name, value, style, effectiveExplode, allowReserved, true, true, true);
 }
 
 /** Serializes the 3.2 RFC 6265 `cookie` style as one or more cookie pairs. */
@@ -190,9 +183,20 @@ export function serializeOpenAPI32CookieValue(
   if (style !== "form" && style !== "cookie") {
     throw new Error(`style ${JSON.stringify(style)} is not defined for cookie parameters`);
   }
-  const units = serializeCookieValue(name, value, "form", explode);
-  validateOpenAPI32CookieUnits(units);
-  return units;
+  // `style: cookie` is 3.2's own: it "follows RFC 6265 Cookie syntax:
+  // contributions preserve exact names and values, use `; ` between pairs, and
+  // apply no percent-encoding or other escaping; values needing escaping MUST
+  // arrive already escaped" (§8.2). Because it escapes nothing, the caller's
+  // value has to BE a cookie-value, which is what the check below is for. The
+  // `form` style on this same edition percent-encodes like every other line,
+  // and a percent-encoded contribution is a cookie-value by construction, so
+  // the check does not apply to it.
+  if (style === "cookie") {
+    const units = serializeCookieValue(name, value, "form", explode, (raw) => raw);
+    validateOpenAPI32CookieUnits(units);
+    return units;
+  }
+  return serializeCookieValue(name, value, "form", explode);
 }
 
 /** Serializes the sole querystring value as the complete query component. */
