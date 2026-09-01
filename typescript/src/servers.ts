@@ -311,6 +311,28 @@ export function validateCompletedOpenAPIURL(raw: string): void {
       { cause: error },
     );
   }
+  // The completed target's scheme. Every 3.x document states this and none of
+  // them was implemented: `openbindings.openapi-3.0@1` §10 and
+  // `openbindings.openapi-3.2@1` §10 — "A completed target whose scheme is not
+  // `http` or `https` refuses before dispatch, because no incorporated
+  // authority defines that scheme's HTTP-semantics mapping" — and
+  // `openbindings.openapi-3.1@1` §10, which states the same restriction as a
+  // static exclusion of the Server alternative. Nothing here dispatched:
+  // `ftp://`, `file://` and `ws://` all reached the transport on all three
+  // lines. The check lives at this shared completion point because that is
+  // where the scheme is finally decided, after a `server` choice or a
+  // consumer-configured URL has had its say.
+  //
+  // The refusal is what all three documents agree forbids — no bytes on a
+  // scheme with no defined mapping. Whether 3.1's stronger STATIC exclusion
+  // should also remove the target from synthesis is a sibling divergence left
+  // open rather than guessed here.
+  const scheme = completed.protocol.replace(/:$/, "").toLowerCase();
+  if (scheme !== "http" && scheme !== "https") {
+    throw new Error(
+      `completed OpenAPI target scheme ${JSON.stringify(scheme)} is not http or https; no incorporated authority defines its HTTP-semantics mapping`,
+    );
+  }
   for (const [name, component] of [
     ["path", completed.pathname],
     ["query", completed.search.slice(1)],

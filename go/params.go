@@ -455,9 +455,17 @@ func routeParameterWithOptions(r *routedInput, p *openapi3.Parameter, value any,
 			}
 			r.resolvedPath = strings.ReplaceAll(r.resolvedPath, "{"+p.Name+"}", escaped)
 		case openapi3.ParameterInQuery:
+			// This is the CONTENT-form lane, whose byte rule is its own pin and
+			// is unconditional: "Percent-encoding a content-form parameter
+			// leaves RFC 3986 unreserved bytes literal and encodes every other
+			// UTF-8 byte as uppercase `%HH`" (§8.3 in all three 3.x documents).
+			// `allowReserved` is a `schema`-path control -- Appendix C's
+			// reserved expansion and the C.3 manual-construction rule govern
+			// "a query mixing regular form EXPANSION" -- and it does not reach
+			// this lane. Honoring it here leaked the whole reserved set:
+			// a supplied ":/?@$,;" rode literally on every edition.
 			if hasMediaFidelity(bindingSpec) {
-				querySafe := strings.HasPrefix(options.edition, "3.2.")
-				r.queryUnits = append(r.queryUnits, revision3URIEscape(p.Name, false, querySafe)+"="+revision3URIEscape(serialized, p.AllowReserved, querySafe))
+				r.queryUnits = append(r.queryUnits, revision3URIEscape(p.Name, false, true)+"="+revision3URIEscape(serialized, false, true))
 			} else {
 				r.queryUnits = append(r.queryUnits, queryEscape(p.Name, false)+"="+queryEscape(serialized, p.AllowReserved))
 			}
@@ -494,7 +502,9 @@ func routeParameterWithOptions(r *routedInput, p *openapi3.Parameter, value any,
 		}
 		r.resolvedPath = strings.ReplaceAll(r.resolvedPath, "{"+p.Name+"}", expanded)
 	case openapi3.ParameterInQuery:
-		querySafe := strings.HasPrefix(options.edition, "3.2.")
+		// Appendix C.4.2's pre-encoding set, stated identically by all three
+		// 3.x documents. See the note on the other call site.
+		const querySafe = true
 		units, err := serializeQueryValueForRevision(p.Name, value, sm.Style, sm.Explode, p.AllowReserved, bindingSpec, querySafe, querySafe)
 		if err != nil {
 			return fmt.Errorf("query parameter %q: %w", p.Name, err)
@@ -513,7 +523,13 @@ func routeParameterWithOptions(r *routedInput, p *openapi3.Parameter, value any,
 		if err != nil {
 			return fmt.Errorf("cookie parameter %q: %w", p.Name, err)
 		}
-		if strings.HasPrefix(options.edition, "3.2.") {
+		// The RFC 6265 cookie-value check belongs to `style: cookie`, whose
+		// contract is that values "MUST arrive already escaped" -- so it is
+		// the caller's value that has to be a cookie-value. A form-style
+		// contribution is percent-encoded above and is always one by
+		// construction, so applying the check to every 3.2 cookie parameter
+		// refused values the edition serializes perfectly well.
+		if sm.Style == "cookie" {
 			if err := validateOpenAPI32CookieUnits(units); err != nil {
 				return fmt.Errorf("cookie parameter %q: %w", p.Name, err)
 			}
@@ -774,18 +790,41 @@ func revision3URIEscape(value string, allowReserved, formSafe bool) string {
 	return out.String()
 }
 
-// serializeCookieValue expands one cookie parameter (form style only) into
-// raw name=value units, which channel assembly (openbindings.openapi-3.0@1
-// §11; openbindings.openapi-3.1@1 §11) joins into
-// the single Cookie header with "; ". Cookie values are not percent-encoded
-// (the OAS defines no cookie escaping); exploded array/object expansions use
-// the cookie header's own pair separator rather than form's "&", which has
-// no meaning inside a Cookie header.
+// serializeCookieValue expands one cookie parameter into name=value units,
+// which channel assembly (openbindings.openapi-3.0@1 §11;
+// openbindings.openapi-3.1@1 §11) joins into the single Cookie header with
+// "; ". Exploded array/object expansions use the cookie header's own pair
+// separator rather than form's "&", which has no meaning inside a Cookie
+// header.
+//
+// The `form` style PERCENT-ENCODES, on every accepted edition. This code
+// previously did not, on the stated ground that "the OAS defines no cookie
+// escaping" -- which is the sentence openbindings.openapi-3.1@1 §8.2 was
+// written to refute: "No accepted edition extends that exemption to cookies,
+// and this specification does not invent one: a declared cookie parameter
+// serialized on the `schema` path is percent-encoded by ordinary RFC 6570
+// expansion, because `allowReserved` is valid only for query parameters and no
+// cookie-specific exemption exists." It goes on to dispose of the Appendix D
+// remark this code was reading as a rule: that remark is "advice to artifact
+// authors rather than a serialization rule". Leaving values unencoded put a
+// raw ";" from a supplied value straight into the Cookie header, where it
+// splits one contribution into several.
+//
+// OAS 3.2's `style: cookie` is the one exemption, and it is that style's, not
+// the destination's: it "follows RFC 6265 Cookie syntax: contributions
+// preserve exact names and values, use `; ` between pairs, and apply no
+// percent-encoding or other escaping; values needing escaping MUST arrive
+// already escaped" (openbindings.openapi-3.2@1 §8.2). That style exists only
+// on the 3.2 line, so no other edition reaches the identity escaper.
 func serializeCookieValue(name string, value any, style string, explode bool) ([]string, error) {
 	if style != openapi3.SerializationForm && style != "cookie" {
 		return nil, fmt.Errorf("style %q is not defined for cookie parameters", style)
 	}
-	return expandFormPairs(name, value, explode, func(s string) string { return s })
+	escape := func(s string) string { return queryEscape(s, false) }
+	if style == "cookie" {
+		escape = func(s string) string { return s }
+	}
+	return expandFormPairs(name, value, explode, escape)
 }
 
 // expandSimple implements the OAS "simple" rows:

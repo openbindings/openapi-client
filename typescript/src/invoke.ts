@@ -485,6 +485,13 @@ export async function runBinding(
   if (queryUnits.length > 0) {
     reqURL += "?" + queryUnits.join("&");
   }
+  // The completed target's scheme, checked on the standalone client's own
+  // dispatch path. The adapter reaches validateCompletedOpenAPIURL; this lane
+  // never did, so `ftp://`, `file://` and `ws://` servers all reached the
+  // transport. Every 3.x document forbids it (§10 in each), and the Go twin
+  // gates the same point inside AssembleRequestURL, which both of its lanes
+  // share.
+  validateCompletedTargetScheme(reqURL);
 
   const fetchHeaders = new Headers();
   if (wire.contentType !== "") {
@@ -2102,5 +2109,29 @@ export function preflightTarget(
     return { op, params, baseURL: resolveServer(doc, pathItem, op, ctx, sourceLocation) };
   } catch {
     return null;
+  }
+}
+
+/**
+ * Refuses a completed target whose scheme has no defined HTTP-semantics
+ * mapping. `openbindings.openapi-3.0@1` §10 and `openbindings.openapi-3.2@1`
+ * §10 state it as a refusal before dispatch; `openbindings.openapi-3.1@1` §10
+ * states the same restriction as a static exclusion of the Server
+ * alternative. The refusal is what all three agree forbids — no bytes on such
+ * a scheme — and whether 3.1's stronger static exclusion should also remove
+ * the target from synthesis is left open rather than guessed.
+ */
+function validateCompletedTargetScheme(raw: string): void {
+  let completed: URL;
+  try {
+    completed = new URL(raw);
+  } catch {
+    return; // shape errors are the existing assembly checks' to report
+  }
+  const scheme = completed.protocol.replace(/:$/, "").toLowerCase();
+  if (scheme !== "http" && scheme !== "https") {
+    throw new Error(
+      `completed OpenAPI target scheme ${JSON.stringify(scheme)} is not http or https; no incorporated authority defines its HTTP-semantics mapping`,
+    );
   }
 }
