@@ -227,7 +227,11 @@ export function routeInput(
     if (!p?.name || !p?.in) continue;
     if (!(p.name in input)) {
       if (p.in === "path") missingPath.push(p.name);
-      else if (options.openapiVersion === "3.2.0" && p.required === true) missingRequired.push(`${p.in}/${p.name}`);
+      // R2 (2026-09-01): `required` means mandatory in every accepted edition
+      // and every document of the family incorporates the refusal;
+      // minimality-audit M9 briefly gated this to 3.2 and the gate was
+      // reversed as drift.
+      else if (p.required === true) missingRequired.push(`${p.in}/${p.name}`);
       continue;
     }
     consumed.add(p.name);

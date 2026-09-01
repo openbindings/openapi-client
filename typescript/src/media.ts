@@ -840,6 +840,19 @@ function validateRevision3URLEncoded(
         `urlencoded binary property ${JSON.stringify(name)} has no Base64 boundary in the selected execution profile`,
       );
     }
+    // R4 (ratified 2026-09-01): an array riding this lane whole, whose
+    // item-type default defines no serialization for a container, stays an
+    // ADMISSIBLE candidate carrying a required `propertyMedia` choice.
+    // Rejecting the media candidate here would make the operation unreachable
+    // where the specification says one consumer choice makes it dispatchable,
+    // and would state a whole-source verdict on a cell that has a stated
+    // remedy.
+    if (
+      typeof enc?.contentType !== "string"
+      && urlencodedArrayNeedsPropertyMedia(property, openapiVersion.startsWith("3.0"))
+    ) {
+      continue;
+    }
     validateContentBasedMedia(name, property, enc, openapiVersion.startsWith("3.0"), "urlencoded");
   }
 }
@@ -1903,8 +1916,6 @@ export interface WireBody {
   contentType: string;
   /** Selected multipart declaration awaiting a runtime-generated or author-declared boundary. */
   multipartMediaType?: string;
-  /** Static schema-owned Content-Transfer-Encoding headers by part name. */
-  multipartTransferEncodings?: Record<string, string>;
 }
 
 /**
@@ -1967,10 +1978,7 @@ export function buildRequestBody(
           plan.wholeObject === true,
         ),
         contentType: "",
-        ...(plan.revision3 === true ? {
-          multipartMediaType: plan.mediaType,
-          multipartTransferEncodings: multipartTransferEncodings(doc, plan.media),
-        } : {}),
+        ...(plan.revision3 === true ? { multipartMediaType: plan.mediaType } : {}),
       };
     }
     case FAMILY_URLENCODED: {
@@ -2049,9 +2057,11 @@ export async function finalizeRequestBody(wire: WireBody): Promise<WireBody> {
   if (boundary !== runtimeBoundary) {
     bytes = replaceMultipartBoundary(bytes, runtimeBoundary, boundary);
   }
-  if (wire.multipartTransferEncodings && Object.keys(wire.multipartTransferEncodings).length > 0) {
-    bytes = insertMultipartTransferEncodingHeaders(bytes, boundary, wire.multipartTransferEncodings);
-  }
+  // R5 (2026-09-01): a `contentEncoding` declaration never produces a
+  // Content-Transfer-Encoding field. The edition's equivalence describes what
+  // the declaration MEANS, not a field a serializer adds, and RFC 7578 §4.7
+  // says senders SHOULD NOT generate it. The declared equivalence still
+  // governs the conflict check in openapi32-media.ts and response parsing.
 
   const params: Record<string, string> = { ...selected.renderedParams, boundary };
   const contentType = selected.base + Object.keys(params)
@@ -2059,84 +2069,6 @@ export async function finalizeRequestBody(wire: WireBody): Promise<WireBody> {
     .map((name) => `; ${name}=${formatParameter(params[name]!)}`)
     .join("");
   return { body: bytes, contentType };
-}
-
-function insertMultipartTransferEncodingHeaders(
-  bytes: Uint8Array,
-  boundary: string,
-  encodings: Record<string, string>,
-): Uint8Array<ArrayBuffer> {
-  const delimiter = new TextEncoder().encode(`--${boundary}\r\n`);
-  const headerEnd = new Uint8Array([13, 10, 13, 10]);
-  const insertions: Array<{ at: number; bytes: Uint8Array }> = [];
-  let cursor = 0;
-  while (cursor < bytes.length) {
-    const delimiterAt = byteIndexOf(bytes, delimiter, cursor);
-    if (delimiterAt < 0) break;
-    const headersAt = delimiterAt + delimiter.length;
-    const end = byteIndexOf(bytes, headerEnd, headersAt);
-    if (end < 0) break;
-    const headers = new TextDecoder().decode(bytes.slice(headersAt, end));
-    const match = /(?:^|\r\n)Content-Disposition:[^\r\n]*; name="([^"]*)"/i.exec(headers);
-    const encoding = match ? encodings[match[1]!] : undefined;
-    if (encoding !== undefined) {
-      insertions.push({
-        at: end + 2,
-        bytes: new TextEncoder().encode(`Content-Transfer-Encoding: ${encoding}\r\n`),
-      });
-    }
-    cursor = end + headerEnd.length;
-  }
-  if (insertions.length === 0) return Uint8Array.from(bytes);
-  const added = insertions.reduce((total, insertion) => total + insertion.bytes.length, 0);
-  const result = new Uint8Array(bytes.length + added);
-  let source = 0;
-  let target = 0;
-  for (const insertion of insertions) {
-    result.set(bytes.slice(source, insertion.at), target);
-    target += insertion.at - source;
-    result.set(insertion.bytes, target);
-    target += insertion.bytes.length;
-    source = insertion.at;
-  }
-  result.set(bytes.slice(source), target);
-  return result;
-}
-
-function byteIndexOf(haystack: Uint8Array, needle: Uint8Array, from: number): number {
-  outer: for (let index = from; index <= haystack.length - needle.length; index++) {
-    for (let offset = 0; offset < needle.length; offset++) {
-      if (haystack[index + offset] !== needle[offset]) continue outer;
-    }
-    return index;
-  }
-  return -1;
-}
-
-function multipartTransferEncodings(
-  doc: OpenAPIDocument,
-  media: OpenAPIMediaType | null,
-): Record<string, string> {
-  if (isOpenAPI30(doc)) return {};
-  const rawSchema = mediaSchema(media);
-  const schema = rawSchema && typeof rawSchema === "object" ? rawSchema : null;
-  if (schema === null) return {};
-  const result: Record<string, string> = {};
-  for (const [name, property] of Object.entries(resolvedMultipartProperties(schema, new Set()))) {
-    const partSchema = schemaTypeIs(property, "array")
-      ? resolvedMultipartItems(property)
-      : property;
-    // [JSON Schema 2020-12] Section 8.3 derives `contentEncoding` from MIME's
-    // Content-Transfer-Encoding header and conditions it on the instance being
-    // a string. On a declared non-string type the keyword is inert, so the
-    // header it maps to is not emitted either; emitting it would give an
-    // annotation that carries no meaning force on the wire. The Go twins gate
-    // the same header the same way.
-    if (partSchema === null || !schemaTypeIs(partSchema, "string")) continue;
-    const encoding = resolvedSchemaStringKeyword(partSchema, "contentEncoding");
-    if (encoding !== "") result[name] = encoding;
-  }
-  return result;
 }
 
 function validateMultipartBoundary(boundary: string): void {
@@ -2693,7 +2625,52 @@ function writeRevision3MultipartPart(
  * condition. Without it a declared non-string part carrying `contentEncoding`
  * took application/octet-stream, which no accepted edition assigns it.
  */
-function defaultMultipartContentType(schema: Record<string, unknown>, is30: boolean): string {
+/**
+ * R4 (ratified 2026-09-01). Reports the content-based urlencoded lane's
+ * ungoverned cell: an `array` property, riding one field as a whole compound,
+ * whose item-derived default selects a media type that defines no
+ * serialization for a container. `application/json` does define one and is
+ * therefore governed; `text/plain` and `application/octet-stream` do not, and
+ * this specification authors no bytes there — the property needs an explicit
+ * Encoding `contentType` or the `propertyMedia` choice. Exported so the
+ * preflight requirement and the emission refusal read the same predicate.
+ */
+export function urlencodedArrayNeedsPropertyMedia(
+  schema: Record<string, unknown> | null,
+  is30: boolean,
+): boolean {
+  if (schema === null) return false;
+  // `type: ["array", "null"]` is an array property that also admits null; the
+  // nullable collapse is what every other rule on this lane reads, so the
+  // predicate reads it too rather than answering differently for the two
+  // spellings of the same declaration.
+  const { schema: collapsed } = effectiveRevision3PartSchema(schema, is30);
+  const container = collapsed ?? schema;
+  if (typeof container !== "object" || container === null || !schemaTypeIs(container, "array")) return false;
+  const items = resolvedMultipartItems(container);
+  if (items === null) return false;
+  // A typeless item declaration has no default concrete type on either edition
+  // line, which is the same "selection yields no single concrete media type"
+  // cell Section 9.3's configuration point already names.
+  if (!hasDeclaredSchemaType(items) && partSchemaDeclaresNoType(items, is30)) return true;
+  let selected: string;
+  try {
+    selected = defaultMultipartContentType(container, is30);
+  } catch {
+    // No item-type default resolves at all -- a choice applicator that
+    // supplies no single resolved member, or a union that does not collapse.
+    // Section 5.2 leaves that property with no resolved member declaration, so
+    // no media choice repairs it and the ordinary refusal stands.
+    return false;
+  }
+  return !isJSONMediaType(parseMediaType(selected, true).base);
+}
+
+function defaultMultipartContentType(
+  schema: Record<string, unknown>,
+  is30: boolean,
+  depth = 0,
+): string {
   // 3.0.4's default-`contentType` table gives `string` with `format`
   // "`binary` or `byte`" the default application/octet-stream, while 3.0.0
   // through 3.0.3's prose names only `binary` before "other primitive types".
@@ -2710,7 +2687,26 @@ function defaultMultipartContentType(schema: Record<string, unknown>, is30: bool
   ) {
     return "application/octet-stream";
   }
-  if (schemaTypeIs(schema, "object") || schemaTypeIs(schema, "array")) return "application/json";
+  if (schemaTypeIs(schema, "object")) return "application/json";
+  // The edition's default table gives an `array` "the item-type default", not
+  // its container's `application/json`: the type that decides is the resolved
+  // `items` declaration. On multipart this is invisible because an array
+  // property expands into one part per item, each already carrying the item's
+  // own schema; on the content-based urlencoded lane the whole array rides one
+  // field, and reading `application/json` off the container there would author
+  // bytes the edition never selected. R4 (ratified 2026-09-01) reads the table
+  // literally, and the urlencoded lane refuses-or-configures where the
+  // item-derived selection defines no serialization for the container.
+  if (schemaTypeIs(schema, "array")) {
+    if (depth > 8) {
+      throw new Error("multipart property nests arrays past the depth an item-type default can resolve");
+    }
+    const items = resolvedMultipartItems(schema);
+    if (items === null) {
+      throw new Error("multipart array property has no resolved items declaration and therefore no item-type default");
+    }
+    return defaultMultipartContentType(items, is30, depth + 1);
+  }
   if (
     schemaTypeIs(schema, "string")
     || schemaTypeIs(schema, "number")
@@ -3089,6 +3085,22 @@ function buildRevision3URLEncodedBody(
     const selected = declaredCT
       ?? parseMediaType(defaultMultipartContentType(property, openapiVersion.startsWith("3.0")), true);
     requireSupportedCharset(selected, `urlencoded property ${JSON.stringify(name)}`);
+    // R4 (ratified 2026-09-01). On this lane the whole compound rides one
+    // field, so the media type the default table selects has to define the
+    // bytes of the CONTAINER. The item-type default can select one that does
+    // not — `text/plain` for primitive items, `application/octet-stream` for
+    // encoded-string items — and no accepted edition says what an array looks
+    // like there. This specification authors no bytes for that cell: the
+    // property needs an explicit single concrete Encoding `contentType` in the
+    // artifact or the `propertyMedia` choice, and without one the invocation
+    // refuses before dispatch as the context-required species.
+    if (declaredCT === null && urlencodedArrayNeedsPropertyMedia(property, openapiVersion.startsWith("3.0"))) {
+      throw new Error(
+        `urlencoded property ${JSON.stringify(name)} is an array whose item-type default `
+        + `${selected.canonical} defines no serialization for the whole value; `
+        + `configuration.propertyMedia.${name} is required`,
+      );
+    }
     let text: string;
     const encodedString = artifactEncodedString(property, openapiVersion.startsWith("3.0"));
     if (encodedString) {

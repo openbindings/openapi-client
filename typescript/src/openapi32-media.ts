@@ -305,7 +305,11 @@ function multipartPart(
     if (transfer && !transfer.admits(contentEncoding.value)) {
       throw new Error(`explicit Content-Transfer-Encoding Header disallows contentEncoding ${JSON.stringify(contentEncoding.value)}`);
     }
-    headers.push(`Content-Transfer-Encoding: ${contentEncoding.value}`);
+    // R5 (2026-09-01): the edition's equivalence describes what the
+    // declaration MEANS, not a field a serializer adds, and RFC 7578 §4.7 says
+    // senders SHOULD NOT generate the field. No emission; the declared
+    // equivalence still governs the conflict check above and parsing. Matches
+    // the 3.0/3.1 lanes.
   }
   for (const [name, value] of fixedHeaders(encoding)) {
     if (name.toLowerCase() === "content-type" || name.toLowerCase() === "content-transfer-encoding") continue;

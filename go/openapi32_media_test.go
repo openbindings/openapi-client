@@ -102,7 +102,11 @@ func TestNormalizeOpenAPI32JSONNumber(t *testing.T) {
 	}
 }
 
-func TestOpenAPI32PositionalMultipartEncodingAndTransferHeader(t *testing.T) {
+// R5 (ratified 2026-09-01): contentEncoding never produces a
+// Content-Transfer-Encoding header. OAS 3.2.0 §4.15.4.2 and RFC 7578 §4.7
+// ("Senders SHOULD NOT generate any parts with a Content-Transfer-Encoding
+// header field") both forbid the emission.
+func TestOpenAPI32PositionalMultipartEncodingOmitsTransferHeader(t *testing.T) {
 	transport := &openAPI32OperationTransport{}
 	client, err := Load(context.Background(), Source{Content: []byte(`
 openapi: 3.2.0
@@ -165,7 +169,7 @@ paths:
 		extras = append(extras, part.Header.Get("X-Part"))
 	}
 	if !reflect.DeepEqual(names, []string{"first", "rest"}) || !reflect.DeepEqual(bodies, []string{"QUJD", "REVG"}) ||
-		!reflect.DeepEqual(transfers, []string{"base64", "base64"}) || !reflect.DeepEqual(extras, []string{"prefix", ""}) {
+		!reflect.DeepEqual(transfers, []string{"", ""}) || !reflect.DeepEqual(extras, []string{"prefix", ""}) {
 		t.Fatalf("parts names=%v bodies=%v transfers=%v extras=%v", names, bodies, transfers, extras)
 	}
 }

@@ -319,7 +319,11 @@ func routeInputWithParameterOptions(params openapi3.Parameters, input map[string
 		if !ok {
 			if p.In == openapi3.ParameterInPath {
 				missingPath = append(missingPath, p.Name)
-			} else if strings.HasPrefix(options.edition, "3.2.") && p.Required {
+			} else if p.Required {
+				// R2 (2026-09-01): `required` means mandatory in every accepted
+				// edition and every document of the family incorporates the refusal;
+				// minimality-audit M9 briefly gated this to 3.2 on implementation
+				// grounds and the gate was reversed as drift.
 				missingRequired = append(missingRequired, p.In+"/"+p.Name)
 			}
 			continue

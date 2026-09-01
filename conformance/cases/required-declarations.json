@@ -1,32 +1,66 @@
 [
   {
-    "name": "no input with a required query parameter dispatches",
+    "name": "no input with a required query parameter refuses",
     "document": {
       "openapi": "3.1.0",
-      "info": { "title": "required declarations", "version": "1" },
-      "servers": [{ "url": "http://fixture.invalid" }],
+      "info": {
+        "title": "required declarations",
+        "version": "1"
+      },
+      "servers": [
+        {
+          "url": "http://fixture.invalid"
+        }
+      ],
       "paths": {
         "/search": {
           "get": {
             "operationId": "search",
             "parameters": [
-              { "name": "q", "in": "query", "required": true, "schema": { "type": "string" } }
+              {
+                "name": "q",
+                "in": "query",
+                "required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
             ],
-            "responses": { "200": { "description": "ok", "content": { "application/json": {} } } }
+            "responses": {
+              "200": {
+                "description": "ok",
+                "content": {
+                  "application/json": {}
+                }
+              }
+            }
           }
         }
       }
     },
     "ref": "#/paths/~1search/get",
-    "input": { "present": false },
-    "expect": { "dispatched": true, "method": "GET", "path": "/search", "query": "" }
+    "input": {
+      "present": false
+    },
+    "expect": {
+      "dispatched": false,
+      "code": "ERR_REFUSED",
+      "messageContains": "missing required parameter(s) query/q"
+    }
   },
   {
     "name": "no input with a required request body refuses",
     "document": {
       "openapi": "3.1.0",
-      "info": { "title": "required declarations", "version": "1" },
-      "servers": [{ "url": "http://fixture.invalid" }],
+      "info": {
+        "title": "required declarations",
+        "version": "1"
+      },
+      "servers": [
+        {
+          "url": "http://fixture.invalid"
+        }
+      ],
       "paths": {
         "/items": {
           "post": {
@@ -35,17 +69,33 @@
               "required": true,
               "content": {
                 "application/json": {
-                  "schema": { "type": "object", "properties": { "name": { "type": "string" } } }
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  }
                 }
               }
             },
-            "responses": { "200": { "description": "ok", "content": { "application/json": {} } } }
+            "responses": {
+              "200": {
+                "description": "ok",
+                "content": {
+                  "application/json": {}
+                }
+              }
+            }
           }
         }
       }
     },
     "ref": "#/paths/~1items/post",
-    "input": { "present": false },
+    "input": {
+      "present": false
+    },
     "expect": {
       "dispatched": false,
       "code": "ERR_REFUSED",
@@ -56,8 +106,15 @@
     "name": "a supplied empty object with a required request body refuses",
     "document": {
       "openapi": "3.1.0",
-      "info": { "title": "required declarations", "version": "1" },
-      "servers": [{ "url": "http://fixture.invalid" }],
+      "info": {
+        "title": "required declarations",
+        "version": "1"
+      },
+      "servers": [
+        {
+          "url": "http://fixture.invalid"
+        }
+      ],
       "paths": {
         "/items": {
           "post": {
@@ -66,17 +123,34 @@
               "required": true,
               "content": {
                 "application/json": {
-                  "schema": { "type": "object", "properties": { "name": { "type": "string" } } }
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  }
                 }
               }
             },
-            "responses": { "200": { "description": "ok", "content": { "application/json": {} } } }
+            "responses": {
+              "200": {
+                "description": "ok",
+                "content": {
+                  "application/json": {}
+                }
+              }
+            }
           }
         }
       }
     },
     "ref": "#/paths/~1items/post",
-    "input": { "present": true, "value": {} },
+    "input": {
+      "present": true,
+      "value": {}
+    },
     "expect": {
       "dispatched": false,
       "code": "ERR_REFUSED",
@@ -84,47 +158,98 @@
     }
   },
   {
-    "name": "a supplied empty object missing a required query parameter dispatches",
+    "name": "a supplied empty object missing a required query parameter refuses",
     "document": {
       "openapi": "3.1.0",
-      "info": { "title": "required declarations", "version": "1" },
-      "servers": [{ "url": "http://fixture.invalid" }],
+      "info": {
+        "title": "required declarations",
+        "version": "1"
+      },
+      "servers": [
+        {
+          "url": "http://fixture.invalid"
+        }
+      ],
       "paths": {
         "/search": {
           "get": {
             "operationId": "search",
             "parameters": [
-              { "name": "q", "in": "query", "required": true, "schema": { "type": "string" } }
+              {
+                "name": "q",
+                "in": "query",
+                "required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
             ],
-            "responses": { "200": { "description": "ok", "content": { "application/json": {} } } }
+            "responses": {
+              "200": {
+                "description": "ok",
+                "content": {
+                  "application/json": {}
+                }
+              }
+            }
           }
         }
       }
     },
     "ref": "#/paths/~1search/get",
-    "input": { "present": true, "value": {} },
-    "expect": { "dispatched": true, "method": "GET", "path": "/search", "query": "" }
+    "input": {
+      "present": true,
+      "value": {}
+    },
+    "expect": {
+      "dispatched": false,
+      "code": "ERR_REFUSED",
+      "messageContains": "missing required parameter(s) query/q"
+    }
   },
   {
     "name": "no input with a declared path parameter refuses",
     "document": {
       "openapi": "3.1.0",
-      "info": { "title": "required declarations", "version": "1" },
-      "servers": [{ "url": "http://fixture.invalid" }],
+      "info": {
+        "title": "required declarations",
+        "version": "1"
+      },
+      "servers": [
+        {
+          "url": "http://fixture.invalid"
+        }
+      ],
       "paths": {
         "/items/{id}": {
           "get": {
             "operationId": "getItem",
             "parameters": [
-              { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+              {
+                "name": "id",
+                "in": "path",
+                "required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
             ],
-            "responses": { "200": { "description": "ok", "content": { "application/json": {} } } }
+            "responses": {
+              "200": {
+                "description": "ok",
+                "content": {
+                  "application/json": {}
+                }
+              }
+            }
           }
         }
       }
     },
     "ref": "#/paths/~1items~1{id}/get",
-    "input": { "present": false },
+    "input": {
+      "present": false
+    },
     "expect": {
       "dispatched": false,
       "code": "ERR_REFUSED",
@@ -135,36 +260,72 @@
     "name": "a complete input dispatches with parameter and body routed",
     "document": {
       "openapi": "3.1.0",
-      "info": { "title": "required declarations", "version": "1" },
-      "servers": [{ "url": "http://fixture.invalid" }],
+      "info": {
+        "title": "required declarations",
+        "version": "1"
+      },
+      "servers": [
+        {
+          "url": "http://fixture.invalid"
+        }
+      ],
       "paths": {
         "/items/{id}": {
           "post": {
             "operationId": "replaceItem",
             "parameters": [
-              { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+              {
+                "name": "id",
+                "in": "path",
+                "required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
             ],
             "requestBody": {
               "required": true,
               "content": {
                 "application/json": {
-                  "schema": { "type": "object", "properties": { "name": { "type": "string" } } }
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  }
                 }
               }
             },
-            "responses": { "200": { "description": "ok", "content": { "application/json": {} } } }
+            "responses": {
+              "200": {
+                "description": "ok",
+                "content": {
+                  "application/json": {}
+                }
+              }
+            }
           }
         }
       }
     },
     "ref": "#/paths/~1items~1{id}/post",
-    "input": { "present": true, "value": { "id": "7", "name": "x" } },
+    "input": {
+      "present": true,
+      "value": {
+        "id": "7",
+        "name": "x"
+      }
+    },
     "expect": {
       "dispatched": true,
       "method": "POST",
       "path": "/items/7",
       "query": "",
-      "bodyJSON": { "name": "x" }
+      "bodyJSON": {
+        "name": "x"
+      }
     }
   }
 ]

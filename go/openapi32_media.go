@@ -1352,7 +1352,11 @@ func writeOpenAPI32MultipartPart(writer *multipart.Writer, name string, value an
 		if explicit, present := openAPI32Header(encoding, "Content-Transfer-Encoding"); present && !explicit.admitsFold(contentEncoding) {
 			return fmt.Errorf("explicit Content-Transfer-Encoding Header disallows contentEncoding %q", contentEncoding)
 		}
-		headers.Set("Content-Transfer-Encoding", contentEncoding)
+		// R5 (2026-09-01): the edition's equivalence describes what the
+		// declaration MEANS, not a field a serializer adds, and RFC 7578 §4.7
+		// says senders SHOULD NOT generate the field. No emission; the
+		// declared equivalence still governs the conflict check above and
+		// parsing. Matches the 3.0/3.1 lanes.
 	}
 	part, err := writer.CreatePart(headers)
 	if err != nil {
