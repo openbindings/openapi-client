@@ -126,7 +126,7 @@ import { isSSEContentType, streamSSE } from "./sse.js";
 
 /**
  * Drives one OpenAPI binding invocation over the binding-facing handle: one
- * HTTP exchange per invocation (openbindings.openapi@1 §8). All
+ * HTTP exchange per invocation (the family's §7, target interaction). All
  * pre-dispatch refusals — bad ref, unresolvable operation, unflattenable
  * declarations, out-of-family request media, unresolvable server, missing
  * context, missing path parameters, unmatched input fields, credential
@@ -210,7 +210,7 @@ export async function runBinding(
     inv.fireError(
       new InvocationError(
         ERR_REFUSED,
-        `operation declares parameter "${unflattenable}" without a distinct wire identity under execution profile ${args.source.profile.name} (OAPI-P-03, unflattenable/unresolvable)`,
+        `operation declares parameter "${unflattenable}" without a distinct wire identity under execution profile ${args.source.profile.name} (unflattenable or unresolvable)`,
       ),
     );
     return;
@@ -1903,7 +1903,7 @@ export function pathTemplateAddressabilityConflict(
   if (unaddressable.length === 0) return "";
   unaddressable.sort(codePointCompare);
   return `path template variable(s) ${unaddressable.join(", ")} have no declared path parameter: `
-    + "the target URL cannot be built (OAPI-P-05: unresolvable target)";
+    + "the target URL cannot be built (unresolvable target)";
 }
 
 /**

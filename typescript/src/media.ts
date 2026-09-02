@@ -523,7 +523,7 @@ export function planRequestBodies(
     }
     declared.sort();
     throw new Error(
-      `request body declares no media type whose declaration selects a request carriage lane openbindings.openapi@1 defines (declared: ${declared.join(", ")})`,
+      `request body declares no media type whose declaration selects a request carriage lane the registered OpenAPI binding family defines (declared: ${declared.join(", ")})`,
     );
   }
   candidates.sort((a, b) => a.parsed.identity.localeCompare(b.parsed.identity));

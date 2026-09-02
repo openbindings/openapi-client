@@ -45,6 +45,27 @@ for (const forbidden of ["BindingInvocationArgs", "InvocationError", "bindingSpe
   }
 }
 
+// The Go block below has a TypeScript twin. Without it the same retired
+// identifier sat in four user-facing TypeScript strings while only the Go copy
+// ever turned this job red.
+const tsFiles = (await readdir(new URL("../typescript/src/", import.meta.url)))
+  .filter((name) => name.endsWith(".ts") && !name.endsWith(".test.ts") && !name.endsWith(".d.ts"));
+for (const name of tsFiles) {
+  const source = await readFile(new URL(`../typescript/src/${name}`, import.meta.url), "utf8");
+  // '"$openbindings"' is deliberately NOT in this list yet, unlike the Go list.
+  // On its first run it fired on input-routes-v2.ts and client.ts: the
+  // TypeScript engine hard-codes the OBI SDK's envelope key, where the Go
+  // engine carries its own key ("$openapi", Profile.InputRouteKey) and the Go
+  // SDK rebinds it at the seam. Closing that is a two-repo change (a profile
+  // field here, the seam in openbindings-ts) and is queued; add the token
+  // when it lands.
+  for (const forbidden of ["openbindings.openapi@", "@openbindings/"]) {
+    if (source.includes(forbidden)) {
+      throw new Error(`standalone TypeScript source ${name} leaks internal/OpenBindings concept ${forbidden}`);
+    }
+  }
+}
+
 const goMod = await readFile(new URL("../go/go.mod", import.meta.url), "utf8");
 if (goMod.includes("github.com/openbindings/openbindings-go")) {
   throw new Error("standalone Go module depends on the OpenBindings Go SDK");

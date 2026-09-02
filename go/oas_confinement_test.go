@@ -202,7 +202,7 @@ func TestConfinement_PathsReferenceObjectRefusesWithThePart2Reason(t *testing.T)
 	}`
 	if _, err := loadConfined(document); err == nil {
 		t.Fatalf("a source with no addressable target must refuse")
-	} else if !strings.Contains(err.Error(), "whole-source refusal (OAPI-P-01") {
+	} else if !strings.Contains(err.Error(), "whole-source refusal") {
 		t.Errorf("want the part-2 refusal, got %q", err)
 	}
 }

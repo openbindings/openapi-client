@@ -348,7 +348,7 @@ func loadArtifact(ctx context.Context, client *http.Client, source Source, allow
 			document = confined
 		}
 	}
-	// The invalid-artifact acceptance floor (openbindings.openapi@1 §3),
+	// The invalid-artifact acceptance floor (§3.2 of `openbindings.openapi-3.1@1` and its siblings),
 	// computed over the entry document's raw image. Part 2's single derived
 	// whole-source refusal is returned as a load failure; per-target
 	// verdicts ride with the document for the prepare-time inventory filter.

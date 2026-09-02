@@ -389,7 +389,7 @@ func enumerateOperations(document *openapi3.T) []resolvedOperation {
 }
 
 // enumerateOperationsWithFloor applies the acceptance-floor inventory filter
-// (openbindings.openapi@1 §3): a ladder-invalid target is not addressed and
+// (§3.2 of `openbindings.openapi-3.1@1` and its siblings): a ladder-invalid target is not addressed and
 // is not enumerated as invocable.
 func enumerateOperationsWithFloor(artifact *Artifact, floor *acceptanceFloor) []resolvedOperation {
 	if artifact == nil || artifact.Refusal() != nil || artifact.SourceExclusion() != nil {
