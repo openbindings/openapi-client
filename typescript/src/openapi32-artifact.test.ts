@@ -164,7 +164,7 @@ paths:
   it("classifies selector errors independently of target lookup", async () => {
     const artifact = await loadOpenAPIArtifact({ content: {
       openapi: "3.2.0",
-      paths: { "/x": { query: {}, additionalOperations: { COPY: {}, get: {} } } },
+      paths: { "/x": { query: {}, additionalOperations: { COPY: {}, get: {}, GET: {} } } },
     } });
     await expect(artifact.resolveOperation("#/paths/~1x/query")).resolves.toMatchObject({
       reference: { wireMethod: "QUERY" },
@@ -173,7 +173,12 @@ paths:
       reference: { wireMethod: "COPY", additional: true },
     });
     await expect(artifact.resolveOperation("#/paths/~1x/QUERY")).rejects.toBeInstanceOf(OpenAPIOperationResolutionError);
-    await expect(artifact.resolveOperation("#/paths/~1x/additionalOperations/get")).rejects.toMatchObject({
+    // §6.1: `get` spells a method token the fixed `get` field does not send, so
+    // it is admitted; only the byte-exact `GET` is the declaration defect.
+    await expect(artifact.resolveOperation("#/paths/~1x/additionalOperations/get")).resolves.toMatchObject({
+      reference: { wireMethod: "get", additional: true },
+    });
+    await expect(artifact.resolveOperation("#/paths/~1x/additionalOperations/GET")).rejects.toMatchObject({
       kind: "excluded",
     });
   });

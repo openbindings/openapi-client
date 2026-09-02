@@ -1,3 +1,4 @@
+import { swagger20ConfigRequired } from "./swagger20-context.js";
 import {
   arrayMember,
   stringMember,
@@ -40,7 +41,7 @@ export function resolveSwagger20Server(
     }
   } else {
     if (usable.length === 0) throw new Error("Swagger 2.0 target has no usable http or https scheme");
-    if (usable.length !== 1) throw new Error(`Swagger 2.0 target has ${usable.length} usable schemes; configuration.server must select one`);
+    if (usable.length !== 1) throw swagger20ConfigRequired("server", "");
     selected = usable[0]!;
   }
   let effectiveHost = host.value;

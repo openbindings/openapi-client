@@ -1,3 +1,6 @@
+import { swagger20ConfigRequired } from "./swagger20-context.js";
+import { ConfigRequired } from "./servers.js";
+import { swagger20RefusalError } from "./swagger20-context.js";
 import {
   Swagger20ExecutionError,
   type PreparedSwagger20Operation,
@@ -42,18 +45,13 @@ export async function executeSwagger20(
   try {
     responses = await swagger20ResponsesFor(prepared.operation);
   } catch (error: unknown) {
-    throw refused(error);
+    throw refused(error, prepared);
   }
   let routed;
   let server: string;
   let security;
   try {
-    server = resolveSwagger20Server(
-      prepared.document,
-      prepared.operation,
-      prepared.options.server,
-      prepared.options.serverSchemeIndex,
-    );
+    server = resolveSwagger20ServerForInvocation(prepared);
     security = selectSwagger20Security(
       prepared.document,
       prepared.operation,
@@ -61,6 +59,31 @@ export async function executeSwagger20(
       prepared.options.securityAlternative,
       prepared.options.securityCredentials,
     );
+    // A supplied value the point does not admit is the caller's own choice, so
+    // no further context changes the answer: it stays §3.2's plain species. The
+    // Go engine's Start() has always checked this; without the same check here,
+    // an out-of-set value falls through to the "no choice supplied" branch and
+    // would be reported as an awaited one.
+    if (prepared.options.emptyValueForm !== undefined
+      && prepared.options.emptyValueForm !== "name-only"
+      && prepared.options.emptyValueForm !== "empty") {
+      throw new Swagger20ExecutionError("ERR_REFUSED", "emptyValueForm must be name-only or empty");
+    }
+    // openbindings.openapi-2.0@1 §9.1: a payload-emitting invocation over a
+    // non-self-electing effective `consumes` set "requires one concrete
+    // `requestMedia` choice BEFORE input consumption". A required payload
+    // always emits, so the choice is owed before any supplied value is read
+    // and before any value-conditional point can be reached. The Go engine's
+    // Start() has always done this; doing it here is what makes the twins name
+    // the same point on the same document.
+    const declaredPayload = await swagger20PayloadFor(parameters, prepared.operation);
+    if (swagger20PayloadIsRequired(declaredPayload)) {
+      selectSwagger20RequestMedia(
+        effectiveSwagger20MediaSet(prepared.document, prepared.operation, "consumes"),
+        declaredPayload,
+        prepared.options.requestMedia,
+      );
+    }
     routed = routeSwagger20Input(
       parameters,
       prepared.operation.path,
@@ -69,7 +92,7 @@ export async function executeSwagger20(
       prepared.options.emptyValueForm,
     );
   } catch (error: unknown) {
-    throw refused(error);
+    throw refused(error, prepared);
   }
   applySwagger20Security(routed, security);
   const payloadPresent = routed.bodyPresent || routed.formPresent;
@@ -90,7 +113,7 @@ export async function executeSwagger20(
       requestBody = encoded.body;
       contentType = encoded.contentType;
     } catch (error: unknown) {
-      throw refused(error);
+      throw refused(error, prepared);
     }
   }
   const query = swagger20RawQuery(routed.query);
@@ -100,7 +123,7 @@ export async function executeSwagger20(
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throw new Error("target scheme is not HTTP");
     decodeURIComponent(parsed.pathname + parsed.search);
   } catch (error: unknown) {
-    throw refused(error);
+    throw refused(error, prepared);
   }
   const headers = new Headers();
   for (const header of routed.headers) headers.append(header.name, header.value);
@@ -114,7 +137,7 @@ export async function executeSwagger20(
         prepared.options.requestContentCodings,
       );
     } catch (error: unknown) {
-      throw refused(error);
+      throw refused(error, prepared);
     }
   }
   let response: Response;
@@ -265,12 +288,54 @@ function responseError(error: unknown): Swagger20ExecutionError {
   return new Swagger20ExecutionError("ERR_RESPONSE_ERROR", errorMessage(error), { cause: error });
 }
 
-function refused(error: unknown): Swagger20ExecutionError {
-  return error instanceof Swagger20ExecutionError
-    ? error
-    : new Swagger20ExecutionError("ERR_REFUSED", errorMessage(error), { cause: error });
+/**
+ * Classifies one pre-dispatch refusal into its §3.2 species. The target is the
+ * asserted context scope: the source location the caller supplied, matching the
+ * side-effect-free preflight's assertion.
+ */
+function refused(error: unknown, prepared?: PreparedSwagger20Operation): Swagger20ExecutionError {
+  return swagger20RefusalError(error, prepared?.options.source.location ?? "");
 }
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Resolves the effective server, deciding the species of a failure. §12.1's
+ * `server` row admits either one effective scheme with the artifact's own host
+ * and basePath, or "one complete URL ... replacing the resolved server base",
+ * so the question "would a supplied server repair this?" is answered by
+ * resolving again with one — the same probe the synthesis surface uses, so the
+ * two surfaces cannot drift apart. A caller who already configured the point is
+ * looking at their own value, not at an awaited one.
+ */
+function resolveSwagger20ServerForInvocation(prepared: PreparedSwagger20Operation): string {
+  try {
+    return resolveSwagger20Server(
+      prepared.document,
+      prepared.operation,
+      prepared.options.server,
+      prepared.options.serverSchemeIndex,
+    );
+  } catch (error: unknown) {
+    if (error instanceof ConfigRequired) throw error;
+    if (prepared.options.server !== undefined || prepared.options.serverSchemeIndex !== undefined) throw error;
+    try {
+      resolveSwagger20Server(prepared.document, prepared.operation, "https://configured.invalid", undefined);
+    } catch {
+      throw error;
+    }
+    throw swagger20ConfigRequired("server", "");
+  }
+}
+
+/**
+ * Whether the declared payload lane must emit on every invocation: an
+ * `in: body` parameter marked required, or any required `formData` parameter.
+ * The Go engine's `swagger20PayloadIsRequired` is the same predicate.
+ */
+function swagger20PayloadIsRequired(model: { body?: { required?: boolean }; form?: { required?: boolean }[] }): boolean {
+  if (model.body) return model.body.required === true;
+  return (model.form ?? []).some((parameter) => parameter.required === true);
 }

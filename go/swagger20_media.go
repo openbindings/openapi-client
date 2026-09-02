@@ -143,7 +143,7 @@ func selectSwagger20RequestMedia(set swagger20MediaSet, model swagger20PayloadMo
 	if len(candidates) == 0 {
 		return nil, fmt.Errorf("effective consumes has no usable request-media candidate")
 	}
-	return nil, fmt.Errorf("payload requires one concrete configuration.requestMedia choice")
+	return nil, swagger20ConfigRequired("requestMedia", "")
 }
 
 func selectConfiguredSwagger20RequestMedia(set swagger20MediaSet, model swagger20PayloadModel, wanted parsedMediaType) (*swagger20RequestMediaSelection, error) {

@@ -1,3 +1,5 @@
+import { swagger20ConfigRequired } from "./swagger20-context.js";
+import { escapePointerToken } from "./swagger20-reference.js";
 import { parseMediaRange, parseMediaType, type ParsedMediaType } from "./media.js";
 import {
   arrayMember,
@@ -127,7 +129,7 @@ export function selectSwagger20RequestMedia(
     return { media: candidates[0]!.declaration, declaration: candidates[0]!.declaration, lane: candidates[0]!.lane! };
   }
   if (candidates.length === 0) throw new Error("effective consumes has no usable request-media candidate");
-  throw new Error("payload requires one concrete configuration.requestMedia choice");
+  throw swagger20ConfigRequired("requestMedia", "");
 }
 
 export function encodeSwagger20RequestPayload(
@@ -490,7 +492,7 @@ function multipart(
     let contentType = "text/plain; charset=utf-8";
     if (file) {
       const configured = propertyMedia[contribution.name];
-      if (!configured) throw new Error(`file formData parameter ${JSON.stringify(contribution.name)} requires propertyMedia`);
+      if (!configured) throw swagger20ConfigRequired("propertyMedia", `/${escapePointerToken(contribution.name)}`);
       contentType = parseConcrete(configured).canonical;
     }
     const name = contribution.name.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
