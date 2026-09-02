@@ -824,6 +824,7 @@ function validateRevision3URLEncoded(
   for (const [name, rawProperty] of Object.entries(resolvedMultipartPropertySchemas(schema, new Set()))) {
     const { schema: property } = effectiveRevision3PartSchema(rawProperty, openapiVersion.startsWith("3.0"));
     if (property === false || property === null) continue; // an unsatisfiable property has no admissible runtime value
+    if (resolveDeclaration(property, openapiVersion.startsWith("3.0")).admitsNoInstance()) continue; // §5.2's empty intersection: the boolean false's resolved form, same accounting
     const enc = asObject(encoding[name]);
     if (Object.hasOwn(encoding, name) && enc === null) {
       throw new Error(`urlencoded property ${JSON.stringify(name)} declares an invalid Encoding Object`);
@@ -1161,6 +1162,7 @@ function validateRevision3Multipart(
   for (const [name, rawProperty] of Object.entries(resolvedMultipartPropertySchemas(schema, new Set()))) {
     const { schema: property } = effectiveRevision3PartSchema(rawProperty, openapiVersion.startsWith("3.0"));
     if (property === false || property === null) continue; // an unsatisfiable property has no admissible runtime value
+    if (resolveDeclaration(property, openapiVersion.startsWith("3.0")).admitsNoInstance()) continue; // §5.2's empty intersection: the boolean false's resolved form, same accounting
     validateContentTransferEncoding(name, property);
     const enc = asObject(encoding[name]);
     if (!openapiVersion.startsWith("3.0") && hasExplicitMultipartExpansion(enc)) {
@@ -2239,6 +2241,11 @@ export function buildMultipartBody(
         continue; // §9.2: a JSON null value elides the nullable optional part
       }
       if (effective.schema !== null && effective.schema !== false) propSchema = effective.schema;
+      if (effective.schema === false || (propSchema !== null && resolveDeclaration(propSchema, is30).admitsNoInstance())) {
+        // §5.2: a supplied value against a declaration admitting no instance
+        // fails every admission test and refuses before dispatch at its part.
+        throw new Error(`multipart part ${JSON.stringify(name)}: no value can satisfy its declaration`);
+      }
     }
 
     // A declared array expands into repeated parts of the same name, each
@@ -3052,6 +3059,9 @@ function buildRevision3URLEncodedBody(
       continue; // §9.2: a JSON null value elides the nullable optional field
     }
     if (effective.schema !== null && effective.schema !== false) property = effective.schema;
+    if (effective.schema === false || (property !== null && resolveDeclaration(property, openapiVersion.startsWith("3.0")).admitsNoInstance())) {
+      throw new Error(`urlencoded property ${JSON.stringify(name)}: no value can satisfy its declaration`); // §5.2
+    }
     if (property === null) {
       throw new Error(`urlencoded property ${JSON.stringify(name)} has no declaration-defined carriage`);
     }

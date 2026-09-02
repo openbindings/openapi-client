@@ -994,6 +994,14 @@ func validateRevision3URLEncodedMedia(doc *openapi3.T, media *openapi3.MediaType
 				continue
 			}
 		}
+		if resolveDeclaration(propertySchema, is30).admitsNoInstance() {
+			// §5.2's empty intersection is the boolean false's resolved form and
+			// takes the same accounting: an unsatisfiable property is an
+			// unreachable defect (§3.2's smallest-owner rule), not a routed
+			// field, and it destroys neither its alternative nor its target.
+			// A value supplied for it refuses before dispatch at the part.
+			continue
+		}
 		propertySchema, _ = effectiveRevision3PartSchema(propertySchema, is30)
 		var enc *openapi3.Encoding
 		if media != nil {
@@ -1051,6 +1059,9 @@ func validateRevision3MultipartMedia(doc *openapi3.T, media *openapi3.MediaType)
 			if !literal {
 				continue // an unsatisfiable property has no admissible runtime value
 			}
+		}
+		if resolveDeclaration(partSchema, is30).admitsNoInstance() {
+			continue // §5.2's empty intersection: the boolean false's resolved form, same accounting
 		}
 		partSchema, _ = effectiveRevision3PartSchema(partSchema, is30)
 		var enc *openapi3.Encoding
