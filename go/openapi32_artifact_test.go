@@ -2,6 +2,7 @@ package openapiclient
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -724,34 +725,68 @@ paths:
     additionalOperations:
       COPY: {operationId: copy}
       CONNECT: {operationId: customConnect}
-      get: {operationId: colliding}
+      get: {operationId: lowercaseGetIsItsOwnToken}
+      GeT: {operationId: mixedCaseGetIsItsOwnToken}
+      GET: {operationId: collidesWithTheGetFixedField}
 `)}, ArtifactLoadOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, ref := range []string{
-		"#/paths/~1pets~1{petId}/query",
-		"#/paths/~1pets~1{petId}/additionalOperations/COPY",
-		"#/paths/~1pets~1{petId}/additionalOperations/CONNECT",
+	// openbindings.openapi-3.2@1 §6.1: an additionalOperations key denotes the
+	// method token it spells, and RFC 9110 §9.1 makes that token
+	// case-sensitive. `get` and `GeT` are therefore methods no fixed field
+	// defines, and each is sent in its authored capitalization.
+	for ref, wireMethod := range map[string]string{
+		"#/paths/~1pets~1{petId}/query":                        "QUERY",
+		"#/paths/~1pets~1{petId}/additionalOperations/COPY":    "COPY",
+		"#/paths/~1pets~1{petId}/additionalOperations/CONNECT": "CONNECT",
+		"#/paths/~1pets~1{petId}/additionalOperations/get":     "get",
+		"#/paths/~1pets~1{petId}/additionalOperations/GeT":     "GeT",
 	} {
-		if _, err := artifact.ResolveOperation(ref); err != nil {
+		target, err := artifact.ResolveOperation(ref)
+		if err != nil {
 			t.Errorf("ResolveOperation(%q): %v", ref, err)
+			continue
+		}
+		if got := target.WireMethod(); got != wireMethod {
+			t.Errorf("ResolveOperation(%q).WireMethod() = %q, want %q", ref, got, wireMethod)
 		}
 	}
 	for _, ref := range []string{
 		"#/paths/~1pets~1%7BpetId%7D/query",
 		"#/paths/~1pets~1{petId}/QUERY",
 		"#/paths/~1pets~1{petId}/connect",
-		"#/paths/~1pets~1{petId}/additionalOperations/get",
-		"#/paths/~1pets~1{petId}/additionalOperations/GeT",
 	} {
 		if _, err := artifact.ResolveOperation(ref); err == nil {
 			t.Errorf("ResolveOperation(%q) unexpectedly succeeded", ref)
 		}
 	}
+	// Only the byte-exact wire spelling is the declaration defect OAS forbids.
+	excluded := "#/paths/~1pets~1{petId}/additionalOperations/GET"
+	_, err = artifact.ResolveOperation(excluded)
+	var resolution *OperationResolutionError
+	if !errors.As(err, &resolution) || resolution.Kind != OperationTargetExcluded {
+		t.Fatalf("ResolveOperation(%q) error = %v, want an %q resolution error", excluded, err, OperationTargetExcluded)
+	}
 	operations := enumerateOperationsWithFloor(artifact, nil)
-	if len(operations) != 3 {
-		t.Fatalf("enumerated operations = %d, want query + COPY + CONNECT; %#v", len(operations), operations)
+	if len(operations) != 5 {
+		t.Fatalf("enumerated operations = %d, want query + CONNECT + COPY + GeT + get; %#v", len(operations), operations)
+	}
+	// A key that resolves also enumerates, and the excluded one does neither.
+	enumerated := map[string]bool{}
+	for _, operation := range operations {
+		enumerated[operation.info.Ref] = true
+	}
+	for _, ref := range []string{
+		"#/paths/~1pets~1{petId}/additionalOperations/get",
+		"#/paths/~1pets~1{petId}/additionalOperations/GeT",
+	} {
+		if !enumerated[ref] {
+			t.Errorf("%q resolves but does not enumerate", ref)
+		}
+	}
+	if enumerated[excluded] {
+		t.Errorf("%q is excluded but enumerates", excluded)
 	}
 }
 

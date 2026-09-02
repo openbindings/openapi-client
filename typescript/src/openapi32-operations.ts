@@ -70,7 +70,15 @@ export function parseOpenAPI32OperationReference(ref: string): OpenAPIOperationR
       );
     }
     for (const fixed of OPENAPI32_FIXED_METHODS) {
-      if (method.toLowerCase() === fixed) {
+      // The key denotes the method token it spells, and OAS forbids only an
+      // entry for a method a fixed field already defines. RFC 9110 §9.1 makes
+      // the method token case-sensitive and OAS 3.2.0 §3.2 routes this
+      // comparison to HTTP's own rule, so the collision is byte-equality
+      // against the token this fixed field sends — `fixed.toUpperCase()`,
+      // which is the fixed-field `wireMethod` rule below. `post` is a
+      // different token from `POST`, and no fixed field defines it
+      // (openbindings.openapi-3.2@1 §6.1).
+      if (method === fixed.toUpperCase()) {
         throw new OpenAPIOperationResolutionError(
           "excluded",
           `additional operation method ${JSON.stringify(method)} collides with fixed operation field ${JSON.stringify(fixed)}`,

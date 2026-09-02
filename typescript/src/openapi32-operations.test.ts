@@ -17,7 +17,13 @@ const operationsDocument = {
       additionalOperations: {
         COPY: {},
         "F~O": {},
+        // openbindings.openapi-3.2@1 §6.1: an additionalOperations key denotes
+        // the method token it spells, and RFC 9110 §9.1 makes that token
+        // case-sensitive. `GeT` is a method no fixed field defines; `GET` is
+        // the byte-exact token the `get` fixed field sends, so it is the
+        // declaration defect OAS forbids.
         GeT: {},
+        GET: {},
       },
     },
   },
@@ -28,6 +34,7 @@ describe("OpenAPI 3.2 operation correspondence", () => {
     ["#/paths/~1operations/query", "QUERY"],
     ["#/paths/~1operations/additionalOperations/COPY", "COPY"],
     ["#/paths/~1operations/additionalOperations/F~0O", "F~O"],
+    ["#/paths/~1operations/additionalOperations/GeT", "GeT"],
   ])("dispatches %s with its exact wire method", async (ref, method) => {
     const fetchFn = vi.fn<typeof fetch>(async () => new Response(null, { status: 204 }));
     const prepared = await new OpenAPIEngine().prepare({
@@ -51,6 +58,14 @@ describe("OpenAPI 3.2 operation correspondence", () => {
     expect(copy.reference).toMatchObject({ additional: true, wireMethod: "COPY" });
   });
 
+  it("admits a case-distinct method token and excludes only the byte-exact collision", async () => {
+    const artifact = await loadOpenAPIArtifact({ content: operationsDocument });
+    const mixed = await artifact.resolveOperation("#/paths/~1operations/additionalOperations/GeT");
+    expect(mixed.reference).toMatchObject({ additional: true, method: "GeT", wireMethod: "GeT" });
+    await expect(artifact.resolveOperation("#/paths/~1operations/additionalOperations/GET"))
+      .rejects.toMatchObject({ kind: "excluded" });
+  });
+
   it("retains excluded additional-operation positions in deterministic inventory", async () => {
     const artifact = await loadOpenAPIArtifact({ content: operationsDocument });
     const inventory = await artifact.operationInventory();
@@ -59,8 +74,15 @@ describe("OpenAPI 3.2 operation correspondence", () => {
       "#/paths/~1operations/query",
       "#/paths/~1operations/additionalOperations/COPY",
       "#/paths/~1operations/additionalOperations/F~0O",
+      "#/paths/~1operations/additionalOperations/GET",
       "#/paths/~1operations/additionalOperations/GeT",
     ]);
-    expect(inventory.at(-1)?.error).toMatchObject({ kind: "excluded" });
+    // A key that resolves also enumerates as a target; the excluded one
+    // enumerates as a position with no target.
+    const byRef = new Map(inventory.map((disposition) => [disposition.reference.ref, disposition]));
+    expect(byRef.get("#/paths/~1operations/additionalOperations/GeT")?.target).toBeDefined();
+    expect(byRef.get("#/paths/~1operations/additionalOperations/GET")?.target).toBeUndefined();
+    expect(byRef.get("#/paths/~1operations/additionalOperations/GET")?.error)
+      .toMatchObject({ kind: "excluded" });
   });
 });

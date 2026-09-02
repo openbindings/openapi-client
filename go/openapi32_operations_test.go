@@ -151,7 +151,8 @@ paths:
     additionalOperations:
       mixed: {operationId: lowerCase}
       MiXeD: {operationId: mixedCase}
-      QuErY: {operationId: fixedCollision}
+      QuErY: {operationId: caseDistinctFromQUERY}
+      QUERY: {operationId: fixedCollision}
       'BAD METHOD': {operationId: invalidToken}
 `)}, ArtifactLoadOptions{})
 	if err != nil {
@@ -164,6 +165,9 @@ paths:
 		"#/paths/~1composed/additionalOperations/lower",
 		"#/paths/~1keys/additionalOperations/mixed",
 		"#/paths/~1keys/additionalOperations/MiXeD",
+		// §6.1: `QuErY` spells a method token the fixed `query` field does not
+		// send, so it is admitted; only the byte-exact `QUERY` is the defect.
+		"#/paths/~1keys/additionalOperations/QuErY",
 	} {
 		if _, err := artifact.ResolveOperation(ref); err != nil {
 			t.Errorf("ResolveOperation(%q): %v", ref, err)
@@ -172,7 +176,7 @@ paths:
 	for _, ref := range []string{
 		"#/paths/~1composed/additionalOperations/MIXED",
 		"#/paths/~1collision/additionalOperations/MiXeD",
-		"#/paths/~1keys/additionalOperations/QuErY",
+		"#/paths/~1keys/additionalOperations/QUERY",
 		"#/paths/~1keys/additionalOperations/BAD METHOD",
 	} {
 		if _, err := artifact.ResolveOperation(ref); err == nil {
