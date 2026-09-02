@@ -142,10 +142,12 @@ function credentialPlacement(
     if (!/^[A-Za-z0-9\-._~+/]+={0,}$/u.test(credential.accessToken)) {
       throw new Error(`Swagger 2.0 OAuth2 credential ${JSON.stringify(name)} requires an RFC 6750 Bearer access token`);
     }
-    const granted = new Set(credential.scopes);
-    for (const scope of requiredScopes) if (!granted.has(scope)) {
-      throw new Error(`Swagger 2.0 OAuth2 credential ${JSON.stringify(name)} does not satisfy required scope ${JSON.stringify(scope)}`);
-    }
+    // R1 (ratified 2026-09-01, stated identically at openapi-2.0:567 and in all
+    // three 3.x siblings): whether a supplied credential satisfies a required
+    // scope is the counterparty's own determination and is never evaluated by
+    // this binding. `scopes` is declared by binding-invoker 0.1 only on the
+    // REQUIREMENT, never on the credential, and the three 3.x lanes evaluate no
+    // scopes at all. See the Go twin.
     return { query: false, name: "Authorization", value: `Bearer ${credential.accessToken}` };
   }
   throw new Error(`Swagger 2.0 security definition ${JSON.stringify(name)} has inadmissible type ${JSON.stringify(type.value)}`);

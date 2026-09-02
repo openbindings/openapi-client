@@ -142,15 +142,18 @@ func selectSwagger20Security(document *Swagger20Document, operation swagger20Ope
 			if !validBearerToken(credential.AccessToken) {
 				return nil, fmt.Errorf("Swagger 2.0 OAuth2 credential %q requires an RFC 6750 Bearer access token", name)
 			}
-			granted := map[string]bool{}
-			for _, scope := range credential.Scopes {
-				granted[scope] = true
-			}
-			for _, scope := range requiredScopes {
-				if !granted[scope] {
-					return nil, fmt.Errorf("Swagger 2.0 OAuth2 credential %q does not satisfy required scope %q", name, scope)
-				}
-			}
+			// R1 (ratified 2026-09-01, stated identically at openapi-2.0:567 and in
+			// all three 3.x siblings): whether a supplied credential satisfies a
+			// required scope is the counterparty's own determination and is never
+			// evaluated by this binding. No accepted edition assigns a client a
+			// verification duty, none gives a credential's GRANTED scopes any
+			// representation, and `scopes` is declared by binding-invoker 0.1 only
+			// on the REQUIREMENT -- what the challenge tells a caller the operation
+			// needs -- never on the credential. The three 3.x lanes evaluate no
+			// scopes at all; this lane used to, which made one credential refuse on
+			// 2.0 and dispatch on 3.0/3.1/3.2. A token the counterparty finds
+			// insufficient produces that counterparty's own response, which
+			// classifies under section 9 like any other outcome.
 			placement = swagger20CredentialPlacement{name: "Authorization", value: "Bearer " + credential.AccessToken}
 		default:
 			return nil, fmt.Errorf("Swagger 2.0 security definition %q has inadmissible type %q", name, typeName.value)
