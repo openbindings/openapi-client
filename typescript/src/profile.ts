@@ -13,13 +13,15 @@ export interface OpenAPIExecutionProfile {
   readonly dynamicObjectCarriage: boolean;
   readonly wholeJSONCarriage: boolean;
   readonly schemaOmittedOAS30ByteCarriage: boolean;
+  /** Private discriminator key of the routed-input envelope. */
+  readonly inputRouteKey: string;
   /** Exact private marker expected when routed input is supplied. */
   readonly inputRouteMarker: string;
 }
 
 function profile(
   name: string,
-  capabilities: Partial<Omit<OpenAPIExecutionProfile, "name" | "inputRouteMarker">> = {},
+  capabilities: Partial<Omit<OpenAPIExecutionProfile, "name" | "inputRouteKey" | "inputRouteMarker">> = {},
 ): OpenAPIExecutionProfile {
   return Object.freeze({
     name,
@@ -29,6 +31,7 @@ function profile(
     dynamicObjectCarriage: false,
     wholeJSONCarriage: false,
     schemaOmittedOAS30ByteCarriage: false,
+    inputRouteKey: "$openapi",
     inputRouteMarker: "openapi-client.routed@1",
     ...capabilities,
   });
@@ -76,4 +79,18 @@ export function withInputRouteMarker(
 ): OpenAPIExecutionProfile {
   if (!inputRouteMarker) throw new Error("input route marker must be non-empty");
   return Object.freeze({ ...base, inputRouteMarker });
+}
+
+/**
+ * Returns a profile with an adapter-owned private routed-envelope discriminator
+ * key and marker. The Go engine exposes the same pair (`WithInputRouteEnvelope`).
+ */
+export function withInputRouteEnvelope(
+  base: OpenAPIExecutionProfile,
+  inputRouteKey: string,
+  inputRouteMarker: string,
+): OpenAPIExecutionProfile {
+  if (!inputRouteKey) throw new Error("input route key must be non-empty");
+  if (!inputRouteMarker) throw new Error("input route marker must be non-empty");
+  return Object.freeze({ ...base, inputRouteKey, inputRouteMarker });
 }
