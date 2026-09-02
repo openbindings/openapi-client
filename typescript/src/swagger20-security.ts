@@ -1,3 +1,6 @@
+import { Swagger20CredentialsRequired, swagger20CredentialRequirement } from "./swagger20-context.js";
+import type { ContextRequirement } from "./internal/index.js";
+import { swagger20ConfigRequired } from "./swagger20-context.js";
 import {
   arrayMember,
   isSwagger20Object,
@@ -41,7 +44,7 @@ export function selectSwagger20Security(
   let selected = selection;
   if (selected === undefined) {
     if (requirements.length !== 1) {
-      throw new Error(`Swagger 2.0 security has ${requirements.length} alternatives; configuration.security must select one`);
+      throw swagger20ConfigRequired("security", "");
     }
     selected = 0;
   }
@@ -65,7 +68,8 @@ export function selectSwagger20Security(
     if (!isSwagger20Object(rawDefinition)) {
       throw new Error(`Swagger 2.0 security requirement ${JSON.stringify(name)} names no usable root definition`);
     }
-    const placement = credentialPlacement(name, rawDefinition, scopes as string[], credentials);
+    const placement = credentialPlacement(name, rawDefinition, scopes as string[], credentials, () =>
+      swagger20AlternativeRequirements(requirement, definitions.value!));
     const key = `${placement.query ? "query" : "header"}\u0000${placement.query ? placement.name : placement.name.toLowerCase()}`;
     const previous = owned.get(key);
     if (previous) throw new Error(`Swagger 2.0 credentials ${JSON.stringify(previous)} and ${JSON.stringify(name)} collide at one wire destination`);
@@ -96,13 +100,14 @@ function credentialPlacement(
   definition: Swagger20Object,
   requiredScopes: string[],
   credentials: Swagger20SecurityCredentials,
+  alternative: () => ContextRequirement[] | undefined,
 ): Swagger20CredentialPlacement {
   const type = stringMember(definition, "type");
   if (!type.valid) throw new Error(`Swagger 2.0 security definition ${JSON.stringify(name)} requires a string type`);
   if (type.value === "basic") {
     if (requiredScopes.length !== 0) throw new Error(`Swagger 2.0 basic requirement ${JSON.stringify(name)} must have an empty scopes array`);
     const credential = credentials.basic?.[name];
-    if (!credential) throw new Error(`Swagger 2.0 basic credential ${JSON.stringify(name)} is required`);
+    if (!credential) throw missingCredentials(alternative, `Swagger 2.0 basic credential ${JSON.stringify(name)} is required`);
     if (credential.userId.includes(":") || !validBasicText(credential.userId) || !validBasicText(credential.password)) {
       throw new Error(`Swagger 2.0 basic credential ${JSON.stringify(name)} violates RFC 7617 constraints`);
     }
@@ -118,7 +123,7 @@ function credentialPlacement(
     if (destination.value === "header" && !httpFieldName(wireName.value!)) {
       throw new Error(`Swagger 2.0 apiKey definition ${JSON.stringify(name)} has an invalid header destination`);
     }
-    if (!Object.hasOwn(credentials.apiKeys ?? {}, name)) throw new Error(`Swagger 2.0 apiKey credential ${JSON.stringify(name)} is required`);
+    if (!Object.hasOwn(credentials.apiKeys ?? {}, name)) throw missingCredentials(alternative, `Swagger 2.0 apiKey credential ${JSON.stringify(name)} is required`);
     const value = credentials.apiKeys![name]!;
     if (destination.value === "header" && !httpFieldValue(value)) {
       throw new Error(`Swagger 2.0 apiKey credential ${JSON.stringify(name)} contains a field-invalid byte`);
@@ -128,7 +133,13 @@ function credentialPlacement(
   if (type.value === "oauth2") {
     validateOAuth2(name, definition, requiredScopes);
     const credential = credentials.oauth2?.[name];
-    if (!credential || !/^[A-Za-z0-9\-._~+/]+={0,}$/u.test(credential.accessToken)) {
+    // An absent credential is awaited and names its resolution path; a supplied
+    // one this lane cannot use is a value the caller already chose, so no
+    // further context changes the answer (§3.2).
+    if (!credential) {
+      throw missingCredentials(alternative, `Swagger 2.0 OAuth2 credential ${JSON.stringify(name)} requires an RFC 6750 Bearer access token`);
+    }
+    if (!/^[A-Za-z0-9\-._~+/]+={0,}$/u.test(credential.accessToken)) {
       throw new Error(`Swagger 2.0 OAuth2 credential ${JSON.stringify(name)} requires an RFC 6750 Bearer access token`);
     }
     const granted = new Set(credential.scopes);
@@ -178,3 +189,34 @@ function validBasicText(value: string): boolean {
 
 function httpFieldName(value: string): boolean { return /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u.test(value); }
 function httpFieldValue(value: string): boolean { return !/[\u0000-\u0008\u000a-\u001f\u007f]/u.test(value); }
+
+/**
+ * The auth requirements of one selected security alternative, in the same
+ * name order the selection walks. Returns undefined where a scheme's declared
+ * type has no requirement family, so the refusal stays the plain species
+ * rather than naming a resolution path no runtime could take.
+ */
+function swagger20AlternativeRequirements(
+  requirement: Swagger20Object,
+  definitions: Swagger20Object,
+): ContextRequirement[] | undefined {
+  const result: ContextRequirement[] = [];
+  for (const name of Object.keys(requirement).sort()) {
+    const definition = definitions[name];
+    if (!isSwagger20Object(definition)) return undefined;
+    const scopes = Array.isArray(requirement[name])
+      ? (requirement[name] as unknown[]).filter((scope): scope is string => typeof scope === "string")
+      : [];
+    const entry = swagger20CredentialRequirement(stringMember(definition, "type").value ?? "", name, scopes);
+    if (entry === undefined) return undefined;
+    result.push(entry);
+  }
+  return result.length === 0 ? undefined : result;
+}
+
+function missingCredentials(alternative: () => ContextRequirement[] | undefined, message: string): Error {
+  const requirements = alternative();
+  return requirements === undefined
+    ? new Error(message)
+    : new Swagger20CredentialsRequired(requirements, message);
+}

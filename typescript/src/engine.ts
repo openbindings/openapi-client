@@ -780,3 +780,7 @@ export type {
   Swagger20SynthesisSecurityAlternative,
   Swagger20SynthesisSecurityScheme,
 } from "./swagger20-synthesis.js";
+export {
+  swagger20ConfigurationRequirement,
+  swagger20CredentialRequirement,
+} from "./swagger20-context.js";
