@@ -1638,7 +1638,19 @@ function concreteBodyFamily(
   // character-data media below. The CALLER determines those octets, so the
   // lane authors no correspondence. Scoped by the declaration: the supplied
   // value's type never selects a lane.
-  if (isCharacterDataMedia(base) && schema !== null && typeof schema === "object" && schemaTypeIs(schema, "string")) {
+  // The gate is the RESOLVED declaration (§5.2): `allOf` branches intersect,
+  // so `allOf: [{type: string}, {type: object}]` admits no instance and
+  // selects no lane. It is not "some branch is a string" — that union read
+  // put such a declaration on the text lane and then failed it inside the
+  // plan, which the OBI SDK reported as a degenerate media/schema
+  // combination while the Go twin, gating on the intersection, reported no
+  // lane selected. OAPI31-SS-48 pins the Go reading.
+  if (
+    isCharacterDataMedia(base)
+    && schema !== null
+    && typeof schema === "object"
+    && resolveDeclaration(schema, openapiVersion.startsWith("3.0")).admitsStringAsSoleNonNullType()
+  ) {
     return FAMILY_TEXT;
   }
   return "";
