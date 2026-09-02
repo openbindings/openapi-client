@@ -47,8 +47,12 @@ func (d SchemaDeclaration) AdmitsStringAsSoleNonNullType() bool {
 	return d.declaration.admitsStringAsSoleNonNullType()
 }
 
-func (d SchemaDeclaration) Typeless() bool   { return d.declaration.typeless() }
-func (d SchemaDeclaration) AdmitsNull() bool { return d.declaration.admitsNull() }
+func (d SchemaDeclaration) Typeless() bool { return d.declaration.typeless() }
+
+// AdmitsNoInstance reports a resolved declaration no instance satisfies: a
+// boolean `false` schema, or §5.2's empty `allOf` intersection.
+func (d SchemaDeclaration) AdmitsNoInstance() bool { return d.declaration.admitsNoInstance() }
+func (d SchemaDeclaration) AdmitsNull() bool       { return d.declaration.admitsNull() }
 func (d SchemaDeclaration) SoleNonNullType() (string, bool) {
 	return d.declaration.soleNonNullType()
 }
@@ -395,4 +399,19 @@ func (d resolvedDeclaration) items() resolvedDeclaration {
 		}
 	}
 	return resolveDeclaration(allOfSchema(matches), d.oas30)
+}
+
+func (d resolvedDeclaration) admitsNoInstance() bool {
+	if d.ambiguous {
+		return false
+	}
+	for _, conjunct := range d.conjuncts {
+		if literal, boolean := booleanSchemaLiteral(conjunct); boolean && !literal {
+			return true
+		}
+	}
+	// A nil map means no conjunct contributed a type set (an OAS 3.0
+	// array-valued `type` is malformed on that line and is refused by its own
+	// rule, not here); an empty non-nil map is §5.2's empty intersection.
+	return d.types != nil && len(d.types) == 0
 }

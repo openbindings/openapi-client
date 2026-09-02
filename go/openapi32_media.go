@@ -787,6 +787,9 @@ func validateOpenAPI32URLEncodedMedia(doc *openapi3.T, media *openapi3.MediaType
 	}
 	for name := range props {
 		propertySchema := resolvedMultipartProperty(schema, name, map[*openapi3.Schema]bool{})
+		if resolveDeclaration(propertySchema, false).admitsNoInstance() {
+			continue // an unsatisfiable property is unreachable and destroys nothing (§3.2)
+		}
 		propertySchema, _ = effectiveRevision3PartSchema(propertySchema, false)
 		encoding := openAPI32NamedEncoding(media, overlay, name)
 		if encoding != nil && encoding.usesSerialization() {

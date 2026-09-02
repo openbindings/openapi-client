@@ -17,6 +17,8 @@ export interface ResolvedDeclaration {
   declaresOnly(...allowed: string[]): boolean;
   admitsStringAsSoleNonNullType(): boolean;
   typeless(): boolean;
+  /** No instance satisfies the resolved declaration: a boolean `false` schema, or §5.2's empty intersection. */
+  admitsNoInstance(): boolean;
   admitsNull(): boolean;
   format(): { value: string; conflict: boolean };
   keywordString(key: "contentEncoding" | "contentMediaType"): { value: string; conflict: boolean };
@@ -56,6 +58,11 @@ class Declaration implements ResolvedDeclaration {
       if (member !== "string" && member !== "null") return false;
     }
     return true;
+  }
+
+  admitsNoInstance(): boolean {
+    if (this.ambiguous) return false;
+    return this.unsatisfiable || (this.types !== null && this.types.size === 0);
   }
 
   typeless(): boolean {

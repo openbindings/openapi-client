@@ -127,6 +127,9 @@ export function buildResolvedMultipartBody(
       ? "application/octet-stream"
       : singleConcreteMediaType(declared).canonical;
     const property = resolved.property(name);
+    if (property.admitsNoInstance()) {
+      throw new Error(`multipart part ${JSON.stringify(name)}: no value can satisfy its declaration`); // §5.2
+    }
     const values = property.declaresOnly("array")
       ? requireArray(fields[name], name)
       : [fields[name]];
