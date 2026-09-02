@@ -130,7 +130,7 @@ export function planAbstractInputRoutes(
       const body: Record<string, unknown> = {};
       if (Object.keys(bodyFields).length > 0) body.properties = bodyFields;
       if (wholeBodyField) body.whole = wholeBodyField;
-      return `[{"$openbindings":${JSON.stringify(profile.inputRouteMarker)},"value":$,"parameters":${JSON.stringify(parameters)},"body":${JSON.stringify(body)}}]`;
+      return `[{${JSON.stringify(profile.inputRouteKey)}:${JSON.stringify(profile.inputRouteMarker)},"value":$,"parameters":${JSON.stringify(parameters)},"body":${JSON.stringify(body)}}]`;
     },
   };
 }
@@ -174,8 +174,9 @@ export function parseRoutedEnvelope(
   }
   const envelope = asRecord(input[0]);
   if (!envelope) throw new Error(`${revision} routed input array item must be an object`);
-  if (!("$openbindings" in envelope)) {
-    throw new Error(`${revision} routed input array item requires $openbindings marker`);
+  const key = profile.inputRouteKey;
+  if (!(key in envelope)) {
+    throw new Error(`${revision} routed input array item requires ${key} marker`);
   }
   if (
     Object.keys(envelope).length !== 4
@@ -184,11 +185,11 @@ export function parseRoutedEnvelope(
     || envelope.body === undefined
   ) {
     throw new Error(
-      `${revision} routed input array item must contain exactly $openbindings, value, parameters, and body`,
+      `${revision} routed input array item must contain exactly ${key}, value, parameters, and body`,
     );
   }
-  if (envelope.$openbindings !== profile.inputRouteMarker) {
-    throw new Error(`${revision} routed input has invalid $openbindings marker ${JSON.stringify(envelope.$openbindings)}`);
+  if (envelope[key] !== profile.inputRouteMarker) {
+    throw new Error(`${revision} routed input has invalid ${key} marker ${JSON.stringify(envelope[key])}`);
   }
   const value = asRecord(envelope.value);
   if (!value) throw new Error(`${revision} routed input value must be a JSON object`);

@@ -569,7 +569,7 @@ async function nativeInput(
   return {
     supplied,
     value: [{
-      $openbindings: OPENAPI_PROFILE_FULL.inputRouteMarker,
+      [OPENAPI_PROFILE_FULL.inputRouteKey]: OPENAPI_PROFILE_FULL.inputRouteMarker,
       value,
       parameters: routes.parameters,
       body: bodyDescriptor,

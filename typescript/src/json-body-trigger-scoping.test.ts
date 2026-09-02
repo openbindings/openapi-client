@@ -90,7 +90,7 @@ async function runLane(
 
 describe("language-neutral §9.1 JSON-body trigger scoping", () => {
   const routedInput = [{
-    $openbindings: OPENAPI_PROFILE_FULL.inputRouteMarker,
+    [OPENAPI_PROFILE_FULL.inputRouteKey]: OPENAPI_PROFILE_FULL.inputRouteMarker,
     value: { payload: { ...BODY_VALUE } },
     parameters: [],
     body: { whole: "payload" },

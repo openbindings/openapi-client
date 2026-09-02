@@ -14,7 +14,7 @@ import { FAMILY_JSON, type BodyPlan } from "./media.js";
 describe("OpenAPI revision-2 routed input", () => {
   it("refuses one source field supplying two destinations", () => {
     expect(() => parseRoutedEnvelope([{
-      $openbindings: ROUTED_PROFILE.inputRouteMarker,
+      [ROUTED_PROFILE.inputRouteKey]: ROUTED_PROFILE.inputRouteMarker,
       value: { shared: "x" },
       parameters: [
         { in: "path", name: "id", field: "shared" },
@@ -26,7 +26,7 @@ describe("OpenAPI revision-2 routed input", () => {
 
   it("requires the private descriptor's exact top-level shape", () => {
     expect(() => parseRoutedEnvelope([{
-      $openbindings: ROUTED_PROFILE.inputRouteMarker,
+      [ROUTED_PROFILE.inputRouteKey]: ROUTED_PROFILE.inputRouteMarker,
       value: {},
       parameters: [],
       body: {},
@@ -36,7 +36,7 @@ describe("OpenAPI revision-2 routed input", () => {
 
   it("leaves a marker-shaped application object in the flat representation", () => {
     expect(parseRoutedEnvelope({
-      $openbindings: ROUTED_PROFILE.inputRouteMarker,
+      [ROUTED_PROFILE.inputRouteKey]: ROUTED_PROFILE.inputRouteMarker,
       value: { application: true },
     })).toBeNull();
   });
