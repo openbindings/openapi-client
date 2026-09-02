@@ -131,7 +131,11 @@ func (p *swagger20Parameter) serialize(value any, converter ParameterConverter, 
 		case Swagger20EmptyValueEmpty:
 			return []swagger20WireContribution{{name: p.name, valuePresent: true, parameter: p}}, nil
 		default:
-			return nil, fmt.Errorf("parameter %q requires emptyValueForm name-only or empty", p.name)
+			// The declaration admits two empty spellings that produce distinct
+			// bytes, and openbindings.openapi-2.0@1 §8.1 states that no binding
+			// default prefers one. The choice is awaited, so the refusal names
+			// it (§3.2's context-required species).
+			return nil, swagger20ConfigRequired("emptyValueForm", "")
 		}
 	}
 	if p.typeName != "array" {

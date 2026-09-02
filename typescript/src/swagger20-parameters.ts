@@ -1,3 +1,4 @@
+import { swagger20ConfigRequired } from "./swagger20-context.js";
 import {
   Swagger20Number,
   arrayMember,
@@ -363,7 +364,11 @@ function serializeParameter(
     }
     if (emptyValueForm === "name-only") return [{ name: parameter.name, value: "", valuePresent: false, parameter }];
     if (emptyValueForm === "empty") return [{ name: parameter.name, value: "", valuePresent: true, parameter }];
-    throw new Error(`parameter ${JSON.stringify(parameter.name)} requires emptyValueForm name-only or empty`);
+    // The declaration admits two empty spellings that produce distinct bytes,
+    // and openbindings.openapi-2.0@1 §8.1 states that no binding default
+    // prefers one. The choice is awaited, so the refusal names it (§3.2's
+    // context-required species).
+    throw swagger20ConfigRequired("emptyValueForm", "");
   }
   if (parameter.typeName !== "array") {
     return [{ name: parameter.name, value: converted[0]!, valuePresent: true, parameter }];

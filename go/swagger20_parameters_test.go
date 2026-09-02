@@ -213,26 +213,48 @@ func TestSwagger20ValueRefusalsPrecedeDispatch(t *testing.T) {
     {"name":"empty","in":"query","type":"string","allowEmptyValue":true}
   ],"responses":{"204":{"description":"ok"}}}}}
 }`
+	// openbindings.openapi-2.0@1 §3.2 gives an unusable target's pre-dispatch
+	// refusal two species. Both refuse before dispatch and neither has an
+	// observable side effect -- what this test is named for, and what every row
+	// still asserts. `code` records which species each condition carries: the
+	// context-required one where a named §12.1 point is awaited and the refusal
+	// names it, the plain one where no supplied context could change the answer.
+	// `parameterConversion` is deliberately plain: the converter is a runtime
+	// capability, not a value the invocation context can carry, so naming it
+	// would emit a satisfiable-looking challenge no runtime could satisfy
+	// (binding-invoker, "Requirement types").
 	for _, testCase := range []struct {
 		name      string
 		parameter Swagger20Parameters
 		configure func(*Swagger20PrepareOptions)
+		code      string
+		point     string
 	}{
-		{name: "literal integer exponent", parameter: Swagger20Parameters{Path: map[string]any{"id": "x"}, Query: map[string]any{"count": json.Number("2e0")}}},
-		{name: "assertion", parameter: Swagger20Parameters{Path: map[string]any{"id": "x"}, Query: map[string]any{"count": json.Number("1")}}},
-		{name: "delimiter collision", parameter: Swagger20Parameters{Path: map[string]any{"id": "x"}, Query: map[string]any{"labels": []any{"a,b"}}}},
-		{name: "header CRLF", parameter: Swagger20Parameters{Path: map[string]any{"id": "x"}, Header: map[string]any{"note": "ok\r\nbad"}}},
-		{name: "empty choice absent", parameter: Swagger20Parameters{Path: map[string]any{"id": "x"}, Query: map[string]any{"empty": ""}}},
-		{name: "unknown native key", parameter: Swagger20Parameters{Path: map[string]any{"id": "x"}, Query: map[string]any{"other": "x"}}},
-		{name: "number conversion absent", parameter: Swagger20Parameters{Path: map[string]any{"id": "x"}, Query: map[string]any{"count": json.Number("2")}}},
+		{name: "literal integer exponent", code: CodeRefused, parameter: Swagger20Parameters{Path: map[string]any{"id": "x"}, Query: map[string]any{"count": json.Number("2e0")}}},
+		{name: "assertion", code: CodeRefused, parameter: Swagger20Parameters{Path: map[string]any{"id": "x"}, Query: map[string]any{"count": json.Number("1")}}},
+		{name: "delimiter collision", code: CodeRefused, parameter: Swagger20Parameters{Path: map[string]any{"id": "x"}, Query: map[string]any{"labels": []any{"a,b"}}}},
+		{name: "header CRLF", code: CodeRefused, parameter: Swagger20Parameters{Path: map[string]any{"id": "x"}, Header: map[string]any{"note": "ok\r\nbad"}}},
+		{name: "empty choice absent", code: CodeContextRequired, point: "emptyValueForm", parameter: Swagger20Parameters{Path: map[string]any{"id": "x"}, Query: map[string]any{"empty": ""}}},
+		{name: "unknown native key", code: CodeRefused, parameter: Swagger20Parameters{Path: map[string]any{"id": "x"}, Query: map[string]any{"other": "x"}}},
+		{name: "number conversion absent", code: CodeRefused, parameter: Swagger20Parameters{Path: map[string]any{"id": "x"}, Query: map[string]any{"count": json.Number("2")}}},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			transport := &swagger20CaptureTransport{}
 			prepared := prepareSwagger20TestOperation(t, document, transport, testCase.configure)
 			err := runSwagger20TestInput(t, prepared, Swagger20Input{Parameters: testCase.parameter})
 			var executionError *ExecutionError
-			if !errors.As(err, &executionError) || executionError.Code != CodeRefused {
-				t.Fatalf("error = %#v, want %s", err, CodeRefused)
+			if !errors.As(err, &executionError) || executionError.Code != testCase.code {
+				t.Fatalf("error = %#v, want %s", err, testCase.code)
+			}
+			if testCase.point != "" {
+				prerequisites, ok := executionError.Details.(*Prerequisites)
+				if !ok || len(prerequisites.Alternatives) != 1 || len(prerequisites.Alternatives[0].Requirements) != 1 {
+					t.Fatalf("details = %#v, want one requirement", executionError.Details)
+				}
+				requirement := prerequisites.Alternatives[0].Requirements[0]
+				if requirement.Type != "config.value" || requirement.Extra["point"] != testCase.point {
+					t.Fatalf("requirement = %#v, want config.value at %q", requirement, testCase.point)
+				}
 			}
 			if len(transport.requests) != 0 {
 				t.Fatalf("dispatched %d requests", len(transport.requests))

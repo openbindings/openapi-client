@@ -19,33 +19,36 @@ func (p *Swagger20PreparedOperation) Start(ctx context.Context) (*Execution, err
 	if err != nil {
 		return nil, err
 	}
+	target := p.options.Source.Location
 	serverBase, err := resolveSwagger20Server(p.document, p.operation, p.options.Server, p.options.ServerSchemeIndex)
 	if err != nil {
-		return nil, &ExecutionError{Code: CodeRefused, Message: err.Error(), Cause: err}
+		return nil, swagger20RefusalError(p.serverRefusal(err), target)
 	}
 	security, err := selectSwagger20Security(p.document, p.operation, parameters, p.options.SecurityAlternative, p.options.SecurityCredentials)
 	if err != nil {
-		return nil, &ExecutionError{Code: CodeRefused, Message: err.Error(), Cause: err}
+		return nil, swagger20RefusalError(err, target)
 	}
+	// A supplied value this point does not admit is the caller's own choice, so
+	// no further context changes the answer: it stays the plain species.
 	if p.options.EmptyValueForm != "" && p.options.EmptyValueForm != Swagger20EmptyValueNameOnly && p.options.EmptyValueForm != Swagger20EmptyValueEmpty {
 		return nil, &ExecutionError{Code: CodeRefused, Message: "emptyValueForm must be name-only or empty"}
 	}
 	payload, err := swagger20PayloadFor(parameters, p.document)
 	if err != nil {
-		return nil, &ExecutionError{Code: CodeRefused, Message: err.Error(), Cause: err}
+		return nil, swagger20RefusalError(err, target)
 	}
 	if swagger20PayloadIsRequired(payload) {
 		consumes, mediaErr := effectiveSwagger20MediaSet(p.document, p.operation, "consumes")
 		if mediaErr != nil {
-			return nil, &ExecutionError{Code: CodeRefused, Message: mediaErr.Error(), Cause: mediaErr}
+			return nil, swagger20RefusalError(mediaErr, target)
 		}
 		if _, mediaErr := selectSwagger20RequestMedia(consumes, payload, p.options.RequestMedia); mediaErr != nil {
-			return nil, &ExecutionError{Code: CodeRefused, Message: mediaErr.Error(), Cause: mediaErr}
+			return nil, swagger20RefusalError(mediaErr, target)
 		}
 	}
 	responses, err := swagger20ResponsesFor(p.document.graph, p.operation)
 	if err != nil {
-		return nil, &ExecutionError{Code: CodeRefused, Message: err.Error(), Cause: err}
+		return nil, swagger20RefusalError(err, target)
 	}
 	execution := newExecution(ctx)
 	client := p.options.HTTPClient
@@ -110,7 +113,7 @@ func runSwagger20(ctx context.Context, client *http.Client, prepared *Swagger20P
 
 	routed, err := routeSwagger20Input(parameters, prepared.operation.path, input, prepared.options)
 	if err != nil {
-		execution.failExecution(&ExecutionError{Code: CodeRefused, Message: err.Error(), Cause: err})
+		execution.failExecution(swagger20RefusalError(err, prepared.options.Source.Location))
 		return
 	}
 	applySwagger20Security(&routed, security)
@@ -124,28 +127,28 @@ func runSwagger20(ctx context.Context, client *http.Client, prepared *Swagger20P
 	if payloadPresent {
 		model, modelErr := swagger20PayloadFor(parameters, prepared.document)
 		if modelErr != nil {
-			execution.failExecution(&ExecutionError{Code: CodeRefused, Message: modelErr.Error(), Cause: modelErr})
+			execution.failExecution(swagger20RefusalError(modelErr, prepared.options.Source.Location))
 			return
 		}
 		consumes, mediaErr := effectiveSwagger20MediaSet(prepared.document, prepared.operation, "consumes")
 		if mediaErr != nil {
-			execution.failExecution(&ExecutionError{Code: CodeRefused, Message: mediaErr.Error(), Cause: mediaErr})
+			execution.failExecution(swagger20RefusalError(mediaErr, prepared.options.Source.Location))
 			return
 		}
 		selection, mediaErr := selectSwagger20RequestMedia(consumes, model, prepared.options.RequestMedia)
 		if mediaErr != nil {
-			execution.failExecution(&ExecutionError{Code: CodeRefused, Message: mediaErr.Error(), Cause: mediaErr})
+			execution.failExecution(swagger20RefusalError(mediaErr, prepared.options.Source.Location))
 			return
 		}
 		requestBody, contentType, mediaErr = encodeSwagger20RequestPayload(selection, model, routed, prepared.options)
 		if mediaErr != nil {
-			execution.failExecution(&ExecutionError{Code: CodeRefused, Message: mediaErr.Error(), Cause: mediaErr})
+			execution.failExecution(swagger20RefusalError(mediaErr, prepared.options.Source.Location))
 			return
 		}
 	}
 	requestURL, err := AssembleRequestURL(serverBase, routed.resolvedPath, swagger20RawQuery(routed.query))
 	if err != nil {
-		execution.failExecution(&ExecutionError{Code: CodeRefused, Message: err.Error(), Cause: err})
+		execution.failExecution(swagger20RefusalError(err, prepared.options.Source.Location))
 		return
 	}
 	var bodyReader io.Reader
@@ -154,7 +157,7 @@ func runSwagger20(ctx context.Context, client *http.Client, prepared *Swagger20P
 	}
 	request, err := http.NewRequestWithContext(ctx, swagger20HTTPMethod(prepared.operation.method), requestURL.String(), bodyReader)
 	if err != nil {
-		execution.failExecution(&ExecutionError{Code: CodeRefused, Message: err.Error(), Cause: err})
+		execution.failExecution(swagger20RefusalError(err, prepared.options.Source.Location))
 		return
 	}
 	for _, header := range routed.headers {
@@ -163,7 +166,7 @@ func runSwagger20(ctx context.Context, client *http.Client, prepared *Swagger20P
 	if payloadPresent {
 		request.Header.Set("Content-Type", contentType)
 		if err := applySwagger20RequestContentCodings(request, parameters, prepared.options.RequestContentCodings); err != nil {
-			execution.failExecution(&ExecutionError{Code: CodeRefused, Message: err.Error(), Cause: err})
+			execution.failExecution(swagger20RefusalError(err, prepared.options.Source.Location))
 			return
 		}
 	}

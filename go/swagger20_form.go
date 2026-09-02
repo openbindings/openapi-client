@@ -64,7 +64,7 @@ func encodeSwagger20Multipart(contributions []swagger20WireContribution, media p
 		configured := propertyMedia[contribution.name]
 		parsed, err := parseRevision3MediaType(configured)
 		if configured == "" || err != nil || parsed.rangeSpecificity != 2 {
-			return nil, "", fmt.Errorf("file formData parameter %q requires a concrete configuration.propertyMedia value", contribution.name)
+			return nil, "", swagger20ConfigRequired("propertyMedia", "/"+escapeJSONPointerSegment(contribution.name))
 		}
 		partMedia[contribution.name] = parsed.canonical
 	}
