@@ -137,7 +137,7 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 	if name := unflattenableParamForRevision(params, args.Source.Capability); name != "" {
 		inv.failExecution(&ExecutionError{
 			Code:    CodeRefused,
-			Message: fmt.Sprintf("operation declares parameter %q without a distinct wire identity under %s (OAPI-P-03, unflattenable/unresolvable)", name, args.Source.Capability),
+			Message: fmt.Sprintf("operation declares parameter %q without a distinct wire identity under %s (unflattenable or unresolvable)", name, args.Source.Capability),
 		})
 		return
 	}

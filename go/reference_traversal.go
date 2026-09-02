@@ -21,7 +21,7 @@ import (
 // `{type: string}`.
 //
 // THE ANSWER IS THE INCORPORATED AUTHORITY'S, AND IT DIFFERS BY EDITION LINE.
-// `openbindings.openapi@1` §2 accepts eight editions "each interpreted under its
+// Each sibling specification's §2 accepts its editions "each interpreted under its
 // own immutable official text", so the two lines are read separately rather than
 // averaged. Every quotation below is verified at the pinned bytes by
 // `corpus-lab/scripts/verify-pointer-below-reference-authorities.mjs`, which
@@ -100,7 +100,7 @@ import (
 //
 // The refusing branch is enumerated rather than the following one on purpose:
 // an edition outside the accepted set, or a document whose `openapi` field this
-// pass could not read, is refused by OAPI-P-01 at load with its own diagnostic,
+// pass could not read, is refused by the admission gate at load with its own diagnostic,
 // and this pass must not pre-empt that with a second, less informative one.
 func openAPIFollowsPointerBelowReference(edition string) bool {
 	switch edition {

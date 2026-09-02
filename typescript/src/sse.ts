@@ -37,8 +37,8 @@ export function isSSEContentType(contentType: string | null): boolean {
 
 /**
  * Reads a `text/event-stream` HTTP response body per the WHATWG
- * server-sent events processing model (openbindings.openapi@1 §8,
- * OAPI-P-06), emitting one output per received event on the invocation
+ * server-sent events processing model (the family's §9.5, response
+ * decoding), emitting one output per received event on the invocation
  * handle. It takes ownership of the terminal transition: `closeOutput`
  * when the body is exhausted cleanly, `fireError` (ERR_STREAM_ERROR) on a
  * read failure (abnormal termination is a failure outcome; output values

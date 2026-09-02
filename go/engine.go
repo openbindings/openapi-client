@@ -156,7 +156,7 @@ func prepareDocumentWithFloor(document *openapi3.T, floor *acceptanceFloor, opti
 }
 
 func prepareArtifactWithFloor(artifact *Artifact, floor *acceptanceFloor, options PrepareOptions) (*PreparedOperation, error) {
-	// The acceptance-floor inventory filter (openbindings.openapi@1 §3): a
+	// The acceptance-floor inventory filter (§3.2 of `openbindings.openapi-3.1@1` and its siblings): a
 	// ladder-invalid target is not addressed, and its invocation is refused
 	// before dispatch -- provably no interaction side effect.
 	if verdict := floor.opVerdict(options.Ref); verdict != nil && verdict.Disposition == "invalid" {

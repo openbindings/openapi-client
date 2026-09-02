@@ -290,7 +290,7 @@ function resolveInternal(root: Obj, ref: string): Resolution {
 const sortDefects = (ds: FloorDefect[]): FloorDefect[] => ds.sort((a, b) => (a.position < b.position ? -1 : a.position > b.position ? 1 : 0));
 
 function part2Refusal(detail: string): string {
-  return `whole-source refusal (OAPI-P-01, openbindings.openapi@1 §3 part 2): no addressable target remains: ${detail}`;
+  return `whole-source refusal: no addressable target remains: ${detail}`;
 }
 
 // The entry messages, byte-identical in every engine.

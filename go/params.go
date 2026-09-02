@@ -108,7 +108,7 @@ func checkPathTemplateAddressability(pathTemplate string, params openapi3.Parame
 		return nil
 	}
 	sort.Strings(unaddressable)
-	return fmt.Errorf("path template variable(s) %s have no declared path parameter: the target URL cannot be built (OAPI-P-05: unresolvable target)", strings.Join(unaddressable, ", "))
+	return fmt.Errorf("path template variable(s) %s have no declared path parameter: the target URL cannot be built (unresolvable target)", strings.Join(unaddressable, ", "))
 }
 
 // normalizedTemplatedPathHierarchy erases template NAMES while preserving the
@@ -1189,7 +1189,7 @@ func queryEscape(s string, allowReserved bool) string {
 // form-urlencoded rules, and 3.1.2 Section 4.8.12.4 names the tilde.
 //
 // Which member of that permitted set to pick is the IMPLEMENTATIONS'
-// convention, not the binding specification's: openbindings.openapi@1 states
+// convention, not the binding specification's: the OpenAPI binding-specification family states
 // the permitted set and does not narrow it. The pick is pinned by the shared
 // twin case table (testdata/urlencoded-escaper-cases.json), executed by both Go
 // engines and by openapi-client/typescript.

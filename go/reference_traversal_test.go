@@ -31,11 +31,11 @@ func TestPointerBelowReferenceEditionPartition(t *testing.T) {
 			t.Errorf("openAPIFollowsPointerBelowReference(%q) = %v, want %v", edition, got, follows)
 		}
 	}
-	// An edition this specification does not accept is refused by OAPI-P-01
+	// An edition this specification does not accept is refused by the admission gate
 	// with its own diagnostic, so this rule must not pre-empt it.
 	for _, edition := range []string{"", "2.0", "3.0.5", "3.1.3", "3.2.1"} {
 		if !openAPIFollowsPointerBelowReference(edition) {
-			t.Errorf("openAPIFollowsPointerBelowReference(%q) refuses; an unaccepted edition must reach OAPI-P-01's diagnostic instead", edition)
+			t.Errorf("openAPIFollowsPointerBelowReference(%q) refuses; an unaccepted edition must reach the admission gate's diagnostic instead", edition)
 		}
 	}
 }

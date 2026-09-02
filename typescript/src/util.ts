@@ -104,7 +104,7 @@ export function buildJsonPointerRef(path: string, method: string): string {
  * with no location has no base and must be self-contained: a relative
  * external $ref then fails with a readable error (absolute http(s) $refs
  * still resolve — they need no base). The artifact's own `openapi` field
- * discriminates the accepted editions (OAPI-P-01).
+ * discriminates the accepted editions (the family's §2 admission gate).
  *
  * String content parses as YAML 1.2 (JSON being a valid subset); duplicate
  * mapping keys are refused loudly by the YAML layer itself, satisfying the
@@ -313,7 +313,7 @@ export function validateDocumentAddress(location: string): void {
 }
 
 /**
- * Discriminates the exact accepted editions per OAPI-P-01. Patch-looking
+ * Discriminates the exact accepted editions (the family's §2 admission gate). Patch-looking
  * values outside the frozen set are not inferred compatible.
  */
 function checkAcceptedOpenAPIVersion(raw: unknown): void {
@@ -321,12 +321,12 @@ function checkAcceptedOpenAPIVersion(raw: unknown): void {
   const v = doc && typeof doc === "object" ? doc["openapi"] : undefined;
   if (typeof v !== "string" || v === "") {
     throw new Error(
-      "document declares no `openapi` field: openbindings.openapi@1 requires one of its exact accepted OpenAPI editions (OAPI-P-01; Swagger 2.0 is not accepted)",
+      "document declares no `openapi` field; this loader accepts exactly OpenAPI 3.0.0–3.0.4 and 3.1.0–3.1.2 (Swagger 2.0 and OpenAPI 3.2 have their own loaders)",
     );
   }
   if (!ACCEPTED_OPENAPI_VERSIONS.has(v)) {
     throw new Error(
-      `unsupported OpenAPI version "${v}": openbindings.openapi@1 accepts exactly 3.0.0–3.0.4 and 3.1.0–3.1.2 (OAPI-P-01)`,
+      `unsupported OpenAPI version "${v}": this loader accepts exactly 3.0.0–3.0.4 and 3.1.0–3.1.2`,
     );
   }
 }
@@ -418,7 +418,7 @@ const ACCEPTED_OPENAPI_VERSIONS = new Set([
  * The Go twin is `reference_traversal.go` in both Go engines.
  *
  * The refusing branch is enumerated rather than the following one on purpose:
- * an edition outside the accepted set is refused by OAPI-P-01 with its own
+ * an edition outside the accepted set is refused by the admission gate with its own
  * diagnostic, and this rule must not pre-empt it with a second, less
  * informative one.
  */
@@ -780,7 +780,7 @@ function escapeJSONPointerSegment(segment: string): string {
 // A cyclic schema is emitted using the dialect's own recursion mechanism: the
 // cycle participant is hoisted into the operation schema's `$defs` and every
 // occurrence becomes a same-document `$ref` to it. The hoisted member needs a
-// key, and that key is SYNTHESIS surface: `openbindings.openapi@1` §10 places
+// key, and that key is SYNTHESIS surface: the family's §12.2 places
 // deterministic generation of OBI documents from OpenAPI artifacts outside the
 // specification, and the binding-specification authoring doctrine states that a
 // family specification does not define a synthesis naming convention. Nothing
