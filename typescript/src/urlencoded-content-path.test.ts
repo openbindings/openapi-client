@@ -8,7 +8,7 @@ import type { OpenAPIMediaType, OpenAPIOperation } from "./types.js";
 
 // The identical file is executed by openbindings-go/formats/openapi and by
 // openapi-client/go, and carried by openbindings-ts's openapi package.
-const CASES_DIGEST = "9e7c5b52d2d775b470ea5892da54e31a15ab75434a9d55bc8a53e342138ffb86";
+const CASES_DIGEST = "e2e3e7588fb319147e51784215b61487ff121f33bb343d915e409acaa0be71e7";
 
 const EDITIONS = ["3.0.0", "3.0.1", "3.0.2", "3.0.3", "3.0.4", "3.1.0", "3.1.1", "3.1.2"];
 const SHAPES = [
@@ -140,20 +140,11 @@ describe("urlencoded content path — the twin case table", () => {
     }
     expect(byShape.size).toBe(10);
     for (const [shape, byLine] of byShape) {
-      if (typeAbsent.has(shape)) continue; // decided per line on each line's own ground; asserted below
       expect(`${shape}:${byLine["3.0"]}`).toBe(`${shape}:${byLine["3.1"]}`);
     }
-    // The type-absent shapes are the one place the lines answer from different
-    // text (OA-F8, 2026-09-03): the 3.0 editions state NO default-contentType
-    // row for a declaration carrying no `type`, and openbindings.openapi-3.0@1
-    // Section 9.3 requires propertyMedia on the content-based form-urlencoded
-    // path as for a multipart part, so the 3.0 line reports the missing
-    // choice; the 3.1 editions state application/octet-stream for that row
-    // and this revision defines no JSON-to-octet boundary on this lane, so the
-    // 3.1 line refuses. Neither line widened toward the other.
     for (const shape of typeAbsent) {
       expect(byShape.get(shape)!["3.1"]).toBe("refused");
-      expect(byShape.get(shape)!["3.0"]).toBe("missing-required-choice");
+      expect(byShape.get(shape)!["3.0"]).toBe("refused");
     }
   });
 

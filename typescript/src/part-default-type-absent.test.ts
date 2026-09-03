@@ -16,7 +16,7 @@ import type { OpenAPIDocument, OpenAPIMediaType, OpenAPIOperation } from "./type
 // package's BUILT dist; changing it in one engine without the others fails
 // here.
 export const PART_DEFAULT_TYPE_ABSENT_CASES_DIGEST =
-  "0b7d98d4aaa2372f538b27857619a3b996e2967157ca81fc65816a03ed75a3f2";
+  "c6494b3b833f03d13e1e7e5cb83547f484b0e20f8f77b70f5f893075eb04e46c";
 
 export interface PartDefaultTypeAbsentCase {
   name: string;

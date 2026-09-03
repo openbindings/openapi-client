@@ -49,11 +49,6 @@ func (d SchemaDeclaration) AdmitsStringAsSoleNonNullType() bool {
 
 func (d SchemaDeclaration) Typeless() bool { return d.declaration.typeless() }
 
-// DeterminesNoDefault reports a resolved declaration that reaches no row of the
-// accepted editions' default Encoding contentType table; see
-// resolvedDeclaration.determinesNoDefault.
-func (d SchemaDeclaration) DeterminesNoDefault() bool { return d.declaration.determinesNoDefault() }
-
 // AdmitsNoInstance reports a resolved declaration no instance satisfies: a
 // boolean `false` schema, or §5.2's empty `allOf` intersection.
 func (d SchemaDeclaration) AdmitsNoInstance() bool { return d.declaration.admitsNoInstance() }
@@ -243,46 +238,6 @@ func (d resolvedDeclaration) typeless() bool {
 
 func (d resolvedDeclaration) admitsNull() bool {
 	return !d.ambiguous && d.types["null"]
-}
-
-// determinesNoDefault reports a content-based form or multipart declaration
-// for which the accepted editions' default Encoding contentType table states
-// no row, so no part or field media type is determined and the family
-// specification's propertyMedia configuration point supplies it (3.0 §9.3's
-// configuration point; 3.1 and 3.2 §9.3's "a multi-type resolved set determines
-// no default" convention and the [limit] that follows it):
-//
-//   - on the 3.0 line, a TYPELESS resolved declaration: 3.0.0 through 3.0.3
-//     enumerate a string with format binary, "other primitive types", object
-//     and array and close without a catch-all, and 3.0.4 tabulates the same
-//     cases keyed on a declared `type`, so no stated row reaches a declaration
-//     carrying none;
-//   - on the 3.1 and 3.2 lines, a resolved type set with TWO OR MORE non-null
-//     members: every row of the 3.1.1, 3.1.2 and 3.2.0 tables is keyed on one
-//     `type` (`absent`, `string`, `number, integer, or boolean`, `object`,
-//     `array`), and a set such as ["string", "integer"] matches none of them.
-//     A set with one non-null member beside `null` is not such a set; §9.3
-//     reads it through the collapse rule and it takes its member's row.
-//
-// An ambiguous choice (no single resolved member under §5.2) and a declaration
-// admitting no instance are different conditions with their own rules and are
-// never reported here. On the 3.0 line an array-valued `type` is not a union
-// declaration at all ("Value MUST be a string. Multiple types via an array are
-// not supported"), so it is not reported here either.
-func (d resolvedDeclaration) determinesNoDefault() bool {
-	if d.ambiguous || d.admitsNoInstance() {
-		return false
-	}
-	if d.oas30 {
-		return d.typeless()
-	}
-	nonNull := 0
-	for member := range d.types {
-		if member != "null" {
-			nonNull++
-		}
-	}
-	return nonNull >= 2
 }
 
 func (d resolvedDeclaration) soleNonNullType() (string, bool) {

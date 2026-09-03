@@ -854,40 +854,8 @@ function validateRevision3URLEncoded(
     ) {
       continue;
     }
-    if (
-      typeof enc?.contentType !== "string"
-      && !(openapiVersion.startsWith("3.0") && booleanSchemaLiteral(rawProperty) === true)
-      && contentPropertyDeterminesNoDefault(property, openapiVersion.startsWith("3.0"))
-    ) {
-      // A 3.0 boolean-literal Schema Object is outside that line's closed
-      // dialect and keeps its refusal below; it is not the typeless cell.
-      continue; // invocation supplies propertyMedia; synthesis keeps the alternative
-    }
     validateContentBasedMedia(name, property, enc, openapiVersion.startsWith("3.0"), "urlencoded");
   }
-}
-
-/**
- * A content-based form or multipart property whose ENCODED UNIT — the resolved
- * items declaration of an array property, the property's own resolved
- * declaration otherwise — reaches no row of the accepted editions' default
- * contentType table (see ResolvedDeclaration.determinesNoDefault). Such a
- * property is not a defect: it is a represented unit carrying the
- * `propertyMedia` requirement, admitted here and refused before dispatch, as
- * the context-required species, only when a value reaches it without that
- * choice. Exported so the twin planners read one predicate.
- */
-export function contentPropertyDeterminesNoDefault(
-  schema: Record<string, unknown> | null,
-  is30: boolean,
-): boolean {
-  if (schema === null) return false;
-  let unit: Record<string, unknown> | null = schema;
-  if (schemaTypeIs(schema, "array")) {
-    unit = resolvedMultipartItems(schema);
-    if (unit === null) return false;
-  }
-  return resolveDeclaration(unit, is30).determinesNoDefault();
 }
 
 const SUPPORTED_CHARSETS = new Set(["utf-8", "us-ascii", "iso-8859-1"]);
@@ -1221,15 +1189,6 @@ function validateRevision3Multipart(
       contentSchema = items;
     }
     if (!hasExplicitMultipartExpansion(enc)) {
-      if (
-        typeof enc?.contentType !== "string"
-        && !(openapiVersion.startsWith("3.0") && booleanSchemaLiteral(rawProperty) === true)
-        && contentPropertyDeterminesNoDefault(contentSchema, openapiVersion.startsWith("3.0"))
-      ) {
-        // A 3.0 boolean-literal Schema Object is outside that line's closed
-        // dialect and keeps its refusal below; it is not the typeless cell.
-        continue; // invocation supplies propertyMedia; synthesis keeps the alternative
-      }
       validateContentBasedMedia(name, contentSchema, enc, openapiVersion.startsWith("3.0"), "multipart");
     }
   }
@@ -1252,20 +1211,15 @@ function validateContentBasedMedia(
   requireSupportedCharset(selected, `${subject} property ${JSON.stringify(name)}`);
   if (isJSONMediaType(selected.base)) return;
   if (selected.base === "text/plain") {
-    // The Go twin's rule: the resolved declaration must BE a type text/plain
-    // carries. A resolved set whose every non-null member is such a type — a
-    // 3.1/3.2 multi-type set reached under an explicit or configured
-    // text/plain — is carried by the one lane the media type names: a string
-    // as its characters, a number or boolean as its shortest RFC 8259 lexical
-    // form (Section 9.3's text/plain pin); the media type selects the lane and
-    // the lane spells every scalar it admits. A 3.0 array-valued `type` never
-    // resolves to a type set and is refused by its own rule.
+    // The Go twin's rule: the resolved declaration must BE one of the
+    // primitive types text/plain can carry. A union that survived the
+    // nullable collapse declares value-dependent alternatives and has no
+    // single faithful carriage here either.
     if (
       !schemaTypeIs(schema, "string")
       && !schemaTypeIs(schema, "number")
       && !schemaTypeIs(schema, "integer")
       && !schemaTypeIs(schema, "boolean")
-      && !resolveDeclaration(schema, is30).declaresOnly("string", "number", "integer", "boolean", "null")
     ) {
       throw new Error(`${subject} property ${JSON.stringify(name)} cannot serialize its schema as text/plain`);
     }
@@ -2722,11 +2676,10 @@ export function urlencodedArrayNeedsPropertyMedia(
   try {
     selected = defaultMultipartContentType(container, is30);
   } catch {
-    // No item-type default resolves at all. A multi-type item set on the
-    // 3.1/3.2 lines is the "determines no default" cell and is reported by
-    // contentPropertyDeterminesNoDefault instead; a choice applicator that
-    // supplies no single resolved member is left with no resolved member
-    // declaration under Section 5.2, and the ordinary refusal stands.
+    // No item-type default resolves at all -- a choice applicator that
+    // supplies no single resolved member, or a union that does not collapse.
+    // Section 5.2 leaves that property with no resolved member declaration, so
+    // no media choice repairs it and the ordinary refusal stands.
     return false;
   }
   return !isJSONMediaType(parseMediaType(selected, true).base);

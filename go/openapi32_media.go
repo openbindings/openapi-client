@@ -801,9 +801,6 @@ func validateOpenAPI32URLEncodedMedia(doc *openapi3.T, media *openapi3.MediaType
 		if encodingRequiresPropertyMedia(openAPI32EncodingAsTyped(encoding)) {
 			continue
 		}
-		if typed := openAPI32EncodingAsTyped(encoding); (typed == nil || typed.ContentType == "") && contentPropertyDeterminesNoDefault(propertySchema, false) {
-			continue // invocation supplies propertyMedia; synthesis keeps the alternative
-		}
 		contentType, err := revision3PartContentType(propertySchema, openAPI32EncodingAsTyped(encoding), false)
 		if err != nil {
 			return fmt.Errorf("urlencoded property %q: %w", name, err)

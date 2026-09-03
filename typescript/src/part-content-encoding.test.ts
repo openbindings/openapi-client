@@ -16,7 +16,7 @@ import type { OpenAPIDocument, OpenAPIMediaType, OpenAPIOperation } from "./type
 // package's BUILT dist; changing it in one engine without the others fails
 // here.
 export const PART_CONTENT_ENCODING_CASES_DIGEST =
-  "a8812162d3d51b1d869821a733e29b47e240f8a8e00319c721d3fbdcdf52fa64";
+  "0af069f3d6569ebb8750547ac53f07acae305057091a0a5c05a66617e58e2721";
 
 export interface PartContentEncodingCase {
   name: string;
