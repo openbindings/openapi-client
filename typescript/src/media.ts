@@ -1311,24 +1311,33 @@ function hasDeclaredSchemaType(schema: Record<string, unknown>): boolean {
 }
 
 /**
- * The boolean schema literals in both spellings: the literal itself and the
- * structural encodings some toolchains emit for them — `{"anyOf":[{},
- * {"not":{}}]}` for true and `{"allOf":[{},{"not":{}}]}` for false. Returns
- * null for every ordinary schema.
+ * The boolean schema literals: the literal itself, plus the structural
+ * encoding some toolchains emit for false — `{"allOf":[{},{"not":{}}]}`.
+ * Returns null for every ordinary schema, the `{"anyOf":[{},{"not":{}}]}`
+ * structure included (see the body).
  */
 function booleanSchemaLiteral(schema: Record<string, unknown> | boolean | null): boolean | null {
   if (schema === true || schema === false) return schema;
   if (schema === null || Object.keys(schema).length !== 1) return null;
-  for (const [keyword, literal] of [["anyOf", true], ["allOf", false]] as const) {
-    const members = schema[keyword];
-    if (!Array.isArray(members) || members.length !== 2) continue;
-    const first = asObject(members[0]);
-    const second = asObject(members[1]);
-    if (first === null || Object.keys(first).length !== 0 || second === null || Object.keys(second).length !== 1) continue;
-    const not = asObject(second.not);
-    if (not !== null && Object.keys(not).length === 0) return literal;
-  }
-  return null;
+  // Only the `allOf` spelling of false is still read as a literal. The
+  // `anyOf: [{}, {not: {}}]` spelling is NOT the always-true schema under the
+  // binding specifications' §5.2: a choice skips only a branch whose resolved
+  // declaration declares only `null`, `not` never participates in
+  // resolution, and the choice supplies a single member declaration only when
+  // exactly one candidate remains -- `{}` and `{not: {}}` are two candidates,
+  // so the declaration resolves to no single member and a supplied value at
+  // that position refuses before dispatch, exactly as
+  // `oneOf: [{type: string}, {type: integer}]` does. The Go twin reads the
+  // same structure the same way; its loader marks the lifted encoding of a
+  // literal so the two never meet. The unmarked allOf-false reading is
+  // recorded as a separate residue rather than changed here.
+  const members = schema.allOf;
+  if (!Array.isArray(members) || members.length !== 2) return null;
+  const first = asObject(members[0]);
+  const second = asObject(members[1]);
+  if (first === null || Object.keys(first).length !== 0 || second === null || Object.keys(second).length !== 1) return null;
+  const not = asObject(second.not);
+  return not !== null && Object.keys(not).length === 0 ? false : null;
 }
 
 /**
