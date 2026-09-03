@@ -81,7 +81,7 @@ func (s *ServerSet) Resolve(selection *ServerSelection) (string, error) {
 		}
 		return "", &ServerResolutionRequiredError{
 			Path: "/url", Enum: urls,
-			Description: fmt.Sprintf("the effective server list has %d alternatives; select one", len(s.servers)),
+			Description: fmt.Sprintf("the effective server list has %d alternatives; configuration.server must select one", len(s.servers)),
 		}
 	}
 

@@ -18,12 +18,16 @@ import {
 import type { OpenAPIDocument } from "./types.js";
 import type { OpenAPIHostTransport } from "./host-transport.js";
 import {
+  configRequiredDetails,
   preflightTarget,
+  propertyMediaContextDetails,
+  requestMediaContextDetails,
   requiredContext,
   requiredRequestMediaContext,
   runBinding,
 } from "./invoke.js";
 import { errorMessage, loadOpenAPIDocument, parseRef } from "./util.js";
+import type { ConfigRequired } from "./servers.js";
 import { computeAcceptanceFloor, floorInvalidTargetMessage, floorOpVerdict, type AcceptanceFloor } from "./acceptance-floor.js";
 import type { OpenAPIParameterConverter } from "./params.js";
 import {
@@ -676,6 +680,38 @@ export {
   type OpenAPIHostRequest,
   type OpenAPIHostTransport,
 } from "./host-transport.js";
+export {
+  PROPERTY_MEDIA_REQUIREMENT_DESCRIPTION,
+  REQUEST_MEDIA_REQUIREMENT_DESCRIPTION,
+} from "./invoke.js";
+
+/**
+ * The prerequisites this engine raises for a missing `requestMedia` choice,
+ * scoped to `target` (the resolved server base). An adapter that elects
+ * request media at its own site reports this exact payload rather than a
+ * re-minted copy.
+ */
+export function requestMediaPrerequisites(target: string): OpenAPIPrerequisites {
+  return requestMediaContextDetails(target);
+}
+
+/**
+ * The prerequisites this engine raises for form or multipart properties whose
+ * media type the artifact leaves to the `propertyMedia` point, one
+ * requirement per property name, scoped to `target`.
+ */
+export function propertyMediaPrerequisites(target: string, names: readonly string[]): OpenAPIPrerequisites {
+  return propertyMediaContextDetails(target, names);
+}
+
+/**
+ * The prerequisites this engine raises for a resolvable-missing configuration
+ * value signalled as a {@link ConfigRequired}: the signal's point, path,
+ * prompt text, schema and durability exactly as supplied, scoped to `target`.
+ */
+export function configurationPrerequisites(required: ConfigRequired, target: string): OpenAPIPrerequisites {
+  return configRequiredDetails(required, target);
+}
 export {
   OPENAPI_PROFILE_BASE,
   OPENAPI_PROFILE_DYNAMIC_OBJECT,

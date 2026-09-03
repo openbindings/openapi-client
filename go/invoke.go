@@ -827,15 +827,25 @@ func requiredRequestMediaContextWithPlans(doc *openapi3.T, op *openapi3.Operatio
 	if openAPI32 && soleConcreteRequestPlan(op, plans) != nil || !openAPI32 && !onlyRangePlans(plans) {
 		return nil, nil
 	}
+	durable := true
 	requirement := newConfigValueRequirementCompat(
 		"requestMedia", "",
-		"select a concrete request media type admitted by the OpenAPI declaration",
-		nil, nil,
+		requestMediaRequirementDescription,
+		nil, &durable,
 	)
 	return &Prerequisites{
 		Alternatives: []RequirementAlternative{{Requirements: []Requirement{requirement}}},
 	}, nil
 }
+
+// requestMediaRequirementDescription is the prompt text on the `requestMedia`
+// requirement, identical across this engine, the TypeScript engine and the
+// SDK adapters, so one point reads the same wherever it is raised.
+const requestMediaRequirementDescription = "select the concrete request media type for this non-sole-concrete declaration"
+
+// propertyMediaRequirementDescription is the prompt text on each
+// `propertyMedia` requirement, identical across the same four engines.
+const propertyMediaRequirementDescription = "select one concrete media type for this form or multipart property"
 
 // mergeRequirements combines two independent context needs. Each
 // details value is an OR of alternatives; satisfying the operation requires
