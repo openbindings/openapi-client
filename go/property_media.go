@@ -200,6 +200,10 @@ func requiredPropertyMediaContextWithPlans(document *openapi3.T, operation *open
 	if err != nil {
 		return nil, err
 	}
+	// A property media choice is made once per binding and reused, so the
+	// requirement is durable -- the same amortization claim `requestMedia`
+	// and the server choice carry, stated in requirement form.
+	durable := true
 	var requirements []Requirement
 	seen := map[string]bool{}
 	for _, plan := range plans {
@@ -210,7 +214,7 @@ func requiredPropertyMediaContextWithPlans(document *openapi3.T, operation *open
 					seen[name] = true
 					requirements = append(requirements, newConfigValueRequirementCompat(
 						"propertyMedia", "/"+escapeJSONPointerSegment(name),
-						"select one concrete media type for this form or multipart property", nil, nil,
+						propertyMediaRequirementDescription, nil, &durable,
 					))
 				}
 				continue

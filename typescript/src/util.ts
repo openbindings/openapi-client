@@ -770,7 +770,7 @@ function unescapeJSONPointerSegment(segment: string): string {
   return segment.replace(/~1/gu, "/").replace(/~0/gu, "~");
 }
 
-function escapeJSONPointerSegment(segment: string): string {
+export function escapeJSONPointerSegment(segment: string): string {
   return segment.replace(/~/gu, "~0").replace(/\//gu, "~1");
 }
 

@@ -43,7 +43,7 @@ import type {
   OpenAPISecurityScheme,
   OpenAPIOAuthFlow,
 } from "./types.js";
-import { codePointCompare, errorMessage, jsonCarriesLoneSurrogate, parseRef } from "./util.js";
+import { codePointCompare, errorMessage, escapeJSONPointerSegment, jsonCarriesLoneSurrogate, parseRef } from "./util.js";
 import {
   MissingPathParamError,
   effectiveParameters,
@@ -113,14 +113,26 @@ interface OpenAPIBindingRunArgs extends BindingInvocationArgs {
  */
 function configOrSourceError(e: unknown, sourceLocation: string | undefined): InvocationError {
   if (e instanceof ConfigRequired) {
-    return contextRequiredError(e.message, {
-      target: sourceLocation ?? "",
-      alternatives: [
-        { requirements: [configValueRequirement(e.point, e.path, e.message, e.schema, e.durable)] },
-      ],
-    });
+    return contextRequiredError(e.message, configRequiredDetails(e, sourceLocation ?? ""));
   }
   return new InvocationError(ERR_REFUSED, errorMessage(e));
+}
+
+/**
+ * The CONTEXT_REQUIRED payload for a resolvable-missing configuration value
+ * signalled as a ConfigRequired: one config.value requirement carrying the
+ * point, path, prompt text, engine-asserted schema and durability exactly as
+ * the signal supplied them, scoped to `target`. Exported so an adapter that
+ * catches the same signal reports the same challenge rather than a re-minted
+ * copy that drops fields.
+ */
+export function configRequiredDetails(required: ConfigRequired, target: string): ContextRequiredDetails {
+  return {
+    target,
+    alternatives: [
+      { requirements: [configValueRequirement(required.point, required.path, required.message, required.schema, required.durable)] },
+    ],
+  };
 }
 import { isSSEContentType, streamSSE } from "./sse.js";
 import {
@@ -1120,20 +1132,58 @@ function requestMediaContextRequired(target: string): InvocationError {
   );
 }
 
-function requestMediaContextDetails(target: string): ContextRequiredDetails {
+/**
+ * The CONTEXT_REQUIRED payload for a missing `requestMedia` choice: one
+ * config.value requirement at the whole point, durable because the choice is
+ * made once per binding and reused (the context/input discriminator: a value
+ * an invocation flow resolves once and then runs on), scoped to the resolved
+ * server base the invocation is about to use. Exported so the SDK adapter
+ * raises this exact challenge from its own election site.
+ */
+export function requestMediaContextDetails(target: string): ContextRequiredDetails {
   return {
     target,
     alternatives: [{
       requirements: [configValueRequirement(
         "requestMedia",
         "",
-        "select a concrete request media type admitted by the OpenAPI content declarations",
+        REQUEST_MEDIA_REQUIREMENT_DESCRIPTION,
         undefined,
         true,
       )],
     }],
   };
 }
+
+/**
+ * The CONTEXT_REQUIRED payload for the form or multipart properties whose
+ * media type the artifact leaves to the `propertyMedia` configuration point:
+ * one config.value requirement per property name, all in one alternative
+ * (every one is needed), each durable for the same reason `requestMedia` is,
+ * scoped to the resolved server base.
+ */
+export function propertyMediaContextDetails(target: string, names: readonly string[]): ContextRequiredDetails {
+  return {
+    target,
+    alternatives: [{
+      requirements: names.map((name) => configValueRequirement(
+        "propertyMedia",
+        `/${escapeJSONPointerSegment(name)}`,
+        PROPERTY_MEDIA_REQUIREMENT_DESCRIPTION,
+        undefined,
+        true,
+      )),
+    }],
+  };
+}
+
+/** Prompt text on the `requestMedia` requirement; identical in the Go engine. */
+export const REQUEST_MEDIA_REQUIREMENT_DESCRIPTION =
+  "select the concrete request media type for this non-sole-concrete declaration";
+
+/** Prompt text on each `propertyMedia` requirement; identical in the Go engine. */
+export const PROPERTY_MEDIA_REQUIREMENT_DESCRIPTION =
+  "select one concrete media type for this form or multipart property";
 
 /** Side-effect-free requestMedia preflight for a required represented range-only body. */
 export function requiredRequestMediaContext(
