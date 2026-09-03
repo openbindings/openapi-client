@@ -43,7 +43,7 @@ import type {
   OpenAPISecurityScheme,
   OpenAPIOAuthFlow,
 } from "./types.js";
-import { codePointCompare, errorMessage, escapeJSONPointerSegment, jsonCarriesLoneSurrogate, parseRef } from "./util.js";
+import { codePointCompare, errorMessage, escapeJSONPointerSegment, parseStrictResponseJSON, parseRef } from "./util.js";
 import {
   MissingPathParamError,
   effectiveParameters,
@@ -1225,6 +1225,13 @@ export function builtinClassify(_site: InvokeSite, raw: RawResult): boolean | ty
  * invalid passthrough emits text no consumer can re-encode, so the
  * interaction completes unsuccessfully instead.
  */
+function invalidResponseJSON(contentType: string | null, cause: unknown): InvocationError {
+  return new InvocationError(
+    ERR_RESPONSE_ERROR,
+    `response declares ${JSON.stringify(contentType)} but the body is not valid JSON: ${errorMessage(cause)}`,
+  );
+}
+
 function loneSurrogateResponse(contentType: string | null): InvocationError {
   return new InvocationError(
     ERR_RESPONSE_ERROR,
@@ -1246,17 +1253,16 @@ export function decodeByContentType(contentType: string | null): OutputDecoder {
   const isJSON = isJSONMediaType(normalizeMediaType(contentType ?? ""));
   return (_site: InvokeSite, raw: RawResult): unknown => {
     if (isJSON) {
-      let value: unknown;
-      try {
-        value = JSON.parse(raw.body);
-      } catch (e: unknown) {
-        throw new InvocationError(
-          ERR_RESPONSE_ERROR,
-          `response declares ${JSON.stringify(contentType)} but the body is not valid JSON: ${errorMessage(e)}`,
-        );
-      }
-      if (jsonCarriesLoneSurrogate(raw.body, value)) throw loneSurrogateResponse(contentType);
-      return value;
+      // Text-fed, so no TextDecoder has stripped a leading byte-order mark and
+      // JSON.parse rejects one. That is this lane's long-standing behaviour and
+      // the consolidation deliberately does not change it: whether §9.2's
+      // ignore-the-mark rule reaches an SSE event's data text is a rule
+      // question, not a refactor's to settle.
+      return parseStrictResponseJSON(
+        raw.body,
+        (cause) => invalidResponseJSON(contentType, cause),
+        () => loneSurrogateResponse(contentType),
+      );
     }
     return raw.body;
   };
@@ -1279,18 +1285,16 @@ export function decodeBytesByContentType(
     if (bytes.length === 0) return null;
     if (isJSON) {
       let text: string;
-      let value: unknown;
       try {
         text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-        value = JSON.parse(text);
       } catch (e: unknown) {
-        throw new InvocationError(
-          ERR_RESPONSE_ERROR,
-          `response declares ${JSON.stringify(contentType)} but the body is not valid JSON: ${errorMessage(e)}`,
-        );
+        throw invalidResponseJSON(contentType, e);
       }
-      if (jsonCarriesLoneSurrogate(text, value)) throw loneSurrogateResponse(contentType);
-      return value;
+      return parseStrictResponseJSON(
+        text,
+        (cause) => invalidResponseJSON(contentType, cause),
+        () => loneSurrogateResponse(contentType),
+      );
     }
     return decodeTextLane(contentType, bytes, revision3);
   };

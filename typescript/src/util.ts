@@ -1411,6 +1411,40 @@ function valueHasLoneSurrogate(value: unknown): boolean {
  * emitting a value. `text` is the JSON source the value came from; when it
  * holds no surrogate escape at all, the walk is skipped entirely.
  */
+/**
+ * The strict-JSON RESPONSE profile all four sibling binding specifications pin
+ * at §9.2: duplicate object member names resolve to the last member the parse
+ * encounters — `JSON.parse` already does exactly that, so nothing here
+ * implements it — and a lone surrogate escape yields NO value.
+ *
+ * Both outcomes are REQUIRED parameters rather than defaults, and that is the
+ * whole point of the shape. The Swagger 2.0 lane shipped without the surrogate
+ * check for exactly as long as it had its own copy of this parse, and a
+ * signature you cannot call without deciding the surrogate case cannot lose it
+ * again. Each lane keeps its own error type and message; only the profile is
+ * shared, which mirrors the Go twin's `parseStrictJSON`.
+ *
+ * A leading byte-order mark is deliberately NOT handled here. Every byte-fed
+ * lane decodes through `TextDecoder`, which strips the mark before this sees
+ * the text, so those lanes already ignore it as §9.2 requires. The one
+ * text-fed caller is left exactly as it was rather than having its behaviour
+ * changed by a refactor: see the note in `decodeByContentType`.
+ */
+export function parseStrictResponseJSON(
+  text: string,
+  onInvalid: (cause: unknown) => Error,
+  onLoneSurrogate: () => Error,
+): unknown {
+  let value: unknown;
+  try {
+    value = JSON.parse(text) as unknown;
+  } catch (cause: unknown) {
+    throw onInvalid(cause);
+  }
+  if (jsonCarriesLoneSurrogate(text, value)) throw onLoneSurrogate();
+  return value;
+}
+
 export function jsonCarriesLoneSurrogate(text: string, value: unknown): boolean {
   if (!SURROGATE_ESCAPE.test(text)) return false;
   return valueHasLoneSurrogate(value);

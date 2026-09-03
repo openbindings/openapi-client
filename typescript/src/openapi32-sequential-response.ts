@@ -12,7 +12,7 @@ import { openAPI32PositionalMultipart } from "./openapi32-media.js";
 import { resolveDeclaration, type SchemaDeclaration } from "./resolved-declaration.js";
 import { streamSSE } from "./sse.js";
 import type { OpenAPIMediaType } from "./types.js";
-import { errorMessage, jsonCarriesLoneSurrogate } from "./util.js";
+import { errorMessage, parseStrictResponseJSON } from "./util.js";
 
 /** One item-framing form incorporated by an OpenAPI 3.2 response media type. */
 export type OpenAPI32SequentialResponseKind =
@@ -198,17 +198,17 @@ async function emitJSONItem(
     failSequential(inv, `${framing} item ${index} is empty`);
     return false;
   }
+  // The response-JSON strictness pin reaches every item: an unpaired surrogate
+  // yields no value, so the item is malformed rather than emitted.
   let value: unknown;
   try {
-    value = JSON.parse(text);
+    value = parseStrictResponseJSON(
+      text,
+      (cause) => new Error(`${framing} item ${index} is malformed JSON: ${errorMessage(cause)}`),
+      () => new Error(`${framing} item ${index} carries an unpaired surrogate`),
+    );
   } catch (error: unknown) {
-    failSequential(inv, `${framing} item ${index} is malformed JSON: ${errorMessage(error)}`);
-    return false;
-  }
-  // The response-JSON strictness pin reaches every item: an unpaired
-  // surrogate yields no value, so the item is malformed rather than emitted.
-  if (jsonCarriesLoneSurrogate(text, value)) {
-    failSequential(inv, `${framing} item ${index} carries an unpaired surrogate`);
+    failSequential(inv, errorMessage(error));
     return false;
   }
   return emitSequentialValue(value, args, inv, metadata);
@@ -374,17 +374,16 @@ function decodeSequentialPart(
   const parsed = parseMediaType(contentType, true);
   if (isJSONMediaType(parsed.base)) {
     let text: string;
-    let value: unknown;
     try {
       text = new TextDecoder("utf-8", { fatal: true }).decode(body);
-      value = JSON.parse(text);
     } catch (error: unknown) {
       throw new Error(`part declares ${JSON.stringify(contentType)} but is not valid JSON: ${errorMessage(error)}`);
     }
-    if (jsonCarriesLoneSurrogate(text, value)) {
-      throw new Error(`part declares ${JSON.stringify(contentType)} but carries an unpaired surrogate`);
-    }
-    return value;
+    return parseStrictResponseJSON(
+      text,
+      (cause) => new Error(`part declares ${JSON.stringify(contentType)} but is not valid JSON: ${errorMessage(cause)}`),
+      () => new Error(`part declares ${JSON.stringify(contentType)} but carries an unpaired surrogate`),
+    );
   }
   if (parsed.base.startsWith("text/") || parsed.base === "application/xml" || parsed.base.endsWith("+xml")) {
     return decodePartText(body, parsed.params.charset ?? "utf-8");
