@@ -160,8 +160,16 @@ func TestSwagger20RefusalSpecies(t *testing.T) {
 			if !ok || len(prerequisites.Alternatives) != 1 {
 				t.Fatalf("details = %#v, want one alternative", executionError.Details)
 			}
-			if prerequisites.Target != "https://api.example/swagger.json" {
-				t.Fatalf("target = %q, want the asserted source scope", prerequisites.Target)
+			// The target is the concrete destination the invoker is about to
+			// use: the resolved §10 server base once it resolves, and only
+			// where the server itself is awaited the source location the
+			// caller supplied -- the same two scopes the 3.x lane asserts.
+			wantTarget := "https://api.example"
+			if testCase.point == "server" {
+				wantTarget = "https://api.example/swagger.json"
+			}
+			if prerequisites.Target != wantTarget {
+				t.Fatalf("target = %q, want %q", prerequisites.Target, wantTarget)
 			}
 			requirements := prerequisites.Alternatives[0].Requirements
 			if testCase.point != "" {
@@ -174,6 +182,12 @@ func TestSwagger20RefusalSpecies(t *testing.T) {
 			for _, requirement := range requirements {
 				if requirement.Type == testCase.auth && requirement.Name == testCase.schemeName {
 					found = true
+				}
+				// A declared credential amortizes across invocations, so every
+				// credential requirement carries the contract's persistence
+				// permission, as the 3.x lane's security requirements do.
+				if requirement.Durable == nil || !*requirement.Durable {
+					t.Fatalf("requirement %#v is not durable", requirement)
 				}
 			}
 			if !found {
@@ -196,9 +210,15 @@ func TestSwagger20CredentialAlternativeIsCarriedWhole(t *testing.T) {
 		t.Fatalf("error = %#v, want %s", err, CodeContextRequired)
 	}
 	prerequisites := executionError.Details.(*Prerequisites)
+	if prerequisites.Target != "https://api.example" {
+		t.Fatalf("target = %q, want the resolved server base", prerequisites.Target)
+	}
 	got := map[string]string{}
 	for _, requirement := range prerequisites.Alternatives[0].Requirements {
 		got[requirement.Name] = requirement.Type
+		if requirement.Durable == nil || !*requirement.Durable {
+			t.Fatalf("requirement %#v is not durable", requirement)
+		}
 	}
 	if len(got) != 2 || got["b"] != "auth.basic" || got["k"] != "auth.apiKey" {
 		t.Fatalf("requirements = %#v, want both declared schemes", prerequisites.Alternatives[0].Requirements)

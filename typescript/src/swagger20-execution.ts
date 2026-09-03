@@ -290,11 +290,12 @@ function responseError(error: unknown): Swagger20ExecutionError {
 
 /**
  * Classifies one pre-dispatch refusal into its §3.2 species. The target is the
- * asserted context scope: the source location the caller supplied, matching the
- * side-effect-free preflight's assertion.
+ * asserted context scope, {@link PreparedSwagger20Operation.contextTarget}:
+ * the resolved server base once it resolves, matching the side-effect-free
+ * preflight's assertion.
  */
 function refused(error: unknown, prepared?: PreparedSwagger20Operation): Swagger20ExecutionError {
-  return swagger20RefusalError(error, prepared?.options.source.location ?? "");
+  return swagger20RefusalError(error, prepared?.contextTarget() ?? "");
 }
 
 function errorMessage(error: unknown): string {

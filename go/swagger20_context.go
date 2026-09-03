@@ -78,6 +78,41 @@ type swagger20CredentialsRequired struct {
 
 func (e *swagger20CredentialsRequired) Error() string { return e.message }
 
+// Swagger20CredentialRequirement builds the auth-family requirement for one
+// declared Swagger 2.0 security scheme: `basic`, `apiKey`, or `oauth2` with
+// the requirement's declared scopes. It is the one builder both surfaces use
+// -- the invocation challenge here and a side-effect-free preflight built from
+// the synthesis model -- so the two cannot state different boundaries.
+//
+// Every credential requirement is `durable: true`. The binding-invoker
+// contract makes that flag the invoker's permission to persist the resolved
+// value keyed from the challenge's target, granted "only when reuse is safe";
+// a declared credential is resolved once per binding and reused on every
+// later invocation, which is the amortization claim the context/input
+// discriminator states for context generally, and the same claim the OpenAPI
+// 3.x lane already makes on its own security requirements. The false return
+// reports a scheme type outside the closed set, which has no requirement
+// family: the refusal then stays the plain species rather than naming a
+// resolution path no runtime could take.
+func Swagger20CredentialRequirement(schemeType, name string, scopes []string) (Requirement, bool) {
+	durable := true
+	entry := Requirement{Name: name, Durable: &durable}
+	switch schemeType {
+	case "basic":
+		entry.Type = "auth.basic"
+	case "apiKey":
+		entry.Type = "auth.apiKey"
+	case "oauth2":
+		entry.Type = "auth.oauth2"
+		if len(scopes) > 0 {
+			entry.Extra = map[string]any{"scopes": append([]string(nil), scopes...)}
+		}
+	default:
+		return Requirement{}, false
+	}
+	return entry, true
+}
+
 func swagger20CredentialRequirements(requirement map[string]any, definitions swagger20Member[swagger20Object]) ([]Requirement, bool) {
 	names := make([]string, 0, len(requirement))
 	for name := range requirement {
@@ -94,26 +129,16 @@ func swagger20CredentialRequirements(requirement map[string]any, definitions swa
 		if !found || !valid {
 			return nil, false
 		}
-		entry := Requirement{Name: name}
-		switch swagger20Object(definitionMap).string("type").value {
-		case "basic":
-			entry.Type = "auth.basic"
-		case "apiKey":
-			entry.Type = "auth.apiKey"
-		case "oauth2":
-			entry.Type = "auth.oauth2"
-			var scopes []string
-			if rawScopes, ok := requirement[name].([]any); ok {
-				for _, rawScope := range rawScopes {
-					if scope, ok := rawScope.(string); ok {
-						scopes = append(scopes, scope)
-					}
+		var scopes []string
+		if rawScopes, ok := requirement[name].([]any); ok {
+			for _, rawScope := range rawScopes {
+				if scope, ok := rawScope.(string); ok {
+					scopes = append(scopes, scope)
 				}
 			}
-			if len(scopes) > 0 {
-				entry.Extra = map[string]any{"scopes": scopes}
-			}
-		default:
+		}
+		entry, ok := Swagger20CredentialRequirement(swagger20Object(definitionMap).string("type").value, name, scopes)
+		if !ok {
 			return nil, false
 		}
 		result = append(result, entry)
@@ -124,12 +149,35 @@ func swagger20CredentialRequirements(requirement map[string]any, definitions swa
 	return result, true
 }
 
+// ContextTarget is the context scope a CONTEXT_REQUIRED challenge from this
+// operation asserts, and the scope a side-effect-free preflight asserts for
+// the same operation. The binding-invoker contract defines the target as "the
+// concrete destination or context scope the invoker is about to use". Once
+// the §10 server resolves -- scheme, host, and basePath, or the configured
+// replacement URL, never userinfo -- that destination is known and is the
+// target, exactly as the OpenAPI 3.x lane asserts its resolved server base on
+// every credential and media challenge. Where the server itself cannot
+// resolve, the only scope this operation can assert is the source location
+// the caller supplied, which is what the 3.x lane asserts on its own server
+// challenge; a content-only source then asserts nothing. Resolution is pure,
+// so this can be answered before any challenge without a side effect.
+func (p *Swagger20PreparedOperation) ContextTarget() string {
+	if p == nil {
+		return ""
+	}
+	serverBase, err := resolveSwagger20Server(p.document, p.operation, p.options.Server, p.options.ServerSchemeIndex)
+	if err != nil {
+		return p.options.Source.Location
+	}
+	return serverBase
+}
+
 // swagger20RefusalError applies §3.2's discriminator to one pre-dispatch
 // refusal. A refusal a named §12.1 point or a declared credential would repair
 // is the context-required species and carries that resolution path; every
 // other refusal is the plain species and carries nothing. `target` is the
-// asserted context scope, which for this lane is the source location the
-// caller supplied -- the same scope the side-effect-free preflight asserts.
+// asserted context scope, ContextTarget above -- the same scope the
+// side-effect-free preflight asserts.
 func swagger20RefusalError(err error, target string) *ExecutionError {
 	if err == nil {
 		return nil

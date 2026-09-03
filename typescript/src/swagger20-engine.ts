@@ -24,6 +24,7 @@ import {
 } from "./swagger20-parameters.js";
 import { executeSwagger20, type Swagger20ExecutionResult } from "./swagger20-execution.js";
 import type { Swagger20SecurityCredentials } from "./swagger20-security.js";
+import { resolveSwagger20Server } from "./swagger20-server.js";
 
 export type Swagger20ContentCodingResult = Uint8Array | ArrayBuffer | ArrayBufferView;
 export type Swagger20ContentCodec = (
@@ -93,6 +94,28 @@ export class PreparedSwagger20Operation {
   /** Executes one unary Swagger 2.0 HTTP interaction. */
   async execute(input: Swagger20Input = {}): Promise<Swagger20ExecutionResult> {
     return executeSwagger20(this, await this.resolvedParameters(), input);
+  }
+
+  /**
+   * The context scope a CONTEXT_REQUIRED challenge from this operation
+   * asserts, and the scope a side-effect-free preflight asserts for the same
+   * operation. The binding-invoker contract defines the target as "the
+   * concrete destination or context scope the invoker is about to use". Once
+   * the §10 server resolves — scheme, host, and basePath, or the configured
+   * replacement URL, never userinfo — that destination is known and is the
+   * target, exactly as the OpenAPI 3.x lane asserts its resolved server base on
+   * every credential and media challenge. Where the server itself cannot
+   * resolve, the only scope this operation can assert is the source location
+   * the caller supplied, which is what the 3.x lane asserts on its own server
+   * challenge; a content-only source then asserts nothing. Resolution is pure,
+   * so this can be answered before any challenge without a side effect.
+   */
+  contextTarget(): string {
+    try {
+      return resolveSwagger20Server(this.document, this.operation, this.options.server, this.options.serverSchemeIndex);
+    } catch {
+      return this.options.source.location ?? "";
+    }
   }
 
   /** Detached declaration analysis for side-effect-free preflight and synthesis. */

@@ -19,7 +19,7 @@ func (p *Swagger20PreparedOperation) Start(ctx context.Context) (*Execution, err
 	if err != nil {
 		return nil, err
 	}
-	target := p.options.Source.Location
+	target := p.ContextTarget()
 	serverBase, err := resolveSwagger20Server(p.document, p.operation, p.options.Server, p.options.ServerSchemeIndex)
 	if err != nil {
 		return nil, swagger20RefusalError(p.serverRefusal(err), target)
@@ -84,6 +84,7 @@ func swagger20PayloadIsRequired(model swagger20PayloadModel) bool {
 
 func runSwagger20(ctx context.Context, client *http.Client, prepared *Swagger20PreparedOperation, parameters *swagger20ParameterSet, responses swagger20ResponseSet, serverBase string, security []swagger20CredentialPlacement, execution *Execution) {
 	input := Swagger20Input{}
+	target := prepared.ContextTarget()
 	// Even a parameter-free operation observes the optional caller envelope:
 	// an authored unknown member must refuse rather than race a dispatch. EOF
 	// is the sole spelling of an absent envelope.
@@ -113,7 +114,7 @@ func runSwagger20(ctx context.Context, client *http.Client, prepared *Swagger20P
 
 	routed, err := routeSwagger20Input(parameters, prepared.operation.path, input, prepared.options)
 	if err != nil {
-		execution.failExecution(swagger20RefusalError(err, prepared.options.Source.Location))
+		execution.failExecution(swagger20RefusalError(err, target))
 		return
 	}
 	applySwagger20Security(&routed, security)
@@ -127,28 +128,28 @@ func runSwagger20(ctx context.Context, client *http.Client, prepared *Swagger20P
 	if payloadPresent {
 		model, modelErr := swagger20PayloadFor(parameters, prepared.document)
 		if modelErr != nil {
-			execution.failExecution(swagger20RefusalError(modelErr, prepared.options.Source.Location))
+			execution.failExecution(swagger20RefusalError(modelErr, target))
 			return
 		}
 		consumes, mediaErr := effectiveSwagger20MediaSet(prepared.document, prepared.operation, "consumes")
 		if mediaErr != nil {
-			execution.failExecution(swagger20RefusalError(mediaErr, prepared.options.Source.Location))
+			execution.failExecution(swagger20RefusalError(mediaErr, target))
 			return
 		}
 		selection, mediaErr := selectSwagger20RequestMedia(consumes, model, prepared.options.RequestMedia)
 		if mediaErr != nil {
-			execution.failExecution(swagger20RefusalError(mediaErr, prepared.options.Source.Location))
+			execution.failExecution(swagger20RefusalError(mediaErr, target))
 			return
 		}
 		requestBody, contentType, mediaErr = encodeSwagger20RequestPayload(selection, model, routed, prepared.options)
 		if mediaErr != nil {
-			execution.failExecution(swagger20RefusalError(mediaErr, prepared.options.Source.Location))
+			execution.failExecution(swagger20RefusalError(mediaErr, target))
 			return
 		}
 	}
 	requestURL, err := AssembleRequestURL(serverBase, routed.resolvedPath, swagger20RawQuery(routed.query))
 	if err != nil {
-		execution.failExecution(swagger20RefusalError(err, prepared.options.Source.Location))
+		execution.failExecution(swagger20RefusalError(err, target))
 		return
 	}
 	var bodyReader io.Reader
@@ -157,7 +158,7 @@ func runSwagger20(ctx context.Context, client *http.Client, prepared *Swagger20P
 	}
 	request, err := http.NewRequestWithContext(ctx, swagger20HTTPMethod(prepared.operation.method), requestURL.String(), bodyReader)
 	if err != nil {
-		execution.failExecution(swagger20RefusalError(err, prepared.options.Source.Location))
+		execution.failExecution(swagger20RefusalError(err, target))
 		return
 	}
 	for _, header := range routed.headers {
@@ -166,7 +167,7 @@ func runSwagger20(ctx context.Context, client *http.Client, prepared *Swagger20P
 	if payloadPresent {
 		request.Header.Set("Content-Type", contentType)
 		if err := applySwagger20RequestContentCodings(request, parameters, prepared.options.RequestContentCodings); err != nil {
-			execution.failExecution(swagger20RefusalError(err, prepared.options.Source.Location))
+			execution.failExecution(swagger20RefusalError(err, target))
 			return
 		}
 	}
