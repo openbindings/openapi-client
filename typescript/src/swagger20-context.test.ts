@@ -15,13 +15,8 @@ const HOST = {
   schemes: ["https"],
 };
 const LOCATION = "https://api.example/swagger.json";
-// The target is the concrete destination the invoker is about to use: the
-// resolved §10 server base once it resolves, and only where the server itself
-// is awaited the source location the caller supplied — the same two scopes the
-// 3.x lane asserts.
-const SERVER_BASE = "https://api.example";
 
-interface Requirement { type: string; name?: string; point?: string; path?: string; schema?: unknown; durable?: boolean }
+interface Requirement { type: string; name?: string; point?: string; path?: string; schema?: unknown }
 
 async function run(
   content: Record<string, unknown>,
@@ -44,9 +39,9 @@ async function run(
   return { dispatches: fetchMock.mock.calls.length };
 }
 
-function requirements(error: Swagger20ExecutionError | undefined, target = SERVER_BASE): Requirement[] {
+function requirements(error: Swagger20ExecutionError | undefined): Requirement[] {
   const details = error?.details as { target?: string; alternatives?: { requirements: Requirement[] }[] };
-  expect(details?.target).toBe(target);
+  expect(details?.target).toBe(LOCATION);
   expect(details?.alternatives).toHaveLength(1);
   return details!.alternatives![0]!.requirements;
 }
@@ -101,14 +96,14 @@ describe("Swagger 2.0 refusal species", () => {
     const { error } = await run({ ...HOST, schemes: ["http", "https"],
       paths: { "/p": { get: { responses: { 204: { description: "ok" } } } } } }, "#/paths/~1p/get", {});
     expect(error?.code).toBe("CONTEXT_REQUIRED");
-    expect(requirements(error, LOCATION)[0]!.point).toBe("server");
+    expect(requirements(error)[0]!.point).toBe("server");
   });
 
   it("names server where §10 states a configured URL is the recovery", async () => {
     const { error } = await run({ ...HOST, schemes: ["ws", "wss"],
       paths: { "/p": { get: { responses: { 204: { description: "ok" } } } } } }, "#/paths/~1p/get", {});
     expect(error?.code).toBe("CONTEXT_REQUIRED");
-    expect(requirements(error, LOCATION)[0]!.point).toBe("server");
+    expect(requirements(error)[0]!.point).toBe("server");
   });
 
   it("names security when two alternatives are declared", async () => {
@@ -126,10 +121,7 @@ describe("Swagger 2.0 refusal species", () => {
       security: [{ k: [] }],
       paths: { "/p": { get: { responses: { 204: { description: "ok" } } } } } }, "#/paths/~1p/get", {});
     expect(error?.code).toBe("CONTEXT_REQUIRED");
-    // A declared credential amortizes across invocations, so every credential
-    // requirement carries the contract's persistence permission, as the 3.x
-    // lane's security requirements do.
-    expect(requirements(error)).toEqual([{ type: "auth.apiKey", name: "k", durable: true }]);
+    expect(requirements(error)).toEqual([{ type: "auth.apiKey", name: "k" }]);
   });
 
   it("carries the whole ANDed alternative, not the first missing member", async () => {
@@ -139,8 +131,8 @@ describe("Swagger 2.0 refusal species", () => {
       paths: { "/p": { get: { responses: { 204: { description: "ok" } } } } } }, "#/paths/~1p/get", {});
     expect(error?.code).toBe("CONTEXT_REQUIRED");
     expect(requirements(error)).toEqual([
-      { type: "auth.basic", name: "b", durable: true },
-      { type: "auth.apiKey", name: "k", durable: true },
+      { type: "auth.basic", name: "b" },
+      { type: "auth.apiKey", name: "k" },
     ]);
   });
 

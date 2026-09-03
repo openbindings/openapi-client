@@ -1,5 +1,5 @@
 import { ConfigRequired } from "./servers.js";
-import { Swagger20ExecutionError, type PreparedSwagger20Operation } from "./swagger20-engine.js";
+import { Swagger20ExecutionError } from "./swagger20-engine.js";
 import { configValueRequirement, type ContextRequirement } from "./internal/index.js";
 import { CONTEXT_REQUIRED, ERR_REFUSED } from "./internal/errcodes.js";
 
@@ -91,24 +91,7 @@ export function swagger20ConfigurationRequirement(point: string, path: string): 
   );
 }
 
-/**
- * Builds the auth requirement for one declared Swagger 2.0 security scheme:
- * `basic`, `apiKey`, or `oauth2` with the requirement's declared scopes. It is
- * the one builder both surfaces use — the invocation challenge here and a
- * side-effect-free preflight built from the synthesis model — so the two
- * cannot state different boundaries.
- *
- * Every credential requirement is `durable: true`. The binding-invoker
- * contract makes that flag the invoker's permission to persist the resolved
- * value keyed from the challenge's target, granted "only when reuse is safe";
- * a declared credential is resolved once per binding and reused on every
- * later invocation, which is the amortization claim the context/input
- * discriminator states for context generally, and the same claim the OpenAPI
- * 3.x lane already makes on its own security requirements. `undefined` reports
- * a scheme type outside the closed set, which has no requirement family: the
- * refusal then stays the plain species rather than naming a resolution path no
- * runtime could take.
- */
+/** Builds the auth requirement for one declared Swagger 2.0 security scheme. */
 export function swagger20CredentialRequirement(
   schemeType: string,
   name: string,
@@ -119,7 +102,7 @@ export function swagger20CredentialRequirement(
       : schemeType === "oauth2" ? "auth.oauth2"
         : undefined;
   if (type === undefined) return undefined;
-  const requirement: ContextRequirement = { type, name, durable: true };
+  const requirement: ContextRequirement = { type, name };
   if (type === "auth.oauth2" && scopes.length > 0) requirement.scopes = [...scopes];
   return requirement;
 }
@@ -128,9 +111,9 @@ export function swagger20CredentialRequirement(
  * Applies §3.2's discriminator to one pre-dispatch refusal. A refusal a named
  * §12.1 point or a declared credential would repair is the context-required
  * species and carries that resolution path; every other refusal is the plain
- * species and carries nothing. `target` is the asserted context scope,
- * {@link PreparedSwagger20Operation.contextTarget} — the same scope the
- * side-effect-free preflight asserts.
+ * species and carries nothing. `target` is the asserted context scope, which
+ * for this lane is the source location the caller supplied — the same scope
+ * the side-effect-free preflight asserts.
  */
 export function swagger20RefusalError(error: unknown, target: string): Swagger20ExecutionError {
   if (error instanceof Swagger20ExecutionError) return error;
