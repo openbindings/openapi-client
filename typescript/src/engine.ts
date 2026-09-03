@@ -16,6 +16,7 @@ import {
   type OpenAPIExecutionProfile,
 } from "./profile.js";
 import type { OpenAPIDocument } from "./types.js";
+import type { OpenAPIHostTransport } from "./host-transport.js";
 import {
   preflightTarget,
   requiredContext,
@@ -85,6 +86,14 @@ export interface OpenAPIExecutionHooks {
 
 export interface OpenAPIEngineOptions {
   fetch?: typeof globalThis.fetch;
+  /**
+   * Transport for the methods the platform `fetch` cannot carry (`CONNECT`,
+   * `TRACE`, `TRACK`). Absent resolves the host's own HTTP client when no
+   * `fetch` is injected; `null` declares that none exists and a function
+   * supplies one, and either is consulted whether or not a `fetch` was
+   * injected.
+   */
+  hostTransport?: OpenAPIHostTransport | null;
   redirect?: RequestRedirect;
   hooks?: OpenAPIExecutionHooks;
   maxDeliveryUnitBytes?: number;
@@ -99,6 +108,8 @@ export interface OpenAPIPrepareOptions {
   context?: Record<string, unknown>;
   signal?: AbortSignal;
   fetch?: typeof globalThis.fetch;
+  /** Per-operation override of {@link OpenAPIEngineOptions.hostTransport}. */
+  hostTransport?: OpenAPIHostTransport | null;
   redirect?: RequestRedirect;
   hooks?: OpenAPIExecutionHooks;
   maxDeliveryUnitBytes?: number;
@@ -251,6 +262,7 @@ export class PreparedOpenAPIOperation {
           maxDeliveryUnitBytes: this.args.maxDeliveryUnitBytes,
           signal: this.args.signal,
           fetch: this.args.fetch,
+          hostTransport: this.args.hostTransport,
           redirect: this.args.redirect,
           securityHandlers: this.args.securityHandlers as Record<string, ArtifactSecurityHandler> | undefined,
           parameterConverter: this.args.parameterConverter,
@@ -311,6 +323,7 @@ export class OpenAPIEngine {
       profile: options.profile ?? OPENAPI_PROFILE_FULL,
       context: contextWithSecurityHandlers(options.context, options.securityHandlers),
       fetch: options.fetch ?? this.options.fetch,
+      hostTransport: options.hostTransport ?? this.options.hostTransport,
       redirect: options.redirect ?? this.options.redirect,
       hooks: options.hooks,
       defaultHooks: this.options.hooks,
@@ -344,6 +357,7 @@ export class OpenAPIEngine {
       profile: options.profile ?? OPENAPI_PROFILE_FULL,
       context: contextWithSecurityHandlers(options.context, options.securityHandlers),
       fetch: options.fetch ?? this.options.fetch,
+      hostTransport: options.hostTransport ?? this.options.hostTransport,
       redirect: options.redirect ?? this.options.redirect,
       hooks: options.hooks,
       defaultHooks: this.options.hooks,
@@ -655,6 +669,13 @@ function deferred<T>(): {
   return { promise, resolve };
 }
 
+export {
+  fetchCarriesMethod,
+  hostCarriesMethod,
+  hostTransport,
+  type OpenAPIHostRequest,
+  type OpenAPIHostTransport,
+} from "./host-transport.js";
 export {
   OPENAPI_PROFILE_BASE,
   OPENAPI_PROFILE_DYNAMIC_OBJECT,

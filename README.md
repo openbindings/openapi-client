@@ -244,6 +244,34 @@ supply an `http.Client` with its preferred `CheckRedirect` policy. Artifact
 document retrieval still follows redirects so relative references use the
 final retrieval URI.
 
+## Methods fetch cannot carry
+
+The WHATWG Fetch Standard forbids `CONNECT`, `TRACE`, and `TRACK` (the `Request`
+constructor throws) and rewrites non-uppercase spellings of `DELETE`, `GET`,
+`HEAD`, `OPTIONS`, `POST`, and `PUT` (`post` is sent as `POST`). An OpenAPI
+document can denote all of these: `trace` is a fixed Path Item field, and
+OpenAPI 3.2 `additionalOperations` keys are byte-exact method tokens.
+
+When no `fetch` is injected, `OpenAPIRuntime` and `OpenAPIEngine` send a
+forbidden method through the host's own HTTP client (`node:http`/`node:https`
+under Node) with the same planned request line, headers, and body the fetch
+path would carry. Where the host has no such client (a browser or Worker), or
+where no available transport sends the token byte-exactly (Node's client
+uppercases method tokens, so an `additionalOperations` key such as `post`
+cannot be sent as authored), the invocation refuses before dispatch with a
+plain refusal that names the platform limit — never a transport failure, and
+never another method in its place. `hostTransport` on the engine, prepare, and
+runtime options overrides the resolved client, and `null` declares that none
+exists. An injected `fetch` is the caller's transport and receives the planned
+method as computed; a caller that also supplies `hostTransport` declares how
+those methods are sent.
+
+`OpenAPIClient` observes every exchange as a WHATWG `Request` for its
+middleware and result evidence, so it refuses such a call before dispatch with
+a `configuration` error (`METHOD_UNSUPPORTED_BY_FETCH`). The Go client's
+`net/http` transport sends every method token verbatim, so the two clients
+differ here only where the TypeScript host cannot carry the token.
+
 ## Scope
 
 The invocation-complete scope is:

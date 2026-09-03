@@ -26,6 +26,8 @@ export type {
   OpenAPISuccessResult,
 } from "./client.js";
 export type { OpenAPIParameterConverter } from "./params.js";
+export { fetchCarriesMethod, hostCarriesMethod, hostTransport } from "./host-transport.js";
+export type { OpenAPIHostRequest, OpenAPIHostTransport } from "./host-transport.js";
 export { documentInboundOperationInventory } from "./openapi-inbound-inventory.js";
 export type {
   OpenAPIInboundOperationDisposition,

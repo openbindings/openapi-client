@@ -10,6 +10,7 @@ import {
   type InvokeHooks,
   type InvokeSite,
 } from "./internal/index.js";
+import type { OpenAPIHostTransport } from "./host-transport.js";
 import { OPENAPI_PROFILE_FULL, type OpenAPIExecutionProfile } from "./profile.js";
 import type { OpenAPIDocument } from "./types.js";
 import {
@@ -43,6 +44,14 @@ export interface OpenAPIRuntimeInvocationArgs {
   maxDeliveryUnitBytes?: number;
   signal?: AbortSignal;
   fetch?: typeof globalThis.fetch;
+  /**
+   * Transport for the methods the platform `fetch` cannot carry (`CONNECT`,
+   * `TRACE`, `TRACK`). Absent resolves the host's own HTTP client when no
+   * `fetch` is injected; `null` declares that none exists and a function
+   * supplies one, and either is consulted whether or not a `fetch` was
+   * injected.
+   */
+  hostTransport?: OpenAPIHostTransport | null;
   /** Defaults to `manual`, keeping redirect responses observable. */
   redirect?: RequestRedirect;
   securityHandlers?: Record<string, ArtifactSecurityHandler>;
@@ -170,6 +179,7 @@ function toBindingArgs(args: OpenAPIRuntimeInvocationArgs): BindingInvocationArg
     maxDeliveryUnitBytes: args.maxDeliveryUnitBytes,
     signal: args.signal,
     fetch: args.fetch,
+    hostTransport: args.hostTransport,
     redirect: args.redirect,
     securityHandlers: args.securityHandlers,
     parameterConverter: args.parameterConverter,

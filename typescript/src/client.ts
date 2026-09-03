@@ -26,6 +26,7 @@ import { decodeBytesByContentType } from "./invoke.js";
 import { openAPIFailureEvidence } from "./failure.js";
 import { isSSEContentType } from "./sse.js";
 import { errorMessage, loadOpenAPIDocument, parseRef } from "./util.js";
+import { fetchCarriesMethod } from "./host-transport.js";
 
 export type HTTPMethod = "get" | "put" | "post" | "delete" | "options" | "head" | "patch" | "trace";
 
@@ -738,6 +739,24 @@ function observedFetch(
   exchange: Deferred<ObservedExchange>,
 ): typeof globalThis.fetch {
   return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    // The client observes every exchange as a WHATWG `Request`, and the
+    // Request constructor forbids CONNECT/TRACE/TRACK and rewrites
+    // non-uppercase spellings of the six methods it normalizes (Fetch
+    // Standard §2.2.1). That is a limit of this client's Request-shaped
+    // middleware and evidence surface, stated before dispatch as a
+    // configuration refusal rather than surfacing as a transport failure;
+    // the engine's own default transport (`OpenAPIRuntime`, `OpenAPIEngine`)
+    // carries the forbidden methods through the host HTTP client.
+    const plannedMethod = input instanceof Request ? input.method : (init?.method ?? "GET");
+    if (!fetchCarriesMethod(plannedMethod)) {
+      const refused = new OpenAPIClientError(
+        "configuration",
+        "METHOD_UNSUPPORTED_BY_FETCH",
+        `method ${JSON.stringify(plannedMethod)} cannot be observed as a WHATWG Request: the fetch API forbids or rewrites it; invoke through OpenAPIRuntime or OpenAPIEngine, whose default transport carries it through the host HTTP client`,
+      );
+      exchange.reject(refused);
+      throw refused;
+    }
     let request = new Request(input, init);
     try {
       for (const item of middleware) {
