@@ -1,6 +1,7 @@
 import { swagger20ConfigRequired } from "./swagger20-context.js";
 import { escapePointerToken } from "./swagger20-reference.js";
 import { parseMediaRange, parseMediaType, type ParsedMediaType } from "./media.js";
+import { jsonCarriesLoneSurrogate } from "./util.js";
 import {
   arrayMember,
   isSwagger20Object,
@@ -375,8 +376,22 @@ export async function decodeSwagger20Response(
   if (matches.length !== 1) throw new Error(`response media ${JSON.stringify(media.canonical)} ambiguously matches effective produces`);
   const lane = swagger20ResponseLane(media, declaration);
   if (lane === "json") {
-    try { return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body)) as unknown; }
+    let text: string;
+    let value: unknown;
+    try {
+      text = new TextDecoder("utf-8", { fatal: true }).decode(body);
+      value = JSON.parse(text) as unknown;
+    }
     catch (error: unknown) { throw new Error("response body is not strict JSON", { cause: error }); }
+    // openbindings.openapi-2.0@1 §9.2's strict-JSON pin: a lone surrogate escape
+    // yields no value in either direction. The 3.x lanes apply this inside
+    // invoke.ts's guarded decoders; this lane parses its own body, so the check
+    // belongs here too. Without it the 2.0 lane emitted the unpaired surrogate as
+    // a successful operation value, which the pin and the Go twin both refuse.
+    if (jsonCarriesLoneSurrogate(text, value)) {
+      throw new Error("response body carries an unpaired surrogate, which denotes no character");
+    }
+    return value;
   }
   if (lane === "text") return new TextDecoder("utf-8", { fatal: true }).decode(body);
   if (lane === "byte") {
