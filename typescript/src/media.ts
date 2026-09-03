@@ -2685,6 +2685,41 @@ export function urlencodedArrayNeedsPropertyMedia(
   return !isJSONMediaType(parseMediaType(selected, true).base);
 }
 
+/**
+ * Section 9.3's content-lane media selection for one form or multipart
+ * property, reduced to the question the 3.0 line's Section 8.1 converter asks:
+ * does the selected lane carry the value as character data? An explicit single
+ * concrete Encoding `contentType` -- which the `propertyMedia` choice
+ * materializes onto the plan before routing -- else the declaration-keyed
+ * default table names the lane; only `text/plain` converts a JSON scalar to a
+ * string, and the JSON lane serializes the supplied value untouched. For an
+ * array property the default is the item-type default, the type each repeated
+ * multipart part carries. A selection this reports false for either rides
+ * another lane's own rule or is refused by the body writer; neither is a
+ * conversion site.
+ */
+export function contentPropertySelectsTextLane(
+  schema: Record<string, unknown> | boolean | null,
+  enc: Record<string, unknown> | null,
+  is30: boolean,
+  name: string,
+): boolean {
+  if (typeof enc?.contentType === "string" && enc.contentType !== "") {
+    try {
+      return parseSingleMultipartContentType(enc.contentType, name).base === "text/plain";
+    } catch {
+      return false;
+    }
+  }
+  const effective = effectiveRevision3PartSchema(schema, is30).schema;
+  if (effective === null || effective === false) return false;
+  try {
+    return parseMediaType(defaultMultipartContentType(effective, is30), true).base === "text/plain";
+  } catch {
+    return false;
+  }
+}
+
 function defaultMultipartContentType(
   schema: Record<string, unknown>,
   is30: boolean,

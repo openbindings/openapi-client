@@ -5,6 +5,7 @@ import {
   parseMediaRange,
   parseMediaType,
   planRequestBodies as planRequestBodiesFromClient,
+  contentPropertySelectsTextLane,
   urlencodedArrayNeedsPropertyMedia,
   type BodyPlan,
   type ParsedMediaRange,
@@ -500,6 +501,19 @@ function styleValueContainsDelimiter(value: unknown, delimiters: string): boolea
     || (typeof member === "string" && containsAnyDelimiter(member, delimiters)));
 }
 
+/**
+ * openbindings.openapi-3.0@1 Section 8.1 names the converter for a Section 9.3
+ * form or part property only where that property "must convert a JSON scalar
+ * to a string", and Section 9.3 routes a content-based property through
+ * Section 9.2's lane for its selected media type: the text/plain lane is the
+ * converter's only content-lane site, and the JSON lane serializes the
+ * supplied value as strict JSON without consulting it. Before 2026-09-03 the
+ * converter ran by DECLARATION here, so an `integer` array bound for
+ * `application/json` reached the wire as `["1","2"]`. The 3.1 and 3.2 lines
+ * scope the converter to the schema-form and RFC 6570-style paths outright
+ * (3.1 Section 8.1: "never for Section 9.3's content-based path"), which the
+ * `oas30` gate carries.
+ */
 function prepareContentFormPropertyValue(
   plan: BodyPlan | undefined,
   name: string,
@@ -508,7 +522,12 @@ function prepareContentFormPropertyValue(
   converter: OpenAPIParameterConverter | undefined,
 ): unknown {
   if (!plan?.media || !oas30) return value;
-  const declaration = resolveDeclaration(plan.media.schema, true).property(name);
+  const root = plan.media.schema as SchemaDeclaration;
+  const enc = asRecord(asRecord(plan.media.encoding)?.[name]);
+  if (!contentPropertySelectsTextLane(authoredPropertySchema(root, name, true), enc, true, name)) {
+    return value;
+  }
+  const declaration = resolveDeclaration(root, true).property(name);
   try {
     return convertContentFormScalars(declaration, value, converter);
   } catch (error: unknown) {
