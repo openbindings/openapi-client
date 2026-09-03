@@ -19,6 +19,23 @@ export interface ResolvedDeclaration {
   typeless(): boolean;
   /** No instance satisfies the resolved declaration: a boolean `false` schema, or §5.2's empty intersection. */
   admitsNoInstance(): boolean;
+  /**
+   * The accepted editions' default Encoding `contentType` table states no row
+   * for this declaration, so a content-based form or multipart property
+   * declared this way determines no part or field media type and the family
+   * specification's `propertyMedia` point supplies it: on the 3.0 line a
+   * TYPELESS declaration (3.0.0-3.0.3 enumerate string-with-format-binary,
+   * "other primitive types", object and array with no catch-all; 3.0.4
+   * tabulates the same cases keyed on a declared `type`), and on the 3.1 and
+   * 3.2 lines a resolved type set with TWO OR MORE non-null members (every row
+   * of the 3.1.1, 3.1.2 and 3.2.0 tables is keyed on one `type`, and
+   * `["string", "integer"]` matches none). A set with one non-null member
+   * beside `null` collapses to that member's row. An ambiguous choice and a
+   * declaration admitting no instance are separate conditions and are never
+   * reported here; nor is a 3.0 array-valued `type`, which that line's Schema
+   * Object does not support at all.
+   */
+  determinesNoDefault(): boolean;
   admitsNull(): boolean;
   format(): { value: string; conflict: boolean };
   keywordString(key: "contentEncoding" | "contentMediaType"): { value: string; conflict: boolean };
@@ -68,6 +85,15 @@ class Declaration implements ResolvedDeclaration {
   typeless(): boolean {
     if (this.ambiguous || this.unsatisfiable || this.types !== null) return false;
     return this.conjuncts.every((conjunct) => !Object.hasOwn(conjunct, "type"));
+  }
+
+  determinesNoDefault(): boolean {
+    if (this.ambiguous || this.admitsNoInstance()) return false;
+    if (this.oas30) return this.typeless();
+    if (this.types === null) return false;
+    let nonNull = 0;
+    for (const member of this.types) if (member !== "null") nonNull += 1;
+    return nonNull >= 2;
   }
 
   admitsNull(): boolean {

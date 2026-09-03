@@ -370,7 +370,21 @@ function requestPropertyMediaFacts(
         && contentPath
         && contentType === ""
         && urlencodedArrayNeedsPropertyMedia(authoredPropertySchema(root, name, oas30), oas30);
-      if ((oas30 && multipart && typeless) || mediaChoice || compoundDefault) {
+      // A resolved declaration the editions' default-contentType table states
+      // no row for — typeless on the 3.0 line, a multi-type set on the 3.1 and
+      // 3.2 lines — determines no part or field media type on EITHER
+      // content-based lane, and Section 9.3 names propertyMedia as the missing
+      // choice. `property` is already the encoded unit (the items declaration
+      // of an array property).
+      // The 3.0 typeless clause keeps its declaration-only reading (an explicit
+      // single concrete contentType does not lift it; the shared
+      // part-content-encoding table pins that in both engines); the 3.1/3.2
+      // multi-type clause applies where no explicit contentType fixes the part
+      // type, since an explicit single concrete value fixes it under the
+      // preceding rules and no default is then consulted.
+      const noDefault = (oas30 && typeless)
+        || (contentPath && contentType === "" && property.determinesNoDefault());
+      if (noDefault || mediaChoice || compoundDefault) {
         required.push(name);
         declarations[name] = contentType;
       }

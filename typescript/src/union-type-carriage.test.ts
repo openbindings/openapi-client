@@ -270,9 +270,17 @@ describe("union-type carriage — the twin case table", () => {
   // with the wrong expectation. The runner now plans through
   // planResolvedRequestBodies, as its Go twins always did, and the engines
   // agree on all 112 cells.
+  //
+  // OA-F8 (2026-09-03): EIGHT cells moved from refused to
+  // missing-required-choice — 3.1.2 x {string-integer, string-object} x both
+  // media x both keyword spellings. A resolved type set with two or more
+  // non-null members matches no row of the 3.1 editions' default-contentType
+  // table (every row is keyed on ONE `type`), so it determines no part or
+  // field media type and Section 9.3 names propertyMedia as the missing
+  // choice; this harness supplies none. The Go twins carry the per-row basis.
 const EXPECTED: Record<string, string> = {
-  "3.0.4|application/x-www-form-urlencoded|absent-type|contentEncoding": "refused",
-  "3.0.4|application/x-www-form-urlencoded|absent-type|plain": "refused",
+  "3.0.4|application/x-www-form-urlencoded|absent-type|contentEncoding": "missing-required-choice",
+  "3.0.4|application/x-www-form-urlencoded|absent-type|plain": "missing-required-choice",
   "3.0.4|application/x-www-form-urlencoded|array-null|contentEncoding": "refused",
   "3.0.4|application/x-www-form-urlencoded|array-null|plain": "refused",
   "3.0.4|application/x-www-form-urlencoded|boolean-true|contentEncoding": "refused",
@@ -281,8 +289,8 @@ const EXPECTED: Record<string, string> = {
   "3.0.4|application/x-www-form-urlencoded|empty-array|plain": "refused",
   "3.0.4|application/x-www-form-urlencoded|integer-null|contentEncoding": "refused",
   "3.0.4|application/x-www-form-urlencoded|integer-null|plain": "refused",
-  "3.0.4|application/x-www-form-urlencoded|memberless|contentEncoding": "refused",
-  "3.0.4|application/x-www-form-urlencoded|memberless|plain": "refused",
+  "3.0.4|application/x-www-form-urlencoded|memberless|contentEncoding": "missing-required-choice",
+  "3.0.4|application/x-www-form-urlencoded|memberless|plain": "missing-required-choice",
   "3.0.4|application/x-www-form-urlencoded|null-only|contentEncoding": "refused",
   "3.0.4|application/x-www-form-urlencoded|null-only|plain": "refused",
   "3.0.4|application/x-www-form-urlencoded|null-string|contentEncoding": "refused",
@@ -347,12 +355,12 @@ const EXPECTED: Record<string, string> = {
   "3.1.2|application/x-www-form-urlencoded|object-null|plain": "admitted;value=p=%7B%22k%22%3A%22v%22%7D;null=elided",
   "3.1.2|application/x-www-form-urlencoded|string-array-1|contentEncoding": "admitted;value=p=x;null=error",
   "3.1.2|application/x-www-form-urlencoded|string-array-1|plain": "admitted;value=p=x;null=p=",
-  "3.1.2|application/x-www-form-urlencoded|string-integer|contentEncoding": "refused",
-  "3.1.2|application/x-www-form-urlencoded|string-integer|plain": "refused",
+  "3.1.2|application/x-www-form-urlencoded|string-integer|contentEncoding": "missing-required-choice",
+  "3.1.2|application/x-www-form-urlencoded|string-integer|plain": "missing-required-choice",
   "3.1.2|application/x-www-form-urlencoded|string-null|contentEncoding": "admitted;value=p=x;null=elided",
   "3.1.2|application/x-www-form-urlencoded|string-null|plain": "admitted;value=p=x;null=elided",
-  "3.1.2|application/x-www-form-urlencoded|string-object|contentEncoding": "refused",
-  "3.1.2|application/x-www-form-urlencoded|string-object|plain": "refused",
+  "3.1.2|application/x-www-form-urlencoded|string-object|contentEncoding": "missing-required-choice",
+  "3.1.2|application/x-www-form-urlencoded|string-object|plain": "missing-required-choice",
   "3.1.2|application/x-www-form-urlencoded|string|contentEncoding": "admitted;value=p=x;null=error",
   "3.1.2|application/x-www-form-urlencoded|string|plain": "admitted;value=p=x;null=p=",
   "3.1.2|multipart/form-data|absent-type|contentEncoding": "admitted;value=error;null=error",
@@ -385,12 +393,12 @@ const EXPECTED: Record<string, string> = {
   "3.1.2|multipart/form-data|object-null|plain": "admitted;value=application/json:{\"k\":\"v\"};null=elided",
   "3.1.2|multipart/form-data|string-array-1|contentEncoding": "admitted;value=application/octet-stream:x;null=error",
   "3.1.2|multipart/form-data|string-array-1|plain": "admitted;value=text/plain:x;null=text/plain:",
-  "3.1.2|multipart/form-data|string-integer|contentEncoding": "refused",
-  "3.1.2|multipart/form-data|string-integer|plain": "refused",
+  "3.1.2|multipart/form-data|string-integer|contentEncoding": "missing-required-choice",
+  "3.1.2|multipart/form-data|string-integer|plain": "missing-required-choice",
   "3.1.2|multipart/form-data|string-null|contentEncoding": "admitted;value=application/octet-stream:x;null=elided",
   "3.1.2|multipart/form-data|string-null|plain": "admitted;value=text/plain:x;null=elided",
-  "3.1.2|multipart/form-data|string-object|contentEncoding": "refused",
-  "3.1.2|multipart/form-data|string-object|plain": "refused",
+  "3.1.2|multipart/form-data|string-object|contentEncoding": "missing-required-choice",
+  "3.1.2|multipart/form-data|string-object|plain": "missing-required-choice",
   "3.1.2|multipart/form-data|string|contentEncoding": "admitted;value=application/octet-stream:x;null=error",
   "3.1.2|multipart/form-data|string|plain": "admitted;value=text/plain:x;null=text/plain:",
 };

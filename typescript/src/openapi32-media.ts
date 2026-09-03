@@ -458,6 +458,15 @@ function defaultPartContentType(
   const encoding = declaration.keywordString("contentEncoding");
   if (!encoding.conflict && encoding.value !== "") return "application/octet-stream";
   if (declaration.typeless()) return "application/octet-stream";
+  // Section 9.3 of openbindings.openapi-3.2@1: the default determination is
+  // declaration-keyed, not value-keyed, and a multi-type resolved set
+  // determines no default. The planner reports such a part as a propertyMedia
+  // requirement before any value is consumed, so this is reached only by a
+  // path that bypassed that requirement, and it refuses rather than reading a
+  // Content-Type off the supplied value's JSON type.
+  if (declaration.determinesNoDefault()) {
+    throw new Error("multipart part declares a multi-type resolved set, which determines no default Content-Type; configuration.propertyMedia is required");
+  }
   const kind = openAPI32JSONValueType(value);
   return kind === "array" || kind === "object" ? "application/json" : "text/plain";
 }
