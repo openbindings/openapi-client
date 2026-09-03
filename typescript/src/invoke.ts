@@ -123,6 +123,13 @@ function configOrSourceError(e: unknown, sourceLocation: string | undefined): In
   return new InvocationError(ERR_REFUSED, errorMessage(e));
 }
 import { isSSEContentType, streamSSE } from "./sse.js";
+import {
+  fetchCarriesMethod,
+  hostCarriesMethod,
+  hostMethodRefusal,
+  hostTransport,
+  type OpenAPIHostTransport,
+} from "./host-transport.js";
 
 /**
  * Drives one OpenAPI binding invocation over the binding-facing handle: one
@@ -520,7 +527,6 @@ export async function runBinding(
     fetchHeaders.set("Cookie", cookieUnits.join("; "));
   }
 
-  const doFetch = args.fetch ?? fetch;
   let resp: Response;
   const requestInit: RequestInit = {
     method: wireMethod,
@@ -529,8 +535,38 @@ export async function runBinding(
     signal: inv.signal,
     redirect: args.redirect ?? "manual",
   };
+  // The platform `fetch` refuses or rewrites some method tokens before any
+  // bytes leave the process (Fetch Standard §2.2.1: CONNECT/TRACE/TRACK are
+  // forbidden; non-uppercase spellings of DELETE/GET/HEAD/OPTIONS/POST/PUT
+  // are normalized). For the platform default transport only, a forbidden
+  // method rides the host's own HTTP client where one exists, and a method
+  // no available transport can send byte-exactly refuses before dispatch —
+  // a plain refusal naming the platform limit, never a transport failure.
+  // An injected `fetch` is the caller's transport and receives the planned
+  // method as computed, unless the caller also supplied `hostTransport`
+  // (a function or `null`), which declares how those methods are sent
+  // (host-transport.ts).
+  const platformFetch = args.fetch === undefined || args.fetch === globalThis.fetch;
+  let host: OpenAPIHostTransport | null = null;
+  if (!fetchCarriesMethod(wireMethod) && (platformFetch || args.hostTransport !== undefined)) {
+    host = args.hostTransport === undefined ? await hostTransport() : args.hostTransport;
+    if (host === null || !hostCarriesMethod(wireMethod)) {
+      inv.fireError(new InvocationError(ERR_REFUSED, hostMethodRefusal(wireMethod, host !== null)));
+      return;
+    }
+  }
+  const doFetch = args.fetch ?? fetch;
   let securedRequest: Request | undefined;
   if (selectedSecurity && args.securityHandlers) {
+    if (host !== null) {
+      // A security handler receives a WHATWG `Request`, which cannot be
+      // constructed for this method at all.
+      inv.fireError(new InvocationError(
+        ERR_REFUSED,
+        `method ${JSON.stringify(wireMethod)} cannot be handed to a security handler: the WHATWG Request constructor forbids it`,
+      ));
+      return;
+    }
     securedRequest = new Request(reqURL, requestInit);
     for (const { name, scheme } of selectedSecurity.schemes) {
       const handler = args.securityHandlers[name];
@@ -544,9 +580,17 @@ export async function runBinding(
     }
   }
   try {
-    resp = securedRequest
-      ? await doFetch(securedRequest)
-      : await doFetch(reqURL, requestInit);
+    resp = host !== null
+      ? await host(reqURL, {
+        method: wireMethod,
+        headers: fetchHeaders,
+        body: wire.body,
+        signal: inv.signal,
+        redirect: requestInit.redirect,
+      })
+      : securedRequest
+        ? await doFetch(securedRequest)
+        : await doFetch(reqURL, requestInit);
   } catch (e: unknown) {
     // Aborted while in flight: the handle is already terminal (caller
     // cancel or another terminal transition); stay silent.
