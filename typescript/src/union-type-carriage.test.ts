@@ -31,8 +31,7 @@ import type { OpenAPIDocument, OpenAPIMediaType, OpenAPIOperation } from "./type
 //     multi-member array spelling refuses.
 //   - EIGHT cells moved from admitted to refused on 2026-08-17, all at 3.1.2,
 //     all in the |plain column: `absent-type`, `memberless` and `boolean-true`
-//     (then the structural true spelling, since renamed `ambiguous-choice`)
-//     declare no `type` at all, and every
+//     (the structural true spelling) declare no `type` at all, and every
 //     accepted 3.1 edition states that part's default Content-Type as
 //     application/octet-stream -- 3.1.1 and 3.1.2 as the Encoding Object
 //     default table's `type`-absent first row, 3.1.0 through the total
@@ -46,7 +45,7 @@ import type { OpenAPIDocument, OpenAPIMediaType, OpenAPIOperation } from "./type
 //     convention answered.
 //   - FOURTEEN cells moved from admitted to refused on 2026-08-20 (stage-3
 //     block 5, escalation M2), all at 3.0.4: `absent-type`, `memberless`,
-//     `empty-array` and `ambiguous-choice|plain`, on both media. The 3.0-line
+//     `empty-array` and `boolean-true|plain`, on both media. The 3.0-line
 //     value-keyed convention is deleted from Section 9.2, so a resolved part
 //     schema declaring no `type` refuses on EVERY accepted edition -- the
 //     3.1 editions state a default this revision defines no boundary to
@@ -68,12 +67,7 @@ const SPELLINGS: Array<[string, Record<string, unknown>]> = [
   ["empty-array", { type: [] }],
   ["absent-type", { description: "probe" }],
   ["memberless", {}],
-  // An AUTHORED anyOf[{}, {not: {}}]: two Section 5.2 candidates. Until
-  // 2026-09-02 this row was `boolean-true`, "the structural true spelling",
-  // and the engines read it as the always-true schema; the Go loader now
-  // marks its own encoding of a literal, and an authored structure resolves
-  // to no single member in all three engines, exactly as `string-object`.
-  ["ambiguous-choice", { anyOf: [{}, { not: {} }] }],
+  ["boolean-true", { anyOf: [{}, { not: {} }] }],
 ];
 
 const EDITIONS = ["3.0.4", "3.1.2"];
@@ -212,10 +206,10 @@ describe("union-type carriage — the twin case table", () => {
     expect(got).toEqual(EXPECTED);
   });
 
-  // The literal boolean `true` is the always-true schema; its structural
-  // look-alike `anyOf: [{}, {not: {}}]` is NOT (it is the shared table's
-  // `ambiguous-choice` row, a two-candidate choice under Section 5.2), so the
-  // literal is exercised here on its own. Repaired 2026-09-01. This assertion previously read a boolean `true`
+  // The literal boolean `true` and its structural encoding are the same
+  // unconstrained declaration; the shared table carries the structural
+  // spelling because that is the only one the Go Schema Object can hold.
+  // Repaired 2026-09-01. This assertion previously read a boolean `true`
   // through `partSchema`, whose object spread turns `true` into `{}` — so it
   // compared a typeless object schema against the structural spelling and
   // never exercised a boolean literal at all. It now passes the literal
@@ -281,8 +275,8 @@ const EXPECTED: Record<string, string> = {
   "3.0.4|application/x-www-form-urlencoded|absent-type|plain": "refused",
   "3.0.4|application/x-www-form-urlencoded|array-null|contentEncoding": "refused",
   "3.0.4|application/x-www-form-urlencoded|array-null|plain": "refused",
-  "3.0.4|application/x-www-form-urlencoded|ambiguous-choice|contentEncoding": "refused",
-  "3.0.4|application/x-www-form-urlencoded|ambiguous-choice|plain": "refused",
+  "3.0.4|application/x-www-form-urlencoded|boolean-true|contentEncoding": "refused",
+  "3.0.4|application/x-www-form-urlencoded|boolean-true|plain": "refused",
   "3.0.4|application/x-www-form-urlencoded|empty-array|contentEncoding": "refused",
   "3.0.4|application/x-www-form-urlencoded|empty-array|plain": "refused",
   "3.0.4|application/x-www-form-urlencoded|integer-null|contentEncoding": "refused",
@@ -309,8 +303,8 @@ const EXPECTED: Record<string, string> = {
   "3.0.4|multipart/form-data|absent-type|plain": "missing-required-choice",
   "3.0.4|multipart/form-data|array-null|contentEncoding": "refused",
   "3.0.4|multipart/form-data|array-null|plain": "refused",
-  "3.0.4|multipart/form-data|ambiguous-choice|contentEncoding": "refused",
-  "3.0.4|multipart/form-data|ambiguous-choice|plain": "refused",
+  "3.0.4|multipart/form-data|boolean-true|contentEncoding": "refused",
+  "3.0.4|multipart/form-data|boolean-true|plain": "refused",
   "3.0.4|multipart/form-data|empty-array|contentEncoding": "refused",
   "3.0.4|multipart/form-data|empty-array|plain": "refused",
   "3.0.4|multipart/form-data|integer-null|contentEncoding": "refused",
@@ -337,8 +331,8 @@ const EXPECTED: Record<string, string> = {
   "3.1.2|application/x-www-form-urlencoded|absent-type|plain": "refused",
   "3.1.2|application/x-www-form-urlencoded|array-null|contentEncoding": "missing-required-choice",
   "3.1.2|application/x-www-form-urlencoded|array-null|plain": "missing-required-choice",
-  "3.1.2|application/x-www-form-urlencoded|ambiguous-choice|contentEncoding": "refused",
-  "3.1.2|application/x-www-form-urlencoded|ambiguous-choice|plain": "refused",
+  "3.1.2|application/x-www-form-urlencoded|boolean-true|contentEncoding": "refused",
+  "3.1.2|application/x-www-form-urlencoded|boolean-true|plain": "refused",
   "3.1.2|application/x-www-form-urlencoded|empty-array|contentEncoding": "refused",
   "3.1.2|application/x-www-form-urlencoded|empty-array|plain": "refused",
   "3.1.2|application/x-www-form-urlencoded|integer-null|contentEncoding": "admitted;value=p=7;null=elided",
@@ -365,8 +359,18 @@ const EXPECTED: Record<string, string> = {
   "3.1.2|multipart/form-data|absent-type|plain": "admitted;value=error;null=error",
   "3.1.2|multipart/form-data|array-null|contentEncoding": "admitted;value=text/plain:a;null=elided",
   "3.1.2|multipart/form-data|array-null|plain": "admitted;value=text/plain:a;null=elided",
-  "3.1.2|multipart/form-data|ambiguous-choice|contentEncoding": "refused",
-  "3.1.2|multipart/form-data|ambiguous-choice|plain": "refused",
+  "3.1.2|multipart/form-data|boolean-true|contentEncoding": "refused",
+  // KNOWN TWIN DIVERGENCE, left open deliberately on 2026-09-01. This engine
+  // refuses; the Go engines admit and reach an emission error. Section 5.2 of
+  // both 3.x documents skips only a branch "whose resolved declaration
+  // declares only `null`" and supplies a single resolved member "only when
+  // exactly one candidate remains", and `{}` and `{not: {}}` are two
+  // candidates, so refusing is the reading the documents state. The Go side is
+  // also internally inconsistent here: its |contentEncoding twin refuses,
+  // which its own header rule says cannot differ. Fixing it touches Go's
+  // choice-resolution for every ambiguous branch and is queued as its own
+  // change rather than folded into R4.
+  "3.1.2|multipart/form-data|boolean-true|plain": "refused",
   "3.1.2|multipart/form-data|empty-array|contentEncoding": "refused",
   "3.1.2|multipart/form-data|empty-array|plain": "refused",
   "3.1.2|multipart/form-data|integer-null|contentEncoding": "admitted;value=text/plain:7;null=elided",
