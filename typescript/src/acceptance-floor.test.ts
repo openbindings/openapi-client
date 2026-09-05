@@ -1,9 +1,9 @@
 // Executes the shared acceptance-floor case table (block 8d-1): the 8 policy
 // mechanism fixtures (block 8b) and the 66-cell OAS shape table, with
-// expectations computed by the reviewed corpus-lab census instrument. The
-// same table file, at the same digest, embeds in
-// openbindings-go/formats/openapi, openapi-client/go, and this package:
-// three ports, one answer.
+// expectations updated for the published smallest-owner response confinement
+// and addressability algebra. The same table file, at the same digest, embeds
+// in the standalone Go and TypeScript engines. OpenBindings integration moves
+// to this answer after the standalone engine contract is frozen.
 
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -14,7 +14,7 @@ import { computeAcceptanceFloor } from "./acceptance-floor.js";
 // The embedded table's own digest, and the digest of the shape table it was
 // generated from. A change to either is a change to the shared answer and
 // must land in every engine simultaneously.
-const CASE_TABLE_SHA256 = "53d53b3f43e3ca88e0788e3cff2d45be9b9c50cc90eb0d4702f9712a51e277a1";
+const CASE_TABLE_SHA256 = "b7cd7bf071efe73d6675f9b2fee9bd1afe9be3658403397bf73e56ceb34277fa";
 const SHAPE_TABLE_SHA256 = "4e8f5393e48868e2a9468d7232921e1c2f3b33efd941f605b9e328b23191d456";
 
 interface CaseExpect {

@@ -1,20 +1,25 @@
-# OpenBindings OpenAPI Client
+# OpenAPI Client
 
-A document-driven OpenAPI 2.0, 3.0, 3.1, and 3.2 client for invoking brownfield APIs directly from their OpenAPI documents. Swagger 2.0 has raw-preserving, edition-specific lanes in both Go and TypeScript; OpenAPI 3.2 is complete in the Go engine, with its TypeScript twin following separately.
+Deterministic, document-driven OpenAPI clients for TypeScript/JavaScript and
+Go. Both implementations load Swagger 2.0 and OpenAPI 3.0, 3.1, or 3.2
+descriptions and invoke authored operations directly.
 
-The client does not generate source code and does not require an OpenBindings Interface (OBI). Load a document, select an authored operation, and call it. This client's contract deliberately follows the document and incorporated OpenAPI/HTTP rules for server resolution, parameter serialization, request-body carriage, security placement, response selection, decoding, and streaming.
+No generated code or OpenBindings Interface is required. The four
+OpenBindings OpenAPI binding specifications supply the deterministic behavior,
+but the published clients are OpenAPI-native and have no OpenBindings runtime
+dependency.
 
-This repository is also the OpenAPI execution substrate used by the OpenBindings OpenAPI binding adapter. The standalone API is deliberately OpenAPI-native; protocol abstraction belongs in the adapter, not in this client.
+> Status: release candidate. Both language implementations pass all 888
+> hash-locked portable processor scenarios at the pinned OpenBindings 0.2
+> authority revision, together with the native, race, package, browser, API,
+> and clean-consumer qualification gates.
 
-> Status: pre-release. The TypeScript and Go clients are runnable and tested;
-> their public APIs are being stabilized before the first package releases.
-
-## TypeScript quick start
+## TypeScript
 
 ```ts
 import { OpenAPIClient } from "@openbindings/openapi-client";
 
-const client = await OpenAPIClient.load("https://example.com/openapi.yaml", {
+const client = await OpenAPIClient.load(new URL("https://example.com/openapi.yaml"), {
   auth: { session: process.env.EXAMPLE_TOKEN! },
 });
 
@@ -25,27 +30,34 @@ const result = await client.call("getPet", {
   },
 });
 
-if (result.ok) {
-  console.log(result.data);
-} else {
-  console.error(result.response.status, result.error);
-}
+if (result.ok) console.log(result.data);
+else console.error(result.response.status, result.error);
 ```
 
-## Go quick start
+See the [TypeScript package guide](typescript/README.md) for sources,
+selection, inputs, authentication, results, streaming, middleware, transports,
+and redirects.
+
+## Go
 
 ```go
-client, err := openapiclient.Load(ctx, openapiclient.Source{
-    Location: "https://example.com/openapi.yaml",
-}, openapiclient.ClientOptions{
-    Auth: map[string]any{"session": os.Getenv("EXAMPLE_TOKEN")},
+import openapi "github.com/openbindings/openapi-client/go"
+
+client, err := openapi.Load(ctx, openapi.FromURL("https://example.com/openapi.yaml"), openapi.Options{
+    Auth: openapi.Credentials{
+        "session": openapi.Token(os.Getenv("EXAMPLE_TOKEN")),
+    },
 })
 if err != nil {
     log.Fatal(err)
 }
 
-result, err := client.Call(ctx, openapiclient.OperationID("getPet"), openapiclient.Input{
-    Parameters: openapiclient.Parameters{
+getPet, err := client.Operation(openapi.OperationID("getPet"))
+if err != nil {
+    log.Fatal(err)
+}
+result, err := getPet.Call(ctx, openapi.Input{
+    Parameters: openapi.Parameters{
         Path:  map[string]any{"petId": "p-123"},
         Query: map[string]any{"include": []any{"owner", "vaccinations"}},
     },
@@ -60,286 +72,116 @@ if result.OK {
 }
 ```
 
-Go accepts an absolute artifact URI, UTF-8 JSON/YAML bytes, or an already
-parsed `*openapi3.T`. `OperationID`, `PathOperation`, and `OperationRef`
-select operations without an OBI. `Client.Stream` exposes ordered SSE values,
-framing metadata, cancellation, backpressure, and terminal completion through
-`Stream.Next`. Values already emitted remain readable before a terminal failure
-is returned.
+The Go module exposes the same concepts idiomatically:
 
-Swagger 2.0 uses its own raw-preserving Go model and never converts through an
-OpenAPI 3.x document. `LoadSwagger20` loads and inventories an exact
-`swagger: "2.0"` source, `Swagger20Client.SynthesisModel` exposes native
-operation analysis for thin adapters, and `Engine.PrepareSwagger20` selects
-one literal path-operation reference through the edition-specific execution
-lane.
+- `FromURL`, `FromBytes`, and `FromText` make source intent explicit;
+- `OperationID`, `OperationRef`, `PathOperation`, and
+  `AdditionalOperation` select operations;
+- `Parameters` keeps path, query, whole-querystring, header, and cookie
+  identities separate;
+- `Token`, `Basic`, and `CustomSecurity` provide typed, scheme-named
+  credentials;
+- `Server`, `ServerVariables`, and `ServerURL` create mutually exclusive server
+  selections;
+- `Call` returns unary outcomes and `Stream` preserves ordered delivery,
+  cancellation, backpressure, and SSE metadata;
+- non-2xx HTTP outcomes are native results, while local and protocol failures
+  are typed `ClientError` values.
 
-The TypeScript engine mirrors that boundary with `loadSwagger20` and
-`prepareSwagger20` from `@openbindings/openapi-client/engine`; its native
-`Swagger20Client.synthesisModel()` supplies detached declaration analysis to
-thin adapters without importing OpenBindings vocabulary into the client.
+`ClientError.Kind` is the closed coarse classification for the public major
+version. `ClientError.Code` supplies a more specific reason; documented or
+exported values are stable, while callers should allow future codes.
 
-The lower-level Go surface exposes the same OpenAPI wire machinery directly.
-`EffectiveServerSet`, `NewServerSet`, `ServerSet.Resolve`,
-`AssembleRequestURL`, and `ValidateRequestURL` resolve and complete target
-URLs; `ValidateSecurityRequirementCarriage` checks the destinations in one
-Security Requirement Object. `RequestContentCodings` and
-`ResponseContentCodings` on `ClientOptions`, `CallOptions`, and
-`PrepareOptions` provide deterministic HTTP content codecs, while
-`DecodeResponseBody` applies the built-in response media lane. Engine callers
-can select unary event-stream buffering with `BufferEventStreams` or suppress
-the artifact-derived `Accept` preference with `OmitAcceptHeader`.
+Missing artifact choices use `CodeConfigurationRequired` and carry typed
+`ConfigurationRequirements`. Each alternative is a complete remedy made of
+native input fields, option fields, or authored security-scheme credentials;
+callers never need an OpenBindings context object.
 
-The Go OpenAPI 3.2 lane is request- and response-complete: fixed QUERY and
-case-exact additional operations, 3.2 parameter and request-media rules,
-response ranges and media election, declared content-coding stacks,
-JSONL/NDJSON/JSON-seq, positional multipart and SSE delivery, and 3.2
-reference identity all run through the native artifact model. Callback and
-webhook operations are exposed through `Artifact.InboundOperationInventory`
-for adapters that synthesize targetless dependency contracts.
+Unary and unsuccessful results retain a bounded replay of `Response.Body`.
+For successful streams, `Response.Body` is nil because the stream is its sole
+consumer; status, headers, request, and other response metadata remain native.
 
-The grouped parameter shape preserves identities that OpenAPI treats as distinct. A path parameter, query parameter, header parameter, cookie parameter, and body property may legally share a name without overwriting one another.
+`DocumentHTTPClient` retrieves artifacts and external references;
+`HTTPClient` dispatches operations. Their redirect and security policies are
+independent. Invocation redirects default to `RedirectManual`.
+`RedirectFollow` follows only method-and-body-preserving hops and strips
+selected credentials and Cookie across origins.
 
-## Sources and operation selection
+## Product boundary
 
-`OpenAPIClient.load` accepts:
+The repository deliberately publishes one client-engine facade per language.
+Parser-owned models, development profiles, routed OpenBindings envelopes, OBI
+synthesis structures, and existing OB CLI integration APIs are not public
+compatibility constraints.
 
-- a document URL or filesystem path;
-- a `URL`;
-- an already parsed OpenAPI document; or
-- `{ location, content }`, where `content` may be a parsed document, JSON, YAML, or UTF-8 bytes and `location` supplies the resolution base.
-
-Operations can be selected by authored `operationId`, path and method, or canonical OpenAPI binding reference:
-
-```ts
-await client.call("getPet", input);
-await client.call({ path: "/pets/{petId}", method: "get" }, input);
-await client.call({ ref: "#/paths/~1pets~1{petId}/get" }, input);
-
-for (const operation of client.operations()) {
-  console.log(operation.operationId, operation.method, operation.path);
-}
+```text
+direct application ─────────────────────┐
+generated typed facade (optional) ─────┼──► native OpenAPI client
+OpenBindings SDK ─► OpenAPI adapter ────┘              |
+                                                   private engine
+                                                        |
+                                          editions / transport / codecs
 ```
 
-Duplicate `operationId` values fail loudly rather than selecting an arbitrary operation.
+The adapter may select bindings and translate OpenBindings lifecycle and
+values. It consumes supported native package surface and may not import private
+engine files or reimplement OpenAPI request serialization, security, redirect,
+response, or streaming behavior. OB CLI migrates through the SDK and adapter
+only after the standalone substrate is accepted.
 
-## Bodies and media types
+## Deterministic scope
 
-The `body` member is the application body, not an OpenBindings envelope:
+Both clients own:
 
-```ts
-await client.call("replacePet", {
-  parameters: { path: { petId: "p-123" } },
-  body: { name: "Mochi", active: false },
-});
-```
+- exact-edition loading and reference closure;
+- operation inventory, canonical references, QUERY, and OpenAPI 3.2
+  additional method tokens;
+- server resolution and complete URL construction;
+- effective parameters and style/explode/content serialization;
+- JSON, character, raw, URL-encoded, multipart, and sequential media lanes;
+- request-media and property-media choice;
+- security alternatives and credential placement;
+- request and response content codings;
+- response-key and media selection, decoding, and native failure evidence;
+- redirect safety, cancellation, delivery limits, backpressure, and exactly
+  one terminal outcome.
 
-`false`, `0`, `""`, `null`, and `{}` are preserved as supplied bodies. `undefined` means omitted. When a declaration uses a media range or more than one concrete request representation is admissible, select the concrete representation with `mediaType`.
+Callbacks and webhooks are reverse interactions rather than ordinary client
+calls. Generated schema types, validation-as-policy, link traversal, mocking,
+server implementation, and documentation rendering are separate products.
 
-```ts
-await client.call("upload", {
-  body: bytes,
-  mediaType: "application/octet-stream",
-});
-```
+## Authority and conformance
 
-The Go `Input.PropertyMediaTypes` map supplies a concrete media type for a
-multipart or form property when its Encoding `contentType` is a range/list, or
-when an OpenAPI 3.0 typeless multipart property has no artifact default. The
-client validates each choice against the authored Encoding declaration before
-dispatch.
+The exact OpenBindings 0.2 source revision and processor/synthesis corpora are
+hash-locked under `authority/` and `conformance/upstream/`. They are
+development and release evidence, never runtime dependencies.
 
-## Authentication
+The release loop requires:
 
-Credentials are keyed by the names authored under `components.securitySchemes`. The client uses the document to determine whether and where each credential rides.
+- all 888 portable processor scenarios in both languages;
+- native and race-enabled test suites;
+- exact public API snapshots;
+- one intentional TypeScript package export and a clean Go package surface;
+- clean installed ESM, CommonJS, browser-bundle, and external Go consumers;
+- cancellation, redirect, security, streaming, and size-bound tests; and
+- no unresolved high- or medium-severity review finding.
 
-```ts
-const client = await OpenAPIClient.load(document, {
-  auth: {
-    tenantKey: process.env.TENANT_KEY!,
-    session: process.env.ACCESS_TOKEN!,
-    adminBasic: { username: "admin", password: process.env.ADMIN_PASSWORD! },
-  },
-});
-```
+Full OBI synthesis and OpenBindings lifecycle conformance belong to the later
+thin-adapter phase. The client engines expose the behavior; adapters add only
+OpenBindings-specific projection and orchestration.
 
-Unknown scheme names and incompatible credential shapes fail before dispatch. OpenAPI security alternatives remain authoritative; the client does not invent a protocol-independent auth policy.
-
-For an authored scheme outside the built-in API-key, Basic, Bearer, OAuth 2, and OpenID Connect adapters, provide a scheme-keyed native handler. The explicit handler both satisfies that named OpenAPI requirement and applies its concrete request behavior; a plain string is never guessed into the wrong scheme.
-
-```ts
-await client.call("digestProtected", {}, {
-  auth: {
-    digest({ request }) {
-      request.headers.set("authorization", buildDigestHeader(request));
-    },
-  },
-});
-```
-
-## Results and errors
-
-HTTP outcomes are protocol-native in the standalone client:
-
-```ts
-const result = await client.call("createPet", { body: pet });
-
-if (result.ok) {
-  result.data;                    // decoded application value
-  result.response.status;         // concrete HTTP status
-  result.response.headers;        // concrete HTTP headers
-  result.openapi.responseKey;     // governing Response Object, if any
-} else {
-  result.error;                   // decoded response body, if any
-  result.response;                // exact HTTP response evidence
-  result.openapi.declared;        // whether the artifact declared it
-}
-```
-
-A non-2xx HTTP response is a returned `ok: false` value. Local selection, source, configuration, transport, protocol, response-decoding, cancellation, and implementation failures throw `OpenAPIClientError`. This distinction is native-client ergonomics; the OpenBindings adapter is responsible for translating it into protocol-independent invocation outcomes.
-
-## Streaming
-
-Use `stream` when an operation can return Server-Sent Events or when cardinality is not known in advance:
-
-```ts
-const result = await client.stream<string>("watchPets");
-if (!result.ok) throw new Error(`HTTP ${result.response.status}`);
-
-for await (const event of result.events) {
-  console.log(event.data, event.sse?.event, event.sse?.id);
-}
-await result.closed;
-```
-
-The async iterable preserves ordering, partial outputs, backpressure, cancellation, and completion. SSE `event`, `id`, and `retry` framing is retained on `event.sse`; it is not mixed into the application `data`. `call` rejects a `text/event-stream` response with `STREAMING_RESPONSE` instead of silently buffering an unbounded stream.
-
-## Middleware and HTTP integration
-
-Middleware is intentionally protocol-aware. That is appropriate here because this is the OpenAPI/HTTP layer, below the OpenBindings abstraction boundary.
-
-```ts
-const client = await OpenAPIClient.load(document, {
-  headers: { "user-agent": "my-service/1" },
-  middleware: [{
-    onRequest({ operation, request }) {
-      request.headers.set("x-trace-operation", operation.operationId ?? operation.ref);
-    },
-    onResponse({ response }) {
-      metrics.observe(response.status);
-    },
-  }],
-  fetch: instrumentedFetch,
-});
-```
-
-Per-call options override client defaults for credentials, server selection, headers, cancellation, fetch, redirect handling, and response delivery-unit limits.
-The client-level `signal` also cancels document loading and becomes the default
-for later calls; a per-call signal overrides it.
-
-Redirect responses are observable native outcomes by default (`manual`) so an
-artifact-bound method and body are not silently rewritten or replayed. A
-standalone TypeScript caller can select `redirect: "follow"`; a Go caller can
-supply an `http.Client` with its preferred `CheckRedirect` policy. Artifact
-document retrieval still follows redirects so relative references use the
-final retrieval URI.
-
-## Methods fetch cannot carry
-
-The WHATWG Fetch Standard forbids `CONNECT`, `TRACE`, and `TRACK` (the `Request`
-constructor throws) and rewrites non-uppercase spellings of `DELETE`, `GET`,
-`HEAD`, `OPTIONS`, `POST`, and `PUT` (`post` is sent as `POST`). An OpenAPI
-document can denote all of these: `trace` is a fixed Path Item field, and
-OpenAPI 3.2 `additionalOperations` keys are byte-exact method tokens.
-
-When no `fetch` is injected, `OpenAPIRuntime` and `OpenAPIEngine` send a
-forbidden method through the host's own HTTP client (`node:http`/`node:https`
-under Node) with the same planned request line, headers, and body the fetch
-path would carry. Where the host has no such client (a browser or Worker), or
-where no available transport sends the token byte-exactly (Node's client
-uppercases method tokens, so an `additionalOperations` key such as `post`
-cannot be sent as authored), the invocation refuses before dispatch with a
-plain refusal that names the platform limit — never a transport failure, and
-never another method in its place. `hostTransport` on the engine, prepare, and
-runtime options overrides the resolved client, and `null` declares that none
-exists. An injected `fetch` is the caller's transport and receives the planned
-method as computed; a caller that also supplies `hostTransport` declares how
-those methods are sent.
-
-`OpenAPIClient` observes every exchange as a WHATWG `Request` for its
-middleware and result evidence, so it refuses such a call before dispatch with
-a `configuration` error (`METHOD_UNSUPPORTED_BY_FETCH`). The Go client's
-`net/http` transport sends every method token verbatim, so the two clients
-differ here only where the TypeScript host cannot carry the token.
-
-## Scope
-
-The invocation-complete scope is:
-
-- native Swagger 2.0 plus OpenAPI 3.0.x, 3.1.x, and Go 3.2.0 document loading and reference resolution;
-- operation discovery and exact selection;
-- document/path/operation server resolution and variables;
-- path, query, header, and cookie parameter serialization;
-- JSON, text, raw bytes, URL-encoded, multipart, media ranges, and selection;
-- OpenAPI security requirements and credential placement;
-- HTTP dispatch, redirect policy, response declaration/media matching, decoding, and exact failure evidence;
-- SSE framing, delivery-unit limits, cancellation, and backpressure.
-
-Inbound callbacks and webhooks are reverse interactions, not client calls. Code generation, mocking, validation-as-policy, server implementation, documentation rendering, and link traversal are outside this client's invocation scope.
-
-See [Architecture](docs/architecture.md), [Fidelity contract](docs/fidelity-contract.md), [adapter contract](docs/adapter-contract.md), [extraction ledger](docs/extraction-ledger.md), [release qualification](docs/release-qualification.md), [Go parity plan](docs/go-parity-plan.md), and [Conformance](conformance/README.md).
+See [architecture](docs/architecture.md), [public API contract](docs/public-api-v1.md),
+[qualification ledger](docs/extraction-ledger.md), [release qualification](docs/release-qualification.md),
+[OpenBindings migration](docs/openbindings-migration.md), and
+[conformance](conformance/README.md).
 
 ## Development
 
 ```sh
 pnpm install
 pnpm qualify:release
-cd go
-GOWORK=off go test -race ./...
 ```
-
-Neither language implementation has a runtime dependency on an OpenBindings
-SDK. TypeScript's default entry point exposes the native client while its
-lower-level engine and analysis APIs live on explicit subpaths. Go exposes the
-native `Client` and lower-level `Engine` from one idiomatic package.
-
-### Execution-engine entry point
-
-Adapter authors and lower-level consumers can use the same implementation
-without adopting the native client's result conventions:
-
-```ts
-import { OpenAPIEngine } from "@openbindings/openapi-client/engine";
-
-const prepared = await new OpenAPIEngine().prepare({
-  source: { location: "https://example.com/openapi.yaml" },
-  ref: "#/paths/~1pets~1{id}/get",
-  context: { bearerToken: token },
-});
-
-// Resolves only after every artifact/configuration check that can be made
-// without application input. No input has been accepted at this point.
-const execution = await prepared.start();
-await execution.send(routedArtifactInput);
-await execution.finishInput();
-
-for await (const event of execution.events) {
-  consume(event.value);
-}
-await execution.completed;
-```
-
-The `./engine` API returns its own `OpenAPIExecutionError` and neutral session
-interfaces; it never constructs an OpenBindings SDK class. Reusable document
-analysis primitives are available from `./analysis`. Most application code
-should use the native `OpenAPIClient` entry point above.
-
-For abstraction adapters, `openAPIPortableFailureData(error)` returns only a
-JSON-domain value selected and decoded through the governing OpenAPI Response
-Object and media declaration. Generic `OpenAPIExecutionError.details` and
-native response evidence are intentionally not interchangeable with portable
-application failure data.
 
 ## License
 
-Apache-2.0.
+Apache-2.0

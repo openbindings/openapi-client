@@ -17,7 +17,7 @@ describe("native Swagger 2.0 synthesis analysis", () => {
     ]);
   });
 
-  it("accounts unusable server and security alternatives at their smallest owners", async () => {
+  it("keeps optional parameter/security collisions runtime-conditional and accounts unusable servers", async () => {
     const client = await loadSwagger20({ content: {
       swagger: "2.0", schemes: ["https", "wss"], host: "api.example",
       securityDefinitions: {
@@ -34,6 +34,6 @@ describe("native Swagger 2.0 synthesis analysis", () => {
     expect(operation?.excluded).toBe(false);
     expect(operation?.requirements).toContain("configuration.security");
     expect(operation?.alternatives.filter((alternative) => !alternative.usable).map((alternative) => alternative.kind))
-      .toEqual(["security", "server"]);
+      .toEqual(["server"]);
   });
 });

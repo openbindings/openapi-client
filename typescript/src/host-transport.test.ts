@@ -84,6 +84,12 @@ function traceDocument(version: string, extra: Record<string, unknown> = {}): Re
   };
 }
 
+function additionalOperation(method: string): Record<string, unknown> {
+  return {
+    additionalOperations: { [method]: { responses: { "204": { description: "ok" } } } },
+  };
+}
+
 async function settle(call: { close(): Promise<void>; outputs: AsyncIterable<unknown> }): Promise<InvocationError | null> {
   await call.close();
   try {
@@ -238,34 +244,35 @@ describe("OpenAPIRuntime default transport", () => {
     expect(seen).toHaveLength(0);
   });
 
-  it("refuses a secured trace target before dispatch because a security handler needs a WHATWG Request", async () => {
+  it("applies a native security handler to TRACE without a WHATWG Request", async () => {
     const document = traceDocument("3.1.0");
     (document.paths as Record<string, Record<string, Record<string, unknown>>>)["/t"]!.trace!.security = [{ digest: [] }];
     document.components = { securitySchemes: { digest: { type: "http", scheme: "digest" } } };
     const prepared = await new OpenAPIEngine().prepare({
       source: { content: document },
       ref: "#/paths/~1t/trace",
-      securityHandlers: { digest: () => undefined },
+      securityHandlers: {
+        digest(request) {
+          request.headers.set("authorization", "Digest native-proof");
+        },
+      },
     });
     expect(prepared.prerequisites).toBeNull();
     const execution = await prepared.start();
     await execution.finishInput();
-    await expect(execution.completed).rejects.toMatchObject({ code: ERR_REFUSED });
-    await expect(execution.completed).rejects.toThrow("security handler");
-    expect(seen).toHaveLength(0);
+    await expect(execution.completed).resolves.toBeUndefined();
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.method).toBe("TRACE");
+    expect(seen[0]!.headers).toContain("Digest native-proof");
   });
 });
 
 describe("OpenAPIEngine default transport on OpenAPI 3.2", () => {
-  const additional = (method: string): Record<string, unknown> => ({
-    additionalOperations: { [method]: { responses: { "204": { description: "ok" } } } },
-  });
-
   async function invoke(ref: string, document: Record<string, unknown>): Promise<OpenAPIExecutionError | null> {
-    const prepared = await new OpenAPIEngine().prepare({ source: { content: document }, ref, profile: OPENAPI_PROFILE_FULL });
-    const execution = await prepared.start();
-    await execution.finishInput();
     try {
+      const prepared = await new OpenAPIEngine().prepare({ source: { content: document }, ref, profile: OPENAPI_PROFILE_FULL });
+      const execution = await prepared.start();
+      await execution.finishInput();
       await execution.completed;
       return null;
     } catch (error: unknown) {
@@ -280,13 +287,15 @@ describe("OpenAPIEngine default transport on OpenAPI 3.2", () => {
     expect(seen[0]!.body).toBe("");
   });
 
-  it("dispatches an additional CONNECT operation through the host HTTP client", async () => {
-    expect(await invoke("#/paths/~1t/additionalOperations/CONNECT", traceDocument("3.2.0", additional("CONNECT")))).toBeNull();
-    expect(seen.map((entry) => `${entry.method} ${entry.url}`)).toEqual(["CONNECT /t"]);
+  it("refuses an additional CONNECT operation because it creates an unmodeled tunnel", async () => {
+    const error = await invoke("#/paths/~1t/additionalOperations/CONNECT", traceDocument("3.2.0", additionalOperation("CONNECT")));
+    expect(error?.code).toBe(ERR_REFUSED);
+    expect(error?.message).toContain("tunnel outside the unary OpenAPI operation model");
+    expect(seen).toHaveLength(0);
   });
 
   it("refuses an additional `post` operation before dispatch: no host transport sends that token byte-exactly", async () => {
-    const error = await invoke("#/paths/~1t/additionalOperations/post", traceDocument("3.2.0", additional("post")));
+    const error = await invoke("#/paths/~1t/additionalOperations/post", traceDocument("3.2.0", additionalOperation("post")));
     expect(error?.code).toBe(ERR_REFUSED);
     expect(error?.message).toBe(hostMethodRefusal("post", true));
     expect(seen).toHaveLength(0);
@@ -294,19 +303,17 @@ describe("OpenAPIEngine default transport on OpenAPI 3.2", () => {
 });
 
 describe("OpenAPIClient", () => {
-  it("refuses a trace call as a configuration limit of its Request-shaped observation surface", async () => {
+  it("dispatches TRACE through the native planned-request surface", async () => {
     const client = await OpenAPIClient.load(traceDocument("3.1.0"));
-    await expect(client.call({ path: "/t", method: "trace" })).rejects.toMatchObject({
-      kind: "configuration",
-      code: "METHOD_UNSUPPORTED_BY_FETCH",
-    });
-    expect(seen).toHaveLength(0);
+    await expect(client.call({ path: "/t", method: "trace" })).resolves.toMatchObject({ ok: true });
+    expect(seen.map((entry) => entry.method)).toEqual(["TRACE"]);
   });
 
-  it("wraps that refusal as an OpenAPIClientError", async () => {
-    const client = await OpenAPIClient.load(traceDocument("3.1.0"));
-    const error = await client.call({ path: "/t", method: "trace" }).catch((caught: unknown) => caught);
+  it("wraps a byte-exact transport refusal as an OpenAPIClientError", async () => {
+    const client = await OpenAPIClient.load(traceDocument("3.2.0", additionalOperation("post")));
+    const error = await client.call({ path: "/t", method: "post", additional: true }).catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(OpenAPIClientError);
+    expect(error).toMatchObject({ kind: "input", code: ERR_REFUSED });
   });
 });
 

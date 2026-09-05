@@ -7,8 +7,13 @@
     "test": "pnpm --dir typescript test",
     "test:go": "cd go && GOWORK=off go test -race ./...",
     "lint": "pnpm --dir typescript lint",
+    "authority:sync": "node scripts/sync-openbindings-authority.mjs",
+    "authority:verify": "node scripts/verify-openbindings-authority.mjs",
+    "test:corpus": "node scripts/verify-upstream-processor-corpus.mjs",
     "boundary": "pnpm build && node scripts/verify-boundary.mjs",
-    "verify": "pnpm lint && pnpm test && pnpm test:go && pnpm boundary",
+    "api:verify": "node scripts/verify-public-api.mjs",
+    "verify:browser": "pnpm --dir typescript verify:browser",
+    "verify": "pnpm authority:verify && pnpm test:corpus && pnpm lint && pnpm test && pnpm test:go && pnpm boundary && pnpm verify:browser && pnpm api:verify",
     "verify:consumers": "node scripts/verify-clean-consumers.mjs",
     "qualify:release": "pnpm verify && pnpm verify:consumers"
   }

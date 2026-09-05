@@ -86,8 +86,8 @@ describe("OpenAPIEngine", () => {
       securitySchemes: { digest: { type: "http", scheme: "digest" } },
     };
     secured.paths["/widgets/{id}"]!.get!.security = [{ digest: [] }];
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = input as Request;
+    const fetchFn = vi.fn<typeof fetch>(async (input, init) => {
+      const request = input instanceof Request ? input : new Request(input, init);
       expect(request.headers.get("cookie")).toBe("session=ready");
       expect(request.headers.get("authorization")).toBe("Digest engine-proof");
       return new Response('{"id":"42"}', {

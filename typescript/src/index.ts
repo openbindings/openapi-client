@@ -1,3 +1,10 @@
+/**
+ * Standalone, document-driven OpenAPI client.
+ *
+ * The package exposes one OpenAPI-native application surface. Parser models,
+ * execution internals, OpenBindings adapters, and synthesis structures are
+ * intentionally private.
+ */
 export {
   OpenAPIClient,
   OpenAPIClientError,
@@ -7,9 +14,16 @@ export type {
   OpenAPIAuthValue,
   OpenAPICallInput,
   OpenAPICallOptions,
+  OpenAPIClientErrorKind,
+  OpenAPIConfigurationRequirement,
   OpenAPIClientMiddleware,
   OpenAPIClientOptions,
+  OpenAPIConfigurationRequirements,
+  OpenAPIContentCodec,
+  OpenAPIContentCodingResult,
   OpenAPIDeclarationMatch,
+  OpenAPIEdition,
+  OpenAPIEmptyValueForm,
   OpenAPIFailureResult,
   OpenAPIOperationClient,
   OpenAPIOperationInfo,
@@ -18,89 +32,18 @@ export type {
   OpenAPIResult,
   OpenAPISecurityHandler,
   OpenAPISecurityHandlerContext,
-  OpenAPIStreamResult,
-  OpenAPIStreamEvent,
-  OpenAPIStreamSuccessResult,
   OpenAPIServerSelection,
   OpenAPISource,
+  OpenAPIStreamEvent,
+  OpenAPIStreamResult,
+  OpenAPIStreamSuccessResult,
   OpenAPISuccessResult,
 } from "./client.js";
+export type {
+  OpenAPIHostRequest,
+  OpenAPIHostTransport,
+  OpenAPIPlannedRequest,
+  OpenAPIRedirectPolicy,
+} from "./host-transport.js";
 export type { OpenAPIParameterConverter } from "./params.js";
-export { fetchCarriesMethod, hostCarriesMethod, hostTransport } from "./host-transport.js";
-export type { OpenAPIHostRequest, OpenAPIHostTransport } from "./host-transport.js";
-export { documentInboundOperationInventory } from "./openapi-inbound-inventory.js";
-export type {
-  OpenAPIInboundOperationDisposition,
-  OpenAPIInboundOperationKind,
-  OpenAPIInboundOperationReference,
-  OpenAPIInboundOperationTarget,
-} from "./openapi-inbound-inventory.js";
-export {
-  OpenAPIArtifact,
-  classifyOpenAPIEdition,
-  loadOpenAPIArtifact,
-} from "./openapi32-artifact.js";
-export {
-  admittedOpenAPI32ResponseKey,
-  selectOpenAPI32Response,
-} from "./openapi32-response.js";
-export type { OpenAPI32ResponseSelection } from "./openapi32-response.js";
-export { classifyOpenAPI32SequentialResponse } from "./openapi32-sequential-response.js";
-export type { OpenAPI32SequentialResponseKind } from "./openapi32-sequential-response.js";
-export type {
-  OpenAPIArtifactLoadOptions,
-  OpenAPIArtifactSource,
-  OpenAPIEdition,
-  OpenAPI32Resource,
-  OpenAPIOperationDisposition,
-} from "./openapi32-artifact.js";
-export {
-  OpenAPIOperationResolutionError,
-  parseOpenAPI32OperationReference,
-} from "./openapi32-operations.js";
-export {
-  openAPI32ParameterSerializationMethod,
-  serializeOpenAPI32CookieValue,
-  serializeOpenAPI32QueryStringParameter,
-  serializeOpenAPI32QueryValue,
-  validateOpenAPI32CookieUnits,
-  validateOpenAPI32OperationParameters,
-  validateOpenAPI32ParameterSerialization,
-} from "./openapi32-parameters.js";
-export type { OpenAPI32ParameterSerializationMethod } from "./openapi32-parameters.js";
-export {
-  openAPI32SecurityNameKind,
-  openAPI32SecurityRequirementNames,
-  openAPI32SecurityScheme,
-  openAPI32SecuritySchemeReference,
-} from "./openapi32-security.js";
-export {
-  buildOpenAPI32MultipartBody,
-  buildOpenAPI32SequentialBody,
-  normalizeOpenAPI32JSONNumber,
-  openAPI32NonJSONTextSchema,
-  openAPI32PositionalMultipart,
-  openAPI32RequestMediaAdmission,
-  serializeOpenAPI32NonJSONText,
-  validateOpenAPI32MultipartFields,
-} from "./openapi32-media.js";
-export type {
-  OpenAPI32MultipartWire,
-  OpenAPI32RequestMediaAdmission,
-  OpenAPI32RoutedBody,
-  OpenAPI32SequentialRequestKind,
-} from "./openapi32-media.js";
-export type {
-  OpenAPI32ResponseMediaExclusion,
-  OpenAPIOperationReference,
-  OpenAPIResolvedOperation,
-} from "./openapi32-operations.js";
-export type {
-  OpenAPIDocument,
-  OpenAPIOperation,
-  OpenAPIParameter,
-  OpenAPIPathItem,
-  OpenAPIRequestBody,
-  OpenAPIResponse,
-  OpenAPIMediaType,
-} from "./types.js";
+export type { OpenAPICharacterDecoder, OpenAPICharacterEncoder } from "./response-mechanics.js";

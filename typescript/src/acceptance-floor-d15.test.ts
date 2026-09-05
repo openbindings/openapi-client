@@ -41,14 +41,14 @@ const cases: D15Case[] = [
   },
   {
     // The stoatchat shape: the tuple form is not the 3.0 line's `items`.
-    name: "an array-valued `items` in a response schema climbs P2",
+    name: "an array-valued `items` in a response schema stays confined",
     doc: {
       openapi: "3.0.0",
       paths: { "/a": { post: { responses: { 200: { description: "ok", content: { "application/json": { schema: { type: "object", additionalProperties: { items: [{ type: "string" }, { type: "number" }] } } } } } } } } },
     },
     positions: ["#/paths/~1a/post/responses/200/content/application~1json/schema/additionalProperties/items"],
     method: "post",
-    disposition: "invalid",
+    disposition: "represented",
     invalidAlternatives: 0,
   },
   {
@@ -61,7 +61,7 @@ const cases: D15Case[] = [
     },
     positions: ["#/paths/~1a/get/responses/200/content/application~1json/schema/exclusiveMinimum"],
     method: "get",
-    disposition: "invalid",
+    disposition: "represented",
     invalidAlternatives: 0,
   },
   {
@@ -91,8 +91,8 @@ const cases: D15Case[] = [
     // The 3.0 line's Schema Object is not the 2020-12 dialect and a boolean is
     // not a Schema Object there, so a boolean `properties` member IS this
     // class -- and the defect confines to the smallest unit that owns it
-    // (F-O1-13, ruled 2026-08-20; here a response schema, so P2 climbs it to
-    // the operation, exactly as the string member below).
+    // (F-O1-13, ruled 2026-08-20; here a response schema, so it remains on the
+    // response projection, exactly as the string member below).
     //
     // This case read "is REFERRED, not this class" until then. The referral
     // rested on `openbindings.openapi@1` §9.2 ascribing an interpretation to a
@@ -112,7 +112,7 @@ const cases: D15Case[] = [
     },
     positions: ["#/paths/~1a/get/responses/200/content/application~1json/schema/properties/f"],
     method: "get",
-    disposition: "invalid",
+    disposition: "represented",
     invalidAlternatives: 0,
   },
   {
@@ -125,7 +125,7 @@ const cases: D15Case[] = [
     },
     positions: ["#/paths/~1a/get/responses/200/content/application~1json/schema/properties/f"],
     method: "get",
-    disposition: "invalid",
+    disposition: "represented",
     invalidAlternatives: 0,
   },
 ];

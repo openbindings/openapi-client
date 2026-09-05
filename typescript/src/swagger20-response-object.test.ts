@@ -1,9 +1,4 @@
-// Round R2: the upstream-invalid governing Response Object rule on the
-// Swagger 2.0 lane. TWIN of `go/swagger20_response_object_test.go`; the two
-// must stay behaviourally identical shape for shape.
-//
-// See `swagger20SuccessResponseKey` in `swagger20-media.ts` for the success
-// scope (Round R2's F1 ruling) and the carve-out this preserves.
+// Smallest-owner response-defect confinement on the Swagger 2.0 lane.
 
 import { describe, expect, it } from "vitest";
 import { loadSwagger20 } from "./swagger20-loader.js";
@@ -40,18 +35,18 @@ async function analyze(document: Record<string, unknown>) {
 }
 
 describe("Swagger 2.0 upstream-invalid governing Response Object", () => {
-  it.each(defectiveShapes)("excludes its own target when %s", async (_name, response) => {
+  it.each(defectiveShapes)("keeps the operation represented when %s", async (_name, response) => {
     const operations = await analyze(responseDocument("200", response, false));
-    expect(operations.get("broken")?.excluded).toBe(true);
+    expect(operations.get("broken")?.excluded).toBe(false);
     expect(operations.get("intact")?.excluded).toBe(false);
   });
 
-  // `default` can govern a 2xx status on this edition -- there are no range
-  // keys -- so a defective `default` Response Object is a governing success
-  // declaration and excludes.
-  it.each(defectiveShapes)("excludes through `default` when %s", async (_name, response) => {
+  // An admitted key retains lookup precedence even when its smallest
+  // Response projection is invalid; it never promotes that defect to the
+  // operation owner.
+  it.each(defectiveShapes)("keeps `default` precedence without removing the operation when %s", async (_name, response) => {
     const operations = await analyze(responseDocument("default", response, false));
-    expect(operations.get("broken")?.excluded).toBe(true);
+    expect(operations.get("broken")?.excluded).toBe(false);
   });
 
   // F1: a defective NON-SUCCESS declaration loses no representation and must
@@ -67,9 +62,7 @@ describe("Swagger 2.0 upstream-invalid governing Response Object", () => {
     expect(operations.get("broken")?.excluded).toBe(false);
   });
 
-  // A `$ref`ed Response Object governs its referencing target exactly as an
-  // inline one does, so the constraints are read inside the referenced object.
-  it("reads the constraints inside a `$ref`ed Response Object", async () => {
+  it("confines a defect inside a `$ref`ed Response Object", async () => {
     const operations = await analyze({
       swagger: "2.0",
       info: { title: "R2", version: "1" },
@@ -81,7 +74,7 @@ describe("Swagger 2.0 upstream-invalid governing Response Object", () => {
         "/intact": { get: { operationId: "intact", responses: { 204: { description: "ok" } } } },
       },
     });
-    expect(operations.get("broken")?.excluded).toBe(true);
+    expect(operations.get("broken")?.excluded).toBe(false);
     expect(operations.get("intact")?.excluded).toBe(false);
   });
 });

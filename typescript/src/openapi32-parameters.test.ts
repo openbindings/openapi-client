@@ -130,9 +130,6 @@ describe("OpenAPI 3.2 parameter surface", () => {
         type: "object", properties: { nested: { type: "object" } },
       } },
     ], "/x"],
-    ["form cookie static", [
-      { name: "c", in: "cookie", style: "form", explode: true, schema: schemas.array },
-    ], "/x"],
     ["unmatched path parameter", [
       { name: "id", in: "path", required: true, schema: { type: "string" } },
     ], "/x"],
@@ -150,6 +147,18 @@ describe("OpenAPI 3.2 parameter surface", () => {
     const ref = `#/paths/${path.replaceAll("~", "~0").replaceAll("/", "~1")}/get`;
     await expect(artifact.resolveOperation(ref)).rejects.toMatchObject({ kind: "excluded" });
     await expect(artifact.resolveOperation("#/paths/~1survivor/get")).resolves.toBeDefined();
+  });
+
+  it("keeps a form/exploded cookie declaration represented because zero or one emitted pair is usable", async () => {
+    const artifact = await loadOpenAPIArtifact({ content: {
+      openapi: "3.2.0",
+      paths: {
+        "/x": { get: { parameters: [
+          { name: "c", in: "cookie", style: "form", explode: true, schema: schemas.array },
+        ] } },
+      },
+    } });
+    await expect(artifact.resolveOperation("#/paths/~1x/get")).resolves.toBeDefined();
   });
 
   it("excludes both members of an equivalent templated path hierarchy", async () => {

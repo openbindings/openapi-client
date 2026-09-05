@@ -16,7 +16,7 @@ import {
   type OpenAPIExecutionProfile,
 } from "./profile.js";
 import type { OpenAPIDocument } from "./types.js";
-import type { OpenAPIHostTransport } from "./host-transport.js";
+import type { OpenAPIHostTransport, OpenAPIPlannedRequest } from "./host-transport.js";
 import {
   configRequiredDetails,
   preflightTarget,
@@ -30,6 +30,13 @@ import { errorMessage, loadOpenAPIDocument, parseRef } from "./util.js";
 import type { ConfigRequired } from "./servers.js";
 import { computeAcceptanceFloor, floorInvalidTargetMessage, floorOpVerdict, type AcceptanceFloor } from "./acceptance-floor.js";
 import type { OpenAPIParameterConverter } from "./params.js";
+import {
+  normalizeOpenAPIContentCodings,
+  type OpenAPICharacterDecoder,
+  type OpenAPICharacterEncoder,
+  type OpenAPIContentDecoder,
+  type OpenAPIContentEncoder,
+} from "./response-mechanics.js";
 import {
   loadOpenAPIArtifact,
   type OpenAPIArtifact,
@@ -56,9 +63,9 @@ export interface OpenAPISecurityHandlerContext {
 
 /** Applies an artifact-authored security scheme not covered by a builtin. */
 export type OpenAPIEngineSecurityHandler = (
-  request: Request,
+  request: OpenAPIPlannedRequest,
   context: OpenAPISecurityHandlerContext,
-) => Request | void | Promise<Request | void>;
+) => OpenAPIPlannedRequest | void | Promise<OpenAPIPlannedRequest | void>;
 
 /** Protocol-native facts supplied to an optional execution hook. */
 export interface OpenAPIHookResult {
@@ -102,6 +109,10 @@ export interface OpenAPIEngineOptions {
   hooks?: OpenAPIExecutionHooks;
   maxDeliveryUnitBytes?: number;
   parameterConverter?: OpenAPIParameterConverter;
+  requestContentCodings?: Record<string, OpenAPIContentEncoder>;
+  responseContentCodings?: Record<string, OpenAPIContentDecoder>;
+  requestCharacterEncodings?: Record<string, OpenAPICharacterEncoder>;
+  responseCharacterEncodings?: Record<string, OpenAPICharacterDecoder>;
 }
 
 /** Inputs fixed before an operation is prepared. */
@@ -119,6 +130,10 @@ export interface OpenAPIPrepareOptions {
   maxDeliveryUnitBytes?: number;
   securityHandlers?: Record<string, OpenAPIEngineSecurityHandler>;
   parameterConverter?: OpenAPIParameterConverter;
+  requestContentCodings?: Record<string, OpenAPIContentEncoder>;
+  responseContentCodings?: Record<string, OpenAPIContentDecoder>;
+  requestCharacterEncodings?: Record<string, OpenAPICharacterEncoder>;
+  responseCharacterEncodings?: Record<string, OpenAPICharacterDecoder>;
   /** Disable external `$ref` retrieval for strictly side-effect-free inspection. */
   allowExternalRefs?: boolean;
 }
@@ -270,6 +285,10 @@ export class PreparedOpenAPIOperation {
           redirect: this.args.redirect,
           securityHandlers: this.args.securityHandlers as Record<string, ArtifactSecurityHandler> | undefined,
           parameterConverter: this.args.parameterConverter,
+          requestContentCodings: this.args.requestContentCodings,
+          responseContentCodings: this.args.responseContentCodings,
+          requestCharacterEncodings: this.args.requestCharacterEncodings,
+          responseCharacterEncodings: this.args.responseCharacterEncodings,
           observeOutput: (_value, valueMetadata) => metadata.push(cloneMetadata(valueMetadata)),
           hooks,
           site,
@@ -298,8 +317,15 @@ export class PreparedOpenAPIOperation {
   }
 }
 
-interface PreparedArguments extends Omit<RequiredByKey<OpenAPIPrepareOptions, "profile">, "source"> {
+interface PreparedArguments extends Omit<
+  RequiredByKey<OpenAPIPrepareOptions, "profile">,
+  "source" | "requestContentCodings" | "responseContentCodings" | "requestCharacterEncodings" | "responseCharacterEncodings"
+> {
   source: OpenAPIEngineSource;
+  requestContentCodings: ReadonlyMap<string, OpenAPIContentEncoder>;
+  responseContentCodings: ReadonlyMap<string, OpenAPIContentDecoder>;
+  requestCharacterEncodings: ReadonlyMap<string, OpenAPICharacterEncoder>;
+  responseCharacterEncodings: ReadonlyMap<string, OpenAPICharacterDecoder>;
   defaultHooks?: OpenAPIExecutionHooks;
 }
 
@@ -322,6 +348,7 @@ export class OpenAPIEngine {
 
   /** Loads the source and resolves one operation without consuming application input. */
   async prepare(options: OpenAPIPrepareOptions): Promise<PreparedOpenAPIOperation> {
+    const codings = normalizeEngineContentCodings(options, this.options);
     const args: PreparedArguments = {
       ...options,
       profile: options.profile ?? OPENAPI_PROFILE_FULL,
@@ -333,6 +360,7 @@ export class OpenAPIEngine {
       defaultHooks: this.options.hooks,
       maxDeliveryUnitBytes: options.maxDeliveryUnitBytes ?? this.options.maxDeliveryUnitBytes,
       parameterConverter: options.parameterConverter ?? this.options.parameterConverter,
+      ...codings,
     };
     let loaded: LoadedOpenAPIDocument;
     try {
@@ -356,6 +384,7 @@ export class OpenAPIEngine {
     if (!location) return null;
     const document = this.cache.get(location);
     if (!document) return null;
+    const codings = normalizeEngineContentCodings(options, this.options);
     const args: PreparedArguments = {
       ...options,
       profile: options.profile ?? OPENAPI_PROFILE_FULL,
@@ -367,6 +396,7 @@ export class OpenAPIEngine {
       defaultHooks: this.options.hooks,
       maxDeliveryUnitBytes: options.maxDeliveryUnitBytes ?? this.options.maxDeliveryUnitBytes,
       parameterConverter: options.parameterConverter ?? this.options.parameterConverter,
+      ...codings,
     };
     return this.prepared(document, args);
   }
@@ -377,7 +407,7 @@ export class OpenAPIEngine {
   ): Promise<PreparedOpenAPIOperation> {
     let target: OpenAPIResolvedOperation | undefined;
     try {
-      target = loaded.artifact?.edition === "3.2.0"
+      target = loaded.artifact
         ? await loaded.artifact.resolveOperation(args.ref)
         : undefined;
     } catch (error: unknown) {
@@ -480,6 +510,43 @@ export class OpenAPIEngine {
     }
     throw new Error("source must have location or content");
   }
+}
+
+function normalizeEngineContentCodings(
+  options: OpenAPIPrepareOptions,
+  defaults: OpenAPIEngineOptions,
+): {
+  requestContentCodings: ReadonlyMap<string, OpenAPIContentEncoder>;
+  responseContentCodings: ReadonlyMap<string, OpenAPIContentDecoder>;
+  requestCharacterEncodings: ReadonlyMap<string, OpenAPICharacterEncoder>;
+  responseCharacterEncodings: ReadonlyMap<string, OpenAPICharacterDecoder>;
+} {
+  const request = normalizeOpenAPIContentCodings(
+    options.requestContentCodings ?? defaults.requestContentCodings,
+    "request",
+  );
+  const response = normalizeOpenAPIContentCodings(
+    options.responseContentCodings ?? defaults.responseContentCodings,
+    "response",
+  );
+  const requestCharacters = normalizeOpenAPIContentCodings(
+    options.requestCharacterEncodings ?? defaults.requestCharacterEncodings,
+    "request",
+  );
+  const responseCharacters = normalizeOpenAPIContentCodings(
+    options.responseCharacterEncodings ?? defaults.responseCharacterEncodings,
+    "response",
+  );
+  const defect = request.defect ?? response.defect ?? requestCharacters.defect ?? responseCharacters.defect;
+  if (defect) {
+    throw new OpenAPIExecutionError("ERR_REFUSED", defect.message, { cause: defect });
+  }
+  return {
+    requestContentCodings: request.codecs,
+    responseContentCodings: response.codecs,
+    requestCharacterEncodings: requestCharacters.codecs,
+    responseCharacterEncodings: responseCharacters.codecs,
+  };
 }
 
 function declaresOpenAPI32(content: unknown): boolean {
@@ -679,6 +746,7 @@ export {
   hostTransport,
   type OpenAPIHostRequest,
   type OpenAPIHostTransport,
+  type OpenAPIPlannedRequest,
 } from "./host-transport.js";
 export {
   PROPERTY_MEDIA_REQUIREMENT_DESCRIPTION,

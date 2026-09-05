@@ -119,7 +119,7 @@ describe("a non-http(s) completed target refuses before dispatch", () => {
     it(edition, async () => {
       for (const scheme of ["ftp", "file", "ws", "wss", "gopher"]) {
         await expect(dispatch(document(edition, null, `${scheme}://api.example`), {}))
-          .rejects.toThrow(/is not http or https/);
+          .rejects.toThrow(/does not use http or https/);
       }
       for (const scheme of ["http", "https"]) {
         await expect(dispatch(document(edition, null, `${scheme}://api.example`), {}))

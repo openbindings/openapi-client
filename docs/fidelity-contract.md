@@ -23,9 +23,9 @@ not every object an OpenAPI document can contain.
 
 | Surface | Required behavior |
 | --- | --- |
-| Editions | OpenAPI 3.0.0–3.0.4 and 3.1.0–3.1.2 are accepted exactly; another edition is refused. |
+| Editions | Swagger 2.0, OpenAPI 3.0.0–3.0.4, OpenAPI 3.1.0–3.1.2, and OpenAPI 3.2.0 are accepted exactly; another edition is refused. |
 | Sources | JSON/YAML text, parsed documents, bytes, absolute artifact locations, redirect-aware retrieval bases, and complete local/external reference closure. |
-| Targets | Every `paths` operation using an OpenAPI HTTP method is discoverable by `operationId`, path/method, or canonical reference. Duplicate `operationId` values are refused as ambiguous. |
+| Targets | Every addressable `paths` operation is discoverable by `operationId`, path/method, or canonical reference. OpenAPI 3.2 QUERY and case-sensitive `additionalOperations` method tokens are preserved. Duplicate `operationId` values are refused as ambiguous. |
 | Requests | Server precedence and variables; path/query/header/cookie parameters; OpenAPI styles, explode, content parameters, and reserved-character rules; JSON, structured suffix JSON, text, bytes, form, multipart, media ranges, and concrete media selection. |
 | Security | Anonymous and OR/AND requirements; API keys, Basic, Bearer, OAuth 2, and OpenID Connect builtins; artifact-named extension handlers for other schemes. Credentials are applied only for one complete artifact-authorized alternative. |
 | Responses | Exact/range/default response selection, governing media selection, empty responses, JSON/text/byte application values, declared unsuccessful outcomes, and protocol-native evidence. |
@@ -87,11 +87,12 @@ demonstrate that wire, application, and lifecycle mismatches are detected.
 ## Current claim level
 
 The TypeScript and Go native clients share the same declared support boundary
-and run a language-neutral conformance floor. The adapters execute through
-those standalone engines, while synthesis remains adapter-owned. Qualification
-uses independently sourced artifacts, authority-authored wire transcripts, an
-independently qualified request witness, exact cross-SDK synthesis comparison,
-and sealed acquisition cohorts.
+and run the hash-locked portable processor corpus through their public
+facades. Their native suites add authority-derived wire, value, lifecycle,
+package, race, and external-consumer evidence. OpenBindings adapters,
+cross-SDK synthesis comparison, direct-versus-adapted differentials, and
+sealed acquisition cohorts remain later qualification gates; none is part of
+the current standalone-client claim.
 
 Passing this contract is evidence for the stated standard OpenAPI boundary; it
 is not a claim to infer private vendor-extension behavior or to operate an API

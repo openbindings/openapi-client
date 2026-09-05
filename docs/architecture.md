@@ -10,27 +10,25 @@ The repository has three intentional layers:
 2. **Execution engine** — document loading/resolution, request planning, serialization, security placement, HTTP, declaration matching, decoding, and lifecycle mechanics.
 3. **OpenBindings adapter (separate package)** — OBI source resolution, binding selection integration, OpenBindings context negotiation, abstract input translation, and protocol-independent output/error/lifecycle translation.
 
-Only the first two belong to the standalone product. The adapter consumes the engine; the engine must never import the adapter or require an OBI.
+Only the first two belong to the standalone product. The adapter consumes the
+supported native client package; neither the client nor its private engine may
+import the adapter or require an OBI.
 
 ## Dependency direction
 
 ```text
-application using OpenAPI only
-        │
-        ▼
-native OpenAPI client API
-        │
-        ▼
-OpenAPI execution engine ───► HTTP service
-        ▲
-        │
-OpenBindings OpenAPI adapter
-        ▲
-        │
-OpenBindings Core invocation
+direct OpenAPI application ─────────────┐
+generated typed facade ────────────────┼──► native OpenAPI client API
+OpenBindings Core ─► OpenAPI adapter ──┘               │
+                                                       ▼
+                                      private execution engine ─► HTTP service
 ```
 
-An application may enter at either top edge. Adding OpenBindings should add selection and abstraction above the engine, not replace the OpenAPI implementation below it. Removing OpenBindings should leave an ordinary OpenAPI client with the same wire behavior.
+The adapter consumes the same supported native package as an unrelated
+application; it does not import private engine files. Adding OpenBindings adds
+selection and abstraction around the native client, not a second OpenAPI
+implementation. Removing OpenBindings leaves an ordinary OpenAPI client with
+the same wire behavior.
 
 ## Ownership rule
 
@@ -52,28 +50,28 @@ If a behavior can be decided from the OpenAPI document, native call options, and
 
 ## No synthesis dependency
 
-The engine executes references already present in an OpenAPI document. It does not need to synthesize or understand an OBI. OBI synthesis may use the same document-analysis utilities, but synthesis has no authority over the engine's OpenAPI behavior.
+The engine executes references already present in an OpenAPI document. It does
+not need to synthesize or understand an OBI. If OBI synthesis needs additional
+document facts, they first become a clean OpenAPI-native capability of the
+standalone package, with the same semantics in TypeScript and Go. The adapter
+must not import private files or make synthesis authoritative over invocation.
 
-## Extraction state
+## Implementation authority
 
-The TypeScript package is dependency-isolated from `@openbindings/sdk`. It
-publishes three deliberate entry points: the native client, the SDK-neutral
-execution engine, and reusable document analysis. Engine behavior is selected
-by named capability profiles; it contains no OpenBindings binding identifier.
-The separate adapter maps the unreleased first OpenBindings OpenAPI candidate
-to the full profile and supplies the binding-private routed-input marker. The
-other profiles are internal development/migration coordinates, not published
-binding specifications. The native client selects the fullest profile
-directly.
+The four release/0.2 family specifications are the implementation authority:
 
-The Go module now follows the same boundary: its public `Client`, `Engine`,
-prepared operation, execution session, HTTP result, failure evidence, and SSE
-types import no OpenBindings package. The Go binding package maps the
-unreleased candidate semantics to the full engine profile and bridges Core
-invocation frames. Its
-former request/response execution loop has been retired; synthesis analysis
-remains there by ownership.
+- `openbindings.openapi-2.0@1`;
+- `openbindings.openapi-3.0@1`;
+- `openbindings.openapi-3.1@1`;
+- `openbindings.openapi-3.2@1`.
 
-Both languages execute the language-neutral native wire fixtures. The full
-TypeScript client suite and the pre-existing Go binding conformance suite pass
-through their respective standalone engines.
+Their exact source revision and portable conformance corpus are vendored and
+hash-locked under `authority/` and `conformance/upstream/`. They are test and
+release inputs, never runtime dependencies. `docs/public-api-v1.md` defines the
+new native product contract built over that authority.
+
+The old pre-release APIs, development profiles, withdrawn unified binding ID,
+and current adapter/CLI integration are not compatibility constraints. The
+implementation converges from the specifications outward: edition engines,
+one native surface in TypeScript and Go, thin OpenBindings adapters, then the
+SDK and OB CLI.

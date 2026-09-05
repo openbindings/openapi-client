@@ -8,8 +8,8 @@ if (forbiddenDependencies.length > 0) {
 }
 
 const exportedPaths = Object.keys(packageJSON.exports ?? {});
-if (exportedPaths.join(",") !== ".,./engine,./analysis") {
-  throw new Error(`standalone package must expose native client, engine, and analysis entry points, got ${exportedPaths.join(", ")}`);
+if (exportedPaths.join(",") !== ".") {
+  throw new Error(`standalone package must expose only its intentional native client-engine entry point, got ${exportedPaths.join(", ")}`);
 }
 
 const declarations = await readFile(new URL("../typescript/dist/index.d.ts", import.meta.url), "utf8");
@@ -22,26 +22,6 @@ for (const forbidden of [
 ]) {
   if (declarations.includes(forbidden)) {
     throw new Error(`public declarations leak internal/OpenBindings concept ${forbidden}`);
-  }
-}
-
-const engineDeclarations = await readFile(new URL("../typescript/dist/engine.d.ts", import.meta.url), "utf8");
-for (const forbidden of [
-  "BindingInvocationArgs",
-  "ContextRequiredDetails",
-  "InvocationError",
-  "bindingSpec",
-  "@openbindings/",
-]) {
-  if (engineDeclarations.includes(forbidden)) {
-    throw new Error(`engine declarations leak internal/OpenBindings concept ${forbidden}`);
-  }
-}
-
-const analysisDeclarations = await readFile(new URL("../typescript/dist/analysis.d.ts", import.meta.url), "utf8");
-for (const forbidden of ["BindingInvocationArgs", "InvocationError", "bindingSpec", "@openbindings/"]) {
-  if (analysisDeclarations.includes(forbidden)) {
-    throw new Error(`analysis declarations leak internal/OpenBindings concept ${forbidden}`);
   }
 }
 
@@ -78,6 +58,23 @@ for (const name of goFiles) {
       throw new Error(`standalone Go source ${name} leaks internal/OpenBindings concept ${forbidden}`);
     }
   }
+}
+
+const goCorpusAdapter = await readFile(
+  new URL("../go/internal/runtime/upstream_processor_corpus_test.go", import.meta.url),
+  "utf8",
+);
+if (!goCorpusAdapter.startsWith("package openapiclient_test\n") ||
+    !goCorpusAdapter.includes('openapi "github.com/openbindings/openapi-client/go"')) {
+  throw new Error("Go upstream corpus must exercise the public root package from an external test package");
+}
+
+const tsCorpusAdapter = await readFile(
+  new URL("../typescript/src/upstream-processor-corpus.test.ts", import.meta.url),
+  "utf8",
+);
+if (!tsCorpusAdapter.includes('from "./index.js";')) {
+  throw new Error("TypeScript upstream corpus must exercise the public package entry module");
 }
 
 console.log("standalone package boundary verified");

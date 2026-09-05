@@ -1,7 +1,7 @@
 {
   "name": "@openbindings/openapi-client",
   "version": "0.1.0",
-  "description": "Document-driven Swagger 2.0 and OpenAPI 3.0/3.1 client for TypeScript and JavaScript",
+  "description": "Deterministic document-driven client for Swagger 2.0 and OpenAPI 3.0, 3.1, and 3.2",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -17,48 +17,46 @@
         "types": "./dist/index.d.cts",
         "default": "./dist/index.cjs"
       }
-    },
-    "./engine": {
-      "import": {
-        "types": "./dist/engine.d.ts",
-        "default": "./dist/engine.js"
-      },
-      "require": {
-        "types": "./dist/engine.d.cts",
-        "default": "./dist/engine.cjs"
-      }
-    },
-    "./analysis": {
-      "import": {
-        "types": "./dist/analysis.d.ts",
-        "default": "./dist/analysis.js"
-      },
-      "require": {
-        "types": "./dist/analysis.d.cts",
-        "default": "./dist/analysis.cjs"
-      }
     }
   },
-  "files": ["dist"],
-  "publishConfig": { "access": "public" },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsup",
     "prepack": "tsup",
     "test": "vitest run",
-    "lint": "tsc --noEmit && tsc -p tsconfig.test.json"
+    "lint": "tsc --noEmit && tsc -p tsconfig.test.json",
+    "verify:browser": "node scripts/verify-browser-bundle.mjs"
   },
-  "keywords": ["openapi", "client", "runtime", "brownfield", "http"],
+  "keywords": [
+    "openapi",
+    "swagger",
+    "client",
+    "typescript",
+    "javascript",
+    "http"
+  ],
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/openbindings/openapi-client.git",
     "directory": "typescript"
   },
-  "engines": { "node": ">=18" },
-  "dependencies": { "js-yaml": "^4.2.0", "json-schema-library": "^11.6.1" },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "js-yaml": "^4.2.0",
+    "json-schema-library": "^11.6.1"
+  },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.0.0",
+    "esbuild": "0.27.7",
     "tsup": "^8.5.1",
     "typescript": "^5.9.3",
     "vitest": "^4.1.3"

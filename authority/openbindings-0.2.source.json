@@ -1,0 +1,28 @@
+{
+  "repository": "https://github.com/openbindings/spec.git",
+  "releaseBranch": "release/0.2",
+  "commit": "c5cbec60a739d26ff1bbc3ea9e8cf7fd8eaf25af",
+  "corpusRevision": 6,
+  "families": [
+    {
+      "family": "openapi-2.0",
+      "bindingSpec": "openbindings.openapi-2.0@1",
+      "rulePrefix": "OAPI20"
+    },
+    {
+      "family": "openapi-3.0",
+      "bindingSpec": "openbindings.openapi-3.0@1",
+      "rulePrefix": "OAPI30"
+    },
+    {
+      "family": "openapi-3.1",
+      "bindingSpec": "openbindings.openapi-3.1@1",
+      "rulePrefix": "OAPI31"
+    },
+    {
+      "family": "openapi-3.2",
+      "bindingSpec": "openbindings.openapi-3.2@1",
+      "rulePrefix": "OAPI32"
+    }
+  ]
+}

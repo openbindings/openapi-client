@@ -1,8 +1,8 @@
 // Executes the shared Schema Object dialect case table
 // (testdata/schema-object-dialect-cases.json) through the shipped acceptance
-// floor. The same file, at the same digest, embeds in openapi-client/go,
-// openapi-client/typescript, openbindings-go/formats/openapi and
-// openbindings-ts/packages/openapi: four engines, one answer.
+// floor. The same file, at the same digest, embeds in the standalone Go and
+// TypeScript engines. OpenBindings integration migrates after their public
+// contract is frozen.
 //
 // Each cell places one Schema Object at a success response's only media
 // alternative beside a clean sibling operation, so every cell asserts three
@@ -16,7 +16,7 @@ import { computeAcceptanceFloor } from "./acceptance-floor.js";
 
 // The embedded table's own digest. A change here is a change to the shared
 // answer and must land in every engine simultaneously.
-const SCHEMA_OBJECT_DIALECT_TABLE_SHA256 = "f3b84e690c1a77cd7710a704876ebc00129824dd8ec11a011c9b447dcde1b58c";
+const SCHEMA_OBJECT_DIALECT_TABLE_SHA256 = "3f455cbd34904fa90a002b0276816c5ed0a9d527c8bbd05bb5e7e1d4e5479803";
 
 export interface SchemaDialectPosition {
   position: string;
@@ -86,10 +86,10 @@ describe("the shared Schema Object dialect case table", () => {
       expect(subject, `no verdict for ${SCHEMA_DIALECT_SUBJECT_REF}`).toBeTruthy();
       expect(subject!.disposition, cell.why).toBe(cell.disposition);
 
-      // The evidence a consumer sees: the defective positions that climbed to
-      // the unit, each with the class that owns it.
+      // Defective response positions stay on the represented operation's
+      // smallest-owner projections.
       const want = cell.positions.map((p) => `${p.class} ${SCHEMA_DIALECT_SCHEMA_PTR}${p.position}`).sort();
-      const got = subject!.defects.map((d) => `${d.class} ${d.position}`).sort();
+      const got = [...subject!.projections.values()].flat().map((d) => `${d.class} ${d.position}`).sort();
       expect(got, cell.why).toEqual(want);
 
       // Confinement: the clean sibling never pays for the cell's defect.

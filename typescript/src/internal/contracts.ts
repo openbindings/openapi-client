@@ -1,7 +1,7 @@
 import type { InvokeHooks, InvokeSite } from "./hooks.js";
 import type { OpenAPIExecutionProfile } from "../profile.js";
 import type { OpenAPIParameterConverter } from "../params.js";
-import type { OpenAPIHostTransport } from "../host-transport.js";
+import type { OpenAPIHostTransport, OpenAPIPlannedRequest } from "../host-transport.js";
 
 export interface InvocationSource {
   profile: OpenAPIExecutionProfile;
@@ -15,9 +15,9 @@ export interface ArtifactSecurityHandlerContext {
 }
 
 export type ArtifactSecurityHandler = (
-  request: Request,
+  request: OpenAPIPlannedRequest,
   context: ArtifactSecurityHandlerContext,
-) => Request | void | Promise<Request | void>;
+) => OpenAPIPlannedRequest | void | Promise<OpenAPIPlannedRequest | void>;
 
 export interface BindingInvocationArgs {
   source: InvocationSource;

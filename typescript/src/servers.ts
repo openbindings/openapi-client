@@ -46,8 +46,13 @@ export function resolveServer(
   sourceLocation: string | undefined,
 ): string {
   const version = typeof doc.openapi === "string" ? doc.openapi : "";
-  const servers = eligibleServers(effectiveServers(doc, pathItem, operation), version, sourceLocation);
+  const declaredServers = effectiveServers(doc, pathItem, operation);
   const configuration = contextConfiguration(context);
+  const configuredBase = completeConfiguredBase(configuration.server);
+  if (configuredBase !== undefined) {
+    return joinableServerBase(absolutizeServerURL(configuredBase, sourceLocation));
+  }
+  const servers = eligibleServers(declaredServers, version, sourceLocation);
   if (configuration.server != null) {
     const selected = resolveOpenAPIServerSelection(configuration.server, servers, version);
     return joinableServerBase(absolutizeServerURL(selected.url, sourceLocation));
@@ -119,9 +124,22 @@ export function eligibleServers(
     }
   }
   if (eligible.length > 0) return eligible as [OpenAPIServerEntry, ...OpenAPIServerEntry[]];
-  throw firstError instanceof Error
-    ? firstError
-    : new Error("the effective server list has no usable alternative");
+  throw new ConfigRequired(
+    "server",
+    "/url",
+    firstError instanceof Error
+      ? `the effective server list has no usable alternative: ${firstError.message}`
+      : "the effective server list has no usable alternative",
+    undefined,
+    true,
+  );
+}
+
+function completeConfiguredBase(raw: unknown): string | undefined {
+  if (typeof raw === "string" && denotesTargetBase(raw)) return raw;
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const base = (raw as Record<string, unknown>).baseUrl;
+  return typeof base === "string" && base !== "" ? base : undefined;
 }
 
 export function resolveOpenAPIServerSelection(
@@ -256,11 +274,22 @@ export function substituteServerVariables(
   }
   for (const name of Object.keys(supplied ?? {})) {
     if (!Object.hasOwn(variables, name)) {
-      throw new Error(`server ${JSON.stringify(server.url)} declares no variable ${JSON.stringify(name)}`);
+      const expression = `{${name}}`;
+      const occurrences = result.split(expression).length - 1;
+      if (occurrences !== 1) {
+        throw new Error(`server ${JSON.stringify(server.url)} has no unique expression for supplied variable ${JSON.stringify(name)}`);
+      }
+      result = result.replace(expression, supplied![name]!);
     }
   }
   if (result.includes("{") || result.includes("}")) {
-    throw new Error(`server URL ${JSON.stringify(server.url)} contains an unresolved template variable`);
+    throw new ConfigRequired(
+      "server",
+      "/url",
+      `server URL ${JSON.stringify(server.url)} contains an unresolved template variable; supply an exact substitution or complete URL`,
+      undefined,
+      true,
+    );
   }
   return result;
 }
@@ -333,6 +362,12 @@ export function validateCompletedOpenAPIURL(raw: string): void {
       `completed OpenAPI target scheme ${JSON.stringify(scheme)} is not http or https; no incorporated authority defines its HTTP-semantics mapping`,
     );
   }
+  if (completed.hostname === "") {
+    throw new Error("completed OpenAPI target has an empty host");
+  }
+  if (completed.username !== "" || completed.password !== "") {
+    throw new Error("completed OpenAPI target contains forbidden userinfo");
+  }
   for (const [name, component] of [
     ["path", completed.pathname],
     ["query", completed.search.slice(1)],
@@ -381,6 +416,15 @@ function validateServerBaseSpelling(value: string): void {
   }
   if (/[^\u0021-\u007e]/u.test(value) || /%(?![0-9A-Fa-f]{2})/u.test(value)) {
     throw new Error(`server URL ${JSON.stringify(value)} does not parse under RFC 3986`);
+  }
+  if (denotesTargetBase(value)) {
+    const parsed = new URL(value);
+    if (parsed.username !== "" || parsed.password !== "") {
+      throw new Error(`server URL ${JSON.stringify(value)} contains forbidden userinfo`);
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      throw new Error(`server URL ${JSON.stringify(value)} does not use http or https`);
+    }
   }
 }
 

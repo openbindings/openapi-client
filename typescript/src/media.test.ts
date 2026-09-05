@@ -289,6 +289,31 @@ async function formDataParts(fd: FormData): Promise<Record<string, Array<[string
   return parts;
 }
 
+function encodedMultipartParts(
+  body: BodyInit | undefined,
+  contentType: string,
+): Record<string, Array<[string, string]>> {
+  if (!(body instanceof Uint8Array)) throw new TypeError("expected encoded multipart bytes");
+  const boundary = /(?:^|;)\s*boundary=([^;]+)/u.exec(contentType)?.[1];
+  if (!boundary) throw new TypeError("encoded multipart body has no boundary");
+  const result: Record<string, Array<[string, string]>> = {};
+  const text = new TextDecoder().decode(body);
+  for (const raw of text.split(`--${boundary}`).slice(1)) {
+    const framed = raw.startsWith("\r\n") ? raw.slice(2) : raw;
+    if (framed.startsWith("--")) break;
+    const split = framed.indexOf("\r\n\r\n");
+    if (split < 0) continue;
+    const headerBlock = framed.slice(0, split);
+    const value = framed.slice(split + 4).replace(/\r\n$/u, "");
+    const name = /(?:^|;)\s*name="((?:\\.|[^"])*)"/iu.exec(headerBlock)?.[1]
+      ?.replace(/\\(["\\])/gu, "$1");
+    if (!name) continue;
+    const partType = /^Content-Type:\s*(.+)$/imu.exec(headerBlock)?.[1]?.trim() ?? "";
+    (result[name] ??= []).push([partType, value]);
+  }
+  return result;
+}
+
 function b64(bytes: number[] | string): string {
   const s = typeof bytes === "string" ? bytes : String.fromCharCode(...bytes);
   return btoa(s);
@@ -335,7 +360,7 @@ describe("buildMultipartBody", () => {
         { profile: OPENAPI_PROFILE_MEDIA, openapiVersion: "3.0.4" },
       );
       expect(() => buildRequestBody(DOC_30, plan, routedWith({ bodyFields: { file: value } })))
-        .toThrow(/invalid canonical base64/);
+        .toThrow(/canonical Base64/);
     },
   );
 
@@ -356,7 +381,7 @@ describe("buildMultipartBody", () => {
       plan,
       routedWith({ bodyFields: { archive: b64("zip-bytes") } }),
     );
-    const parts = await formDataParts(wire.body as FormData);
+    const parts = encodedMultipartParts(wire.body, wire.contentType);
     expect(parts.archive?.[0]).toEqual(["application/zip", "zip-bytes"]);
   });
 
@@ -375,7 +400,7 @@ describe("buildMultipartBody", () => {
       { profile: OPENAPI_PROFILE_MEDIA, openapiVersion: "3.0.4" },
     );
     expect(() => buildRequestBody(DOC_30, plan, routedWith({ bodyFields: { file: value } })))
-      .toThrow(/requires a canonical Base64 string/);
+      .toThrow(/must be a canonical Base64 string/);
     expect(() => buildMultipartBody(DOC_30, media, { file: value })).not.toThrow();
   });
 
@@ -534,12 +559,10 @@ describe("buildURLEncodedBody", () => {
   });
 });
 
-// The Accept header advertises the declared concrete media types of the
-// SUCCESS responses (2xx literals + the 2XX range; default never
-// participates; ranges are not concrete); absent any declaration,
-// application/json (§9.2, §8).
+// The Accept header advertises every useful concrete response media type;
+// ranges are not concrete. This does not predict the eventual status.
 describe("successMediaTypes / acceptHeader / isStreamingCapable", () => {
-  it("collects success media only — 2xx literals and the 2XX range; ranges excluded", () => {
+  it("collects concrete media from every response alternative and excludes ranges", () => {
     const op: OpenAPIOperation = {
       responses: {
         "200": { content: { "application/json": {}, "text/event-stream": {} } },
@@ -548,7 +571,13 @@ describe("successMediaTypes / acceptHeader / isStreamingCapable", () => {
         default: { content: { "application/xml": {}, "*/*": {} } },
       },
     };
-    expect(successMediaTypes(op)).toEqual(["application/json", "text/csv", "text/event-stream"]);
+    expect(successMediaTypes(op)).toEqual([
+      "application/json",
+      "application/problem+json",
+      "application/xml",
+      "text/csv",
+      "text/event-stream",
+    ]);
     expect(isStreamingCapable(op)).toBe(true);
   });
 
@@ -795,17 +824,17 @@ describe("§9.2 type-absent and nullable-choice parts", () => {
     let wire = buildRequestBody(DOC_31, plan, routedWith({
       bodyFields: { file: "raw-text", file_id: "id-1", options: { k: "v" } },
     }));
-    let parts = await formDataParts(wire.body as FormData);
-    expect(parts.file?.[0]).toEqual(["", "raw-text"]);
-    expect(parts.file_id?.[0]).toEqual(["", "id-1"]);
+    let parts = encodedMultipartParts(wire.body, wire.contentType);
+    expect(parts.file?.[0]).toEqual(["application/octet-stream", "raw-text"]);
+    expect(parts.file_id?.[0]).toEqual(["text/plain", "id-1"]);
     expect(parts.options?.[0]).toEqual(["application/json", '{"k":"v"}']);
 
     wire = buildRequestBody(DOC_31, plan, routedWith({
       bodyFields: { file: null, file_id: "id-2" },
     }));
-    parts = await formDataParts(wire.body as FormData);
+    parts = encodedMultipartParts(wire.body, wire.contentType);
     expect(parts.file).toBeUndefined();
-    expect(parts.file_id?.[0]).toEqual(["", "id-2"]);
+    expect(parts.file_id?.[0]).toEqual(["text/plain", "id-2"]);
   });
 
   it("still refuses a choice with more than one non-null branch", () => {
@@ -968,11 +997,17 @@ describe("string-carriage lane (declaration-scoped)", () => {
     expect(binary[0]).toMatchObject({ mediaKey: "text/csv", family: FAMILY_RAW });
   });
 
-  it("refuses an unsupported charset for the whole family, not just text/plain", () => {
-    expect(() => planRequestBodies(
+  it("retains a declared charset lane and refuses only when its runtime encoder is absent", () => {
+    const plans = planRequestBodies(
       opWithRequestBody({ "text/csv; charset=shift_jis": { schema: { type: "string" } } }, true),
       options,
-    )).toThrow(/charset/);
+    );
+    expect(plans).toHaveLength(1);
+    expect(() => buildRequestBody(
+      DOC_31,
+      plans[0]!,
+      routedWith({ bodyValue: "hello", bodySet: true }),
+    )).toThrow(/without a request encoder/);
   });
 
   it("encodes the emitted body under the declared charset for the whole family", () => {
@@ -981,7 +1016,12 @@ describe("string-carriage lane (declaration-scoped)", () => {
       options,
     );
     expect(plans).toHaveLength(1);
-    const wire = buildRequestBody(DOC_31, plans[0]!, routedWith({ bodyValue: "é", bodySet: true }));
+    const wire = buildRequestBody(
+      DOC_31,
+      plans[0]!,
+      routedWith({ bodyValue: "é", bodySet: true }),
+      new Map([["iso-8859-1", (value: string) => Uint8Array.from(value, (character) => character.charCodeAt(0))]]),
+    );
     expect(wire.contentType).toBe("text/csv; charset=iso-8859-1");
     expect(Array.from(wire.body as Uint8Array)).toEqual([0xe9]);
   });

@@ -43,7 +43,7 @@ describe("native Swagger 2.0 server and security execution", () => {
     await prepared.execute();
     expect(fetchMock.mock.calls[0]?.[0]).toBe("https://docs.example:8443/x");
   });
-  it("keeps an authored root basePath and its resulting double slash", async () => {
+  it("joins an authored root basePath and operation path at one slash boundary", async () => {
     const fetchMock = vi.fn<typeof fetch>(async () => new Response(null, { status: 204 }));
     const prepared = await prepareSwagger20({
       source: {
@@ -59,6 +59,6 @@ describe("native Swagger 2.0 server and security execution", () => {
       fetch: fetchMock,
     });
     await prepared.execute();
-    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://api.example//x");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://api.example/x");
   });
 });

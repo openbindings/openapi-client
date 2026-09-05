@@ -6,10 +6,15 @@ import {
 } from "./media.js";
 import {
   MissingPathParamError,
+  prepareSchemaParameterValue,
   routeParameter,
   type OpenAPIParameterSerializationOptions,
   type RoutedInput,
 } from "./params.js";
+import {
+  contentFormNullIsElided,
+  prepareEncodingStylePropertyValue,
+} from "./resolved-media.js";
 import { codePointCompare } from "./util.js";
 
 export interface AbstractParameterRoute {
@@ -343,7 +348,13 @@ export function routeEnvelope(
       continue;
     }
     consumed.add(mapping.field);
-    routeParameter(routed, parameter, envelope.value[mapping.field], profile, options);
+    const prepared = prepareSchemaParameterValue(
+      parameter,
+      envelope.value[mapping.field],
+      options.converter,
+      options.openapiVersion,
+    );
+    routeParameter(routed, parameter, prepared.value, profile, options);
   }
   if (missingPath.length > 0) {
     missingPath.sort(codePointCompare);
@@ -368,7 +379,17 @@ export function routeEnvelope(
         const field = envelope.bodyFields[bodyName]!;
         if (!(field in envelope.value)) continue;
         if (!plan.props?.has(bodyName)) continue;
-        routed.bodyFields[bodyName] = envelope.value[field];
+        const supplied = envelope.value[field];
+        const oas30 = options.openapiVersion?.startsWith("3.0") === true;
+        if (!contentFormNullIsElided(plan, bodyName, supplied, oas30)) {
+          routed.bodyFields[bodyName] = prepareEncodingStylePropertyValue(
+            plan,
+            bodyName,
+            supplied,
+            oas30,
+            options.converter,
+          );
+        }
         consumed.add(field);
       }
     }

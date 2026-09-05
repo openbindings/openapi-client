@@ -43,6 +43,7 @@ class Declaration implements ResolvedDeclaration {
     private readonly oas30: boolean,
     private readonly resolveReference?: SchemaReferenceResolver,
     private readonly unsatisfiable = false,
+    private readonly nullAdmitted = false,
   ) {}
 
   declaresOnly(...allowed: string[]): boolean {
@@ -71,7 +72,7 @@ class Declaration implements ResolvedDeclaration {
   }
 
   admitsNull(): boolean {
-    return !this.ambiguous && this.types?.has("null") === true;
+    return !this.ambiguous && !this.unsatisfiable && this.nullAdmitted;
   }
 
   format(): { value: string; conflict: boolean } {
@@ -88,8 +89,10 @@ class Declaration implements ResolvedDeclaration {
   admitsStringEnumValue(value: string): boolean {
     if (this.ambiguous || this.unsatisfiable) return false;
     for (const conjunct of this.conjuncts) {
+      if (typeof conjunct.const === "string" && conjunct.const !== value) return false;
       if (!Array.isArray(conjunct.enum) || conjunct.enum.length === 0) continue;
-      if (!conjunct.enum.some((candidate) => candidate === value)) return false;
+      const strings = conjunct.enum.filter((candidate): candidate is string => typeof candidate === "string");
+      if (strings.length > 0 && !strings.includes(value)) return false;
     }
     return true;
   }
@@ -200,7 +203,66 @@ export function resolveDeclaration(
     oas30,
     resolveReference,
     result.unsatisfiable,
+    declarationAdmitsNull(schema, oas30, resolveReference, new Set()),
   );
+}
+
+function declarationAdmitsNull(
+  schema: SchemaDeclaration,
+  oas30: boolean,
+  resolveReference: SchemaReferenceResolver | undefined,
+  seen: Set<object>,
+): boolean {
+  if (schema === false) return false;
+  if (schema === true || schema === null || schema === undefined) return true;
+  const object = asRecord(schema);
+  if (!object) return true;
+  if (seen.has(object)) return true;
+  seen.add(object);
+  try {
+    let admitted = true;
+    if (typeof object.$ref === "string" && resolveReference) {
+      admitted = declarationAdmitsNull(
+        resolveReference(object.$ref, object),
+        oas30,
+        resolveReference,
+        seen,
+      );
+      if (oas30) return admitted;
+    }
+    if (Object.hasOwn(object, "const") && object.const !== null) admitted = false;
+    if (Array.isArray(object.enum) && !object.enum.includes(null)) admitted = false;
+    const type = object.type;
+    if (oas30 && typeof type === "string" && type !== "") {
+      admitted &&= object.nullable === true;
+    } else if (!oas30 && typeof type === "string" && type !== "") {
+      admitted &&= type === "null";
+    } else if (!oas30 && Array.isArray(type) && type.length > 0) {
+      admitted &&= type.includes("null");
+    }
+    for (const keyword of ["anyOf", "oneOf"] as const) {
+      const branches = object[keyword];
+      if (!Array.isArray(branches) || branches.length === 0) continue;
+      const matches = branches.filter((branch) => declarationAdmitsNull(
+        branch as SchemaDeclaration,
+        oas30,
+        resolveReference,
+        seen,
+      )).length;
+      admitted &&= keyword === "anyOf" ? matches > 0 : matches === 1;
+    }
+    if (Array.isArray(object.allOf)) {
+      admitted &&= object.allOf.every((member) => declarationAdmitsNull(
+        member as SchemaDeclaration,
+        oas30,
+        resolveReference,
+        seen,
+      ));
+    }
+    return admitted;
+  } finally {
+    seen.delete(object);
+  }
 }
 
 /** Returns the actual property-map slots contributing to a resolved member. */

@@ -166,7 +166,7 @@ describe("resolveServer — the configuration point", () => {
     )).toThrow(/outside its declared enum/);
     expect(() =>
       resolveServer(doc, null, null, ctxWith({ index: 0, variables: { nope: "x" } }), ""),
-    ).toThrow('declares no variable "nope"');
+    ).toThrow('has no unique expression for supplied variable "nope"');
   });
 
   it("a config that selects nothing is loud, not silently ignored", () => {

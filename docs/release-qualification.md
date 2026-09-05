@@ -1,88 +1,98 @@
-# OpenAPI release qualification
+# OpenAPI client release qualification
 
-## Frozen candidate
+## Candidate boundary
 
-The release candidate accepts exactly OpenAPI 3.0.0–3.0.4 and
-3.1.0–3.1.2 client-invoked Path Item operations. It includes the native
-TypeScript and Go clients and the `openbindings.openapi@1` adapters. OpenAPI
-3.2, Swagger 2.0, code generation, link traversal, callbacks, webhooks, and
-uninstalled vendor-extension behavior are not part of this release boundary.
+The standalone candidate is the TypeScript package and Go module for direct
+Swagger 2.0 and OpenAPI 3.0, 3.1, and 3.2 invocation. It includes the native
+client-engine facades, edition mechanics, transport integration, codecs,
+streaming, and native HTTP outcome model.
 
-The loop may fix an implementation defect in the lowest owning layer. It may
-not add a Core field, alter the OBI document model, silently widen the
-candidate's declared semantic boundary, or infer behavior from one corpus
-producer. Evidence of such a need stops release qualification for explicit
-design review.
+It does not include an OpenBindings adapter, an OBI synthesizer, the
+OpenBindings SDK, OB CLI integration, generated schema types, or compatibility
+with this repository's earlier pre-release APIs. Those are downstream
+consumers or separate products.
+
+The behavioral authority is the four `openbindings.openapi-*.@1` binding
+specifications on the OpenBindings 0.2 release line. Their source and portable
+corpus are pinned under `authority/` and `conformance/upstream/`.
 
 ## Local release gate
 
-`pnpm qualify:release` is the repository-local gate. It requires:
+`pnpm qualify:release` is the repository-local gate. At one exact clean
+revision it requires:
 
-1. TypeScript type checking and the complete standalone test suite;
-2. the complete Go suite under the race detector;
-3. production TypeScript builds and SDK-boundary inspection;
-4. installation of the packed npm artifact into a clean external project;
-5. both ESM and CommonJS consumption from that installed artifact; and
-6. consumption of the Go package from a clean external module.
+1. authority source, file hashes, rule inventory, and corpus counts verify;
+2. all 888 processor scenarios pass through the public TypeScript and Go
+   client behavior;
+3. TypeScript type checking, native tests, and production ESM/CommonJS builds
+   pass;
+4. the complete Go suite passes under the race detector;
+5. boundary inspection finds one intentional TypeScript export and no
+   OpenBindings runtime dependency or public compatibility type;
+6. reviewed TypeScript declarations and Go documentation match the intentional
+   public API snapshot;
+7. a packed npm artifact works from clean ESM and CommonJS projects and its
+   installed declarations compile for both module forms;
+8. the package bundles for a browser target without a Node-only static
+   dependency;
+9. a clean external Go module loads and invokes every supported edition; and
+10. formatting and repository integrity checks pass.
 
-The consumer gate deliberately executes installed package entry points rather
-than importing the workspace source tree. It catches missing files, invalid
-exports, accidental workspace dependencies, and source-only success.
+The corpus gate uses the public client facade. Internal helper tests are
+necessary but cannot substitute for it.
 
-## System qualification gate
+## Current authority gate
 
-The OpenBindings workspace additionally runs the authority-derived wire
-differential, TypeScript/Go adapter suites, exact synthesis-and-coverage parity,
-the varied development corpus, sealed holdouts, and comparator mutation
-self-checks. The corpus of independently sourced third-party artifacts and
-its per-artifact reports are internal qualification assets of the
-OpenBindings project and are not redistributed; the published evidence is the
-authored conformance content, the aggregate counts below, and the
-sealed-cohort SHA-256 commitments recorded in the OpenBindings
-specification's conformance evidence policy. None of it is a runtime
-dependency of this standalone repository.
+The hash-locked authority revision is
+`c5cbec60a739d26ff1bbc3ea9e8cf7fd8eaf25af` on `release/0.2`. It includes the
+published fixture corrections to `OAPI30-PS-199`, `OAPI31-PS-188`,
+`OAPI32-PS-237`, and `OAPI32-PS-243`.
 
-A release is qualified only when both the local and system gates are green,
-unsupported semantics refuse before dispatch when knowable, and every new
-failure is classified as artifact invalidity, boundary exclusion, engine
-defect, adapter defect, binding-spec defect, or a separately reviewed possible
-Core limitation.
+Both public clients pass all 888 scenarios directly from the pinned corpus.
+Qualification uses no fixture overlay, scenario-ID exception, or weakened
+operation/input enforcement.
 
-## Current qualification result
+## Adversarial review gate
 
-The current candidate passes the local gate with 237 TypeScript tests, the Go
-race suite, production boundary inspection, clean npm ESM/CommonJS installs,
-and a clean external Go-module consumer. The OpenBindings system gate passes
-574 TypeScript adapter tests and the full Go adapter race suite.
+After the mechanical gate is green, a fresh review must find no unresolved P0,
+P1, or P2 issue in:
 
-The authority suite contains 17 cross-layer wire cases. The standalone and
-OpenBindings TypeScript lanes have zero wire or application mismatches, the Go
-standalone and adapter lanes pass 17/17, and all four seeded comparator
-mutations are detected. The independent Swagger witness disagrees on two
-known, authority-adjudicated seams; it is not a production authority.
+- binding-spec alignment and cross-edition confinement;
+- TypeScript/Go behavioral parity;
+- request-target, credential, header, cookie, redirect, and resource-loading
+  safety;
+- cancellation, partial delivery, terminal outcomes, and size bounds;
+- source, operation, input, configuration, transport, protocol, response,
+  cancellation, and internal error classification, including confinement of
+  otherwise-unclassified private failures behind the public error type;
+- immutability and concurrent-client use;
+- public naming, discoverability, defaults, and generated-facade viability;
+- package contents, browser/Node/CommonJS behavior, and external Go use; and
+- documentation accuracy.
 
-All 70 authority-derived semantic cells are assigned exactly once in the
-release evidence ledger, with executable evidence in both languages. Across
-the 170-artifact corpus, all 152 artifacts in the supported comparison
-envelope have exact TypeScript/Go synthesis and coverage parity. Three sealed
-holdout cohorts (SHA-256 seals
-`b9c168ff9c81008a7f47086ead5e14030bd154e356bae224942ab0176a22a6a4`,
-`9ddba505f83ba19f534996d915f3dd25bdf0683eecb7fa1b9f62979b065fd153`, and
-`95c04c900686c3d52d46fc856bea883b2e38d5ddb035409c9242b47b0b881a46`) contain
-66 supported artifacts with exact parity plus four invalid-upstream tolerance
-observations, and no goal-relevant mismatch.
+A finding is fixed at its lowest owning layer and receives a discriminating
+test. The review reruns against the changed snapshot. Qualification stops only
+when the mechanical gates remain green and a final review accepts the exact
+same bytes.
 
-## Host policy and hostile artifacts
+## Adapter-phase gate
 
-The clients propagate cancellation through artifact retrieval, external
-reference closure, invocation, and streaming. They refuse malformed sources,
-unsupported editions and URI schemes, duplicate YAML mapping keys, unresolved
-or baseless references, ambiguous operations, media collisions, and invalid
-configuration. Response delivery-unit limits prevent unbounded unary values or
-individual SSE events.
+Full OpenBindings synthesis is deliberately not a standalone-client release
+gate. The later adapter phase must derive all 154 OpenAPI synthesis scenarios
+from engine-owned facts, add OBI operation and coverage projection, and prove
+that neither the adapter nor OB CLI contains OpenAPI wire logic. Adapter
+differentials must show the same HTTP exchange and application values as the
+standalone client.
 
-Artifact fetch policy is intentionally host-owned. Applications processing
-untrusted documents must provide a restricted `fetch` implementation or
-`http.Client` for network allowlists, source-size limits, proxy policy, TLS,
-and environment-specific file access. The runtime must not invent one global
-security policy and present it as OpenAPI semantics.
+## Host security policy
+
+Artifact retrieval policy is host-owned. Applications loading untrusted
+descriptions should provide a restricted `documentFetch` or
+`DocumentHTTPClient` for network allowlists, source-size limits, proxy policy,
+TLS policy, and environment-specific file access. Invocation transport is a
+separate capability.
+
+The clients themselves enforce binding-defined target, header, cookie,
+credential, content, redirect, and response boundaries. A custom transport,
+middleware, or security handler is an explicit native extension point; its
+additional behavior is the caller's responsibility.

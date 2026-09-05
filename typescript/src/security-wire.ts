@@ -44,6 +44,7 @@ export function buildOpenAPICredentialPlacements(
         if (!value || !scheme.name) break;
         if (scheme.in === "header" || scheme.in === "query" || scheme.in === "cookie") {
           if (scheme.in === "cookie") validateOpenAPICookieCredential(scheme.name, value);
+          if (scheme.in === "header") validateOpenAPIHeaderCredential(scheme.name, value);
           add(scheme.in, scheme.name, value);
         }
         break;
@@ -128,6 +129,30 @@ export function validateOpenAPICookieCredential(name: string, value: string): vo
   }
 }
 
+/** Validates the complete value of an API key emitted as an HTTP field. */
+export function validateOpenAPIHeaderCredential(name: string, value: string): void {
+  if (/^[ \t]|[ \t]$/u.test(value)) {
+    throw new Error(`header credential ${JSON.stringify(name)} has forbidden boundary whitespace`);
+  }
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if ((code < 0x20 && code !== 0x09) || code === 0x7f) {
+      throw new Error(`header credential ${JSON.stringify(name)} is not an RFC 9110 field-value`);
+    }
+  }
+  if (name.toLowerCase() === "cookie") {
+    const units = value.split("; ");
+    if (units.length === 0 || units.some((unit) => {
+      const equals = unit.indexOf("=");
+      return equals <= 0
+        || !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u.test(unit.slice(0, equals))
+        || !validCookieValue(unit.slice(equals + 1));
+    })) {
+      throw new Error(`header credential ${JSON.stringify(name)} is not an RFC 6265 cookie-string`);
+    }
+  }
+}
+
 /** Percent-encodes an API-key query name or value under RFC 3986. */
 export function encodeOpenAPICredentialQuery(value: string): string {
   return encodeURIComponent(value).replace(/[!'()*]/gu, (character) =>
@@ -147,11 +172,24 @@ export function openAPICredentialCollision(
   };
   for (const parameter of params) {
     if (!parameter.name) continue;
+    // Declaration-time exclusion is sound only for an unavoidable, fixed
+    // destination. Optional and object-expanding parameters are checked from
+    // their actual populated destinations at invocation time.
+    if (parameter.required !== true || parameterHasDynamicDestinations(parameter)) continue;
     if (parameter.in === "header") declared.header.add(parameter.name.toLowerCase());
     else if (parameter.in === "query") declared.query.add(parameter.name);
     else if (parameter.in === "cookie") declared.cookie.add(parameter.name);
   }
   const processorOwned = new Set(["host", "content-length", "content-type", "accept"]);
+  if (
+    placements.some((placement) => placement.channel === "query")
+    && (
+      params.some((parameter) => parameter.in === "querystring" && parameter.required === true)
+      || populated.query.has("\0querystring")
+    )
+  ) {
+    return "query credential collides with a whole-querystring parameter (OAPI-P-10)";
+  }
   const hasRawCookieOwner = populated.header.has("cookie") || placements.some(
     (placement) => placement.channel === "header" && placement.name.toLowerCase() === "cookie",
   );
@@ -191,4 +229,24 @@ function validBasicCredentialText(value: string): boolean {
     const code = character.codePointAt(0)!;
     return code >= 0x20 && code <= 0x7e;
   });
+}
+
+function validCookieValue(value: string): boolean {
+  const quoted = value.startsWith('"') || value.endsWith('"');
+  if (quoted && !(value.startsWith('"') && value.endsWith('"') && value.length >= 2)) return false;
+  const inner = quoted ? value.slice(1, -1) : value;
+  return [...new TextEncoder().encode(inner)].every((byte) => byte === 0x21
+    || (byte >= 0x23 && byte <= 0x2b)
+    || (byte >= 0x2d && byte <= 0x3a)
+    || (byte >= 0x3c && byte <= 0x5b)
+    || (byte >= 0x5d && byte <= 0x7e));
+}
+
+function parameterHasDynamicDestinations(parameter: OpenAPIParameter): boolean {
+  const style = typeof parameter.style === "string"
+    ? parameter.style
+    : parameter.in === "query" || parameter.in === "cookie" ? "form" : "simple";
+  const explode = typeof parameter.explode === "boolean" ? parameter.explode : style === "form";
+  return style === "deepObject" || style === "querystring"
+    || (explode && (style === "form" || style === "cookie"));
 }

@@ -1,8 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
   single,
-  newInvokeHooks,
-  USE_DEFAULT,
   ERR_INVALID_REF,
   ERR_PROTOCOL,
   ERR_RESPONSE_ERROR,
@@ -10,6 +8,7 @@ import {
   ERR_SOURCE_CONFIG_ERROR,
   ERR_VALIDATION_FAILED,
 } from "./internal/index.js";
+import { OpenAPIClient } from "./client.js";
 import { OpenAPIRuntime } from "./runtime.js";
 import { loadOpenAPIDocument } from "./util.js";
 import {
@@ -264,7 +263,12 @@ describe("OAPI-P-03 — flattened-model refusals", () => {
               },
               { name: "id", in: "query", schema: { type: "string" } },
             ],
-            responses: { "200": { description: "ok" } },
+            responses: {
+              "200": {
+                description: "ok",
+                content: { "application/json": { schema: { type: "object" } } },
+              },
+            },
           },
         },
       },
@@ -440,7 +444,12 @@ describe("OAPI-P-03 — flattened-model refusals", () => {
                 },
               },
             },
-            responses: { "200": { description: "ok" } },
+            responses: {
+              "200": {
+                description: "ok",
+                content: { "application/json": { schema: { type: "object" } } },
+              },
+            },
           },
         },
       },
@@ -964,26 +973,28 @@ describe("OAPI-P-04 — request media on the wire", () => {
                       ids: { type: "array", items: { type: "integer" } },
                     },
                   },
+                  encoding: { ids: { contentType: "application/json" } },
                 },
               },
             },
-            responses: { "200": { description: "ok" } },
+            responses: {
+              "200": {
+                description: "ok",
+                content: { "application/json": { schema: { type: "object" } } },
+              },
+            },
           },
         },
       },
     };
     const { fetch, requests } = mockFetch(() => jsonResponse({}));
-    const call = new OpenAPIRuntime().invokeBinding({
-      source: src(spec),
-      ref: "#/paths/~1form/post",
-      fetch,
-    });
-    await call.write({ name: "a b", ids: [1, 2] });
-    await single(call.outputs);
+    const client = await OpenAPIClient.load(spec, { fetch });
+    await expect(client.call("postForm", { body: { name: "a b", ids: [1, 2] } }))
+      .resolves.toMatchObject({ ok: true });
     expect(requests[0]?.headers.get("Content-Type")).toBe(
       "application/x-www-form-urlencoded",
     );
-    expect(requests[0]?.body).toBe("ids=1&ids=2&name=a%20b");
+    expect(requests[0]?.body).toBe("ids=%5B1%2C2%5D&name=a+b");
   });
 
   // Synthetic body unwrap on the wire: with an array body schema, the
@@ -1079,7 +1090,7 @@ describe("OAPI-P-04 — request media on the wire", () => {
 
   // The Accept header carries the declared success media; membership is
   // normative (§9.2).
-  it("advertises declared success media in Accept, never failure media", async () => {
+  it("advertises every useful declared response media type in Accept", async () => {
     const spec = {
       openapi: "3.0.3",
       info: { title: "t", version: "1" },
@@ -1112,7 +1123,7 @@ describe("OAPI-P-04 — request media on the wire", () => {
     const accept = requests[0]?.headers.get("Accept") ?? "";
     expect(accept).toContain("application/json");
     expect(accept).toContain("text/csv");
-    expect(accept).not.toContain("problem+json");
+    expect(accept).toContain("problem+json");
   });
 });
 
@@ -1121,7 +1132,7 @@ describe("OAPI-P-04 — request media on the wire", () => {
 // ---------------------------------------------------------------------------
 
 const DUAL_SPEC = {
-  openapi: "3.0.3",
+  openapi: "3.2.0",
   info: { title: "t", version: "1" },
   servers: [{ url: BASE }],
   paths: {
@@ -1133,7 +1144,18 @@ const DUAL_SPEC = {
             description: "ok",
             content: {
               "application/json": { schema: { type: "object" } },
-              "text/event-stream": {},
+              "text/event-stream": {
+                itemSchema: {
+                  type: "object",
+                  required: ["data"],
+                  properties: {
+                    data: { type: "string" },
+                    event: { type: "string" },
+                    id: { type: "string" },
+                    retry: { type: "integer", minimum: 0 },
+                  },
+                },
+              },
             },
           },
         },
@@ -1160,19 +1182,16 @@ describe("OAPI-P-06 / §8 — interaction shape", () => {
   // An operation declaring BOTH a JSON success and text/event-stream is
   // streaming-capable; the response's Content-Type framing selects the shape.
   it("selects the shape by response framing among declared shapes", async () => {
-    const inv = new OpenAPIRuntime();
-
     // SSE framing → server-streaming.
     const { fetch: sseFetch } = mockFetch(() =>
       sseResponse(["data: one\n\ndata: two\n\n"]),
     );
-    const streamCall = inv.invokeBinding({
-      source: src(DUAL_SPEC),
-      ref: REF_DUAL,
-      fetch: sseFetch,
-    });
+    const streamClient = await OpenAPIClient.load(DUAL_SPEC, { fetch: sseFetch });
+    const streamCall = await streamClient.stream({ ref: REF_DUAL });
+    expect(streamCall.ok).toBe(true);
+    if (!streamCall.ok) throw new Error("expected a successful SSE response");
     const events: unknown[] = [];
-    for await (const e of streamCall.outputs) events.push(e);
+    for await (const e of streamCall.events) events.push(e.data);
     await streamCall.closed;
     expect(events).toEqual(["one", "two"]);
 
@@ -1180,12 +1199,11 @@ describe("OAPI-P-06 / §8 — interaction shape", () => {
     const { fetch: jsonFetch } = mockFetch(() =>
       jsonResponse({ mode: "unary" }),
     );
-    const unaryCall = inv.invokeBinding({
-      source: src(DUAL_SPEC),
-      ref: REF_DUAL,
-      fetch: jsonFetch,
+    const unaryClient = await OpenAPIClient.load(DUAL_SPEC, { fetch: jsonFetch });
+    await expect(unaryClient.call({ ref: REF_DUAL })).resolves.toMatchObject({
+      ok: true,
+      data: { mode: "unary" },
     });
-    await expect(single(unaryCall.outputs)).resolves.toEqual({ mode: "unary" });
   });
 
   // WHATWG extraction: a lone empty `data:` line DISPATCHES an event whose
@@ -1205,13 +1223,12 @@ describe("OAPI-P-06 / §8 — interaction shape", () => {
         "data: incomplete-final-event", // no blank line: discarded
       ]),
     );
-    const call = new OpenAPIRuntime().invokeBinding({
-      source: src(DUAL_SPEC),
-      ref: REF_DUAL,
-      fetch,
-    });
+    const client = await OpenAPIClient.load(DUAL_SPEC, { fetch });
+    const call = await client.stream({ ref: REF_DUAL });
+    expect(call.ok).toBe(true);
+    if (!call.ok) throw new Error("expected a successful SSE response");
     const events: unknown[] = [];
-    for await (const e of call.outputs) events.push(e);
+    for await (const e of call.events) events.push(e.data);
     await call.closed;
     expect(events).toEqual(["first", "", "third"]);
   });
@@ -1221,60 +1238,50 @@ describe("OAPI-P-06 / §8 — interaction shape", () => {
     const { fetch } = mockFetch(() =>
       sseResponse(["data: crlf\r\n\r\n", "data: cr\r\r"]),
     );
-    const call = new OpenAPIRuntime().invokeBinding({
-      source: src(DUAL_SPEC),
-      ref: REF_DUAL,
-      fetch,
-    });
+    const client = await OpenAPIClient.load(DUAL_SPEC, { fetch });
+    const call = await client.stream({ ref: REF_DUAL });
+    expect(call.ok).toBe(true);
+    if (!call.ok) throw new Error("expected a successful SSE response");
     const events: unknown[] = [];
-    for await (const e of call.outputs) events.push(e);
+    for await (const e of call.events) events.push(e.data);
     expect(events).toEqual(["crlf", "cr"]);
   });
 
   // One leading U+FEFF BOM is ignored per the WHATWG stream grammar.
   it("ignores one leading BOM", async () => {
     const { fetch } = mockFetch(() => sseResponse(["﻿data: x\n\n"]));
-    const call = new OpenAPIRuntime().invokeBinding({
-      source: src(DUAL_SPEC),
-      ref: REF_DUAL,
-      fetch,
-    });
-    await expect(single(call.outputs)).resolves.toBe("x");
+    const client = await OpenAPIClient.load(DUAL_SPEC, { fetch });
+    const call = await client.stream({ ref: REF_DUAL });
+    expect(call.ok).toBe(true);
+    if (!call.ok) throw new Error("expected a successful SSE response");
+    const values: unknown[] = [];
+    for await (const event of call.events) values.push(event.data);
+    await call.closed;
+    expect(values).toEqual(["x"]);
   });
 
   // WHATWG lastEventId semantics: the last event ID persists across events
   // until changed; retry is digits-only.
   it("persists lastEventId across events and honors digits-only retry", async () => {
-    const metas: Array<Record<string, string[] | undefined>> = [];
-    const hooks = newInvokeHooks(
-      {
-        decode: (_site, raw) => {
-          metas.push({
-            id: raw.meta["x-sse-id"],
-            retry: raw.meta["x-sse-retry"],
-          });
-          return USE_DEFAULT;
-        },
-      },
-      {},
-    );
+    const metas: Array<{ id?: string; retry?: number }> = [];
     const { fetch } = mockFetch(() =>
       sseResponse([
         "id: 7\nretry: 250\ndata: a\n\n",
         "retry: 9x9\ndata: b\n\n", // non-digits retry ignored; id persists
       ]),
     );
-    const call = new OpenAPIRuntime().invokeBinding({
-      source: src(DUAL_SPEC),
-      ref: REF_DUAL,
-      fetch,
-      hooks,
-    });
+    const client = await OpenAPIClient.load(DUAL_SPEC, { fetch });
+    const call = await client.stream({ ref: REF_DUAL });
+    expect(call.ok).toBe(true);
+    if (!call.ok) throw new Error("expected a successful SSE response");
     const events: unknown[] = [];
-    for await (const e of call.outputs) events.push(e);
+    for await (const e of call.events) {
+      events.push(e.data);
+      metas.push({ ...(e.sse?.id ? { id: e.sse.id } : {}), ...(e.sse?.retry !== undefined ? { retry: e.sse.retry } : {}) });
+    }
     expect(events).toEqual(["a", "b"]);
-    expect(metas[0]).toEqual({ id: ["7"], retry: ["250"] });
-    expect(metas[1]).toEqual({ id: ["7"], retry: undefined });
+    expect(metas[0]).toEqual({ id: "7", retry: 250 });
+    expect(metas[1]).toEqual({ id: "7" });
   });
 });
 
@@ -1293,13 +1300,13 @@ describe("OAPI-P-07 — decode", () => {
           headers: { "Content-Type": "text/plain; charset=iso-8859-1" },
         }),
     );
-    const call = new OpenAPIRuntime().invokeBinding({
-      source: src(WIDGET_SPEC),
-      ref: PING_REF,
+    const client = await OpenAPIClient.load(WIDGET_SPEC, {
       fetch,
+      responseCharacterEncodings: {
+        "iso-8859-1": (bytes) => String.fromCharCode(...bytes),
+      },
     });
-    await call.close();
-    await expect(single(call.outputs)).resolves.toBe("é");
+    await expect(client.call("getSession")).resolves.toMatchObject({ ok: true, data: "é" });
   });
 
   it("treats invalid UTF-8 under the default charset as a loud decode error", async () => {

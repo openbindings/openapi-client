@@ -1,9 +1,11 @@
 # Go parity port
 
-Status: completed for the current pre-release support boundary. This document
-remains the maintenance contract for future cross-language changes.
+Status: native-client parity complete; downstream OpenBindings migration is
+deferred until the standalone surface is accepted.
 
-The Go client will implement the same native contract as the TypeScript client. It must not be a façade that exposes native-looking methods while importing the OpenBindings binding package as its execution implementation.
+The Go client implements the same native contract as the TypeScript client. It
+is not a façade that exposes native-looking methods while importing the
+OpenBindings binding package as its execution implementation.
 
 ## Public shape
 
@@ -19,9 +21,14 @@ result, err := client.Call(ctx, openapiclient.OperationID("getPet"), openapiclie
 })
 ```
 
-`Result` will distinguish successful and non-2xx HTTP outcomes while retaining `*http.Response`, decoded data/error values, and governing OpenAPI declaration information. Local source, selection, configuration, transport, protocol, decode, cancellation, and implementation failures will be typed Go errors.
+`Result` distinguishes successful and non-2xx HTTP outcomes while retaining
+`*http.Response`, decoded data/error values, and governing OpenAPI declaration
+information. Local source, selection, configuration, transport, protocol,
+decode, cancellation, and implementation failures are typed Go errors.
 
-Streaming will use an explicit session with an ordered receive channel or iterator method, `Close/Cancel`, response metadata, and a terminal error. It will preserve partial values before a terminal error.
+Streaming uses an explicit session with an ordered iterator method,
+`Cancel`, response metadata, and a terminal error. It preserves partial values
+before a terminal error.
 
 ## Extraction sequence
 
@@ -29,9 +36,14 @@ Streaming will use an explicit session with an ordered receive channel or iterat
 2. Define small native request/result/error/session types in this repository. **Complete.**
 3. Run language-neutral conformance cases in both clients. **Complete.**
 4. Implement the native `Client` over the engine. **Complete.**
-5. Replace the Go binding package's direct runtime implementation with an adapter over the engine. **Complete.**
-6. Keep OBI synthesis in `openbindings-go/formats/openapi`; share document-analysis helpers only where their ownership is genuinely artifact-native. **Preserved.**
-7. Delete the old execution mirror after differential parity passes. **Complete.**
+5. Freeze the clean standalone surface without preserving current adapter, SDK,
+   or OB CLI APIs. **In qualification.**
+6. Add the smallest public, immutable OpenAPI-native analysis capability needed
+   by generators and thin binding adapters. **Deferred to the analysis phase.**
+7. Rewrite the Go binding package as an adapter over the accepted native
+   surface, then migrate the SDK and OB CLI. **Deferred.**
+8. Delete the displaced adapter execution mirror only after differential parity
+   and all portable synthesis scenarios pass. **Deferred.**
 
 ## Why this is not a wrapper-first port
 

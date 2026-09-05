@@ -108,13 +108,20 @@ export async function effectiveSwagger20Parameters(operation: Swagger20ResolvedO
   const byWire: Swagger20ParameterSet["byWire"] = {
     path: new Map(), query: new Map(), header: new Map(), formData: new Map(),
   };
-  const set: Swagger20ParameterSet = { all: effective, nonBody: [], byWire, qualified: false };
+  const set: Swagger20ParameterSet = { all: [], nonBody: [], byWire, qualified: false };
   const names = new Map<string, Swagger20ParameterLocation>();
   const headers = new Map<string, string>();
   let bodyCount = 0;
   let formCount = 0;
   for (const parameter of effective) {
-    validateParameterDeclaration(parameter);
+    try {
+      validateParameterDeclaration(parameter);
+    } catch (error: unknown) {
+      const required = booleanMember(parameter.raw, "required").value === true;
+      if (parameter.in === "header" && !required && parameter.name !== "" && !httpFieldName(parameter.name)) continue;
+      throw error;
+    }
+    set.all.push(parameter);
     if (parameter.in === "body") {
       bodyCount++;
       set.body = parameter;
@@ -257,7 +264,19 @@ function validateParameterDeclaration(parameter: Swagger20Parameter): void {
   }
   if (parameter.in === "header") {
     if (!httpFieldName(parameter.name)) throw new Error("header name is not an HTTP field-name");
-    if (["host", "content-length", "content-type"].includes(parameter.name.toLowerCase())) {
+    if ([
+      "host",
+      "content-length",
+      "content-type",
+      "connection",
+      "keep-alive",
+      "proxy-authorization",
+      "proxy-connection",
+      "te",
+      "trailer",
+      "transfer-encoding",
+      "upgrade",
+    ].includes(parameter.name.toLowerCase())) {
       throw new Error(`header parameter ${JSON.stringify(parameter.name)} collides with a processor-owned field`);
     }
   }
@@ -327,6 +346,9 @@ export function routeSwagger20Input(
     } else if (parameter.in === "header") {
       for (const contribution of contributions) {
         if (!httpFieldValue(contribution.value)) throw new Error(`header parameter ${JSON.stringify(parameter.name)} contains a field-invalid byte`);
+        if (parameter.name.toLowerCase() === "cookie" && !cookieString(contribution.value)) {
+          throw new Error(`header parameter ${JSON.stringify(parameter.name)} is not a complete Cookie field value`);
+        }
         routed.headers.push(contribution);
       }
     } else {
@@ -546,7 +568,14 @@ function httpFieldName(name: string): boolean {
 }
 
 function httpFieldValue(value: string): boolean {
-  return !/[\u0000-\u0008\u000a-\u001f\u007f]/u.test(value);
+  return value === value.trim() && !/[\u0000-\u0008\u000a-\u001f\u007f]/u.test(value);
+}
+
+function cookieString(value: string): boolean {
+  const token = "[!#$%&'*+.^_`|~0-9A-Za-z-]+";
+  const octets = "[\\x21\\x23-\\x2B\\x2D-\\x3A\\x3C-\\x5B\\x5D-\\x7E]*";
+  const pair = `${token}=(?:${octets}|\"${octets}\")`;
+  return new RegExp(`^${pair}(?:; ${pair})*$`, "u").test(value);
 }
 
 function finiteNumber(value: unknown): boolean {

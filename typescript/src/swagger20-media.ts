@@ -28,6 +28,10 @@ import {
   type Swagger20SchemaDeclaration,
 } from "./swagger20-schema.js";
 import { newSwagger20ResolutionMemo } from "./swagger20-reference.js";
+import type {
+  Swagger20CharacterDecoder,
+  Swagger20CharacterEncoder,
+} from "./swagger20-engine.js";
 
 export interface Swagger20ParsedMedia extends ParsedMediaType {
   specificity: 0 | 1 | 2;
@@ -63,6 +67,7 @@ export interface Swagger20ResolvedResponse {
   raw: Swagger20Object;
   resource: Swagger20Resource;
   key: string;
+  invalid?: boolean;
 }
 
 export function effectiveSwagger20MediaSet(
@@ -138,16 +143,20 @@ export function encodeSwagger20RequestPayload(
   model: Swagger20PayloadModel,
   routed: Swagger20RoutedInput,
   propertyMedia: Record<string, string> = {},
+  characterEncoders?: ReadonlyMap<string, Swagger20CharacterEncoder>,
 ): { body: Uint8Array; contentType: string } {
   if (selection.lane === "json") {
+    if (jsonValueHasLoneSurrogate(routed.body)) throw new Error("request value carries an unpaired surrogate");
     const encoded = JSON.stringify(routed.body);
     if (encoded === undefined) throw new Error("request value has no strict JSON image");
     return { body: new TextEncoder().encode(encoded), contentType: selection.media.canonical };
   }
   if (selection.lane === "text") {
     if (typeof routed.body !== "string") throw new Error("character-data request lane requires a string");
-    requireUTF8(selection.media);
-    return { body: new TextEncoder().encode(routed.body), contentType: selection.media.canonical };
+    return {
+      body: encodeCharacterData(routed.body, selection.media, characterEncoders),
+      contentType: selection.media.canonical,
+    };
   }
   if (selection.lane === "byte") {
     if (typeof routed.body !== "string" || !standardBase64(routed.body)) throw new Error("format byte request value is not standard Base64");
@@ -162,6 +171,26 @@ export function encodeSwagger20RequestPayload(
   }
   if (model.kind !== "formData") throw new Error("multipart lane has no formData model");
   return multipart(routed.formData, selection.media, propertyMedia);
+}
+
+function jsonValueHasLoneSurrogate(value: unknown): boolean {
+  if (typeof value === "string") {
+    for (let index = 0; index < value.length; index += 1) {
+      const unit = value.charCodeAt(index);
+      if (unit >= 0xd800 && unit <= 0xdbff) {
+        const next = index + 1 < value.length ? value.charCodeAt(index + 1) : 0;
+        if (next < 0xdc00 || next > 0xdfff) return true;
+        index += 1;
+      } else if (unit >= 0xdc00 && unit <= 0xdfff) return true;
+    }
+    return false;
+  }
+  if (Array.isArray(value)) return value.some(jsonValueHasLoneSurrogate);
+  if (value !== null && typeof value === "object") {
+    return Object.entries(value as Record<string, unknown>).some(([name, member]) =>
+      jsonValueHasLoneSurrogate(name) || jsonValueHasLoneSurrogate(member));
+  }
+  return false;
 }
 
 export function swagger20RequestLane(media: Swagger20ParsedMedia, model: Swagger20PayloadModel): Swagger20MediaLane {
@@ -182,7 +211,6 @@ export function swagger20RequestLane(media: Swagger20ParsedMedia, model: Swagger
   if (swagger20ByteString(model.declaration!)) return "byte";
   if (swagger20RawOctets(model.declaration!)) return "octets";
   if (isCharacterMedia(media.base) && swagger20SoleString(model.declaration!)) {
-    requireUTF8(media);
     return "text";
   }
   throw new Error("selected media and resolved declaration define no request byte carriage");
@@ -197,6 +225,71 @@ export function swagger20RangeHasUsableLane(range: Swagger20ParsedMedia, model: 
     if (!declarationMatches(range, media)) return false;
     try { swagger20RequestLane(media, model); return true; } catch { return false; }
   });
+}
+
+/** Deterministic generated Accept value for every usable response-media range. */
+export async function swagger20AcceptHeader(
+  document: Swagger20Document,
+  operation: Swagger20ResolvedOperation,
+  parameters: Swagger20ParameterSet,
+  responses: Swagger20Object,
+): Promise<string> {
+  if ([...parameters.byWire.header.keys()].some((name) => name.toLowerCase() === "accept")) return "";
+  const declarations: Swagger20SchemaDeclaration[] = [];
+  for (const [key, raw] of Object.entries(responses)) {
+    if (key.startsWith("x-") || (!/^\d{3}$/u.test(key) && key !== "default")) continue;
+    try {
+      const response = await resolveResponse(operation, raw, operation.resource, key, new Set());
+      if (!member(response.raw, "schema").present) continue;
+      declarations.push(await resolveSwagger20SchemaDeclaration(
+        operation.graph,
+        response.raw.schema,
+        response.resource,
+        true,
+      ));
+    } catch {
+      // Defective subordinate response projections advertise no lane; valid
+      // sibling declarations remain eligible.
+    }
+  }
+  if (declarations.length === 0) return "";
+  const result = new Set<string>();
+  for (const entry of effectiveSwagger20MediaSet(document, operation, "produces").entries) {
+    if (!entry.parsed || entry.colliding || Object.keys(entry.parsed.params).some((name) => name.toLowerCase() === "q")) continue;
+    if (declarations.some((declaration) => swagger20ResponseRangeHasLane(entry.parsed!, declaration))) {
+      result.add(entry.parsed.canonical);
+    }
+  }
+  return [...result].sort(utf8Compare).join(", ");
+}
+
+function swagger20ResponseRangeHasLane(
+  range: Swagger20ParsedMedia,
+  declaration: Swagger20SchemaDeclaration,
+): boolean {
+  const candidates = range.specificity === 2
+    ? [range]
+    : [
+        "application/json",
+        "application/problem+json",
+        "text/plain",
+        "application/xml",
+        "application/octet-stream",
+        "image/png",
+      ].map(parseConcrete).filter((media) => declarationMatches(range, media));
+  return candidates.some((media) => {
+    try { swagger20ResponseLane(media, declaration); return true; } catch { return false; }
+  });
+}
+
+function utf8Compare(left: string, right: string): number {
+  const a = new TextEncoder().encode(left);
+  const b = new TextEncoder().encode(right);
+  const length = Math.min(a.length, b.length);
+  for (let index = 0; index < length; index += 1) {
+    if (a[index] !== b[index]) return a[index]! - b[index]!;
+  }
+  return a.length - b.length;
 }
 
 /**
@@ -282,21 +375,7 @@ export async function swagger20ResponsesFor(operation: Swagger20ResolvedOperatio
     if (key.toLowerCase().startsWith("x-")) continue;
     if (key !== "default" && !/^[1-5][0-9][0-9]$/u.test(key)) throw new Error(`selected Swagger 2.0 Responses Object contains inadmissible key ${JSON.stringify(key)}`);
     count++;
-    // The upstream-invalid governing Response Object exclusion, scoped to the
-    // declaration that can govern a SUCCESS response (F1; see
-    // `swagger20SuccessResponseKey`). A defective NON-SUCCESS declaration is
-    // left standing here: it destroys no representation, and if it actually
-    // governs an actual failure response the response rung reports it there.
-    if (!swagger20SuccessResponseKey(key)) continue;
-    try {
-      await swagger20ResponseObjectDefect(operation, value, key);
-    } catch (error: unknown) {
-      throw new Error(
-        `selected Swagger 2.0 response ${JSON.stringify(key)} is upstream-invalid: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-    }
+    void value;
   }
   if (count === 0) throw new Error("selected Swagger 2.0 Responses Object has no exact status or default Response");
   return responses.value!;
@@ -310,7 +389,11 @@ export async function governingSwagger20Response(
   const exact = String(status);
   const key = Object.hasOwn(responses, exact) ? exact : Object.hasOwn(responses, "default") ? "default" : undefined;
   if (!key) return undefined;
-  return resolveResponse(operation, responses[key], operation.resource, key, new Set());
+  try {
+    return await resolveResponse(operation, responses[key], operation.resource, key, new Set());
+  } catch {
+    return { raw: {}, resource: operation.resource, key, invalid: true };
+  }
 }
 
 /** @internal - resolves one authored Response/Reference position for native analysis. */
@@ -330,7 +413,7 @@ async function resolveResponse(
   key: string,
   active: Set<string>,
 ): Promise<Swagger20ResolvedResponse> {
-  if (!isSwagger20Object(value)) throw new Error("Response or Reference Object is not an object");
+  if (!isSwagger20Object(value)) return { raw: {}, resource, key, invalid: true };
   const reference = stringMember(value, "$ref");
   if (reference.present) {
     if (!reference.valid || reference.value === "") throw new Error("Response Reference Object has an invalid $ref");
@@ -343,18 +426,6 @@ async function resolveResponse(
       return resolveResponse(operation, resolved.node, resolved.resource, key, active);
     } finally { active.delete(identity); }
   }
-  // `description` is REQUIRED and its value MUST be a string. ABSENCE is the
-  // carve-out `openbindings.openapi-2.0@1` §9.4 states in the same breath as
-  // the exclusion: a governing Response Object that omits it while declaring no
-  // `schema` loses no representation -- nothing it says about a response body
-  // is misdeclared -- so it still GOVERNS, and the omission-with-`schema` case
-  // is excluded before dispatch by `swagger20ResponseObjectDefect` rather than
-  // refused here. A PRESENT `description` of another kind is not the carve-out:
-  // it is a fixed-field violation like any other.
-  const description = stringMember(value, "description");
-  if (description.present && !description.valid) {
-    throw new Error("Response Object `description` is not a string");
-  }
   return { raw: value, resource, key };
 }
 
@@ -364,6 +435,7 @@ export async function decodeSwagger20Response(
   governing: Swagger20ResolvedResponse,
   body: Uint8Array,
   actualContentType: string,
+  characterDecoders?: ReadonlyMap<string, Swagger20CharacterDecoder>,
 ): Promise<unknown> {
   if (!member(governing.raw, "schema").present) throw new Error("non-empty response is governed by a Response Object without schema");
   const declaration = await resolveSwagger20SchemaDeclaration(
@@ -389,7 +461,7 @@ export async function decodeSwagger20Response(
       () => new Error("response body carries an unpaired surrogate, which denotes no character"),
     );
   }
-  if (lane === "text") return new TextDecoder("utf-8", { fatal: true }).decode(body);
+  if (lane === "text") return decodeCharacterData(body, media, characterDecoders);
   if (lane === "byte") {
     const text = new TextDecoder("utf-8", { fatal: true }).decode(body);
     if (!standardBase64(text)) throw new Error("format byte response is not standard Base64");
@@ -406,7 +478,6 @@ export function swagger20ResponseLane(
   if (swagger20ByteString(declaration)) return "byte";
   if (swagger20RawOctets(declaration)) return "octets";
   if (isCharacterMedia(media.base) && swagger20SoleString(declaration)) {
-    requireUTF8(media);
     return "text";
   }
   throw new Error(`response media ${JSON.stringify(media.canonical)} and declaration define no byte carriage`);
@@ -467,9 +538,47 @@ function isCharacterMedia(base: string): boolean {
   return type === "text" || base === "application/xml" || subtype?.endsWith("+xml") === true;
 }
 
-function requireUTF8(media: Swagger20ParsedMedia): void {
-  const charset = media.params.charset?.toLowerCase();
-  if (charset !== undefined && charset !== "utf-8" && charset !== "utf8") throw new Error(`unsupported character-data charset ${JSON.stringify(charset)}`);
+function charsetFor(media: Swagger20ParsedMedia): string {
+  return (media.params.charset ?? "utf-8").trim().toLowerCase();
+}
+
+function encodeCharacterData(
+  value: string,
+  media: Swagger20ParsedMedia,
+  encoders?: ReadonlyMap<string, Swagger20CharacterEncoder>,
+): Uint8Array {
+  const charset = charsetFor(media);
+  if (charset === "utf-8" || charset === "utf8") return new TextEncoder().encode(value);
+  const encoder = encoders?.get(charset);
+  if (!encoder) throw new Error(`unsupported request character-data charset ${JSON.stringify(charset)}`);
+  try {
+    return codingBytes(encoder(value));
+  } catch (error: unknown) {
+    throw new Error(`request character-data charset ${JSON.stringify(charset)} failed`, { cause: error });
+  }
+}
+
+function decodeCharacterData(
+  body: Uint8Array,
+  media: Swagger20ParsedMedia,
+  decoders?: ReadonlyMap<string, Swagger20CharacterDecoder>,
+): string {
+  const charset = charsetFor(media);
+  if (charset === "utf-8" || charset === "utf8") return new TextDecoder("utf-8", { fatal: true }).decode(body);
+  const decoder = decoders?.get(charset);
+  if (!decoder) throw new Error(`unsupported response character-data charset ${JSON.stringify(charset)}`);
+  try {
+    return decoder(body);
+  } catch (error: unknown) {
+    throw new Error(`response character-data charset ${JSON.stringify(charset)} failed`, { cause: error });
+  }
+}
+
+function codingBytes(value: Uint8Array | ArrayBuffer | ArrayBufferView): Uint8Array {
+  if (value instanceof Uint8Array) return value;
+  if (value instanceof ArrayBuffer) return new Uint8Array(value);
+  if (ArrayBuffer.isView(value)) return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+  throw new Error("character encoder result is not a byte sequence");
 }
 
 function urlEncoded(contributions: Swagger20WireContribution[]): string {

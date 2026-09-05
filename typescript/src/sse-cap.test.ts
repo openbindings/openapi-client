@@ -1,7 +1,6 @@
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "node:http";
 import { describe, it, expect, afterAll } from "vitest";
-import { OpenAPIRuntime } from "./runtime.js";
-import { OPENAPI_PROFILE_FULL } from "./profile.js";
+import { OPENAPI_PROFILE_FULL, OpenAPIEngine } from "./engine.js";
 
 // The SSE size cap is PER EVENT — each event is one delivery unit, so the
 // consumer-configurable delivery-unit bound applies per emission, never
@@ -20,7 +19,7 @@ describe("SSE size cap is per-event, not cumulative", () => {
 
   function spec() {
     return {
-      openapi: "3.0.3",
+      openapi: "3.2.0",
       info: { title: "SSE Cap Test", version: "1.0.0" },
       servers: [{ url: `http://127.0.0.1:${port}` }],
       paths: {
@@ -37,6 +36,18 @@ describe("SSE size cap is per-event, not cumulative", () => {
         },
       },
     };
+  }
+
+  async function start(maxDeliveryUnitBytes?: number) {
+    const prepared = await new OpenAPIEngine().prepare({
+      source: { content: spec() },
+      ref: "#/paths/~1events/get",
+      profile: OPENAPI_PROFILE_FULL,
+      ...(maxDeliveryUnitBytes === undefined ? {} : { maxDeliveryUnitBytes }),
+    });
+    const execution = await prepared.start();
+    await execution.finishInput();
+    return execution;
   }
 
   it("keeps flowing across a >10MB cumulative stream of under-bound events", async () => {
@@ -58,14 +69,10 @@ describe("SSE size cap is per-event, not cumulative", () => {
       });
     });
 
-    const invoker = new OpenAPIRuntime();
-    const call = invoker.invokeBinding({
-      source: { profile: OPENAPI_PROFILE_FULL, content: spec() },
-      ref: "#/paths/~1events/get",
-    });
+    const call = await start();
     const events: unknown[] = [];
-    for await (const v of call.outputs) events.push(v);
-    await call.closed;
+    for await (const v of call.events) events.push(v);
+    await call.completed;
 
     expect(events).toHaveLength(6);
   });
@@ -86,13 +93,8 @@ describe("SSE size cap is per-event, not cumulative", () => {
       });
     });
 
-    const invoker = new OpenAPIRuntime();
-    const call = invoker.invokeBinding({
-      source: { profile: OPENAPI_PROFILE_FULL, content: spec() },
-      ref: "#/paths/~1events/get",
-    });
-
-    await expect(call.closed).rejects.toMatchObject({ code: "ERR_RESPONSE_ERROR" });
+    const call = await start();
+    await expect(call.completed).rejects.toMatchObject({ code: "ERR_RESPONSE_ERROR" });
   });
 
   it("honors a caller-tuned per-event delivery-unit bound (identity unchanged)", async () => {
@@ -113,14 +115,8 @@ describe("SSE size cap is per-event, not cumulative", () => {
       });
     });
 
-    const invoker = new OpenAPIRuntime();
-    const call = invoker.invokeBinding({
-      source: { profile: OPENAPI_PROFILE_FULL, content: spec() },
-      ref: "#/paths/~1events/get",
-      maxDeliveryUnitBytes: 1024,
-    });
-
-    await expect(call.closed).rejects.toMatchObject({
+    const call = await start(1024);
+    await expect(call.completed).rejects.toMatchObject({
       code: "ERR_RESPONSE_ERROR",
       message: expect.stringContaining("SSE event exceeds 1024 byte limit"),
     });

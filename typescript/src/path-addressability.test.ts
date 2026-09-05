@@ -149,7 +149,7 @@ describe("path-template addressability", () => {
       }),
       {
         fetch: vi.fn<typeof fetch>(async (request) => {
-          observed = new URL((request as Request).url).pathname;
+          observed = new URL(request instanceof Request ? request.url : String(request)).pathname;
           return new Response(`{"ok":true}`, { status: 200, headers: { "Content-Type": "application/json" } });
         }),
       },
@@ -166,8 +166,8 @@ describe("path-template addressability", () => {
   // with the same message — the URL cannot be built either way.
   it.each([
     { name: "required", required: true, want: "missing path parameter(s) id" },
-    { name: "optional", required: false, want: "missing path parameter(s) id" },
-  ])("still refuses an omitted $name declared path parameter", async ({ required, want }) => {
+    { name: "optional", required: false, want: "is upstream-invalid" },
+  ])("refuses an omitted $name declared path parameter at the correct owner", async ({ required, want }) => {
     const client = await OpenAPIClient.load(
       document({
         "/items/{id}": {

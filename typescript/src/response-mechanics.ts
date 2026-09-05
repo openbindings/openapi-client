@@ -32,6 +32,8 @@ export type OpenAPIContentEncoder = (
   body: Uint8Array,
 ) => OpenAPIContentCodingResult | Promise<OpenAPIContentCodingResult>;
 export type OpenAPIContentDecoder = OpenAPIContentEncoder;
+export type OpenAPICharacterEncoder = (value: string) => OpenAPIContentCodingResult;
+export type OpenAPICharacterDecoder = (bytes: Uint8Array) => string;
 
 export interface OpenAPIResponseMechanicsModel {
   document: OpenAPIDocument;
@@ -40,6 +42,7 @@ export interface OpenAPIResponseMechanicsModel {
   method: string;
   emptyResponse: boolean;
   maxDeliveryUnitBytes?: number;
+  responseCharacterDecodings?: ReadonlyMap<string, OpenAPICharacterDecoder>;
   unaryEventStream?: {
     actualContentTypeHeader: string;
     mediaType: string;
@@ -53,7 +56,7 @@ export function normalizeOpenAPIContentCodings<T>(
   const codecs = new Map<string, T>();
   for (const [authored, codec] of Object.entries(input ?? {})) {
     const token = authored.trim().toLowerCase();
-    if (!HTTP_TOKEN.test(token) || typeof codec !== "function") {
+    if (typeof codec !== "function") {
       return { codecs, defect: new Error(`invalid ${direction} content-coding capability ${JSON.stringify(authored)}`) };
     }
     if (codecs.has(token)) {
@@ -72,12 +75,10 @@ export async function governOpenAPIRequest(
 ): Promise<{ input: RequestInfo | URL; init: RequestInit | undefined }> {
   const sourceHeaders = init?.headers ?? (input instanceof Request ? input.headers : undefined);
   const headers = new Headers(sourceHeaders);
-  // §9.1 supplies no portable response preference. Remove the predecessor's
-  // synthesized field after all security/context placements have run.
-  headers.delete("Accept");
   const rawCoding = headers.get("Content-Encoding") ?? "";
   let body = init?.body ?? (input instanceof Request ? input.body : null);
   if (rawCoding !== "") {
+    if (body === null) requestRefusal("request Content-Encoding cannot be supplied when no request representation is emitted");
     const governing = effectiveContentEncodingParameter(model.parameters);
     if (!governing) requestRefusal("request Content-Encoding has no effective governing Header Parameter");
     if (!schemaAdmitsHeaderValue(governing.schema, rawCoding, model.document.openapi?.startsWith("3.0") ?? true)) {
@@ -124,8 +125,7 @@ export async function governOpenAPIResponse(
   const sourceContentType = response.headers.get("Content-Type");
   const sourceCoding = response.headers.get("Content-Encoding") ?? "";
   if (
-    model.document.openapi === "3.2.0"
-    && model.method.toLowerCase() !== "head"
+    model.method.toLowerCase() !== "head"
     && response.body
     && sourceContentType !== null
     && sourceCoding === ""
@@ -162,9 +162,10 @@ export async function governOpenAPIResponse(
     }
     // `sequential` is only ever set inside the `match` guard above, so a
     // sequential classification always has the declaration it was derived from.
-    if (sequential && match) {
-      if (sequential === "sse") {
-        validateResponseMediaLane(match.media, sourceContentType, false);
+    const eventStream = match && parseMediaType(sourceContentType, true).base === "text/event-stream";
+    if (eventStream || (model.document.openapi === "3.2.0" && sequential && match)) {
+      if (match && sequential === "sse") {
+        validateResponseMediaLane(match.media, sourceContentType, false, model.responseCharacterDecodings);
       }
       return response;
     }
@@ -181,38 +182,46 @@ export async function governOpenAPIResponse(
   if (model.method.toLowerCase() === "head") bytes = new Uint8Array();
   const headers = new Headers(response.headers);
   const rawCoding = headers.get("Content-Encoding") ?? "";
+  const successful = response.status >= 200 && response.status < 300;
+  const noContent = model.method.toLowerCase() === "head" || responseBodyForbidden(response.status);
   if (rawCoding !== "") {
-    if (!governing) responseError("coded response has no governing Response Object");
-    const declared = responseHeader(governing.response, "Content-Encoding");
-    if (!declared) responseError("actual response Content-Encoding has no governing Header Object");
-    if (!schemaAdmitsHeaderValue(declared.schema as SchemaDeclaration, rawCoding, model.document.openapi?.startsWith("3.0") ?? true)) {
-      responseError("actual response Content-Encoding is not admitted by its governing Header Object");
-    }
     let tokens: string[];
     try {
       tokens = parsedContentCodings(rawCoding);
     } catch {
       responseError("invalid Content-Encoding field value");
     }
-    for (let index = tokens.length - 1; index >= 0; index -= 1) {
-      const token = tokens[index]!;
-      if (token === "identity") continue;
-      const codec = codecs.get(token);
-      if (!codec) responseError(`response content-coding ${JSON.stringify(token)} is unsupported`);
-      try {
-        bytes = codingBytes(await codec(bytes));
-      } catch {
-        responseError(`response content-coding ${JSON.stringify(token)} failed`);
+    if (governing) {
+      for (const declared of responseHeaders(governing.response, "Content-Encoding")) {
+        if (!headerExactStringDomainAdmits(declared.schema as SchemaDeclaration, rawCoding, model.document.openapi?.startsWith("3.0") ?? true)) {
+          responseError("actual response Content-Encoding is outside a binding-understood exact Header domain");
+        }
       }
-      if (bytes.byteLength > deliveryLimit) {
-        throw new OpenAPIWireMechanicsError("ERR_RESPONSE_ERROR");
+    }
+    if (!noContent && (governing || !successful)) {
+      for (let index = tokens.length - 1; index >= 0; index -= 1) {
+        const token = tokens[index]!;
+        if (token === "identity") continue;
+        const codec = codecs.get(token);
+        if (!codec) responseError(`response content-coding ${JSON.stringify(token)} is unsupported`);
+        try {
+          bytes = codingBytes(await codec(bytes));
+        } catch {
+          responseError(`response content-coding ${JSON.stringify(token)} failed`);
+        }
+        if (bytes.byteLength > deliveryLimit) {
+          throw new OpenAPIWireMechanicsError("ERR_RESPONSE_ERROR");
+        }
       }
     }
   }
 
   model.emptyResponse = bytes.length === 0;
   if (bytes.length > 0) {
-    if (!governing) responseError("non-empty response has no governing Response Object");
+    if (!governing) {
+      if (successful) responseError("non-empty response has no governing Response Object");
+      return responseFromBytes(response, headers, bytes);
+    }
     let contentType = headers.get("Content-Type") ?? "";
     if (contentType === "") {
       contentType = "application/octet-stream";
@@ -222,10 +231,24 @@ export async function governOpenAPIResponse(
     try {
       match = governingResponseMediaMatch(governing.response, contentType, true, true);
     } catch {
-      responseError("actual response media does not match its governing declaration");
+      if (successful) responseError("actual response media does not match its governing declaration");
+      return responseFromBytes(response, headers, bytes);
     }
-    if (!match) responseError("actual response media does not match its governing declaration");
-    validateResponseMediaLane(match.media, contentType, model.document.openapi?.startsWith("3.0") ?? true);
+    if (!match) {
+      if (successful) responseError("actual response media does not match its governing declaration");
+      return responseFromBytes(response, headers, bytes);
+    }
+    try {
+      validateResponseMediaLane(
+        match.media,
+        contentType,
+        model.document.openapi?.startsWith("3.0") ?? true,
+        model.responseCharacterDecodings,
+      );
+    } catch (error: unknown) {
+      if (successful) throw error;
+      return responseFromBytes(response, headers, bytes);
+    }
     if (parseMediaType(contentType, true).base === "text/event-stream" && model.unaryEventStream) {
       headers.set(model.unaryEventStream.actualContentTypeHeader, contentType);
       headers.set("Content-Type", model.unaryEventStream.mediaType);
@@ -236,6 +259,15 @@ export async function governOpenAPIResponse(
     ? null
     : bytesToArrayBuffer(bytes);
   return new Response(body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+function responseFromBytes(response: Response, headers: Headers, bytes: Uint8Array): Response {
+  headers.delete("Content-Length");
+  return new Response(bytes.length === 0 && responseBodyForbidden(response.status) ? null : bytesToArrayBuffer(bytes), {
     status: response.status,
     statusText: response.statusText,
     headers,
@@ -265,12 +297,11 @@ function effectiveContentEncodingParameter(parameters: OpenAPIParameter[]): Open
   return found.length === 1 ? found[0]! : null;
 }
 
-function responseHeader(response: OpenAPIResponse, wanted: string): Record<string, unknown> | null {
+function responseHeaders(response: OpenAPIResponse, wanted: string): Record<string, unknown>[] {
   const headers = asRecord(response.headers);
-  const found = Object.entries(headers ?? {})
+  return Object.entries(headers ?? {})
     .filter(([name, value]) => name.toLowerCase() === wanted.toLowerCase() && asRecord(value) !== null)
     .map(([, value]) => asRecord(value)!);
-  return found.length === 1 ? found[0]! : null;
 }
 
 function requireGovernedResponseHeaders(response: OpenAPIResponse, actual: Headers): void {
@@ -293,6 +324,22 @@ function schemaAdmitsHeaderValue(
     && declaration.admitsStringEnumValue(value);
 }
 
+/**
+ * Response Content-Encoding uses only the binding's deliberately small,
+ * decidable raw-string subset. Each non-empty string-valued enum/const domain
+ * contributes conjunctively; all other Schema constraints are descriptive at
+ * this wire boundary and cannot make processors invent inverse serialization.
+ */
+function headerExactStringDomainAdmits(
+  schema: SchemaDeclaration,
+  value: string,
+  oas30: boolean,
+): boolean {
+  const declaration = resolveDeclaration(schema, oas30);
+  if (declaration.ambiguous || declaration.admitsNoInstance()) return true;
+  return declaration.admitsStringEnumValue(value);
+}
+
 function parsedContentCodings(raw: string): string[] {
   const members = raw.split(",");
   if (members.length === 0) throw new Error("empty Content-Encoding");
@@ -307,12 +354,13 @@ function validateResponseMediaLane(
   media: OpenAPIMediaType,
   contentType: string,
   oas30: boolean,
+  decoders?: ReadonlyMap<string, OpenAPICharacterDecoder>,
 ): void {
   const parsed = parseMediaType(contentType, true);
   if (isJSONMediaType(parsed.base)) return;
   const declaration = resolveDeclaration(media.schema, oas30);
   if (isCharacterDataMedia(parsed.base) && declaration.admitsStringAsSoleNonNullType()) {
-    requireSupportedCharset(parsed.params.charset ?? "utf-8");
+    requireSupportedCharset(parsed.params.charset ?? "utf-8", decoders);
     return;
   }
   if (declaration.typeless()) return;
@@ -332,9 +380,11 @@ function isCharacterDataMedia(base: string): boolean {
   return base === "application/xml" || base.endsWith("+xml");
 }
 
-function requireSupportedCharset(charset: string): void {
-  if (!["utf-8", "utf8", "us-ascii", "ascii", "iso-8859-1", "iso8859-1", "latin-1", "latin1"]
-    .includes(charset.toLowerCase())) {
+function requireSupportedCharset(
+  charset: string,
+  decoders?: ReadonlyMap<string, OpenAPICharacterDecoder>,
+): void {
+  if (!["utf-8", "utf8"].includes(charset.toLowerCase()) && !decoders?.has(charset.toLowerCase())) {
     responseError(`unsupported response charset ${JSON.stringify(charset)}`);
   }
 }

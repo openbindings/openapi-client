@@ -1,41 +1,62 @@
 # Conformance
 
-Conformance is behavioral, not snapshot-based. A case describes an OpenAPI artifact, a native call, and observable facts at four boundaries:
+Conformance is behavioral, not snapshot-based. A processor case supplies an
+OpenAPI artifact, a native call, and observable facts at four boundaries:
 
-1. selection and pre-dispatch refusal;
-2. exact HTTP request;
-3. native result or stream;
+1. operation selection and pre-dispatch refusal;
+2. the HTTP request;
+3. the native result or stream; and
 4. lifecycle and cancellation.
 
-The suite must include OpenAPI 3.0 and 3.1, JSON and YAML, local and external references, documents from unrelated producers, adversarial minimized fixtures, and differential checks against independent OpenAPI/HTTP implementations where a credible oracle exists.
+The standalone clients support Swagger 2.0 and OpenAPI 3.0, 3.1, and 3.2 in
+JSON and YAML, including local and external references. Product code must
+never special-case a fixture name, repository, generator signature, operation
+ID, vendor extension, or other corpus accident.
 
-Corpus discoveries are promoted into small specification-rule fixtures. Product code must never special-case a filename, repository, generator signature, operation id, vendor extension, or other corpus accident.
+## Authoritative portable corpus
 
-## Initial native contract
+`upstream/openbindings-0.2/processor/` is the hash-locked portable processor
+corpus for the four OpenBindings OpenAPI binding specifications. Both the
+TypeScript and Go clients execute every scenario through their public native
+client facades. A passing helper or adapter test cannot substitute for that
+public-boundary run.
 
-The TypeScript tests currently cover:
+The upstream synthesis corpus is also vendored. It is not a standalone-client
+release gate: synthesis projects OpenAPI facts into OpenBindings operations,
+requirements, and coverage, so it belongs to the later OpenBindings adapter.
+The adapter must derive those results from the native client substrate and may
+not reimplement OpenAPI wire behavior.
 
-- operation-id, path/method, and canonical-reference selection;
-- independent same-named path, query, and body values;
-- scheme-name-keyed API-key and bearer placement;
-- declared non-2xx bodies plus status/header/declaration evidence;
-- falsy whole bodies;
-- explicit empty optional object body versus omitted body;
-- protocol-aware middleware;
-- SSE ordering, completion, and unary misuse refusal;
-- typed local selection/configuration failures.
+The current lock includes the published corrections to `OAPI30-PS-199`,
+`OAPI31-PS-188`, `OAPI32-PS-237`, and `OAPI32-PS-243`. Both clients pass the
+unchanged pinned bytes; no fixture overlay, scenario-ID branch, or relaxed
+operation/input enforcement participates in qualification.
 
-The existing OpenBindings OpenAPI artifact corpus and invocation suite remain an expansion source. Cases move by ownership: artifact-execution assertions belong here; OBI synthesis and abstraction assertions remain in the binding package.
+## Native suites
 
-## Cross-language gate
+Language-native tests add coverage that the portable format cannot conveniently
+express, including:
 
-`cases/native-wire.json` is executed by both TypeScript and Go. It covers
-OpenAPI 3.0 and 3.1, collision-preserving grouped inputs, parameter
-serialization, scheme-named security placement, falsy whole bodies, and rich
-declared HTTP failures. New cross-language behavior belongs in this format
-when it can be stated without language- or implementation-specific machinery.
+- exact-edition loading and reference closure;
+- operation inventory and all selector forms;
+- request serialization, media lanes, content coding, and character coding;
+- security alternatives and scheme-named credential placement;
+- server configuration and complete-URL recovery;
+- declared success and failure responses with raw HTTP evidence;
+- redirects, transport separation, middleware, size bounds, and cancellation;
+- SSE and sequential streaming, ordering, backpressure, and terminal outcomes;
+- immutable loaded state and detached extension metadata; and
+- typed error kind and code classification.
 
-The shared set is a floor, not a representative corpus by itself. Each
-language also runs its deeper artifact, streaming, external-reference,
-adversarial, and adapter suites; corpus discoveries are promoted here only
-when a stable language-neutral oracle can be stated.
+`cases/native-wire.json` remains a compact language-neutral floor exercised by
+both implementations. Corpus discoveries are promoted there only when a stable
+cross-language oracle can be stated; edition-specific and lifecycle-heavy
+cases remain in their native suites.
+
+## Evidence discipline
+
+Every behavioral change receives a discriminating test at the lowest owning
+layer. A scenario must fail an implementation that omits or reverses the rule;
+mere execution coverage is not enough. Authority files and portable fixtures
+remain development and release evidence only and are never shipped as runtime
+dependencies.

@@ -1,7 +1,4 @@
-// Round R2: the upstream-invalid governing Response Object rule on the OpenAPI
-// 3.2 lane, and its F1 success scope. TWIN of
-// `go/openapi32_response_object_test.go`; the two must stay behaviourally
-// identical shape for shape.
+// Smallest-owner response-defect confinement on the OpenAPI 3.2 lane.
 
 import { describe, expect, it } from "vitest";
 import { loadOpenAPIArtifact } from "./openapi32-artifact.js";
@@ -35,9 +32,9 @@ async function resolve(document: Record<string, unknown>, selector: string) {
 }
 
 describe("OpenAPI 3.2 upstream-invalid governing Response Object", () => {
-  it.each(defectiveShapes)("excludes its own target when %s", async (_name, response) => {
+  it.each(defectiveShapes)("keeps the operation represented when %s", async (_name, response) => {
     const document = responseDocument("200", response, false);
-    await expect(resolve(document, "#/paths/~1broken/get")).rejects.toMatchObject({ kind: "excluded" });
+    await expect(resolve(document, "#/paths/~1broken/get")).resolves.toBeDefined();
     await expect(resolve(document, "#/paths/~1intact/get")).resolves.toBeDefined();
   });
 
@@ -50,12 +47,12 @@ describe("OpenAPI 3.2 upstream-invalid governing Response Object", () => {
     await expect(resolve(document, "#/paths/~1intact/get")).resolves.toBeDefined();
   });
 
-  // `default` governs a 2xx status only when no `2XX` range key covers the
-  // class; where one does, `default` can never govern a success.
-  it("scopes a defective `default` by the presence of a `2XX` range key", async () => {
+  // A defective admitted default remains subordinate whether or not a 2XX
+  // range shadows it for successful responses.
+  it("keeps a defective `default` subordinate with and without a `2XX` range key", async () => {
     const defect = { description: "ok", headers: "nope" };
     await expect(resolve(responseDocument("default", defect, false), "#/paths/~1broken/get"))
-      .rejects.toMatchObject({ kind: "excluded" });
+      .resolves.toBeDefined();
     await expect(resolve({
       openapi: "3.2.0",
       info: { title: "R2", version: "1" },

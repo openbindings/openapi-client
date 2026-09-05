@@ -1,6 +1,9 @@
 # OpenBindings adapter contract
 
-The OpenBindings OpenAPI binding package is an adapter over this repository's execution engine. Its job is translation, not a second OpenAPI implementation.
+The future OpenBindings OpenAPI binding packages are adapters over this
+repository's supported native client capabilities. Their job is translation,
+not a second OpenAPI implementation. Existing SDK and OB CLI APIs are migration
+inputs only; preserving them is not a requirement.
 
 ## Inputs to the engine
 
@@ -12,7 +15,7 @@ The adapter resolves the selected OBI binding and supplies:
 - resolved configuration and credentials;
 - cancellation, size limits, and optional diagnostic hooks.
 
-The engine is the adapter's single implementation substrate for `$ref`
+The native package is the adapter's single implementation substrate for `$ref`
 resolution, servers, parameter serialization, request bodies, security
 placement, HTTP, responses, and SSE. Portable OpenBindings meaning still comes
 from the selected binding specification; this split prevents the adapter from
@@ -48,32 +51,30 @@ The adapter therefore owns a small mechanical bridge:
 
 No request planning or OpenAPI response logic belongs in this bridge.
 
-## Development capability profiles
+## Native analysis prerequisite
 
-No OpenAPI binding specification has been published. The adapter accepts only
-the unreleased first `openbindings.openapi@1` candidate and maps it to the
-engine's fullest capability profile. The engine's other named profiles record
-development and migration stages; they have never been binding-specification
-identifiers or revisions. The standalone native client selects the fullest
-profile and does not expose binding-spec identifiers.
-
-The profile is an engine input, not synthesis authority. Synthesis still creates OBI operations and private correspondence transforms; it does not decide how OpenAPI behaves on the wire.
+Invocation adapters can use `operations`, `operation`, `call`, and `stream`
+directly. Full OBI synthesis additionally needs immutable OpenAPI-native
+declaration analysis: effective parameters, request and response alternatives,
+security alternatives, configuration requirements, and smallest-owner
+invalid/excluded dispositions. That capability must be added to both public
+language packages before adapter cutover. It must not expose OBI types or make
+synthesis authoritative over invocation.
 
 ## Cutover gate
 
-The adapter may switch from its current in-repository engine mirror only when:
+The SDK and CLI may switch to the new substrate only when:
 
 - all artifact-execution tests pass against this repository;
 - binding-only synthesis and operation-layer tests pass through the bridge;
 - context challenges remain recognizable by the Core SDK;
 - partial outputs and terminal failures retain drain-before-terminal behavior;
 - package inspection proves the standalone public entry point has no Core dependency;
-- no duplicated OpenAPI request/response implementation remains in the adapter package.
+- no duplicated OpenAPI request/response implementation remains in an adapter,
+  SDK, or OB CLI package;
+- all 154 portable synthesis scenarios pass through adapter-owned projection
+  derived from the native analysis capability; and
+- native and OpenBindings-adapted invocations produce the same HTTP exchange,
+  application values, ordering, cancellation, and terminal outcome.
 
-Both cutovers satisfy this gate. TypeScript package declarations preserve SDK
-class ownership and the adapter suite passes through the standalone engine.
-The Go adapter converts neutral prerequisites, hooks, metadata, failures,
-inputs, outputs, cancellation, and completion while the existing binding
-suite passes unchanged, including under the race detector. The displaced Go
-HTTP/SSE execution loop has been removed. Synthesis-only schema projection and
-dialect modules remain in each adapter by design.
+This cutover has not been performed in the current standalone-client phase.

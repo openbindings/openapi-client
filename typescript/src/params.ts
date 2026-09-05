@@ -24,6 +24,7 @@ import {
 // ---------------------------------------------------------------------------
 
 const IGNORED_HEADER_PARAMS = new Set(["accept", "content-type", "authorization"]);
+const HTTP_TOKEN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u;
 
 /** Deterministically converts a JSON boolean or number for parameter carriage. */
 export type OpenAPIParameterConverter = (value: boolean | number) => string;
@@ -54,8 +55,17 @@ export function effectiveParameters(
   return merged.filter((p) => {
     if (!p?.name || !p?.in) return false;
     if (p.in === "header" && IGNORED_HEADER_PARAMS.has(p.name.toLowerCase())) return false;
+    if ((p.in === "header" || p.in === "cookie") && !HTTP_TOKEN.test(p.name)) return false;
     return true;
   });
+}
+
+export function invalidRequiredParameterName(parameters: OpenAPIParameter[]): string | undefined {
+  return parameters.find((parameter) =>
+    parameter?.required === true
+    && (parameter.in === "header" || parameter.in === "cookie")
+    && typeof parameter.name === "string"
+    && !HTTP_TOKEN.test(parameter.name))?.name;
 }
 
 /** Effective Parameter Object rows before malformed declarations are filtered. */
@@ -80,7 +90,13 @@ export function effectiveParameterDeclarationRows(
 }
 
 /** Returns the first effective Parameter Object outside the OpenAPI 3.x gate. */
-export function malformedEffectiveParameter(parameters: OpenAPIParameter[]): string | undefined {
+export function malformedEffectiveParameter(
+  parameters: OpenAPIParameter[],
+  openapiVersion = "",
+): string | undefined {
+  const locations = openapiVersion === "3.2.0"
+    ? ["path", "query", "querystring", "header", "cookie"]
+    : ["path", "query", "header", "cookie"];
   for (const parameter of parameters) {
     const name = typeof parameter?.name === "string" && parameter.name !== ""
       ? parameter.name
@@ -89,7 +105,7 @@ export function malformedEffectiveParameter(parameters: OpenAPIParameter[]): str
       !parameter
       || typeof parameter.name !== "string"
       || parameter.name === ""
-      || !["path", "query", "header", "cookie"].includes(parameter.in ?? "")
+      || !locations.includes(parameter.in ?? "")
     ) return name;
     const hasSchema = Object.hasOwn(parameter, "schema");
     const hasContent = Object.hasOwn(parameter, "content");
@@ -590,6 +606,7 @@ export function routeParameter(
   if (content && Object.keys(content).length > 0) {
     if (openapi32 && p.in === "querystring") {
       r.queryUnits.push(serializeOpenAPI32QueryStringParameter(p, value));
+      r.populated.query.add("\0querystring");
       return;
     }
     const serialized = serializeParamContentValue(p, value, profile);
@@ -675,6 +692,7 @@ export function routeParameter(
       }
       r.queryUnits.push(...units);
       r.populated.query.add(name);
+      for (const unit of units) r.populated.query.add(queryContributionName(unit));
       break;
     }
     case "header": {
@@ -682,6 +700,9 @@ export function routeParameter(
       try {
         v = serializeHeaderValue(engineValue, style, explode);
         if (!validHeaderFieldValue(v)) throw new Error("serialized header contains an invalid HTTP field byte");
+        if (name.toLowerCase() === "cookie" && !validCookieString(v)) {
+          throw new Error("serialized raw Cookie header is not an RFC 6265 cookie-string");
+        }
       } catch (e) {
         throw new Error(`header parameter "${name}": ${(e as Error).message}`, { cause: e });
       }
@@ -699,7 +720,9 @@ export function routeParameter(
         throw new Error(`cookie parameter "${name}": ${(e as Error).message}`, { cause: e });
       }
       r.cookieUnits.push(...units);
+      validateCookieUnits(units);
       r.populated.cookie.add(name);
+      for (const unit of units) r.populated.cookie.add(cookieContributionName(unit));
       break;
     }
     default:
@@ -854,6 +877,10 @@ export function prepareSchemaParameterValue(
     if (parameter.in === "header" && !validHeaderFieldValue(serialized)) {
       throw new Error("serialized header contains an invalid HTTP field byte");
     }
+    if (parameter.in === "header" && parameter.name?.toLowerCase() === "cookie" && !validCookieString(serialized)) {
+      throw new Error("serialized raw Cookie header is not an RFC 6265 cookie-string");
+    }
+    if (parameter.in === "cookie") validateCookieUnits([`${parameter.name ?? ""}=${serialized}`]);
     return { value, cookieEmits: parameter.in === "cookie" };
   }
 
@@ -880,6 +907,7 @@ export function prepareSchemaParameterValue(
     if (units.length > 1 && !(openapiVersion === "3.2.0" && method.style === "cookie")) {
       throw new Error("supplied value would produce multiple cookie pairs");
     }
+    validateCookieUnits(units);
     return { value: engineValue, cookieEmits: units.length > 0 };
   }
   return { value: engineValue, cookieEmits: false };
@@ -949,11 +977,55 @@ function delimitedObjectAsSequence(value: unknown, style: string): unknown {
 }
 
 function validHeaderFieldValue(value: string): boolean {
+  if (/^[ \t]|[ \t]$/u.test(value)) return false;
   for (let index = 0; index < value.length; index += 1) {
     const code = value.charCodeAt(index);
     if ((code < 0x20 && code !== 0x09) || code === 0x7f) return false;
   }
   return true;
+}
+
+function validateCookieUnits(units: readonly string[]): void {
+  for (const unit of units) {
+    const split = unit.indexOf("=");
+    if (split <= 0 || !HTTP_TOKEN.test(unit.slice(0, split)) || !validCookieValue(unit.slice(split + 1))) {
+      throw new Error(`serialized cookie contribution ${JSON.stringify(unit)} is not an RFC 6265 cookie-pair`);
+    }
+  }
+}
+
+function validCookieString(value: string): boolean {
+  const units = value.split("; ");
+  if (units.length === 0 || units.some((unit) => unit === "")) return false;
+  try {
+    validateCookieUnits(units);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function validCookieValue(value: string): boolean {
+  const quoted = value.startsWith('"') || value.endsWith('"');
+  if (quoted && !(value.startsWith('"') && value.endsWith('"') && value.length >= 2)) return false;
+  const inner = quoted ? value.slice(1, -1) : value;
+  for (let index = 0; index < inner.length; index += 1) {
+    const code = inner.charCodeAt(index);
+    if (!(code === 0x21 || code >= 0x23 && code <= 0x2b || code >= 0x2d && code <= 0x3a
+      || code >= 0x3c && code <= 0x5b || code >= 0x5d && code <= 0x7e)) return false;
+  }
+  return true;
+}
+
+function queryContributionName(unit: string): string {
+  const equals = unit.indexOf("=");
+  const raw = equals < 0 ? unit : unit.slice(0, equals);
+  try { return decodeURIComponent(raw.replaceAll("+", " ")); } catch { return raw; }
+}
+
+function cookieContributionName(unit: string): string {
+  const equals = unit.indexOf("=");
+  return equals < 0 ? unit : unit.slice(0, equals);
 }
 
 function nonRFCStyleDelimiters(style: string): string {
@@ -1295,13 +1367,17 @@ function expandFormPairs(name: string, value: unknown, explode: boolean, esc: Es
   const arr = asArray(value);
   if (arr) {
     const parts = arrayStrings(arr);
-    if (explode) return parts.map((p) => `${name}=${esc(p)}`);
+    if (explode) return parts.length === 0
+      ? [`${name}=`]
+      : parts.map((p) => `${name}=${esc(p)}`);
     return [`${name}=` + joinEscaped(parts, ",", esc)];
   }
   const obj = asObject(value);
   if (obj) {
     const pairs = objectPairs(obj);
-    if (explode) return pairs.map(([k, v]) => `${esc(k)}=${esc(v)}`);
+    if (explode) return pairs.length === 0
+      ? [`${name}=`]
+      : pairs.map(([k, v]) => `${esc(k)}=${esc(v)}`);
     return [`${name}=` + joinEscaped(flattenPairs(pairs), ",", esc)];
   }
   return [`${name}=${esc(primitiveString(value))}`];

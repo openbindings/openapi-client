@@ -56,7 +56,7 @@ describe("OpenAPI 3.2 response content codings", () => {
     expect(order).toEqual(["second", "first"]);
   });
 
-  it("treats identity as built in and rejects ambiguous governing declarations", async () => {
+  it("treats identity as built in and case-folds unconstrained Header declarations conjunctively", async () => {
     const identity = await governOpenAPIResponse(new Response("payload", {
       headers: { "Content-Type": "text/plain", "Content-Encoding": "identity" },
     }), model({ schema: { type: "string", enum: ["identity"] } }), new Map());
@@ -66,8 +66,9 @@ describe("OpenAPI 3.2 response content codings", () => {
     ambiguous.operation.responses!["200"]!.headers!["content-encoding"] = {
       schema: { type: "string" },
     };
-    await expect(governOpenAPIResponse(new Response("payload", {
+    const grouped = await governOpenAPIResponse(new Response("payload", {
       headers: { "Content-Type": "text/plain", "Content-Encoding": "identity" },
-    }), ambiguous, new Map())).rejects.toMatchObject({ code: "ERR_PROTOCOL" });
+    }), ambiguous, new Map());
+    expect(await grouped.text()).toBe("payload");
   });
 });

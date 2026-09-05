@@ -1,0 +1,5233 @@
+{
+  "format": "openbindings.openapi-client-authority-ledger@1",
+  "source": {
+    "repository": "https://github.com/openbindings/spec.git",
+    "releaseBranch": "release/0.2",
+    "commit": "c5cbec60a739d26ff1bbc3ea9e8cf7fd8eaf25af",
+    "corpusRevision": 6
+  },
+  "generated": [
+    {
+      "family": "openapi-2.0",
+      "bindingSpec": "openbindings.openapi-2.0@1",
+      "specPath": "binding-specs/openapi-2.0/openbindings.openapi-2.0.md",
+      "specSha256": "d7632c7a125a525c8b0e91bf302292d37dc0c4dc51244ea67089cd6a80baea2c",
+      "processorScenarioCount": 186,
+      "synthesisScenarioCount": 25,
+      "rules": [
+        {
+          "id": "OAPI20-P-01",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "it implements the closed load gates, smallest-owner confinement, reference closure, Schema Object dialect, and selector semantics of §§3–6.",
+          "upstreamScenarios": [
+            "OAPI20-PS-02",
+            "OAPI20-PS-03",
+            "OAPI20-PS-04",
+            "OAPI20-PS-05",
+            "OAPI20-PS-06",
+            "OAPI20-PS-93",
+            "OAPI20-PS-125",
+            "OAPI20-PS-126",
+            "OAPI20-PS-127"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI20-P-02",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "it accepts only §7's envelope, applies §8's effective-parameter, collision, conversion, collection, location, empty, and form rules, and refuses every unknown or unroutable input before dispatch.",
+          "upstreamScenarios": [
+            "OAPI20-PS-01",
+            "OAPI20-PS-07",
+            "OAPI20-PS-08",
+            "OAPI20-PS-09",
+            "OAPI20-PS-10",
+            "OAPI20-PS-11",
+            "OAPI20-PS-12",
+            "OAPI20-PS-13",
+            "OAPI20-PS-14",
+            "OAPI20-PS-15",
+            "OAPI20-PS-16",
+            "OAPI20-PS-17",
+            "OAPI20-PS-18",
+            "OAPI20-PS-19",
+            "OAPI20-PS-20",
+            "OAPI20-PS-21",
+            "OAPI20-PS-22",
+            "OAPI20-PS-23",
+            "OAPI20-PS-24",
+            "OAPI20-PS-25",
+            "OAPI20-PS-26",
+            "OAPI20-PS-32",
+            "OAPI20-PS-105",
+            "OAPI20-PS-106",
+            "OAPI20-PS-107",
+            "OAPI20-PS-108",
+            "OAPI20-PS-109",
+            "OAPI20-PS-110",
+            "OAPI20-PS-111",
+            "OAPI20-PS-112",
+            "OAPI20-PS-128",
+            "OAPI20-PS-129",
+            "OAPI20-PS-133",
+            "OAPI20-PS-134",
+            "OAPI20-PS-135",
+            "OAPI20-PS-142",
+            "OAPI20-PS-143",
+            "OAPI20-PS-187"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI20-P-03",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "it preserves media alternatives and applies §9's matching, request election, carriage, content-coding, response lookup, classification, and unary-boundary rules without sniffing or undeclared fallback.",
+          "upstreamScenarios": [
+            "OAPI20-PS-01",
+            "OAPI20-PS-27",
+            "OAPI20-PS-28",
+            "OAPI20-PS-29",
+            "OAPI20-PS-30",
+            "OAPI20-PS-31",
+            "OAPI20-PS-32",
+            "OAPI20-PS-33",
+            "OAPI20-PS-34",
+            "OAPI20-PS-35",
+            "OAPI20-PS-36",
+            "OAPI20-PS-37",
+            "OAPI20-PS-38",
+            "OAPI20-PS-39",
+            "OAPI20-PS-40",
+            "OAPI20-PS-41",
+            "OAPI20-PS-42",
+            "OAPI20-PS-43",
+            "OAPI20-PS-44",
+            "OAPI20-PS-45",
+            "OAPI20-PS-46",
+            "OAPI20-PS-47",
+            "OAPI20-PS-48",
+            "OAPI20-PS-49",
+            "OAPI20-PS-50",
+            "OAPI20-PS-51",
+            "OAPI20-PS-52",
+            "OAPI20-PS-53",
+            "OAPI20-PS-84",
+            "OAPI20-PS-85",
+            "OAPI20-PS-86",
+            "OAPI20-PS-87",
+            "OAPI20-PS-88",
+            "OAPI20-PS-89",
+            "OAPI20-PS-90",
+            "OAPI20-PS-91",
+            "OAPI20-PS-92",
+            "OAPI20-PS-93",
+            "OAPI20-PS-95",
+            "OAPI20-PS-96",
+            "OAPI20-PS-97",
+            "OAPI20-PS-98",
+            "OAPI20-PS-99",
+            "OAPI20-PS-100",
+            "OAPI20-PS-101",
+            "OAPI20-PS-102",
+            "OAPI20-PS-103",
+            "OAPI20-PS-104",
+            "OAPI20-PS-111",
+            "OAPI20-PS-112",
+            "OAPI20-PS-113",
+            "OAPI20-PS-114",
+            "OAPI20-PS-115",
+            "OAPI20-PS-116",
+            "OAPI20-PS-117",
+            "OAPI20-PS-118",
+            "OAPI20-PS-119",
+            "OAPI20-PS-120",
+            "OAPI20-PS-122",
+            "OAPI20-PS-123",
+            "OAPI20-PS-124",
+            "OAPI20-PS-132",
+            "OAPI20-PS-133",
+            "OAPI20-PS-137",
+            "OAPI20-PS-138",
+            "OAPI20-PS-139",
+            "OAPI20-PS-141"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI20-P-04",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "it resolves complete target URLs under §10 and security alternatives, credentials, prerequisites, and channel collisions under §11.",
+          "upstreamScenarios": [
+            "OAPI20-PS-54",
+            "OAPI20-PS-55",
+            "OAPI20-PS-56",
+            "OAPI20-PS-57",
+            "OAPI20-PS-58",
+            "OAPI20-PS-59",
+            "OAPI20-PS-60",
+            "OAPI20-PS-61",
+            "OAPI20-PS-62",
+            "OAPI20-PS-63",
+            "OAPI20-PS-64",
+            "OAPI20-PS-65",
+            "OAPI20-PS-66",
+            "OAPI20-PS-67",
+            "OAPI20-PS-68",
+            "OAPI20-PS-69",
+            "OAPI20-PS-70",
+            "OAPI20-PS-71",
+            "OAPI20-PS-72",
+            "OAPI20-PS-73",
+            "OAPI20-PS-74",
+            "OAPI20-PS-75",
+            "OAPI20-PS-76",
+            "OAPI20-PS-77",
+            "OAPI20-PS-78",
+            "OAPI20-PS-79",
+            "OAPI20-PS-80",
+            "OAPI20-PS-81",
+            "OAPI20-PS-82",
+            "OAPI20-PS-83",
+            "OAPI20-PS-94",
+            "OAPI20-PS-121",
+            "OAPI20-PS-130",
+            "OAPI20-PS-131",
+            "OAPI20-PS-140",
+            "OAPI20-PS-155",
+            "OAPI20-SS-18"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI20-P-05",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§3.2's source, addressability, synthesis-status, and invocation-outcome axes remain independent, including when every addressable target is invalid or excluded.",
+          "upstreamScenarios": [
+            "OAPI20-PS-95",
+            "OAPI20-SS-13"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI20-P-06",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§11 rejects an invalid API-key header name as an excluded security alternative and rejects an unsafe runtime header value before dispatch.",
+          "upstreamScenarios": [
+            "OAPI20-PS-82",
+            "OAPI20-PS-144"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI20-P-07",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "an invalid failure-only Response projection remains coverage loss without removing its operation, as §9.4 requires.",
+          "upstreamScenarios": [
+            "OAPI20-PS-104"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI20-P-08",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.4 performs no content decoding or output for HEAD, non-101 informational, `204`, `205`, and `304` responses and reports forbidden actual content as a loud response-phase protocol error.",
+          "upstreamScenarios": [
+            "OAPI20-PS-145"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI20-P-09",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "a declared body projection cannot cause content decoding or output for an actual no-content response.",
+          "upstreamScenarios": [
+            "OAPI20-PS-145"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI20-P-10",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§8.2 excludes a non-token optional ordinary-header projection without excluding the operation, allowing an invocation that omits it to dispatch.",
+          "upstreamScenarios": [
+            "OAPI20-PS-146",
+            "OAPI20-SS-15"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI20-P-11",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§8.2 treats the would-be caller key of that excluded optional header as unknown input and refuses it before dispatch.",
+          "upstreamScenarios": [
+            "OAPI20-PS-147"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI20-P-12",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§8.2 propagates a non-token required ordinary header to an excluded target that remains addressable and refuses before dispatch.",
+          "upstreamScenarios": [
+            "OAPI20-PS-148",
+            "OAPI20-SS-15"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI20-P-13",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§8.2 prevents caller control of every listed connection, framing, routing, and selected-body-media field by excluding the addressable target before dispatch.",
+          "upstreamScenarios": [
+            "OAPI20-PS-149",
+            "OAPI20-SS-15"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI20-P-14",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.4 treats `101 Switching Protocols` as an immediate loud response-phase protocol error rather than waiting for a later HTTP final response.",
+          "upstreamScenarios": [
+            "OAPI20-PS-150"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI20-P-15",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.4 admits a `default`-only Responses Object and uses that Response Object for an otherwise unmatched successful status.",
+          "upstreamScenarios": [
+            "OAPI20-PS-151"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI20-P-16",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§§8.2 and 11 refuse any supplied ordinary-header or header-credential value that is not an RFC 9110 `field-value`, including leading or trailing SP or HTAB, and additionally require a raw `Cookie` field value to be an RFC 6265 `cookie-string`.",
+          "upstreamScenarios": [
+            "OAPI20-PS-152",
+            "OAPI20-PS-153",
+            "OAPI20-PS-154"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI20-P-17",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.4 confines invalid Response keys, values, and fixed members to their smallest projections without changing admitted-key precedence or removing an otherwise usable target; valid body and header siblings still govern, matched-but-excluded media fails loudly only when selected on success, and failure decoding remains best-effort.",
+          "upstreamScenarios": [
+            "OAPI20-PS-95",
+            "OAPI20-PS-96",
+            "OAPI20-PS-97",
+            "OAPI20-PS-98",
+            "OAPI20-PS-99",
+            "OAPI20-PS-100",
+            "OAPI20-PS-101",
+            "OAPI20-PS-102"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI20-P-18",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.3 groups surviving response Header declarations by ASCII-case-insensitive field identity, applies every `Content-Encoding` constraint conjunctively, and never excludes an OAS 2.0 response merely because optional case-equivalent declarations conflict.",
+          "upstreamScenarios": [
+            "OAPI20-PS-156",
+            "OAPI20-PS-178",
+            "OAPI20-PS-179"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI20-P-19",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§11 confines statically unavoidable credential collisions to the smallest security alternative and preserves every non-colliding OR alternative.",
+          "upstreamScenarios": [
+            "OAPI20-PS-157"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI20-P-20",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§11 checks actual serialized destinations and treats optional or runtime-derived parameter collisions as invocation-conditional rather than static exclusions.",
+          "upstreamScenarios": [
+            "OAPI20-PS-70",
+            "OAPI20-PS-158"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI20-P-21",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§§8.2 and 11 reserve each processor-owned header destination, including `Proxy-Authorization`, at the target or security-alternative boundary.",
+          "upstreamScenarios": [
+            "OAPI20-PS-79"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI20-P-22",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§11 percent-encodes both an API-key query name and value with uppercase UTF-8 triplets.",
+          "upstreamScenarios": [
+            "OAPI20-PS-64"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI20-P-23",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§11 preserves the unordered multiset of ordinary-parameter and credential query contributions and each contribution's fixed bytes.",
+          "upstreamScenarios": [
+            "OAPI20-PS-159"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI20-P-24",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§10 rejects an empty artifact host and refuses any completed or configured HTTP URL without a nonempty host or with userinfo before dispatch.",
+          "upstreamScenarios": [
+            "OAPI20-PS-160",
+            "OAPI20-PS-161"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI20-P-25",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§8.3 emits generated multipart `name` parameters with the pinned UTF-8 quoted-string escaping and excludes a name outside that admitted byte grammar.",
+          "upstreamScenarios": [
+            "OAPI20-PS-162"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI20-P-26",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.4 strips binding-selected header credentials and Cookie contributions on a followed cross-origin redirect and never appends a binding-selected query credential to any redirect Location.",
+          "upstreamScenarios": [
+            "OAPI20-PS-163"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI20-P-27",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.3 refuses a supplied request `Content-Encoding` field on a body-free invocation and excludes a required field only when no surviving request lane can emit a representation.",
+          "upstreamScenarios": [
+            "OAPI20-PS-164"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI20-P-28",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§11 constructs OAuth2 Bearer authorization from one valid RFC 6750 `b64token` and refuses every empty, non-Bearer-typed, or grammatically invalid token before dispatch.",
+          "upstreamScenarios": [
+            "OAPI20-PS-66",
+            "OAPI20-PS-165",
+            "OAPI20-PS-166",
+            "OAPI20-PS-167",
+            "OAPI20-PS-168",
+            "OAPI20-PS-169"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI20-P-29",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.3 validates no-content response `Content-Encoding` syntax and exact raw-string domains without requiring or invoking a decoder.",
+          "upstreamScenarios": [
+            "OAPI20-PS-170",
+            "OAPI20-PS-171",
+            "OAPI20-PS-175",
+            "OAPI20-PS-176",
+            "OAPI20-PS-177"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI20-P-30",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.2 requires UTF-8 encoding and decoding, treats additional charset directions as independent capabilities, refuses an unavailable or failed request encoder before dispatch, and reports an unavailable or failed response decoder loudly.",
+          "upstreamScenarios": [
+            "OAPI20-PS-172",
+            "OAPI20-PS-174"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI20-P-31",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.3 derives response `Content-Encoding` raw-string domains by filtering a string Header's enum to string members and applies every case-folded group's domains conjunctively at response time.",
+          "upstreamScenarios": [
+            "OAPI20-PS-173"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI20-P-32",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.2 refuses before dispatch a caller-supplied JSON value containing an unpaired surrogate code unit, without replacement, passthrough, or request-byte emission.",
+          "upstreamScenarios": [
+            "OAPI20-PS-180"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI20-P-33",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§7 computes caller-key uniqueness only after invalid and excluded parameter projections are removed, so a removed projection creates no key and does not activate qualified mode.",
+          "upstreamScenarios": [
+            "OAPI20-PS-181",
+            "OAPI20-PS-182"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI20-P-34",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§8.2 emits the deterministic equal-preference `Accept` union for admitted response media, while an effective OAS 2.0 Header Parameter whose name compares ASCII case-insensitively to `Accept` suppresses generation and retains ordinary caller ownership.",
+          "upstreamScenarios": [
+            "OAPI20-PS-183",
+            "OAPI20-PS-184"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI20-P-35",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§10 confines an out-of-enum authored `schemes` member to that invalid alternative, preserves valid siblings, and retains complete-URL recovery when no dispatchable artifact alternative survives.",
+          "upstreamScenarios": [
+            "OAPI20-PS-185",
+            "OAPI20-PS-186"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI20-P-36",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§8.2 excludes a response media range carrying a case-insensitive `q` parameter only when the binding generates `Accept`, preserves every valid sibling range, and keeps that range admitted when an effective caller-owned Header Parameter whose name compares ASCII case-insensitively to `Accept` suppresses generation.",
+          "upstreamScenarios": [
+            "OAPI20-PS-183",
+            "OAPI20-PS-184"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI20-S-01",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "it preserves §12.2's binding/transform boundary, emits no artifact-derived inbound dependency, accounts every lossy or non-equivalent Schema Object translation as coverage loss, and reports complete operation coverage under Core OBI-B-02.",
+          "upstreamScenarios": [
+            "OAPI20-SS-13"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI20-S-02",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "it uses §3.2's locally defined status vocabulary for targets and subordinate projections without depending on any project interface contract.",
+          "upstreamScenarios": [
+            "OAPI20-SS-13"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI20-S-03",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§9.4's declared body projection for a no-content response is subordinate `excluded` coverage while the operation remains represented.",
+          "upstreamScenarios": [
+            "OAPI20-SS-14"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI20-S-04",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§9.3 confines a non-token response Header Object key to subordinate `excluded` coverage without removing the response alternative or operation.",
+          "upstreamScenarios": [
+            "OAPI20-SS-17"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI20-S-05",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§9.4 represents an otherwise usable operation whose Responses Object is `default`-only and projects that fallback Response Object normally.",
+          "upstreamScenarios": [
+            "OAPI20-SS-16"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI20-S-06",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§9.4 retains an operation and every valid response sibling while accounting each invalid or excluded response projection at its smallest owner.",
+          "upstreamScenarios": [
+            "OAPI20-SS-14"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI20-S-07",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§11 removes only statically unavoidable credential-collision alternatives, preserves non-colliding OR alternatives, and never treats an optional parameter collision as a static exclusion.",
+          "upstreamScenarios": [
+            "OAPI20-SS-19"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI20-S-08",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§8.3 accounts an unrepresentable multipart name at its media-alternative owner while preserving unrelated operations.",
+          "upstreamScenarios": [
+            "OAPI20-SS-20"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI20-S-09",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§9.3 accounts a required bodyless request `Content-Encoding` parameter at its target owner while preserving unrelated operations.",
+          "upstreamScenarios": [
+            "OAPI20-SS-21"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI20-S-10",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§7 derives the operation input from the post-confinement effective parameter set, leaving a surviving same-named cross-location parameter unqualified when its only collision was removed.",
+          "upstreamScenarios": [
+            "OAPI20-SS-22"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI20-S-11",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§10 accounts an out-of-enum authored `schemes` member as invalid at that alternative while retaining valid siblings or a represented target with its actual `configuration.server` recovery requirement.",
+          "upstreamScenarios": [
+            "OAPI20-SS-23"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI20-S-12",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§8.2 accounts a response media range carrying a case-insensitive `q` parameter as excluded only when generated `Accept` would carry it, while preserving a valid sibling or, under effective caller ownership of `Accept`, that same range and its target.",
+          "upstreamScenarios": [
+            "OAPI20-SS-24",
+            "OAPI20-SS-25"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        }
+      ]
+    },
+    {
+      "family": "openapi-3.0",
+      "bindingSpec": "openbindings.openapi-3.0@1",
+      "specPath": "binding-specs/openapi-3.0/openbindings.openapi-3.0.md",
+      "specSha256": "dd15ec4b37b25dd9889e3711965e818c3de32c71ed70988b905398f7ebba6cd7",
+      "processorScenarioCount": 193,
+      "synthesisScenarioCount": 39,
+      "rules": [
+        {
+          "id": "OAPI30-P-01",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "it implements the closed load gates, smallest-owner confinement, Schema Object subset, reference closure, and selector semantics of §§3–6.",
+          "upstreamScenarios": [
+            "OAPI30-PS-20",
+            "OAPI30-PS-60",
+            "OAPI30-PS-61",
+            "OAPI30-PS-62",
+            "OAPI30-PS-63",
+            "OAPI30-PS-64",
+            "OAPI30-PS-128",
+            "OAPI30-PS-150",
+            "OAPI30-PS-151",
+            "OAPI30-PS-152",
+            "OAPI30-PS-153",
+            "OAPI30-PS-154",
+            "OAPI30-PS-161",
+            "OAPI30-PS-162"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-02",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "it accepts only §7's envelope, applies §8's effective-parameter, collision, conversion, style, content, header, cookie, and path rules, and refuses every unknown or unroutable input before dispatch.",
+          "upstreamScenarios": [
+            "OAPI30-PS-02",
+            "OAPI30-PS-28",
+            "OAPI30-PS-31",
+            "OAPI30-PS-46",
+            "OAPI30-PS-49",
+            "OAPI30-PS-68",
+            "OAPI30-PS-69",
+            "OAPI30-PS-77",
+            "OAPI30-PS-78",
+            "OAPI30-PS-79",
+            "OAPI30-PS-80",
+            "OAPI30-PS-81",
+            "OAPI30-PS-82",
+            "OAPI30-PS-83",
+            "OAPI30-PS-84",
+            "OAPI30-PS-104",
+            "OAPI30-PS-105",
+            "OAPI30-PS-106",
+            "OAPI30-PS-107",
+            "OAPI30-PS-108",
+            "OAPI30-PS-109",
+            "OAPI30-PS-110",
+            "OAPI30-PS-111",
+            "OAPI30-PS-112",
+            "OAPI30-PS-113",
+            "OAPI30-PS-114",
+            "OAPI30-PS-130",
+            "OAPI30-PS-131",
+            "OAPI30-PS-144",
+            "OAPI30-PS-145",
+            "OAPI30-PS-146",
+            "OAPI30-PS-147",
+            "OAPI30-PS-148",
+            "OAPI30-PS-164",
+            "OAPI30-PS-165",
+            "OAPI30-PS-169",
+            "OAPI30-PS-174",
+            "OAPI30-PS-175",
+            "OAPI30-PS-241"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-03",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "it preserves media alternatives and applies §9's matching, request election, carriage, form, multipart, content-coding, response lookup, classification, and unary-boundary rules without sniffing or undeclared fallback.",
+          "upstreamScenarios": [
+            "OAPI30-PS-28",
+            "OAPI30-PS-29",
+            "OAPI30-PS-30",
+            "OAPI30-PS-31",
+            "OAPI30-PS-42",
+            "OAPI30-PS-46",
+            "OAPI30-PS-49",
+            "OAPI30-PS-54",
+            "OAPI30-PS-56",
+            "OAPI30-PS-60",
+            "OAPI30-PS-61",
+            "OAPI30-PS-62",
+            "OAPI30-PS-63",
+            "OAPI30-PS-64",
+            "OAPI30-PS-75",
+            "OAPI30-PS-76",
+            "OAPI30-PS-85",
+            "OAPI30-PS-86",
+            "OAPI30-PS-87",
+            "OAPI30-PS-88",
+            "OAPI30-PS-89",
+            "OAPI30-PS-90",
+            "OAPI30-PS-91",
+            "OAPI30-PS-92",
+            "OAPI30-PS-93",
+            "OAPI30-PS-94",
+            "OAPI30-PS-117",
+            "OAPI30-PS-118",
+            "OAPI30-PS-119",
+            "OAPI30-PS-120",
+            "OAPI30-PS-121",
+            "OAPI30-PS-122",
+            "OAPI30-PS-123",
+            "OAPI30-PS-127",
+            "OAPI30-PS-129",
+            "OAPI30-PS-132",
+            "OAPI30-PS-133",
+            "OAPI30-PS-134",
+            "OAPI30-PS-135",
+            "OAPI30-PS-136",
+            "OAPI30-PS-137",
+            "OAPI30-PS-138",
+            "OAPI30-PS-139",
+            "OAPI30-PS-140",
+            "OAPI30-PS-141",
+            "OAPI30-PS-142",
+            "OAPI30-PS-143",
+            "OAPI30-PS-149",
+            "OAPI30-PS-159",
+            "OAPI30-PS-160",
+            "OAPI30-PS-163",
+            "OAPI30-PS-166",
+            "OAPI30-PS-167",
+            "OAPI30-PS-168",
+            "OAPI30-PS-170",
+            "OAPI30-PS-171",
+            "OAPI30-PS-172"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-04",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "it resolves servers and complete target URLs under §10 and security alternatives, credentials, prerequisites, and channel collisions under §11.",
+          "upstreamScenarios": [
+            "OAPI30-PS-96",
+            "OAPI30-PS-97",
+            "OAPI30-PS-98",
+            "OAPI30-PS-99",
+            "OAPI30-PS-100",
+            "OAPI30-PS-101",
+            "OAPI30-PS-102",
+            "OAPI30-PS-103",
+            "OAPI30-PS-108",
+            "OAPI30-PS-124",
+            "OAPI30-PS-125",
+            "OAPI30-PS-126",
+            "OAPI30-PS-155",
+            "OAPI30-PS-156",
+            "OAPI30-PS-157",
+            "OAPI30-PS-158",
+            "OAPI30-PS-173"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-05",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§3.2's source, addressability, synthesis-status, and invocation-outcome axes remain independent, including when every addressable target is invalid or excluded.",
+          "upstreamScenarios": [
+            "OAPI30-PS-157",
+            "OAPI30-SS-49"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-06",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.1 excludes a required Request Body Object whose `content` map is empty.",
+          "upstreamScenarios": [
+            "OAPI30-PS-176"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-07",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.3 refuses a required content-based form property supplied as null instead of silently eliding it.",
+          "upstreamScenarios": [
+            "OAPI30-PS-177"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-08",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.3 emits only safe artifact-fixed multipart headers and excludes required nonfixed or contradictory `Content-Disposition` declarations.",
+          "upstreamScenarios": [
+            "OAPI30-PS-122"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-09",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§11 excludes invalid API-key destination names and rejects unsafe runtime header or cookie values before dispatch.",
+          "upstreamScenarios": [
+            "OAPI30-PS-102",
+            "OAPI30-PS-178"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-10",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "an invalid failure-only Response projection remains coverage loss without removing its operation, as §9.5 requires.",
+          "upstreamScenarios": [
+            "OAPI30-PS-135"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-11",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.5 performs no content decoding or output for HEAD, non-101 informational, `204`, `205`, and `304` responses and reports forbidden actual content as a loud response-phase protocol error.",
+          "upstreamScenarios": [
+            "OAPI30-PS-179"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-12",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "a declared body projection cannot cause content decoding or output for an actual no-content response.",
+          "upstreamScenarios": [
+            "OAPI30-PS-179"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-13",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.5 retains a governing non-`Content-Type` response Header Object's `required: true` check on a no-content response.",
+          "upstreamScenarios": [
+            "OAPI30-PS-87"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-14",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§8.3 excludes a non-token optional ordinary-header projection without excluding the operation, allowing an invocation that omits it to dispatch.",
+          "upstreamScenarios": [
+            "OAPI30-PS-180",
+            "OAPI30-SS-51"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-15",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§8.3 treats the would-be caller key of that excluded optional header as unknown input and refuses it before dispatch.",
+          "upstreamScenarios": [
+            "OAPI30-PS-181"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-16",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§8.3 propagates a non-token required ordinary header to an excluded target that remains addressable and refuses before dispatch.",
+          "upstreamScenarios": [
+            "OAPI30-PS-182",
+            "OAPI30-SS-51"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-17",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§8.3 prevents caller control of every listed connection, framing, and routing field by excluding the addressable target before dispatch.",
+          "upstreamScenarios": [
+            "OAPI30-PS-183",
+            "OAPI30-SS-51"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-18",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.5 treats `101 Switching Protocols` as an immediate loud response-phase protocol error rather than waiting for a later HTTP final response.",
+          "upstreamScenarios": [
+            "OAPI30-PS-184"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-19",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§10 keeps an operation whose artifact-derived completed target has a non-HTTP scheme addressable and represented while refusing that invocation before dispatch.",
+          "upstreamScenarios": [
+            "OAPI30-PS-185",
+            "OAPI30-SS-52"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-20",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§10 permits a conforming complete configured HTTP or HTTPS URL to replace that artifact-derived base and dispatch the otherwise unchanged operation.",
+          "upstreamScenarios": [
+            "OAPI30-PS-186"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-21",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§8.3 excludes a non-token optional cookie-parameter projection without excluding the operation, allowing an invocation that omits it to dispatch.",
+          "upstreamScenarios": [
+            "OAPI30-PS-187"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-22",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§8.3 treats the would-be caller key of that excluded optional cookie parameter as unknown input and refuses it before dispatch.",
+          "upstreamScenarios": [
+            "OAPI30-PS-188"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-23",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§8.3 propagates a non-token required cookie parameter to an excluded target that remains addressable and refuses before dispatch.",
+          "upstreamScenarios": [
+            "OAPI30-PS-189"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-24",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.4 propagates a non-token `required: true` response Header Object key to its response alternative and reports a successful response governed by it as a loud response-phase protocol error.",
+          "upstreamScenarios": [
+            "OAPI30-PS-190"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-25",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§8.3 refuses before dispatch when an ordinary structured-cookie parameter's serialized value is not an RFC 6265 `cookie-value`.",
+          "upstreamScenarios": [
+            "OAPI30-PS-191"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-26",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§6.1 admits a `default`-only Responses Object and uses that Response Object for an otherwise unmatched successful status.",
+          "upstreamScenarios": [
+            "OAPI30-PS-192"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-27",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§§8.3 and 11 refuse any supplied ordinary-header or header-credential value that is not an RFC 9110 `field-value`, including leading or trailing SP or HTAB, and additionally require a raw `Cookie` field value to be an RFC 6265 `cookie-string`.",
+          "upstreamScenarios": [
+            "OAPI30-PS-193",
+            "OAPI30-PS-194",
+            "OAPI30-PS-195"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-28",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§8.3 refuses an invocation that would combine any supplied raw Cookie source — a Header Parameter or selected header credential — with any structured cookie parameter or selected cookie credential.",
+          "upstreamScenarios": [
+            "OAPI30-PS-196",
+            "OAPI30-PS-197"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-29",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.5 confines invalid Response keys, values, and fixed members to their smallest projections without changing admitted-key precedence or removing an otherwise usable target; valid body and header siblings still govern, matched-but-excluded media fails loudly only when selected on success, and failure decoding remains best-effort.",
+          "upstreamScenarios": [
+            "OAPI30-PS-132",
+            "OAPI30-PS-133",
+            "OAPI30-PS-134"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-30",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.4 groups surviving response Header declarations by ASCII-case-insensitive field identity, applies required presence and `Content-Encoding` constraints conjunctively, and excludes only a required coding group whose finite constraints are provably unsatisfiable.",
+          "upstreamScenarios": [
+            "OAPI30-PS-198",
+            "OAPI30-PS-232",
+            "OAPI30-PS-233"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-31",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.3 groups Encoding Header declarations by ASCII-case-insensitive field identity, emits one coherent artifact-fixed value, and excludes a conflicting, unsafe, or required-nonfixed group at the media-alternative boundary.",
+          "upstreamScenarios": [
+            "OAPI30-PS-199"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-32",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§11 confines statically unavoidable credential collisions to the smallest security alternative and preserves every non-colliding OR alternative.",
+          "upstreamScenarios": [
+            "OAPI30-PS-103"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-33",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§11 checks actual serialized destinations and treats optional or runtime-derived parameter collisions as invocation-conditional rather than static exclusions.",
+          "upstreamScenarios": [
+            "OAPI30-PS-200",
+            "OAPI30-PS-201",
+            "OAPI30-PS-202"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-34",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§§8.3 and 11 reserve each processor-owned header destination, including `Proxy-Authorization`, at the target or security-alternative boundary.",
+          "upstreamScenarios": [
+            "OAPI30-PS-203"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-35",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§11 percent-encodes both an API-key query name and value with uppercase UTF-8 triplets.",
+          "upstreamScenarios": [
+            "OAPI30-PS-101"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-36",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§11 preserves the unordered multiset of ordinary-parameter and credential query contributions and each contribution's fixed bytes.",
+          "upstreamScenarios": [
+            "OAPI30-PS-204"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-37",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§10 excludes only an unusable declaration-derived Server alternative with query, fragment, empty HTTP host, or userinfo, permits a sibling or complete configured URL to recover, and refuses a nonconforming consumer choice before dispatch.",
+          "upstreamScenarios": [
+            "OAPI30-PS-96",
+            "OAPI30-PS-97",
+            "OAPI30-PS-98"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-38",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§§7 and 11 emit neither content nor binding-carried credentials or Cookie fields on TRACE, preserve an anonymous alternative, and refuse or exclude the smallest unavoidable sensitive source before dispatch.",
+          "upstreamScenarios": [
+            "OAPI30-PS-205",
+            "OAPI30-PS-206"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-39",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.3 emits generated multipart `name` parameters with the pinned UTF-8 quoted-string escaping and excludes a name outside that admitted byte grammar.",
+          "upstreamScenarios": [
+            "OAPI30-PS-207"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-40",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.5 strips binding-selected header credentials and Cookie contributions on a followed cross-origin redirect and never appends a binding-selected query credential to any redirect Location.",
+          "upstreamScenarios": [
+            "OAPI30-PS-208"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-41",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.4 refuses a supplied request `Content-Encoding` field on a body-free invocation and excludes a required field only when no surviving request lane can emit a representation.",
+          "upstreamScenarios": [
+            "OAPI30-PS-209"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-42",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§11 constructs HTTP-bearer, OAuth2, and OpenID Connect authorization from one valid RFC 6750 `b64token` and refuses every empty, non-Bearer-typed, or grammatically invalid token before dispatch.",
+          "upstreamScenarios": [
+            "OAPI30-PS-210",
+            "OAPI30-PS-211",
+            "OAPI30-PS-212",
+            "OAPI30-PS-213",
+            "OAPI30-PS-214",
+            "OAPI30-PS-215",
+            "OAPI30-PS-216"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-43",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.4 validates no-content response `Content-Encoding` syntax and exact raw-string domains without requiring or invoking a decoder.",
+          "upstreamScenarios": [
+            "OAPI30-PS-217",
+            "OAPI30-PS-218",
+            "OAPI30-PS-223",
+            "OAPI30-PS-224",
+            "OAPI30-PS-231"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-44",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.2 requires UTF-8 encoding and decoding, treats additional charset directions as independent capabilities, refuses an unavailable or failed request encoder before dispatch, and reports an unavailable or failed response decoder loudly.",
+          "upstreamScenarios": [
+            "OAPI30-PS-219",
+            "OAPI30-PS-222"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-45",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.4 derives response `Content-Encoding` raw-string domains through resolved `$ref`, recursive `allOf`, mixed-enum filtering, and conjunction, then applies every case-folded group's domains conjunctively at response time.",
+          "upstreamScenarios": [
+            "OAPI30-PS-220",
+            "OAPI30-PS-225"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-46",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§10 accounts a Server Variable Object with an absent or wrong-typed required `default` as `invalid` at its Server alternative while retaining a target recoverable through `configuration.server`.",
+          "upstreamScenarios": [
+            "OAPI30-PS-221",
+            "OAPI30-PS-230"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-47",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§10 excludes an empty variable `enum` or out-of-enum declaration default at its Server alternative while retaining siblings and complete-URL recovery.",
+          "upstreamScenarios": [
+            "OAPI30-PS-226",
+            "OAPI30-PS-227"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-48",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§10 permits an exact consumer substitution for an otherwise undeclared Server URL expression and reports a missing substitution as context-required on `configuration.server`.",
+          "upstreamScenarios": [
+            "OAPI30-PS-228",
+            "OAPI30-PS-229"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-49",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§10 refuses a consumer substitution outside a declared nonempty variable `enum` without changing synthesis coverage or weakening the selected Server Object.",
+          "upstreamScenarios": [
+            "OAPI30-PS-95"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-50",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.2 refuses before dispatch a caller-supplied JSON value containing an unpaired surrogate code unit, without replacement, passthrough, or request-byte emission.",
+          "upstreamScenarios": [
+            "OAPI30-PS-234"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-51",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§7 computes caller-key uniqueness only after invalid and excluded parameter projections are removed, so a removed projection creates no key and does not activate qualified mode.",
+          "upstreamScenarios": [
+            "OAPI30-PS-235",
+            "OAPI30-PS-236"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-52",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.1 emits the deterministic equal-preference `Accept` union of every admitted response-content media range across successful and unsuccessful response alternatives and omits it only when that set is empty.",
+          "upstreamScenarios": [
+            "OAPI30-PS-237"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-53",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.3 invents neither `filename` nor `filename*`, preserves an admissible artifact-fixed literal `filename`, and excludes a fixed `filename*` at the multipart alternative.",
+          "upstreamScenarios": [
+            "OAPI30-PS-238",
+            "OAPI30-PS-239",
+            "OAPI30-PS-240"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-54",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.1 excludes a response media range carrying a case-insensitive `q` parameter before `Accept` construction while preserving every valid sibling range.",
+          "upstreamScenarios": [
+            "OAPI30-PS-237"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-55",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§8.3 keeps form-cookie array and object declarations represented without shape-only exclusion, including their required forms and both `explode` choices.",
+          "upstreamScenarios": [
+            "OAPI30-PS-115",
+            "OAPI30-PS-242",
+            "OAPI30-PS-243",
+            "OAPI30-PS-248",
+            "OAPI30-PS-249"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-56",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§8.3 refuses only a supplied form-cookie value whose actual expansion represents multiple logical values, while a zero- or one-pair expansion remains available subject to the ordinary cookie-name and value checks.",
+          "upstreamScenarios": [
+            "OAPI30-PS-116",
+            "OAPI30-PS-242",
+            "OAPI30-PS-243",
+            "OAPI30-PS-244",
+            "OAPI30-PS-248",
+            "OAPI30-PS-249"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-57",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§8.2 refuses a supplied nested array or object member whose runtime shape leaves the admitted style cell, without private stringification or JSON serialization.",
+          "upstreamScenarios": [
+            "OAPI30-PS-245"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-58",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.1 applies required-body exclusion to the effective post-method, post-confinement request-content set, while preserving a method-ignored body declaration and every surviving configurable alternative.",
+          "upstreamScenarios": [
+            "OAPI30-PS-169",
+            "OAPI30-PS-176",
+            "OAPI30-PS-246"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-P-59",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.1 advertises an admitted failure-only response media range in `Accept` without allowing that range to govern an actual successful response.",
+          "upstreamScenarios": [
+            "OAPI30-PS-247"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-S-01",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "it preserves §12.2's binding/transform boundary, emits §6.2's targetless unconstrained dependencies, accounts every lossy or non-equivalent Schema Object translation as coverage loss, and reports complete coverage under Core OBI-B-02.",
+          "upstreamScenarios": [
+            "OAPI30-SS-49"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-S-02",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "it uses §3.2's locally defined status vocabulary for targets and subordinate projections without depending on any project interface contract.",
+          "upstreamScenarios": [
+            "OAPI30-SS-49"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-S-03",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§9.5's declared body projection for a no-content response is subordinate `excluded` coverage while the operation remains represented.",
+          "upstreamScenarios": [
+            "OAPI30-SS-50"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-S-04",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "it reports §8.3's non-token cookie parameter and §9.4's non-token response Header Object key at their specified smallest owners and propagates only their required forms.",
+          "upstreamScenarios": [
+            "OAPI30-SS-53"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-S-05",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§6.1 represents an otherwise usable operation whose Responses Object is `default`-only and projects that fallback Response Object normally.",
+          "upstreamScenarios": [
+            "OAPI30-SS-54"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-S-06",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§8.3 propagates an unavoidable raw/structured Cookie collision to its smallest security alternative or target while retaining every non-colliding OR alternative.",
+          "upstreamScenarios": [
+            "OAPI30-SS-55"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-S-07",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§9.5 retains an operation and every valid response sibling while accounting each invalid or excluded response projection at its smallest owner.",
+          "upstreamScenarios": [
+            "OAPI30-SS-50"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-S-08",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§§8.3 and 11 remove only statically unavoidable parameter or credential combinations, preserve non-colliding OR alternatives, and never treat an optional collision as a static exclusion.",
+          "upstreamScenarios": [
+            "OAPI30-SS-56"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-S-09",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§10 retains a target recoverable from unusable Server alternatives and records its actual `configuration.server` requirement.",
+          "upstreamScenarios": [
+            "OAPI30-SS-52"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-S-10",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§11 excludes binding-carried credential alternatives from TRACE while retaining an anonymous alternative, and excludes the target only when no complete safe alternative remains.",
+          "upstreamScenarios": [
+            "OAPI30-SS-57"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-S-11",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§9.4 preserves coherent response Header groups and accounts a provably unsatisfiable required response `Content-Encoding` group at its response-alternative owner.",
+          "upstreamScenarios": [
+            "OAPI30-SS-58"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-S-12",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§9.3 preserves coherent Encoding Header groups and accounts a conflicting or required-nonfixed group at its media-alternative owner.",
+          "upstreamScenarios": [
+            "OAPI30-SS-59"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-S-13",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§9.3 accounts an unrepresentable multipart name at its media-alternative owner while preserving unrelated operations.",
+          "upstreamScenarios": [
+            "OAPI30-SS-60"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-S-14",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§9.4 accounts a required bodyless request `Content-Encoding` parameter at its target owner while preserving unrelated operations.",
+          "upstreamScenarios": [
+            "OAPI30-SS-61"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-S-15",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§10 accounts a Server Variable Object with an absent or wrong-typed required `default` as an `invalid` Server alternative while retaining a target recoverable through `configuration.server`.",
+          "upstreamScenarios": [
+            "OAPI30-SS-62"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-S-16",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§10 accounts an empty variable `enum` or out-of-enum declaration default as an `excluded` Server alternative while retaining a target recoverable through `configuration.server`.",
+          "upstreamScenarios": [
+            "OAPI30-SS-63"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-S-17",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§10 preserves a Server URL expression without a matching Server Variable Object, represents the target, and records its actual `configuration.server` requirement rather than excluding the alternative.",
+          "upstreamScenarios": [
+            "OAPI30-SS-64"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-S-18",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§7 derives the operation input from the post-confinement effective parameter set, leaving a surviving same-named cross-location parameter unqualified when its only collision was removed.",
+          "upstreamScenarios": [
+            "OAPI30-SS-65"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-S-19",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§9.3 preserves an admissible artifact-fixed literal multipart `filename` and accounts a fixed `filename*` exclusion at its media-alternative owner.",
+          "upstreamScenarios": [
+            "OAPI30-SS-66"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-S-20",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§9.1 accounts a response media range carrying a case-insensitive `q` parameter as excluded at that alternative while preserving a valid sibling and its target.",
+          "upstreamScenarios": [
+            "OAPI30-SS-67"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-S-21",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§8.3 represents optional and required form-cookie array and object declarations without shape-only coverage loss; invocation-time multiplicity creates no synthesis exclusion.",
+          "upstreamScenarios": [
+            "OAPI30-SS-68"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI30-S-22",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§9.1 accounts a removed request-content alternative at its own owner and propagates exclusion to a required Request Body target exactly when no alternative survives after method disposition and confinement.",
+          "upstreamScenarios": [
+            "OAPI30-SS-69"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        }
+      ]
+    },
+    {
+      "family": "openapi-3.1",
+      "bindingSpec": "openbindings.openapi-3.1@1",
+      "specPath": "binding-specs/openapi-3.1/openbindings.openapi-3.1.md",
+      "specSha256": "54876ba7b05d1fd8ad61b3752c90c450065f94a9f8e4274e4e391f6653ac23a1",
+      "processorScenarioCount": 215,
+      "synthesisScenarioCount": 56,
+      "rules": [
+        {
+          "id": "OAPI31-P-01",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "it implements the closed load gates, §3.2's smallest-owner rule, the source-refusal rule and §5.2's dialect rules, reference closure, and selector semantics of §§3–6.",
+          "upstreamScenarios": [
+            "OAPI31-PS-01",
+            "OAPI31-PS-80",
+            "OAPI31-PS-130",
+            "OAPI31-PS-131",
+            "OAPI31-PS-132",
+            "OAPI31-PS-152",
+            "OAPI31-PS-153",
+            "OAPI31-PS-154"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-02",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "it accepts only §7's envelope, applies §8's effective-parameter, collision, conversion, style, content, header, cookie, and path rules, and refuses every unknown or unroutable input before dispatch.",
+          "upstreamScenarios": [
+            "OAPI31-PS-03",
+            "OAPI31-PS-10",
+            "OAPI31-PS-13",
+            "OAPI31-PS-14",
+            "OAPI31-PS-15",
+            "OAPI31-PS-21",
+            "OAPI31-PS-22",
+            "OAPI31-PS-25",
+            "OAPI31-PS-47",
+            "OAPI31-PS-48",
+            "OAPI31-PS-66",
+            "OAPI31-PS-67",
+            "OAPI31-PS-70",
+            "OAPI31-PS-75",
+            "OAPI31-PS-76",
+            "OAPI31-PS-77",
+            "OAPI31-PS-78",
+            "OAPI31-PS-79",
+            "OAPI31-PS-81",
+            "OAPI31-PS-82",
+            "OAPI31-PS-83",
+            "OAPI31-PS-84",
+            "OAPI31-PS-85",
+            "OAPI31-PS-86",
+            "OAPI31-PS-87",
+            "OAPI31-PS-88",
+            "OAPI31-PS-89",
+            "OAPI31-PS-90",
+            "OAPI31-PS-93",
+            "OAPI31-PS-94",
+            "OAPI31-PS-95",
+            "OAPI31-PS-116",
+            "OAPI31-PS-117",
+            "OAPI31-PS-123",
+            "OAPI31-PS-124",
+            "OAPI31-PS-132",
+            "OAPI31-PS-133",
+            "OAPI31-PS-134",
+            "OAPI31-PS-148",
+            "OAPI31-PS-149",
+            "OAPI31-PS-150",
+            "OAPI31-PS-156",
+            "OAPI31-PS-157",
+            "OAPI31-PS-161",
+            "OAPI31-PS-227"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-03",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "it preserves media alternatives and applies §9's matching, request election, carriage, form, multipart, content-coding, response lookup, classification, and unary-boundary rules without sniffing or undeclared fallback.",
+          "upstreamScenarios": [
+            "OAPI31-PS-04",
+            "OAPI31-PS-05",
+            "OAPI31-PS-06",
+            "OAPI31-PS-07",
+            "OAPI31-PS-10",
+            "OAPI31-PS-11",
+            "OAPI31-PS-13",
+            "OAPI31-PS-16",
+            "OAPI31-PS-17",
+            "OAPI31-PS-18",
+            "OAPI31-PS-19",
+            "OAPI31-PS-22",
+            "OAPI31-PS-32",
+            "OAPI31-PS-33",
+            "OAPI31-PS-34",
+            "OAPI31-PS-35",
+            "OAPI31-PS-36",
+            "OAPI31-PS-37",
+            "OAPI31-PS-38",
+            "OAPI31-PS-39",
+            "OAPI31-PS-40",
+            "OAPI31-PS-41",
+            "OAPI31-PS-43",
+            "OAPI31-PS-44",
+            "OAPI31-PS-47",
+            "OAPI31-PS-48",
+            "OAPI31-PS-50",
+            "OAPI31-PS-51",
+            "OAPI31-PS-52",
+            "OAPI31-PS-53",
+            "OAPI31-PS-55",
+            "OAPI31-PS-57",
+            "OAPI31-PS-58",
+            "OAPI31-PS-59",
+            "OAPI31-PS-67",
+            "OAPI31-PS-71",
+            "OAPI31-PS-72",
+            "OAPI31-PS-73",
+            "OAPI31-PS-74",
+            "OAPI31-PS-96",
+            "OAPI31-PS-97",
+            "OAPI31-PS-98",
+            "OAPI31-PS-99",
+            "OAPI31-PS-100",
+            "OAPI31-PS-101",
+            "OAPI31-PS-102",
+            "OAPI31-PS-103",
+            "OAPI31-PS-104",
+            "OAPI31-PS-105",
+            "OAPI31-PS-106",
+            "OAPI31-PS-118",
+            "OAPI31-PS-119",
+            "OAPI31-PS-121",
+            "OAPI31-PS-122",
+            "OAPI31-PS-125",
+            "OAPI31-PS-126",
+            "OAPI31-PS-127",
+            "OAPI31-PS-128",
+            "OAPI31-PS-129",
+            "OAPI31-PS-135",
+            "OAPI31-PS-136",
+            "OAPI31-PS-137",
+            "OAPI31-PS-138",
+            "OAPI31-PS-139",
+            "OAPI31-PS-140",
+            "OAPI31-PS-141",
+            "OAPI31-PS-142",
+            "OAPI31-PS-143",
+            "OAPI31-PS-144",
+            "OAPI31-PS-145",
+            "OAPI31-PS-146",
+            "OAPI31-PS-147",
+            "OAPI31-PS-151",
+            "OAPI31-PS-155",
+            "OAPI31-PS-158",
+            "OAPI31-PS-159",
+            "OAPI31-PS-160"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-04",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "it resolves servers and complete target URLs under §10 and security alternatives, credentials, prerequisites, and channel collisions under §11.",
+          "upstreamScenarios": [
+            "OAPI31-PS-08",
+            "OAPI31-PS-09",
+            "OAPI31-PS-12",
+            "OAPI31-PS-22",
+            "OAPI31-PS-23",
+            "OAPI31-PS-24",
+            "OAPI31-PS-26",
+            "OAPI31-PS-27",
+            "OAPI31-PS-107",
+            "OAPI31-PS-108",
+            "OAPI31-PS-109",
+            "OAPI31-PS-110",
+            "OAPI31-PS-111",
+            "OAPI31-PS-112",
+            "OAPI31-PS-113",
+            "OAPI31-PS-114",
+            "OAPI31-PS-115",
+            "OAPI31-PS-120",
+            "OAPI31-PS-162"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-05",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§3.2's source, addressability, synthesis-status, and invocation-outcome axes remain independent, including source-scope dialect exclusion and an all-invalid target inventory.",
+          "upstreamScenarios": [
+            "OAPI31-PS-80",
+            "OAPI31-PS-132",
+            "OAPI31-SS-51"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-06",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§5.2 preserves `$dynamicRef`'s runtime dynamic scope by excluding only a schema-inspected owner and leaving type-uninspected JSON carriage unaffected.",
+          "upstreamScenarios": [
+            "OAPI31-PS-163"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-07",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.1 excludes a required Request Body Object whose `content` map is empty.",
+          "upstreamScenarios": [
+            "OAPI31-PS-164"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-08",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.3 refuses a required content-based form property supplied as null instead of silently eliding it.",
+          "upstreamScenarios": [
+            "OAPI31-PS-165"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-09",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.3 emits only safe artifact-fixed multipart headers and excludes required nonfixed or contradictory `Content-Disposition` declarations.",
+          "upstreamScenarios": [
+            "OAPI31-PS-166"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-10",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§11 excludes invalid API-key destination names and rejects unsafe runtime header or cookie values before dispatch.",
+          "upstreamScenarios": [
+            "OAPI31-PS-114",
+            "OAPI31-PS-167"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-11",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "an invalid failure-only Response projection remains coverage loss without removing its operation, as §9.5 requires.",
+          "upstreamScenarios": [
+            "OAPI31-PS-129"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-12",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.5 performs no content decoding or output for HEAD, non-101 informational, `204`, `205`, and `304` responses and reports forbidden actual content as a loud response-phase protocol error.",
+          "upstreamScenarios": [
+            "OAPI31-PS-168"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-13",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "a declared body projection cannot cause content decoding or output for an actual no-content response.",
+          "upstreamScenarios": [
+            "OAPI31-PS-168"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-14",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.5 retains a governing non-`Content-Type` response Header Object's `required: true` check on a no-content response.",
+          "upstreamScenarios": [
+            "OAPI31-PS-98"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-15",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§8.3 excludes a non-token optional ordinary-header projection without excluding the operation, allowing an invocation that omits it to dispatch.",
+          "upstreamScenarios": [
+            "OAPI31-PS-169",
+            "OAPI31-SS-53"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-16",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§8.3 treats the would-be caller key of that excluded optional header as unknown input and refuses it before dispatch.",
+          "upstreamScenarios": [
+            "OAPI31-PS-170"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-17",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§8.3 propagates a non-token required ordinary header to an excluded target that remains addressable and refuses before dispatch.",
+          "upstreamScenarios": [
+            "OAPI31-PS-171",
+            "OAPI31-SS-53"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-18",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§8.3 prevents caller control of every listed connection, framing, and routing field by excluding the addressable target before dispatch.",
+          "upstreamScenarios": [
+            "OAPI31-PS-172",
+            "OAPI31-SS-53"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-19",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.5 treats `101 Switching Protocols` as an immediate loud response-phase protocol error rather than waiting for a later HTTP final response.",
+          "upstreamScenarios": [
+            "OAPI31-PS-173"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-20",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§10 keeps an operation whose artifact-derived completed target has a non-HTTP scheme addressable and represented while refusing that invocation before dispatch.",
+          "upstreamScenarios": [
+            "OAPI31-PS-174",
+            "OAPI31-SS-54"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-21",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§10 permits a conforming complete configured HTTP or HTTPS URL to replace that artifact-derived base and dispatch the otherwise unchanged operation.",
+          "upstreamScenarios": [
+            "OAPI31-PS-175"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-22",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§8.3 excludes a non-token optional cookie-parameter projection without excluding the operation, allowing an invocation that omits it to dispatch.",
+          "upstreamScenarios": [
+            "OAPI31-PS-176"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-23",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§8.3 treats the would-be caller key of that excluded optional cookie parameter as unknown input and refuses it before dispatch.",
+          "upstreamScenarios": [
+            "OAPI31-PS-177"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-24",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§8.3 propagates a non-token required cookie parameter to an excluded target that remains addressable and refuses before dispatch.",
+          "upstreamScenarios": [
+            "OAPI31-PS-178"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-25",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.4 propagates a non-token `required: true` response Header Object key to its response alternative and reports a successful response governed by it as a loud response-phase protocol error.",
+          "upstreamScenarios": [
+            "OAPI31-PS-179"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-26",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§8.3 refuses before dispatch when an ordinary structured-cookie parameter's serialized value is not an RFC 6265 `cookie-value`.",
+          "upstreamScenarios": [
+            "OAPI31-PS-180"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-27",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§6.1 admits a `default`-only Responses Object and uses that Response Object for an otherwise unmatched successful status.",
+          "upstreamScenarios": [
+            "OAPI31-PS-181"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-28",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§§8.3 and 11 refuse any supplied ordinary-header or header-credential value that is not an RFC 9110 `field-value`, including leading or trailing SP or HTAB, and additionally require a raw `Cookie` field value to be an RFC 6265 `cookie-string`.",
+          "upstreamScenarios": [
+            "OAPI31-PS-182",
+            "OAPI31-PS-183",
+            "OAPI31-PS-184"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-29",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§8.3 refuses an invocation that would combine any supplied raw Cookie source — a Header Parameter or selected header credential — with any structured cookie parameter or selected cookie credential.",
+          "upstreamScenarios": [
+            "OAPI31-PS-185",
+            "OAPI31-PS-186"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-30",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.5 confines invalid Response keys, values, and fixed members to their smallest projections without changing admitted-key precedence or removing an otherwise usable target; valid body and header siblings still govern, matched-but-excluded media fails loudly only when selected on success, and failure decoding remains best-effort.",
+          "upstreamScenarios": [
+            "OAPI31-PS-119",
+            "OAPI31-PS-125",
+            "OAPI31-PS-126",
+            "OAPI31-PS-127",
+            "OAPI31-PS-128"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-31",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.4 groups surviving response Header declarations by ASCII-case-insensitive field identity, applies required presence and `Content-Encoding` constraints conjunctively, and excludes only a required coding group whose finite constraints are provably unsatisfiable.",
+          "upstreamScenarios": [
+            "OAPI31-PS-187",
+            "OAPI31-PS-218",
+            "OAPI31-PS-219"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-32",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.3 groups Encoding Header declarations by ASCII-case-insensitive field identity, emits one coherent artifact-fixed value, and excludes a conflicting, unsafe, or required-nonfixed group at the media-alternative boundary.",
+          "upstreamScenarios": [
+            "OAPI31-PS-188"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-33",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§11 confines statically unavoidable credential collisions to the smallest security alternative and preserves every non-colliding OR alternative.",
+          "upstreamScenarios": [
+            "OAPI31-PS-115"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-34",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§11 checks actual serialized destinations and treats optional or runtime-derived parameter collisions as invocation-conditional rather than static exclusions.",
+          "upstreamScenarios": [
+            "OAPI31-PS-09",
+            "OAPI31-PS-189",
+            "OAPI31-PS-190",
+            "OAPI31-PS-191"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-35",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§§8.3 and 11 reserve each processor-owned header destination, including `Proxy-Authorization`, at the target or security-alternative boundary.",
+          "upstreamScenarios": [
+            "OAPI31-PS-192"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-36",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§11 percent-encodes both an API-key query name and value with uppercase UTF-8 triplets.",
+          "upstreamScenarios": [
+            "OAPI31-PS-113"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-37",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§11 preserves the unordered multiset of ordinary-parameter and credential query contributions and each contribution's fixed bytes.",
+          "upstreamScenarios": [
+            "OAPI31-PS-193"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-38",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§10 excludes only an unusable declaration-derived Server alternative with query, fragment, empty HTTP host, or userinfo, permits a sibling or complete configured URL to recover, and refuses a nonconforming consumer choice before dispatch.",
+          "upstreamScenarios": [
+            "OAPI31-PS-108",
+            "OAPI31-PS-109",
+            "OAPI31-PS-110"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-39",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§§7 and 11 emit neither content nor binding-carried credentials or Cookie fields on TRACE, preserve anonymous or mutual-TLS alternatives, and refuse or exclude the smallest unavoidable sensitive source before dispatch.",
+          "upstreamScenarios": [
+            "OAPI31-PS-194",
+            "OAPI31-PS-195"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-40",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.3 emits generated multipart `name` parameters with the pinned UTF-8 quoted-string escaping and excludes a name outside that admitted byte grammar.",
+          "upstreamScenarios": [
+            "OAPI31-PS-196"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-41",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.5 strips binding-selected header credentials and Cookie contributions on a followed cross-origin redirect and never appends a binding-selected query credential to any redirect Location.",
+          "upstreamScenarios": [
+            "OAPI31-PS-197"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-42",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.4 refuses a supplied request `Content-Encoding` field on a body-free invocation and excludes a required field only when no surviving request lane can emit a representation.",
+          "upstreamScenarios": [
+            "OAPI31-PS-198"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-43",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§11 constructs HTTP-bearer, OAuth2, and OpenID Connect authorization from one valid RFC 6750 `b64token` and refuses every empty, non-Bearer-typed, or grammatically invalid token before dispatch.",
+          "upstreamScenarios": [
+            "OAPI31-PS-199",
+            "OAPI31-PS-200",
+            "OAPI31-PS-201",
+            "OAPI31-PS-202",
+            "OAPI31-PS-203",
+            "OAPI31-PS-204",
+            "OAPI31-PS-205"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-44",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.4 validates no-content response `Content-Encoding` syntax and exact raw-string domains without requiring or invoking a decoder.",
+          "upstreamScenarios": [
+            "OAPI31-PS-206",
+            "OAPI31-PS-207",
+            "OAPI31-PS-212",
+            "OAPI31-PS-213",
+            "OAPI31-PS-217"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-45",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.2 requires UTF-8 encoding and decoding, treats additional charset directions as independent capabilities, refuses an unavailable or failed request encoder before dispatch, and reports an unavailable or failed response decoder loudly.",
+          "upstreamScenarios": [
+            "OAPI31-PS-208",
+            "OAPI31-PS-211"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-46",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.4 derives response `Content-Encoding` raw-string domains through resolved `$ref`, recursive `allOf`, mixed-enum filtering, `const`, and conjunction, then applies every case-folded group's domains conjunctively at response time.",
+          "upstreamScenarios": [
+            "OAPI31-PS-209",
+            "OAPI31-PS-214"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-47",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§10 accounts an absent or wrong-typed required Server Variable `default`, empty `enum`, or out-of-enum default as `invalid` at its Server alternative while retaining a target recoverable through `configuration.server`.",
+          "upstreamScenarios": [
+            "OAPI31-PS-210"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-48",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§10 permits an exact consumer substitution for an otherwise undeclared Server URL expression and reports a missing substitution as context-required on `configuration.server`.",
+          "upstreamScenarios": [
+            "OAPI31-PS-215",
+            "OAPI31-PS-216"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-49",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.2 refuses before dispatch a caller-supplied JSON value containing an unpaired surrogate code unit, without replacement, passthrough, or request-byte emission.",
+          "upstreamScenarios": [
+            "OAPI31-PS-220"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-50",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§7 computes caller-key uniqueness only after invalid and excluded parameter projections are removed, so a removed projection creates no key and does not activate qualified mode.",
+          "upstreamScenarios": [
+            "OAPI31-PS-221",
+            "OAPI31-PS-222"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-51",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.1 emits the deterministic equal-preference `Accept` union of every admitted response-content media range across successful and unsuccessful response alternatives and omits it only when that set is empty.",
+          "upstreamScenarios": [
+            "OAPI31-PS-223"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-52",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.3 invents neither `filename` nor `filename*`, preserves an admissible artifact-fixed literal `filename`, and excludes a fixed `filename*` at the multipart alternative.",
+          "upstreamScenarios": [
+            "OAPI31-PS-224",
+            "OAPI31-PS-225",
+            "OAPI31-PS-226"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-53",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.1 excludes a response media range carrying a case-insensitive `q` parameter before `Accept` construction while preserving every valid sibling range.",
+          "upstreamScenarios": [
+            "OAPI31-PS-223"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-54",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§8.3 keeps form-cookie array and object declarations represented without shape-only exclusion, including their required forms and both `explode` choices.",
+          "upstreamScenarios": [
+            "OAPI31-PS-91",
+            "OAPI31-PS-228",
+            "OAPI31-PS-229",
+            "OAPI31-PS-234",
+            "OAPI31-PS-235"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-55",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§8.3 refuses only a supplied form-cookie value whose actual expansion represents multiple logical values, while a zero- or one-pair expansion remains available subject to the ordinary cookie-name and value checks.",
+          "upstreamScenarios": [
+            "OAPI31-PS-92",
+            "OAPI31-PS-228",
+            "OAPI31-PS-229",
+            "OAPI31-PS-230",
+            "OAPI31-PS-234",
+            "OAPI31-PS-235"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-56",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§8.2 refuses a supplied nested array or object member whose runtime shape leaves the admitted style cell, without private stringification or JSON serialization.",
+          "upstreamScenarios": [
+            "OAPI31-PS-231"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-57",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.1 applies required-body exclusion to the effective post-method, post-confinement request-content set, while preserving a method-ignored body declaration and every surviving configurable alternative.",
+          "upstreamScenarios": [
+            "OAPI31-PS-161",
+            "OAPI31-PS-164",
+            "OAPI31-PS-232"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-P-58",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.1 advertises an admitted failure-only response media range in `Accept` without allowing that range to govern an actual successful response.",
+          "upstreamScenarios": [
+            "OAPI31-PS-233"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-S-01",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "it preserves §12.2's binding/transform boundary, emits §6.2's targetless unconstrained dependencies, accounts every lossy or non-equivalent Schema Object translation as coverage loss, and reports complete coverage under Core OBI-B-02.",
+          "upstreamScenarios": [
+            "OAPI31-SS-51"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-S-02",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "it uses §3.2's locally defined status vocabulary for sources, targets, dependencies, and subordinate projections without depending on any project interface contract.",
+          "upstreamScenarios": [
+            "OAPI31-SS-51"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-S-03",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§9.5's declared body projection for a no-content response is subordinate `excluded` coverage while the operation remains represented.",
+          "upstreamScenarios": [
+            "OAPI31-SS-52"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-S-04",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "it reports §8.3's non-token cookie parameter and §9.4's non-token response Header Object key at their specified smallest owners and propagates only their required forms.",
+          "upstreamScenarios": [
+            "OAPI31-SS-55"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-S-05",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§6.1 represents an otherwise usable operation whose Responses Object is `default`-only and projects that fallback Response Object normally.",
+          "upstreamScenarios": [
+            "OAPI31-SS-56"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-S-06",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§8.3 propagates an unavoidable raw/structured Cookie collision to its smallest security alternative or target while retaining every non-colliding OR alternative.",
+          "upstreamScenarios": [
+            "OAPI31-SS-57"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-S-07",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§9.5 retains an operation and every valid response sibling while accounting each invalid or excluded response projection at its smallest owner.",
+          "upstreamScenarios": [
+            "OAPI31-SS-52"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-S-08",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§§8.3 and 11 remove only statically unavoidable parameter or credential combinations, preserve non-colliding OR alternatives, and never treat an optional collision as a static exclusion.",
+          "upstreamScenarios": [
+            "OAPI31-SS-58"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-S-09",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§10 retains a target recoverable from unusable Server alternatives and records its actual `configuration.server` requirement.",
+          "upstreamScenarios": [
+            "OAPI31-SS-22",
+            "OAPI31-SS-54"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-S-10",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§11 excludes binding-carried credential alternatives from TRACE while retaining an anonymous or mutual-TLS alternative, and excludes the target only when no complete safe alternative remains.",
+          "upstreamScenarios": [
+            "OAPI31-SS-59"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-S-11",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§9.4 preserves coherent response Header groups and accounts a provably unsatisfiable required response `Content-Encoding` group at its response-alternative owner.",
+          "upstreamScenarios": [
+            "OAPI31-SS-60"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-S-12",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§9.3 preserves coherent Encoding Header groups and accounts a conflicting or required-nonfixed group at its media-alternative owner.",
+          "upstreamScenarios": [
+            "OAPI31-SS-61"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-S-13",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§9.3 accounts an unrepresentable multipart name at its media-alternative owner while preserving unrelated operations.",
+          "upstreamScenarios": [
+            "OAPI31-SS-62"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-S-14",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§9.4 accounts a required bodyless request `Content-Encoding` parameter at its target owner while preserving unrelated operations.",
+          "upstreamScenarios": [
+            "OAPI31-SS-63"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-S-15",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§10 accounts an absent or wrong-typed required Server Variable `default`, empty `enum`, or out-of-enum default as an `invalid` Server alternative while retaining each target recoverable through `configuration.server`.",
+          "upstreamScenarios": [
+            "OAPI31-SS-64"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-S-16",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§10 preserves a Server URL expression without a matching Server Variable Object, represents the target, and records its actual `configuration.server` requirement rather than excluding the alternative.",
+          "upstreamScenarios": [
+            "OAPI31-SS-65"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-S-17",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§7 derives the operation input from the post-confinement effective parameter set, leaving a surviving same-named cross-location parameter unqualified when its only collision was removed.",
+          "upstreamScenarios": [
+            "OAPI31-SS-66"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-S-18",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§9.3 preserves an admissible artifact-fixed literal multipart `filename` and accounts a fixed `filename*` exclusion at its media-alternative owner.",
+          "upstreamScenarios": [
+            "OAPI31-SS-67"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-S-19",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§9.1 accounts a response media range carrying a case-insensitive `q` parameter as excluded at that alternative while preserving a valid sibling and its target.",
+          "upstreamScenarios": [
+            "OAPI31-SS-68"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-S-20",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§8.3 represents optional and required form-cookie array and object declarations without shape-only coverage loss; invocation-time multiplicity creates no synthesis exclusion.",
+          "upstreamScenarios": [
+            "OAPI31-SS-69"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI31-S-21",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§9.1 accounts a removed request-content alternative at its own owner and propagates exclusion to a required Request Body target exactly when no alternative survives after method disposition and confinement.",
+          "upstreamScenarios": [
+            "OAPI31-SS-70"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        }
+      ]
+    },
+    {
+      "family": "openapi-3.2",
+      "bindingSpec": "openbindings.openapi-3.2@1",
+      "specPath": "binding-specs/openapi-3.2/openbindings.openapi-3.2.md",
+      "specSha256": "28be92fec1426de876083cf589842f34cc907e57af2120ebecdfcc3c288c271f",
+      "processorScenarioCount": 294,
+      "synthesisScenarioCount": 34,
+      "rules": [
+        {
+          "id": "OAPI32-P-01",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "it implements the closed load gates, smallest-owner confinement, the source-refusal rule and §5.2's dialect rules, reference closure, and selector semantics of §§3–6.",
+          "upstreamScenarios": [
+            "OAPI32-PS-02",
+            "OAPI32-PS-03",
+            "OAPI32-PS-04",
+            "OAPI32-PS-05",
+            "OAPI32-PS-06",
+            "OAPI32-PS-07",
+            "OAPI32-PS-08",
+            "OAPI32-PS-09",
+            "OAPI32-PS-10",
+            "OAPI32-PS-11",
+            "OAPI32-PS-12",
+            "OAPI32-PS-13",
+            "OAPI32-PS-14",
+            "OAPI32-PS-15",
+            "OAPI32-PS-16",
+            "OAPI32-PS-17",
+            "OAPI32-PS-18",
+            "OAPI32-PS-19",
+            "OAPI32-PS-20",
+            "OAPI32-PS-21",
+            "OAPI32-PS-22",
+            "OAPI32-PS-23",
+            "OAPI32-PS-24",
+            "OAPI32-PS-25",
+            "OAPI32-PS-26",
+            "OAPI32-PS-27",
+            "OAPI32-PS-28",
+            "OAPI32-PS-29",
+            "OAPI32-PS-30",
+            "OAPI32-PS-31",
+            "OAPI32-PS-32",
+            "OAPI32-PS-33",
+            "OAPI32-PS-34",
+            "OAPI32-PS-131",
+            "OAPI32-PS-163",
+            "OAPI32-PS-164",
+            "OAPI32-PS-165",
+            "OAPI32-PS-166",
+            "OAPI32-PS-167",
+            "OAPI32-PS-168",
+            "OAPI32-PS-169",
+            "OAPI32-PS-170",
+            "OAPI32-PS-171",
+            "OAPI32-PS-172",
+            "OAPI32-PS-173",
+            "OAPI32-PS-174",
+            "OAPI32-PS-203",
+            "OAPI32-PS-204",
+            "OAPI32-PS-205",
+            "OAPI32-PS-206",
+            "OAPI32-PS-207",
+            "OAPI32-PS-208"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-02",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "it accepts only §7's envelope, applies §8's effective-parameter, collision, conversion, closed-style, undefined-value, content, querystring, header, cookie, and path rules, and refuses every unknown or unroutable input before dispatch.",
+          "upstreamScenarios": [
+            "OAPI32-PS-25",
+            "OAPI32-PS-35",
+            "OAPI32-PS-36",
+            "OAPI32-PS-37",
+            "OAPI32-PS-38",
+            "OAPI32-PS-39",
+            "OAPI32-PS-40",
+            "OAPI32-PS-41",
+            "OAPI32-PS-42",
+            "OAPI32-PS-43",
+            "OAPI32-PS-44",
+            "OAPI32-PS-45",
+            "OAPI32-PS-46",
+            "OAPI32-PS-47",
+            "OAPI32-PS-48",
+            "OAPI32-PS-49",
+            "OAPI32-PS-50",
+            "OAPI32-PS-51",
+            "OAPI32-PS-52",
+            "OAPI32-PS-53",
+            "OAPI32-PS-54",
+            "OAPI32-PS-55",
+            "OAPI32-PS-56",
+            "OAPI32-PS-57",
+            "OAPI32-PS-58",
+            "OAPI32-PS-59",
+            "OAPI32-PS-60",
+            "OAPI32-PS-61",
+            "OAPI32-PS-62",
+            "OAPI32-PS-63",
+            "OAPI32-PS-64",
+            "OAPI32-PS-65",
+            "OAPI32-PS-66",
+            "OAPI32-PS-67",
+            "OAPI32-PS-69",
+            "OAPI32-PS-70",
+            "OAPI32-PS-71",
+            "OAPI32-PS-132",
+            "OAPI32-PS-175",
+            "OAPI32-PS-196",
+            "OAPI32-PS-210",
+            "OAPI32-PS-211",
+            "OAPI32-PS-284"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-03",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "it preserves media alternatives and applies §9's matching, request election, carriage, form, multipart, Encoding, content-coding, sequential/SSE, response lookup, classification, and value-boundary rules without sniffing or undeclared fallback.",
+          "upstreamScenarios": [
+            "OAPI32-PS-72",
+            "OAPI32-PS-73",
+            "OAPI32-PS-74",
+            "OAPI32-PS-75",
+            "OAPI32-PS-76",
+            "OAPI32-PS-77",
+            "OAPI32-PS-78",
+            "OAPI32-PS-79",
+            "OAPI32-PS-80",
+            "OAPI32-PS-81",
+            "OAPI32-PS-82",
+            "OAPI32-PS-83",
+            "OAPI32-PS-84",
+            "OAPI32-PS-85",
+            "OAPI32-PS-86",
+            "OAPI32-PS-87",
+            "OAPI32-PS-88",
+            "OAPI32-PS-89",
+            "OAPI32-PS-90",
+            "OAPI32-PS-91",
+            "OAPI32-PS-92",
+            "OAPI32-PS-93",
+            "OAPI32-PS-94",
+            "OAPI32-PS-95",
+            "OAPI32-PS-96",
+            "OAPI32-PS-97",
+            "OAPI32-PS-98",
+            "OAPI32-PS-99",
+            "OAPI32-PS-100",
+            "OAPI32-PS-101",
+            "OAPI32-PS-102",
+            "OAPI32-PS-103",
+            "OAPI32-PS-104",
+            "OAPI32-PS-105",
+            "OAPI32-PS-106",
+            "OAPI32-PS-107",
+            "OAPI32-PS-108",
+            "OAPI32-PS-109",
+            "OAPI32-PS-110",
+            "OAPI32-PS-129",
+            "OAPI32-PS-130",
+            "OAPI32-PS-133",
+            "OAPI32-PS-134",
+            "OAPI32-PS-135",
+            "OAPI32-PS-136",
+            "OAPI32-PS-137",
+            "OAPI32-PS-138",
+            "OAPI32-PS-139",
+            "OAPI32-PS-140",
+            "OAPI32-PS-141",
+            "OAPI32-PS-142",
+            "OAPI32-PS-143",
+            "OAPI32-PS-144",
+            "OAPI32-PS-145",
+            "OAPI32-PS-146",
+            "OAPI32-PS-147",
+            "OAPI32-PS-148",
+            "OAPI32-PS-149",
+            "OAPI32-PS-150",
+            "OAPI32-PS-151",
+            "OAPI32-PS-152",
+            "OAPI32-PS-153",
+            "OAPI32-PS-154",
+            "OAPI32-PS-155",
+            "OAPI32-PS-156",
+            "OAPI32-PS-157",
+            "OAPI32-PS-158",
+            "OAPI32-PS-159",
+            "OAPI32-PS-160",
+            "OAPI32-PS-161",
+            "OAPI32-PS-162",
+            "OAPI32-PS-163",
+            "OAPI32-PS-164",
+            "OAPI32-PS-165",
+            "OAPI32-PS-166",
+            "OAPI32-PS-167",
+            "OAPI32-PS-168",
+            "OAPI32-PS-172",
+            "OAPI32-PS-01",
+            "OAPI32-PS-176",
+            "OAPI32-PS-177",
+            "OAPI32-PS-178",
+            "OAPI32-PS-179",
+            "OAPI32-PS-180",
+            "OAPI32-PS-181",
+            "OAPI32-PS-182",
+            "OAPI32-PS-183",
+            "OAPI32-PS-184",
+            "OAPI32-PS-185",
+            "OAPI32-PS-186",
+            "OAPI32-PS-187",
+            "OAPI32-PS-188",
+            "OAPI32-PS-189",
+            "OAPI32-PS-190",
+            "OAPI32-PS-191",
+            "OAPI32-PS-192",
+            "OAPI32-PS-193",
+            "OAPI32-PS-194",
+            "OAPI32-PS-195",
+            "OAPI32-PS-197",
+            "OAPI32-PS-198",
+            "OAPI32-PS-199",
+            "OAPI32-PS-200",
+            "OAPI32-PS-209",
+            "OAPI32-PS-212",
+            "OAPI32-PS-213",
+            "OAPI32-PS-276"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-04",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "it resolves servers and complete target URLs under §10 and security alternatives, credentials, prerequisites, and channel collisions under §11.",
+          "upstreamScenarios": [
+            "OAPI32-PS-111",
+            "OAPI32-PS-112",
+            "OAPI32-PS-113",
+            "OAPI32-PS-114",
+            "OAPI32-PS-115",
+            "OAPI32-PS-116",
+            "OAPI32-PS-117",
+            "OAPI32-PS-118",
+            "OAPI32-PS-119",
+            "OAPI32-PS-120",
+            "OAPI32-PS-121",
+            "OAPI32-PS-122",
+            "OAPI32-PS-123",
+            "OAPI32-PS-124",
+            "OAPI32-PS-125",
+            "OAPI32-PS-126",
+            "OAPI32-PS-127",
+            "OAPI32-PS-128",
+            "OAPI32-PS-131",
+            "OAPI32-PS-201",
+            "OAPI32-PS-202",
+            "OAPI32-PS-214"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-05",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§3.2's source, addressability, synthesis-status, and invocation-outcome axes remain independent, including source-scope dialect exclusion and an all-invalid target inventory.",
+          "upstreamScenarios": [
+            "OAPI32-PS-11",
+            "OAPI32-PS-12",
+            "OAPI32-SS-13",
+            "OAPI32-SS-16"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-06",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§5.2 preserves `$dynamicRef`'s runtime dynamic scope by excluding only a schema-inspected owner and leaving type-uninspected JSON carriage unaffected.",
+          "upstreamScenarios": [
+            "OAPI32-PS-215"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-07",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§6.1 keeps exact `CONNECT` addressable but excluded and does not conflate a case-distinct additional-operation token with it.",
+          "upstreamScenarios": [
+            "OAPI32-PS-216"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-08",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.2 never treats unvalidated supplied data as OAS `validated runtime data` for non-JSON type selection.",
+          "upstreamScenarios": [
+            "OAPI32-PS-108"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-09",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.3 emits only safe artifact-fixed multipart headers and excludes required nonfixed or contradictory `Content-Disposition` declarations.",
+          "upstreamScenarios": [
+            "OAPI32-PS-91"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-10",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§11 excludes invalid API-key destination names and rejects unsafe runtime header or cookie values before dispatch.",
+          "upstreamScenarios": [
+            "OAPI32-PS-124",
+            "OAPI32-PS-217"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-11",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "an invalid failure-only Response projection remains coverage loss without removing its operation, as §9.6 requires.",
+          "upstreamScenarios": [
+            "OAPI32-PS-185"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-12",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.6 performs no content decoding or output for HEAD, non-101 informational, `204`, `205`, and `304` responses and reports forbidden actual content as a loud response-phase protocol error.",
+          "upstreamScenarios": [
+            "OAPI32-PS-218"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-13",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "a declared body projection cannot cause content decoding or output for an actual no-content response.",
+          "upstreamScenarios": [
+            "OAPI32-PS-218"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-14",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.6 retains a governing non-`Content-Type` response Header Object's `required: true` check on a no-content response.",
+          "upstreamScenarios": [
+            "OAPI32-PS-137"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-15",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§8.3 excludes a non-token optional ordinary-header projection without excluding the operation, allowing an invocation that omits it to dispatch.",
+          "upstreamScenarios": [
+            "OAPI32-PS-219",
+            "OAPI32-SS-17"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-16",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§8.3 treats the would-be caller key of that excluded optional header as unknown input and refuses it before dispatch.",
+          "upstreamScenarios": [
+            "OAPI32-PS-220"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-17",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§8.3 propagates a non-token required ordinary header to an excluded target that remains addressable and refuses before dispatch.",
+          "upstreamScenarios": [
+            "OAPI32-PS-221",
+            "OAPI32-SS-17"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-18",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§8.3 prevents caller control of every listed connection, framing, and routing field by excluding the addressable target before dispatch.",
+          "upstreamScenarios": [
+            "OAPI32-PS-222",
+            "OAPI32-SS-17"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-19",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.6 treats `101 Switching Protocols` as an immediate loud response-phase protocol error rather than waiting for a later HTTP final response.",
+          "upstreamScenarios": [
+            "OAPI32-PS-223"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-20",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§10 keeps an operation whose artifact-derived completed target has a non-HTTP scheme addressable and represented while refusing that invocation before dispatch.",
+          "upstreamScenarios": [
+            "OAPI32-PS-224",
+            "OAPI32-SS-18"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-21",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§10 permits a conforming complete configured HTTP or HTTPS URL to replace that artifact-derived base and dispatch the otherwise unchanged operation.",
+          "upstreamScenarios": [
+            "OAPI32-PS-225"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-22",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§8.3 excludes a non-token optional cookie-parameter projection without excluding the operation, allowing an invocation that omits it to dispatch.",
+          "upstreamScenarios": [
+            "OAPI32-PS-226"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-23",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§8.3 treats the would-be caller key of that excluded optional cookie parameter as unknown input and refuses it before dispatch.",
+          "upstreamScenarios": [
+            "OAPI32-PS-227"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-24",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§8.3 propagates a non-token required cookie parameter to an excluded target that remains addressable and refuses before dispatch.",
+          "upstreamScenarios": [
+            "OAPI32-PS-228"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-25",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.4 propagates a non-token `required: true` response Header Object key to its response alternative and reports a successful response governed by it as a loud response-phase protocol error.",
+          "upstreamScenarios": [
+            "OAPI32-PS-229"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-26",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§8.3 refuses before dispatch when an ordinary structured-cookie parameter's serialized value is not an RFC 6265 `cookie-value`.",
+          "upstreamScenarios": [
+            "OAPI32-PS-230"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-27",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§6.1 admits a `default`-only Responses Object and uses that Response Object for an otherwise unmatched successful status.",
+          "upstreamScenarios": [
+            "OAPI32-PS-231"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-28",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§§8.3 and 11 refuse any supplied ordinary-header or header-credential value that is not an RFC 9110 `field-value`, including leading or trailing SP or HTAB, and additionally require a raw `Cookie` field value to be an RFC 6265 `cookie-string`.",
+          "upstreamScenarios": [
+            "OAPI32-PS-232",
+            "OAPI32-PS-233",
+            "OAPI32-PS-234"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-29",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§8.3 refuses an invocation that would combine any supplied raw Cookie source — a Header Parameter or selected header credential — with any structured cookie parameter or selected cookie credential.",
+          "upstreamScenarios": [
+            "OAPI32-PS-235",
+            "OAPI32-PS-236"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-30",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.6 confines invalid Response keys, values, and fixed members to their smallest projections without changing admitted-key precedence or removing an otherwise usable target; valid body and header siblings still govern, matched-but-excluded media fails loudly only when selected on success, and failure decoding remains best-effort.",
+          "upstreamScenarios": [
+            "OAPI32-PS-178",
+            "OAPI32-PS-179",
+            "OAPI32-PS-180",
+            "OAPI32-PS-181",
+            "OAPI32-PS-182",
+            "OAPI32-PS-183",
+            "OAPI32-PS-184"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-31",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.4 groups surviving response Header declarations by ASCII-case-insensitive field identity, applies required presence and `Content-Encoding` constraints conjunctively, and excludes only a required coding group whose finite constraints are provably unsatisfiable.",
+          "upstreamScenarios": [
+            "OAPI32-PS-152",
+            "OAPI32-PS-273",
+            "OAPI32-PS-274"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-32",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.3 groups Encoding Header declarations by ASCII-case-insensitive field identity, emits one coherent artifact-fixed value, and excludes a conflicting, unsafe, or required-nonfixed group at the media-alternative boundary.",
+          "upstreamScenarios": [
+            "OAPI32-PS-237"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-33",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§11 confines statically unavoidable credential collisions to the smallest security alternative and preserves every non-colliding OR alternative.",
+          "upstreamScenarios": [
+            "OAPI32-PS-125"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-34",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§11 checks actual serialized destinations and treats optional or runtime-derived parameter collisions as invocation-conditional rather than static exclusions.",
+          "upstreamScenarios": [
+            "OAPI32-PS-238",
+            "OAPI32-PS-239",
+            "OAPI32-PS-240"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-35",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§§8.3 and 11 reserve each processor-owned header destination, including `Proxy-Authorization`, at the target or security-alternative boundary.",
+          "upstreamScenarios": [
+            "OAPI32-PS-241"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-36",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§11 percent-encodes both an API-key query name and value with uppercase UTF-8 triplets.",
+          "upstreamScenarios": [
+            "OAPI32-PS-123"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-37",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§11 preserves the unordered multiset of ordinary-parameter and credential query contributions and each contribution's fixed bytes.",
+          "upstreamScenarios": [
+            "OAPI32-PS-242"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-38",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§11 confines a required whole-querystring/query-credential conflict to its security alternative and treats the optional form as invocation-conditional.",
+          "upstreamScenarios": [
+            "OAPI32-PS-243",
+            "OAPI32-PS-244",
+            "OAPI32-PS-245"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-39",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§8.3 distinguishes an omitted optional whole-querystring parameter from a supplied zero-byte representation, which emits a present empty query component.",
+          "upstreamScenarios": [
+            "OAPI32-PS-246"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-40",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§10 excludes only an unusable declaration-derived Server alternative with query, fragment, empty HTTP host, or userinfo, permits a sibling or complete configured URL to recover, and refuses a nonconforming consumer choice before dispatch.",
+          "upstreamScenarios": [
+            "OAPI32-PS-118"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-41",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§§7 and 11 emit neither content nor binding-carried credentials or Cookie fields on TRACE, preserve anonymous or mutual-TLS alternatives, and refuse or exclude the smallest unavoidable sensitive source before dispatch.",
+          "upstreamScenarios": [
+            "OAPI32-PS-247",
+            "OAPI32-PS-248"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-42",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.3 emits generated multipart `name` parameters with the pinned UTF-8 quoted-string escaping and excludes a name outside that admitted byte grammar.",
+          "upstreamScenarios": [
+            "OAPI32-PS-193",
+            "OAPI32-PS-249"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-43",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.6 strips binding-selected header credentials and Cookie contributions on a followed cross-origin redirect and never appends a binding-selected query credential to any redirect Location.",
+          "upstreamScenarios": [
+            "OAPI32-PS-250"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-44",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§7 preserves a declared Request Body and enforces `required: true` for an admitted `additionalOperations` extension method rather than treating an unregistered method as content-forbidding.",
+          "upstreamScenarios": [
+            "OAPI32-PS-251",
+            "OAPI32-PS-294"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-45",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.4 refuses a supplied request `Content-Encoding` field on a body-free invocation and excludes a required field only when no surviving request lane can emit a representation.",
+          "upstreamScenarios": [
+            "OAPI32-PS-252"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-46",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§8.3 validates every emitted `style: cookie` pair name and value, including runtime keys from exploded objects, before dispatch.",
+          "upstreamScenarios": [
+            "OAPI32-PS-253"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-47",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§11 constructs HTTP-bearer, OAuth2, and OpenID Connect authorization from one valid RFC 6750 `b64token` and refuses every empty, non-Bearer-typed, or grammatically invalid token before dispatch.",
+          "upstreamScenarios": [
+            "OAPI32-PS-254",
+            "OAPI32-PS-255",
+            "OAPI32-PS-256",
+            "OAPI32-PS-257",
+            "OAPI32-PS-258",
+            "OAPI32-PS-259",
+            "OAPI32-PS-260"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-48",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.4 validates no-content response `Content-Encoding` syntax and exact raw-string domains without requiring or invoking a decoder.",
+          "upstreamScenarios": [
+            "OAPI32-PS-261",
+            "OAPI32-PS-262",
+            "OAPI32-PS-267",
+            "OAPI32-PS-268",
+            "OAPI32-PS-272"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-49",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.2 requires UTF-8 encoding and decoding, treats additional charset directions as independent capabilities, refuses an unavailable or failed request encoder before dispatch, and reports an unavailable or failed response decoder loudly.",
+          "upstreamScenarios": [
+            "OAPI32-PS-263",
+            "OAPI32-PS-266"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-50",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.4 derives response `Content-Encoding` raw-string domains through resolved `$ref`, recursive `allOf`, mixed-enum filtering, `const`, and conjunction, then applies every case-folded group's domains conjunctively at response time.",
+          "upstreamScenarios": [
+            "OAPI32-PS-264",
+            "OAPI32-PS-269"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-51",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§10 accounts an absent or wrong-typed required Server Variable `default`, empty `enum`, or out-of-enum default as `invalid` at its Server alternative while retaining a target recoverable through `configuration.server`.",
+          "upstreamScenarios": [
+            "OAPI32-PS-265"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-52",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§10 permits an exact consumer substitution for an otherwise undeclared Server URL expression and reports a missing substitution as context-required on `configuration.server`.",
+          "upstreamScenarios": [
+            "OAPI32-PS-270",
+            "OAPI32-PS-271"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-53",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.2 refuses before dispatch a caller-supplied JSON value containing an unpaired surrogate code unit, without replacement, passthrough, or request-byte emission.",
+          "upstreamScenarios": [
+            "OAPI32-PS-275"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-54",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§7 computes caller-key uniqueness only after invalid and excluded parameter projections are removed, so a removed projection creates no key and does not activate qualified mode.",
+          "upstreamScenarios": [
+            "OAPI32-PS-277",
+            "OAPI32-PS-278"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-55",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.1 emits the deterministic equal-preference `Accept` union of every admitted response-content media range across successful and unsuccessful response alternatives and omits it only when that set is empty.",
+          "upstreamScenarios": [
+            "OAPI32-PS-279"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-56",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.3 invents neither `filename` nor `filename*`, preserves admissible artifact-fixed literal `filename` parameters and `filename*` parameters on other name-based multipart subtypes, and excludes a fixed `filename*` from `multipart/form-data` at the multipart alternative.",
+          "upstreamScenarios": [
+            "OAPI32-PS-280",
+            "OAPI32-PS-281",
+            "OAPI32-PS-282",
+            "OAPI32-PS-283"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-57",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.1 excludes a response media range carrying a case-insensitive `q` parameter before `Accept` construction while preserving every valid sibling range.",
+          "upstreamScenarios": [
+            "OAPI32-PS-279"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-58",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§8.3 keeps form-cookie array and object declarations represented without shape-only exclusion, including their required and non-exploded forms.",
+          "upstreamScenarios": [
+            "OAPI32-PS-68",
+            "OAPI32-PS-285",
+            "OAPI32-PS-286",
+            "OAPI32-PS-287",
+            "OAPI32-PS-293"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-59",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§8.3 refuses an exploded form-cookie value only when its actual expansion emits two or more Cookie pairs, while a zero- or one-pair expansion remains available subject to ordinary cookie-name and value checks.",
+          "upstreamScenarios": [
+            "OAPI32-PS-285",
+            "OAPI32-PS-286",
+            "OAPI32-PS-288",
+            "OAPI32-PS-293"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-60",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.1 applies required-body exclusion to the effective post-method, post-confinement request-content set, while preserving a method-ignored body declaration and every surviving configurable alternative.",
+          "upstreamScenarios": [
+            "OAPI32-PS-35",
+            "OAPI32-PS-289"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-61",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§9.1 advertises an admitted failure-only response media range in `Accept` without allowing that range to govern an actual successful response.",
+          "upstreamScenarios": [
+            "OAPI32-PS-290"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-62",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§7 preserves and emits a declared fixed-operation PATCH request body under RFC 5789, including enforcement of `required: true`.",
+          "upstreamScenarios": [
+            "OAPI32-PS-291",
+            "OAPI32-PS-292"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-S-01",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "it preserves §12.2's binding/transform boundary, emits §6.2's targetless unconstrained dependencies, accounts every lossy or non-equivalent Schema Object translation as coverage loss, and reports complete coverage under Core OBI-B-02.",
+          "upstreamScenarios": [
+            "OAPI32-SS-13"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-S-02",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "it uses §3.2's locally defined status vocabulary for sources, targets, dependencies, and subordinate projections without depending on any project interface contract.",
+          "upstreamScenarios": [
+            "OAPI32-SS-13"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-S-03",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§9.6's declared body projection for a no-content response is subordinate `excluded` coverage while the operation remains represented.",
+          "upstreamScenarios": [
+            "OAPI32-SS-15"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-S-04",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "it reports §8.3's non-token cookie parameter and §9.4's non-token response Header Object key at their specified smallest owners and propagates only their required forms.",
+          "upstreamScenarios": [
+            "OAPI32-SS-19"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-S-05",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§6.1 represents an otherwise usable operation whose Responses Object is `default`-only and projects that fallback Response Object normally.",
+          "upstreamScenarios": [
+            "OAPI32-SS-20"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-S-06",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§8.3 propagates an unavoidable raw/structured Cookie collision to its smallest security alternative or target while retaining every non-colliding OR alternative.",
+          "upstreamScenarios": [
+            "OAPI32-SS-21"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-S-07",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§9.6 retains an operation and every valid response sibling while accounting each invalid or excluded response projection at its smallest owner.",
+          "upstreamScenarios": [
+            "OAPI32-SS-15"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-S-08",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§§8.3 and 11 remove only statically unavoidable parameter or credential combinations, preserve non-colliding OR alternatives, never treat an optional collision as a static exclusion, and confine a querystring/query-credential conflict to its security alternative.",
+          "upstreamScenarios": [
+            "OAPI32-SS-22"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-S-09",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§10 retains a target recoverable from unusable Server alternatives and records its actual `configuration.server` requirement.",
+          "upstreamScenarios": [
+            "OAPI32-SS-18"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-S-10",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§11 excludes binding-carried credential alternatives from TRACE while retaining an anonymous or mutual-TLS alternative, and excludes the target only when no complete safe alternative remains.",
+          "upstreamScenarios": [
+            "OAPI32-SS-23"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-S-11",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§9.4 preserves coherent response Header groups and accounts a provably unsatisfiable required response `Content-Encoding` group at its response-alternative owner.",
+          "upstreamScenarios": [
+            "OAPI32-SS-24"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-S-12",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§9.3 preserves coherent Encoding Header groups and accounts a conflicting or required-nonfixed group at its media-alternative owner.",
+          "upstreamScenarios": [
+            "OAPI32-SS-25"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-S-13",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§9.3 accounts an unrepresentable multipart name at its media-alternative owner while preserving unrelated operations.",
+          "upstreamScenarios": [
+            "OAPI32-SS-26"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-S-14",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§9.4 accounts a required bodyless request `Content-Encoding` parameter at its target owner while preserving unrelated operations.",
+          "upstreamScenarios": [
+            "OAPI32-SS-27"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-S-15",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§10 accounts an absent or wrong-typed required Server Variable `default`, empty `enum`, or out-of-enum default as an `invalid` Server alternative while retaining each target recoverable through `configuration.server`.",
+          "upstreamScenarios": [
+            "OAPI32-SS-28"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-S-16",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§10 preserves a Server URL expression without a matching Server Variable Object, represents the target, and records its actual `configuration.server` requirement rather than excluding the alternative.",
+          "upstreamScenarios": [
+            "OAPI32-SS-29"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-S-17",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§7 derives the operation input from the post-confinement effective parameter set, leaving a surviving same-named cross-location parameter unqualified when its only collision was removed.",
+          "upstreamScenarios": [
+            "OAPI32-SS-30"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-S-18",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§9.3 preserves an admissible artifact-fixed literal multipart `filename` and accounts a fixed `filename*` exclusion from `multipart/form-data` at its media-alternative owner.",
+          "upstreamScenarios": [
+            "OAPI32-SS-31"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-S-19",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§9.1 accounts a response media range carrying a case-insensitive `q` parameter as excluded at that alternative while preserving a valid sibling and its target.",
+          "upstreamScenarios": [
+            "OAPI32-SS-32"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-S-20",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§8.3 represents optional and required form-cookie array and object declarations, exploded or not, without shape-only coverage loss; invocation-time multiplicity creates no synthesis exclusion.",
+          "upstreamScenarios": [
+            "OAPI32-SS-33"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-S-21",
+          "kind": "synthesis",
+          "owner": "analysis-and-openbindings-adapter",
+          "description": "§9.1 accounts a removed request-content alternative at its own owner and propagates exclusion to a required Request Body target exactly when no alternative survives after method disposition and confinement.",
+          "upstreamScenarios": [
+            "OAPI32-SS-34"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        }
+      ]
+    }
+  ]
+}

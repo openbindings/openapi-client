@@ -16,13 +16,13 @@
 // under interface-synthesizer 0.2's inventory; response-side rungs are
 // locating rungs whose defects attribute to the containing operation.
 //
-// Propagation predicates -- the ONLY three ways a defect climbs a rung:
+// Propagation predicates -- the only ways a defect climbs a rung:
 //
 //   P1 input:   a defect in an effective Parameter Object, or in its schema
 //               closure, makes the OPERATION invalid.
-//   P2 output:  a defect leaving a success response declaration that DECLARED
-//               a body with no surviving representable media alternative
-//               makes the OPERATION invalid.
+//   P2 output:  response defects are confined to their smallest response or
+//               media projection. They do not make the operation unaddressable;
+//               actual status/body consequences are decided at invocation.
 //   P3 address: a defect in the Paths Object key or in the HTTP-method
 //               member makes the OPERATION invalid.
 //
@@ -32,8 +32,9 @@
 // Whole-source refusal follows the family document's three-part acceptance floor:
 // part 1 (the closed load gates) is owned by the load path and never asked
 // here; part 2 -- exactly one derived refusal -- is computed by this
-// instrument: the source refuses only when no addressable target remains.
-// Excluded operations are ADDRESSED targets and never trigger it. An
+// instrument: the source refuses only when inventory or reference defects
+// prevent every declared operation slot from becoming addressable. Invalid
+// and excluded operations are ADDRESSED targets and never trigger it. An
 // artifact that conformantly declares no target is accepted with an empty
 // interface. A Paths Object member that is an EXTERNAL Reference Object
 // defers the question to resolution.
@@ -164,6 +165,8 @@ function floorAuthority(cls: string, line: "3.0" | "3.1"): string {
       return is30
         ? "OAS 3.0 line, Response Object: `description` is a string, `content` is a map of Media Type Objects, `headers` a map of Header Objects, `links` a map of Link Objects; a fixed field carrying another JSON kind, or a `headers` member that is not a Header Object, violates the Response Object's fixed-field constraints"
         : "OAS 3.1 line, Response Object: `description` is a string, `content` is a map of Media Type Objects, `headers` a map of Header Objects, `links` a map of Link Objects; a fixed field carrying another JSON kind, or a `headers` member that is not a Header Object, violates the Response Object's fixed-field constraints";
+    case "D17":
+      return "OAS, Parameter Object: `schema` and `content` are mutually exclusive";
     case "URef":
       return is30
         ? "OAS 3.0 line, Reference Object: $ref follows JSON Reference; its fragment is a JSON Pointer (RFC 6901) and identifies no location in the entry document"
@@ -437,7 +440,7 @@ export function computeAcceptanceFloor(raw: unknown): AcceptanceFloor | undefine
           continue;
         }
         const opMap = opValue;
-        // D10: Parameter Objects omitting name or in.
+        // D10 / D17: required identity and mutually-exclusive schema/content.
         for (const holder of [
           { list: pathItem["parameters"], ptr: `#/paths/${esc(pathKey)}/parameters` },
           { list: opMap["parameters"], ptr: `${ref}/parameters` },
@@ -446,6 +449,7 @@ export function computeAcceptanceFloor(raw: unknown): AcceptanceFloor | undefine
           holder.list.forEach((p, i) => {
             if (isRefObj(p) || !isObj(p)) return;
             if (!("name" in p) || !("in" in p)) addDefect(defect("D10", `${holder.ptr}/${i}`));
+            if ("schema" in p && "content" in p) addDefect(defect("D17", `${holder.ptr}/${i}`));
           });
         }
         // Responses: D7 / D9 / D16 / D8 / D12.
@@ -701,9 +705,13 @@ export function computeAcceptanceFloor(raw: unknown): AcceptanceFloor | undefine
   };
 
   let anyDestroyedOrInvalid = destroyedDeclared;
-  let representedOrAddressed = 0;
+  let addressableTargets = 0;
 
   for (const row of rawOps) {
+    // A declared HTTP-method member forms an addressable target slot even when
+    // that target is invalid or excluded. Its selector must resolve and the
+    // unusable target then refuses before dispatch.
+    addressableTargets++;
     const op: FloorOp = {
       ref: row.ref,
       path: row.path,
@@ -843,43 +851,12 @@ export function computeAcceptanceFloor(raw: unknown): AcceptanceFloor | undefine
         rvContent = rv["content"] as Obj;
         declared = sortedKeys(rvContent);
       }
-      // An upstream-invalid GOVERNING Response Object excludes the selected
-      // target before any actual response is inspected: response governance is
-      // target-level (`openbindings.openapi-3.1@1` §9.5 and its restored
-      // siblings). Two of the three response-rung classes are that defect, and
-      // they climb with no further question asked:
-      //
-      //   D7  -- the member is not a Response Object at all, so there is no
-      //          governing declaration to read.
-      //   D16 -- the member IS a Response Object and violates the fixed-field
-      //          constraints the same sentence names.
-      //
-      // D9 is deliberately NOT here, and its declared-content gate below is
-      // unchanged. A Response Object that omits its REQUIRED `description`
-      // while declaring no content loses no representation: nothing about the
-      // response body is misdeclared, so the target still carries everything it
-      // ever carried. That is the `{}` carve-out the documents state in the
-      // same sentence, and it is the whole difference between S1 (invalid) and
-      // a bare `{}` (represented).
-      if (respDefect && respDefect.class === "D7") {
-        addClimb(respDefect); // P2
-        continue;
-      }
-      if (fixedFieldDefects.length > 0) {
-        if (respDefect) addClimb(respDefect);
-        addClimb(...fixedFieldDefects); // P2
-        continue;
-      }
-      if (respDefect && declared.length === 0) {
-        addProjection(op.ref, respDefect);
-        continue;
-      }
-      if (respDefect && declared.length > 0) {
-        addClimb(respDefect); // P2
-        continue;
-      }
+      // Response defects stay at their smallest projection. Admitted response
+      // keys retain lookup precedence, valid body/header siblings keep
+      // governing, and actual response consequences are decided at runtime.
+      if (respDefect) addProjection(op.ref, respDefect);
+      addProjection(op.ref, ...fixedFieldDefects);
       if (declared.length === 0) continue;
-      let surviving = 0;
       const deadAlternativeDefects: FloorDefect[] = [];
       for (const mediaKey of declared) {
         const aptr = `${rptr}/content/${esc(mediaKey)}`;
@@ -888,23 +865,18 @@ export function computeAcceptanceFloor(raw: unknown): AcceptanceFloor | undefine
           deadAlternativeDefects.push(d);
           continue;
         }
-        let dead = false;
         const mo = rvContent![mediaKey];
         if (isObj(mo) && isObj(mo["schema"])) {
           const { defs, projs } = closureDefects(`${aptr}/schema`, mo["schema"]);
           addProjection(op.ref, ...projs);
           if (defs.length > 0) {
-            dead = true;
             deadAlternativeDefects.push(...defs);
           }
         }
-        if (!dead) surviving++;
       }
-      if (surviving === 0) {
-        addClimb(...deadAlternativeDefects); // P2: no surviving representable alternative
-      } else if (deadAlternativeDefects.length > 0) {
-        // Some response media alternatives are invalid but the response
-        // survives: an at-position projection on the operation.
+      if (deadAlternativeDefects.length > 0) {
+        // The response key and operation remain addressable while each invalid
+        // response-media declaration is recorded at the operation projection.
         addProjection(op.ref, ...deadAlternativeDefects);
       }
     }
@@ -923,21 +895,17 @@ export function computeAcceptanceFloor(raw: unknown): AcceptanceFloor | undefine
     } else if (requestMediaExcluded) {
       op.disposition = "excluded-request-media";
       op.requestMediaExcluded = true;
-      representedOrAddressed++;
     } else {
       op.disposition = "represented";
-      representedOrAddressed++;
     }
     floor.ops.set(op.ref, op);
     floor.opOrder.push(op.ref);
   }
 
-  // §3 part 2, the single derived rule: refuse only when no addressable
-  // target remains -- zero operations survive as represented or
-  // excluded-addressed AND at least one declared target was destroyed or
-  // invalidated AND no Paths Object member is an external Reference Object
-  // (externals defer the question to resolution).
-  if (representedOrAddressed === 0 && anyDestroyedOrInvalid && floor.externalPathItemMembers === 0) {
+  // §3 part 2: target-confined invalidity/exclusion does not make a declared
+  // target slot unaddressable. Refuse only when inventory/reference defects
+  // prevent every slot from being formed.
+  if (addressableTargets === 0 && anyDestroyedOrInvalid && floor.externalPathItemMembers === 0) {
     floor.refusal = part2Refusal("every position that would have carried an operation object is defective under the governing edition");
   }
   return floor;

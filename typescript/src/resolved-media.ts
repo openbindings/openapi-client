@@ -258,12 +258,7 @@ export function prepareResolvedPropertyMediaView(
         ...(media.encoding[name] ?? {}),
         ...(typeof contentType === "string" && contentType !== "" ? { contentType } : {}),
       };
-      materializeRawProperty(plan.media.schema, name, plan.oas30 === true);
     }
-    // OpenAPI 3.2's native multipart writer owns fixed part headers and uses
-    // them to detect Content-Transfer-Encoding contradictions. They are not
-    // descriptive noise on that edition's request lane.
-    if (plan.openapiVersion !== "3.2.0") stripDescriptiveEncodingHeaders(media);
     if (plan.oas30 && plan.family === FAMILY_MULTIPART) stripMultipartStyleControls(media);
   }
 }

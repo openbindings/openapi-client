@@ -29,6 +29,8 @@ export type Swagger20ContentCodingResult = Uint8Array | ArrayBuffer | ArrayBuffe
 export type Swagger20ContentCodec = (
   bytes: Uint8Array,
 ) => Swagger20ContentCodingResult | Promise<Swagger20ContentCodingResult>;
+export type Swagger20CharacterEncoder = (value: string) => Swagger20ContentCodingResult;
+export type Swagger20CharacterDecoder = (bytes: Uint8Array) => string;
 
 export interface Swagger20PrepareOptions extends Swagger20LoadOptions {
   source: Swagger20Source;
@@ -48,10 +50,16 @@ export interface Swagger20PrepareOptions extends Swagger20LoadOptions {
   requestMedia?: string;
   /** Concrete media type for each file-valued multipart form property. */
   propertyMedia?: Record<string, string>;
+  /** Defaults to manual; follow mode retains only method-preserving hops. */
+  redirect?: RequestRedirect;
   /** Whole-representation request encoders keyed by normalized content-coding token. */
   requestContentCodings?: ReadonlyMap<string, Swagger20ContentCodec>;
   /** Whole-representation response decoders keyed by normalized content-coding token. */
   responseContentCodings?: ReadonlyMap<string, Swagger20ContentCodec>;
+  /** Request character encoders keyed by normalized charset token. UTF-8 is built in. */
+  requestCharacterEncodings?: ReadonlyMap<string, Swagger20CharacterEncoder>;
+  /** Response character decoders keyed by normalized charset token. UTF-8 is built in. */
+  responseCharacterEncodings?: ReadonlyMap<string, Swagger20CharacterDecoder>;
 }
 
 /** A failure produced by the exact Swagger 2.0 engine lane. */

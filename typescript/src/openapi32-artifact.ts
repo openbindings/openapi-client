@@ -105,6 +105,7 @@ export class OpenAPIArtifact {
 
   private readonly overlay?: OpenAPI32Overlay;
   private readonly operationTargets: ReadonlyMap<string, OpenAPIResolvedOperation>;
+  private readonly referringSecurityByPath: ReadonlyMap<string, Record<string, Record<string, unknown>>>;
 
   /** @internal */
   constructor(args: {
@@ -115,6 +116,7 @@ export class OpenAPIArtifact {
     sourceExclusion?: string;
     overlay?: OpenAPI32Overlay;
     operationTargets?: ReadonlyMap<string, OpenAPIResolvedOperation>;
+    referringSecurityByPath?: ReadonlyMap<string, Record<string, Record<string, unknown>>>;
   }) {
     this.document = args.document;
     this.edition = args.edition;
@@ -123,6 +125,7 @@ export class OpenAPIArtifact {
     this.sourceExclusion = args.sourceExclusion;
     this.overlay = args.overlay;
     this.operationTargets = args.operationTargets ?? new Map();
+    this.referringSecurityByPath = args.referringSecurityByPath ?? new Map();
   }
 
   get openAPI32(): OpenAPI32Resource | undefined {
@@ -137,7 +140,16 @@ export class OpenAPIArtifact {
       throw new OpenAPIOperationResolutionError("excluded", this.sourceExclusion);
     }
     if (this.edition === "3.2.0") {
-      parseOpenAPI32OperationReference(ref);
+      const reference = parseOpenAPI32OperationReference(ref);
+      if (
+        reference.additional
+        && OPENAPI32_FIXED_METHODS.some((fixed) => reference.method === fixed.toUpperCase())
+      ) {
+        throw new OpenAPIOperationResolutionError(
+          "excluded",
+          `additional operation method ${JSON.stringify(reference.method)} collides with a fixed operation field`,
+        );
+      }
       const prepared = this.operationTargets.get(ref);
       if (prepared) return prepared;
       if (!this.overlay) {
@@ -173,6 +185,9 @@ export class OpenAPIArtifact {
       document: this.document,
       pathItem,
       operation,
+      ...(this.referringSecurityByPath.get(parsed.path)
+        ? { referringSecuritySchemes: this.referringSecurityByPath.get(parsed.path) }
+        : {}),
     };
   }
 
@@ -189,7 +204,19 @@ export class OpenAPIArtifact {
             additional: false,
             wireMethod: method.toUpperCase(),
           };
-          result.push({ reference, target: await this.resolveOperation(reference.ref) });
+          const operation = pathItem[method] as OpenAPIOperation;
+          result.push({
+            reference,
+            target: {
+              reference,
+              document: this.document,
+              pathItem,
+              operation,
+              ...(this.referringSecurityByPath.get(path)
+                ? { referringSecuritySchemes: this.referringSecurityByPath.get(path) }
+                : {}),
+            },
+          });
         }
       }
       return result;
@@ -235,6 +262,7 @@ export class OpenAPIArtifact {
       ...(this.sourceExclusion ? { sourceExclusion: this.sourceExclusion } : {}),
       ...(this.overlay ? { overlay: this.overlay } : {}),
       operationTargets,
+      referringSecurityByPath: this.referringSecurityByPath,
     });
   }
 }
@@ -265,13 +293,35 @@ export async function loadOpenAPIArtifact(
   const edition = classifyOpenAPIEdition(entry.root);
   options.onRawDocument?.(entry.root);
   if (edition !== "3.2.0") {
+    const resources: Array<{ root: Record<string, unknown>; baseURI?: string }> = [];
     const document = await loadOpenAPIDocument(
       entry.retrieval ?? source.location,
       entry.root,
-      { signal: options.signal, allowExternalRefs: options.allowExternalRefs },
+      {
+        signal: options.signal,
+        allowExternalRefs: options.allowExternalRefs,
+        onResource: (root, baseURI) => resources.push({ root, baseURI }),
+      },
       options.fetch,
     );
-    return new OpenAPIArtifact({ document, edition, location: entry.retrieval ?? source.location });
+    const root = asRecord(entry.root);
+    const sourceExclusion = edition.startsWith("3.1.")
+      && typeof root?.jsonSchemaDialect === "string"
+      && root.jsonSchemaDialect !== ""
+      && root.jsonSchemaDialect !== OAS_BASE_DIALECT
+      ? `OpenAPI 3.1 document jsonSchemaDialect ${JSON.stringify(root.jsonSchemaDialect)} is outside the supported default dialect`
+      : undefined;
+    return new OpenAPIArtifact({
+      document,
+      edition,
+      location: entry.retrieval ?? source.location,
+      ...(sourceExclusion ? { sourceExclusion } : {}),
+      referringSecurityByPath: referringSecurityScopes(
+        entry.root,
+        entry.retrieval ?? source.location,
+        resources,
+      ),
+    });
   }
 
   const overlay = new OpenAPI32Overlay(options);
@@ -388,6 +438,15 @@ class OpenAPI32Overlay {
       throw new OpenAPIOperationResolutionError("not-found", "OpenAPI 3.2 overlay has no entry resource");
     }
     const reference = parseOpenAPI32OperationReference(ref);
+    if (
+      reference.additional
+      && OPENAPI32_FIXED_METHODS.some((fixed) => reference.method === fixed.toUpperCase())
+    ) {
+      throw new OpenAPIOperationResolutionError(
+        "excluded",
+        `additional operation method ${JSON.stringify(reference.method)} collides with a fixed operation field`,
+      );
+    }
     const root = asRecord(this.entry.root)!;
     const paths = asRecord(root.paths);
     const adjacent = asRecord(paths?.[reference.path]);
@@ -698,7 +757,10 @@ class OpenAPI32Overlay {
     if (headers) {
       const materialized: Record<string, unknown> = {};
       for (const [name, value] of Object.entries(headers)) {
-        materialized[name] = (await this.resolveReferenceObject(value, owner, "header")).value;
+        const node = await this.resolveReferenceObject(value, owner, "header");
+        materialized[name] = asRecord(node.value)
+          ? await this.materializeResponseHeader(node)
+          : cloneJSON(node.value);
       }
       result.headers = materialized;
     }
@@ -777,72 +839,79 @@ class OpenAPI32Overlay {
     if (!responses) throw new Error("selected Responses declaration is not an object");
     const result: Record<string, unknown> = {};
     const exclusions: OpenAPI32ResponseMediaExclusion[] = [];
-    const success = openAPI32SuccessResponseKeys(responses);
     for (const [key, value] of Object.entries(responses)) {
       if (key.startsWith("x-")) continue;
-      // F1: a defect in a declaration that can never govern a success loses no
-      // representation, so it must not destroy the target. Such a member is left
-      // OUT of the materialized Responses rather than reported: that is the same
-      // state the 3.0/3.1 confinement pass reaches when it neutralises the
-      // defective raw position, so an actual failure response then finds no
-      // governing declaration on every lane alike.
+      // An admitted key retains lookup precedence even when its Response
+      // projection is invalid. Preserve that identity as an empty executable
+      // projection: successful non-empty content then fails at response time,
+      // while empty success and best-effort failure behavior remain available.
       let resolved;
       try {
         resolved = await this.resolveReferenceOnlyObject(value, owner, "response", "Response Object");
       } catch (error: unknown) {
-        if (!success.has(key)) continue;
+        if (!asRecord(value)) {
+          result[key] = {};
+          continue;
+        }
         throw error;
       }
       const response = asRecord(resolved.value);
       if (!response) {
-        if (!success.has(key)) continue;
-        throw new Error(`selected Response ${JSON.stringify(key)} is not an object`);
-      }
-      const defect = openAPI32ResponseObjectDefect(response);
-      if (defect !== undefined) {
-        if (!success.has(key)) continue;
-        throw new Error(`selected Response ${JSON.stringify(key)} is upstream-invalid: ${defect}`);
+        result[key] = {};
+        continue;
       }
       const clone = cloneJSON(response) as Record<string, unknown>;
+      if (Object.hasOwn(response, "description") && typeof response.description !== "string") {
+        delete clone.description;
+      }
       if (Object.hasOwn(response, "headers")) {
         const headers = asRecord(response.headers);
-        if (!headers) throw new Error(`selected Response ${JSON.stringify(key)} headers is not an object`);
-        const materialized: Record<string, unknown> = {};
-        for (const [name, header] of Object.entries(headers)) {
-          const headerNode = await this.resolveReferenceOnlyObject(
-            header,
-            resolved.resource,
-            "header",
-            "Header Object",
-          );
-          materialized[name] = await this.materializeResponseHeader(headerNode);
+        if (!headers) {
+          delete clone.headers;
+        } else {
+          const materialized: Record<string, unknown> = {};
+          for (const [name, header] of Object.entries(headers)) {
+            if (!asRecord(header)) continue;
+            const headerNode = await this.resolveReferenceOnlyObject(
+              header,
+              resolved.resource,
+              "header",
+              "Header Object",
+            );
+            materialized[name] = await this.materializeResponseHeader(headerNode);
+          }
+          clone.headers = materialized;
         }
-        clone.headers = materialized;
       }
       if (Object.hasOwn(response, "links")) {
         const links = asRecord(response.links);
-        if (!links) throw new Error(`selected Response ${JSON.stringify(key)} links is not an object`);
-        const materialized: Record<string, unknown> = {};
-        for (const [name, link] of Object.entries(links)) {
-          const linkNode = await this.resolveReferenceOnlyObject(
-            link,
-            resolved.resource,
-            "link",
-            "Link Object",
-          );
-          materialized[name] = cloneJSON(linkNode.value);
+        if (!links) {
+          delete clone.links;
+        } else {
+          const materialized: Record<string, unknown> = {};
+          for (const [name, link] of Object.entries(links)) {
+            const linkNode = await this.resolveReferenceOnlyObject(
+              link,
+              resolved.resource,
+              "link",
+              "Link Object",
+            );
+            materialized[name] = cloneJSON(linkNode.value);
+          }
+          clone.links = materialized;
         }
-        clone.links = materialized;
       }
       if (Object.hasOwn(response, "content")) {
         const content = asRecord(response.content);
-        if (!content) throw new Error(`selected Response ${JSON.stringify(key)} content is not an object`);
-        clone.content = await this.materializeResponseContent(
-          key,
-          content,
-          resolved.resource,
-          exclusions,
-        );
+        if (!content) delete clone.content;
+        else {
+          clone.content = await this.materializeResponseContent(
+            key,
+            content,
+            resolved.resource,
+            exclusions,
+          );
+        }
       }
       result[key] = clone;
     }
@@ -1097,6 +1166,33 @@ function stripHash(value: string): string {
   return url.href;
 }
 
+function referringSecurityScopes(
+  entryRoot: unknown,
+  entryLocation: string | undefined,
+  resources: readonly { root: Record<string, unknown>; baseURI?: string }[],
+): ReadonlyMap<string, Record<string, Record<string, unknown>>> {
+  const result = new Map<string, Record<string, Record<string, unknown>>>();
+  const paths = asRecord(asRecord(entryRoot)?.paths);
+  for (const [path, raw] of Object.entries(paths ?? {})) {
+    const ref = asRecord(raw)?.$ref;
+    if (typeof ref !== "string" || ref.startsWith("#")) continue;
+    const resolved = resolveURL(ref, entryLocation);
+    if (!resolved) continue;
+    const resourceAddress = stripHash(resolved);
+    const resource = resources.find((candidate) =>
+      candidate.baseURI !== undefined && stripHash(candidate.baseURI) === resourceAddress);
+    const schemes = asRecord(asRecord(resource?.root.components)?.securitySchemes);
+    if (!schemes) continue;
+    const cloned: Record<string, Record<string, unknown>> = {};
+    for (const [name, scheme] of Object.entries(schemes)) {
+      const object = asRecord(scheme);
+      if (object) cloned[name] = cloneJSON(object);
+    }
+    if (Object.keys(cloned).length > 0) result.set(path, cloned);
+  }
+  return result;
+}
+
 function resolveReferenceURL(
   refText: string,
   base?: string,
@@ -1181,107 +1277,4 @@ function escapePointer(value: string): string {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-// The upstream-invalid governing Response Object defects
-// `openbindings.openapi-3.2@1` §9.6 names: a `description` that is not a
-// string, a `content`, `headers`, or `links` value that is not a map, or a
-// `headers` member that is not a Header Object. It is the 3.0/3.1 floor's D16
-// predicate, stated on this lane in this edition's own terms.
-//
-// The 3.0/3.1 lanes reach D16 through the acceptance floor, which does not
-// accept the 3.2 edition at all: the 3.2 lane asks its declaration questions
-// over its own raw overlay, so a sibling rule has to be stated here or it is
-// not stated at all. Round R measured what that cost: `description: 123`
-// excluded the target on 3.0/3.1, excluded it in Go's 3.2 lane only by accident
-// (kin-openapi refusing the value), and COMPLETED THE INVOCATION here. One
-// rule, three answers, inside one family.
-//
-// Round R2 finished the job for the other four kinds, which had the same
-// defect: they excluded, but for a parser's reasons rather than a rule's, and
-// that said nothing at all about the non-success declarations the same parser
-// also refused. See `openAPI32SuccessResponseKeys` for the scope.
-//
-// WHY OMISSION IS NOT CHECKED HERE, and it is an AUTHORITY difference rather
-// than a gap. OAS 3.2.0 DROPPED the `REQUIRED` marker that OAS 3.0.4 and OAS
-// 3.1.2 carry on the Response Object's `description`, and added an optional
-// `summary` beside it:
-//
-//   OAS 3.0.4 §4.7.17.1  description | string | REQUIRED. A description ...
-//   OAS 3.1.2 §4.8.17.1  description | string | REQUIRED. A description ...
-//   OAS 3.2.0 §4.17.1    summary     | string | A short summary ...
-//                        description | string | A description ...   <- no REQUIRED
-//
-// So a 3.2 Response Object that omits `description` is CONFORMANT and governs
-// normally, while the same omission is upstream-invalid on the 3.0/3.1 lines
-// (the shared case table pins that as S1). The two lines answering differently
-// is correct, and `openbindings.openapi-3.2@1` §9.5 states it as the edition
-// difference it is. What 3.2 still fixes is the KIND -- `description` is typed
-// `string` -- which is the whole of what this function tests.
-//
-// Round R nearly got this wrong in the safe direction's opposite: it implemented
-// the omission check too, and 25 shipped tests in the Go client went red. They
-// were not stale fixtures. They were legal OAS 3.2 documents, and the authority
-// was refusing a rule it does not impose.
-//
-// DECISION, recorded where a reader of this rule will look: THIS LANE GETS NO
-// ACCEPTANCE FLOOR, and that is a finding rather than deferred debt. Round R2
-// scouted one and measured why it would be the wrong instrument. The floor's
-// own primitive `isFloorResponseObject` DEFINES a Response Object by the
-// presence of `description` -- the exact constraint OAS 3.2.0 removed -- so D7
-// and D6 would both be wrong on this line before any other class fired; its
-// `httpMethods` inventory predates `query` and `additionalOperations`, so the
-// raw operation inventory would be wrong too; and fifteen further classes would
-// begin firing on a lane that reaches every verdict through the overlay,
-// changing coverage emission, the confinement pass's attribution and §3 part 2's
-// whole-source refusal, and forcing 3.2 cells into the digest-pinned shared case
-// table. A ladder built on a presence predicate the edition deleted is not a
-// smaller version of the right instrument; it is the wrong one. The complaint
-// the debt note recorded -- that the outcome followed from the absence of a rule
-// -- is discharged by STATING the rule here, which is what this does.
-function openAPI32ResponseObjectDefect(response: Record<string, unknown>): string | undefined {
-  if (Object.hasOwn(response, "description") && typeof response["description"] !== "string") {
-    return "`description` is not a string";
-  }
-  for (const field of ["content", "headers", "links"] as const) {
-    if (!Object.hasOwn(response, field)) continue;
-    const members = asRecord(response[field]);
-    if (!members) return `${JSON.stringify(field)} is not a map`;
-    if (field !== "headers") continue;
-    for (const name of Object.keys(members).sort()) {
-      // Case-SENSITIVE, exactly as the 3.0/3.1 floor's test is: these keys are
-      // HEADER NAMES, and `X-Request-Id` is an ordinary header rather than a
-      // specification extension.
-      if (name.startsWith("x-")) continue;
-      if (!asRecord(members[name])) return `header ${JSON.stringify(name)} is not a Header Object`;
-    }
-  }
-  return undefined;
-}
-
-/**
- * The Responses keys whose declaration can govern a SUCCESSFUL (2xx final
- * status) response.
- *
- * Round R2's F1 ruling scopes the upstream-invalid Response Object exclusion to
- * the governing SUCCESS declaration, family-wide: a failure body is opaque
- * application-authored data (§9.6), so a defect in the declaration that governs
- * one loses no representation and must not destroy a target whose success path
- * is intact. It is what the 3.0/3.1 acceptance floor already performs by never
- * climbing at a non-success response.
- *
- * `default` qualifies only when no `2XX` range key is declared: a `2XX` key
- * covers the whole success class, so `default` can then never govern one. That
- * is the same question `swagger20SuccessResponseKey` answers with an
- * unconditional yes, because OAS 2.0 has no range keys at all.
- */
-function openAPI32SuccessResponseKeys(responses: Record<string, unknown>): Set<string> {
-  const hasSuccessRange = Object.hasOwn(responses, "2XX");
-  const out = new Set<string>();
-  for (const key of Object.keys(responses)) {
-    if (key.startsWith("x-")) continue;
-    if (/^2[0-9][0-9]$/u.test(key) || key === "2XX") out.add(key);
-    else if (key === "default" && !hasSuccessRange) out.add(key);
-  }
-  return out;
 }

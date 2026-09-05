@@ -25,7 +25,24 @@ export interface Swagger20SecurityCredentials {
   oauth2?: Record<string, Swagger20OAuth2Credential>;
 }
 
-interface Swagger20CredentialPlacement { query: boolean; name: string; value: string }
+export interface Swagger20CredentialPlacement { query: boolean; name: string; value: string }
+
+const PROCESSOR_OWNED_CREDENTIAL_HEADERS = new Set([
+  "host",
+  "content-length",
+  "content-type",
+  "content-encoding",
+  "accept",
+  "accept-encoding",
+  "connection",
+  "keep-alive",
+  "proxy-authorization",
+  "proxy-connection",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+]);
 
 /** Selects exactly one complete security alternative and validates only its closure. */
 export function selectSwagger20Security(
@@ -76,7 +93,7 @@ export function selectSwagger20Security(
     if (credentialCollides(placement, parameters)) {
       throw new Error(`Swagger 2.0 credential ${JSON.stringify(name)} collides with an effective Parameter`);
     }
-    if (!placement.query && ["host", "content-length", "content-type"].includes(placement.name.toLowerCase())) {
+    if (!placement.query && PROCESSOR_OWNED_CREDENTIAL_HEADERS.has(placement.name.toLowerCase())) {
       throw new Error(`Swagger 2.0 credential ${JSON.stringify(name)} collides with processor-owned header ${JSON.stringify(placement.name)}`);
     }
     owned.set(key, name);
@@ -87,6 +104,9 @@ export function selectSwagger20Security(
 
 export function applySwagger20Security(routed: Swagger20RoutedInput, placements: Swagger20CredentialPlacement[]): void {
   for (const placement of placements) {
+    if (runtimeCredentialCollision(routed, placement)) {
+      throw new Error(`Swagger 2.0 credential destination ${JSON.stringify(placement.name)} collides with supplied parameter input`);
+    }
     const contribution: Swagger20WireContribution = placement.query
       ? { name: swagger20PercentEncode(placement.name), value: swagger20PercentEncode(placement.value), valuePresent: true }
       : { name: placement.name, value: placement.value, valuePresent: true };
@@ -127,6 +147,9 @@ function credentialPlacement(
     const value = credentials.apiKeys![name]!;
     if (destination.value === "header" && !httpFieldValue(value)) {
       throw new Error(`Swagger 2.0 apiKey credential ${JSON.stringify(name)} contains a field-invalid byte`);
+    }
+    if (destination.value === "header" && wireName.value!.toLowerCase() === "cookie" && !cookieString(value)) {
+      throw new Error(`Swagger 2.0 apiKey credential ${JSON.stringify(name)} is not a complete Cookie field value`);
     }
     return { query: destination.value === "query", name: wireName.value!, value };
   }
@@ -178,8 +201,20 @@ function validateOAuth2(name: string, definition: Swagger20Object, requiredScope
 }
 
 function credentialCollides(placement: Swagger20CredentialPlacement, parameters: Swagger20ParameterSet): boolean {
-  if (placement.query) return parameters.byWire.query.has(placement.name);
-  return [...parameters.byWire.header.keys()].some((name) => name.toLowerCase() === placement.name.toLowerCase());
+  if (placement.query) return parameters.byWire.query.get(placement.name)?.required === true;
+  return [...parameters.byWire.header.values()].some((parameter) =>
+    parameter.required && parameter.name.toLowerCase() === placement.name.toLowerCase());
+}
+
+function runtimeCredentialCollision(
+  routed: Swagger20RoutedInput,
+  placement: Swagger20CredentialPlacement,
+): boolean {
+  if (placement.query) {
+    const encoded = swagger20PercentEncode(placement.name);
+    return routed.query.some((contribution) => contribution.name === encoded);
+  }
+  return routed.headers.some((contribution) => contribution.name.toLowerCase() === placement.name.toLowerCase());
 }
 
 function validBasicText(value: string): boolean {
@@ -190,7 +225,15 @@ function validBasicText(value: string): boolean {
 }
 
 function httpFieldName(value: string): boolean { return /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u.test(value); }
-function httpFieldValue(value: string): boolean { return !/[\u0000-\u0008\u000a-\u001f\u007f]/u.test(value); }
+function httpFieldValue(value: string): boolean {
+  return value === value.trim() && !/[\u0000-\u0008\u000a-\u001f\u007f]/u.test(value);
+}
+function cookieString(value: string): boolean {
+  const token = "[!#$%&'*+.^_`|~0-9A-Za-z-]+";
+  const octets = "[\\x21\\x23-\\x2B\\x2D-\\x3A\\x3C-\\x5B\\x5D-\\x7E]*";
+  const pair = `${token}=(?:${octets}|\"${octets}\")`;
+  return new RegExp(`^${pair}(?:; ${pair})*$`, "u").test(value);
+}
 
 /**
  * The auth requirements of one selected security alternative, in the same

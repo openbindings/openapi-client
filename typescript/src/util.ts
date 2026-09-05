@@ -1393,7 +1393,7 @@ function stringHasLoneSurrogate(value: string): boolean {
   return false;
 }
 
-function valueHasLoneSurrogate(value: unknown): boolean {
+export function valueHasLoneSurrogate(value: unknown): boolean {
   if (typeof value === "string") return stringHasLoneSurrogate(value);
   if (Array.isArray(value)) return value.some((member) => valueHasLoneSurrogate(member));
   if (value !== null && typeof value === "object") {

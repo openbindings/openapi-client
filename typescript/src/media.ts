@@ -11,7 +11,7 @@ import {
   serializeMultipartValue,
   serializeQueryValue,
 } from "./params.js";
-import { bodySchemaFlattens, codePointCompare } from "./util.js";
+import { bodySchemaFlattens, codePointCompare, valueHasLoneSurrogate } from "./util.js";
 import {
   hasDynamicObjectCarriage,
   hasMediaFidelity,
@@ -26,13 +26,13 @@ import {
 import {
   buildOpenAPI32MultipartBody,
   buildOpenAPI32SequentialBody,
-  openAPI32MultipartNeedsNativeBuilder,
   openAPI32RequestMediaAdmission,
   serializeOpenAPI32NonJSONText,
   validateOpenAPI32MultipartFields,
   type OpenAPI32SequentialRequestKind,
 } from "./openapi32-media.js";
 import { resolveDeclaration } from "./resolved-declaration.js";
+import type { OpenAPICharacterEncoder } from "./response-mechanics.js";
 
 // This file implements the family documents' request-media and body rules:
 // media selection with its deterministic tiebreaks and pre-dispatch
@@ -858,16 +858,12 @@ function validateRevision3URLEncoded(
   }
 }
 
-const SUPPORTED_CHARSETS = new Set(["utf-8", "us-ascii", "iso-8859-1"]);
-
 function requireSupportedCharset(
   parsed: Pick<ParsedMediaType, "params">,
   subject: string,
 ): void {
   const charset = parsed.params["charset"];
-  if (charset !== undefined && !SUPPORTED_CHARSETS.has(charset.toLowerCase())) {
-    throw new Error(`${subject} declares unsupported charset ${JSON.stringify(charset)}`);
-  }
+  if (charset !== undefined && charset === "") throw new Error(`${subject} declares an empty charset`);
 }
 
 // hasExplicitMultipartExpansion reports whether an Encoding Object writes an
@@ -1350,6 +1346,9 @@ function effectiveRevision3PartSchema(
   if (literal === true) return { schema: {}, nullable: false };
   if (literal === false) return { schema: false, nullable: false };
   if (schema === null || typeof schema === "boolean") return { schema: null, nullable: false };
+  if (is30 && schema.nullable === true && typeof schema.type === "string") {
+    return { schema, nullable: true };
+  }
   const collapsed = collapsedNullableChoiceBranch(schema);
   if (collapsed !== null) return { schema: collapsed, nullable: true };
   const member = collapsedNullableTypeMember(schema, is30);
@@ -1943,6 +1942,7 @@ export function buildRequestBody(
   doc: OpenAPIDocument,
   plan: BodyPlan | null,
   routed: RoutedBody,
+  characterEncoders?: ReadonlyMap<string, OpenAPICharacterEncoder>,
 ): WireBody {
   if (!plan?.declared) return { body: undefined, contentType: "" };
   switch (plan.family) {
@@ -1954,29 +1954,34 @@ export function buildRequestBody(
           // body rides the wire.
           return { body: undefined, contentType: "" };
         }
-        return { body: JSON.stringify(routed.bodyValue ?? null), contentType: plan.mediaType };
+        const value = routed.bodyValue ?? null;
+        if (valueHasLoneSurrogate(value)) throw new Error("request value carries an unpaired surrogate");
+        return { body: JSON.stringify(value), contentType: plan.mediaType };
       }
       if (Object.keys(routed.bodyFields).length === 0) {
         if (plan.required || routed.bodySet) return { body: "{}", contentType: plan.mediaType };
         return { body: undefined, contentType: "" };
       }
+      if (valueHasLoneSurrogate(routed.bodyFields)) {
+        throw new Error("request value carries an unpaired surrogate");
+      }
       return { body: JSON.stringify(routed.bodyFields), contentType: plan.mediaType };
     }
     case FAMILY_MULTIPART: {
-      if (plan.openapiVersion === "3.2.0") {
-        if (plan.positionalMultipart) {
-          if (!routed.bodySet && !plan.required) return { body: undefined, contentType: "" };
-          return buildOpenAPI32MultipartBody(plan.mediaType, plan.media, routed);
+      if (plan.revision3 === true) {
+        if (plan.positionalMultipart && !routed.bodySet && !plan.required) {
+          return { body: undefined, contentType: "" };
         }
         const openAPI32Fields = objectBodyFields(plan, routed);
+        if (plan.openapiVersion === "3.2.0") {
         validateOpenAPI32MultipartFields(plan.media, openAPI32Fields);
-        if (openAPI32MultipartNeedsNativeBuilder(plan.media)) {
-          return buildOpenAPI32MultipartBody(
-            plan.mediaType,
-            plan.media,
-            { ...routed, bodyFields: openAPI32Fields },
-          );
         }
+        return buildOpenAPI32MultipartBody(
+          plan.mediaType,
+          plan.media,
+          { ...routed, bodyFields: openAPI32Fields },
+          plan.openapiVersion,
+        );
       }
       const fields = objectBodyFields(plan, routed);
       if (Object.keys(fields).length === 0 && !plan.required && !routed.bodySet) {
@@ -1988,11 +1993,10 @@ export function buildRequestBody(
           doc,
           plan.media,
           fields,
-          plan.revision3 === true,
+          false,
           plan.wholeObject === true,
         ),
         contentType: "",
-        ...(plan.revision3 === true ? { multipartMediaType: plan.mediaType } : {}),
       };
     }
     case FAMILY_URLENCODED: {
@@ -2021,12 +2025,19 @@ export function buildRequestBody(
           `request media ${plan.mediaType} declares a string body but the supplied value is ${typeof routed.bodyValue}, not a string`,
         );
       }
+      if (plan.openapiVersion === "3.2.0" && plan.range) {
+        const declaration = resolveDeclaration(mediaSchema(plan.media), false);
+        const types = [...(declaration.types ?? [])].filter((type) => type !== "null");
+        if (declaration.ambiguous || new Set(types).size !== 1) {
+          throw new Error(`request media ${plan.mediaType} does not determine exactly one non-JSON serialization type`);
+        }
+      }
       const text = plan.openapiVersion === "3.2.0"
         ? serializeOpenAPI32NonJSONText(mediaSchema(plan.media), routed.bodyValue)
         : routed.bodyValue as string;
       return {
         body: plan.revision3 === true && Object.hasOwn(parseMediaType(plan.mediaType, true).params, "charset")
-          ? encodeTextForMedia(text, plan.mediaType, "request body")
+          ? encodeTextForMedia(text, plan.mediaType, "request body", characterEncoders)
           : text,
         contentType: plan.mediaType,
       };
@@ -2145,7 +2156,12 @@ function replaceMultipartBoundary(
   return result;
 }
 
-function encodeTextForMedia(value: unknown, mediaType: string, subject: string): Uint8Array<ArrayBuffer> {
+function encodeTextForMedia(
+  value: unknown,
+  mediaType: string,
+  subject: string,
+  encoders?: ReadonlyMap<string, OpenAPICharacterEncoder>,
+): Uint8Array<ArrayBuffer> {
   if (typeof value !== "string") {
     throw new Error(`${subject} requires a string value`);
   }
@@ -2154,26 +2170,21 @@ function encodeTextForMedia(value: unknown, mediaType: string, subject: string):
   switch ((parsed.params["charset"] ?? "utf-8").toLowerCase()) {
     case "utf-8":
       return new TextEncoder().encode(value);
-    case "us-ascii": {
-      const result = new Uint8Array(value.length);
-      for (let index = 0; index < value.length; index++) {
-        const code = value.charCodeAt(index);
-        if (code > 0x7f) throw new Error(`${subject} cannot represent U+${code.toString(16).toUpperCase().padStart(4, "0")} as US-ASCII`);
-        result[index] = code;
-      }
-      return result;
-    }
-    case "iso-8859-1": {
-      const result = new Uint8Array(value.length);
-      for (let index = 0; index < value.length; index++) {
-        const code = value.charCodeAt(index);
-        if (code > 0xff) throw new Error(`${subject} cannot represent U+${code.toString(16).toUpperCase().padStart(4, "0")} as ISO-8859-1`);
-        result[index] = code;
-      }
-      return result;
-    }
   }
-  throw new Error(`${subject} declares an unsupported charset`);
+  const charset = (parsed.params["charset"] ?? "utf-8").toLowerCase();
+  const encoder = encoders?.get(charset);
+  if (!encoder) throw new Error(`${subject} declares charset ${JSON.stringify(charset)} without a request encoder`);
+  try {
+    const encoded = encoder(value);
+    if (encoded instanceof Uint8Array) return Uint8Array.from(encoded);
+    if (encoded instanceof ArrayBuffer) return new Uint8Array(encoded);
+    if (ArrayBuffer.isView(encoded)) {
+      return Uint8Array.from(new Uint8Array(encoded.buffer, encoded.byteOffset, encoded.byteLength));
+    }
+  } catch (error: unknown) {
+    throw new Error(`${subject} character encoder ${JSON.stringify(charset)} failed`, { cause: error });
+  }
+  throw new Error(`${subject} character encoder ${JSON.stringify(charset)} returned no byte sequence`);
 }
 
 function decodeBoundaryBase64(value: unknown, mediaType: string): Uint8Array<ArrayBuffer> {
@@ -3085,10 +3096,7 @@ function buildRevision3URLEncodedBody(
     }
     const effective = effectiveRevision3PartSchema(property, openapiVersion.startsWith("3.0"));
     if (effective.nullable && fields[name] === null) {
-      if (
-        openapiVersion === "3.2.0"
-        && resolveDeclaration(schema, false).requiresProperty(name)
-      ) {
+      if (resolveDeclaration(schema, openapiVersion.startsWith("3.0")).requiresProperty(name)) {
         throw new Error(`urlencoded property ${JSON.stringify(name)} is required and cannot be elided for null content-based encoding`);
       }
       continue; // §9.2: a JSON null value elides the nullable optional field
@@ -3267,13 +3275,12 @@ export function successMediaTypes(
 ): string[] {
   if (!op?.responses) return [];
   const seen = new Map<string, string>();
-  const hasRange = Object.hasOwn(op.responses, "2XX");
-  const exactSuccesses = new Set(
-    Object.keys(op.responses).filter((key) => /^2[0-9][0-9]$/.test(key)),
-  );
   for (const [key, resp] of Object.entries(op.responses)) {
-    const defaultCanGovernSuccess = key === "default" && !hasRange && exactSuccesses.size < 100;
-    if (!isSuccessResponseKey(key) && !defaultCanGovernSuccess) continue;
+    // Accept is an operation-wide advertisement: failure Response media are
+    // useful to the peer too. Invalid response keys and exact HTTP no-content
+    // cases contribute no response representation alternative.
+    if (!/^(?:[1-5][0-9][0-9]|[1-5]XX|default)$/u.test(key)) continue;
+    if (/^1[0-9][0-9]$/u.test(key) || ["204", "205", "304"].includes(key)) continue;
     const content = (resp as OpenAPIResponse | undefined)?.content;
     if (!content) continue;
     // §9.2 normalized collision, confined: a colliding parsed identity can
@@ -3285,6 +3292,7 @@ export function successMediaTypes(
       if (colliding.has(mt)) continue;
       try {
         const parsed = parseMediaType(mt, revision3);
+        if (Object.hasOwn(parsed.params, "q")) continue;
         advertise(seen, parsed);
       } catch {
         if (revision3 && responseFidelity) {

@@ -186,6 +186,7 @@ export function buildOpenAPI32MultipartBody(
   mediaType: string,
   media: OpenAPIMediaType | null,
   routed: OpenAPI32RoutedBody,
+  openapiVersion = "3.2.0",
 ): OpenAPI32MultipartWire {
   if (!media) throw new Error("OpenAPI 3.2 multipart plan has no Media Type Object");
   const base = mediaBase(mediaType);
@@ -199,7 +200,7 @@ export function buildOpenAPI32MultipartBody(
     const prefix = Array.isArray(media.prefixEncoding) ? media.prefixEncoding : [];
     const itemEncoding = asRecord(media.itemEncoding);
     const itemSchema = media.itemSchema as SchemaDeclaration
-      ?? resolveDeclaration(media.schema as SchemaDeclaration, false).items();
+      ?? resolveDeclaration(media.schema as SchemaDeclaration, openapiVersion.startsWith("3.0.")).items();
     routed.bodyValue.forEach((value, index) => {
       const encoding = asRecord(prefix[index]) ?? itemEncoding;
       const disposition = formData ? positionalDisposition(encoding) : undefined;
@@ -211,21 +212,38 @@ export function buildOpenAPI32MultipartBody(
         encoding,
         formData,
         0,
+        openapiVersion,
       ));
     });
   } else {
-    const root = resolveDeclaration(media.schema as SchemaDeclaration, false);
+    const root = resolveDeclaration(media.schema as SchemaDeclaration, openapiVersion.startsWith("3.0."));
     const encoding = asRecord(media.encoding);
     for (const name of Object.keys(routed.bodyFields).sort()) {
-      parts.push(multipartPart(
-        boundary,
-        `form-data; name=${JSON.stringify(name)}`,
-        routed.bodyFields[name],
-        root.property(name),
-        asRecord(encoding?.[name]),
-        formData,
-        0,
-      ));
+      const property = root.property(name);
+      const value = routed.bodyFields[name];
+      if (value === null && property.admitsNull() && !root.requiresProperty(name)) {
+        continue;
+      }
+      const propertyEncoding = asRecord(encoding?.[name]);
+      if (formData) validateFixedFormDisposition(name, propertyEncoding);
+      if (property.declaresOnly("array") && !Array.isArray(value)) {
+        throw new Error(`multipart property ${JSON.stringify(name)} requires an array value`);
+      }
+      const nested = activeNestedEncoding(propertyEncoding);
+      const values = property.declaresOnly("array") && Array.isArray(value) && !nested ? value : [value];
+      const declaration = property.declaresOnly("array") && !nested ? property.items() : property;
+      for (const member of values) {
+        parts.push(multipartPart(
+          boundary,
+          generatedFormDisposition(name),
+          member,
+          declaration,
+          propertyEncoding,
+          formData,
+          0,
+          openapiVersion,
+        ));
+      }
     }
   }
   parts.push(ascii(`--${boundary}--\r\n`));
@@ -243,8 +261,12 @@ function multipartPart(
   encoding: Record<string, unknown> | null,
   formData: boolean,
   depth: number,
+  openapiVersion: string,
 ): Uint8Array<ArrayBuffer> {
-  const declaration = isResolvedDeclaration(schema) ? schema : resolveDeclaration(schema, false);
+  const headerGroups = encodingHeaderGroups(encoding, openapiVersion);
+  const declaration = isResolvedDeclaration(schema)
+    ? schema
+    : resolveDeclaration(schema, openapiVersion.startsWith("3.0."));
   let contentType = typeof encoding?.contentType === "string" && encoding.contentType !== ""
     ? firstContentType(encoding.contentType)
     : defaultPartContentType(declaration, value);
@@ -262,12 +284,13 @@ function multipartPart(
       for (const name of Object.keys(object).sort()) {
         nestedParts.push(multipartPart(
           nestedBoundary,
-          `form-data; name=${JSON.stringify(name)}`,
+          generatedFormDisposition(name),
           object[name],
           declaration.property(name),
           asRecord(children?.[name]),
           mediaBase(contentType) === "multipart/form-data",
           depth + 1,
+          openapiVersion,
         ));
       }
     } else {
@@ -285,6 +308,7 @@ function multipartPart(
           child,
           mediaBase(contentType) === "multipart/form-data",
           depth + 1,
+          openapiVersion,
         ));
       });
     }
@@ -296,12 +320,14 @@ function multipartPart(
   }
 
   const headers: string[] = [];
+  const declaredDisposition = headerGroups.get("content-disposition")?.fixed;
+  if (declaredDisposition !== undefined) disposition = declaredDisposition;
   if (disposition !== undefined) headers.push(`Content-Disposition: ${disposition}`);
   else if (formData) headers.push("Content-Disposition: form-data; name=\"\"");
   headers.push(`Content-Type: ${contentType}`);
   const contentEncoding = declaration.keywordString("contentEncoding");
   if (!contentEncoding.conflict && contentEncoding.value !== "" && declaration.admitsStringAsSoleNonNullType()) {
-    const transfer = headerDeclaration(encoding, "Content-Transfer-Encoding");
+    const transfer = headerGroups.get("content-transfer-encoding");
     if (transfer && !transfer.admits(contentEncoding.value)) {
       throw new Error(`explicit Content-Transfer-Encoding Header disallows contentEncoding ${JSON.stringify(contentEncoding.value)}`);
     }
@@ -311,8 +337,9 @@ function multipartPart(
     // equivalence still governs the conflict check above and parsing. Matches
     // the 3.0/3.1 lanes.
   }
-  for (const [name, value] of fixedHeaders(encoding)) {
-    if (name.toLowerCase() === "content-type" || name.toLowerCase() === "content-transfer-encoding") continue;
+  for (const { name, fixed: value } of headerGroups.values()) {
+    if (value === undefined) continue;
+    if (name.toLowerCase() === "content-type") continue;
     if (name.toLowerCase() === "content-disposition" && disposition !== undefined) continue;
     headers.push(`${name}: ${value}`);
   }
@@ -323,15 +350,44 @@ function multipartPart(
   ]);
 }
 
+function generatedFormDisposition(name: string): string {
+  for (const character of name) {
+    const code = character.codePointAt(0)!;
+    if (code === 0 || code === 0x7f || code < 0x20) {
+      throw new Error(`multipart part name ${JSON.stringify(name)} contains a forbidden control character`);
+    }
+  }
+  return `form-data; name="${name.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+}
+
+function validateFixedFormDisposition(name: string, encoding: Record<string, unknown> | null): void {
+  const fixed = headerDeclaration(encoding, "Content-Disposition")?.fixed;
+  if (fixed === undefined) return;
+  if (/(?:^|;)\s*filename\*\s*=/iu.test(fixed)) {
+    throw new Error(`multipart property ${JSON.stringify(name)} declares forbidden filename* in Content-Disposition`);
+  }
+  const match = /(?:^|;)\s*name\s*=\s*(?:"((?:\\.|[^"])*)"|([^;\s]+))/iu.exec(fixed);
+  const declared = match?.[1] !== undefined
+    ? match[1].replace(/\\(["\\])/gu, "$1")
+    : match?.[2];
+  if (!/^form-data\s*;/iu.test(fixed) || declared !== name) {
+    throw new Error(`multipart Content-Disposition does not name property ${JSON.stringify(name)}`);
+  }
+}
+
 function partBody(
   declaration: ReturnType<typeof resolveDeclaration>,
   value: unknown,
   contentType: string,
 ): Uint8Array<ArrayBuffer> {
   const encoding = declaration.keywordString("contentEncoding");
-  if (!encoding.conflict && encoding.value !== "") {
+  if (!encoding.conflict && encoding.value !== "" && declaration.admitsStringAsSoleNonNullType()) {
     if (typeof value !== "string") throw new Error("artifact-encoded multipart part requires a string");
     return new TextEncoder().encode(value);
+  }
+  const format = declaration.format();
+  if (!format.conflict && format.value === "binary") {
+    return canonicalBase64Bytes(value, "multipart binary part");
   }
   if (declaration.typeless()) return canonicalBase64Bytes(value, "multipart part");
   if (mediaBase(contentType) === "application/json" || mediaBase(contentType).endsWith("+json")) {
@@ -449,6 +505,110 @@ function fixedHeaders(encoding: Record<string, unknown> | null): Array<[string, 
   return result;
 }
 
+interface EncodingHeaderGroup {
+  name: string;
+  fixed?: string;
+  required: boolean;
+  admits(value: string): boolean;
+}
+
+/**
+ * Resolves one HTTP field per ASCII-case-insensitive Encoding-header group.
+ * Exact raw-string domains are intentionally narrow: only schema-form
+ * string const/enum constraints, conjoined through allOf, participate.
+ */
+function encodingHeaderGroups(
+  encoding: Record<string, unknown> | null,
+  openapiVersion: string,
+): Map<string, EncodingHeaderGroup> {
+  const grouped = new Map<string, Array<{
+    name: string;
+    required: boolean;
+    domain: ReadonlySet<string> | null;
+  }>>();
+  const headers = asRecord(encoding?.headers);
+  for (const name of Object.keys(headers ?? {}).sort()) {
+    if (name.toLowerCase() === "content-type") continue;
+    if (!HTTP_FIELD_NAME.test(name)) {
+      throw new Error(`Encoding header ${JSON.stringify(name)} is not an HTTP field-name token`);
+    }
+    const header = asRecord(headers?.[name]);
+    if (!header) continue; // invalid projection is confined and treated absent
+    const key = name.toLowerCase();
+    const members = grouped.get(key) ?? [];
+    members.push({
+      name,
+      required: header.required === true,
+      domain: Object.hasOwn(header, "content")
+        ? null
+        : exactHeaderStringDomain(header.schema, !openapiVersion.startsWith("3.0.")),
+    });
+    grouped.set(key, members);
+  }
+
+  const result = new Map<string, EncodingHeaderGroup>();
+  for (const [key, members] of grouped) {
+    const fixed = new Set<string>();
+    for (const member of members) {
+      if (member.domain?.size === 1) fixed.add(member.domain.values().next().value!);
+    }
+    if (fixed.size > 1) {
+      throw new Error(`case-equivalent Encoding headers for ${JSON.stringify(members[0]!.name)} fix conflicting values`);
+    }
+    const value = fixed.values().next().value as string | undefined;
+    if (value !== undefined && members.some((member) => member.domain !== null && !member.domain.has(value))) {
+      throw new Error(`case-equivalent Encoding headers for ${JSON.stringify(members[0]!.name)} have no common fixed value`);
+    }
+    const required = members.some((member) => member.required);
+    if (value === undefined && required) {
+      throw new Error(`required Encoding header ${JSON.stringify(members[0]!.name)} has no exact artifact-fixed value`);
+    }
+    if (value !== undefined && !validHTTPFieldValue(value)) {
+      throw new Error(`Encoding header ${JSON.stringify(members[0]!.name)} fixes an invalid HTTP field value`);
+    }
+    result.set(key, {
+      name: members[0]!.name,
+      ...(value === undefined ? {} : { fixed: value }),
+      required,
+      admits: (candidate) => members.every((member) => member.domain === null || member.domain.has(candidate)),
+    });
+  }
+  return result;
+}
+
+const HTTP_FIELD_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u;
+
+function validHTTPFieldValue(value: string): boolean {
+  if (/^[ \t]|[ \t]$/u.test(value)) return false;
+  for (const character of value) {
+    const code = character.codePointAt(0)!;
+    if (code === 0x7f || (code < 0x20 && code !== 0x09) || (code >= 0xd800 && code <= 0xdfff)) return false;
+  }
+  return true;
+}
+
+function exactHeaderStringDomain(schema: unknown, allowConst: boolean): ReadonlySet<string> | null {
+  if (schema === false) return new Set();
+  const object = asRecord(schema);
+  if (!object) return null;
+  const domains: Set<string>[] = [];
+  if (allowConst && typeof object.const === "string") domains.push(new Set([object.const]));
+  if (Array.isArray(object.enum)) {
+    const strings = object.enum.filter((candidate): candidate is string => typeof candidate === "string");
+    if (strings.length > 0) domains.push(new Set(strings));
+  }
+  for (const member of Array.isArray(object.allOf) ? object.allOf : []) {
+    const domain = exactHeaderStringDomain(member, allowConst);
+    if (domain !== null) domains.push(new Set(domain));
+  }
+  if (domains.length === 0) return null;
+  const [first, ...rest] = domains;
+  for (const candidate of [...first!]) {
+    if (rest.some((domain) => !domain.has(candidate))) first!.delete(candidate);
+  }
+  return first!;
+}
+
 function defaultPartContentType(
   declaration: ReturnType<typeof resolveDeclaration>,
   value: unknown,
@@ -456,8 +616,14 @@ function defaultPartContentType(
   const declared = declaration.keywordString("contentMediaType");
   if (!declared.conflict && declared.value !== "") return declared.value;
   const encoding = declaration.keywordString("contentEncoding");
-  if (!encoding.conflict && encoding.value !== "") return "application/octet-stream";
+  if (!encoding.conflict && encoding.value !== "" && declaration.admitsStringAsSoleNonNullType()) {
+    return "application/octet-stream";
+  }
   if (declaration.typeless()) return "application/octet-stream";
+  const format = declaration.format();
+  if (!format.conflict && (format.value === "binary" || format.value === "byte")) {
+    return "application/octet-stream";
+  }
   const kind = openAPI32JSONValueType(value);
   return kind === "array" || kind === "object" ? "application/json" : "text/plain";
 }

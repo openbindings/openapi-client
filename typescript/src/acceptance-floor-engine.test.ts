@@ -1,6 +1,5 @@
 // The acceptance floor at the client engine's seams (block 8d-1): §3 part-2
-// whole-source refusal at load, and the prepare-time inventory filter that
-// refuses a ladder-invalid target before dispatch.
+// whole-source refusal at load, plus addressable-but-unusable target behavior.
 
 import { describe, expect, it } from "vitest";
 import { OpenAPIEngine, OpenAPIExecutionError } from "./engine.js";
@@ -16,7 +15,8 @@ const INVALID_TARGET_DOCUMENT = JSON.stringify({
     "/bad": {
       get: {
         operationId: "getBad",
-        responses: { "200": { description: "ok", content: { "application/json": { schema: { type: "int" } } } } },
+        parameters: [{ in: "query", schema: { type: "string" } }],
+        responses: { "200": { description: "ok" } },
       },
     },
   },

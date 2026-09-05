@@ -43,35 +43,102 @@ try {
     archive,
   ], typeScriptConsumer, npmEnvironment);
 
-  const document = JSON.stringify({
-    openapi: "3.1.2",
-    info: { title: "clean consumer", version: "1" },
-    servers: [{ url: "https://api.example.test" }],
-    paths: {
-      "/ping": {
-        get: {
-          operationId: "ping",
-          responses: { "204": { description: "done" } },
-        },
+  const documents = JSON.stringify([
+    {
+      edition: "2.0",
+      document: {
+        swagger: "2.0",
+        info: { title: "Swagger", version: "1" },
+        schemes: ["https"],
+        host: "api.example.test",
+        paths: { "/ping": { get: { operationId: "ping20", responses: { "204": { description: "done" } } } } },
       },
+      operationId: "ping20",
     },
-  });
+    ...["3.0.4", "3.1.2", "3.2.0"].map((edition) => ({
+      edition,
+      document: {
+        openapi: edition,
+        info: { title: `OpenAPI ${edition}`, version: "1" },
+        servers: [{ url: "https://api.example.test" }],
+        paths: { "/ping": { get: { operationId: `ping${edition.replaceAll(".", "")}`, responses: { "204": { description: "done" } } } } },
+      },
+      operationId: `ping${edition.replaceAll(".", "")}`,
+    })),
+  ]);
   await writeFile(join(typeScriptConsumer, "esm.mjs"), `
 import assert from "node:assert/strict";
 import { OpenAPIClient } from "@openbindings/openapi-client";
-const client = await OpenAPIClient.load(${document});
-assert.deepEqual(client.operations().map(({ operationId }) => operationId), ["ping"]);
+const documents = ${documents};
+for (const fixture of documents) {
+  const client = await OpenAPIClient.load(fixture.document, {
+    fetch: async () => new Response(null, { status: 204 }),
+  });
+  assert.equal(client.edition, fixture.edition);
+  assert.deepEqual(client.operations().map(({ operationId }) => operationId), [fixture.operationId]);
+  assert.equal((await client.operation(fixture.operationId).call()).ok, true);
+}
 `);
   await writeFile(join(typeScriptConsumer, "cjs.cjs"), `
 const assert = require("node:assert/strict");
 const { OpenAPIClient } = require("@openbindings/openapi-client");
 (async () => {
-  const client = await OpenAPIClient.load(${document});
-  assert.deepEqual(client.operations().map(({ operationId }) => operationId), ["ping"]);
+  const fixture = ${documents}[2];
+  const client = await OpenAPIClient.load(fixture.document);
+  assert.equal(client.edition, "3.1.2");
+  assert.deepEqual(client.operations().map(({ operationId }) => operationId), [fixture.operationId]);
 })().catch((error) => { console.error(error); process.exitCode = 1; });
 `);
+  await writeFile(join(typeScriptConsumer, "consumer.ts"), `
+import {
+  OpenAPIClient,
+  OpenAPIClientError,
+  type OpenAPIResult,
+} from "@openbindings/openapi-client";
+
+declare const document: Record<string, unknown>;
+async function consume(): Promise<void> {
+  const client = await OpenAPIClient.load(document, {
+    fetch: async () => new Response(null, { status: 204 }),
+  });
+  const result: OpenAPIResult<{ name: string }, { message: string }> =
+    await client.call("getPet", { parameters: { path: { id: "p-1" } } });
+  if (result.ok) result.data?.name.toUpperCase();
+  else result.error?.message.toUpperCase();
+  try {
+    await client.stream("watchPets");
+  } catch (error) {
+    if (error instanceof OpenAPIClientError) error.kind satisfies string;
+  }
+}
+void consume;
+`);
+  await writeFile(join(typeScriptConsumer, "consumer.cts"), `
+import openapi = require("@openbindings/openapi-client");
+const Client: typeof openapi.OpenAPIClient = openapi.OpenAPIClient;
+const ErrorType: typeof openapi.OpenAPIClientError = openapi.OpenAPIClientError;
+void Client;
+void ErrorType;
+`);
+  await writeFile(join(typeScriptConsumer, "tsconfig.json"), `${JSON.stringify({
+    compilerOptions: {
+      target: "ES2022",
+      module: "NodeNext",
+      moduleResolution: "NodeNext",
+      lib: ["ES2022", "DOM", "DOM.Iterable"],
+      strict: true,
+      noEmit: true,
+      skipLibCheck: false,
+    },
+    include: ["consumer.ts", "consumer.cts"],
+  }, null, 2)}\n`);
   await run(process.execPath, ["esm.mjs"], typeScriptConsumer);
   await run(process.execPath, ["cjs.cjs"], typeScriptConsumer);
+  await run(process.execPath, [
+    resolve(root, "typescript", "node_modules", "typescript", "bin", "tsc"),
+    "--project",
+    "tsconfig.json",
+  ], typeScriptConsumer);
 
   const goModule = resolve(root, "go").replaceAll("\\", "/");
   await writeFile(join(goConsumer, "go.mod"), `module releaseconsumer
@@ -86,17 +153,38 @@ replace github.com/openbindings/openapi-client/go => ${goModule}
 
 import (
   "context"
+  "io"
+  "net/http"
+  "strings"
   "testing"
 
   openapiclient "github.com/openbindings/openapi-client/go"
 )
 
+type transportFunc func(*http.Request) (*http.Response, error)
+func (f transportFunc) RoundTrip(request *http.Request) (*http.Response, error) { return f(request) }
+
 func TestCleanConsumer(t *testing.T) {
-  document := []byte(${JSON.stringify(document)})
-  client, err := openapiclient.Load(context.Background(), openapiclient.Source{Content: document}, openapiclient.ClientOptions{})
-  if err != nil { t.Fatal(err) }
-  operations := client.Operations()
-  if len(operations) != 1 || operations[0].OperationID != "ping" { t.Fatalf("operations = %#v", operations) }
+  fixtures := []struct { edition openapiclient.Edition; operationID, document string }{
+    {openapiclient.Swagger20, "ping20", ${JSON.stringify(JSON.stringify(JSON.parse(documents)[0].document))}},
+    {openapiclient.OpenAPI304, "ping304", ${JSON.stringify(JSON.stringify(JSON.parse(documents)[1].document))}},
+    {openapiclient.OpenAPI312, "ping312", ${JSON.stringify(JSON.stringify(JSON.parse(documents)[2].document))}},
+    {openapiclient.OpenAPI320, "ping320", ${JSON.stringify(JSON.stringify(JSON.parse(documents)[3].document))}},
+  }
+  transport := transportFunc(func(request *http.Request) (*http.Response, error) {
+    return &http.Response{StatusCode: 204, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("")), Request: request}, nil
+  })
+  for _, fixture := range fixtures {
+    client, err := openapiclient.Load(context.Background(), openapiclient.FromText(fixture.document), openapiclient.Options{
+      HTTPClient: &http.Client{Transport: transport},
+    })
+    if err != nil { t.Fatal(err) }
+    if client.Edition() != fixture.edition { t.Fatalf("edition = %q", client.Edition()) }
+    operation, err := client.Operation(openapiclient.OperationID(fixture.operationID))
+    if err != nil { t.Fatal(err) }
+    result, err := operation.Call(context.Background(), openapiclient.Input{})
+    if err != nil || !result.OK { t.Fatalf("result=%#v err=%v", result, err) }
+  }
 }
 `);
   await run("go", ["mod", "tidy"], goConsumer, { GOWORK: "off" });
@@ -110,8 +198,8 @@ func TestCleanConsumer(t *testing.T) {
     "package.json",
   ), "utf8"));
   assert.equal(manifest.name, "@openbindings/openapi-client");
-  assert.deepEqual(Object.keys(manifest.exports), [".", "./engine", "./analysis"]);
-  console.log("clean TypeScript ESM/CJS and Go consumers verified");
+  assert.deepEqual(Object.keys(manifest.exports), ["."]);
+  console.log("clean TypeScript ESM/CJS runtime and type consumers, plus Go consumer, verified");
 } finally {
   const expectedPrefix = join(tmpdir(), "openbindings-openapi-client-release-");
   if (!temporaryRoot.startsWith(expectedPrefix)) {

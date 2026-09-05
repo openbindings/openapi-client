@@ -69,22 +69,6 @@ export function parseOpenAPI32OperationReference(ref: string): OpenAPIOperationR
         `additional operation method ${JSON.stringify(method)} is not an HTTP token`,
       );
     }
-    for (const fixed of OPENAPI32_FIXED_METHODS) {
-      // The key denotes the method token it spells, and OAS forbids only an
-      // entry for a method a fixed field already defines. RFC 9110 §9.1 makes
-      // the method token case-sensitive and OAS 3.2.0 §3.2 routes this
-      // comparison to HTTP's own rule, so the collision is byte-equality
-      // against the token this fixed field sends — `fixed.toUpperCase()`,
-      // which is the fixed-field `wireMethod` rule below. `post` is a
-      // different token from `POST`, and no fixed field defines it
-      // (openbindings.openapi-3.2@1 §6.1).
-      if (method === fixed.toUpperCase()) {
-        throw new OpenAPIOperationResolutionError(
-          "excluded",
-          `additional operation method ${JSON.stringify(method)} collides with fixed operation field ${JSON.stringify(fixed)}`,
-        );
-      }
-    }
     return {
       ref,
       path: unescapePointerToken(parts[0]!),
@@ -142,10 +126,14 @@ export function openAPI32OperationReferences(root: unknown): OpenAPIOperationRef
       try {
         result.push(parseOpenAPI32OperationReference(ref));
       } catch (error: unknown) {
-        if (error instanceof OpenAPIOperationResolutionError && error.kind === "excluded") {
+        if (error instanceof OpenAPIOperationResolutionError) {
           // Inventory retains excluded positions. Construct the reference
-          // without weakening the parser used for actual selection.
-          result.push({ ref, path, method, additional: true, wireMethod: method });
+          // without weakening the parser used for actual selection. Invalid
+          // reference spellings remain absent so an explicit selector fails
+          // at selector resolution rather than making artifact loading fail.
+          if (error.kind === "excluded") {
+            result.push({ ref, path, method, additional: true, wireMethod: method });
+          }
           continue;
         }
         throw error;

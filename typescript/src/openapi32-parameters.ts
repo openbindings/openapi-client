@@ -9,7 +9,6 @@ import { isJSONMediaType, buildURLEncodedBody, parseMediaType } from "./media.js
 import {
   checkPathTemplateDeclaration,
   effectiveParameterDeclarationRows,
-  formStyleCookieMultiValueProof,
   queryEscape,
   resolvedParameterStyleLaneUndefinedExpansionMember,
   serializationMethod,
@@ -60,9 +59,6 @@ export function validateOpenAPI32OperationParameters(
     const member = resolvedParameterStyleLaneUndefinedExpansionMember(parameter, false);
     if (member !== null) {
       throw new Error(`resolved compound member ${JSON.stringify(member)} has no defined style expansion`);
-    }
-    if (formStyleCookieMultiValueProof(parameter, false)) {
-      throw new Error("form-style exploded cookie declaration always produces multiple cookie pairs");
     }
   }
 

@@ -47,7 +47,12 @@ import { codePointCompare, errorMessage, escapeJSONPointerSegment, parseStrictRe
 import {
   MissingPathParamError,
   effectiveParameters,
+  effectiveParameterDeclarationRows,
+  equivalentPathTemplateCollision,
+  invalidRequiredParameterName,
+  malformedEffectiveParameter,
   queryEscape,
+  resolvedStyleLaneUndefinedExpansionParam,
   routeInput,
   unflattenableParam,
   validateResolvedParameterSerialization,
@@ -73,11 +78,17 @@ import {
   isJSONMediaType,
   normalizeMediaType,
   parseMediaType,
-  planRequestBodies,
   responseUsesRawBoundary,
   type BodyPlan,
 } from "./media.js";
-import { ConfigRequired, resolveServer } from "./servers.js";
+import {
+  configuredResolvedPropertyMedia,
+  planResolvedRequestBodies,
+  prepareResolvedEncodingView,
+  prepareResolvedPropertyMediaView,
+  requiredPropertyMediaNames,
+} from "./resolved-media.js";
+import { ConfigRequired, resolveServer, validateCompletedOpenAPIURL } from "./servers.js";
 import {
   buildOpenAPICredentialPlacements,
   encodeOpenAPICredentialQuery,
@@ -92,9 +103,23 @@ import {
   classifyOpenAPI32SequentialResponse,
   streamOpenAPI32SequentialResponse,
 } from "./openapi32-sequential-response.js";
+import {
+  OpenAPIWireMechanicsError,
+  governOpenAPIRequest,
+  governOpenAPIResponse,
+  type OpenAPICharacterDecoder,
+  type OpenAPICharacterEncoder,
+  type OpenAPIContentDecoder,
+  type OpenAPIContentEncoder,
+  type OpenAPIResponseMechanicsModel,
+} from "./response-mechanics.js";
 
 interface OpenAPIBindingRunArgs extends BindingInvocationArgs {
   openAPITarget?: OpenAPIResolvedOperation;
+  requestContentCodings?: ReadonlyMap<string, OpenAPIContentEncoder>;
+  responseContentCodings?: ReadonlyMap<string, OpenAPIContentDecoder>;
+  requestCharacterEncodings?: ReadonlyMap<string, OpenAPICharacterEncoder>;
+  responseCharacterEncodings?: ReadonlyMap<string, OpenAPICharacterDecoder>;
 }
 
 /**
@@ -141,6 +166,7 @@ import {
   hostMethodRefusal,
   hostTransport,
   type OpenAPIHostTransport,
+  type OpenAPIPlannedRequest,
 } from "./host-transport.js";
 
 /**
@@ -200,10 +226,19 @@ export async function runBinding(
     );
     return;
   }
+  const securityDocument = scopedSecurityDocument(doc, args.openAPITarget, args.context);
+  if (doc.openapi === "3.2.0" && wireMethod === "CONNECT") {
+    inv.fireError(new InvocationError(
+      ERR_REFUSED,
+      "CONNECT creates a tunnel outside the unary OpenAPI operation model",
+    ));
+    return;
+  }
 
   const routedRevision = hasRoutedInputs(args.source.profile);
   const revision3 = hasMediaFidelity(args.source.profile);
   const responseFidelity = hasResponseFidelity(args.source.profile);
+  const bodyIgnored = requestBodyIgnored(doc.openapi ?? "", wireMethod);
   const planningOptions = {
     profile: args.source.profile,
     openapiVersion: doc.openapi,
@@ -213,13 +248,45 @@ export async function runBinding(
   // Revision 2 lifts cross-location name collisions through its routed
   // source value. Case-distinct declarations that HTTP itself treats as one
   // header name remain unresolvable in both revisions.
+  const parameterRows = effectiveParameterDeclarationRows(pathItem, op);
+  const malformedParameter = malformedEffectiveParameter(parameterRows, doc.openapi);
+  if (malformedParameter !== undefined) {
+    inv.fireError(new InvocationError(
+      ERR_REFUSED,
+      `effective Parameter Object ${JSON.stringify(malformedParameter)} is upstream-invalid`,
+    ));
+    return;
+  }
+  const invalidRequiredName = invalidRequiredParameterName(parameterRows);
+  if (invalidRequiredName !== undefined) {
+    inv.fireError(new InvocationError(
+      ERR_REFUSED,
+      `required parameter ${JSON.stringify(invalidRequiredName)} cannot produce a valid HTTP field name`,
+    ));
+    return;
+  }
   const params = effectiveParameters(pathItem, op);
+  const equivalentPath = equivalentPathTemplateCollision(doc.paths, path);
+  if (equivalentPath !== undefined) {
+    inv.fireError(new InvocationError(
+      ERR_REFUSED,
+      `path template ${JSON.stringify(path)} is equivalent to ${JSON.stringify(equivalentPath)} and cannot be selected deterministically`,
+    ));
+    return;
+  }
+  if (path.includes("?") || path.includes("#")) {
+    inv.fireError(new InvocationError(
+      ERR_REFUSED,
+      `path template ${JSON.stringify(path)} contains a query or fragment delimiter`,
+    ));
+    return;
+  }
   const ownershipConflict = parameterOwnershipConflict(params);
   if (ownershipConflict !== "") {
     inv.fireError(new InvocationError(ERR_REFUSED, ownershipConflict));
     return;
   }
-  const securityConfigurationFailure = securityConfigurationError(doc, op);
+  const securityConfigurationFailure = securityConfigurationError(securityDocument, op);
   if (securityConfigurationFailure !== "") {
     inv.fireError(new InvocationError(ERR_REFUSED, securityConfigurationFailure));
     return;
@@ -246,6 +313,10 @@ export async function runBinding(
         if (doc.openapi === "3.2.0") validateOpenAPI32ParameterSerialization(parameter);
         else validateResolvedParameterSerialization(parameter, oas30);
       }
+      const undefinedExpansion = resolvedStyleLaneUndefinedExpansionParam(params, args.source.profile, oas30);
+      if (undefinedExpansion !== null) {
+        throw new Error(`parameter ${JSON.stringify(undefinedExpansion)} requires an undefined nested serialization expansion`);
+      }
     } catch (error: unknown) {
       inv.fireError(new InvocationError(ERR_REFUSED, errorMessage(error)));
       return;
@@ -270,13 +341,18 @@ export async function runBinding(
   // CONTEXT_REQUIRED is raised before any input is consumed and before any
   // network I/O, so a no-input-consumed retry (after the operation layer
   // resolves context) is safe.
-  const securityConflict = securityAlternativesCollision(doc, op, baseURL, params);
+  const securityConflict = securityAlternativesCollision(securityDocument, op, baseURL, params, wireMethod);
   if (securityConflict !== "") {
     inv.fireError(new InvocationError(ERR_REFUSED, securityConflict));
     return;
   }
+  const securitySelection = securitySelectionError(securityDocument, op, args.context, baseURL, params, wireMethod);
+  if (securitySelection !== "") {
+    inv.fireError(new InvocationError(ERR_REFUSED, securitySelection));
+    return;
+  }
 
-  const details = requiredContext(doc, op, args.context, baseURL, params);
+  const details = requiredContext(securityDocument, op, args.context, baseURL, params, wireMethod);
   if (details) {
     inv.fireError(
       contextRequiredError("OpenAPI operation requires authentication context", details),
@@ -288,9 +364,9 @@ export async function runBinding(
   // candidate set is artifact-only, so an unsupported/degenerate set is a
   // knowable pre-dispatch refusal and must not wait for caller input.
   let requiredBodyPlans: BodyPlan[] | undefined;
-  if (op.requestBody?.required === true) {
+  if (!bodyIgnored && op.requestBody?.required === true) {
     try {
-      requiredBodyPlans = planRequestBodies(op, planningOptions);
+      requiredBodyPlans = planResolvedRequestBodies(op, planningOptions);
     } catch (e: unknown) {
       inv.fireError(new InvocationError(ERR_REFUSED, errorMessage(e)));
       return;
@@ -306,10 +382,29 @@ export async function runBinding(
     if (
       revision3
       && supportedBodyPlans.length > 0
-      && supportedBodyPlans.every((plan) => plan.range)
+      && !(supportedBodyPlans.length === 1 && !supportedBodyPlans[0]!.range)
       && (configuredMedia === undefined || configuredMedia === null)
     ) {
       inv.fireError(requestMediaContextRequired(baseURL));
+      return;
+    }
+    const selectedRequiredPlans = configuredRequestPlans(supportedBodyPlans, args.context, planningOptions);
+    const configuredProperties = recordValue(contextConfiguration(args.context)["propertyMedia"]);
+    const missingProperties = [...new Set(
+      selectedRequiredPlans.flatMap((plan) => requiredPropertyMediaNames(plan))
+        .filter((name) => typeof configuredProperties?.[name] !== "string"),
+    )].sort(codePointCompare);
+    if (missingProperties.length > 0) {
+      inv.fireError(contextRequiredError(
+        "OpenAPI request properties require concrete propertyMedia choices",
+        propertyMediaContextDetails(baseURL, missingProperties),
+      ));
+      return;
+    }
+    try {
+      for (const plan of selectedRequiredPlans) configuredResolvedPropertyMedia(plan, configuredProperties);
+    } catch (error: unknown) {
+      inv.fireError(new InvocationError(ERR_REFUSED, errorMessage(error)));
       return;
     }
   }
@@ -329,7 +424,7 @@ export async function runBinding(
   let inputMap: Record<string, unknown>;
   let envelope: RoutedEnvelope | null = null;
   let inputSupplied = false;
-  if (params.length === 0 && op.requestBody == null) {
+  if (params.length === 0 && (op.requestBody == null || bodyIgnored)) {
     // No-input operation: close input on entry so the caller never has to,
     // and dispatch immediately.
     void inv.closeInput();
@@ -379,15 +474,15 @@ export async function runBinding(
 
   let plans: BodyPlan[] = [];
   const willEmitBody = envelope
-    ? envelopeWillEmitBody(envelope, op)
-    : requestWillEmitBody(params, inputMap, op);
+    ? !bodyIgnored && envelopeWillEmitBody(envelope, op)
+    : !bodyIgnored && requestWillEmitBody(params, inputMap, op);
   // §9.1 required declarations: a required request body with no value to
   // carry refuses before dispatch, applied to absent and
   // supplied-but-incomplete input alike — the artifact's own
   // requestBody.required is the ground. An explicitly present body (the
   // routed envelope's body.present, or any field the routes carry to the
   // body) is a value; anything else leaves nothing to send.
-  if (!willEmitBody && op.requestBody != null && op.requestBody.required === true) {
+  if (!bodyIgnored && !willEmitBody && op.requestBody != null && op.requestBody.required === true) {
     inv.fireError(new InvocationError(
       ERR_REFUSED,
       "operation requires a request body: the input supplies no value to carry (§9.1 required declarations)",
@@ -396,7 +491,7 @@ export async function runBinding(
   }
   if (willEmitBody || envelope) {
     try {
-      plans = requiredBodyPlans ?? planRequestBodies(op, planningOptions);
+      plans = requiredBodyPlans ?? planResolvedRequestBodies(op, planningOptions);
     } catch (e: unknown) {
       inv.fireError(new InvocationError(ERR_REFUSED, errorMessage(e)));
       return;
@@ -427,6 +522,12 @@ export async function runBinding(
       continue;
     }
     try {
+      if (candidate) {
+        const configuredProperties = recordValue(contextConfiguration(args.context)["propertyMedia"]);
+        configuredResolvedPropertyMedia(candidate, configuredProperties);
+        prepareResolvedPropertyMediaView([candidate], configuredProperties);
+        prepareResolvedEncodingView([candidate]);
+      }
       const candidateRouted = envelope
         ? routeEnvelope(params, envelope, path, candidate, args.source.profile, {
           converter: args.parameterConverter,
@@ -437,7 +538,7 @@ export async function runBinding(
           openapiVersion: doc.openapi,
         });
       const candidateWire = await finalizeRequestBody(
-        buildRequestBody(doc, candidate, candidateRouted),
+        buildRequestBody(doc, candidate, candidateRouted, args.requestCharacterEncodings),
       );
       routed = candidateRouted;
       wire = candidateWire;
@@ -447,10 +548,18 @@ export async function runBinding(
         routeFailure = e;
         break;
       }
+      if (e instanceof ConfigRequired) {
+        routeFailure = e;
+        break;
+      }
       reasons.push(`${candidate?.mediaType ?? "no body"}: ${errorMessage(e)}`);
     }
   }
   if (!routed || !wire) {
+    if (routeFailure instanceof ConfigRequired) {
+      inv.fireError(configOrSourceError(routeFailure, baseURL));
+      return;
+    }
     const failure = routeFailure ?? new Error(
       `no request media candidate can carry this invocation: ${
         reasons.length > 0 ? reasons.join("; ") : "configured requestMedia selects no declared supported candidate"
@@ -468,7 +577,7 @@ export async function runBinding(
 
   // ----- Channel assembly (§9.6, OAPI-P-10). -----
 
-  const selectedSecurity = selectedSecurityPlan(doc, op, args.context, baseURL, params);
+  const selectedSecurity = selectedSecurityPlan(securityDocument, op, args.context, baseURL, params, wireMethod);
   const placements = selectedSecurity && args.context
     ? credentialValues(selectedSecurity, args.context)
     : [];
@@ -510,7 +619,7 @@ export async function runBinding(
   // transport. Every 3.x document forbids it (§10 in each), and the Go twin
   // gates the same point inside AssembleRequestURL, which both of its lanes
   // share.
-  validateCompletedTargetScheme(reqURL);
+  validateCompletedOpenAPIURL(reqURL);
 
   const fetchHeaders = new Headers();
   if (wire.contentType !== "") {
@@ -540,13 +649,36 @@ export async function runBinding(
   }
 
   let resp: Response;
-  const requestInit: RequestInit = {
+  let requestInput: RequestInfo | URL = reqURL;
+  let requestInit: RequestInit | undefined = {
     method: wireMethod,
     headers: fetchHeaders,
     body: wire.body,
     signal: inv.signal,
     redirect: args.redirect ?? "manual",
   };
+  const mechanics: OpenAPIResponseMechanicsModel = {
+    document: doc,
+    operation: op,
+    parameters: params,
+    method: wireMethod,
+    emptyResponse: false,
+    maxDeliveryUnitBytes: args.maxDeliveryUnitBytes,
+    responseCharacterDecodings: args.responseCharacterEncodings,
+  };
+  try {
+    const governed = await governOpenAPIRequest(
+      requestInput,
+      requestInit,
+      mechanics,
+      args.requestContentCodings ?? new Map(),
+    );
+    requestInput = governed.input;
+    requestInit = governed.init;
+  } catch (error: unknown) {
+    inv.fireError(toInvocationError(error));
+    return;
+  }
   // The platform `fetch` refuses or rewrites some method tokens before any
   // bytes leave the process (Fetch Standard §2.2.1: CONNECT/TRACE/TRACK are
   // forbidden; non-uppercase spellings of DELETE/GET/HEAD/OPTIONS/POST/PUT
@@ -560,31 +692,32 @@ export async function runBinding(
   // (host-transport.ts).
   const platformFetch = args.fetch === undefined || args.fetch === globalThis.fetch;
   let host: OpenAPIHostTransport | null = null;
-  if (!fetchCarriesMethod(wireMethod) && (platformFetch || args.hostTransport !== undefined)) {
+  const explicitHost = args.hostTransport !== undefined;
+  if (!fetchCarriesMethod(wireMethod) && (explicitHost || platformFetch)) {
     host = args.hostTransport === undefined ? await hostTransport() : args.hostTransport;
-    if (host === null || !hostCarriesMethod(wireMethod)) {
+    if (host === null || (!explicitHost && !hostCarriesMethod(wireMethod))) {
       inv.fireError(new InvocationError(ERR_REFUSED, hostMethodRefusal(wireMethod, host !== null)));
       return;
     }
   }
   const doFetch = args.fetch ?? fetch;
-  let securedRequest: Request | undefined;
-  if (selectedSecurity && args.securityHandlers) {
-    if (host !== null) {
-      // A security handler receives a WHATWG `Request`, which cannot be
-      // constructed for this method at all.
-      inv.fireError(new InvocationError(
-        ERR_REFUSED,
-        `method ${JSON.stringify(wireMethod)} cannot be handed to a security handler: the WHATWG Request constructor forbids it`,
-      ));
-      return;
-    }
-    securedRequest = new Request(reqURL, requestInit);
+  let plannedRequest: OpenAPIPlannedRequest = {
+    url: requestInput instanceof Request ? requestInput.url : String(requestInput),
+    method: requestInput instanceof Request ? requestInput.method : String(requestInit?.method ?? wireMethod),
+    headers: new Headers(requestInput instanceof Request ? requestInput.headers : requestInit?.headers),
+    body: requestInput instanceof Request ? requestInput.body : requestInit?.body ?? null,
+    signal: inv.signal,
+    redirect: requestInit?.redirect,
+  };
+  const selectedHasCustomSecurityHandler = selectedSecurity?.schemes.some(
+    ({ name }) => args.securityHandlers?.[name] !== undefined,
+  ) ?? false;
+  if (selectedSecurity && selectedHasCustomSecurityHandler && args.securityHandlers) {
     for (const { name, scheme } of selectedSecurity.schemes) {
       const handler = args.securityHandlers[name];
       if (!handler) continue;
       try {
-        securedRequest = await handler(securedRequest, { schemeName: name, scheme }) ?? securedRequest;
+        plannedRequest = await handler(plannedRequest, { schemeName: name, scheme }) ?? plannedRequest;
       } catch (error: unknown) {
         inv.fireError(new InvocationError(ERR_REFUSED, errorMessage(error)));
         return;
@@ -592,23 +725,29 @@ export async function runBinding(
     }
   }
   try {
-    resp = host !== null
-      ? await host(reqURL, {
-        method: wireMethod,
-        headers: fetchHeaders,
-        body: wire.body,
-        signal: inv.signal,
-        redirect: requestInit.redirect,
-      })
-      : securedRequest
-        ? await doFetch(securedRequest)
-        : await doFetch(reqURL, requestInit);
+    resp = await dispatchWithSafeRedirects(
+      plannedRequest,
+      host,
+      doFetch,
+      placements,
+    );
   } catch (e: unknown) {
     // Aborted while in flight: the handle is already terminal (caller
     // cancel or another terminal transition); stay silent.
     if (inv.signal.aborted) return;
     // The request never produced a response: a transport-level failure.
     inv.fireError(new InvocationError(ERR_CONNECT_FAILED, errorMessage(e)));
+    return;
+  }
+
+  try {
+    resp = await governOpenAPIResponse(
+      resp,
+      mechanics,
+      args.responseContentCodings ?? new Map(),
+    );
+  } catch (error: unknown) {
+    inv.fireError(toInvocationError(error));
     return;
   }
 
@@ -785,7 +924,7 @@ export async function runBinding(
   // A truly empty 2xx carries no output regardless of a stray streaming
   // Content-Type. Peek without buffering the stream: a non-empty first
   // chunk is replayed into a replacement Response for normal SSE handling.
-  if (doc.openapi !== "3.2.0" && isSSEContentType(contentType)) {
+  if (doc.openapi === "3.2.0" && isSSEContentType(contentType)) {
     try {
       const peeked = await peekResponseBody(resp);
       resp = peeked.response;
@@ -828,7 +967,7 @@ export async function runBinding(
   // text/event-stream response on an operation that is NOT
   // streaming-capable contradicts the declaration: a protocol error, never
   // a silent reclassification.
-  if (isSSEContentType(contentType)) {
+  if (doc.openapi === "3.2.0" && isSSEContentType(contentType)) {
     // Classification is independent of declaration lookup. A non-success
     // final status is the native HTTP failure even if its body happens to
     // use event-stream framing.
@@ -1033,7 +1172,7 @@ export async function runBinding(
         !("specificity" in mediaMatch.declared),
       )
       ? ((_site: InvokeSite, _raw: RawResult): unknown => bytesToBase64(bodyBytes))
-      : decodeBytesByContentType(contentType, bodyBytes, revision3);
+      : decodeBytesByContentType(contentType, bodyBytes, revision3, args.responseCharacterEncodings);
     output = await decodeThroughHooks(args.hooks, site, raw, builtin);
   } catch (e: unknown) {
     inv.fireError(toInvocationError(e));
@@ -1050,6 +1189,83 @@ export async function runBinding(
   args.observeOutput?.(output, invocationMeta);
   await inv.emitOutput(output);
   inv.closeOutput();
+}
+
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+
+/**
+ * Follows only redirects that preserve the operation's method and request
+ * representation. Fetch's automatic mode is not sufficient here: for
+ * example, it rewrites POST to GET on 303 before the binding can observe the
+ * declared operation's actual response. Cross-origin hops also drop every
+ * selected credential destination and Cookie before another dispatch.
+ */
+async function dispatchWithSafeRedirects(
+  request: OpenAPIPlannedRequest,
+  host: OpenAPIHostTransport | null,
+  fetchFn: typeof globalThis.fetch,
+  credentialOwnership: readonly CredentialPlacement[],
+): Promise<Response> {
+  if (request.redirect !== "follow") {
+    return dispatchPlannedRequest(request, host, fetchFn);
+  }
+
+  let current: OpenAPIPlannedRequest = { ...request, redirect: "manual" };
+  for (let followed = 0; ; followed += 1) {
+    const response = await dispatchPlannedRequest(current, host, fetchFn);
+    if (!REDIRECT_STATUSES.has(response.status)) return response;
+
+    const location = response.headers.get("location");
+    if (!location || redirectRewritesMethod(response.status, current.method)) {
+      return response;
+    }
+    if (followed >= 9) {
+      throw new Error("stopped after 10 redirects");
+    }
+
+    let nextURL: URL;
+    try {
+      nextURL = new URL(location, current.url);
+    } catch {
+      return response;
+    }
+    const priorURL = new URL(current.url);
+    let headers = new Headers(current.headers);
+    if (priorURL.origin !== nextURL.origin) {
+      headers.delete("Cookie");
+      for (const placement of credentialOwnership) {
+        if (placement.channel === "header") headers.delete(placement.name);
+        else if (placement.channel === "cookie") headers.delete("Cookie");
+        else nextURL.searchParams.delete(placement.name);
+      }
+    }
+
+    // Do not cancel through the response body here: Node's Fetch couples that
+    // cancellation to the invocation signal and can abort the preserving hop.
+    // The response is no longer retained after the next dispatch.
+    current = { ...current, url: nextURL.toString(), headers, redirect: "manual" };
+  }
+}
+
+function dispatchPlannedRequest(
+  request: OpenAPIPlannedRequest,
+  host: OpenAPIHostTransport | null,
+  fetchFn: typeof globalThis.fetch,
+): Promise<Response> {
+  if (host !== null) return host(request.url, request);
+  return fetchFn(request.url, {
+    method: request.method,
+    headers: request.headers,
+    body: request.body,
+    signal: request.signal,
+    redirect: request.redirect,
+  });
+}
+
+function redirectRewritesMethod(status: number, method: string): boolean {
+  const normalized = method.toUpperCase();
+  if (status === 303) return normalized !== "GET" && normalized !== "HEAD";
+  return (status === 301 || status === 302) && normalized === "POST";
 }
 
 /** Enforces governing OpenAPI 3.2 response Header Object requirements. */
@@ -1094,6 +1310,14 @@ function requestWillEmitBody(
   if (op.requestBody == null) return false;
   const parameterNames = new Set(params.map((parameter) => parameter.name).filter((name): name is string => Boolean(name)));
   return Object.keys(input).some((name) => !parameterNames.has(name));
+}
+
+/** Binding-family method disposition for Request Body declarations. */
+function requestBodyIgnored(openapiVersion: string, method: string): boolean {
+  const normalized = method.toUpperCase();
+  if (normalized === "TRACE") return true;
+  return openapiVersion.startsWith("3.0.")
+    && ["GET", "HEAD", "DELETE", "OPTIONS"].includes(normalized);
 }
 
 /** Applies the optional artifact-neutral request-media configuration point. */
@@ -1201,8 +1425,8 @@ export function requiredRequestMediaContext(
     return null;
   }
   try {
-    const supported = planRequestBodies(op, { profile, openapiVersion: doc.openapi });
-    return supported.length > 0 && supported.every((plan) => plan.range)
+    const supported = planResolvedRequestBodies(op, { profile, openapiVersion: doc.openapi });
+    return supported.length > 0 && !(supported.length === 1 && !supported[0]!.range)
       ? requestMediaContextDetails(target)
       : null;
   } catch {
@@ -1279,6 +1503,7 @@ export function decodeBytesByContentType(
   contentType: string | null,
   bytes: Uint8Array,
   revision3 = false,
+  characterDecoders?: ReadonlyMap<string, OpenAPICharacterDecoder>,
 ): OutputDecoder {
   const isJSON = isJSONMediaType(normalizeMediaType(contentType ?? ""));
   return (_site: InvokeSite, _raw: RawResult): unknown => {
@@ -1296,7 +1521,7 @@ export function decodeBytesByContentType(
         () => loneSurrogateResponse(contentType),
       );
     }
-    return decodeTextLane(contentType, bytes, revision3);
+    return decodeTextLane(contentType, bytes, revision3, characterDecoders);
   };
 }
 
@@ -1311,6 +1536,7 @@ export function decodeTextLane(
   contentType: string | null,
   bytes: Uint8Array,
   revision3 = false,
+  characterDecoders?: ReadonlyMap<string, OpenAPICharacterDecoder>,
 ): string {
   let charset = "utf-8";
   if (contentType) {
@@ -1341,40 +1567,20 @@ export function decodeTextLane(
           "response body is not valid UTF-8 (the declared/default charset)",
         );
       }
-    case "us-ascii":
-    case "ascii": {
-      for (const [i, b] of bytes.entries()) {
-        if (b >= 0x80) {
-          throw new InvocationError(
-            ERR_RESPONSE_ERROR,
-            `response body byte ${i} is not valid US-ASCII (the declared charset)`,
-          );
-        }
+    default: {
+      const decoder = characterDecoders?.get(charset.toLowerCase());
+      if (!decoder) {
+        throw new InvocationError(
+          ERR_RESPONSE_ERROR,
+          `response declares charset ${JSON.stringify(charset)}, which this implementation cannot decode`,
+        );
       }
-      return latin1String(bytes);
+      try { return decoder(bytes); }
+      catch (error: unknown) {
+        throw new InvocationError(ERR_RESPONSE_ERROR, `response character decoder ${JSON.stringify(charset)} failed`, error);
+      }
     }
-    case "iso-8859-1":
-    case "iso8859-1":
-    case "latin-1":
-    case "latin1":
-      // True latin-1: each byte IS its code point (a TextDecoder
-      // "iso-8859-1" label would decode windows-1252, which differs in
-      // 0x80–0x9F).
-      return latin1String(bytes);
-    default:
-      throw new InvocationError(
-        ERR_RESPONSE_ERROR,
-        `response declares charset ${JSON.stringify(charset)}, which this implementation cannot decode; override at the decode configuration point`,
-      );
   }
-}
-
-function latin1String(bytes: Uint8Array): string {
-  let out = "";
-  for (const b of bytes) {
-    out += String.fromCharCode(b);
-  }
-  return out;
 }
 
 /**
@@ -1414,6 +1620,9 @@ function decodeClassifyTrailer(hooks: InvokeHooks | null | undefined, builtinDec
 /** Converts a seam failure into the terminal InvocationError to surface. */
 function toInvocationError(e: unknown): InvocationError {
   if (e instanceof InvocationError) return e;
+  if (e instanceof OpenAPIWireMechanicsError) {
+    return new InvocationError(e.code, e.message);
+  }
   return new InvocationError(ERR_RESPONSE_ERROR, errorMessage(e));
 }
 
@@ -1563,6 +1772,26 @@ function bytesToBase64(bytes: Uint8Array): string {
 // Context requirements (openbindings.binding-invoker role negotiation)
 // ---------------------------------------------------------------------------
 
+function scopedSecurityDocument(
+  document: OpenAPIDocument,
+  target: OpenAPIResolvedOperation | undefined,
+  context: Record<string, unknown> | undefined,
+): OpenAPIDocument {
+  if (
+    contextConfiguration(context)["implicitConnectionScope"] !== "referring"
+    || !target?.referringSecuritySchemes
+  ) {
+    return document;
+  }
+  return {
+    ...document,
+    components: {
+      ...(document.components ?? {}),
+      securitySchemes: target.referringSecuritySchemes,
+    },
+  };
+}
+
 /**
  * Derives the context requirements for an operation from the OpenAPI
  * document's securitySchemes and the operation's (or document's) security
@@ -1580,8 +1809,9 @@ export function requiredContext(
   ctx: Record<string, unknown> | undefined,
   baseURL: string,
   params: OpenAPIParameter[] = [],
+  method = "",
 ): ContextRequiredDetails | null {
-  const plans = viableSecurityPlans(doc, op, baseURL, params);
+  const plans = configuredSecurityPlans(viableSecurityPlans(doc, op, baseURL, params, method), ctx);
   if (!plans) return null;
   // An empty Security Requirement Object is an anonymous alternative. The
   // binding-invoker context shape intentionally has no empty alternatives,
@@ -1598,6 +1828,7 @@ export function requiredContext(
 interface SecurityPlan {
   context: ContextAlternative;
   schemes: NamedSecurityScheme[];
+  alternativeIndex: number;
 }
 
 /**
@@ -1644,6 +1875,7 @@ function securityPlans(
   doc: OpenAPIDocument,
   op: OpenAPIOperation,
   baseURL: string,
+  method = "",
 ): SecurityPlan[] | null {
   const opSec = op.security as Array<Record<string, unknown>> | undefined;
   const docSec = (doc as Record<string, unknown>)["security"] as
@@ -1662,14 +1894,15 @@ function securityPlans(
     | undefined;
 
   const alternatives: SecurityPlan[] = [];
-  for (const req of requirements) {
+  for (const [alternativeIndex, req] of requirements.entries()) {
+    if (!validSecurityRequirement(doc, req, securitySchemes)) continue;
     const names = Object.keys(req);
     if (names.length === 0) {
-      alternatives.push({ context: { requirements: [] }, schemes: [] });
+      alternatives.push({ context: { requirements: [] }, schemes: [], alternativeIndex });
       continue;
     }
 
-    let expanded: SecurityPlan[] = [{ context: { requirements: [] }, schemes: [] }];
+    let expanded: SecurityPlan[] = [{ context: { requirements: [] }, schemes: [], alternativeIndex }];
     let expressible = true;
     for (const name of names.sort()) {
       const scheme = securitySchemes?.[name];
@@ -1688,6 +1921,7 @@ function securityPlans(
         options.map((requirement) => ({
           context: { requirements: [...plan.context.requirements, requirement] },
           schemes: [...plan.schemes, { scheme, name }],
+          alternativeIndex: plan.alternativeIndex,
         })),
       );
     }
@@ -1701,7 +1935,10 @@ function securityPlans(
     if (!expressible || expanded.length === 0) continue;
     alternatives.push(...expanded);
   }
-  return alternatives.length > 0 ? alternatives : null;
+  const admitted = method.toUpperCase() === "TRACE"
+    ? alternatives.filter((plan) => !plan.schemes.some(({ scheme }) => credentialEmitsSensitiveField(scheme)))
+    : alternatives;
+  return admitted.length > 0 ? admitted : null;
 }
 
 function viableSecurityPlans(
@@ -1709,8 +1946,9 @@ function viableSecurityPlans(
   op: OpenAPIOperation,
   baseURL: string,
   params: OpenAPIParameter[],
+  method = "",
 ): SecurityPlan[] | null {
-  const plans = securityPlans(doc, op, baseURL);
+  const plans = securityPlans(doc, op, baseURL, method);
   if (!plans) return null;
   const populated = { header: new Set<string>(), query: new Set<string>(), cookie: new Set<string>() };
   const viable = plans.filter(
@@ -1719,14 +1957,50 @@ function viableSecurityPlans(
   return viable.length > 0 ? viable : null;
 }
 
+function configuredSecurityPlans(
+  plans: SecurityPlan[] | null,
+  ctx: Record<string, unknown> | undefined,
+): SecurityPlan[] | null {
+  if (!plans) return null;
+  const raw = contextConfiguration(ctx)["security"];
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return plans;
+  const index = (raw as Record<string, unknown>)["index"];
+  if (typeof index !== "number" || !Number.isInteger(index)) return plans;
+  const selected = plans.filter((plan) => plan.alternativeIndex === index);
+  return selected.length > 0 ? selected : null;
+}
+
+function securitySelectionError(
+  doc: OpenAPIDocument,
+  op: OpenAPIOperation,
+  ctx: Record<string, unknown> | undefined,
+  baseURL: string,
+  params: OpenAPIParameter[],
+  method = "",
+): string {
+  const plans = viableSecurityPlans(doc, op, baseURL, params, method);
+  if (!plans) return effectiveSecurityRequirements(doc, op)?.length
+    ? "security declaration has no complete usable alternative"
+    : "";
+  const configured = contextConfiguration(ctx)["security"];
+  if (configured !== undefined) {
+    return configuredSecurityPlans(plans, ctx) ? "" : "configuration.security does not select a usable alternative";
+  }
+  const alternatives = new Set(plans.map((plan) => plan.alternativeIndex));
+  return alternatives.size > 1
+    ? "multiple complete security alternatives require an explicit configuration.security selection"
+    : "";
+}
+
 /** Reports a collision only when every declared security alternative is unusable. */
 function securityAlternativesCollision(
   doc: OpenAPIDocument,
   op: OpenAPIOperation,
   baseURL: string,
   params: OpenAPIParameter[],
+  method = "",
 ): string {
-  const plans = securityPlans(doc, op, baseURL);
+  const plans = securityPlans(doc, op, baseURL, method);
   if (!plans) return "";
   const populated = { header: new Set<string>(), query: new Set<string>(), cookie: new Set<string>() };
   const collisions = plans.map((plan) =>
@@ -1910,13 +2184,63 @@ function selectedSecurityPlan(
   ctx: Record<string, unknown> | undefined,
   baseURL: string,
   params: OpenAPIParameter[],
+  method = "",
 ): SecurityPlan | undefined {
-  const plans = viableSecurityPlans(doc, op, baseURL, params);
+  const plans = configuredSecurityPlans(viableSecurityPlans(doc, op, baseURL, params, method), ctx);
   if (!plans) return undefined;
   return plans.find((candidate) =>
     candidate.context.requirements.length === 0
       || (!!ctx && securityPlanSatisfied(candidate, ctx, baseURL)),
   );
+}
+
+function credentialEmitsSensitiveField(scheme: OpenAPISecurityScheme): boolean {
+  if (scheme.type === "apiKey" || scheme.type === "oauth2" || scheme.type === "openIdConnect") return true;
+  return scheme.type === "http" && ["basic", "bearer"].includes((scheme.scheme ?? "").toLowerCase());
+}
+
+function effectiveSecurityRequirements(
+  doc: OpenAPIDocument,
+  op: OpenAPIOperation,
+): Array<Record<string, unknown>> | undefined {
+  return (op.security as Array<Record<string, unknown>> | undefined)
+    ?? ((doc as Record<string, unknown>)["security"] as Array<Record<string, unknown>> | undefined);
+}
+
+function validSecurityRequirement(
+  doc: OpenAPIDocument,
+  requirement: Record<string, unknown>,
+  schemes: Record<string, OpenAPISecurityScheme> | undefined,
+): boolean {
+  if (requirement === null || typeof requirement !== "object" || Array.isArray(requirement)) return false;
+  for (const [name, scopes] of Object.entries(requirement)) {
+    const scheme = schemes?.[name];
+    if (!scheme || !validSecurityScheme(doc, scheme)) return false;
+    if (!Array.isArray(scopes) || scopes.some((scope) => typeof scope !== "string")) return false;
+    if (!doc.openapi?.startsWith("3.2.")
+      && scheme.type !== "oauth2" && scheme.type !== "openIdConnect" && scopes.length !== 0) return false;
+  }
+  return true;
+}
+
+function validSecurityScheme(doc: OpenAPIDocument, scheme: OpenAPISecurityScheme): boolean {
+  const version = doc.openapi ?? "";
+  const admitted = version.startsWith("3.0.")
+    ? new Set(["apiKey", "http", "oauth2", "openIdConnect"])
+    : new Set(["apiKey", "http", "oauth2", "openIdConnect", "mutualTLS"]);
+  if (typeof scheme.type !== "string" || !admitted.has(scheme.type)) return false;
+  if (scheme.type === "apiKey") {
+    if (typeof scheme.name !== "string" || scheme.name === "" || !["query", "header", "cookie"].includes(scheme.in ?? "")) return false;
+    if ((scheme.in === "header" || scheme.in === "cookie")
+      && !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u.test(scheme.name)) return false;
+  } else if (scheme.type === "http") {
+    if (typeof scheme.scheme !== "string" || scheme.scheme === "") return false;
+  } else if (scheme.type === "oauth2") {
+    if (scheme.flows === null || typeof scheme.flows !== "object" || Array.isArray(scheme.flows)) return false;
+  } else if (scheme.type === "openIdConnect") {
+    if (typeof scheme.openIdConnectUrl !== "string" || scheme.openIdConnectUrl === "") return false;
+  }
+  return true;
 }
 
 function securityPlanSatisfied(
@@ -1959,8 +2283,12 @@ export function parameterOwnershipConflict(params: OpenAPIParameter[]): string {
   const headers = params
     .filter((parameter) => parameter.in === "header" && !!parameter.name)
     .map((parameter) => parameter.name!.toLowerCase());
+  const processorOwned = new Set([
+    "host", "content-length", "connection", "keep-alive", "proxy-authorization",
+    "proxy-connection", "te", "trailer", "transfer-encoding", "upgrade",
+  ]);
   for (const name of headers) {
-    if (name === "host" || name === "content-length") {
+    if (processorOwned.has(name)) {
       return `effective header parameter "${name}" collides with a processor-owned request field (OAPI-P-10)`;
     }
   }
@@ -2232,4 +2560,10 @@ function validateCompletedTargetScheme(raw: string): void {
       `completed OpenAPI target scheme ${JSON.stringify(scheme)} is not http or https; no incorporated authority defines its HTTP-semantics mapping`,
     );
   }
+}
+
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
 }

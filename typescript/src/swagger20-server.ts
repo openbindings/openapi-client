@@ -6,7 +6,7 @@ import {
   type Swagger20ResolvedOperation,
 } from "./swagger20-model.js";
 
-/** Resolves the exact effective Swagger 2.0 target base without slash repair. */
+/** Resolves the exact effective Swagger 2.0 target base. */
 export function resolveSwagger20Server(
   document: Swagger20Document,
   operation: Swagger20ResolvedOperation,
@@ -56,14 +56,21 @@ export function resolveSwagger20Server(
   return `${selected}://${effectiveHost}${basePath.present ? basePath.value : ""}`;
 }
 
+/** Joins the resolved base and Paths key with the specification's one seam repair. */
+export function joinSwagger20Target(base: string, path: string): string {
+  return base.endsWith("/") && path.startsWith("/")
+    ? `${base.slice(0, -1)}${path}`
+    : `${base}${path}`;
+}
+
 function effectiveSchemes(
   document: Swagger20Document,
   operation: Swagger20ResolvedOperation,
   retrieval: string | undefined,
-): { usable: string[]; authored: string[] } {
+): { usable: string[]; authored: Array<string | undefined> } {
   let member = arrayMember(operation.raw, "schemes");
   if (!member.present) member = arrayMember(document.root, "schemes");
-  let authored: string[];
+  let authored: Array<string | undefined>;
   if (!member.present) {
     if (!retrieval) throw new Error("Swagger 2.0 target omits schemes without a document retrieval scheme");
     let parsed: URL;
@@ -76,15 +83,13 @@ function effectiveSchemes(
     authored = [inherited];
   } else {
     if (!member.valid || member.value!.length === 0) throw new Error("Swagger 2.0 effective schemes must be a nonempty array");
-    authored = member.value!.map((value, index) => {
-      if (typeof value !== "string") throw new Error(`Swagger 2.0 effective scheme ${index} is not a string`);
-      if (!["http", "https", "ws", "wss"].includes(value)) {
-        throw new Error(`Swagger 2.0 effective scheme ${JSON.stringify(value)} is outside the closed scheme set`);
-      }
-      return value;
-    });
+    authored = member.value!.map((value) =>
+      typeof value === "string" && ["http", "https", "ws", "wss"].includes(value) ? value : undefined);
   }
-  return { authored, usable: authored.filter((scheme) => scheme === "http" || scheme === "https") };
+  return {
+    authored,
+    usable: authored.filter((scheme): scheme is string => scheme === "http" || scheme === "https"),
+  };
 }
 
 function swagger20Host(value: string): boolean {

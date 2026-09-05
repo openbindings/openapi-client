@@ -42,8 +42,8 @@ describe("language-neutral native wire conformance", () => {
   for (const fixture of cases) {
     it(fixture.name, async () => {
       const document = structuredClone(fixture.document);
-      const fetchFn = vi.fn<typeof fetch>(async (input) => {
-        const request = input as Request;
+      const fetchFn = vi.fn<typeof fetch>(async (input, init) => {
+        const request = new Request(input, init);
         const url = new URL(request.url);
         expect(request.method).toBe(fixture.expect.method);
         expect(url.pathname).toBe(fixture.expect.path);

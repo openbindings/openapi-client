@@ -1,50 +1,15 @@
 /**
- * Host transport for the HTTP methods the WHATWG fetch API cannot carry.
- *
- * The engine plans one wire request — method, completed target, headers, and
- * body bytes — under the incorporated OpenAPI and HTTP rules, and hands it to
- * a transport. The default transport is the platform's `fetch`, and the Fetch
- * Standard (https://fetch.spec.whatwg.org/, §2.2.1 Methods) refuses or
- * rewrites some method tokens before any bytes leave the process:
- *
- *   "A forbidden method is a method that is a byte-case-insensitive match for
- *   `CONNECT`, `TRACE`, or `TRACK`."
- *
- *   "To normalize a method, if it is a byte-case-insensitive match for
- *   `DELETE`, `GET`, `HEAD`, `OPTIONS`, `POST`, or `PUT`, byte-uppercase it."
- *
- * and the `new Request(input, init)` constructor steps: "If method is not a
- * method or method is a forbidden method, then throw a TypeError. Normalize
- * method." Measured on Node 22 (undici): `new Request(url, {method: "TRACE"})`
- * throws `'TRACE' HTTP method is unsupported.`, and `{method: "post"}` is sent
- * as `POST`.
- *
- * Neither outcome is a transport failure: the request was never dispatched,
- * and a rewritten method identifies two distinct artifact values (OpenAPI
- * 3.2's `additionalOperations` keys are byte-exact method tokens under RFC
- * 9110 §9.1). So, on the platform default transport, the engine routes a
- * method fetch forbids through the host's own HTTP client where one exists
- * (`node:http` / `node:https`), refuses before dispatch where none does, and
- * refuses before dispatch a method no available transport can send
- * byte-exactly. An injected `fetch` is the caller's transport and receives the
- * planned method as computed; what it can carry is its own contract. A caller
- * that also supplies `hostTransport` (a function, or `null` for "none")
- * declares how those methods are sent, and the engine consults it whether or
- * not a `fetch` was injected — that is how an adapter wrapping the platform
- * `fetch` for its own governance keeps this routing.
- *
- * The host transport constructs the request from the same planned values the
- * fetch path receives, so the engine-owned bytes — request line, planned
- * headers, body — are identical across the two paths. Ambient headers a
- * transport adds on its own (`Host`, `Connection`, and, for undici's fetch,
- * `accept: *\/*`, `accept-language`, `sec-fetch-mode`, `user-agent`,
- * `accept-encoding`) are transport property on every path, in every engine,
- * and are not part of the binding's bytes.
+ * Byte-preserving transport support for methods the host Fetch implementation
+ * refuses or rewrites. The client still owns the completed URL, method,
+ * headers, body, redirects, and response interpretation.
  */
 
 import type * as NodeHttp from "node:http";
 import type * as NodeHttps from "node:https";
 import type * as NodeStream from "node:stream";
+
+/** Redirect handling admitted by the deterministic invocation contract. */
+export type OpenAPIRedirectPolicy = "manual" | "follow";
 
 /** The planned request handed to a host transport. */
 export interface OpenAPIHostRequest {
@@ -57,6 +22,12 @@ export interface OpenAPIHostRequest {
   signal?: AbortSignal | null;
   /** Fetch redirect mode; the engine defaults it to `manual`. */
   redirect?: RequestRedirect;
+}
+
+/** Complete request plan exposed to engine hooks before transport dispatch. */
+export interface OpenAPIPlannedRequest extends OpenAPIHostRequest {
+  /** Completed HTTP(S) target, including the serialized path and query. */
+  url: string;
 }
 
 /**
@@ -161,6 +132,9 @@ const NULL_BODY_STATUSES = new Set([101, 204, 205, 304]);
 
 function nodeTransport(modules: NodeModules): OpenAPIHostTransport {
   return async (url, request) => {
+    if (!hostCarriesMethod(request.method)) {
+      throw new TypeError(hostMethodRefusal(request.method, true));
+    }
     const mode = request.redirect ?? "manual";
     let current = new URL(url);
     let method = request.method;

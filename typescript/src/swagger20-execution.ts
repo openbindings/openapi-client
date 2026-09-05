@@ -20,19 +20,30 @@ import {
   encodeSwagger20RequestPayload,
   governingSwagger20Response,
   selectSwagger20RequestMedia,
+  swagger20AcceptHeader,
   swagger20PayloadFor,
   swagger20ResponsesFor,
   type Swagger20ResolvedResponse,
 } from "./swagger20-media.js";
 import { booleanMember, objectMember, stringMember, type Swagger20Object } from "./swagger20-model.js";
-import { resolveSwagger20Server } from "./swagger20-server.js";
-import { applySwagger20Security, selectSwagger20Security } from "./swagger20-security.js";
+import { joinSwagger20Target, resolveSwagger20Server } from "./swagger20-server.js";
+import {
+  applySwagger20Security,
+  selectSwagger20Security,
+  type Swagger20CredentialPlacement,
+} from "./swagger20-security.js";
 
 export interface Swagger20ExecutionResult {
   outputPresent: boolean;
   output?: unknown;
   status: number;
   headers: Headers;
+  response: Response;
+  declaration: {
+    declared: boolean;
+    responseKey?: string;
+    mediaType?: string;
+  };
 }
 
 /** @internal - exact Swagger 2.0 unary execution lane. */
@@ -91,15 +102,21 @@ export async function executeSwagger20(
       prepared.options.parameterConverter,
       prepared.options.emptyValueForm,
     );
+    applySwagger20Security(routed, security);
   } catch (error: unknown) {
     throw refused(error, prepared);
   }
-  applySwagger20Security(routed, security);
   const payloadPresent = routed.bodyPresent || routed.formPresent;
   if (payloadPresent && ["get", "head", "delete", "options"].includes(prepared.operation.method)) {
     throw new Swagger20ExecutionError(
       "ERR_REFUSED",
       `Swagger 2.0 ${prepared.operation.method} operations exclude the payload lane`,
+    );
+  }
+  if (!payloadPresent && routed.headers.some((header) => header.name.toLowerCase() === "content-encoding")) {
+    throw new Swagger20ExecutionError(
+      "ERR_REFUSED",
+      "request Content-Encoding cannot be supplied when the invocation emits no request representation",
     );
   }
   let requestBody: Uint8Array | undefined;
@@ -109,7 +126,13 @@ export async function executeSwagger20(
       const model = await swagger20PayloadFor(parameters, prepared.operation);
       const consumes = effectiveSwagger20MediaSet(prepared.document, prepared.operation, "consumes");
       const selection = selectSwagger20RequestMedia(consumes, model, prepared.options.requestMedia);
-      const encoded = encodeSwagger20RequestPayload(selection, model, routed, prepared.options.propertyMedia);
+      const encoded = encodeSwagger20RequestPayload(
+        selection,
+        model,
+        routed,
+        prepared.options.propertyMedia,
+        prepared.options.requestCharacterEncodings,
+      );
       requestBody = encoded.body;
       contentType = encoded.contentType;
     } catch (error: unknown) {
@@ -117,7 +140,7 @@ export async function executeSwagger20(
     }
   }
   const query = swagger20RawQuery(routed.query);
-  const url = `${server}${routed.resolvedPath}${query === "" ? "" : `?${query}`}`;
+  const url = `${joinSwagger20Target(server, routed.resolvedPath)}${query === "" ? "" : `?${query}`}`;
   try {
     const parsed = new URL(url);
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throw new Error("target scheme is not HTTP");
@@ -126,6 +149,12 @@ export async function executeSwagger20(
     throw refused(error, prepared);
   }
   const headers = new Headers();
+  try {
+    const accept = await swagger20AcceptHeader(prepared.document, prepared.operation, parameters, responses);
+    if (accept !== "") headers.set("Accept", accept);
+  } catch (error: unknown) {
+    throw refused(error, prepared);
+  }
   for (const header of routed.headers) headers.append(header.name, header.value);
   if (payloadPresent) {
     headers.set("Content-Type", contentType!);
@@ -144,39 +173,62 @@ export async function executeSwagger20(
   try {
     const fetchFn = prepared.options.fetch ?? globalThis.fetch;
     if (!fetchFn) throw new Error("no fetch implementation is available");
-    response = await fetchFn(url, {
+    response = await swagger20FetchWithSafeRedirects(fetchFn, {
+      url,
       method: prepared.operation.method.toUpperCase(),
       headers,
-      ...(requestBody === undefined ? {} : { body: Uint8Array.from(requestBody).buffer }),
+      body: requestBody === undefined ? null : Uint8Array.from(requestBody).buffer,
       signal: prepared.options.signal,
-    });
+      redirect: prepared.options.redirect ?? "manual",
+    }, security);
   } catch (error: unknown) {
     throw new Swagger20ExecutionError("ERR_CONNECT_FAILED", errorMessage(error), { cause: error });
   }
   let governing: Swagger20ResolvedResponse | undefined;
+  const resultResponse = response.clone();
   try {
     governing = await governingSwagger20Response(prepared.operation, responses, response.status);
   } catch (error: unknown) {
     throw responseError(error);
   }
-  let bytes: Uint8Array<ArrayBufferLike> = new Uint8Array(await response.arrayBuffer());
-  if (prepared.operation.method === "head") bytes = new Uint8Array();
+  if (response.status === 101) throw responseError(new Error("101 Switching Protocols cannot complete this unary binding"));
+  let codingTokens: string[];
   try {
-    bytes = await decodeResponseContentCodings(
-      response.headers,
-      governing,
-      bytes,
-      prepared.options.responseContentCodings,
-    );
+    codingTokens = responseContentCodingTokens(response.headers, governing);
   } catch (error: unknown) {
     throw responseError(error);
   }
+  let bytes: Uint8Array<ArrayBufferLike> = new Uint8Array(await response.arrayBuffer());
+  const noContent = prepared.operation.method === "head"
+    || response.status >= 100 && response.status < 200
+    || [204, 205, 304].includes(response.status);
+  if (noContent) {
+    if (prepared.operation.method !== "head" && bytes.byteLength > 0) {
+      throw responseError(new Error("HTTP response carries content where none is permitted"));
+    }
+    bytes = new Uint8Array();
+  } else {
+    try {
+      bytes = await decodeResponseContentCodings(
+        codingTokens,
+        bytes,
+        prepared.options.responseContentCodings,
+      );
+    } catch (error: unknown) {
+      throw responseError(error);
+    }
+  }
   const success = response.status >= 200 && response.status < 300;
+  const declaration = {
+    declared: governing !== undefined,
+    ...(governing ? { responseKey: governing.key } : {}),
+  };
   if (bytes.byteLength === 0) {
     if (!success) throw httpFailure(response, governing, undefined);
-    return { outputPresent: false, status: response.status, headers: response.headers };
+    return { outputPresent: false, status: response.status, headers: response.headers, response: resultResponse, declaration };
   }
   if (!governing) {
+    if (!success) throw httpFailure(response, governing, undefined);
     throw new Swagger20ExecutionError(
       "ERR_RESPONSE_ERROR",
       `non-empty response status ${response.status} has no governing exact or default Response Object`,
@@ -190,12 +242,73 @@ export async function executeSwagger20(
       governing,
       bytes,
       response.headers.get("Content-Type") ?? "",
+      prepared.options.responseCharacterEncodings,
     );
   } catch (error: unknown) {
+    if (!success && governing.invalid) throw httpFailure(response, governing, undefined);
     throw responseError(error);
   }
   if (!success) throw httpFailure(response, governing, output);
-  return { outputPresent: true, output, status: response.status, headers: response.headers };
+  return { outputPresent: true, output, status: response.status, headers: response.headers, response: resultResponse, declaration };
+}
+
+interface Swagger20PlannedRequest {
+  url: string;
+  method: string;
+  headers: Headers;
+  body: BodyInit | null;
+  signal?: AbortSignal;
+  redirect: RequestRedirect;
+}
+
+async function swagger20FetchWithSafeRedirects(
+  fetchFn: typeof globalThis.fetch,
+  request: Swagger20PlannedRequest,
+  credentials: readonly Swagger20CredentialPlacement[],
+): Promise<Response> {
+  if (request.redirect !== "follow") return swagger20Fetch(fetchFn, request);
+  let current = { ...request, redirect: "manual" as const };
+  for (let followed = 0; ; followed += 1) {
+    const response = await swagger20Fetch(fetchFn, current);
+    if (![301, 302, 303, 307, 308].includes(response.status)) return response;
+    const location = response.headers.get("location");
+    if (!location || swagger20RedirectRewritesMethod(response.status, current.method)) return response;
+    if (followed >= 9) throw new Error("stopped after 10 redirects");
+    let nextURL: URL;
+    try {
+      nextURL = new URL(location, current.url);
+    } catch {
+      return response;
+    }
+    const headers = new Headers(current.headers);
+    if (new URL(current.url).origin !== nextURL.origin) {
+      headers.delete("Cookie");
+      for (const credential of credentials) {
+        if (credential.query) nextURL.searchParams.delete(credential.name);
+        else headers.delete(credential.name);
+      }
+    }
+    current = { ...current, url: nextURL.toString(), headers };
+  }
+}
+
+function swagger20Fetch(
+  fetchFn: typeof globalThis.fetch,
+  request: Swagger20PlannedRequest,
+): Promise<Response> {
+  return fetchFn(request.url, {
+    method: request.method,
+    headers: request.headers,
+    ...(request.body === null ? {} : { body: request.body }),
+    signal: request.signal,
+    redirect: request.redirect,
+  });
+}
+
+function swagger20RedirectRewritesMethod(status: number, method: string): boolean {
+  const normalized = method.toUpperCase();
+  if (status === 303) return normalized !== "GET" && normalized !== "HEAD";
+  return (status === 301 || status === 302) && normalized === "POST";
 }
 
 async function applyRequestContentCodings(
@@ -223,18 +336,10 @@ async function applyRequestContentCodings(
 }
 
 async function decodeResponseContentCodings(
-  headers: Headers,
-  governing: Swagger20ResolvedResponse | undefined,
+  tokens: string[],
   body: Uint8Array,
   codecs: ReadonlyMap<string, Swagger20ContentCodec> | undefined,
 ): Promise<Uint8Array> {
-  const raw = headers.get("Content-Encoding");
-  if (!raw) return body;
-  if (!governing) throw new Error("coded response has no governing Response Object");
-  const header = responseHeader(governing.raw, "Content-Encoding");
-  if (!header) throw new Error("actual response Content-Encoding has no governing Header Object");
-  headerObjectAdmits(header, raw);
-  const tokens = contentCodingTokens(raw);
   for (let index = tokens.length - 1; index >= 0; index--) {
     const token = tokens[index]!;
     if (token === "identity") continue;
@@ -246,26 +351,32 @@ async function decodeResponseContentCodings(
   return body;
 }
 
-function responseHeader(response: Swagger20Object, name: string): Swagger20Object | undefined {
-  const headers = objectMember(response, "headers");
-  if (!headers.present) return undefined;
-  if (!headers.valid) throw new Error("governing Response headers is not an object");
-  const matches = Object.entries(headers.value!).filter(([declared]) => declared.toLowerCase() === name.toLowerCase());
-  if (matches.length > 1) throw new Error(`governing response has ambiguous case-insensitive Header Objects named ${JSON.stringify(name)}`);
-  if (matches.length === 0) return undefined;
-  const value = matches[0]![1];
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error(`governing response Header Object ${JSON.stringify(matches[0]![0])} is not an object`);
+function responseContentCodingTokens(
+  headers: Headers,
+  governing: Swagger20ResolvedResponse | undefined,
+): string[] {
+  const raw = headers.get("Content-Encoding");
+  if (!raw) return [];
+  const tokens = contentCodingTokens(raw);
+  if (governing) {
+    for (const header of responseHeaders(governing.raw, "Content-Encoding")) headerObjectAdmits(header, raw);
   }
-  return value as Swagger20Object;
+  return tokens;
+}
+
+function responseHeaders(response: Swagger20Object, name: string): Swagger20Object[] {
+  const headers = objectMember(response, "headers");
+  if (!headers.valid) return [];
+  const matches = Object.entries(headers.value!).filter(([declared]) => declared.toLowerCase() === name.toLowerCase());
+  return matches.flatMap(([, value]) =>
+    value !== null && typeof value === "object" && !Array.isArray(value) ? [value as Swagger20Object] : []);
 }
 
 function headerObjectAdmits(header: Swagger20Object, value: string): void {
   const type = stringMember(header, "type");
-  if (!type.valid || type.value !== "string") throw new Error("Header Object does not declare type string");
-  const required = booleanMember(header, "required");
-  if (required.present && !required.valid) throw new Error("Header Object required is not a boolean");
-  if (Object.hasOwn(header, "enum") && (!Array.isArray(header.enum) || !header.enum.includes(value))) {
+  if (type.value !== "string" || !Array.isArray(header.enum)) return;
+  const domain = header.enum.filter((member): member is string => typeof member === "string");
+  if (domain.length > 0 && !domain.includes(value)) {
     throw new Error("value is outside enum");
   }
 }
@@ -280,7 +391,11 @@ function codingBytes(value: Swagger20ContentCodingResult): Uint8Array {
 function httpFailure(response: Response, governing: Swagger20ResolvedResponse | undefined, details: unknown): Swagger20ExecutionError {
   return new Swagger20ExecutionError("ERR_EXECUTION_FAILED", `HTTP ${response.status}`, {
     ...(details === undefined ? {} : { details }),
-    evidence: { status: response.status, openapi: { declared: governing !== undefined, responseKey: governing?.key ?? "" } },
+    evidence: {
+      response: response.clone(),
+      status: response.status,
+      openapi: { declared: governing !== undefined, responseKey: governing?.key ?? "" },
+    },
   });
 }
 
@@ -321,6 +436,7 @@ function resolveSwagger20ServerForInvocation(prepared: PreparedSwagger20Operatio
   } catch (error: unknown) {
     if (error instanceof ConfigRequired) throw error;
     if (prepared.options.server !== undefined || prepared.options.serverSchemeIndex !== undefined) throw error;
+    if (errorMessage(error).includes("host must contain only an authority")) throw error;
     try {
       resolveSwagger20Server(prepared.document, prepared.operation, "https://configured.invalid", undefined);
     } catch {

@@ -1,19 +1,50 @@
-package openapiclient
+package openapi
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
-	"sort"
 	"strings"
 
-	"github.com/getkin/kin-openapi/openapi3"
+	runtime "github.com/openbindings/openapi-client/go/internal/runtime"
 )
 
+// Edition is the exact artifact version selected during loading.
+type Edition string
+
+const (
+	Swagger20  Edition = "2.0"
+	OpenAPI300 Edition = "3.0.0"
+	OpenAPI301 Edition = "3.0.1"
+	OpenAPI302 Edition = "3.0.2"
+	OpenAPI303 Edition = "3.0.3"
+	OpenAPI304 Edition = "3.0.4"
+	OpenAPI310 Edition = "3.1.0"
+	OpenAPI311 Edition = "3.1.1"
+	OpenAPI312 Edition = "3.1.2"
+	OpenAPI320 Edition = "3.2.0"
+)
+
+// Source identifies one OpenAPI artifact. Content, when present, is JSON or
+// YAML; Location supplies its reference base and is retrieved when Content is
+// absent.
+type Source struct {
+	Location string
+	Content  []byte
+}
+
+// FromURL creates a location-only source.
+func FromURL(location string) Source { return Source{Location: location} }
+
+// FromBytes creates a content source. Load snapshots the bytes.
+func FromBytes(content []byte) Source { return Source{Content: content} }
+
+// FromText creates a UTF-8 JSON or YAML content source.
+func FromText(content string) Source { return Source{Content: []byte(content)} }
+
+// Method is an authored OpenAPI fixed-operation field.
 type Method string
 
 const (
@@ -25,31 +56,47 @@ const (
 	HEAD    Method = "head"
 	PATCH   Method = "patch"
 	TRACE   Method = "trace"
+	QUERY   Method = "query"
 )
 
-type OperationSelector struct {
-	operationID      string
-	path             string
-	method           Method
-	additionalMethod string
-	ref              string
+// OperationSelector selects an operation without exposing parser internals.
+type OperationSelector struct{ value runtime.OperationSelector }
+
+// OperationID selects the unique operation whose operationId equals value.
+func OperationID(value string) OperationSelector {
+	return OperationSelector{value: runtime.OperationID(value)}
 }
 
-func OperationID(value string) OperationSelector { return OperationSelector{operationID: value} }
+// OperationRef selects an operation by its canonical local OpenAPI reference.
+func OperationRef(value string) OperationSelector {
+	return OperationSelector{value: runtime.OperationRef(value)}
+}
+
+// PathOperation selects a fixed operation field at path.
 func PathOperation(path string, method Method) OperationSelector {
-	return OperationSelector{path: path, method: method}
+	return OperationSelector{value: runtime.PathOperation(path, runtime.Method(method))}
 }
-func OperationRef(value string) OperationSelector { return OperationSelector{ref: value} }
 
+// AdditionalOperation selects a case-sensitive OAS 3.2 additionalOperations
+// method token.
+func AdditionalOperation(path, method string) OperationSelector {
+	return OperationSelector{value: runtime.AdditionalOperation(path, method)}
+}
+
+// OperationInfo is immutable caller-facing operation metadata.
 type OperationInfo struct {
 	Ref         string
 	Path        string
-	Method      Method
+	Method      string
+	WireMethod  string
+	Additional  bool
 	OperationID string
 	Summary     string
 	Tags        []string
 }
 
+// Parameters keeps OpenAPI wire locations distinct even when their names are
+// equal. QueryString is the OAS 3.2 whole-query-component location.
 type Parameters struct {
 	Path        map[string]any
 	Query       map[string]any
@@ -58,63 +105,229 @@ type Parameters struct {
 	Cookie      map[string]any
 }
 
+// Input is one native application input. BodyPresent distinguishes an
+// explicit JSON null from omission; every non-nil Body is present regardless.
 type Input struct {
-	Parameters Parameters
-	// Body is the native application body. Raw media accepts []byte or string;
-	// callers never provide the engine's private Base64 carriage form.
-	Body any
-	// BodyPresent distinguishes an authored JSON null body from omission.
-	// Non-nil Body values are present without setting this field.
-	BodyPresent bool
-	MediaType   string
-	// PropertyMediaTypes supplies concrete media types for multipart or form
-	// properties whose Encoding contentType is a list/range, and for the OAS
-	// 3.0 typeless multipart cell that has no artifact default.
+	Parameters         Parameters
+	Body               any
+	BodyPresent        bool
+	MediaType          string
 	PropertyMediaTypes map[string]string
 }
 
+// BasicCredential is a scheme-named HTTP Basic credential.
 type BasicCredential struct {
 	Username string
 	Password string
 }
 
-type ServerSelection struct {
-	Index     *int
-	URL       string
-	BaseURL   string
-	Variables map[string]string
+// SecuritySchemeInfo is a detached, read-only view of one authored security
+// scheme. JSON is a snapshot, not a parser-owned model.
+type SecuritySchemeInfo struct {
+	Type             string
+	Scheme           string
+	Name             string
+	In               string
+	BearerFormat     string
+	OpenIDConnectURL string
+	Description      string
+	JSON             []byte
 }
 
-type ClientOptions struct {
-	HTTPClient             *http.Client
-	Auth                   map[string]any
-	Server                 any
-	Headers                http.Header
-	MaxResponseBytes       int64
-	SecurityHandlers       map[string]SecurityHandler
-	ParameterConverter     ParameterConverter
-	RequestContentCodings  map[string]ContentEncoder
-	ResponseContentCodings map[string]ContentDecoder
+// SecurityHandler owns one artifact-authored scheme the built-ins do not.
+type SecurityHandler func(*http.Request, SecurityHandlerContext) error
+
+// SecurityHandlerContext describes the scheme and operation for a custom
+// security handler. Its values are detached from parser-owned state.
+type SecurityHandlerContext struct {
+	SchemeName string
+	Scheme     SecuritySchemeInfo
+	Operation  OperationInfo
 }
 
+type credentialKind uint8
+
+const (
+	credentialToken credentialKind = iota + 1
+	credentialBasic
+	credentialHandler
+)
+
+// Credential is a typed scheme-named credential value.
+type Credential struct {
+	kind    credentialKind
+	token   string
+	basic   BasicCredential
+	handler SecurityHandler
+}
+
+// Token supplies the string credential consumed by an API-key, Bearer,
+// OAuth 2, or OpenID Connect scheme according to the artifact declaration.
+func Token(value string) Credential { return Credential{kind: credentialToken, token: value} }
+
+// Basic supplies a Basic credential without exposing a polymorphic any value.
+func Basic(username, password string) Credential {
+	return Credential{kind: credentialBasic, basic: BasicCredential{Username: username, Password: password}}
+}
+
+// CustomSecurity installs the native handler that satisfies and applies one
+// otherwise unsupported authored security scheme.
+func CustomSecurity(handler SecurityHandler) Credential {
+	return Credential{kind: credentialHandler, handler: handler}
+}
+
+// Credentials are keyed by names authored in securityDefinitions or
+// components.securitySchemes.
+type Credentials map[string]Credential
+
+// ServerSelection is constructed by Server or ServerURL so invalid mixed
+// selection shapes cannot be expressed.
+type ServerSelection interface {
+	runtimeServerSelection() *runtime.ServerSelection
+}
+
+type serverIndexSelection struct {
+	index     int
+	variables map[string]string
+}
+
+func (s serverIndexSelection) runtimeServerSelection() *runtime.ServerSelection {
+	return runtime.ServerByIndex(s.index, cloneStrings(s.variables))
+}
+
+type serverVariablesSelection map[string]string
+
+func (s serverVariablesSelection) runtimeServerSelection() *runtime.ServerSelection {
+	return &runtime.ServerSelection{Variables: cloneStrings(s)}
+}
+
+type serverURLSelection string
+
+func (s serverURLSelection) runtimeServerSelection() *runtime.ServerSelection {
+	return runtime.ServerURL(string(s))
+}
+
+// Server selects one zero-based authored effective server and its variables.
+func Server(index int, variables map[string]string) ServerSelection {
+	return serverIndexSelection{index: index, variables: cloneStrings(variables)}
+}
+
+// ServerVariables supplies variables for the sole or default effective server
+// without selecting one by index.
+func ServerVariables(variables map[string]string) ServerSelection {
+	return serverVariablesSelection(cloneStrings(variables))
+}
+
+// ServerURL replaces the artifact-derived base with one complete URL.
+func ServerURL(value string) ServerSelection { return serverURLSelection(value) }
+
+// RedirectPolicy controls invocation redirect handling. The zero value
+// defaults to RedirectManual.
+type RedirectPolicy string
+
+const (
+	RedirectManual RedirectPolicy = "manual"
+	RedirectFollow RedirectPolicy = "follow"
+)
+
+// EmptyValueForm selects the Swagger 2.0 wire spelling of an empty value when
+// the artifact leaves that choice open.
+type EmptyValueForm string
+
+const (
+	EmptyValueNameOnly EmptyValueForm = "name-only"
+	EmptyValueEmpty    EmptyValueForm = "empty"
+)
+
+// ImplicitConnectionScope selects which document owns an unqualified OpenAPI
+// 3.0 security-scheme name across an external reference boundary.
+type ImplicitConnectionScope string
+
+const (
+	ConnectionEntry     ImplicitConnectionScope = "entry"
+	ConnectionReferring ImplicitConnectionScope = "referring"
+)
+
+// ParameterConverter converts an application boolean or number when the
+// binding requires the host to choose its exact string representation.
+type ParameterConverter func(any) (string, error)
+
+// ContentEncoder applies one named request Content-Encoding coding.
+type ContentEncoder func([]byte) ([]byte, error)
+
+// ContentDecoder removes one named response Content-Encoding coding.
+type ContentDecoder func([]byte) ([]byte, error)
+
+// CharacterEncoder encodes request character data for one named charset.
+type CharacterEncoder func(string) ([]byte, error)
+
+// CharacterDecoder decodes response character data for one named charset.
+type CharacterDecoder func([]byte) (string, error)
+
+// Options are immutable defaults for a loaded client.
+type Options struct {
+	// DocumentHTTPClient retrieves the entry artifact and external references.
+	// Its redirect policy is independent from invocation redirects.
+	DocumentHTTPClient *http.Client
+	// HTTPClient dispatches API operations. A nil value uses the package's
+	// default invocation client.
+	HTTPClient *http.Client
+	// Redirect defaults to RedirectManual.
+	Redirect RedirectPolicy
+	// Auth contains credentials keyed by authored security-scheme name.
+	Auth Credentials
+	// Server selects an authored server or supplies a complete replacement URL.
+	Server ServerSelection
+	// Headers are caller-owned ordinary defaults merged into each request.
+	Headers http.Header
+	// MaxDeliveryUnitBytes bounds each decoded value; zero uses the package
+	// default of 10 MiB.
+	MaxDeliveryUnitBytes int64
+	// SecurityAlternative selects one zero-based authored OR alternative.
+	SecurityAlternative     *int
+	ImplicitConnectionScope ImplicitConnectionScope
+	EmptyValueForm          EmptyValueForm
+	ParameterConverter      ParameterConverter
+	// Coding and character maps are keyed case-insensitively by coding or
+	// charset name after package normalization.
+	RequestContentCodings      map[string]ContentEncoder
+	ResponseContentCodings     map[string]ContentDecoder
+	RequestCharacterEncodings  map[string]CharacterEncoder
+	ResponseCharacterEncodings map[string]CharacterDecoder
+}
+
+// CallOptions override client defaults for one invocation. An empty Redirect
+// inherits the client policy.
 type CallOptions struct {
-	HTTPClient             *http.Client
-	Auth                   map[string]any
-	Server                 any
-	Headers                http.Header
-	MaxResponseBytes       int64
-	SecurityHandlers       map[string]SecurityHandler
-	ParameterConverter     ParameterConverter
-	RequestContentCodings  map[string]ContentEncoder
-	ResponseContentCodings map[string]ContentDecoder
+	// HTTPClient overrides the invocation client for this call.
+	HTTPClient *http.Client
+	Redirect   RedirectPolicy
+	// Auth overlays client credentials by authored scheme name.
+	Auth   Credentials
+	Server ServerSelection
+	// Headers replace same-named client defaults and add new ordinary fields.
+	Headers                    http.Header
+	MaxDeliveryUnitBytes       int64
+	SecurityAlternative        *int
+	ImplicitConnectionScope    ImplicitConnectionScope
+	EmptyValueForm             EmptyValueForm
+	ParameterConverter         ParameterConverter
+	RequestContentCodings      map[string]ContentEncoder
+	ResponseContentCodings     map[string]ContentDecoder
+	RequestCharacterEncodings  map[string]CharacterEncoder
+	ResponseCharacterEncodings map[string]CharacterDecoder
 }
 
+// DeclarationMatch identifies the response declaration that governed an HTTP
+// outcome. Declared is false when no Response Object governed the status.
 type DeclarationMatch struct {
 	Declared    bool
 	ResponseKey string
 	MediaType   string
 }
 
+// Result is an HTTP application outcome. Non-2xx outcomes return OK=false;
+// local, transport, and protocol failures return an error from Call.
 type Result struct {
 	OK       bool
 	Data     any
@@ -123,52 +336,76 @@ type Result struct {
 	OpenAPI  DeclarationMatch
 }
 
-type StreamEvent struct {
-	Data any
-	SSE  *SSEMetadata
-}
-
+// SSEMetadata retains Server-Sent Events framing metadata when present.
 type SSEMetadata struct {
 	Event string
 	ID    string
 	Retry *int
 }
 
-type Stream struct {
-	execution *Execution
+// StreamEvent is one application value in response order.
+type StreamEvent struct {
+	Data any
+	SSE  *SSEMetadata
 }
 
+// Stream is the sole consumer of a successful streaming response body.
+type Stream struct{ inner *runtime.Stream }
+
+// Next returns the next event. open is false after terminal completion; callers
+// should then call Wait to distinguish clean completion from terminal failure.
 func (s *Stream) Next(ctx context.Context) (StreamEvent, bool, error) {
-	if ctx == nil {
-		ctx = context.Background()
+	if s == nil || s.inner == nil {
+		return StreamEvent{}, false, nilClientError("OpenAPI stream is nil")
 	}
-	select {
-	case event, open := <-s.execution.Events():
-		if !open {
-			if err := s.execution.Wait(); err != nil {
-				return StreamEvent{}, false, clientError(err)
-			}
-			return StreamEvent{}, false, nil
-		}
-		return StreamEvent{Data: event.Value, SSE: sseMetadata(event.Metadata)}, true, nil
-	case <-ctx.Done():
-		return StreamEvent{}, false, &ClientError{Kind: ErrorCancelled, Code: CodeCancelled, Message: "stream receive cancelled", Cause: ctx.Err()}
+	value, ok, err := s.inner.Next(ctx)
+	if err != nil {
+		return StreamEvent{}, false, clientError(err)
+	}
+	return StreamEvent{Data: value.Data, SSE: copySSE(value.SSE)}, ok, nil
+}
+
+// Cancel stops response consumption and the underlying request.
+func (s *Stream) Cancel() {
+	if s != nil && s.inner != nil {
+		s.inner.Cancel()
 	}
 }
-func (s *Stream) Cancel()               { s.execution.Cancel() }
-func (s *Stream) Done() <-chan struct{} { return s.execution.Done() }
-func (s *Stream) Wait() error           { return clientError(s.execution.Wait()) }
 
+// Done closes after the stream reaches a terminal outcome.
+func (s *Stream) Done() <-chan struct{} {
+	if s == nil || s.inner == nil {
+		return alreadyDone
+	}
+	return s.inner.Done()
+}
+
+// Wait blocks for and returns the stream's terminal outcome.
+func (s *Stream) Wait() error {
+	if s == nil || s.inner == nil {
+		return nilClientError("OpenAPI stream is nil")
+	}
+	return clientError(s.inner.Wait())
+}
+
+var alreadyDone = func() <-chan struct{} {
+	done := make(chan struct{})
+	close(done)
+	return done
+}()
+
+// StreamResult is either a successful stream or an HTTP application failure.
+// On success Response contains metadata only and Stream owns the body. On an
+// HTTP failure Response.Body is a bounded replay.
 type StreamResult struct {
-	OK          bool
-	Stream      *Stream
-	Error       any
-	Response    *http.Response
-	OpenAPI     DeclarationMatch
-	rawBoundary bool
-	sequential  bool
+	OK       bool
+	Stream   *Stream
+	Error    any
+	Response *http.Response
+	OpenAPI  DeclarationMatch
 }
 
+// ErrorKind is the stable coarse category of a ClientError.
 type ErrorKind string
 
 const (
@@ -183,817 +420,604 @@ const (
 	ErrorInternal      ErrorKind = "internal"
 )
 
-type ClientError struct {
-	Kind    ErrorKind
-	Code    string
-	Message string
-	Details any
-	Cause   error
+// CodeConfigurationRequired identifies an actionable missing artifact choice.
+const CodeConfigurationRequired = "CONFIGURATION_REQUIRED"
+
+// ConfigurationRequirementKind identifies which public surface supplies a
+// missing requirement.
+type ConfigurationRequirementKind string
+
+const (
+	RequirementOption     ConfigurationRequirementKind = "option"
+	RequirementInput      ConfigurationRequirementKind = "input"
+	RequirementCredential ConfigurationRequirementKind = "credential"
+)
+
+// ConfigurationRequirement describes one missing native input, option, or
+// credential. Name is an Input field for Kind=input, an Options/CallOptions
+// field for Kind=option, and an authored security-scheme name for
+// Kind=credential.
+type ConfigurationRequirement struct {
+	Kind          ConfigurationRequirementKind
+	Name          string
+	Path          string
+	Credential    string
+	AllowedValues []any
+	Description   string
 }
 
+// ConfigurationAlternative is conjunctive: every requirement must be
+// supplied. ConfigurationRequirements.Alternatives is disjunctive.
+type ConfigurationAlternative struct {
+	Requirements []ConfigurationRequirement
+}
+
+// ConfigurationRequirements describes disjunctive complete remedies for one
+// target. Supplying every member of any one alternative is sufficient.
+type ConfigurationRequirements struct {
+	Target       string
+	Alternatives []ConfigurationAlternative
+}
+
+// ClientError is a typed non-HTTP failure.
+type ClientError struct {
+	Kind         ErrorKind
+	Code         string
+	Message      string
+	Details      any
+	Requirements *ConfigurationRequirements
+	Cause        error
+}
+
+// Error returns the diagnostic message, falling back to Code.
 func (e *ClientError) Error() string {
 	if e.Message != "" {
 		return e.Message
 	}
 	return e.Code
 }
+
+// Unwrap returns the underlying private or host failure, when one exists.
 func (e *ClientError) Unwrap() error { return e.Cause }
 
+// Client is an immutable loaded OpenAPI artifact plus native defaults.
 type Client struct {
-	artifact *Artifact
-	document *openapi3.T
-	floor    *acceptanceFloor
-	source   Source
-	options  ClientOptions
+	inner   *runtime.Client
+	options Options
 }
 
-func Load(ctx context.Context, source Source, options ClientOptions) (*Client, error) {
-	client := options.HTTPClient
-	if client == nil {
-		client = defaultHTTPClient()
+// Load retrieves or parses source, resolves its edition, snapshots mutable
+// caller input, and returns an immutable client.
+func Load(ctx context.Context, source Source, options Options) (*Client, error) {
+	if err := validRedirect(options.Redirect, true); err != nil {
+		return nil, err
 	}
-	artifact, floor, err := loadArtifact(ctx, client, source, true)
+	options = snapshotOptions(options)
+	inner, err := runtime.Load(ctx, runtime.Source{
+		Location: source.Location,
+		Content:  append([]byte(nil), source.Content...),
+	}, runtimeClientOptions(options))
 	if err != nil {
-		return nil, &ClientError{Kind: ErrorSource, Code: "SOURCE_LOAD_FAILED", Message: err.Error(), Cause: err}
+		return nil, clientError(err)
 	}
-	source.Artifact = artifact
-	source.Document = artifact.Document
-	source.Content = nil
-	return &Client{artifact: artifact, document: artifact.Document, floor: floor, source: source, options: options}, nil
+	return &Client{inner: inner, options: options}, nil
 }
 
-func (c *Client) Document() *openapi3.T { return c.document }
-func (c *Client) Artifact() *Artifact   { return c.artifact }
+// Edition returns the exact supported version selected during loading.
+func (c *Client) Edition() Edition {
+	if c == nil || c.inner == nil {
+		return ""
+	}
+	return Edition(c.inner.Edition())
+}
 
+// Location is the resolved entry-document location, when the source had one.
+func (c *Client) Location() string {
+	if c == nil || c.inner == nil {
+		return ""
+	}
+	return c.inner.Location()
+}
+
+// Operations returns a stable detached inventory of addressable operations.
 func (c *Client) Operations() []OperationInfo {
-	operations := enumerateOperationsWithFloor(c.artifact, c.floor)
+	if c == nil || c.inner == nil {
+		return nil
+	}
+	operations := c.inner.Operations()
 	result := make([]OperationInfo, len(operations))
 	for index := range operations {
-		result[index] = operations[index].info
+		result[index] = operationInfo(operations[index])
 	}
 	return result
 }
 
-// Operations returns every addressable operation in the artifact in stable
-// OpenAPI order. OpenAPI 3.2 enumeration includes the fixed QUERY field and
-// case-exact additionalOperations entries; excluded targets are omitted.
-//
-// This artifact-level surface lets native adapters synthesize from the same
-// edition-aware inventory the execution engine resolves, without exposing the
-// private raw-resource overlay or request-body planning types.
-func (a *Artifact) Operations() []OperationInfo {
-	operations := enumerateOperationsWithFloor(a, nil)
-	result := make([]OperationInfo, len(operations))
-	for index := range operations {
-		result[index] = operations[index].info
+// Operation binds a selector once for repeated calls.
+func (c *Client) Operation(selector OperationSelector) (*Operation, error) {
+	if c == nil || c.inner == nil {
+		return nil, &ClientError{Kind: ErrorInternal, Code: "NIL_CLIENT", Message: "OpenAPI client is nil"}
 	}
-	return result
+	info, err := c.inner.SelectOperationInfo(selector.value)
+	if err != nil {
+		return nil, clientError(err)
+	}
+	return &Operation{client: c, selector: selector, info: operationInfo(info)}, nil
 }
 
+// Call invokes selector and returns one unary HTTP application outcome.
 func (c *Client) Call(ctx context.Context, selector OperationSelector, input Input, options ...CallOptions) (*Result, error) {
-	streamResult, err := c.Stream(ctx, selector, input, options...)
+	if c == nil || c.inner == nil {
+		return nil, &ClientError{Kind: ErrorInternal, Code: "NIL_CLIENT", Message: "OpenAPI client is nil"}
+	}
+	call, err := oneCallOptions(options)
 	if err != nil {
 		return nil, err
 	}
-	if !streamResult.OK {
-		return &Result{OK: false, Error: streamResult.Error, Response: streamResult.Response, OpenAPI: streamResult.OpenAPI}, nil
+	result, err := c.inner.Call(ctx, selector.value, runtimeInput(input), runtimeCallOptions(c.options, call))
+	if err != nil {
+		return nil, clientError(err)
 	}
-	if streamResult.sequential || isSSEContentTypeFor(streamResult.Response.Header.Get("Content-Type"), profileFullCoordinate) {
-		streamResult.Stream.Cancel()
-		return nil, &ClientError{Kind: ErrorResponse, Code: "STREAMING_RESPONSE", Message: "operation returned sequential media; use Client.Stream"}
-	}
-	var values []any
-	for {
-		event, open, err := streamResult.Stream.Next(ctx)
-		if err != nil {
-			return nil, err
-		}
-		if !open {
-			break
-		}
-		values = append(values, event.Data)
-	}
-	if len(values) > 1 {
-		return nil, &ClientError{Kind: ErrorResponse, Code: "STREAMING_RESPONSE", Message: "operation produced multiple values; use Client.Stream"}
-	}
-	response, err := streamResult.Stream.execution.Response(ctx)
-	if err == nil {
-		streamResult.Response = response
-	}
-	var data any
-	if len(values) == 1 {
-		data = nativeSuccessValue(values[0], streamResult.rawBoundary)
-	}
-	return &Result{OK: true, Data: data, Response: streamResult.Response, OpenAPI: streamResult.OpenAPI}, nil
+	return resultValue(result), nil
 }
 
+// Stream invokes selector and returns an ordered response stream or an HTTP
+// application failure.
 func (c *Client) Stream(ctx context.Context, selector OperationSelector, input Input, options ...CallOptions) (*StreamResult, error) {
-	if ctx == nil {
-		ctx = context.Background()
+	if c == nil || c.inner == nil {
+		return nil, &ClientError{Kind: ErrorInternal, Code: "NIL_CLIENT", Message: "OpenAPI client is nil"}
 	}
-	resolved, err := resolveOperation(c.artifact, c.floor, selector)
+	call, err := oneCallOptions(options)
 	if err != nil {
 		return nil, err
 	}
-	if c.artifact.Edition.IsOpenAPI32() && !resolved.additional && resolved.info.Method == TRACE {
-		operation := *resolved.operation
-		operation.RequestBody = nil
-		resolved.operation = &operation
-	}
-	native, err := nativeInput(c.artifact, resolved.info.Ref, resolved.document, resolved.pathItem, resolved.operation, input)
+	result, err := c.inner.Stream(ctx, selector.value, runtimeInput(input), runtimeCallOptions(c.options, call))
 	if err != nil {
-		return nil, err
+		return nil, clientError(err)
 	}
-	call := CallOptions{}
+	return streamResultValue(result), nil
+}
+
+// Operation is a selector resolved against one loaded client.
+type Operation struct {
+	client   *Client
+	selector OperationSelector
+	info     OperationInfo
+}
+
+// Info returns detached metadata for the bound operation.
+func (o *Operation) Info() OperationInfo {
+	if o == nil {
+		return OperationInfo{}
+	}
+	return cloneOperationInfo(o.info)
+}
+
+// Call invokes the bound operation as a unary exchange.
+func (o *Operation) Call(ctx context.Context, input Input, options ...CallOptions) (*Result, error) {
+	if o == nil || o.client == nil {
+		return nil, nilClientError("OpenAPI operation is nil")
+	}
+	return o.client.Call(ctx, o.selector, input, options...)
+}
+
+// Stream invokes the bound operation as an ordered response stream.
+func (o *Operation) Stream(ctx context.Context, input Input, options ...CallOptions) (*StreamResult, error) {
+	if o == nil || o.client == nil {
+		return nil, nilClientError("OpenAPI operation is nil")
+	}
+	return o.client.Stream(ctx, o.selector, input, options...)
+}
+
+func nilClientError(message string) *ClientError {
+	return &ClientError{Kind: ErrorInternal, Code: "NIL_CLIENT", Message: message}
+}
+
+func oneCallOptions(options []CallOptions) (CallOptions, error) {
 	if len(options) > 1 {
-		return nil, &ClientError{Kind: ErrorConfiguration, Code: "TOO_MANY_CALL_OPTIONS", Message: "Call accepts at most one CallOptions value"}
+		return CallOptions{}, &ClientError{Kind: ErrorConfiguration, Code: "TOO_MANY_CALL_OPTIONS", Message: "Call accepts at most one CallOptions value"}
 	}
-	if len(options) == 1 {
-		call = options[0]
+	if len(options) == 0 {
+		return CallOptions{}, nil
 	}
-	prepare, err := c.prepareOptions(resolved, native, call)
-	if err != nil {
-		return nil, err
+	if err := validRedirect(options[0].Redirect, false); err != nil {
+		return CallOptions{}, err
 	}
-	prepared, err := prepareArtifactWithFloor(c.artifact, nil, prepare)
-	if err != nil {
-		return nil, clientError(err)
-	}
-	execution, err := prepared.Start(ctx)
-	if err != nil {
-		return nil, clientError(err)
-	}
-	if native.supplied {
-		if err := execution.Send(ctx, native.value); err != nil {
-			execution.Cancel()
-			return nil, clientError(err)
-		}
-	}
-	if err := execution.FinishInput(); err != nil {
-		execution.Cancel()
-		return nil, clientError(err)
-	}
-	response, err := execution.Response(ctx)
-	if err != nil {
-		return nil, clientError(err)
-	}
-	declaration := declarationMatch(resolved.operation, response)
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		terminal := execution.Wait()
-		if replay, replayErr := execution.Response(ctx); replayErr == nil {
-			response = replay
-		}
-		failure := decodeFailure(responseBody(response), response.Header.Get("Content-Type"))
-		if evidence, ok := FailureEvidenceFrom(terminal); ok {
-			failure = decodeFailure(evidence.HTTPResponse.Body, headerValue(evidence.HTTPResponse.Headers, "content-type"))
-			declaration = DeclarationMatch{Declared: evidence.OpenAPI.Declared, ResponseKey: evidence.OpenAPI.ResponseKey, MediaType: evidence.OpenAPI.GoverningMedia}
-		}
-		return &StreamResult{OK: false, Error: failure, Response: response, OpenAPI: declaration}, nil
-	}
-	return &StreamResult{
-		OK: true, Stream: &Stream{execution: execution}, Response: response, OpenAPI: declaration,
-		rawBoundary: nativeResponseUsesRawBoundary(resolved.document, resolved.operation, response),
-		sequential:  nativeOpenAPI32SequentialResponse(c.artifact, resolved.operation, response),
-	}, nil
+	return options[0], nil
 }
 
-func nativeOpenAPI32SequentialResponse(artifact *Artifact, operation *openapi3.Operation, response *http.Response) bool {
-	if artifact == nil || !artifact.Edition.IsOpenAPI32() || response == nil {
-		return false
-	}
-	governing := governingResponse(operation, response.StatusCode)
-	if governing == nil {
-		return false
-	}
-	matched, err := governingResponseMediaMatchFor(governing.response, response.Header.Get("Content-Type"), profileFullCoordinate)
-	if err != nil {
-		return false
-	}
-	kind, err := ClassifyOpenAPI32SequentialResponse(response.Header.Get("Content-Type"), matched.media)
-	return err == nil && kind != ""
-}
-
-type resolvedOperation struct {
-	info       OperationInfo
-	document   *openapi3.T
-	pathItem   *openapi3.PathItem
-	operation  *openapi3.Operation
-	additional bool
-}
-
-func enumerateOperations(document *openapi3.T) []resolvedOperation {
-	if document == nil {
+func validRedirect(policy RedirectPolicy, client bool) error {
+	if policy == "" || policy == RedirectManual || policy == RedirectFollow {
 		return nil
 	}
-	return enumerateOperationsWithFloor(&Artifact{Document: document, Edition: Edition(document.OpenAPI)}, nil)
+	owner := "call"
+	if client {
+		owner = "client"
+	}
+	return &ClientError{Kind: ErrorConfiguration, Code: "INVALID_REDIRECT_POLICY", Message: fmt.Sprintf("%s redirect policy %q is invalid", owner, policy)}
 }
 
-// enumerateOperationsWithFloor applies the acceptance-floor inventory filter
-// (§3.2 of `openbindings.openapi-3.1@1` and its siblings): a ladder-invalid target is not addressed and
-// is not enumerated as invocable.
-func enumerateOperationsWithFloor(artifact *Artifact, floor *acceptanceFloor) []resolvedOperation {
-	if artifact == nil || artifact.Refusal() != nil || artifact.SourceExclusion() != nil {
-		return nil
+func runtimeClientOptions(options Options) runtime.ClientOptions {
+	auth, handlers := runtimeCredentials(options.Auth)
+	return runtime.ClientOptions{
+		LoadHTTPClient:             options.DocumentHTTPClient,
+		HTTPClient:                 redirectClient(options.HTTPClient, normalizedRedirect(options.Redirect)),
+		Auth:                       auth,
+		Server:                     runtimeServer(options.Server),
+		Headers:                    options.Headers.Clone(),
+		MaxDeliveryUnitBytes:       options.MaxDeliveryUnitBytes,
+		SecurityAlternative:        cloneOptionalInt(options.SecurityAlternative),
+		ImplicitConnectionScope:    runtime.ImplicitConnectionScope(options.ImplicitConnectionScope),
+		EmptyValueForm:             runtime.Swagger20EmptyValueForm(options.EmptyValueForm),
+		SecurityHandlers:           handlers,
+		ParameterConverter:         runtime.ParameterConverter(options.ParameterConverter),
+		RequestContentCodings:      contentEncoders(options.RequestContentCodings),
+		ResponseContentCodings:     contentDecoders(options.ResponseContentCodings),
+		RequestCharacterEncodings:  characterEncoders(options.RequestCharacterEncodings),
+		ResponseCharacterEncodings: characterDecoders(options.ResponseCharacterEncodings),
 	}
-	document := artifact.Document
-	if document == nil {
-		return nil
-	}
-	if artifact.Edition.IsOpenAPI32() {
-		if artifact.openAPI32 == nil {
-			return nil
-		}
-		result := []resolvedOperation{}
-		for _, reference := range artifact.openAPI32.operationReferences() {
-			if verdict := floor.opVerdict(reference.Ref); verdict != nil && verdict.Disposition == "invalid" {
-				continue
-			}
-			target, err := artifact.ResolveOperation(reference.Ref)
-			if err != nil {
-				continue
-			}
-			result = append(result, resolvedOperation{
-				document: target.Document, pathItem: target.PathItem, operation: target.Operation,
-				additional: reference.Additional,
-				info: OperationInfo{
-					Ref: reference.Ref, Path: reference.Path, Method: Method(reference.Method),
-					OperationID: target.Operation.OperationID, Summary: target.Operation.Summary,
-					Tags: append([]string(nil), target.Operation.Tags...),
-				},
-			})
-		}
-		return result
-	}
-	if document.Paths == nil {
-		return nil
-	}
-	paths := document.Paths.Map()
-	names := make([]string, 0, len(paths))
-	for path := range paths {
-		names = append(names, path)
-	}
-	sort.Strings(names)
-	result := []resolvedOperation{}
-	for _, path := range names {
-		item := paths[path]
-		if item == nil {
-			continue
-		}
-		for _, method := range httpMethods {
-			operation := item.GetOperation(strings.ToUpper(method))
-			if operation == nil {
-				continue
-			}
-			if verdict := floor.opVerdict("#/paths/" + escapeJSONPointerSegment(path) + "/" + method); verdict != nil && verdict.Disposition == "invalid" {
-				continue
-			}
-			result = append(result, resolvedOperation{document: document, pathItem: item, operation: operation, info: OperationInfo{
-				Ref: "#/paths/" + escapeJSONPointerSegment(path) + "/" + method, Path: path, Method: Method(method),
-				OperationID: operation.OperationID, Summary: operation.Summary, Tags: append([]string(nil), operation.Tags...),
-			}})
-		}
-	}
-	return result
 }
 
-func resolveOperation(artifact *Artifact, floor *acceptanceFloor, selector OperationSelector) (resolvedOperation, error) {
-	operations := enumerateOperationsWithFloor(artifact, floor)
-	if selector.operationID != "" {
-		matches := []resolvedOperation{}
-		for _, operation := range operations {
-			if operation.info.OperationID == selector.operationID {
-				matches = append(matches, operation)
-			}
+func runtimeCallOptions(client Options, call CallOptions) runtime.CallOptions {
+	auth, handlers := runtimeCredentials(call.Auth)
+	var httpClient *http.Client
+	if call.HTTPClient != nil || call.Redirect != "" {
+		base := call.HTTPClient
+		if base == nil {
+			base = client.HTTPClient
 		}
-		if len(matches) == 1 {
-			return matches[0], nil
+		policy := call.Redirect
+		if policy == "" {
+			policy = normalizedRedirect(client.Redirect)
 		}
-		if len(matches) > 1 {
-			return resolvedOperation{}, &ClientError{Kind: ErrorOperation, Code: "DUPLICATE_OPERATION_ID", Message: fmt.Sprintf("operationId %q is not unique", selector.operationID)}
-		}
-		return resolvedOperation{}, &ClientError{Kind: ErrorOperation, Code: "OPERATION_NOT_FOUND", Message: fmt.Sprintf("operationId %q was not found", selector.operationID)}
+		httpClient = redirectClient(base, policy)
 	}
-	if selector.ref != "" {
-		reference, err := parseOperationReference(selector.ref, artifact.Edition)
-		if err != nil {
-			return resolvedOperation{}, &ClientError{Kind: ErrorOperation, Code: "INVALID_OPERATION_REF", Message: err.Error(), Cause: err}
-		}
-		selector.path, selector.method = reference.Path, Method(reference.Method)
-		if reference.Additional {
-			selector.additionalMethod = reference.Method
-		}
+	return runtime.CallOptions{
+		HTTPClient:                 httpClient,
+		Auth:                       auth,
+		Server:                     runtimeServer(call.Server),
+		Headers:                    call.Headers.Clone(),
+		MaxDeliveryUnitBytes:       call.MaxDeliveryUnitBytes,
+		SecurityAlternative:        cloneOptionalInt(call.SecurityAlternative),
+		ImplicitConnectionScope:    runtime.ImplicitConnectionScope(call.ImplicitConnectionScope),
+		EmptyValueForm:             runtime.Swagger20EmptyValueForm(call.EmptyValueForm),
+		SecurityHandlers:           handlers,
+		ParameterConverter:         runtime.ParameterConverter(call.ParameterConverter),
+		RequestContentCodings:      contentEncoders(call.RequestContentCodings),
+		ResponseContentCodings:     contentDecoders(call.ResponseContentCodings),
+		RequestCharacterEncodings:  characterEncoders(call.RequestCharacterEncodings),
+		ResponseCharacterEncodings: characterDecoders(call.ResponseCharacterEncodings),
 	}
-	for _, operation := range operations {
-		if selector.additionalMethod != "" {
-			if operation.info.Path == selector.path && operation.info.Method == Method(selector.additionalMethod) && strings.Contains(operation.info.Ref, "/additionalOperations/") {
-				return operation, nil
-			}
-			continue
-		}
-		if operation.info.Path == selector.path && operation.info.Method == Method(strings.ToLower(string(selector.method))) && !strings.Contains(operation.info.Ref, "/additionalOperations/") {
-			return operation, nil
-		}
-	}
-	return resolvedOperation{}, &ClientError{Kind: ErrorOperation, Code: "OPERATION_NOT_FOUND", Message: fmt.Sprintf("%s %s was not found", strings.ToUpper(string(selector.method)), selector.path)}
 }
 
-type nativeInvocationInput struct {
-	supplied           bool
-	value              any
-	mediaType          string
-	propertyMediaTypes map[string]string
-}
-
-func nativeInput(artifact *Artifact, ref string, document *openapi3.T, pathItem *openapi3.PathItem, operation *openapi3.Operation, input Input) (nativeInvocationInput, error) {
-	parameters := effectiveParameters(pathItem, operation)
-	bodyPresent := input.BodyPresent || input.Body != nil
-	bypassOpenAPI32Media := artifact != nil && artifact.Edition.IsOpenAPI32() && !bodyPresent &&
-		(!hasRequestBody(operation) || !operation.RequestBody.Value.Required)
-	var plans []*bodyPlan
-	var err error
-	if bypassOpenAPI32Media {
-		plans = nil
-	} else if artifact != nil && artifact.Edition.IsOpenAPI32() {
-		reference, parseErr := ParseOperationReference(ref, artifact.Edition)
-		if parseErr != nil {
-			return nativeInvocationInput{}, inputError("BODY_UNSUPPORTED", parseErr.Error(), parseErr)
-		}
-		plans, err = planRequestBodiesForArtifact(artifact, &OperationTarget{OperationReference: reference, Document: document, PathItem: pathItem, Operation: operation}, profileFullCoordinate)
-	} else {
-		plans, err = planRequestBodiesFor(document, operation, profileFullCoordinate)
-	}
-	if err != nil {
-		return nativeInvocationInput{}, inputError("BODY_UNSUPPORTED", err.Error(), err)
-	}
-	selected := []*bodyPlan{}
-	if bypassOpenAPI32Media {
-		selected = nil
-	} else if input.MediaType != "" {
-		selected, err = configuredRequestPlansFor(document, operation, plans, map[string]any{"configuration": map[string]any{"requestMedia": input.MediaType}}, profileFullCoordinate)
-		if err != nil {
-			return nativeInvocationInput{}, inputError("REQUEST_MEDIA_NOT_DECLARED", err.Error(), err)
-		}
-		if len(selected) == 0 {
-			return nativeInvocationInput{}, inputError("REQUEST_MEDIA_NOT_DECLARED", fmt.Sprintf("request media %q is not a supported declaration", input.MediaType), nil)
-		}
-	} else {
-		for _, plan := range plans {
-			if !plan.mediaRange {
-				selected = []*bodyPlan{plan}
-				break
-			}
-		}
-	}
-	routes := planAbstractInputRoutes(parameters, selected)
-	value := map[string]any{}
-	supplied := false
-	locations := []struct {
-		name   string
-		values map[string]any
-	}{{"path", input.Parameters.Path}, {"query", input.Parameters.Query}, {ParameterInQueryString, input.Parameters.QueryString}, {"header", input.Parameters.Header}, {"cookie", input.Parameters.Cookie}}
-	for _, location := range locations {
-		for name, member := range location.values {
-			found := false
-			for _, parameter := range parameters {
-				if parameter != nil && parameter.Value != nil && parameter.Value.In == location.name && parameter.Value.Name == name {
-					found = true
-					break
-				}
-			}
-			if !found {
-				return nativeInvocationInput{}, inputError("UNKNOWN_PARAMETER", fmt.Sprintf("operation does not declare %s parameter %q", location.name, name), nil)
-			}
-			value[routes.parameterField(location.name, name)] = member
-			supplied = true
-		}
-	}
-	if bodyPresent {
-		if len(selected) == 0 {
-			return nativeInvocationInput{}, inputError("BODY_NOT_DECLARED", "operation does not declare a supported request body", nil)
-		}
-		plan := selected[0]
-		bodyValue, bodyErr := nativeRequestBody(plan, input.Body)
-		if bodyErr != nil {
-			return nativeInvocationInput{}, bodyErr
-		}
-		if plan.synthetic || plan.wholeObject {
-			value[routes.wholeBodyField] = bodyValue
-		} else {
-			body, ok := toStringAnyMap(bodyValue)
-			if !ok {
-				return nativeInvocationInput{}, inputError("OBJECT_BODY_REQUIRED", fmt.Sprintf("%s requires an object body", plan.mediaType), nil)
-			}
-			for name, member := range body {
-				value[routes.bodyField(name)] = member
-			}
-		}
-		supplied = true
-	}
-	routeParameters := make([]any, 0, len(routes.parameters))
-	for _, route := range routes.parameters {
-		routeParameters = append(routeParameters, map[string]any{"in": route.In, "name": route.Name, "field": route.Field})
-	}
-	body := map[string]any{}
-	if len(routes.bodyFields) > 0 {
-		properties := map[string]any{}
-		for name, field := range routes.bodyFields {
-			properties[name] = field
-		}
-		body["properties"] = properties
-	}
-	if routes.wholeBodyField != "" {
-		body["whole"] = routes.wholeBodyField
-	}
-	if bodyPresent {
-		body["present"] = true
-	}
-	mediaType := ""
-	if !bypassOpenAPI32Media {
-		mediaType = input.MediaType
-		if mediaType == "" && len(selected) > 0 {
-			mediaType = selected[0].mediaType
-		}
-	}
-	profile := FullProfile()
-	propertyMediaTypes := make(map[string]string, len(input.PropertyMediaTypes))
-	for name, selected := range input.PropertyMediaTypes {
-		propertyMediaTypes[name] = selected
-	}
-	return nativeInvocationInput{supplied: supplied, mediaType: mediaType, propertyMediaTypes: propertyMediaTypes, value: []any{map[string]any{
-		profile.InputRouteKey: profile.InputRouteMarker, "value": value, "parameters": routeParameters, "body": body,
-	}}}, nil
-}
-
-func nativeRequestBody(plan *bodyPlan, body any) (any, error) {
-	if plan == nil || !plan.rawBoundary {
-		return body, nil
-	}
-	var value []byte
-	switch typed := body.(type) {
-	case []byte:
-		value = typed
-	case json.RawMessage:
-		value = []byte(typed)
-	case string:
-		value = []byte(typed)
-	default:
-		return nil, inputError("RAW_BODY_BYTES_REQUIRED", fmt.Sprintf("%s requires a []byte or string body", plan.mediaType), nil)
-	}
-	return base64.StdEncoding.EncodeToString(value), nil
-}
-
-func (c *Client) prepareOptions(operation resolvedOperation, input nativeInvocationInput, call CallOptions) (PrepareOptions, error) {
-	document := operation.document
-	if document == nil {
-		document = c.document
-	}
-	client := call.HTTPClient
-	if client == nil {
-		client = c.options.HTTPClient
-	}
-	if client == nil {
-		client = defaultInvocationHTTPClient()
-	}
-	maxBytes := call.MaxResponseBytes
-	if maxBytes == 0 {
-		maxBytes = c.options.MaxResponseBytes
-	}
-	headers := c.options.Headers.Clone()
-	if headers == nil {
-		headers = http.Header{}
-	}
-	for name, values := range call.Headers {
-		headers[name] = append([]string(nil), values...)
-	}
-	server := call.Server
-	if server == nil {
-		server = c.options.Server
-	}
-	configuration := map[string]any{}
-	if server != nil {
-		configuration["server"] = normalizeServerSelection(server)
-	}
-	if input.mediaType != "" {
-		configuration["requestMedia"] = input.mediaType
-	}
-	if len(input.propertyMediaTypes) > 0 {
-		configuration["propertyMedia"] = input.propertyMediaTypes
-	}
-	contextValue := map[string]any{}
-	if len(configuration) > 0 {
-		contextValue["configuration"] = configuration
-	}
-	if len(headers) > 0 {
-		flattened := map[string]string{}
-		for name, values := range headers {
-			if len(values) > 0 {
-				flattened[name] = values[len(values)-1]
-			}
-		}
-		contextValue["headers"] = flattened
-	}
+func runtimeCredentials(values Credentials) (map[string]any, map[string]runtime.SecurityHandler) {
 	auth := map[string]any{}
-	for name, value := range c.options.Auth {
-		auth[name] = value
-	}
-	for name, value := range call.Auth {
-		auth[name] = value
-	}
-	handlers := map[string]SecurityHandler{}
-	for name, handler := range c.options.SecurityHandlers {
-		handlers[name] = handler
-	}
-	for name, handler := range call.SecurityHandlers {
-		handlers[name] = handler
-	}
-	for name, credential := range auth {
-		scheme, ok := securityScheme(document, name)
-		if !ok {
-			return PrepareOptions{}, &ClientError{Kind: ErrorConfiguration, Code: "UNKNOWN_SECURITY_SCHEME", Message: fmt.Sprintf("security scheme %q was not found", name)}
-		}
-		handler, err := credentialHandler(name, scheme, credential)
-		if err != nil {
-			return PrepareOptions{}, err
-		}
-		handlers[name] = handler
-	}
-	for name := range handlers {
-		if _, ok := securityScheme(document, name); !ok {
-			return PrepareOptions{}, &ClientError{Kind: ErrorConfiguration, Code: "UNKNOWN_SECURITY_SCHEME", Message: fmt.Sprintf("security scheme %q was not found", name)}
-		}
-	}
-	converter := call.ParameterConverter
-	if converter == nil {
-		converter = c.options.ParameterConverter
-	}
-	requestCodings := call.RequestContentCodings
-	if requestCodings == nil {
-		requestCodings = c.options.RequestContentCodings
-	}
-	responseCodings := call.ResponseContentCodings
-	if responseCodings == nil {
-		responseCodings = c.options.ResponseContentCodings
-	}
-	responseCodings, err := normalizeContentDecoders(responseCodings)
-	if err != nil {
-		return PrepareOptions{}, &ClientError{Kind: ErrorConfiguration, Code: "INVALID_RESPONSE_CONTENT_CODINGS", Message: err.Error(), Cause: err}
-	}
-	contextValue = contextWithSecurityHandlers(contextValue, handlers)
-	return PrepareOptions{
-		Source: c.source, Ref: operation.info.Ref, Profile: FullProfile(), Context: contextValue,
-		HTTPClient: client, MaxDeliveryUnitBytes: maxBytes, SecurityHandlers: handlers,
-		ParameterConverter: converter, RequestContentCodings: requestCodings, ResponseContentCodings: responseCodings,
-	}, nil
-}
-
-func securityScheme(document *openapi3.T, name string) (*openapi3.SecurityScheme, bool) {
-	if document == nil || document.Components == nil || document.Components.SecuritySchemes == nil {
-		return nil, false
-	}
-	ref, ok := document.Components.SecuritySchemes[name]
-	if !ok || ref == nil || ref.Value == nil {
-		return nil, false
-	}
-	return ref.Value, true
-}
-
-func credentialHandler(name string, scheme *openapi3.SecurityScheme, credential any) (SecurityHandler, error) {
-	configurationError := func(expected string) (SecurityHandler, error) {
-		return nil, &ClientError{Kind: ErrorConfiguration, Code: "INVALID_CREDENTIAL", Message: fmt.Sprintf("security scheme %q requires %s", name, expected)}
-	}
-	wireError := func(message string) (SecurityHandler, error) {
-		return nil, &ClientError{Kind: ErrorConfiguration, Code: "INVALID_CREDENTIAL", Message: message}
-	}
-	switch scheme.Type {
-	case "apiKey":
-		value, ok := credential.(string)
-		if !ok {
-			return configurationError("a string API key")
-		}
-		if scheme.In == "cookie" && !validRFC6265CookieValue(value) {
-			return wireError(fmt.Sprintf("cookie credential %q cannot be carried as an RFC 6265 cookie-value", name))
-		}
-		return func(request *http.Request, _ SecurityHandlerContext) error {
-			switch scheme.In {
-			case "header":
-				request.Header.Set(scheme.Name, value)
-			case "query":
-				unit := percentEncodeCredentialQuery(scheme.Name) + "=" + percentEncodeCredentialQuery(value)
-				if request.URL.RawQuery == "" {
-					request.URL.RawQuery = unit
-				} else {
-					request.URL.RawQuery += "&" + unit
+	handlers := map[string]runtime.SecurityHandler{}
+	for name, value := range values {
+		switch value.kind {
+		case credentialToken:
+			auth[name] = value.token
+		case credentialBasic:
+			auth[name] = runtime.BasicCredential{Username: value.basic.Username, Password: value.basic.Password}
+		case credentialHandler:
+			if value.handler != nil {
+				handler := value.handler
+				handlers[name] = func(request *http.Request, context runtime.SecurityHandlerContext) error {
+					return handler(request, SecurityHandlerContext{
+						SchemeName: context.SchemeName,
+						Scheme:     securitySchemeInfo(context.Scheme),
+						Operation:  operationInfo(context.Operation),
+					})
 				}
-			case "cookie":
-				request.AddCookie(&http.Cookie{Name: scheme.Name, Value: value})
-			default:
-				return fmt.Errorf("unsupported apiKey location %q", scheme.In)
 			}
-			return nil
-		}, nil
-	case "http":
-		switch strings.ToLower(scheme.Scheme) {
-		case "basic":
-			value, ok := credential.(BasicCredential)
-			if !ok {
-				return configurationError("BasicCredential")
-			}
-			if strings.Contains(value.Username, ":") || !validBasicCredentialText(value.Username) || !validBasicCredentialText(value.Password) {
-				return wireError(fmt.Sprintf("basic credential %q violates RFC 7617 user-id or character-encoding constraints", name))
-			}
-			return func(request *http.Request, _ SecurityHandlerContext) error {
-				request.SetBasicAuth(value.Username, value.Password)
-				return nil
-			}, nil
-		case "bearer":
-			value, ok := credential.(string)
-			if !ok {
-				return configurationError("a token string")
-			}
-			if !validBearerToken(value) {
-				return wireError(fmt.Sprintf("bearer credential %q is not an RFC 6750 b64token", name))
-			}
-			return func(request *http.Request, _ SecurityHandlerContext) error {
-				request.Header.Set("Authorization", "Bearer "+value)
-				return nil
-			}, nil
-		default:
-			return nil, &ClientError{Kind: ErrorConfiguration, Code: "UNSUPPORTED_SECURITY_SCHEME", Message: fmt.Sprintf("security scheme %q requires a custom SecurityHandler", name)}
 		}
-	case "oauth2", "openIdConnect":
-		value, ok := credential.(string)
-		if !ok {
-			return configurationError("an access-token string")
-		}
-		if !validBearerToken(value) {
-			return wireError(fmt.Sprintf("access token for %q is not an RFC 6750 b64token", name))
-		}
-		return func(request *http.Request, _ SecurityHandlerContext) error {
-			request.Header.Set("Authorization", "Bearer "+value)
-			return nil
-		}, nil
-	default:
-		return nil, &ClientError{Kind: ErrorConfiguration, Code: "UNSUPPORTED_SECURITY_SCHEME", Message: fmt.Sprintf("security scheme %q requires a custom SecurityHandler", name)}
+	}
+	return auth, handlers
+}
+
+func securitySchemeInfo(value any) SecuritySchemeInfo {
+	data, _ := json.Marshal(value)
+	fields := struct {
+		Type             string `json:"type"`
+		Scheme           string `json:"scheme"`
+		Name             string `json:"name"`
+		In               string `json:"in"`
+		BearerFormat     string `json:"bearerFormat"`
+		OpenIDConnectURL string `json:"openIdConnectUrl"`
+		Description      string `json:"description"`
+	}{}
+	_ = json.Unmarshal(data, &fields)
+	return SecuritySchemeInfo{
+		Type: fields.Type, Scheme: fields.Scheme, Name: fields.Name, In: fields.In,
+		BearerFormat: fields.BearerFormat, OpenIDConnectURL: fields.OpenIDConnectURL,
+		Description: fields.Description, JSON: append([]byte(nil), data...),
 	}
 }
 
-func normalizeServerSelection(value any) any {
-	selection, ok := value.(ServerSelection)
-	if !ok {
-		return value
+func runtimeInput(input Input) runtime.Input {
+	return runtime.Input{
+		Parameters: runtime.Parameters{
+			Path: input.Parameters.Path, Query: input.Parameters.Query,
+			QueryString: input.Parameters.QueryString, Header: input.Parameters.Header,
+			Cookie: input.Parameters.Cookie,
+		},
+		Body: input.Body, BodyPresent: input.BodyPresent, MediaType: input.MediaType,
+		PropertyMediaTypes: input.PropertyMediaTypes,
 	}
-	result := map[string]any{}
-	if selection.Index != nil {
-		result["index"] = *selection.Index
-	}
-	if selection.URL != "" {
-		result["url"] = selection.URL
-	}
-	if selection.BaseURL != "" {
-		result["baseUrl"] = selection.BaseURL
-	}
-	if len(selection.Variables) > 0 {
-		variables := map[string]any{}
-		for name, member := range selection.Variables {
-			variables[name] = member
-		}
-		result["variables"] = variables
-	}
-	return result
 }
 
-func declarationMatch(operation *openapi3.Operation, response *http.Response) DeclarationMatch {
-	match := governingResponse(operation, response.StatusCode)
-	if match == nil {
-		return DeclarationMatch{}
-	}
-	result := DeclarationMatch{Declared: true, ResponseKey: match.key}
-	if media, err := governingResponseMediaFor(match.response, response.Header.Get("Content-Type"), profileFullCoordinate); err == nil {
-		result.MediaType = media.canonical
-	}
-	return result
-}
-
-func decodeFailure(body []byte, contentType string) any {
-	if len(body) == 0 {
+func runtimeServer(selection ServerSelection) *runtime.ServerSelection {
+	if selection == nil {
 		return nil
 	}
-	if isJSONContentTypeFor(contentType, profileFullCoordinate) {
-		var value any
-		// Failure bodies ride the same lanes as success bodies, so they parse
-		// under the same §9.2 profile; what the profile will not decode stays
-		// opaque application-authored bytes rather than silently altered text.
-		if parseStrictJSON(body, &value) == nil {
-			return value
-		}
-		return append([]byte(nil), body...)
-	}
-	if value, err := decodeTextLaneFor(contentType, body, profileFullCoordinate); err == nil {
-		return value
-	}
-	return append([]byte(nil), body...)
+	return selection.runtimeServerSelection()
 }
 
-func nativeSuccessValue(value any, rawBoundary bool) any {
-	if encoded, ok := value.(string); ok && rawBoundary {
-		if decoded, err := base64.StdEncoding.DecodeString(encoded); err == nil {
-			return decoded
-		}
+func normalizedRedirect(policy RedirectPolicy) RedirectPolicy {
+	if policy == "" {
+		return RedirectManual
 	}
-	return value
+	return policy
 }
 
-func nativeResponseUsesRawBoundary(document *openapi3.T, operation *openapi3.Operation, response *http.Response) bool {
+func redirectClient(client *http.Client, policy RedirectPolicy) *http.Client {
+	if client == nil && policy == RedirectManual {
+		return nil
+	}
+	if client == nil {
+		client = &http.Client{}
+	}
+	clone := *client
+	if policy == RedirectManual {
+		clone.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	}
+	return &clone
+}
+
+func resultValue(value *runtime.Result) *Result {
+	if value == nil {
+		return nil
+	}
+	return &Result{OK: value.OK, Data: value.Data, Error: value.Error, Response: value.Response, OpenAPI: declaration(value.OpenAPI)}
+}
+
+func streamResultValue(value *runtime.StreamResult) *StreamResult {
+	if value == nil {
+		return nil
+	}
+	var stream *Stream
+	if value.Stream != nil {
+		stream = &Stream{inner: value.Stream}
+	}
+	response := value.Response
+	if value.OK {
+		response = responseMetadata(value.Response)
+	}
+	return &StreamResult{OK: value.OK, Stream: stream, Error: value.Error, Response: response, OpenAPI: declaration(value.OpenAPI)}
+}
+
+func responseMetadata(response *http.Response) *http.Response {
 	if response == nil {
-		return false
-	}
-	contentType := response.Header.Get("Content-Type")
-	if contentType == "" && document != nil && document.OpenAPI == string(EditionOpenAPI320) {
-		// A 3.2 non-empty response without Content-Type is governed as
-		// application/octet-stream. This predicate is consulted only for an
-		// emitted value; an empty response emits nothing regardless.
-		contentType = "application/octet-stream"
-	}
-	declaration := governingResponse(operation, response.StatusCode)
-	if declaration == nil {
-		return false
-	}
-	match, err := governingResponseMediaMatchFor(declaration.response, contentType, profileFullCoordinate)
-	return err == nil && responseUsesRawBoundary(document, match.media, contentType, profileFullCoordinate, match.declared.rangeSpecificity == 2)
-}
-
-func responseBody(response *http.Response) []byte {
-	if response == nil || response.Body == nil {
 		return nil
 	}
-	defer response.Body.Close()
-	value, _ := io.ReadAll(response.Body)
+	clone := new(http.Response)
+	*clone = *response
+	clone.Header = response.Header.Clone()
+	clone.Trailer = response.Trailer.Clone()
+	clone.Body = nil
+	if response.Request != nil {
+		clone.Request = response.Request.Clone(response.Request.Context())
+	}
+	return clone
+}
+
+func declaration(value runtime.DeclarationMatch) DeclarationMatch {
+	return DeclarationMatch{Declared: value.Declared, ResponseKey: value.ResponseKey, MediaType: value.MediaType}
+}
+
+func operationInfo(value runtime.OperationInfo) OperationInfo {
+	return OperationInfo{
+		Ref: value.Ref, Path: value.Path, Method: string(value.Method), WireMethod: value.WireMethod,
+		Additional: value.Additional, OperationID: value.OperationID, Summary: value.Summary,
+		Tags: append([]string(nil), value.Tags...),
+	}
+}
+
+func cloneOperationInfo(value OperationInfo) OperationInfo {
+	value.Tags = append([]string(nil), value.Tags...)
 	return value
 }
 
-func headerValue(headers map[string][]string, name string) string {
-	for key, values := range headers {
-		if strings.EqualFold(key, name) && len(values) > 0 {
-			return values[0]
-		}
-	}
-	return ""
-}
-
-func sseMetadata(metadata Metadata) *SSEMetadata {
-	result := &SSEMetadata{}
-	if values := metadata["x-sse-event"]; len(values) > 0 {
-		result.Event = values[0]
-	}
-	if values := metadata["x-sse-id"]; len(values) > 0 {
-		result.ID = values[0]
-	}
-	if values := metadata["x-sse-retry"]; len(values) > 0 {
-		var retry int
-		if _, err := fmt.Sscanf(values[0], "%d", &retry); err == nil {
-			result.Retry = &retry
-		}
-	}
-	if result.Event == "" && result.ID == "" && result.Retry == nil {
+func copySSE(value *runtime.SSEMetadata) *SSEMetadata {
+	if value == nil {
 		return nil
 	}
+	result := &SSEMetadata{Event: value.Event, ID: value.ID}
+	if value.Retry != nil {
+		retry := *value.Retry
+		result.Retry = &retry
+	}
 	return result
-}
-
-func inputError(code, message string, cause error) error {
-	return &ClientError{Kind: ErrorInput, Code: code, Message: message, Cause: cause}
 }
 
 func clientError(err error) error {
 	if err == nil {
 		return nil
 	}
-	var client *ClientError
-	if errors.As(err, &client) {
-		return client
-	}
-	var execution *ExecutionError
-	if errors.As(err, &execution) {
-		kind := ErrorInternal
-		switch execution.Code {
-		case CodeSourceLoadFailed:
-			kind = ErrorSource
-		case CodeInvalidRef, CodeRefNotFound:
-			kind = ErrorOperation
-		case CodeMissingInput, CodeValidationFailed:
-			kind = ErrorInput
-		case CodeSourceConfigError, CodeContextRequired:
-			kind = ErrorConfiguration
-		case CodeConnectFailed:
-			kind = ErrorTransport
-		case CodeProtocol:
-			kind = ErrorProtocol
-		case CodeResponseError, CodeStreamError:
-			kind = ErrorResponse
-		case CodeCancelled, CodeTimeout:
-			kind = ErrorCancelled
+	var value *runtime.ClientError
+	if errors.As(err, &value) {
+		code := value.Code
+		details := value.Details
+		var requirements *ConfigurationRequirements
+		if code == "CONTEXT_REQUIRED" {
+			code = CodeConfigurationRequired
+			requirements = configurationRequirements(value.Details)
+			details = requirements
 		}
-		return &ClientError{Kind: kind, Code: execution.Code, Message: execution.Message, Details: execution.Details, Cause: err}
+		return &ClientError{
+			Kind: ErrorKind(value.Kind), Code: code, Message: value.Message,
+			Details: details, Requirements: requirements, Cause: value.Cause,
+		}
 	}
+	// Keep the private runtime behind the public error contract even if a new
+	// internal path has not yet classified its failure. Callers should never
+	// need to know which implementation layer produced an error.
 	return &ClientError{Kind: ErrorInternal, Code: "INTERNAL_ERROR", Message: err.Error(), Cause: err}
+}
+
+func configurationRequirements(value any) *ConfigurationRequirements {
+	internal, ok := value.(*runtime.Prerequisites)
+	if !ok || internal == nil {
+		if concrete, concreteOK := value.(runtime.Prerequisites); concreteOK {
+			internal = &concrete
+		} else {
+			return nil
+		}
+	}
+	result := &ConfigurationRequirements{Target: internal.Target, Alternatives: make([]ConfigurationAlternative, len(internal.Alternatives))}
+	for alternativeIndex, alternative := range internal.Alternatives {
+		requirements := make([]ConfigurationRequirement, len(alternative.Requirements))
+		for requirementIndex, requirement := range alternative.Requirements {
+			native := ConfigurationRequirement{Description: requirement.Description}
+			if requirement.Type == "config.value" {
+				point, _ := requirement.Extra["point"].(string)
+				native.Kind, native.Name = nativeConfigurationPoint(point)
+				if native.Kind == "" {
+					return nil
+				}
+				native.Path, _ = requirement.Extra["path"].(string)
+				if schema, ok := requirement.Extra["schema"].(map[string]any); ok {
+					if allowed, ok := schema["enum"].([]any); ok {
+						native.AllowedValues = cloneJSONValues(allowed)
+					}
+				}
+			} else {
+				native.Kind = RequirementCredential
+				native.Name = requirement.Name
+				native.Credential = strings.TrimPrefix(requirement.Type, "auth.")
+			}
+			requirements[requirementIndex] = native
+		}
+		result.Alternatives[alternativeIndex] = ConfigurationAlternative{Requirements: requirements}
+	}
+	return result
+}
+
+func nativeConfigurationPoint(point string) (ConfigurationRequirementKind, string) {
+	switch point {
+	case "requestMedia":
+		return RequirementInput, "MediaType"
+	case "propertyMedia":
+		return RequirementInput, "PropertyMediaTypes"
+	case "security":
+		return RequirementOption, "SecurityAlternative"
+	case "parameterConversion":
+		return RequirementOption, "ParameterConverter"
+	case "server":
+		return RequirementOption, "Server"
+	case "emptyValueForm":
+		return RequirementOption, "EmptyValueForm"
+	case "requestContentCodings":
+		return RequirementOption, "RequestContentCodings"
+	case "responseContentCodings":
+		return RequirementOption, "ResponseContentCodings"
+	case "requestCharacterEncodings":
+		return RequirementOption, "RequestCharacterEncodings"
+	case "responseCharacterEncodings":
+		return RequirementOption, "ResponseCharacterEncodings"
+	default:
+		return "", ""
+	}
+}
+
+func cloneJSONValues(input []any) []any {
+	data, err := json.Marshal(input)
+	if err != nil {
+		return nil
+	}
+	var result []any
+	if json.Unmarshal(data, &result) != nil {
+		return nil
+	}
+	return result
+}
+
+func cloneStrings(input map[string]string) map[string]string {
+	if input == nil {
+		return nil
+	}
+	result := make(map[string]string, len(input))
+	for key, value := range input {
+		result[key] = value
+	}
+	return result
+}
+
+func snapshotOptions(input Options) Options {
+	input.Auth = cloneCredentials(input.Auth)
+	input.Headers = input.Headers.Clone()
+	input.SecurityAlternative = cloneOptionalInt(input.SecurityAlternative)
+	input.RequestContentCodings = cloneMap(input.RequestContentCodings)
+	input.ResponseContentCodings = cloneMap(input.ResponseContentCodings)
+	input.RequestCharacterEncodings = cloneMap(input.RequestCharacterEncodings)
+	input.ResponseCharacterEncodings = cloneMap(input.ResponseCharacterEncodings)
+	return input
+}
+
+func cloneCredentials(input Credentials) Credentials {
+	if input == nil {
+		return nil
+	}
+	result := make(Credentials, len(input))
+	for key, value := range input {
+		result[key] = value
+	}
+	return result
+}
+
+func cloneOptionalInt(input *int) *int {
+	if input == nil {
+		return nil
+	}
+	value := *input
+	return &value
+}
+
+func cloneMap[T any](input map[string]T) map[string]T {
+	if input == nil {
+		return nil
+	}
+	result := make(map[string]T, len(input))
+	for key, value := range input {
+		result[key] = value
+	}
+	return result
+}
+
+func contentEncoders(input map[string]ContentEncoder) map[string]runtime.ContentEncoder {
+	result := make(map[string]runtime.ContentEncoder, len(input))
+	for key, value := range input {
+		result[key] = runtime.ContentEncoder(value)
+	}
+	return result
+}
+func contentDecoders(input map[string]ContentDecoder) map[string]runtime.ContentDecoder {
+	result := make(map[string]runtime.ContentDecoder, len(input))
+	for key, value := range input {
+		result[key] = runtime.ContentDecoder(value)
+	}
+	return result
+}
+func characterEncoders(input map[string]CharacterEncoder) map[string]runtime.CharacterEncoder {
+	result := make(map[string]runtime.CharacterEncoder, len(input))
+	for key, value := range input {
+		result[key] = runtime.CharacterEncoder(value)
+	}
+	return result
+}
+func characterDecoders(input map[string]CharacterDecoder) map[string]runtime.CharacterDecoder {
+	result := make(map[string]runtime.CharacterDecoder, len(input))
+	for key, value := range input {
+		result[key] = runtime.CharacterDecoder(value)
+	}
+	return result
 }
