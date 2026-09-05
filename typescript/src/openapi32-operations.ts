@@ -1,4 +1,5 @@
 import type { OpenAPIDocument, OpenAPIOperation, OpenAPIPathItem } from "./types.js";
+import type { OpenAPI32ParameterLaneExclusion } from "./openapi32-parameters.js";
 
 /** Fixed Operation Object fields admitted by OpenAPI 3.2. */
 export const OPENAPI32_FIXED_METHODS = [
@@ -25,6 +26,8 @@ export interface OpenAPIResolvedOperation {
   referringSecuritySchemes?: Record<string, Record<string, unknown>>;
   /** Response media alternatives excluded by confined closure defects. */
   responseMediaExclusions?: OpenAPI32ResponseMediaExclusion[];
+  /** Parameter lanes excluded below target scope and omitted from execution. */
+  parameterLaneExclusions?: OpenAPI32ParameterLaneExclusion[];
 }
 
 export interface OpenAPI32ResponseMediaExclusion {
@@ -33,7 +36,7 @@ export interface OpenAPI32ResponseMediaExclusion {
   reason: string;
 }
 
-export type OpenAPIOperationResolutionKind = "invalid-reference" | "not-found" | "excluded";
+export type OpenAPIOperationResolutionKind = "invalid-reference" | "not-found" | "invalid" | "excluded";
 
 export class OpenAPIOperationResolutionError extends Error {
   readonly kind: OpenAPIOperationResolutionKind;

@@ -26,6 +26,7 @@ import {
 import {
   buildOpenAPI32MultipartBody,
   buildOpenAPI32SequentialBody,
+  normalizeOpenAPI32JSONNumber,
   openAPI32RequestMediaAdmission,
   serializeOpenAPI32NonJSONText,
   validateOpenAPI32MultipartFields,
@@ -2188,6 +2189,11 @@ function encodeTextForMedia(
 }
 
 function decodeBoundaryBase64(value: unknown, mediaType: string): Uint8Array<ArrayBuffer> {
+  if (value instanceof Uint8Array) return Uint8Array.from(value);
+  if (value instanceof ArrayBuffer) return new Uint8Array(value.slice(0));
+  if (ArrayBuffer.isView(value)) {
+    return Uint8Array.from(new Uint8Array(value.buffer, value.byteOffset, value.byteLength));
+  }
   if (typeof value !== "string") {
     throw new Error(`request media ${mediaType} requires a Base64 string at the OpenBindings body boundary`);
   }
@@ -2622,7 +2628,7 @@ function writeRevision3MultipartPart(
     );
   }
 
-  const text = primitiveString(value);
+  const text = serializeRevision3ContentText(value);
   if (
     declaredEncodingType === null
     && selected.base === "text/plain"
@@ -2694,41 +2700,6 @@ export function urlencodedArrayNeedsPropertyMedia(
     return false;
   }
   return !isJSONMediaType(parseMediaType(selected, true).base);
-}
-
-/**
- * Section 9.3's content-lane media selection for one form or multipart
- * property, reduced to the question the 3.0 line's Section 8.1 converter asks:
- * does the selected lane carry the value as character data? An explicit single
- * concrete Encoding `contentType` -- which the `propertyMedia` choice
- * materializes onto the plan before routing -- else the declaration-keyed
- * default table names the lane; only `text/plain` converts a JSON scalar to a
- * string, and the JSON lane serializes the supplied value untouched. For an
- * array property the default is the item-type default, the type each repeated
- * multipart part carries. A selection this reports false for either rides
- * another lane's own rule or is refused by the body writer; neither is a
- * conversion site.
- */
-export function contentPropertySelectsTextLane(
-  schema: Record<string, unknown> | boolean | null,
-  enc: Record<string, unknown> | null,
-  is30: boolean,
-  name: string,
-): boolean {
-  if (typeof enc?.contentType === "string" && enc.contentType !== "") {
-    try {
-      return parseSingleMultipartContentType(enc.contentType, name).base === "text/plain";
-    } catch {
-      return false;
-    }
-  }
-  const effective = effectiveRevision3PartSchema(schema, is30).schema;
-  if (effective === null || effective === false) return false;
-  try {
-    return parseMediaType(defaultMultipartContentType(effective, is30), true).base === "text/plain";
-  } catch {
-    return false;
-  }
 }
 
 function defaultMultipartContentType(
@@ -3178,7 +3149,7 @@ function buildRevision3URLEncodedBody(
     } else if (selected.base === "text/plain") {
       text = openapiVersion === "3.2.0"
         ? serializeOpenAPI32NonJSONText(property, fields[name])
-        : primitiveString(fields[name]);
+        : serializeRevision3ContentText(fields[name]);
     } else {
       throw new Error(
         `urlencoded property ${JSON.stringify(name)} has no serializer for ${selected.canonical}`,
@@ -3188,6 +3159,19 @@ function buildRevision3URLEncodedBody(
     units.push(`${formEncodeBytes(new TextEncoder().encode(name))}=${formEncodeBytes(bytes)}`);
   }
   return units.join("&");
+}
+
+/**
+ * Serializes an OAS 3.0/3.1 scalar on a content-based text/plain lane.
+ * This is media serialization, not parameterConversion. Numeric spellings
+ * use the binding family's shortest exact RFC 8259 representation.
+ */
+function serializeRevision3ContentText(value: unknown): string {
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new Error("non-finite number has no RFC 8259 lexical form");
+    return normalizeOpenAPI32JSONNumber(JSON.stringify(value));
+  }
+  return primitiveString(value);
 }
 
 // formEncodeBytes percent-encodes one piece of an

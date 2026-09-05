@@ -18,12 +18,13 @@ corpus are development and release evidence only.
 ## Layer boundary
 
 ```text
-direct application ─────────────────────┐
-generated typed facade (optional) ─────┼──► native client: load / inspect / call / stream
-OpenBindings SDK ─► OpenAPI adapter ────┘                         |
-                                                               private engine
-                                                                    |
-                                                 editions / transport / codecs
+direct application ───────────────────────► native client: load / inspect / preflight / call / stream
+generated typed facade (optional) ────────► native client + provider analysis
+OpenBindings SDK ─► OpenAPI adapter ──────► native client + provider analysis
+                                                                |
+                                                          private engine
+                                                                |
+                                             editions / transport / codecs
 ```
 
 Neither the client nor the engine may import OpenBindings Core, use an OBI as
@@ -108,12 +109,12 @@ component. `body` is present when the property exists, including for `null`,
 native application body object rather than leaking a second public input
 shape.
 
-The package has one supported entry point. Internal artifact models, edition
-helper functions, development profiles, routed-input markers, and
-binding-adapter synthesis types are deliberately not exported. A lower-level
-surface will be published only if it can be expressed as an OpenAPI-native
-contract shared by both languages; current OpenBindings integration shapes do
-not qualify.
+The package has two supported entry points. The root is the small application
+client above. `@openbindings/openapi-client/provider` is the advanced,
+OpenAPI-native provider surface used by generators and protocol adapters. It
+exposes declaration analysis and planning facts, but no OBI operation, Core
+context, binding identifier, SDK class, or OpenBindings dependency. Consumers
+that only invoke APIs do not need the provider entry point.
 
 ## Go surface
 
@@ -130,11 +131,11 @@ stream, err := client.Stream(ctx, openapi.OperationRef("#/paths/~1events/get"), 
 Go uses explicit `Present` fields where a zero value cannot distinguish
 omission. `Server`, `ServerVariables`, and `ServerURL` construct the three
 server-selection forms without an ambiguous options object. Options use typed
-discriminated structs rather than `any`. Loaded
-document internals are not returned as mutable pointers. Advanced preparation
-and analysis APIs may be added once doing so improves package clarity;
-the root package is judged by its exported identifiers, not by preserving the
-current single-package layout.
+discriminated structs rather than `any`. Loaded document internals are not
+returned as mutable pointers. The root package exposes detached `Analysis`
+values and preflight. Advanced declaration and preparation APIs live in
+`github.com/openbindings/openapi-client/go/provider`; they do not pollute the
+application-facing package or introduce OpenBindings vocabulary.
 
 ## Deliberate public decisions
 
@@ -166,7 +167,8 @@ The public surface freezes only when:
 
 - clean ESM, CommonJS, browser-compatible TypeScript, and external Go consumers
   exercise all four editions;
-- the exported API is captured by an intentional manifest/API snapshot;
+- both intentional public tiers are captured by an API snapshot: the
+  application root and the advanced provider surface;
 - examples cover load, inspect, configure, call, stream, cancel, custom
   transport, custom security, and configuration-required recovery;
 - no OpenBindings package, type, identifier, or routed-input marker leaks;

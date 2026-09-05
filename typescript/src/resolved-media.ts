@@ -5,7 +5,6 @@ import {
   parseMediaRange,
   parseMediaType,
   planRequestBodies as planRequestBodiesFromClient,
-  contentPropertySelectsTextLane,
   urlencodedArrayNeedsPropertyMedia,
   type BodyPlan,
   type ParsedMediaRange,
@@ -43,7 +42,7 @@ export interface OpenAPIResolvedBodyPlan extends BodyPlan {
   /** Authored Encoding contentType declaration for each required choice. */
   propertyMediaDeclarations?: Record<string, string>;
   /** Properties represented as canonical Base64 at the client boundary. */
-  rawProperties?: string[];
+  base64Properties?: string[];
   /** Artifact-declared OAS 3.0 Content-Transfer-Encoding fields. */
   transferEncodings?: Record<string, string>;
   oas30?: boolean;
@@ -57,12 +56,18 @@ export interface OpenAPIResolvedBodyPlan extends BodyPlan {
 export function planResolvedRequestBodies(
   ...args: Parameters<typeof planRequestBodiesFromClient>
 ): ReturnType<typeof planRequestBodiesFromClient> {
-  const [operation, options] = args;
+  const [sourceOperation, options] = args;
+  // Admission views temporarily rewrite schema/Encoding fields for the
+  // underlying planner and then restore them. Always apply that machinery to
+  // a detached graph so a loaded provider artifact remains immutable.
+  const operation = Object.isFrozen(sourceOperation)
+    ? structuredClone(sourceOperation)
+    : sourceOperation;
   const oas30 = options?.openapiVersion?.startsWith("3.0") ?? true;
   const facts = requestPropertyMediaFacts(operation, oas30);
   return withEngineEncodingAdmissionView(operation, options?.openapiVersion, () =>
     withEngineMediaAdmissionView(operation, oas30, facts, () => {
-      const plans = planRequestBodiesFromClient(...args) as OpenAPIResolvedBodyPlan[];
+      const plans = planRequestBodiesFromClient(operation, options) as OpenAPIResolvedBodyPlan[];
       return plans.flatMap((plan) => {
         const mediaFacts = facts.get(plan.mediaKey);
         if (mediaFacts && (mediaFacts.unusable
@@ -70,7 +75,7 @@ export function planResolvedRequestBodies(
         if (mediaFacts) {
           plan.propertyMedia = [...mediaFacts.required];
           plan.propertyMediaDeclarations = { ...mediaFacts.declarations };
-          plan.rawProperties = [...mediaFacts.raw];
+          plan.base64Properties = [...mediaFacts.raw];
           plan.transferEncodings = { ...mediaFacts.transferEncodings };
           plan.oas30 = mediaFacts.oas30;
         }
@@ -252,7 +257,7 @@ export function prepareResolvedPropertyMediaView(
     for (const [name, contentType] of Object.entries(selected)) {
       media.encoding[name] = { ...(media.encoding[name] ?? {}), contentType };
     }
-    for (const name of plan.rawProperties ?? []) {
+    for (const name of plan.base64Properties ?? []) {
       const contentType = selected[name] ?? media.encoding[name]?.contentType;
       media.encoding[name] = {
         ...(media.encoding[name] ?? {}),
@@ -370,7 +375,7 @@ function requestPropertyMediaFacts(
         required.push(name);
         declarations[name] = contentType;
       }
-      if (multipart && typeless) raw.push(name);
+      if (multipart && (typeless || (oas30 && property.format().value === "binary"))) raw.push(name);
       if (oas30 && multipart && property.format().value === "byte") {
         const transferEncoding = declaredBase64TransferEncoding(enc);
         if (transferEncoding === false) unusable = true;
@@ -413,12 +418,16 @@ export function prepareEncodingStylePropertyValue(
   plan: BodyPlan | undefined,
   name: string,
   value: unknown,
-  oas30: boolean,
+  _oas30: boolean,
   converter: OpenAPIParameterConverter | undefined,
 ): unknown {
   const encoding = asRecord(asRecord(plan?.media?.encoding)?.[name]);
   if (!encoding || !encodingUsesSerializationForPlan(plan, encoding)) {
-    return prepareContentFormPropertyValue(plan, name, value, oas30, converter);
+    // Content-based form and multipart properties are serialized by the
+    // selected media lane. They never enter parameterConversion; that
+    // configuration point belongs only to schema-form parameters and this
+    // function's explicit RFC 6570-style Encoding branch below.
+    return value;
   }
   const style = typeof encoding.style === "string" && encoding.style !== "" ? encoding.style : "form";
   const prepared = prepareBodyStyleValue(name, value, style, converter);
@@ -494,65 +503,6 @@ function styleValueContainsDelimiter(value: unknown, delimiters: string): boolea
   return Object.entries(object).some(([name, member]) =>
     containsAnyDelimiter(name, delimiters)
     || (typeof member === "string" && containsAnyDelimiter(member, delimiters)));
-}
-
-/**
- * openbindings.openapi-3.0@1 Section 8.1 names the converter for a Section 9.3
- * form or part property only where that property "must convert a JSON scalar
- * to a string", and Section 9.3 routes a content-based property through
- * Section 9.2's lane for its selected media type: the text/plain lane is the
- * converter's only content-lane site, and the JSON lane serializes the
- * supplied value as strict JSON without consulting it. Before 2026-09-03 the
- * converter ran by DECLARATION here, so an `integer` array bound for
- * `application/json` reached the wire as `["1","2"]`. The 3.1 and 3.2 lines
- * scope the converter to the schema-form and RFC 6570-style paths outright
- * (3.1 Section 8.1: "never for Section 9.3's content-based path"), which the
- * `oas30` gate carries.
- */
-function prepareContentFormPropertyValue(
-  plan: BodyPlan | undefined,
-  name: string,
-  value: unknown,
-  oas30: boolean,
-  converter: OpenAPIParameterConverter | undefined,
-): unknown {
-  if (!plan?.media || !oas30) return value;
-  const root = plan.media.schema as SchemaDeclaration;
-  const enc = asRecord(asRecord(plan.media.encoding)?.[name]);
-  if (!contentPropertySelectsTextLane(authoredPropertySchema(root, name, true), enc, true, name)) {
-    return value;
-  }
-  const declaration = resolveDeclaration(root, true).property(name);
-  try {
-    return convertContentFormScalars(declaration, value, converter);
-  } catch (error: unknown) {
-    throw new Error(`body property ${JSON.stringify(name)}: ${errorMessage(error)}`, { cause: error });
-  }
-}
-
-function convertContentFormScalars(
-  declaration: ReturnType<typeof resolveDeclaration>,
-  value: unknown,
-  converter: OpenAPIParameterConverter | undefined,
-): unknown {
-  if (value === null || declaration.ambiguous || declaration.typeless()) return value;
-  if (declaration.declaresOnly("array", "null")) {
-    if (!Array.isArray(value)) return value;
-    return value.map((member, index) => {
-      try {
-        return convertContentFormScalars(declaration.items(), member, converter);
-      } catch (error: unknown) {
-        throw new Error(`array member ${index}: ${errorMessage(error)}`, { cause: error });
-      }
-    });
-  }
-  if (
-    declaration.declaresOnly("boolean", "number", "integer", "null")
-    && (typeof value === "boolean" || typeof value === "number")
-  ) {
-    return convertParameterScalars(value, converter);
-  }
-  return value;
 }
 
 /** Temporarily adapts Encoding declarations while the base planner admits them. */
@@ -927,8 +877,4 @@ function uniqueSorted(values: string[]): string[] {
 
 function codePointCompare(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

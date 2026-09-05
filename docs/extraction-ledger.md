@@ -14,11 +14,11 @@ the authority never overwrites the implementation's claims.
 | Product contract | candidate-frozen | reviewed TypeScript declarations and Go documentation snapshots pass |
 | TypeScript native client | candidate-complete | pinned corpus, lifecycle, browser, package, and consumer gates pass |
 | Go native client | candidate-complete | pinned corpus, race, package, and external-consumer gates pass |
-| Portable processor corpus | pinned and complete | all 888 pinned scenarios pass unchanged through both public clients |
-| Engine-owned analysis | deferred | next native phase adds immutable dispositions and prerequisites in both languages before adapters |
-| Portable OBI synthesis | adapter phase | the later adapter derives all 154 OpenAPI synthesis scenarios from engine analysis |
-| Cross-language parity | candidate-complete | normalized observations match on all 888 corrected portable invocation scenarios |
-| OpenBindings adapters | deferred | thin bridges pass differential tests with no wire logic |
+| Portable processor corpus | pinned and complete | all 896 pinned scenarios pass unchanged through both public clients |
+| Engine-owned analysis | complete for adapter cutover | detached immutable provider projections own parameter, media, security, response, schema, and coverage decisions in both languages |
+| Portable OBI synthesis | behavior- and architecture-complete | TypeScript and Go adapters pass all 154 portable OAS-family synthesis scenarios as mechanical projections of native provider facts |
+| Cross-language parity | candidate-complete | normalized observations match on all 896 portable invocation scenarios |
+| OpenBindings adapters | provider cutover complete | thin invocation and synthesis bridges pass; no duplicate OpenAPI executor or declaration planner remains |
 | SDK and OB CLI | deferred | consumers migrated to the accepted native substrate |
 | Standalone release quality | candidate-qualified | the complete repository-local release gate passes against the pinned authority |
 

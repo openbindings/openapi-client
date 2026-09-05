@@ -32,6 +32,10 @@ export interface AbstractInputRoutes {
   parameters: AbstractParameterRoute[];
   bodyFields: Record<string, string>;
   wholeBodyField: string;
+  /** At least one JSON object candidate admits undeclared body properties. */
+  openBody: boolean;
+  /** At least one surviving request-body candidate is required. */
+  bodyRequired: boolean;
   needsTransform: boolean;
   parameterField(inValue: string, name: string): string;
   bodyField(name: string): string;
@@ -69,7 +73,11 @@ export function planAbstractInputRoutes(
   const bodyNames = new Set<string>();
   let wholeBody = false;
   let protocolNeutralWholeBody = false;
+  let openBody = false;
+  let bodyRequired = false;
   for (const plan of plans) {
+    bodyRequired ||= plan.required;
+    openBody ||= planAllowsObjectPassthrough(plan);
     if (plan.synthetic || plan.wholeObject) {
       wholeBody = true;
       protocolNeutralWholeBody ||= plan.wholeObject === true;
@@ -117,13 +125,14 @@ export function planAbstractInputRoutes(
   // A complete application body uses a protocol-neutral public field and
   // therefore always needs the private whole-body route, even without a
   // collision.
-  const needsTransform = protocolNeutralWholeBody
-    || slots.some((slot, index) => assigned[index] !== slot.base);
+  const needsTransform = slots.length > 0 || openBody || bodyRequired;
 
   return {
     parameters,
     bodyFields,
     wholeBodyField,
+    openBody,
+    bodyRequired,
     needsTransform,
     parameterField(inValue, name) {
       return parameters.find((route) => route.in === inValue && route.name === name)?.field ?? name;
@@ -138,6 +147,10 @@ export function planAbstractInputRoutes(
       return `[{${JSON.stringify(profile.inputRouteKey)}:${JSON.stringify(profile.inputRouteMarker)},"value":$,"parameters":${JSON.stringify(parameters)},"body":${JSON.stringify(body)}}]`;
     },
   };
+}
+
+function planAllowsObjectPassthrough(plan: BodyPlan): boolean {
+  return plan.declared && !plan.synthetic && !plan.wholeObject && plan.family === FAMILY_JSON;
 }
 
 /**

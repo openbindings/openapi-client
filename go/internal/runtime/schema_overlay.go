@@ -33,6 +33,12 @@ type rawSchemaOverlayCollector struct {
 	pending   map[string]map[string]any
 	byRef     map[*openapi3.SchemaRef]map[string]any
 	bySchema  map[*openapi3.Schema]map[string]any
+
+	// externals records the authorial identity of every schema component that
+	// kin-openapi internalized into the entry document. Projection uses this
+	// sidecar to name recursive cut points from the declaring document rather
+	// than from a generated implementation key.
+	externals map[string]refIdentity
 }
 
 func newRawSchemaOverlayCollector() *rawSchemaOverlayCollector {
@@ -42,6 +48,24 @@ func newRawSchemaOverlayCollector() *rawSchemaOverlayCollector {
 		byRef:     map[*openapi3.SchemaRef]map[string]any{},
 		bySchema:  map[*openapi3.Schema]map[string]any{},
 	}
+}
+
+func (c *rawSchemaOverlayCollector) setExternalComponents(externals map[string]refIdentity) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.externals = externals
+}
+
+func (c *rawSchemaOverlayCollector) externalComponents() map[string]refIdentity {
+	if c == nil {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.externals
 }
 
 // markRawSchema records the fields the typed representation would erase and

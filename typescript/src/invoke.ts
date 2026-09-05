@@ -1434,6 +1434,38 @@ export function requiredRequestMediaContext(
   }
 }
 
+/** Side-effect-free propertyMedia preflight for a required represented body. */
+export function requiredPropertyMediaContext(
+  doc: OpenAPIDocument,
+  op: OpenAPIOperation,
+  profile: OpenAPIExecutionProfile,
+  ctx: Record<string, unknown> | undefined,
+  target: string,
+): ContextRequiredDetails | null {
+  if (!hasMediaFidelity(profile) || op.requestBody?.required !== true) return null;
+  try {
+    const supported = planResolvedRequestBodies(op, { profile, openapiVersion: doc.openapi });
+    const configured = contextConfiguration(ctx);
+    let selected: BodyPlan[];
+    if (typeof configured.requestMedia === "string") {
+      selected = configureRequestMedia(supported, configured.requestMedia, {
+        profile,
+        openapiVersion: doc.openapi,
+      });
+    } else {
+      selected = supported.length === 1 && !supported[0]!.range ? supported : [];
+    }
+    if (selected.length !== 1) return null;
+    const supplied = recordValue(configured.propertyMedia);
+    const missing = [...new Set(selected.flatMap((plan) => requiredPropertyMediaNames(plan)))]
+      .filter((name) => typeof supplied?.[name] !== "string")
+      .sort(codePointCompare);
+    return missing.length > 0 ? propertyMediaContextDetails(target, missing) : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * The openapi builtin result classifier (OAPI-P-08): success iff the final
  * HTTP status is 2xx (declared responses may identify application failure data,

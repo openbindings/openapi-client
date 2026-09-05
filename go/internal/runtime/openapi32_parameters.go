@@ -31,7 +31,7 @@ func (a *Artifact) validateOpenAPI32Target(target *OperationTarget) (*OperationT
 		return nil, &OperationResolutionError{Kind: OperationTargetExcluded, Message: err.Error(), Cause: err}
 	}
 	if err := a.openAPI32.validateSelectedParameterDeclarations(target.OperationReference); err != nil {
-		return nil, &OperationResolutionError{Kind: OperationTargetExcluded, Message: err.Error(), Cause: err}
+		return nil, &OperationResolutionError{Kind: OperationTargetInvalid, Message: err.Error(), Cause: err}
 	}
 
 	params := effectiveParameters(target.PathItem, target.Operation)
@@ -45,7 +45,7 @@ func (a *Artifact) validateOpenAPI32Target(target *OperationTarget) (*OperationT
 		return nil, &OperationResolutionError{Kind: OperationTargetExcluded, Message: err.Error(), Cause: err}
 	}
 	if err := checkOpenAPI32PathTemplateDeclaration(target.Path, params); err != nil {
-		return nil, &OperationResolutionError{Kind: OperationTargetExcluded, Message: err.Error(), Cause: err}
+		return nil, &OperationResolutionError{Kind: OperationTargetInvalid, Message: err.Error(), Cause: err}
 	}
 	if other := a.openAPI32.equivalentTemplatedPath(target.Path); other != "" {
 		return nil, operationResolutionError(OperationTargetExcluded, "path %q has the same templated hierarchy as %q", target.Path, other)
@@ -66,12 +66,17 @@ func (a *Artifact) validateOpenAPI32Target(target *OperationTarget) (*OperationT
 		if err := validateOpenAPI32TypedParameter(target.Document, parameter); err != nil {
 			return nil, &OperationResolutionError{Kind: OperationTargetExcluded, Message: fmt.Sprintf("parameter %q: %v", parameter.Name, err), Cause: err}
 		}
+		if parameter.In == ParameterInQueryString {
+			if err := validateOpenAPI32QueryStringMedia(target.Document, parameter); err != nil {
+				target = omitOpenAPI32ParameterLane(target, parameter.In, parameter.Name)
+			}
+		}
 	}
 	if queryStringCount > 1 {
-		return nil, operationResolutionError(OperationTargetExcluded, "operation has more than one effective querystring parameter")
+		return nil, operationResolutionError(OperationTargetInvalid, "operation has more than one effective querystring parameter")
 	}
 	if queryStringCount > 0 && queryCount > 0 {
-		return nil, operationResolutionError(OperationTargetExcluded, "querystring and ordinary query parameters are mutually exclusive")
+		return nil, operationResolutionError(OperationTargetInvalid, "querystring and ordinary query parameters are mutually exclusive")
 	}
 	return target, nil
 }
@@ -114,7 +119,7 @@ func validateOpenAPI32TypedParameter(document *openapi3.T, parameter *openapi3.P
 		if parameter.Schema != nil || parameter.Content == nil {
 			return fmt.Errorf("querystring requires content-form carriage")
 		}
-		return validateOpenAPI32QueryStringMedia(document, parameter)
+		return nil
 	}
 	if parameter.Schema == nil {
 		return nil
@@ -154,6 +159,30 @@ func validateOpenAPI32QueryStringMedia(document *openapi3.T, parameter *openapi3
 		}
 	}
 	return fmt.Errorf("querystring content is absent")
+}
+
+func omitOpenAPI32ParameterLane(target *OperationTarget, location, name string) *OperationTarget {
+	if target == nil || target.PathItem == nil || target.Operation == nil {
+		return target
+	}
+	retain := func(parameters openapi3.Parameters) openapi3.Parameters {
+		result := make(openapi3.Parameters, 0, len(parameters))
+		for _, parameter := range parameters {
+			if parameter != nil && parameter.Value != nil && parameter.Value.In == location && parameter.Value.Name == name {
+				continue
+			}
+			result = append(result, parameter)
+		}
+		return result
+	}
+	pathItem := *target.PathItem
+	operation := *target.Operation
+	pathItem.Parameters = retain(target.PathItem.Parameters)
+	operation.Parameters = retain(target.Operation.Parameters)
+	result := *target
+	result.PathItem = &pathItem
+	result.Operation = &operation
+	return &result
 }
 
 func checkOpenAPI32PathTemplateDeclaration(path string, params openapi3.Parameters) error {

@@ -55,7 +55,7 @@ describe("OpenAPI 3.2 response governance", () => {
     for (const key of ["2xx", "600"]) {
       const invalid = await loadOpenAPIArtifact({ content: document({ [key]: {} }) });
       await expect(invalid.resolveOperation("#/paths/~1x/get")).rejects.toMatchObject({
-        kind: "excluded",
+        kind: "invalid",
       });
     }
   });

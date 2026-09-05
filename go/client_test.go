@@ -2,6 +2,7 @@ package openapi_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -12,6 +13,59 @@ import (
 
 	openapi "github.com/openbindings/openapi-client/go"
 )
+
+func TestAnalysisIsDetachedAndOperationComplete(t *testing.T) {
+	client, err := openapi.Load(context.Background(), openapi.FromText(`
+openapi: 3.1.2
+info: {title: Analysis, version: "1"}
+servers:
+  - url: https://{env}.example.test
+    variables: {env: {default: api}}
+paths:
+  /widgets/{id}:
+    post:
+      operationId: createWidget
+      description: Creates one widget.
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties: {name: {type: string}}
+      responses:
+        "201":
+          description: created
+          content: {application/json: {schema: {type: object}}}
+`), openapi.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := client.Analysis()
+	if len(first.Operations) != 1 {
+		t.Fatalf("analysis operations = %#v", first.Operations)
+	}
+	operation := first.Operations[0]
+	if operation.Description != "Creates one widget." || len(operation.Parameters) != 1 || len(operation.RequestBodies) != 1 || len(operation.Responses) != 1 || len(operation.Servers) != 1 {
+		t.Fatalf("operation analysis = %#v", operation)
+	}
+	if operation.RequestBodies[0].Family != "json" || !operation.RequestBodies[0].Required || operation.Responses[0].Key != "201" || !operation.Responses[0].CanSucceed {
+		t.Fatalf("request/response analysis = %#v / %#v", operation.RequestBodies, operation.Responses)
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(operation.RequestBodies[0].Schema, &schema); err != nil || schema["type"] != "object" {
+		t.Fatalf("body schema = %s err=%v", operation.RequestBodies[0].Schema, err)
+	}
+	first.Operations[0].Parameters[0].Name = "mutated"
+	first.Operations[0].Servers[0].Variables[0] = "mutated"
+	first.Operations[0].RequestBodies[0].Schema[0] = 'x'
+	second := client.Analysis()
+	if second.Operations[0].Parameters[0].Name != "id" || second.Operations[0].Servers[0].Variables[0] != "env" || second.Operations[0].RequestBodies[0].Schema[0] == 'x' {
+		t.Fatalf("analysis mutation escaped: %#v", second.Operations[0])
+	}
+}
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
@@ -217,6 +271,204 @@ paths:
 	operations := client.Operations()
 	if len(operations) != 2 || operations[0].WireMethod != "PURGE" && operations[1].WireMethod != "PURGE" {
 		t.Fatalf("operations = %#v", operations)
+	}
+}
+
+func TestPublicAnalysisIsDetachedAndStable(t *testing.T) {
+	client, err := openapi.Load(context.Background(), openapi.FromText(`
+openapi: 3.1.2
+info: {title: Detached analysis, version: "1"}
+servers: [{url: https://api.example.test}]
+paths:
+  /pets/{id}:
+    post:
+      operationId: updatePet
+      tags: [pets]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      requestBody:
+        content:
+          application/json: {schema: {type: object}}
+      responses: {"204": {description: done}}
+`), openapi.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := client.Analysis()
+	if len(first.Operations) != 1 || len(first.Operations[0].Parameters) != 1 || len(first.Operations[0].RequestBodies) != 1 {
+		t.Fatalf("analysis = %#v", first)
+	}
+	first.Operations[0].Info.Tags[0] = "mutated"
+	first.Operations[0].Parameters[0].Name = "mutated"
+	first.Operations[0].RequestBodies[0].MediaType = "text/plain"
+
+	second := client.Analysis()
+	operation, err := client.AnalyzeOperation(openapi.OperationID("updatePet"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Operations[0].Info.Tags[0] != "pets" || operation.Parameters[0].Name != "id" || operation.RequestBodies[0].MediaType != "application/json" {
+		t.Fatalf("mutating analysis changed the client snapshot: analysis=%#v operation=%#v", second, operation)
+	}
+}
+
+func TestPublicAnalysisReportsMultipartBase64Properties(t *testing.T) {
+	client, err := openapi.Load(context.Background(), openapi.FromText(`
+openapi: 3.0.4
+info: {title: Multipart analysis, version: "1"}
+servers: [{url: https://api.example.test}]
+paths:
+  /upload:
+    post:
+      operationId: upload
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                bytes: {type: string, format: binary}
+                opaque: {}
+                text: {type: string}
+              allOf:
+                - type: object
+                  properties:
+                    nestedBytes: {type: string, format: binary}
+      responses: {"204": {description: done}}
+`), openapi.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	analysis, err := client.AnalyzeOperation(openapi.OperationID("upload"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(analysis.RequestBodies) != 1 || analysis.RequestBodies[0].MediaType != "multipart/form-data" || analysis.RequestBodies[0].Base64 ||
+		len(analysis.RequestBodies[0].Base64Properties) != 3 || analysis.RequestBodies[0].Base64Properties[0] != "bytes" || analysis.RequestBodies[0].Base64Properties[1] != "nestedBytes" || analysis.RequestBodies[0].Base64Properties[2] != "opaque" {
+		t.Fatalf("request bodies = %#v", analysis.RequestBodies)
+	}
+}
+
+func TestPublicPreflightReportsConfigurationWithoutDispatch(t *testing.T) {
+	var dispatches atomic.Int64
+	client, err := openapi.Load(context.Background(), openapi.FromText(`
+openapi: 3.1.2
+info: {title: Native preflight, version: "1"}
+servers:
+  - {url: https://one.example.test}
+  - {url: https://two.example.test}
+components:
+  securitySchemes:
+    session: {type: apiKey, in: header, name: X-Session}
+paths:
+  /secured:
+    get:
+      operationId: secured
+      security: [{session: []}]
+      responses: {"204": {description: done}}
+`), openapi.Options{HTTPClient: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		dispatches.Add(1)
+		return &http.Response{StatusCode: http.StatusNoContent, Header: http.Header{}, Body: http.NoBody, Request: request}, nil
+	})}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation, err := client.Operation(openapi.OperationID("secured"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	requirements, err := operation.Preflight(context.Background(), openapi.Input{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requirements == nil || len(requirements.Alternatives) == 0 {
+		t.Fatalf("requirements = %#v, want server/security remedies", requirements)
+	}
+	foundServer := false
+	for _, alternative := range requirements.Alternatives {
+		for _, requirement := range alternative.Requirements {
+			foundServer = foundServer || requirement.Kind == openapi.RequirementOption && requirement.Name == "Server"
+		}
+	}
+	if !foundServer {
+		t.Fatalf("requirements = %#v, want a server remedy", requirements)
+	}
+	if dispatches.Load() != 0 {
+		t.Fatalf("preflight dispatched %d requests", dispatches.Load())
+	}
+
+	selected := 0
+	credentialRequirements, err := operation.Preflight(context.Background(), openapi.Input{}, openapi.CallOptions{
+		Server: openapi.Server(selected, nil),
+	})
+	if err != nil || credentialRequirements == nil || len(credentialRequirements.Alternatives) != 1 ||
+		len(credentialRequirements.Alternatives[0].Requirements) != 1 ||
+		credentialRequirements.Alternatives[0].Requirements[0].Kind != openapi.RequirementCredential ||
+		credentialRequirements.Alternatives[0].Requirements[0].Name != "session" {
+		t.Fatalf("credential preflight = %#v, err=%v", credentialRequirements, err)
+	}
+	ready, err := operation.Preflight(context.Background(), openapi.Input{}, openapi.CallOptions{
+		Server: openapi.Server(selected, nil), Auth: openapi.Credentials{"session": openapi.Token("secret")},
+	})
+	if err != nil || ready != nil {
+		t.Fatalf("configured preflight = %#v, err=%v", ready, err)
+	}
+	if dispatches.Load() != 0 {
+		t.Fatalf("configured preflight dispatched %d requests", dispatches.Load())
+	}
+}
+
+func TestPublicPreflightPreservesOAuthAcquisitionDetails(t *testing.T) {
+	client, err := openapi.Load(context.Background(), openapi.FromText(`
+openapi: 3.1.2
+info: {title: OAuth preflight, version: "1"}
+servers: [{url: https://api.example.test}]
+components:
+  securitySchemes:
+    oauth:
+      type: oauth2
+      flows:
+        authorizationCode:
+          authorizationUrl: /authorize
+          tokenUrl: https://auth.example.test/token
+          scopes: {write: modify resources}
+paths:
+  /secured:
+    get:
+      operationId: securedOAuth
+      security: [{oauth: [write]}]
+      responses: {"204": {description: done}}
+`), openapi.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation, err := client.Operation(openapi.OperationID("securedOAuth"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	requirements, err := operation.Preflight(context.Background(), openapi.Input{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requirements == nil || len(requirements.Alternatives) != 1 || len(requirements.Alternatives[0].Requirements) != 1 {
+		t.Fatalf("requirements = %#v, want one OAuth alternative", requirements)
+	}
+	requirement := requirements.Alternatives[0].Requirements[0]
+	if requirement.Kind != openapi.RequirementCredential || requirement.Name != "oauth" || requirement.Credential != "oauth2" {
+		t.Fatalf("credential requirement = %#v", requirement)
+	}
+	if got := requirement.Details["grantType"]; got != "authorization_code" {
+		t.Fatalf("grantType = %#v", got)
+	}
+	if got := requirement.Details["authorizeUrl"]; got != "https://api.example.test/authorize" {
+		t.Fatalf("authorizeUrl = %#v", got)
+	}
+	if got := requirement.Details["tokenUrl"]; got != "https://auth.example.test/token" {
+		t.Fatalf("tokenUrl = %#v", got)
+	}
+	scopes, ok := requirement.Details["scopes"].([]any)
+	if !ok || len(scopes) != 1 || scopes[0] != "write" {
+		t.Fatalf("scopes = %#v", requirement.Details["scopes"])
 	}
 }
 

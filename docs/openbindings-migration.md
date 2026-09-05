@@ -50,6 +50,14 @@ redirect, selects response media, or parses a stream.
 8. Remove displaced engine mirrors only after the adapter, SDK, and CLI suites
    pass at one revision in both languages.
 
+Steps 2 through 5 are implemented in the TypeScript and Go native clients and
+format packages. Both adapters use the root client for execution and the
+detached provider projection for synthesis; neither retains a displaced
+OpenAPI executor, private-path dependency, or declaration-planner copy. Both
+pass the complete portable OAS-family synthesis corpus. The next architectural
+phase is step 6: migrate SDK registration and selection onto these accepted
+adapters, followed by OB CLI integration in step 7.
+
 ## Native-to-OpenBindings translation
 
 | Native fact | Adapter responsibility |

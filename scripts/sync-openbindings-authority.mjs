@@ -29,6 +29,32 @@ function write(path, value) {
   writeFileSync(path, value);
 }
 
+function applyCandidateErratum(text, erratum) {
+  const document = JSON.parse(text);
+  const scenario = document.scenarios.find((candidate) => candidate.id === erratum.scenario);
+  if (!scenario) throw new Error(`candidate erratum ${erratum.scenario} was not found`);
+  if (Array.isArray(erratum.rules)) scenario.rules = erratum.rules;
+  if (typeof erratum.section === "string") scenario.section = erratum.section;
+  if (typeof erratum.description === "string") scenario.description = erratum.description;
+  if (erratum.givenPatch) scenario.given = { ...scenario.given, ...erratum.givenPatch };
+  if (Array.isArray(erratum.expected)) scenario.expected = erratum.expected;
+
+  const idMarker = `"id": ${JSON.stringify(erratum.scenario)}`;
+  const idIndex = text.indexOf(idMarker);
+  const start = text.lastIndexOf("    {", idIndex);
+  const delimiter = text.indexOf("\n    },\n    {", idIndex);
+  const finalDelimiter = text.indexOf("\n    }\n  ]", idIndex);
+  const boundary = delimiter >= 0 ? delimiter : finalDelimiter;
+  if (idIndex < 0 || start < 0 || boundary < 0) {
+    throw new Error(`candidate erratum ${erratum.scenario} could not locate its source block`);
+  }
+  const replacement = JSON.stringify(scenario, null, 2)
+    .split("\n")
+    .map((line) => `    ${line}`)
+    .join("\n");
+  return `${text.slice(0, start)}${replacement}${text.slice(boundary + 6)}`;
+}
+
 const copied = [];
 const ledgers = [];
 
@@ -37,8 +63,15 @@ for (const family of source.families) {
   const processorPath = `conformance/binding-specs/processor/${family.family}.json`;
   const synthesisPath = `conformance/binding-specs/synthesis/${family.family}.json`;
   const spec = gitShow(specPath);
-  const processorText = gitShow(processorPath);
-  const synthesisText = gitShow(synthesisPath);
+  let processorText = gitShow(processorPath);
+  let synthesisText = gitShow(synthesisPath);
+
+  for (const erratum of source.candidateErrata ?? []) {
+    if (erratum.family !== family.family) continue;
+    if (erratum.kind === "processor") processorText = applyCandidateErratum(processorText, erratum);
+    else if (erratum.kind === "synthesis") synthesisText = applyCandidateErratum(synthesisText, erratum);
+    else throw new Error(`candidate erratum ${erratum.scenario} has unknown kind ${erratum.kind}`);
+  }
   const processor = JSON.parse(processorText);
   const synthesis = JSON.parse(synthesisText);
 
@@ -132,6 +165,7 @@ const ledger = {
     releaseBranch: source.releaseBranch,
     commit: source.commit,
     corpusRevision: source.corpusRevision,
+    candidateErrata: source.candidateErrata ?? [],
   },
   generated: ledgers,
 };

@@ -9,18 +9,11 @@ import {
 } from "./resolved-media.js";
 import type { OpenAPIOperation } from "./types.js";
 
-// openbindings.openapi-3.0@1 Section 8.1 names `parameterConversion` for a
-// Section 9.3 form or part property only where that property "must convert a
-// JSON scalar to a string", and Section 9.3 routes a content-based property
-// through Section 9.2's lane for its selected media type. The text/plain lane
-// is therefore the converter's only content-lane site; the JSON lane
-// serializes the supplied value as strict JSON and never consults it. Until
-// 2026-09-03 `prepareEncodingStylePropertyValue` -- the preparation the
-// @openbindings/openapi adapter runs on every caller-envelope body member --
-// converted by declaration, so an integer bound for application/json reached
-// the wire as its converted STRING (`["1","2"]`, `"true"`). The converter here
-// is deliberately visible -- `n` + the scalar's own spelling -- so a converted
-// scalar cannot be mistaken for its JSON image.
+// Content-based form and multipart properties are serialized by their media
+// lanes. parameterConversion belongs only to schema-form parameters and an
+// explicitly RFC 6570-style Encoding path. The converter here is deliberately
+// visible -- `n` + the scalar's own spelling -- so accidental consultation is
+// observable.
 const REF = "#/paths/~1form/post";
 
 function operation(mediaType: string, encoding?: Record<string, unknown>): OpenAPIOperation {
@@ -35,6 +28,7 @@ function operation(mediaType: string, encoding?: Record<string, unknown>): OpenA
               ids: { type: "array", items: { type: "integer" } },
               flag: { type: "boolean" },
               count: { type: "integer" },
+              styled: { type: "integer" },
             },
           },
           ...(encoding ? { encoding } : {}),
@@ -57,6 +51,7 @@ function document(mediaType: string, encoding?: Record<string, unknown>): Record
 const JSON_ENCODING = {
   ids: { contentType: "application/json" },
   flag: { contentType: "application/json" },
+  styled: { explode: true },
 };
 const visibleConverter = (value: boolean | number): string => "n" + String(value);
 
@@ -71,16 +66,25 @@ function plan(mediaType: string, encoding?: Record<string, unknown>, propertyMed
 
 describe("OAS 3.0 content-lane conversion scope", () => {
   for (const mediaType of ["application/x-www-form-urlencoded", "multipart/form-data"]) {
-    it(`converts only the text/plain property of a ${mediaType} body`, () => {
+    it(`never converts content-based properties of a ${mediaType} body`, () => {
       const p = plan(mediaType, JSON_ENCODING);
       // Explicit Encoding contentType application/json: the JSON lane, untouched.
       expect(prepareEncodingStylePropertyValue(p, "ids", [1, 2], true, visibleConverter)).toEqual([1, 2]);
       expect(prepareEncodingStylePropertyValue(p, "flag", true, true, visibleConverter)).toBe(true);
-      // No Encoding Object: the default table gives text/plain, Section 8.1's one site.
-      expect(prepareEncodingStylePropertyValue(p, "count", 7, true, visibleConverter)).toBe("n7");
-      expect(() => prepareEncodingStylePropertyValue(p, "count", 7, true, undefined)).toThrow(/parameterConversion/u);
+      // No Encoding Object: the default table gives text/plain and the media
+      // serializer supplies the binding-fixed lexical form without conversion.
+      expect(prepareEncodingStylePropertyValue(p, "count", 7, true, visibleConverter)).toBe(7);
+      expect(prepareEncodingStylePropertyValue(p, "count", 7, true, undefined)).toBe(7);
       // The JSON lane needs no converter at all.
       expect(prepareEncodingStylePropertyValue(p, "flag", true, true, undefined)).toBe(true);
+      if (mediaType === "application/x-www-form-urlencoded") {
+        // Explicit explode selects the style path, which retains the converter.
+        expect(prepareEncodingStylePropertyValue(p, "styled", 7, true, visibleConverter)).toBe("n7");
+        expect(() => prepareEncodingStylePropertyValue(p, "styled", 7, true, undefined)).toThrow(/parameterConversion/u);
+      } else {
+        // OAS 3.0 ignores style controls on multipart Encoding Objects.
+        expect(prepareEncodingStylePropertyValue(p, "styled", 7, true, visibleConverter)).toBe(7);
+      }
     });
   }
 
@@ -93,7 +97,7 @@ describe("OAS 3.0 content-lane conversion scope", () => {
     expect(prepareEncodingStylePropertyValue(p, "ids", [1, 2], true, visibleConverter)).toEqual([1, 2]);
   });
 
-  it("does not consult the converter on the 3.1 line's content path at all", () => {
+  it("does not consult the converter on the 3.1 line's content path either", () => {
     const plans = planResolvedRequestBodies(operation("multipart/form-data"), {
       profile: OPENAPI_PROFILE_FULL,
       openapiVersion: "3.1.2",
@@ -101,7 +105,7 @@ describe("OAS 3.0 content-lane conversion scope", () => {
     expect(prepareEncodingStylePropertyValue(plans[0]!, "count", 7, false, visibleConverter)).toBe(7);
   });
 
-  it("carries JSON-lane properties as their JSON images through the standalone engine", async () => {
+  it("carries JSON and text properties through the standalone engine without conversion", async () => {
     let captured: RequestInit | undefined;
     const prepared = await new OpenAPIEngine({ parameterConverter: visibleConverter }).prepare({
       source: { content: document("application/x-www-form-urlencoded", JSON_ENCODING) },
@@ -112,9 +116,9 @@ describe("OAS 3.0 content-lane conversion scope", () => {
       },
     });
     const execution = await prepared.start();
-    await execution.send({ ids: [1, 2], flag: true });
+    await execution.send({ ids: [1, 2], flag: true, count: 1000 });
     await execution.finishInput();
     await execution.completed;
-    expect(captured?.body).toBe("flag=true&ids=%5B1%2C2%5D");
+    expect(captured?.body).toBe("count=1e3&flag=true&ids=%5B1%2C2%5D");
   });
 });

@@ -11,8 +11,10 @@ import (
 	runtime "github.com/openbindings/openapi-client/go/internal/runtime"
 )
 
-// Edition is the exact artifact version selected during loading.
-type Edition string
+// Edition is the exact artifact version selected during loading. The alias is
+// shared with the advanced provider surface so application and generator code
+// can compare editions without conversion.
+type Edition = runtime.Edition
 
 const (
 	Swagger20  Edition = "2.0"
@@ -93,6 +95,113 @@ type OperationInfo struct {
 	OperationID string
 	Summary     string
 	Tags        []string
+}
+
+// ParameterInfo is one effective OpenAPI parameter identity at the native
+// call boundary. InputKey is stable for generated facades and protocol
+// adapters that begin with a flat parameter object.
+type ParameterInfo struct {
+	Name       string
+	In         string
+	InputKey   string
+	Required   bool
+	Style      string
+	Explode    *bool
+	AllowEmpty bool
+	SourceRef  string
+	Schema     json.RawMessage
+}
+
+// RequestBodyInfo is one admitted request representation.
+type RequestBodyInfo struct {
+	MediaType        string
+	Family           string
+	Required         bool
+	MediaRange       bool
+	WholeValue       bool
+	Base64           bool
+	Base64Properties []string
+	Properties       []string
+	PropertyMedia    []string
+	Schema           json.RawMessage
+}
+
+// SupportDisposition is one smallest-owner protocol support outcome. It is
+// reusable generator evidence and does not depend on OpenBindings Core.
+type SupportDisposition struct {
+	SourceRef    string
+	Scope        string
+	Status       string
+	Code         string
+	Rule         string
+	Reason       string
+	Requirements []string
+}
+
+type ServerAlternativeInfo struct {
+	Index     int
+	URL       string
+	Variables []string
+	Usable    bool
+	Reason    string
+}
+
+type SecuritySchemeAnalysis struct {
+	Name   string
+	Type   string
+	Scheme string
+	In     string
+	Scopes []string
+}
+
+type RequirementAnalysis struct {
+	Type        string
+	Name        string
+	Durable     *bool
+	Description string
+	Extra       map[string]any
+}
+
+type SecurityAlternativeAnalysis struct {
+	Index        int
+	Anonymous    bool
+	Usable       bool
+	Reason       string
+	Schemes      []SecuritySchemeAnalysis
+	Requirements []RequirementAnalysis
+}
+
+type ResponseAlternativeAnalysis struct {
+	Key        string
+	SourceRef  string
+	CanSucceed bool
+	Usable     bool
+	MediaTypes []string
+	Schema     json.RawMessage
+	Reason     string
+}
+
+// OperationAnalysis contains detached declaration facts for one operation.
+type OperationAnalysis struct {
+	Info          OperationInfo
+	Description   string
+	Deprecated    bool
+	Parameters    []ParameterInfo
+	RequestBodies []RequestBodyInfo
+	Responses     []ResponseAlternativeAnalysis
+	Servers       []ServerAlternativeInfo
+	Security      []SecurityAlternativeAnalysis
+	Requirements  []string
+	Coverage      []SupportDisposition
+}
+
+// Analysis is a detached snapshot of the exact artifact loaded by a Client.
+// Mutating returned slices cannot change later analysis or invocation.
+type Analysis struct {
+	Edition    Edition
+	Location   string
+	Operations []OperationAnalysis
+	Coverage   []SupportDisposition
 }
 
 // Parameters keeps OpenAPI wire locations distinct even when their names are
@@ -264,6 +373,21 @@ type CharacterEncoder func(string) ([]byte, error)
 // CharacterDecoder decodes response character data for one named charset.
 type CharacterDecoder func([]byte) (string, error)
 
+// Metadata is protocol-native HTTP metadata. Returned slices are detached
+// from the execution engine.
+type Metadata = runtime.Metadata
+
+// HookSite identifies the resolved operation and target at an optional
+// response-policy seam.
+type HookSite = runtime.HookSite
+
+// RawResult is the bounded protocol-native response presented to a hook.
+type RawResult = runtime.RawResult
+
+// Hooks optionally override response decoding or classification. handled=false
+// declines the decision and continues to the deterministic builtin.
+type Hooks = runtime.Hooks
+
 // Options are immutable defaults for a loaded client.
 type Options struct {
 	// DocumentHTTPClient retrieves the entry artifact and external references.
@@ -294,6 +418,7 @@ type Options struct {
 	ResponseContentCodings     map[string]ContentDecoder
 	RequestCharacterEncodings  map[string]CharacterEncoder
 	ResponseCharacterEncodings map[string]CharacterDecoder
+	Hooks                      *Hooks
 }
 
 // CallOptions override client defaults for one invocation. An empty Redirect
@@ -316,6 +441,7 @@ type CallOptions struct {
 	ResponseContentCodings     map[string]ContentDecoder
 	RequestCharacterEncodings  map[string]CharacterEncoder
 	ResponseCharacterEncodings map[string]CharacterDecoder
+	Hooks                      *Hooks
 }
 
 // DeclarationMatch identifies the response declaration that governed an HTTP
@@ -444,6 +570,9 @@ type ConfigurationRequirement struct {
 	Credential    string
 	AllowedValues []any
 	Description   string
+	// Details carries OpenAPI-native acquisition facts for credential
+	// requirements, such as OAuth scopes, grant type, and endpoint URLs.
+	Details map[string]any
 }
 
 // ConfigurationAlternative is conjunctive: every requirement must be
@@ -532,6 +661,28 @@ func (c *Client) Operations() []OperationInfo {
 	return result
 }
 
+// Analysis returns detached declaration facts from the already-loaded
+// artifact. It performs no retrieval and reparses no source.
+func (c *Client) Analysis() Analysis {
+	if c == nil || c.inner == nil {
+		return Analysis{}
+	}
+	return analysisValue(c.inner.Analysis())
+}
+
+// AnalyzeOperation resolves one selector and returns detached declaration
+// facts from the same artifact snapshot used by invocation.
+func (c *Client) AnalyzeOperation(selector OperationSelector) (OperationAnalysis, error) {
+	if c == nil || c.inner == nil {
+		return OperationAnalysis{}, &ClientError{Kind: ErrorInternal, Code: "NIL_CLIENT", Message: "OpenAPI client is nil"}
+	}
+	value, err := c.inner.AnalyzeOperation(selector.value)
+	if err != nil {
+		return OperationAnalysis{}, clientError(err)
+	}
+	return operationAnalysisValue(value), nil
+}
+
 // Operation binds a selector once for repeated calls.
 func (c *Client) Operation(selector OperationSelector) (*Operation, error) {
 	if c == nil || c.inner == nil {
@@ -558,6 +709,23 @@ func (c *Client) Call(ctx context.Context, selector OperationSelector, input Inp
 		return nil, clientError(err)
 	}
 	return resultValue(result), nil
+}
+
+// Preflight performs every artifact- and configuration-derived check known
+// before dispatch. A non-nil result describes complete alternative remedies.
+func (c *Client) Preflight(ctx context.Context, selector OperationSelector, input Input, options ...CallOptions) (*ConfigurationRequirements, error) {
+	if c == nil || c.inner == nil {
+		return nil, &ClientError{Kind: ErrorInternal, Code: "NIL_CLIENT", Message: "OpenAPI client is nil"}
+	}
+	call, err := oneCallOptions(options)
+	if err != nil {
+		return nil, err
+	}
+	requirements, err := c.inner.Preflight(ctx, selector.value, runtimeInput(input), runtimeCallOptions(c.options, call))
+	if err != nil {
+		return nil, clientError(err)
+	}
+	return configurationRequirements(requirements), nil
 }
 
 // Stream invokes selector and returns an ordered response stream or an HTTP
@@ -598,6 +766,14 @@ func (o *Operation) Call(ctx context.Context, input Input, options ...CallOption
 		return nil, nilClientError("OpenAPI operation is nil")
 	}
 	return o.client.Call(ctx, o.selector, input, options...)
+}
+
+// Preflight inspects the bound operation without dispatching it.
+func (o *Operation) Preflight(ctx context.Context, input Input, options ...CallOptions) (*ConfigurationRequirements, error) {
+	if o == nil || o.client == nil {
+		return nil, nilClientError("OpenAPI operation is nil")
+	}
+	return o.client.Preflight(ctx, o.selector, input, options...)
 }
 
 // Stream invokes the bound operation as an ordered response stream.
@@ -654,6 +830,7 @@ func runtimeClientOptions(options Options) runtime.ClientOptions {
 		ResponseContentCodings:     contentDecoders(options.ResponseContentCodings),
 		RequestCharacterEncodings:  characterEncoders(options.RequestCharacterEncodings),
 		ResponseCharacterEncodings: characterDecoders(options.ResponseCharacterEncodings),
+		Hooks:                      runtimeHooks(options.Hooks),
 	}
 }
 
@@ -686,7 +863,42 @@ func runtimeCallOptions(client Options, call CallOptions) runtime.CallOptions {
 		ResponseContentCodings:     contentDecoders(call.ResponseContentCodings),
 		RequestCharacterEncodings:  characterEncoders(call.RequestCharacterEncodings),
 		ResponseCharacterEncodings: characterDecoders(call.ResponseCharacterEncodings),
+		Hooks:                      runtimeHooks(call.Hooks),
 	}
+}
+
+func runtimeHooks(hooks *Hooks) *runtime.Hooks {
+	if hooks == nil {
+		return nil
+	}
+	result := &runtime.Hooks{}
+	if hooks.Decode != nil {
+		result.Decode = func(site runtime.HookSite, raw runtime.RawResult) (any, bool, error) {
+			return hooks.Decode(hookSiteValue(site), rawResultValue(raw))
+		}
+	}
+	if hooks.Classify != nil {
+		result.Classify = func(site runtime.HookSite, raw runtime.RawResult) (bool, bool, error) {
+			return hooks.Classify(hookSiteValue(site), rawResultValue(raw))
+		}
+	}
+	return result
+}
+
+func hookSiteValue(value runtime.HookSite) HookSite {
+	return HookSite{Ref: value.Ref, Target: value.Target, Profile: value.Profile}
+}
+
+func rawResultValue(value runtime.RawResult) RawResult {
+	result := RawResult{Body: append([]byte(nil), value.Body...), Meta: make(Metadata, len(value.Meta))}
+	if value.Status != nil {
+		status := *value.Status
+		result.Status = &status
+	}
+	for name, values := range value.Meta {
+		result.Meta[name] = append([]string(nil), values...)
+	}
+	return result
 }
 
 func runtimeCredentials(values Credentials) (map[string]any, map[string]runtime.SecurityHandler) {
@@ -769,6 +981,12 @@ func redirectClient(client *http.Client, policy RedirectPolicy) *http.Client {
 	clone := *client
 	if policy == RedirectManual {
 		clone.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	} else {
+		// An explicit follow policy selects the standard user-agent behavior
+		// even when the host's reusable base client was configured for manual
+		// redirects. The engine still applies its method/body and cross-origin
+		// credential safety wrapper around this client.
+		clone.CheckRedirect = nil
 	}
 	return &clone
 }
@@ -820,6 +1038,84 @@ func operationInfo(value runtime.OperationInfo) OperationInfo {
 		Additional: value.Additional, OperationID: value.OperationID, Summary: value.Summary,
 		Tags: append([]string(nil), value.Tags...),
 	}
+}
+
+func analysisValue(value runtime.Analysis) Analysis {
+	result := Analysis{Edition: Edition(value.Edition), Location: value.Location, Operations: make([]OperationAnalysis, len(value.Operations)), Coverage: supportDispositions(value.Coverage)}
+	for index := range value.Operations {
+		result.Operations[index] = operationAnalysisValue(value.Operations[index])
+	}
+	return result
+}
+
+func operationAnalysisValue(value runtime.OperationAnalysis) OperationAnalysis {
+	parameters := make([]ParameterInfo, len(value.Parameters))
+	for index, parameter := range value.Parameters {
+		parameters[index] = ParameterInfo{
+			Name: parameter.Name, In: parameter.In, InputKey: parameter.InputKey, Required: parameter.Required,
+			Style: parameter.Style, AllowEmpty: parameter.AllowEmpty, SourceRef: parameter.SourceRef,
+			Schema: append(json.RawMessage(nil), parameter.Schema...),
+		}
+		if parameter.Explode != nil {
+			explode := *parameter.Explode
+			parameters[index].Explode = &explode
+		}
+	}
+	requestBodies := make([]RequestBodyInfo, len(value.RequestBodies))
+	for index, body := range value.RequestBodies {
+		requestBodies[index] = RequestBodyInfo{
+			MediaType: body.MediaType, Family: body.Family, Required: body.Required, MediaRange: body.MediaRange,
+			WholeValue: body.WholeValue, Base64: body.Base64,
+			Base64Properties: append([]string(nil), body.Base64Properties...), Properties: append([]string(nil), body.Properties...),
+			PropertyMedia: append([]string(nil), body.PropertyMedia...), Schema: append(json.RawMessage(nil), body.Schema...),
+		}
+	}
+	responses := make([]ResponseAlternativeAnalysis, len(value.Responses))
+	for index, response := range value.Responses {
+		responses[index] = ResponseAlternativeAnalysis{
+			Key: response.Key, SourceRef: response.SourceRef, CanSucceed: response.CanSucceed, Usable: response.Usable,
+			MediaTypes: append([]string(nil), response.MediaTypes...), Schema: append(json.RawMessage(nil), response.Schema...), Reason: response.Reason,
+		}
+	}
+	servers := make([]ServerAlternativeInfo, len(value.Servers))
+	for index, server := range value.Servers {
+		servers[index] = ServerAlternativeInfo{Index: server.Index, URL: server.URL, Variables: append([]string(nil), server.Variables...), Usable: server.Usable, Reason: server.Reason}
+	}
+	security := make([]SecurityAlternativeAnalysis, len(value.Security))
+	for index, alternative := range value.Security {
+		security[index] = SecurityAlternativeAnalysis{Index: alternative.Index, Anonymous: alternative.Anonymous, Usable: alternative.Usable, Reason: alternative.Reason}
+		for _, scheme := range alternative.Schemes {
+			security[index].Schemes = append(security[index].Schemes, SecuritySchemeAnalysis{Name: scheme.Name, Type: scheme.Type, Scheme: scheme.Scheme, In: scheme.In, Scopes: append([]string(nil), scheme.Scopes...)})
+		}
+		for _, requirement := range alternative.Requirements {
+			security[index].Requirements = append(security[index].Requirements, requirementAnalysisValue(requirement))
+		}
+	}
+	return OperationAnalysis{
+		Info: operationInfo(value.Info), Description: value.Description, Deprecated: value.Deprecated,
+		Parameters: parameters, RequestBodies: requestBodies, Responses: responses, Servers: servers, Security: security,
+		Requirements: append([]string(nil), value.Requirements...), Coverage: supportDispositions(value.Coverage),
+	}
+}
+
+func supportDispositions(values []runtime.SupportDisposition) []SupportDisposition {
+	result := make([]SupportDisposition, len(values))
+	for index, value := range values {
+		result[index] = SupportDisposition{
+			SourceRef: value.SourceRef, Scope: value.Scope, Status: value.Status, Code: value.Code,
+			Rule: value.Rule, Reason: value.Reason, Requirements: append([]string(nil), value.Requirements...),
+		}
+	}
+	return result
+}
+
+func requirementAnalysisValue(value runtime.Requirement) RequirementAnalysis {
+	result := RequirementAnalysis{Type: value.Type, Name: value.Name, Description: value.Description, Extra: cloneStringAnyMap(value.Extra)}
+	if value.Durable != nil {
+		durable := *value.Durable
+		result.Durable = &durable
+	}
+	return result
 }
 
 func cloneOperationInfo(value OperationInfo) OperationInfo {
@@ -894,6 +1190,7 @@ func configurationRequirements(value any) *ConfigurationRequirements {
 				native.Kind = RequirementCredential
 				native.Name = requirement.Name
 				native.Credential = strings.TrimPrefix(requirement.Type, "auth.")
+				native.Details = cloneStringAnyMap(requirement.Extra)
 			}
 			requirements[requirementIndex] = native
 		}
@@ -941,6 +1238,21 @@ func cloneJSONValues(input []any) []any {
 	return result
 }
 
+func cloneStringAnyMap(input map[string]any) map[string]any {
+	if input == nil {
+		return nil
+	}
+	data, err := json.Marshal(input)
+	if err != nil {
+		return nil
+	}
+	var result map[string]any
+	if json.Unmarshal(data, &result) != nil {
+		return nil
+	}
+	return result
+}
+
 func cloneStrings(input map[string]string) map[string]string {
 	if input == nil {
 		return nil
@@ -960,7 +1272,15 @@ func snapshotOptions(input Options) Options {
 	input.ResponseContentCodings = cloneMap(input.ResponseContentCodings)
 	input.RequestCharacterEncodings = cloneMap(input.RequestCharacterEncodings)
 	input.ResponseCharacterEncodings = cloneMap(input.ResponseCharacterEncodings)
+	input.Hooks = cloneHooks(input.Hooks)
 	return input
+}
+
+func cloneHooks(input *Hooks) *Hooks {
+	if input == nil {
+		return nil
+	}
+	return &Hooks{Decode: input.Decode, Classify: input.Classify}
 }
 
 func cloneCredentials(input Credentials) Credentials {

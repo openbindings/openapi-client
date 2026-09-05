@@ -69,6 +69,7 @@ try {
   await writeFile(join(typeScriptConsumer, "esm.mjs"), `
 import assert from "node:assert/strict";
 import { OpenAPIClient } from "@openbindings/openapi-client";
+import { analyzeOpenAPIProjection } from "@openbindings/openapi-client/provider";
 const documents = ${documents};
 for (const fixture of documents) {
   const client = await OpenAPIClient.load(fixture.document, {
@@ -77,16 +78,21 @@ for (const fixture of documents) {
   assert.equal(client.edition, fixture.edition);
   assert.deepEqual(client.operations().map(({ operationId }) => operationId), [fixture.operationId]);
   assert.equal((await client.operation(fixture.operationId).call()).ok, true);
+  const projection = await analyzeOpenAPIProjection(fixture.document);
+  assert.equal(projection.edition, fixture.edition);
+  assert.equal(Object.isFrozen(projection), true);
 }
 `);
   await writeFile(join(typeScriptConsumer, "cjs.cjs"), `
 const assert = require("node:assert/strict");
 const { OpenAPIClient } = require("@openbindings/openapi-client");
+const { analyzeOpenAPIProjection } = require("@openbindings/openapi-client/provider");
 (async () => {
   const fixture = ${documents}[2];
   const client = await OpenAPIClient.load(fixture.document);
   assert.equal(client.edition, "3.1.2");
   assert.deepEqual(client.operations().map(({ operationId }) => operationId), [fixture.operationId]);
+  assert.equal((await analyzeOpenAPIProjection(fixture.document)).edition, "3.1.2");
 })().catch((error) => { console.error(error); process.exitCode = 1; });
 `);
   await writeFile(join(typeScriptConsumer, "consumer.ts"), `
@@ -95,6 +101,10 @@ import {
   OpenAPIClientError,
   type OpenAPIResult,
 } from "@openbindings/openapi-client";
+import {
+  analyzeOpenAPIProjection,
+  type ProjectionAnalysis,
+} from "@openbindings/openapi-client/provider";
 
 declare const document: Record<string, unknown>;
 async function consume(): Promise<void> {
@@ -112,6 +122,9 @@ async function consume(): Promise<void> {
   }
 }
 void consume;
+declare const projectionSource: Record<string, unknown>;
+const projection: Promise<Readonly<ProjectionAnalysis>> = analyzeOpenAPIProjection(projectionSource);
+void projection;
 `);
   await writeFile(join(typeScriptConsumer, "consumer.cts"), `
 import openapi = require("@openbindings/openapi-client");
@@ -159,6 +172,7 @@ import (
   "testing"
 
   openapiclient "github.com/openbindings/openapi-client/go"
+  openapiprovider "github.com/openbindings/openapi-client/go/provider"
 )
 
 type transportFunc func(*http.Request) (*http.Response, error)
@@ -184,6 +198,9 @@ func TestCleanConsumer(t *testing.T) {
     if err != nil { t.Fatal(err) }
     result, err := operation.Call(context.Background(), openapiclient.Input{})
     if err != nil || !result.OK { t.Fatalf("result=%#v err=%v", result, err) }
+		projection, err := openapiprovider.AnalyzeProjection(context.Background(), openapiprovider.Source{Content: []byte(fixture.document)}, openapiprovider.ClientOptions{})
+		if err != nil { t.Fatal(err) }
+		if projection.Edition != fixture.edition { t.Fatalf("projection edition = %q", projection.Edition) }
   }
 }
 `);
@@ -198,7 +215,7 @@ func TestCleanConsumer(t *testing.T) {
     "package.json",
   ), "utf8"));
   assert.equal(manifest.name, "@openbindings/openapi-client");
-  assert.deepEqual(Object.keys(manifest.exports), ["."]);
+  assert.deepEqual(Object.keys(manifest.exports), [".", "./provider"]);
   console.log("clean TypeScript ESM/CJS runtime and type consumers, plus Go consumer, verified");
 } finally {
   const expectedPrefix = join(tmpdir(), "openbindings-openapi-client-release-");

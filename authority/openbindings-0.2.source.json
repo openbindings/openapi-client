@@ -1,8 +1,8 @@
 {
   "repository": "https://github.com/openbindings/spec.git",
   "releaseBranch": "release/0.2",
-  "commit": "c5cbec60a739d26ff1bbc3ea9e8cf7fd8eaf25af",
-  "corpusRevision": 6,
+  "commit": "ee5291ee5a5a23f7068d8c1d256792274a21167f",
+  "corpusRevision": 8,
   "families": [
     {
       "family": "openapi-2.0",

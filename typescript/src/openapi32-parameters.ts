@@ -30,6 +30,27 @@ export interface OpenAPI32ParameterSerializationMethod {
   explode: boolean;
 }
 
+export type OpenAPI32ParameterDispositionKind = "invalid" | "excluded";
+
+export class OpenAPI32ParameterDispositionError extends Error {
+  readonly kind: OpenAPI32ParameterDispositionKind;
+
+  constructor(kind: OpenAPI32ParameterDispositionKind, message: string) {
+    super(message);
+    this.name = "OpenAPI32ParameterDispositionError";
+    this.kind = kind;
+  }
+}
+
+export interface OpenAPI32ParameterLaneExclusion {
+  identity: string;
+  reason: string;
+}
+
+export interface OpenAPI32ParameterValidation {
+  excludedLanes: readonly OpenAPI32ParameterLaneExclusion[];
+}
+
 /**
  * Applies the complete 3.2 Parameter Object admission gate to one resolved
  * operation closure. This is deliberately artifact-local: legacy documents
@@ -40,9 +61,10 @@ export function validateOpenAPI32OperationParameters(
   path: string,
   pathItem: OpenAPIPathItem,
   operation: OpenAPIOperation,
-): void {
+): OpenAPI32ParameterValidation {
   const rows = effectiveParameterDeclarationRows(pathItem, operation);
   const seen = new Set<string>();
+  const excludedLanes: OpenAPI32ParameterLaneExclusion[] = [];
   let queryCount = 0;
   let queryStringCount = 0;
 
@@ -50,45 +72,61 @@ export function validateOpenAPI32OperationParameters(
     validateOpenAPI32ParameterObject(parameter);
     const identity = `${parameter.in}\u0000${parameter.name}`;
     if (seen.has(identity)) {
-      throw new Error(`operation has duplicate effective parameter identity ${parameter.in}/${parameter.name}`);
+      throw new OpenAPI32ParameterDispositionError(
+        "invalid",
+        `operation has duplicate effective parameter identity ${parameter.in}/${parameter.name}`,
+      );
     }
     seen.add(identity);
     if (parameter.in === "query") queryCount += 1;
     if (parameter.in === "querystring") queryStringCount += 1;
+    const laneExclusion = openAPI32ParameterLaneExclusionReason(parameter);
+    if (laneExclusion) {
+      excludedLanes.push({ identity, reason: laneExclusion });
+      continue;
+    }
     validateOpenAPI32ParameterSerialization(parameter);
     const member = resolvedParameterStyleLaneUndefinedExpansionMember(parameter, false);
     if (member !== null) {
-      throw new Error(`resolved compound member ${JSON.stringify(member)} has no defined style expansion`);
+      throw new OpenAPI32ParameterDispositionError(
+        "excluded",
+        `resolved compound member ${JSON.stringify(member)} has no defined style expansion`,
+      );
     }
   }
 
   if (queryStringCount > 1) {
-    throw new Error("operation has more than one effective querystring parameter");
+    throw new OpenAPI32ParameterDispositionError("invalid", "operation has more than one effective querystring parameter");
   }
   if (queryStringCount > 0 && queryCount > 0) {
-    throw new Error("querystring and ordinary query parameters are mutually exclusive");
+    throw new OpenAPI32ParameterDispositionError("invalid", "querystring and ordinary query parameters are mutually exclusive");
   }
 
   const pathFailure = checkPathTemplateDeclaration(path, rows, true);
-  if (pathFailure) throw new Error(pathFailure);
+  if (pathFailure) throw new OpenAPI32ParameterDispositionError("invalid", pathFailure);
   const collision = equivalentOpenAPI32Path(document.paths, path);
   if (collision) {
-    throw new Error(`path ${JSON.stringify(path)} has the same templated hierarchy as ${JSON.stringify(collision)}`);
+    throw new OpenAPI32ParameterDispositionError(
+      "invalid",
+      `path ${JSON.stringify(path)} has the same templated hierarchy as ${JSON.stringify(collision)}`,
+    );
   }
+  return { excludedLanes };
 }
 
 /** Applies the 3.2 closed style/location/shape table to one declaration. */
 export function validateOpenAPI32ParameterSerialization(parameter: OpenAPIParameter): void {
   if (parameter.in === "querystring") {
-    validateOpenAPI32QueryStringMedia(parameter);
+    const exclusion = openAPI32ParameterLaneExclusionReason(parameter);
+    if (exclusion) throw new OpenAPI32ParameterDispositionError("excluded", exclusion);
     return;
   }
   if (Object.hasOwn(parameter, "content")) return;
   if (Object.hasOwn(parameter, "style") && (typeof parameter.style !== "string" || parameter.style === "")) {
-    throw new Error(`parameter ${JSON.stringify(parameter.name)} declares an invalid style`);
+    throw new OpenAPI32ParameterDispositionError("excluded", `parameter ${JSON.stringify(parameter.name)} declares an invalid style`);
   }
   if (Object.hasOwn(parameter, "explode") && typeof parameter.explode !== "boolean") {
-    throw new Error(`parameter ${JSON.stringify(parameter.name)} declares a non-boolean explode`);
+    throw new OpenAPI32ParameterDispositionError("excluded", `parameter ${JSON.stringify(parameter.name)} declares a non-boolean explode`);
   }
 
   const method = openAPI32ParameterSerializationMethod(parameter);
@@ -99,37 +137,37 @@ export function validateOpenAPI32ParameterSerialization(parameter: OpenAPIParame
   switch (parameter.in) {
     case "path":
       if (!["simple", "label", "matrix"].includes(method.style)) {
-        throw new Error(`style ${JSON.stringify(method.style)} is not defined for path parameters`);
+        throw new OpenAPI32ParameterDispositionError("excluded", `style ${JSON.stringify(method.style)} is not defined for path parameters`);
       }
       break;
     case "header":
       if (method.style !== "simple") {
-        throw new Error(`style ${JSON.stringify(method.style)} is not defined for header parameters`);
+        throw new OpenAPI32ParameterDispositionError("excluded", `style ${JSON.stringify(method.style)} is not defined for header parameters`);
       }
       break;
     case "cookie":
       if (method.style !== "form" && method.style !== "cookie") {
-        throw new Error(`style ${JSON.stringify(method.style)} is not defined for cookie parameters`);
+        throw new OpenAPI32ParameterDispositionError("excluded", `style ${JSON.stringify(method.style)} is not defined for cookie parameters`);
       }
       break;
     case "query":
       if (method.style === "form") break;
       if (method.style === "spaceDelimited" || method.style === "pipeDelimited") {
-        if (method.explode) throw new Error(`query style ${JSON.stringify(method.style)} has no explode=true cell`);
+        if (method.explode) throw new OpenAPI32ParameterDispositionError("excluded", `query style ${JSON.stringify(method.style)} has no explode=true cell`);
         if (resolved.declaresOnly("null", "boolean", "number", "integer", "string")) {
-          throw new Error(`query style ${JSON.stringify(method.style)} is defined only for arrays or objects`);
+          throw new OpenAPI32ParameterDispositionError("excluded", `query style ${JSON.stringify(method.style)} is defined only for arrays or objects`);
         }
         break;
       }
       if (method.style === "deepObject") {
         if (resolved.declaresOnly("null", "boolean", "number", "integer", "string", "array")) {
-          throw new Error("query style deepObject is defined only for objects");
+          throw new OpenAPI32ParameterDispositionError("excluded", "query style deepObject is defined only for objects");
         }
         break;
       }
-      throw new Error(`style ${JSON.stringify(method.style)} is not defined for query parameters`);
+      throw new OpenAPI32ParameterDispositionError("excluded", `style ${JSON.stringify(method.style)} is not defined for query parameters`);
     default:
-      throw new Error(`parameter ${JSON.stringify(parameter.name)} declares unsupported location ${JSON.stringify(parameter.in)}`);
+      throw new OpenAPI32ParameterDispositionError("invalid", `parameter ${JSON.stringify(parameter.name)} declares unsupported location ${JSON.stringify(parameter.in)}`);
   }
 
 }
@@ -251,60 +289,62 @@ export function validateOpenAPI32CookieUnits(units: readonly string[]): void {
 
 function validateOpenAPI32ParameterObject(parameter: OpenAPIParameter): void {
   if (!parameter || typeof parameter.name !== "string" || parameter.name === "" || typeof parameter.in !== "string") {
-    throw new Error("effective Parameter Object must declare non-empty string name and in fields");
+    throw new OpenAPI32ParameterDispositionError("invalid", "effective Parameter Object must declare non-empty string name and in fields");
   }
   if (!OPENAPI32_PARAMETER_LOCATIONS.has(parameter.in)) {
-    throw new Error(`parameter ${JSON.stringify(parameter.name)} declares unsupported location ${JSON.stringify(parameter.in)}`);
+    throw new OpenAPI32ParameterDispositionError("invalid", `parameter ${JSON.stringify(parameter.name)} declares unsupported location ${JSON.stringify(parameter.in)}`);
   }
   const hasSchema = Object.hasOwn(parameter, "schema");
   const hasContent = Object.hasOwn(parameter, "content");
   if (hasSchema === hasContent) {
-    throw new Error(`parameter ${JSON.stringify(parameter.name)} must use exactly one of schema or content`);
+    throw new OpenAPI32ParameterDispositionError("invalid", `parameter ${JSON.stringify(parameter.name)} must use exactly one of schema or content`);
   }
   if (parameter.in === "path" && parameter.required !== true) {
-    throw new Error(`path parameter ${JSON.stringify(parameter.name)} must declare required: true`);
+    throw new OpenAPI32ParameterDispositionError("invalid", `path parameter ${JSON.stringify(parameter.name)} must declare required: true`);
   }
   if (hasContent) {
     const content = asRecord(parameter.content);
     if (!content || Object.keys(content).length !== 1) {
-      throw new Error(`parameter ${JSON.stringify(parameter.name)} content must contain exactly one media type`);
+      throw new OpenAPI32ParameterDispositionError("invalid", `parameter ${JSON.stringify(parameter.name)} content must contain exactly one media type`);
     }
   }
   if (parameter.in === "querystring") {
-    if (!hasContent) throw new Error(`querystring parameter ${JSON.stringify(parameter.name)} must use content`);
+    if (!hasContent) throw new OpenAPI32ParameterDispositionError("invalid", `querystring parameter ${JSON.stringify(parameter.name)} must use content`);
     for (const field of ["schema", "style", "explode", "allowReserved", "allowEmptyValue"]) {
       if (Object.hasOwn(parameter, field)) {
-        throw new Error(`querystring parameter ${JSON.stringify(parameter.name)} declares forbidden schema-form field ${JSON.stringify(field)}`);
+        throw new OpenAPI32ParameterDispositionError("invalid", `querystring parameter ${JSON.stringify(parameter.name)} declares forbidden schema-form field ${JSON.stringify(field)}`);
       }
     }
   }
 }
 
-function validateOpenAPI32QueryStringMedia(parameter: OpenAPIParameter): void {
+function openAPI32ParameterLaneExclusionReason(parameter: OpenAPIParameter): string | undefined {
+  if (parameter.in !== "querystring") return undefined;
   const content = asRecord(parameter.content);
   if (!content || Object.keys(content).length !== 1) {
-    throw new Error("querystring content is absent");
+    return undefined;
   }
   const mediaType = Object.keys(content)[0]!;
   const parsed = parseMediaType(mediaType, true);
   const media = asRecord(content[mediaType]);
   if (media && Object.hasOwn(media, "itemSchema")) {
-    throw new Error(`querystring content ${JSON.stringify(mediaType)} selects a sequential representation`);
+    return `querystring content ${JSON.stringify(mediaType)} selects a sequential representation`;
   }
-  if (isJSONMediaType(parsed.base) || parsed.base === "text/plain") return;
+  if (isJSONMediaType(parsed.base) || parsed.base === "text/plain") return undefined;
   if (parsed.base !== "application/x-www-form-urlencoded") {
-    throw new Error(`querystring content ${JSON.stringify(mediaType)} has no incorporated serialization`);
+    return `querystring content ${JSON.stringify(mediaType)} has no incorporated serialization`;
   }
   if (!media || !Object.hasOwn(media, "schema")) {
-    throw new Error("querystring form content has no application-value schema");
+    return "querystring form content has no application-value schema";
   }
   const resolved = resolveDeclaration(
     media.schema as Record<string, unknown> | boolean | undefined,
     false,
   );
   if (resolved.declaresOnly("null", "boolean", "number", "integer", "string", "array")) {
-    throw new Error("querystring form content requires an object application value");
+    return "querystring form content requires an object application value";
   }
+  return undefined;
 }
 
 function equivalentOpenAPI32Path(

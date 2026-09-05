@@ -23,6 +23,7 @@ import {
   propertyMediaContextDetails,
   requestMediaContextDetails,
   requiredContext,
+  requiredPropertyMediaContext,
   requiredRequestMediaContext,
   runBinding,
 } from "./invoke.js";
@@ -435,7 +436,10 @@ export class OpenAPIEngine {
     if (preflight) {
       prerequisites = composeRequirements(
         requiredContext(document, preflight.op, args.context, preflight.baseURL, preflight.params),
-        requiredRequestMediaContext(document, preflight.op, args.profile, args.context, preflight.baseURL),
+        composeRequirements(
+          requiredRequestMediaContext(document, preflight.op, args.profile, args.context, preflight.baseURL),
+          requiredPropertyMediaContext(document, preflight.op, args.profile, args.context, preflight.baseURL),
+        ),
       );
     }
     return new PreparedOpenAPIOperation(document, args, prerequisites, target);
@@ -448,14 +452,14 @@ export class OpenAPIEngine {
     allowExternalRefs: boolean | undefined,
   ): Promise<LoadedOpenAPIDocument> {
     if (source.artifact) {
-      return { document: source.artifact.document, floor: undefined, artifact: source.artifact };
+      return { document: source.artifact.document as OpenAPIDocument, floor: undefined, artifact: source.artifact };
     }
     if (source.content !== undefined && declaresOpenAPI32(source.content)) {
       const artifact = await loadOpenAPIArtifact(
         { location: source.location, content: source.content },
         { signal, fetch: fetchFn, allowExternalRefs },
       );
-      return { document: artifact.document, floor: undefined, artifact };
+      return { document: artifact.document as OpenAPIDocument, floor: undefined, artifact };
     }
     if (source.content === undefined && source.location) {
       const cached = this.cache.get(source.location);
@@ -471,12 +475,12 @@ export class OpenAPIEngine {
         },
       );
       if (artifact.edition === "3.2.0") {
-        const loaded = { document: artifact.document, floor: undefined, artifact };
+        const loaded = { document: artifact.document as OpenAPIDocument, floor: undefined, artifact };
         this.cache.set(source.location, loaded);
         return loaded;
       }
       if (floor?.refusal) throw new Error(floor.refusal);
-      const loaded = { document: artifact.document, floor };
+      const loaded = { document: artifact.document as OpenAPIDocument, floor };
       this.cache.set(source.location, loaded);
       return loaded;
     }
@@ -702,7 +706,7 @@ function toInternalError(error: unknown): InvocationError {
       error,
     );
   }
-  return new InvocationError("ERR_RUNTIME", errorMessage(error));
+  return new InvocationError("ERR_RUNTIME", errorMessage(error), undefined, undefined, error);
 }
 
 function record(value: unknown): Record<string, unknown> | null {

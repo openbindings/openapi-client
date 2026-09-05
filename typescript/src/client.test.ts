@@ -22,6 +22,46 @@ function document(
 }
 
 describe("OpenAPIClient native API", () => {
+  it("publishes one deeply immutable analysis generation", async () => {
+    const client = await OpenAPIClient.load({
+      openapi: "3.1.2",
+      info: { title: "Analysis", version: "1" },
+      servers: [{ url: "https://{env}.example.test", variables: { env: { default: "api" } } }],
+      paths: {
+        "/widgets/{id}": {
+          post: {
+            operationId: "createWidget",
+            description: "Creates one widget.",
+            parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+            requestBody: {
+              required: true,
+              content: { "application/json": { schema: { type: "object", properties: { name: { type: "string" } } } } },
+            },
+            responses: {
+              "201": { description: "created", content: { "application/json": { schema: { type: "object" } } } },
+            },
+          },
+        },
+      },
+    });
+    const first = client.analysis();
+    const second = client.analysis();
+    expect(second).toBe(first);
+    expect(Object.isFrozen(first)).toBe(true);
+    expect(Object.isFrozen(first.operations[0])).toBe(true);
+    expect(first.operations[0]).toMatchObject({
+      description: "Creates one widget.",
+      deprecated: false,
+      parameters: [{ name: "id", inputKey: "id", required: true }],
+      requestBodies: [{ family: "json", required: true, properties: ["name"] }],
+      responses: [{ key: "201", canSucceed: true, mediaTypes: ["application/json"] }],
+      servers: [{ index: 0, url: "https://{env}.example.test", variables: ["env"], usable: true }],
+    });
+    expect(() => {
+      (first.operations as unknown as unknown[]).push({});
+    }).toThrow(TypeError);
+  });
+
   it("loads a document and selects operations by id, path/method, and ref", async () => {
     const doc = document({
       operationId: "createWidget",
@@ -743,6 +783,135 @@ describe("OpenAPIClient native API", () => {
       },
     });
     expect(calls).toEqual(["first"]);
+  });
+
+  it("returns frozen analysis detached from subsequent client reads", async () => {
+    const doc = document({
+      operationId: "analyzed",
+      tags: ["widgets"],
+      parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+      requestBody: { content: { "application/json": { schema: { type: "object" } } } },
+      responses: { "204": { description: "done" } },
+    });
+    const client = await OpenAPIClient.load(doc);
+    const first = client.analysis();
+    expect(Object.isFrozen(first)).toBe(true);
+    expect(Object.isFrozen(first.operations[0])).toBe(true);
+    expect(() => {
+      (first.operations[0]!.parameters[0] as { name: string }).name = "mutated";
+    }).toThrow(TypeError);
+    const selected = await client.analyzeOperation("analyzed");
+    expect(selected.info.tags).toEqual(["widgets"]);
+    expect(selected.parameters[0]?.name).toBe("id");
+    expect(selected.requestBodies[0]?.mediaType).toBe("application/json");
+  });
+
+  it("reports multipart properties that cross the canonical Base64 boundary", async () => {
+    const client = await OpenAPIClient.load(document({
+      operationId: "upload",
+      requestBody: {
+        content: {
+          "multipart/form-data": {
+            schema: {
+              type: "object",
+              properties: {
+                bytes: { type: "string", format: "binary" },
+                opaque: {},
+                text: { type: "string" },
+              },
+            },
+          },
+        },
+      },
+      responses: { "204": { description: "done" } },
+    }, "/upload", "post", "3.0.4"));
+
+    expect((await client.analyzeOperation("upload")).requestBodies).toMatchObject([{
+      mediaType: "multipart/form-data",
+      base64: false,
+      base64Properties: ["bytes", "opaque"],
+    }]);
+  });
+
+  it("confines an excluded parameter lane while refusing a value routed to it", async () => {
+    const fetchFn = vi.fn<typeof fetch>(async () => new Response(null, { status: 204 }));
+    const client = await OpenAPIClient.load(document({
+      operationId: "optionalSequentialQuery",
+      parameters: [{
+        name: "whole",
+        in: "querystring",
+        content: { "application/json": { itemSchema: { type: "object" } } },
+      }],
+      responses: { "204": { description: "done" } },
+    }, "/query", "get", "3.2.0"), { fetch: fetchFn });
+
+    await expect(client.call("optionalSequentialQuery")).resolves.toMatchObject({ ok: true });
+    await expect(client.call("optionalSequentialQuery", {
+      parameters: { querystring: { whole: [{ id: 1 }] } },
+    })).rejects.toMatchObject({ kind: "input", code: "ERR_REFUSED" });
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("preflights configuration in stages without dispatch", async () => {
+    const fetchFn = vi.fn<typeof fetch>(async () => new Response(null, { status: 204 }));
+    const doc = document({
+      operationId: "preflight",
+      security: [{ session: [] }],
+      responses: { "204": { description: "done" } },
+    }, "/secured", "get");
+    doc.servers = [{ url: "https://one.example.test" }, { url: "https://two.example.test" }];
+    doc.components = { securitySchemes: { session: { type: "apiKey", in: "header", name: "X-Session" } } };
+    const client = await OpenAPIClient.load(doc, { fetch: fetchFn });
+    const operation = client.operation("preflight");
+
+    expect(await operation.preflight()).toMatchObject({
+      alternatives: [[{ kind: "option", name: "server" }]],
+    });
+    expect(await operation.preflight({}, { server: { index: 0 } })).toMatchObject({
+      alternatives: [[{ kind: "credential", name: "session" }]],
+    });
+    await expect(operation.preflight({}, {
+      server: { index: 0 },
+      auth: { session: "secret" },
+    })).resolves.toBeNull();
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it("preserves OAuth acquisition details in public preflight requirements", async () => {
+    const doc = document({
+      operationId: "oauthPreflight",
+      security: [{ oauth: ["write"] }],
+      responses: { "204": { description: "done" } },
+    }, "/secured", "get");
+    doc.components = {
+      securitySchemes: {
+        oauth: {
+          type: "oauth2",
+          flows: {
+            authorizationCode: {
+              authorizationUrl: "/authorize",
+              tokenUrl: "https://auth.example.test/token",
+              scopes: { write: "modify resources" },
+            },
+          },
+        },
+      },
+    };
+    const client = await OpenAPIClient.load(doc);
+    await expect(client.operation("oauthPreflight").preflight()).resolves.toEqual({
+      target: "https://api.example.test/v1",
+      alternatives: [[{
+        kind: "credential",
+        name: "oauth",
+        credential: "oauth2",
+        details: {
+          scopes: ["write"],
+          grantType: "authorization_code",
+          authorizeUrl: "https://api.example.test/authorize",
+          tokenUrl: "https://auth.example.test/token",
+        },
+      }]],
+    });
   });
 });
 

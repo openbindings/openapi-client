@@ -6,15 +6,20 @@
  * intentionally private.
  */
 export {
+  OPENAPI_USE_DEFAULT,
   OpenAPIClient,
   OpenAPIClientError,
 } from "./client.js";
 export type {
   HTTPMethod,
   OpenAPIAuthValue,
+  OpenAPIAnalysis,
   OpenAPICallInput,
   OpenAPICallOptions,
   OpenAPIClientErrorKind,
+  OpenAPIClientHookResult,
+  OpenAPIClientHooks,
+  OpenAPIClientHookSite,
   OpenAPIConfigurationRequirement,
   OpenAPIClientMiddleware,
   OpenAPIClientOptions,
@@ -26,9 +31,12 @@ export type {
   OpenAPIEmptyValueForm,
   OpenAPIFailureResult,
   OpenAPIOperationClient,
+  OpenAPIOperationAnalysis,
   OpenAPIOperationInfo,
   OpenAPIOperationSelector,
   OpenAPIParameterInput,
+  OpenAPIParameterInfo,
+  OpenAPIRequestBodyAnalysis,
   OpenAPIResult,
   OpenAPISecurityHandler,
   OpenAPISecurityHandlerContext,

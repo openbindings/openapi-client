@@ -3,8 +3,9 @@
   "source": {
     "repository": "https://github.com/openbindings/spec.git",
     "releaseBranch": "release/0.2",
-    "commit": "c5cbec60a739d26ff1bbc3ea9e8cf7fd8eaf25af",
-    "corpusRevision": 6
+    "commit": "ee5291ee5a5a23f7068d8c1d256792274a21167f",
+    "corpusRevision": 8,
+    "candidateErrata": []
   },
   "files": [
     {
@@ -16,26 +17,26 @@
     {
       "upstreamPath": "conformance/binding-specs/processor/openapi-3.0.json",
       "localPath": "conformance/upstream/openbindings-0.2/processor/openapi-3.0.json",
-      "sha256": "149a03743fd5d6e037465476b29f87d9b159c72cb802a6a49d1a5974a4eac31a",
-      "bytes": 406975
+      "sha256": "590e5a7a6140b41d7621c983908cedab36439ab2b772ad50439f2034e864553f",
+      "bytes": 410438
     },
     {
       "upstreamPath": "conformance/binding-specs/processor/openapi-3.1.json",
       "localPath": "conformance/upstream/openbindings-0.2/processor/openapi-3.1.json",
-      "sha256": "13c6b28cb584a2a4a9238f157b75576bc28c14615f59d543517ea6fa45e18ecf",
-      "bytes": 449497
+      "sha256": "671de073832381182be3cd51aacfd1384f0587e4bd07ef839fa0d305295d6ed5",
+      "bytes": 453887
     },
     {
       "upstreamPath": "conformance/binding-specs/processor/openapi-3.2.json",
       "localPath": "conformance/upstream/openbindings-0.2/processor/openapi-3.2.json",
-      "sha256": "6d4e1f65321e5767bd0cbe338a0fa93a762ef073f181477c80d871d981855abb",
-      "bytes": 547218
+      "sha256": "8a22a1c51a13d157fcd0e60e815294385f9006d55f3fbf600eeec791f0d2a77b",
+      "bytes": 551854
     },
     {
       "upstreamPath": "conformance/binding-specs/README.md",
       "localPath": "conformance/upstream/openbindings-0.2/README.md",
-      "sha256": "654d78856be1354ffeb7c6ee3b34742d5bbcab2036b9fd8726a2f4b8c91d9138",
-      "bytes": 40890
+      "sha256": "1c06db509cae9415fd49b8254c674749ec702bd6e1166c5609a13438aed0a93f",
+      "bytes": 40946
     },
     {
       "upstreamPath": "conformance/binding-specs/processor-scenario.schema.json",
@@ -58,26 +59,26 @@
     {
       "upstreamPath": "conformance/binding-specs/synthesis/openapi-3.0.json",
       "localPath": "conformance/upstream/openbindings-0.2/synthesis/openapi-3.0.json",
-      "sha256": "522cfc78ee14edf4ed51c43d507a7cf597c3a4e731ca71c3c3a470871520b144",
-      "bytes": 150942
+      "sha256": "e96ffbe898cdf931a66d0b6d05c6541c9e82dece5cb06d4afda0ccb3f0ec6e3d",
+      "bytes": 154375
     },
     {
       "upstreamPath": "conformance/binding-specs/synthesis/openapi-3.1.json",
       "localPath": "conformance/upstream/openbindings-0.2/synthesis/openapi-3.1.json",
-      "sha256": "e10d6a332fe29803e68c6239ee8c90293c040518ae57fdff2ad6067e890ded69",
-      "bytes": 223749
+      "sha256": "bba2a6c1246dbafafd4d97d0dc4faf580813f08fa6ee5578cddc7a494aa2ea02",
+      "bytes": 227703
     },
     {
       "upstreamPath": "conformance/binding-specs/synthesis/openapi-3.2.json",
       "localPath": "conformance/upstream/openbindings-0.2/synthesis/openapi-3.2.json",
-      "sha256": "353cd1f7825acdb8896e3403720f5cbff77669d8719a17890b1eb05940878d9b",
-      "bytes": 115469
+      "sha256": "7024b3278a9239af0a8de34086870bec747807fbad4d31fb1eaab58bdd94e125",
+      "bytes": 119011
     }
   ],
   "totals": {
-    "processorRules": 215,
+    "processorRules": 218,
     "synthesisRules": 76,
-    "processorScenarios": 888,
+    "processorScenarios": 896,
     "synthesisScenarios": 154
   }
 }

@@ -111,32 +111,32 @@ describe("OpenAPI 3.2 parameter surface", () => {
     ["query collision", [
       { name: "whole", in: "querystring", content: { "application/json": { schema: { type: "object" } } } },
       { name: "q", in: "query", schema: { type: "string" } },
-    ], "/x"],
+    ], "/x", "invalid"],
     ["two querystrings", [
       { name: "one", in: "querystring", content: { "application/json": { schema: { type: "object" } } } },
       { name: "two", in: "querystring", content: { "application/json": { schema: { type: "object" } } } },
-    ], "/x"],
+    ], "/x", "invalid"],
     ["querystring schema-form field", [
       { name: "whole", in: "querystring", allowReserved: false, content: { "application/json": { schema: { type: "object" } } } },
-    ], "/x"],
+    ], "/x", "invalid"],
     ["querystring sequential media", [
       { name: "whole", in: "querystring", content: { "application/json": { itemSchema: { type: "object" } } } },
-    ], "/x"],
+    ], "/x", "represented"],
     ["undefined style cell", [
       { name: "q", in: "query", style: "spaceDelimited", explode: true, schema: schemas.array },
-    ], "/x"],
+    ], "/x", "excluded"],
     ["compound member", [
       { name: "q", in: "query", style: "form", explode: false, schema: {
         type: "object", properties: { nested: { type: "object" } },
       } },
-    ], "/x"],
+    ], "/x", "excluded"],
     ["unmatched path parameter", [
       { name: "id", in: "path", required: true, schema: { type: "string" } },
-    ], "/x"],
+    ], "/x", "invalid"],
     ["duplicate expression", [
       { name: "id", in: "path", required: true, schema: { type: "string" } },
-    ], "/{id}/{id}"],
-  ])("confines %s exclusion to the selected target", async (_name, parameters, path) => {
+    ], "/{id}/{id}", "invalid"],
+  ])("confines %s disposition to its smallest owner", async (_name, parameters, path, expected) => {
     const artifact = await loadOpenAPIArtifact({ content: {
       openapi: "3.2.0",
       paths: {
@@ -145,7 +145,13 @@ describe("OpenAPI 3.2 parameter surface", () => {
       },
     } });
     const ref = `#/paths/${path.replaceAll("~", "~0").replaceAll("/", "~1")}/get`;
-    await expect(artifact.resolveOperation(ref)).rejects.toMatchObject({ kind: "excluded" });
+    if (expected === "represented") {
+      await expect(artifact.resolveOperation(ref)).resolves.toMatchObject({
+        parameterLaneExclusions: [expect.objectContaining({ identity: "querystring\u0000whole" })],
+      });
+    } else {
+      await expect(artifact.resolveOperation(ref)).rejects.toMatchObject({ kind: expected });
+    }
     await expect(artifact.resolveOperation("#/paths/~1survivor/get")).resolves.toBeDefined();
   });
 

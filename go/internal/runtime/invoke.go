@@ -2086,12 +2086,16 @@ func credentialDestinations(plan securityPlan) []credentialPlacement {
 func checkCredentialCollisions(placements []credentialPlacement, params openapi3.Parameters, populated map[string]map[string]bool) error {
 	declared := map[string]map[string]bool{"header": {}, "query": {}, ParameterInQueryString: {}, "cookie": {}, "path": {}}
 	requiredWholeQuery := false
+	requiredStructuredCookie := false
 	for _, ref := range params {
 		if ref == nil || ref.Value == nil {
 			continue
 		}
 		if ref.Value.In == ParameterInQueryString && ref.Value.Required {
 			requiredWholeQuery = true
+		}
+		if ref.Value.In == openapi3.ParameterInCookie && ref.Value.Required {
+			requiredStructuredCookie = true
 		}
 		if !ref.Value.Required || !parameterDestinationStaticallyFixed(ref.Value) {
 			continue
@@ -2104,7 +2108,7 @@ func checkCredentialCollisions(placements []credentialPlacement, params openapi3
 	}
 	ownedHeaders := map[string]bool{"Host": true, "Content-Length": true, "Content-Type": true, "Accept": true}
 	hasRawCookieOwner := populated != nil && populated[openapi3.ParameterInHeader]["Cookie"]
-	hasStructuredCookieOwner := populated != nil && len(populated[openapi3.ParameterInCookie]) > 0
+	hasStructuredCookieOwner := requiredStructuredCookie || populated != nil && len(populated[openapi3.ParameterInCookie]) > 0
 	for _, placement := range placements {
 		if placement.channel == "header" && http.CanonicalHeaderKey(placement.name) == "Cookie" {
 			hasRawCookieOwner = true

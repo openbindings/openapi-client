@@ -37,12 +37,12 @@ type Parameters = openapi.Parameters
 type Source = openapi.Source
 
 const (
-	CodeContextRequired  = openapi.CodeConfigurationRequired
-	CodeExecutionFailed  = "ERR_EXECUTION_FAILED"
-	CodeRefused          = "ERR_REFUSED"
-	ErrorOperation       = openapi.ErrorOperation
-	ErrorSource          = openapi.ErrorSource
-	EditionSwagger20     = openapi.Swagger20
+	CodeContextRequired = openapi.CodeConfigurationRequired
+	CodeExecutionFailed = "ERR_EXECUTION_FAILED"
+	CodeRefused         = "ERR_REFUSED"
+	ErrorOperation      = openapi.ErrorOperation
+	ErrorSource         = openapi.ErrorSource
+	EditionSwagger20    = openapi.Swagger20
 )
 
 var (
@@ -358,10 +358,11 @@ func processorErrorPhase(err error, dispatched bool) string {
 		if clientError.Kind == ErrorSource {
 			return "load"
 		}
-		if clientError.Kind == ErrorOperation {
-			return "resolution"
-		}
 	}
+	// Selector resolution was already exercised by Client.Operation above.
+	// Any no-dispatch failure returned by Stream is an invocation-time
+	// pre-dispatch refusal, even when its native error category identifies the
+	// unusable authored operation.
 	return "pre-dispatch"
 }
 

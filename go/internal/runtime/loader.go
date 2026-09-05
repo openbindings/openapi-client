@@ -73,6 +73,7 @@ func loadArtifact(ctx context.Context, client *http.Client, source Source, allow
 		edition = classified
 	}
 	var artifactOverlay *OpenAPI32Overlay
+	var artifactSchemaOverlays *rawSchemaOverlayCollector
 	loadedResources := map[string][]byte{}
 	var loadedResourcesMu sync.Mutex
 
@@ -104,6 +105,8 @@ func loadArtifact(ctx context.Context, client *http.Client, source Source, allow
 			return resolvedBase.ResolveReference(relative)
 		}
 		normalizer := newRawRefSiblingNormalizer(loader.JoinFunc)
+		laneSchemaOverlays := newRawSchemaOverlayCollector()
+		normalizer.schemaOverlays = laneSchemaOverlays
 		read := artifactReadFunc(client, source.Content != nil && source.Location == "", retrievalURIs, &retrievalMu)
 		hydrateSecurityResource := func(resource *url.URL) ([]byte, *url.URL, error) {
 			data, readErr := read(loader, resource)
@@ -209,6 +212,7 @@ func loadArtifact(ctx context.Context, client *http.Client, source Source, allow
 			if entryOverride != nil {
 				entry = entryOverride
 			}
+			composition.rememberEntryReferenceSpellings(entry, resource)
 			if laneOverlay != nil {
 				if captureErr := laneOverlay.capture(entry, resource, resource, true); captureErr != nil {
 					return nil, captureErr
@@ -253,6 +257,8 @@ func loadArtifact(ctx context.Context, client *http.Client, source Source, allow
 		if Edition(document.OpenAPI) != edition {
 			return nil, fmt.Errorf("pre-resolution OpenAPI edition %q changed to %q during typed loading", edition, document.OpenAPI)
 		}
+		laneSchemaOverlays.bindDocument(document)
+		artifactSchemaOverlays = laneSchemaOverlays
 		if artifactOverlay == nil {
 			artifactOverlay = laneOverlay
 		}
@@ -382,10 +388,15 @@ func loadArtifact(ctx context.Context, client *http.Client, source Source, allow
 	if fallbackAllTargetsExcluded {
 		sourceRefusal = "every addressable OpenAPI 3.2 operation target is excluded"
 	}
+	// Close the resolved external graph during construction, before the
+	// artifact becomes observable. This is projection preparation over the
+	// already-loaded graph: no later snapshot call mutates or retrieves.
+	artifactSchemaOverlays.setExternalComponents(internalizeProjectionRefs(ctx, document))
 	artifact := &Artifact{
 		Document:                document,
 		Edition:                 edition,
 		entryBytes:              append([]byte(nil), entryBytes...),
+		schemaOverlays:          artifactSchemaOverlays,
 		openAPI32:               artifactOverlay,
 		operationTargets:        operationTargets,
 		operationErrors:         operationErrors,

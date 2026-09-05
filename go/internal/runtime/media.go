@@ -1181,7 +1181,8 @@ func rawPropertyNames(plan *bodyPlan) map[string]bool {
 		if property.declaresOnly("array") || property.declaresOnly("array", "null") {
 			property = property.items()
 		}
-		if plan.family == familyMultipart && property.typeless() {
+		format, conflict := property.format()
+		if plan.family == familyMultipart && (property.typeless() || (plan.oas30 && !conflict && format == "binary")) {
 			result[name] = true
 		}
 	}
@@ -3096,7 +3097,7 @@ func writeRevision3MultipartPart(writer *multipart.Writer, name string, value an
 		body, err = encodeTextString(text, parsedContentType)
 	case revision3PropertyText:
 		var text string
-		text, err = primitiveString(value)
+		text, err = revision3ContentText(value)
 		if err == nil {
 			body, err = encodeTextString(text, parsedContentType)
 		}
@@ -3679,13 +3680,27 @@ func revision3PropertyBytes(name string, value any, schema *openapi3.Schema, con
 		}
 		return encodeTextString(text, contentType)
 	case revision3PropertyText:
-		text, err := primitiveString(value)
+		text, err := revision3ContentText(value)
 		if err != nil {
 			return nil, err
 		}
 		return encodeTextString(text, contentType)
 	}
 	return nil, fmt.Errorf("unknown property carriage")
+}
+
+// revision3ContentText renders a scalar selected onto a content-based
+// text/plain form or multipart lane. Unlike an RFC 6570-style Encoding path,
+// this is media serialization and never consults parameterConversion.
+// Numbers use the binding family's shortest exact RFC 8259 spelling.
+func revision3ContentText(value any) (string, error) {
+	switch value.(type) {
+	case json.Number, float64, float32, int, int8, int16, int32, int64,
+		uint, uint8, uint16, uint32, uint64:
+		return shortestOpenAPI32JSONNumber(value)
+	default:
+		return primitiveString(value)
+	}
 }
 
 // ---------------------------------------------------------------------------

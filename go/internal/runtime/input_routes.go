@@ -18,6 +18,8 @@ type abstractInputRoutes struct {
 	bodyFields     map[string]string // OpenAPI body property -> abstract field
 	wholeBodyField string            // abstract field for a non-object body
 	needsTransform bool
+	openBody       bool // an object candidate admits undeclared properties
+	bodyRequired   bool
 }
 
 type abstractParameterRoute struct {
@@ -50,10 +52,14 @@ func planAbstractInputRoutes(params openapi3.Parameters, plans []*bodyPlan) abst
 	bodyNames := map[string]bool{}
 	wholeBody := false
 	protocolNeutralWholeBody := false
+	openBody := false
+	bodyRequired := false
 	for _, plan := range plans {
 		if plan == nil {
 			continue
 		}
+		bodyRequired = bodyRequired || plan.required
+		openBody = openBody || planAllowsObjectPassthrough(plan)
 		if plan.synthetic || plan.wholeObject {
 			wholeBody = true
 			protocolNeutralWholeBody = protocolNeutralWholeBody || plan.wholeObject
@@ -106,6 +112,8 @@ func planAbstractInputRoutes(params openapi3.Parameters, plans []*bodyPlan) abst
 	routes := abstractInputRoutes{
 		bodyFields:     map[string]string{},
 		needsTransform: needsTransform,
+		openBody:       openBody,
+		bodyRequired:   bodyRequired,
 	}
 	for i, slot := range slots {
 		switch slot.kind {

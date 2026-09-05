@@ -740,11 +740,10 @@ paths:
 	// case-sensitive. `get` and `GeT` are therefore methods no fixed field
 	// defines, and each is sent in its authored capitalization.
 	for ref, wireMethod := range map[string]string{
-		"#/paths/~1pets~1{petId}/query":                        "QUERY",
-		"#/paths/~1pets~1{petId}/additionalOperations/COPY":    "COPY",
-		"#/paths/~1pets~1{petId}/additionalOperations/CONNECT": "CONNECT",
-		"#/paths/~1pets~1{petId}/additionalOperations/get":     "get",
-		"#/paths/~1pets~1{petId}/additionalOperations/GeT":     "GeT",
+		"#/paths/~1pets~1{petId}/query":                     "QUERY",
+		"#/paths/~1pets~1{petId}/additionalOperations/COPY": "COPY",
+		"#/paths/~1pets~1{petId}/additionalOperations/get":  "get",
+		"#/paths/~1pets~1{petId}/additionalOperations/GeT":  "GeT",
 	} {
 		target, err := artifact.ResolveOperation(ref)
 		if err != nil {
@@ -764,10 +763,16 @@ paths:
 			t.Errorf("ResolveOperation(%q) unexpectedly succeeded", ref)
 		}
 	}
-	// Only the byte-exact wire spelling is the declaration defect OAS forbids.
-	excluded := "#/paths/~1pets~1{petId}/additionalOperations/GET"
-	_, err = artifact.ResolveOperation(excluded)
+	// The byte-exact fixed-method spelling is the declaration defect OAS
+	// forbids, while CONNECT is an addressable binding exclusion.
+	invalid := "#/paths/~1pets~1{petId}/additionalOperations/GET"
+	_, err = artifact.ResolveOperation(invalid)
 	var resolution *OperationResolutionError
+	if !errors.As(err, &resolution) || resolution.Kind != OperationTargetInvalid {
+		t.Fatalf("ResolveOperation(%q) error = %v, want an %q resolution error", invalid, err, OperationTargetInvalid)
+	}
+	excluded := "#/paths/~1pets~1{petId}/additionalOperations/CONNECT"
+	_, err = artifact.ResolveOperation(excluded)
 	if !errors.As(err, &resolution) || resolution.Kind != OperationTargetExcluded {
 		t.Fatalf("ResolveOperation(%q) error = %v, want an %q resolution error", excluded, err, OperationTargetExcluded)
 	}
@@ -775,7 +780,8 @@ paths:
 	if len(operations) != 6 {
 		t.Fatalf("addressable operations = %d, want the five usable targets plus excluded GET; %#v", len(operations), operations)
 	}
-	// A key that resolves also enumerates, and the excluded one does neither.
+	// Usable, invalid, and excluded targets remain visible to the analysis
+	// inventory even when only the usable targets appear in Operations.
 	enumerated := map[string]bool{}
 	for _, operation := range operations {
 		enumerated[operation.info.Ref] = true
@@ -788,11 +794,11 @@ paths:
 			t.Errorf("%q resolves but does not enumerate", ref)
 		}
 	}
-	if !enumerated[excluded] {
-		t.Errorf("%q is excluded but no longer addressable", excluded)
+	if !enumerated[excluded] || !enumerated[invalid] {
+		t.Errorf("classified targets disappeared from analysis inventory: %#v", enumerated)
 	}
-	if invocable := artifact.Operations(); len(invocable) != 5 {
-		t.Errorf("invocable operation list = %d, want five", len(invocable))
+	if invocable := artifact.Operations(); len(invocable) != 4 {
+		t.Errorf("invocable operation list = %d, want four", len(invocable))
 	}
 }
 

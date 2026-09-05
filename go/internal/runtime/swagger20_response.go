@@ -163,12 +163,13 @@ func swagger20ResponseObjectDefect(graph *swagger20ReferenceGraph, value any, re
 		return err
 	}
 	raw := resolved.raw
-	_, descriptionDeclared := raw.member("description")
+	description, descriptionDeclared := raw.member("description")
 	schema, schemaDeclared := raw.member("schema")
-	if !descriptionDeclared && schemaDeclared {
-		// D9's declared-content gate in this edition's spelling. Without a
-		// `schema` this is the carve-out and never reaches here.
-		return fmt.Errorf("Response Object omits its REQUIRED description while declaring a schema")
+	if !descriptionDeclared {
+		return fmt.Errorf("Response Object omits its REQUIRED description")
+	}
+	if _, valid := description.(string); !valid {
+		return fmt.Errorf("Response Object `description` is not a string")
 	}
 	if schemaDeclared {
 		if _, isObject := schema.(map[string]any); !isObject {

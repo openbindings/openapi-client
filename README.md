@@ -9,7 +9,7 @@ OpenBindings OpenAPI binding specifications supply the deterministic behavior,
 but the published clients are OpenAPI-native and have no OpenBindings runtime
 dependency.
 
-> Status: release candidate. Both language implementations pass all 888
+> Status: release candidate. Both language implementations pass all 896
 > hash-locked portable processor scenarios at the pinned OpenBindings 0.2
 > authority revision, together with the native, race, package, browser, API,
 > and clean-consumer qualification gates.
@@ -109,15 +109,16 @@ selected credentials and Cookie across origins.
 
 ## Product boundary
 
-The repository deliberately publishes one client-engine facade per language.
-Parser-owned models, development profiles, routed OpenBindings envelopes, OBI
-synthesis structures, and existing OB CLI integration APIs are not public
-compatibility constraints.
+The repository deliberately publishes one small application client and one
+advanced OpenAPI-native provider surface per language. Routed OpenBindings
+envelopes, OBI synthesis structures, and existing OB CLI integration APIs are
+not public compatibility constraints.
 
 ```text
-direct application ─────────────────────┐
-generated typed facade (optional) ─────┼──► native OpenAPI client
-OpenBindings SDK ─► OpenAPI adapter ────┘              |
+direct application ───────────────────────► native OpenAPI client
+generated typed facade (optional) ────────► native client + provider
+OpenBindings SDK ─► OpenAPI adapter ──────► native client + provider
+                                                        |
                                                    private engine
                                                         |
                                           editions / transport / codecs
@@ -158,17 +159,21 @@ development and release evidence, never runtime dependencies.
 
 The release loop requires:
 
-- all 888 portable processor scenarios in both languages;
+- all 896 portable processor scenarios in both languages;
 - native and race-enabled test suites;
 - exact public API snapshots;
-- one intentional TypeScript package export and a clean Go package surface;
+- exactly two intentional TypeScript exports and matching clean Go root and
+  provider package surfaces;
 - clean installed ESM, CommonJS, browser-bundle, and external Go consumers;
 - cancellation, redirect, security, streaming, and size-bound tests; and
 - no unresolved high- or medium-severity review finding.
 
-Full OBI synthesis and OpenBindings lifecycle conformance belong to the later
-thin-adapter phase. The client engines expose the behavior; adapters add only
-OpenBindings-specific projection and orchestration.
+Full OBI synthesis and OpenBindings lifecycle conformance are qualified in the
+separate adapters. Invocation already crosses a thin mechanical bridge to the
+client engines. Synthesis now derives from the detached native provider
+projection in both languages and passes the portable corpus; the displaced
+adapter-owned OpenAPI planners and executors have been removed. SDK
+registration and OB CLI migration remain downstream.
 
 See [architecture](docs/architecture.md), [public API contract](docs/public-api-v1.md),
 [qualification ledger](docs/extraction-ledger.md), [release qualification](docs/release-qualification.md),

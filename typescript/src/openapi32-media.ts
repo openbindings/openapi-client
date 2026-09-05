@@ -629,6 +629,11 @@ function defaultPartContentType(
 }
 
 function canonicalBase64Bytes(value: unknown, subject: string): Uint8Array<ArrayBuffer> {
+  if (value instanceof Uint8Array) return Uint8Array.from(value);
+  if (value instanceof ArrayBuffer) return new Uint8Array(value.slice(0));
+  if (ArrayBuffer.isView(value)) {
+    return Uint8Array.from(new Uint8Array(value.buffer, value.byteOffset, value.byteLength));
+  }
   if (typeof value !== "string" || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(value)) {
     throw new Error(`${subject} must be a canonical Base64 string`);
   }

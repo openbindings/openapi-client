@@ -19,21 +19,29 @@ type Swagger20SynthesisDocument struct {
 }
 
 type Swagger20SynthesisOperation struct {
-	Ref          string
-	Path         string
-	Method       string
-	OperationID  string
-	Description  string
-	Deprecated   bool
-	Tags         []string
-	Parameters   []Swagger20SynthesisParameter
-	Body         *Swagger20SynthesisBody
-	Responses    []Swagger20SynthesisResponse
-	Alternatives []Swagger20SynthesisAlternative
-	Security     []Swagger20SynthesisSecurityAlternative
-	Requirements []string
-	Excluded     bool
-	Reason       string
+	Ref               string
+	Path              string
+	Method            string
+	OperationID       string
+	Description       string
+	Deprecated        bool
+	Tags              []string
+	Parameters        []Swagger20SynthesisParameter
+	ParameterCoverage []Swagger20SynthesisParameterCoverage
+	Body              *Swagger20SynthesisBody
+	Responses         []Swagger20SynthesisResponse
+	Alternatives      []Swagger20SynthesisAlternative
+	Security          []Swagger20SynthesisSecurityAlternative
+	Requirements      []string
+	Excluded          bool
+	// Disposition is the smallest-owner coverage outcome when Excluded is
+	// true. It distinguishes an upstream-invalid declaration from a valid
+	// declaration outside the client's accepted invocation domain.
+	Disposition string
+	// Rule identifies the binding rule that fixes the exclusion, when one is
+	// available. Upstream-invalid outcomes need no project exclusion rule.
+	Rule   string
+	Reason string
 }
 
 type Swagger20SynthesisParameter struct {
@@ -42,6 +50,13 @@ type Swagger20SynthesisParameter struct {
 	Required        bool
 	AllowEmptyValue bool
 	Schema          json.RawMessage
+}
+
+type Swagger20SynthesisParameterCoverage struct {
+	SourceRef string
+	Status    string
+	Rule      string
+	Reason    string
 }
 
 type Swagger20SynthesisBody struct {
@@ -73,6 +88,8 @@ type Swagger20SynthesisAlternative struct {
 	Index        int
 	Usable       bool
 	Reason       string
+	Disposition  string
+	Rule         string
 	Requirements []string
 }
 
@@ -82,6 +99,7 @@ type Swagger20SynthesisSecurityAlternative struct {
 	Anonymous bool
 	Usable    bool
 	Reason    string
+	Rule      string
 	Schemes   []Swagger20SynthesisSecurityScheme
 }
 
@@ -89,6 +107,61 @@ type Swagger20SynthesisSecurityScheme struct {
 	Name   string
 	Type   string
 	Scopes []string
+}
+
+func excludeSwagger20SynthesisOperation(operation *Swagger20SynthesisOperation, reason string) {
+	operation.Excluded = true
+	operation.Reason = reason
+	operation.Disposition, operation.Rule = classifySwagger20TargetFailure(reason)
+}
+
+func classifySwagger20TargetFailure(reason string) (disposition, rule string) {
+	lower := strings.ToLower(reason)
+	switch {
+	case strings.Contains(lower, "inadmissible key"):
+		return "invalid", ""
+	case strings.Contains(lower, "effective path parameter") && strings.Contains(lower, "no matching template expression"):
+		return "invalid", ""
+	case strings.Contains(lower, "2xx") && strings.Contains(lower, "responses object has no exact status or default response"):
+		return "invalid", ""
+	case strings.Contains(lower, "responses object has no exact status or default response"):
+		return "invalid", "OAPI20-P-05"
+	case strings.Contains(lower, "header name is not an http field-name"):
+		return "excluded", "OAPI20-P-12"
+	case strings.Contains(lower, "processor-owned field"):
+		return "excluded", "OAPI20-P-13"
+	case strings.Contains(lower, "no effective path parameter"):
+		return "excluded", "OAPI20-P-02"
+	case strings.Contains(lower, "content-encoding") && strings.Contains(lower, "payload"):
+		return "excluded", "OAPI20-P-27"
+	case strings.Contains(lower, "response"), strings.Contains(lower, "consumes"), strings.Contains(lower, "produces"), strings.Contains(lower, "payload"):
+		return "excluded", "OAPI20-P-03"
+	case strings.Contains(lower, "security"), strings.Contains(lower, "scheme"), strings.Contains(lower, "host"), strings.Contains(lower, "server"):
+		return "excluded", "OAPI20-P-04"
+	case strings.Contains(lower, "parameter"), strings.Contains(lower, "path template"):
+		return "excluded", "OAPI20-P-02"
+	default:
+		return "excluded", "OAPI20-P-01"
+	}
+}
+
+func classifySwagger20ResponseSetFailure(operation *Swagger20SynthesisOperation, resolved swagger20Operation) {
+	responses := resolved.raw.object("responses")
+	if !responses.present || !responses.valid {
+		return
+	}
+	if len(responses.value) == 0 {
+		operation.Disposition = "invalid"
+		operation.Rule = "OAPI20-P-05"
+		return
+	}
+	for key := range responses.value {
+		if key != "default" && !swagger20ExactStatusKey(key) && !strings.HasPrefix(key, "x-") {
+			operation.Disposition = "invalid"
+			operation.Rule = ""
+			return
+		}
+	}
 }
 
 // SynthesisModel analyzes every authored path-operation position. A defect in
@@ -134,7 +207,7 @@ func (c *Swagger20Client) SynthesisModel() (*Swagger20SynthesisDocument, error) 
 				if referencedItem {
 					continue
 				}
-				analyzed.Excluded, analyzed.Reason = true, err.Error()
+				excludeSwagger20SynthesisOperation(&analyzed, err.Error())
 				model.Operations = append(model.Operations, analyzed)
 				continue
 			}
@@ -179,26 +252,38 @@ func (c *Swagger20Client) analyzeSwagger20Operation(operation swagger20Operation
 
 	parameters, err := effectiveSwagger20Parameters(c.document.graph, operation)
 	if err != nil {
-		result.Excluded, result.Reason = true, err.Error()
+		excludeSwagger20SynthesisOperation(&result, err.Error())
 		return result
 	}
 	responses, err := swagger20ResponsesFor(c.document.graph, operation)
 	if err != nil {
-		result.Excluded, result.Reason = true, err.Error()
+		excludeSwagger20SynthesisOperation(&result, err.Error())
+		classifySwagger20ResponseSetFailure(&result, operation)
 		return result
 	}
 	if _, err := resolveSwagger20Server(c.document, operation, "", nil); err != nil {
-		if _, configuredErr := resolveSwagger20Server(c.document, operation, "https://configured.invalid", nil); configuredErr != nil {
-			result.Excluded, result.Reason = true, err.Error()
+		host := c.document.root.string("host")
+		if host.present && (!host.valid || host.value == "") {
+			excludeSwagger20SynthesisOperation(&result, err.Error())
 			return result
 		}
-		result.Requirements = appendSwagger20Requirement(result.Requirements, "configuration.server")
+		if _, configuredErr := resolveSwagger20Server(c.document, operation, "https://configured.invalid", nil); configuredErr != nil {
+			excludeSwagger20SynthesisOperation(&result, err.Error())
+			return result
+		}
+		effectiveSchemes := operation.raw.array("schemes")
+		if !effectiveSchemes.present {
+			effectiveSchemes = c.document.root.array("schemes")
+		}
+		if effectiveSchemes.present {
+			result.Requirements = appendSwagger20Requirement(result.Requirements, "configuration.server")
+		}
 	}
 
 	for _, parameter := range parameters.nonBody {
 		schema, marshalErr := swagger20ParameterSchemaImage(parameter)
 		if marshalErr != nil {
-			result.Excluded, result.Reason = true, marshalErr.Error()
+			excludeSwagger20SynthesisOperation(&result, marshalErr.Error())
 			return result
 		}
 		result.Parameters = append(result.Parameters, Swagger20SynthesisParameter{
@@ -215,11 +300,26 @@ func (c *Swagger20Client) analyzeSwagger20Operation(operation swagger20Operation
 			result.Requirements = appendSwagger20Requirement(result.Requirements, "configuration.requestContentCodings")
 		}
 	}
+	for _, parameter := range parameters.excluded {
+		rule := "OAPI20-P-10"
+		for _, survivor := range parameters.nonBody {
+			if survivor.name == parameter.name {
+				rule = "OAPI20-S-10"
+				break
+			}
+		}
+		result.ParameterCoverage = append(result.ParameterCoverage, Swagger20SynthesisParameterCoverage{
+			SourceRef: parameter.sourceRef,
+			Status:    "excluded",
+			Rule:      rule,
+			Reason:    fmt.Sprintf("optional header parameter %q is not an HTTP field-name", parameter.name),
+		})
+	}
 	if parameters.body != nil {
 		rawSchema, _ := parameters.body.raw.member("schema")
 		schema, schemaErr := materializeSwagger20Schema(c.document.graph, rawSchema, parameters.body.resource)
 		if schemaErr != nil {
-			result.Excluded, result.Reason = true, schemaErr.Error()
+			excludeSwagger20SynthesisOperation(&result, schemaErr.Error())
 			return result
 		}
 		result.Body = &Swagger20SynthesisBody{Required: parameters.body.required, Schema: schema}
@@ -227,12 +327,12 @@ func (c *Swagger20Client) analyzeSwagger20Operation(operation swagger20Operation
 
 	payload, err := swagger20PayloadFor(parameters, c.document)
 	if err != nil {
-		result.Excluded, result.Reason = true, err.Error()
+		excludeSwagger20SynthesisOperation(&result, err.Error())
 		return result
 	}
 	consumes, err := effectiveSwagger20MediaSet(c.document, operation, "consumes")
 	if err != nil {
-		result.Excluded, result.Reason = true, err.Error()
+		excludeSwagger20SynthesisOperation(&result, err.Error())
 		return result
 	}
 	usableConsumes := 0
@@ -277,7 +377,7 @@ func (c *Swagger20Client) analyzeSwagger20Operation(operation swagger20Operation
 	if payload.kind != "" {
 		if usableConsumes == 0 {
 			if swagger20PayloadIsRequired(payload) {
-				result.Excluded, result.Reason = true, "required request payload has no usable effective consumes alternative"
+				excludeSwagger20SynthesisOperation(&result, "required request payload has no usable effective consumes alternative")
 				return result
 			}
 			result.Body = nil
@@ -298,6 +398,14 @@ func (c *Swagger20Client) analyzeSwagger20Operation(operation swagger20Operation
 			}
 		}
 	}
+	if payload.kind == "" {
+		for _, parameter := range parameters.nonBody {
+			if parameter.required && parameter.in == Swagger20ParameterHeader && strings.EqualFold(parameter.name, "Content-Encoding") {
+				excludeSwagger20SynthesisOperation(&result, "required Content-Encoding parameter has no surviving request payload lane")
+				return result
+			}
+		}
+	}
 
 	result.Security = analyzeSwagger20Security(c.document, operation, parameters)
 	if len(result.Security) > 0 {
@@ -306,11 +414,19 @@ func (c *Swagger20Client) analyzeSwagger20Operation(operation swagger20Operation
 			usableSecurity = usableSecurity || alternative.Usable
 		}
 		if !usableSecurity {
-			result.Excluded, result.Reason = true, "effective security declaration has no usable complete alternative"
+			excludeSwagger20SynthesisOperation(&result, "effective security declaration has no usable complete alternative")
 			return result
 		}
 	}
-	if len(result.Security) > 1 {
+	usableSecurity := 0
+	allInherited := len(result.Security) > 1
+	for _, alternative := range result.Security {
+		if alternative.Usable {
+			usableSecurity++
+		}
+		allInherited = allInherited && strings.HasPrefix(alternative.SourceRef, "#/security/")
+	}
+	if usableSecurity > 1 || allInherited {
 		result.Requirements = appendSwagger20Requirement(result.Requirements, "configuration.security")
 	}
 	result.Alternatives = append(result.Alternatives, swagger20SecuritySynthesisAlternatives(operation, result.Security)...)
@@ -324,11 +440,50 @@ func (c *Swagger20Client) analyzeSwagger20Operation(operation swagger20Operation
 			})
 		}
 	}
+	if produces, err := effectiveSwagger20MediaSet(c.document, operation, "produces"); err == nil {
+		hasQ := false
+		callerOwnsAccept := false
+		for _, parameter := range parameters.nonBody {
+			callerOwnsAccept = callerOwnsAccept || parameter.in == Swagger20ParameterHeader && strings.EqualFold(parameter.name, "Accept")
+		}
+		for _, media := range produces.entries {
+			hasQ = hasQ || swagger20MediaTypeHasQParameter(media.raw)
+		}
+		if hasQ {
+			prefix := "#/produces"
+			if operation.raw.array("produces").present {
+				prefix = operationRef(operation) + "/produces"
+			}
+			for index, media := range produces.entries {
+				alternative := Swagger20SynthesisAlternative{
+					SourceRef: fmt.Sprintf("%s/%d", prefix, index), Kind: "responseMedia", Index: index,
+					Usable: callerOwnsAccept || !swagger20MediaTypeHasQParameter(media.raw),
+				}
+				if !alternative.Usable {
+					alternative.Disposition = "excluded"
+					alternative.Rule = "OAPI20-S-12"
+					alternative.Reason = "response media declaration carries reserved q parameter"
+				}
+				result.Alternatives = append(result.Alternatives, alternative)
+			}
+		}
+	}
 	if swagger20ResponsesUseContentCoding(c.document, operation, responses) {
 		result.Requirements = appendSwagger20Requirement(result.Requirements, "configuration.responseContentCodings")
 	}
 	sort.Strings(result.Requirements)
 	return result
+}
+
+func swagger20MediaTypeHasQParameter(mediaType string) bool {
+	parts := strings.Split(mediaType, ";")
+	for _, part := range parts[1:] {
+		name, _, found := strings.Cut(part, "=")
+		if found && strings.EqualFold(strings.TrimSpace(name), "q") {
+			return true
+		}
+	}
+	return false
 }
 
 func swagger20ParameterSchemaImage(parameter *swagger20Parameter) (json.RawMessage, error) {
@@ -444,10 +599,39 @@ func analyzeSwagger20Security(document *Swagger20Document, operation swagger20Op
 		alternative.Usable = selectionErr == nil
 		if selectionErr != nil {
 			alternative.Reason = selectionErr.Error()
+			if strings.HasPrefix(alternative.SourceRef, "#/paths/") && strings.Contains(alternative.Reason, "collides") && swagger20SecurityHasRequiredFixedCollision(alternative, document, parameters) {
+				alternative.Rule = "OAPI20-P-19"
+			}
 		}
 		result[index] = alternative
 	}
 	return result
+}
+
+func swagger20SecurityHasRequiredFixedCollision(alternative Swagger20SynthesisSecurityAlternative, document *Swagger20Document, parameters *swagger20ParameterSet) bool {
+	definitions := document.root.object("securityDefinitions")
+	if !definitions.valid {
+		return false
+	}
+	for _, scheme := range alternative.Schemes {
+		raw, present := definitions.value.member(scheme.Name)
+		definition, valid := raw.(map[string]any)
+		if !present || !valid || swagger20Object(definition).string("type").value != "apiKey" {
+			continue
+		}
+		location := Swagger20ParameterLocation(swagger20Object(definition).string("in").value)
+		name := swagger20Object(definition).string("name").value
+		for _, parameter := range parameters.nonBody {
+			sameName := parameter.name == name
+			if location == Swagger20ParameterHeader {
+				sameName = strings.EqualFold(parameter.name, name)
+			}
+			if parameter.required && parameter.in == location && sameName {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func swagger20SecuritySynthesisAlternatives(operation swagger20Operation, alternatives []Swagger20SynthesisSecurityAlternative) []Swagger20SynthesisAlternative {
@@ -486,6 +670,13 @@ func swagger20ServerSynthesisAlternatives(document *Swagger20Document, operation
 		alternative.Usable = scheme == "http" || scheme == "https"
 		if !alternative.Usable {
 			alternative.Reason = fmt.Sprintf("effective scheme %q is unusable", scheme)
+			if scheme == "ws" || scheme == "wss" {
+				alternative.Disposition = "excluded"
+				alternative.Rule = "OAPI20-P-04"
+			} else {
+				alternative.Disposition = "invalid"
+				alternative.Rule = "OAPI20-S-11"
+			}
 		}
 		result = append(result, alternative)
 	}
@@ -510,6 +701,14 @@ func analyzeSwagger20Responses(document *Swagger20Document, operation swagger20O
 			entry.Reason = err.Error()
 			result = append(result, entry)
 			continue
+		}
+		if resolved.invalid {
+			entry.Reason = "response declaration is not a Response Object"
+			result = append(result, entry)
+			continue
+		}
+		if defect := swagger20ResponseObjectDefect(document.graph, responses.values[key], responses.resource); defect != nil {
+			entry.Reason = defect.Error()
 		}
 		entry.Headers = analyzeSwagger20ResponseHeaders(resolved.raw, entry.SourceRef)
 		rawSchema, present := resolved.raw.member("schema")
@@ -593,6 +792,8 @@ func analyzeSwagger20ResponseHeaders(response swagger20Object, responseRef strin
 		}
 		object, ok := headers.value[name].(map[string]any)
 		switch {
+		case !swagger20HTTPFieldName(name):
+			entry.Reason = "response header field name is not an HTTP field-name"
 		case !ok:
 			entry.Reason = "response Header Object is not an object"
 		case identities[strings.ToLower(name)] > 1:

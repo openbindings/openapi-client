@@ -61,15 +61,7 @@ func (p *Swagger20PreparedOperation) Start(ctx context.Context) (*Execution, err
 		runSwagger20(execution.ctx, client, p, parameters, responses, serverBase, security, execution)
 		execution.finishAfterRun()
 	}()
-	select {
-	case <-execution.ready:
-		return execution, nil
-	case <-execution.done:
-		return nil, execution.Wait()
-	case <-ctx.Done():
-		execution.Cancel()
-		return nil, executionError(CodeCancelled, ctx.Err())
-	}
+	return awaitExecutionStart(ctx, execution)
 }
 
 func swagger20RedirectClient(client *http.Client, security []swagger20CredentialPlacement) *http.Client {

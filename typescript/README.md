@@ -9,7 +9,7 @@ specifications as an OpenAPI-native client contract. OpenBindings Core, the
 OpenBindings SDK, and OB CLI are not runtime dependencies and do not appear in
 the public API.
 
-> Status: release candidate. The invocation behavior passes all 888
+> Status: candidate under qualification. The invocation behavior passes all 896
 > hash-locked processor scenarios at the pinned OpenBindings 0.2 authority
 > revision, and the public API is candidate-frozen.
 
@@ -277,11 +277,13 @@ client defaults and overridden per call.
 
 ## Package boundary
 
-The package intentionally exports one OpenAPI-native entry point. Internal
-parser models, development profiles, routed-input envelopes, OpenBindings
-context shapes, and synthesis helpers are not public compatibility surface.
-The future OpenBindings adapter and OB CLI integration will consume this
-client rather than constrain its design.
+The package intentionally exports a small application root and the advanced
+`@openbindings/openapi-client/provider` entry point for generators and protocol
+adapters. The provider exposes OpenAPI-native declaration and planning facts;
+it does not expose OBI operations, OpenBindings contexts, binding identifiers,
+or SDK classes. Internal execution files remain private. OpenBindings adapters
+consume these two supported surfaces; SDK and OB CLI integration cannot
+constrain their design.
 
 ## License
 

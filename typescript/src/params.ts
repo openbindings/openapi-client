@@ -29,6 +29,23 @@ const HTTP_TOKEN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u;
 /** Deterministically converts a JSON boolean or number for parameter carriage. */
 export type OpenAPIParameterConverter = (value: boolean | number) => string;
 
+export function duplicateDeclaredParameterIdentity(
+  pathItem: OpenAPIPathItem,
+  operation: OpenAPIOperation,
+): string | undefined {
+  for (const parameters of [pathItem.parameters, operation.parameters]) {
+    if (!Array.isArray(parameters)) continue;
+    const seen = new Set<string>();
+    for (const parameter of parameters) {
+      if (!parameter || typeof parameter.in !== "string" || typeof parameter.name !== "string") continue;
+      const identity = `${parameter.in}\u0000${parameter.name}`;
+      if (seen.has(identity)) return `${parameter.in}/${parameter.name}`;
+      seen.add(identity);
+    }
+  }
+  return undefined;
+}
+
 export interface OpenAPIParameterSerializationOptions {
   /** Overrides the native JSON spelling of boolean and number parameter cells. */
   converter?: OpenAPIParameterConverter;

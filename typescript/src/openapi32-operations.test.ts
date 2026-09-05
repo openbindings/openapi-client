@@ -63,7 +63,7 @@ describe("OpenAPI 3.2 operation correspondence", () => {
     const mixed = await artifact.resolveOperation("#/paths/~1operations/additionalOperations/GeT");
     expect(mixed.reference).toMatchObject({ additional: true, method: "GeT", wireMethod: "GeT" });
     await expect(artifact.resolveOperation("#/paths/~1operations/additionalOperations/GET"))
-      .rejects.toMatchObject({ kind: "excluded" });
+      .rejects.toMatchObject({ kind: "invalid" });
   });
 
   it("retains excluded additional-operation positions in deterministic inventory", async () => {
@@ -83,6 +83,6 @@ describe("OpenAPI 3.2 operation correspondence", () => {
     expect(byRef.get("#/paths/~1operations/additionalOperations/GeT")?.target).toBeDefined();
     expect(byRef.get("#/paths/~1operations/additionalOperations/GET")?.target).toBeUndefined();
     expect(byRef.get("#/paths/~1operations/additionalOperations/GET")?.error)
-      .toMatchObject({ kind: "excluded" });
+      .toMatchObject({ kind: "invalid" });
   });
 });

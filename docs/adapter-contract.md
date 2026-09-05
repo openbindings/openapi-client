@@ -54,12 +54,21 @@ No request planning or OpenAPI response logic belongs in this bridge.
 ## Native analysis prerequisite
 
 Invocation adapters can use `operations`, `operation`, `call`, and `stream`
-directly. Full OBI synthesis additionally needs immutable OpenAPI-native
-declaration analysis: effective parameters, request and response alternatives,
-security alternatives, configuration requirements, and smallest-owner
-invalid/excluded dispositions. That capability must be added to both public
-language packages before adapter cutover. It must not expose OBI types or make
-synthesis authoritative over invocation.
+directly. Full OBI synthesis additionally needs the supported OpenAPI-native
+provider surface to expose effective parameters, request and response
+alternatives, security alternatives, configuration requirements, authorial
+presence and reference identity, and smallest-owner invalid/excluded
+dispositions. Root analysis and preflight are already detached views of the
+same native loaders and semantic planners. The complete projection-grade
+provider is now the sole source of OpenAPI declaration decisions for both
+adapters. It remains an OpenAPI declaration-analysis workspace, not an OBI
+model: it exposes no OBI types and cannot make synthesis authoritative over
+invocation.
+
+TypeScript adapters import only `@openbindings/openapi-client` and
+`@openbindings/openapi-client/provider`. Go adapters import only
+`github.com/openbindings/openapi-client/go` and its `/provider` package. Private
+engine paths are never an adapter contract.
 
 ## Cutover gate
 
@@ -72,9 +81,13 @@ The SDK and CLI may switch to the new substrate only when:
 - package inspection proves the standalone public entry point has no Core dependency;
 - no duplicated OpenAPI request/response implementation remains in an adapter,
   SDK, or OB CLI package;
-- all 154 portable synthesis scenarios pass through adapter-owned projection
+- all 154 portable OAS-family synthesis scenarios pass through adapter-owned projection
   derived from the native analysis capability; and
 - native and OpenBindings-adapted invocations produce the same HTTP exchange,
   application values, ordering, cancellation, and terminal outcome.
 
-This cutover has not been performed in the current standalone-client phase.
+The OpenBindings TypeScript and Go format packages have completed the
+invocation and synthesis cutovers. They no longer contain a second OpenAPI
+executor or declaration planner, and all 154 portable OAS-family synthesis
+scenarios pass through projection derived from the supported provider model.
+SDK registration and OB CLI migration remain downstream work.

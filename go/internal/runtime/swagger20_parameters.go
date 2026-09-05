@@ -9,6 +9,7 @@ import (
 type swagger20Parameter struct {
 	raw              swagger20Object
 	resource         *swagger20Resource
+	sourceRef        string
 	name             string
 	in               Swagger20ParameterLocation
 	typeName         string
@@ -27,6 +28,7 @@ type swagger20Items struct {
 type swagger20ParameterSet struct {
 	all       []*swagger20Parameter
 	nonBody   []*swagger20Parameter
+	excluded  []*swagger20Parameter
 	body      *swagger20Parameter
 	byWire    map[Swagger20ParameterLocation]map[string]*swagger20Parameter
 	qualified bool
@@ -39,12 +41,14 @@ func (p *swagger20Parameter) info() Swagger20ParameterInfo {
 func effectiveSwagger20Parameters(graph *swagger20ReferenceGraph, operation swagger20Operation) (*swagger20ParameterSet, error) {
 	pathParameters, err := swagger20ParameterScope(
 		graph, operation.pathItem.parameters(), operation.pathItem.resourceFor("parameters"), "Path Item",
+		"#/paths/"+escapeJSONPointerSegment(operation.path)+"/parameters",
 	)
 	if err != nil {
 		return nil, err
 	}
 	operationParameters, err := swagger20ParameterScope(
 		graph, operation.raw.array("parameters"), operation.resource, "Operation",
+		operationRef(operation)+"/parameters",
 	)
 	if err != nil {
 		return nil, err
@@ -78,6 +82,7 @@ func effectiveSwagger20Parameters(graph *swagger20ReferenceGraph, operation swag
 				// A non-token optional Header Parameter is confined to that
 				// projection. Because it can never contribute a field, removing it
 				// also keeps it out of caller-key qualification.
+				set.excluded = append(set.excluded, parameter)
 				continue
 			}
 			return nil, fmt.Errorf("effective %s parameter %q: %w", parameter.in, parameter.name, err)
@@ -117,7 +122,7 @@ func effectiveSwagger20Parameters(graph *swagger20ReferenceGraph, operation swag
 	return set, nil
 }
 
-func swagger20ParameterScope(graph *swagger20ReferenceGraph, member swagger20Member[[]any], resource *swagger20Resource, owner string) ([]*swagger20Parameter, error) {
+func swagger20ParameterScope(graph *swagger20ReferenceGraph, member swagger20Member[[]any], resource *swagger20Resource, owner, sourcePrefix string) ([]*swagger20Parameter, error) {
 	if !member.present {
 		return nil, nil
 	}
@@ -134,6 +139,7 @@ func swagger20ParameterScope(graph *swagger20ReferenceGraph, member swagger20Mem
 		if parameter.name == "" || parameter.in == "" {
 			return nil, fmt.Errorf("selected Swagger 2.0 %s parameter %d requires nonempty name and in", owner, index)
 		}
+		parameter.sourceRef = fmt.Sprintf("%s/%d", sourcePrefix, index)
 		identity := parameter.identity()
 		if identities[identity] {
 			return nil, fmt.Errorf("selected Swagger 2.0 %s repeats parameter identity %s", owner, identity)

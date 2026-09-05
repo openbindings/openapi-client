@@ -385,10 +385,7 @@ describe("buildMultipartBody", () => {
     expect(parts.archive?.[0]).toEqual(["application/zip", "zip-bytes"]);
   });
 
-  it.each([
-    new Uint8Array([1, 2]),
-    new Blob([new Uint8Array([1, 2])]),
-  ])("revision 3 rejects non-JSON multipart binary convenience value %s", (value) => {
+  it("accepts a native Uint8Array for an OAS 3.0 multipart binary property", () => {
     const media: OpenAPIMediaType = {
       schema: {
         type: "object",
@@ -399,9 +396,31 @@ describe("buildMultipartBody", () => {
       opWithRequestBody({ "multipart/form-data": media }, true),
       { profile: OPENAPI_PROFILE_MEDIA, openapiVersion: "3.0.4" },
     );
-    expect(() => buildRequestBody(DOC_30, plan, routedWith({ bodyFields: { file: value } })))
-      .toThrow(/must be a canonical Base64 string/);
-    expect(() => buildMultipartBody(DOC_30, media, { file: value })).not.toThrow();
+    const wire = buildRequestBody(
+      DOC_30,
+      plan,
+      routedWith({ bodyFields: { file: new Uint8Array([1, 2]) } }),
+    );
+    const parts = encodedMultipartParts(wire.body, wire.contentType);
+    expect(parts.file?.[0]?.[1]).toBe("\u0001\u0002");
+  });
+
+  it("rejects a Blob at the canonical multipart binary property boundary", () => {
+    const media: OpenAPIMediaType = {
+      schema: {
+        type: "object",
+        properties: { file: { type: "string", format: "binary" } },
+      },
+    };
+    const plan = planRequestBody(
+      opWithRequestBody({ "multipart/form-data": media }, true),
+      { profile: OPENAPI_PROFILE_MEDIA, openapiVersion: "3.0.4" },
+    );
+    expect(() => buildRequestBody(
+      DOC_30,
+      plan,
+      routedWith({ bodyFields: { file: new Blob([new Uint8Array([1, 2])]) } }),
+    )).toThrow(/must be a canonical Base64 string/);
   });
 
   // 3.1.x: a string schema carrying contentMediaType/contentEncoding

@@ -17,7 +17,10 @@ import {
   type OpenAPI32ResponseMediaExclusion,
   type OpenAPIResolvedOperation,
 } from "./openapi32-operations.js";
-import { validateOpenAPI32OperationParameters } from "./openapi32-parameters.js";
+import {
+  OpenAPI32ParameterDispositionError,
+  validateOpenAPI32OperationParameters,
+} from "./openapi32-parameters.js";
 import {
   openAPI32SecurityNameKind,
   openAPI32SecurityRequirementNames,
@@ -41,6 +44,15 @@ const ACCEPTED_EDITIONS = new Set<OpenAPIEdition>([
 
 const OAS_BASE_DIALECT = "https://spec.openapis.org/oas/3.1/dialect/base";
 
+/** Compile-time read-only view paired with the provider's runtime freeze. */
+export type OpenAPIReadonly<T> = T extends (...args: never[]) => unknown
+  ? T
+  : T extends readonly (infer Member)[]
+    ? readonly OpenAPIReadonly<Member>[]
+    : T extends object
+      ? { readonly [Key in keyof T]: OpenAPIReadonly<T[Key]> }
+      : T;
+
 export interface OpenAPIArtifactSource {
   location?: string;
   content?: unknown;
@@ -52,6 +64,16 @@ export interface OpenAPIArtifactLoadOptions {
   allowExternalRefs?: boolean;
   /** Receives the parsed entry resource before any reference is resolved. */
   onRawDocument?: (raw: unknown) => void;
+  /** Receives each resource composed by a non-3.2 artifact load. */
+  onResource?: (root: Record<string, unknown>, baseURI?: string) => void;
+  /** Receives each declaration reached through a non-3.2 `$ref`. */
+  onRefTarget?: (
+    target: object,
+    declaringRoot: Record<string, unknown>,
+    pointer: string,
+  ) => void;
+  /** Keeps an unresolved internal reference for smallest-owner analysis. */
+  tolerateUnresolvableInternalRefs?: boolean;
 }
 
 export interface OpenAPI32Resource {
@@ -97,13 +119,14 @@ interface ResolvedPathItem {
  * normalizer is never an acceptance gate for that edition.
  */
 export class OpenAPIArtifact {
-  readonly document: OpenAPIDocument;
+  readonly document: OpenAPIReadonly<OpenAPIDocument>;
   readonly edition: OpenAPIEdition;
   readonly location?: string;
   readonly refusal?: string;
   readonly sourceExclusion?: string;
 
   private readonly overlay?: OpenAPI32Overlay;
+  private readonly resolvedDocument: OpenAPIDocument;
   private readonly operationTargets: ReadonlyMap<string, OpenAPIResolvedOperation>;
   private readonly referringSecurityByPath: ReadonlyMap<string, Record<string, Record<string, unknown>>>;
 
@@ -118,7 +141,10 @@ export class OpenAPIArtifact {
     operationTargets?: ReadonlyMap<string, OpenAPIResolvedOperation>;
     referringSecurityByPath?: ReadonlyMap<string, Record<string, Record<string, unknown>>>;
   }) {
-    this.document = args.document;
+    // A loaded provider artifact is a stable analysis snapshot. Projection
+    // consumers clone the graph before rewriting it; invocation only reads it.
+    this.resolvedDocument = freezeObjectGraph(args.document);
+    this.document = this.resolvedDocument;
     this.edition = args.edition;
     this.location = args.location;
     this.refusal = args.refusal;
@@ -146,7 +172,7 @@ export class OpenAPIArtifact {
         && OPENAPI32_FIXED_METHODS.some((fixed) => reference.method === fixed.toUpperCase())
       ) {
         throw new OpenAPIOperationResolutionError(
-          "excluded",
+          "invalid",
           `additional operation method ${JSON.stringify(reference.method)} collides with a fixed operation field`,
         );
       }
@@ -169,7 +195,7 @@ export class OpenAPIArtifact {
     } catch (error: unknown) {
       throw new OpenAPIOperationResolutionError("invalid-reference", errorMessage(error), { cause: error });
     }
-    const pathItem = this.document.paths?.[parsed.path];
+    const pathItem = this.resolvedDocument.paths?.[parsed.path];
     const operation = pathItem?.[parsed.method] as OpenAPIOperation | undefined;
     if (!pathItem || !operation) {
       throw new OpenAPIOperationResolutionError("not-found", `operation ${JSON.stringify(ref)} was not found`);
@@ -182,7 +208,7 @@ export class OpenAPIArtifact {
         additional: false,
         wireMethod: parsed.method.toUpperCase(),
       },
-      document: this.document,
+      document: this.resolvedDocument,
       pathItem,
       operation,
       ...(this.referringSecurityByPath.get(parsed.path)
@@ -194,7 +220,7 @@ export class OpenAPIArtifact {
   async operationInventory(): Promise<OpenAPIOperationDisposition[]> {
     if (this.edition !== "3.2.0" || !this.overlay) {
       const result: OpenAPIOperationDisposition[] = [];
-      for (const [path, pathItem] of Object.entries(this.document.paths ?? {})) {
+      for (const [path, pathItem] of Object.entries(this.resolvedDocument.paths ?? {})) {
         for (const method of OPENAPI32_FIXED_METHODS.slice(0, -1)) {
           if (!pathItem[method]) continue;
           const reference = {
@@ -209,7 +235,7 @@ export class OpenAPIArtifact {
             reference,
             target: {
               reference,
-              document: this.document,
+              document: this.resolvedDocument,
               pathItem,
               operation,
               ...(this.referringSecurityByPath.get(path)
@@ -226,7 +252,7 @@ export class OpenAPIArtifact {
 
   /** Inventories targetless callback and webhook operation declarations. */
   inboundOperationInventory(): OpenAPIInboundOperationDisposition[] {
-    return documentInboundOperationInventory(this.document);
+    return documentInboundOperationInventory(this.resolvedDocument);
   }
 
   /** Selects the response declaration governing one final OpenAPI 3.2 status. */
@@ -255,7 +281,7 @@ export class OpenAPIArtifact {
     const operationTargets = new Map(this.operationTargets);
     operationTargets.set(target.reference.ref, target);
     return new OpenAPIArtifact({
-      document: this.document,
+      document: this.resolvedDocument,
       edition: this.edition,
       ...(this.location ? { location: this.location } : {}),
       ...(this.refusal ? { refusal: this.refusal } : {}),
@@ -300,7 +326,12 @@ export async function loadOpenAPIArtifact(
       {
         signal: options.signal,
         allowExternalRefs: options.allowExternalRefs,
-        onResource: (root, baseURI) => resources.push({ root, baseURI }),
+        onResource: (root, baseURI) => {
+          resources.push({ root, baseURI });
+          options.onResource?.(root, baseURI);
+        },
+        onRefTarget: options.onRefTarget,
+        tolerateUnresolvableInternalRefs: options.tolerateUnresolvableInternalRefs,
       },
       options.fetch,
     );
@@ -443,8 +474,14 @@ class OpenAPI32Overlay {
       && OPENAPI32_FIXED_METHODS.some((fixed) => reference.method === fixed.toUpperCase())
     ) {
       throw new OpenAPIOperationResolutionError(
-        "excluded",
+        "invalid",
         `additional operation method ${JSON.stringify(reference.method)} collides with a fixed operation field`,
+      );
+    }
+    if (reference.additional && reference.method === "CONNECT") {
+      throw new OpenAPIOperationResolutionError(
+        "excluded",
+        "additional CONNECT operation creates a tunnel outside the unary OpenAPI operation model",
       );
     }
     const root = asRecord(this.entry.root)!;
@@ -468,15 +505,15 @@ class OpenAPI32Overlay {
     if (Object.hasOwn(operationRecord, "responses")) {
       const rawResponses = asRecord(operationRecord.responses);
       if (!rawResponses) {
-        throw new OpenAPIOperationResolutionError("excluded", `operation ${JSON.stringify(ref)} Responses declaration is not an object`);
+        throw new OpenAPIOperationResolutionError("invalid", `operation ${JSON.stringify(ref)} Responses declaration is not an object`);
       }
       if (Object.keys(rawResponses).length === 0) {
-        throw new OpenAPIOperationResolutionError("excluded", `operation ${JSON.stringify(ref)} has a present empty Responses Object`);
+        throw new OpenAPIOperationResolutionError("invalid", `operation ${JSON.stringify(ref)} has a present empty Responses Object`);
       }
       for (const key of Object.keys(rawResponses)) {
         if (!admittedOpenAPI32ResponseKey(key)) {
           throw new OpenAPIOperationResolutionError(
-            "excluded",
+            "invalid",
             `operation ${JSON.stringify(ref)} has inadmissible Responses key ${JSON.stringify(key)}`,
           );
         }
@@ -484,15 +521,38 @@ class OpenAPI32Overlay {
     }
 
     const materialized = await this.materializePathItem(selected, reference);
-    const pathItem = materialized.pathItem;
-    const operation = openAPI32OperationValue(pathItem as Record<string, unknown>, reference) as OpenAPIOperation;
+    let pathItem = materialized.pathItem;
+    let operation = openAPI32OperationValue(pathItem as Record<string, unknown>, reference) as OpenAPIOperation;
+    let parameterLaneExclusions: readonly { identity: string; reason: string }[] = [];
+    try {
+      const validation = validateOpenAPI32OperationParameters(
+        root as OpenAPIDocument,
+        reference.path,
+        pathItem,
+        operation,
+      );
+      parameterLaneExclusions = validation.excludedLanes;
+      if (parameterLaneExclusions.length > 0) {
+        ({ pathItem, operation } = omitOpenAPI32ParameterLanes(
+          pathItem,
+          operation,
+          reference,
+          new Set(parameterLaneExclusions.map(({ identity }) => identity)),
+        ));
+      }
+    } catch (error: unknown) {
+      throw new OpenAPIOperationResolutionError(
+        error instanceof OpenAPI32ParameterDispositionError ? error.kind : "invalid",
+        errorMessage(error),
+        { cause: error },
+      );
+    }
     const targetRoot = this.targetDocument(root, reference, pathItem);
     const referringSecuritySchemes = await this.materializeSecurityTarget(
       targetRoot,
       asRecord(rawOperation)!,
       selected.operationOwner,
     );
-    validateOpenAPI32OperationParameters(root as OpenAPIDocument, reference.path, pathItem, operation);
     return {
       reference,
       document: targetRoot,
@@ -501,6 +561,9 @@ class OpenAPI32Overlay {
       ...(Object.keys(referringSecuritySchemes).length > 0 ? { referringSecuritySchemes } : {}),
       ...(materialized.responseMediaExclusions.length > 0
         ? { responseMediaExclusions: materialized.responseMediaExclusions }
+        : {}),
+      ...(parameterLaneExclusions.length > 0
+        ? { parameterLaneExclusions: parameterLaneExclusions.map((entry) => ({ ...entry })) }
         : {}),
     };
   }
@@ -1131,6 +1194,10 @@ function assertJSONDomain(root: unknown): void {
 
 function immutableClone<T>(value: T): T {
   const clone = structuredClone(value);
+  return freezeObjectGraph(clone);
+}
+
+function freezeObjectGraph<T>(value: T): T {
   const seen = new WeakSet<object>();
   const freeze = (member: unknown): void => {
     if (!member || typeof member !== "object" || seen.has(member)) return;
@@ -1138,12 +1205,43 @@ function immutableClone<T>(value: T): T {
     for (const child of Object.values(member)) freeze(child);
     Object.freeze(member);
   };
-  freeze(clone);
-  return clone;
+  freeze(value);
+  return value;
 }
 
 function cloneJSON<T>(value: T): T {
   return structuredClone(value);
+}
+
+function omitOpenAPI32ParameterLanes(
+  pathItem: OpenAPIPathItem,
+  operation: OpenAPIOperation,
+  reference: OpenAPIOperationReference,
+  identities: ReadonlySet<string>,
+): { pathItem: OpenAPIPathItem; operation: OpenAPIOperation } {
+  const retain = (parameter: OpenAPIParameter): boolean =>
+    !identities.has(`${parameter.in ?? ""}\u0000${parameter.name ?? ""}`);
+  const nextOperation: OpenAPIOperation = {
+    ...operation,
+    ...(Array.isArray(operation.parameters)
+      ? { parameters: operation.parameters.filter(retain) }
+      : {}),
+  };
+  const nextPathItem: OpenAPIPathItem = {
+    ...pathItem,
+    ...(Array.isArray(pathItem.parameters)
+      ? { parameters: pathItem.parameters.filter(retain) }
+      : {}),
+  };
+  if (reference.additional) {
+    nextPathItem.additionalOperations = {
+      ...(nextPathItem.additionalOperations ?? {}),
+      [reference.method]: nextOperation,
+    };
+  } else {
+    nextPathItem[reference.method] = nextOperation;
+  }
+  return { pathItem: nextPathItem, operation: nextOperation };
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

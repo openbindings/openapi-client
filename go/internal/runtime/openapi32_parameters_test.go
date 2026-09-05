@@ -185,20 +185,21 @@ func TestOpenAPI32ParameterRuntimeRefusalsPrecedeDispatch(t *testing.T) {
 
 func TestOpenAPI32ParameterDeclarationExclusions(t *testing.T) {
 	for _, testCase := range []struct {
-		name      string
-		parameter string
-		path      string
+		name        string
+		parameter   string
+		path        string
+		represented bool
 	}{
-		{"query collision", `{name: whole, in: querystring, content: {application/json: {schema: {type: object}}}}, {name: q, in: query, schema: {type: string}}`, "/x"},
-		{"two querystrings", `{name: one, in: querystring, content: {application/json: {schema: {type: object}}}}, {name: two, in: querystring, content: {application/json: {schema: {type: object}}}}`, "/x"},
-		{"querystring schema", `{name: whole, in: querystring, schema: {type: string}}`, "/x"},
-		{"querystring schema field", `{name: whole, in: querystring, allowReserved: false, content: {application/json: {schema: {type: object}}}}`, "/x"},
-		{"querystring sequential media", `{name: whole, in: querystring, content: {application/json: {itemSchema: {type: object}}}}`, "/x"},
-		{"querystring unsupported media", `{name: whole, in: querystring, content: {image/png: {schema: {type: string}}}}`, "/x"},
-		{"undefined style cell", `{name: q, in: query, style: spaceDelimited, explode: true, schema: {type: array, items: {type: string}}}`, "/x"},
-		{"compound member", `{name: q, in: query, style: form, explode: false, schema: {type: object, properties: {nested: {type: object}}}}`, "/x"},
-		{"unmatched path parameter", `{name: id, in: path, required: true, schema: {type: string}}`, "/x"},
-		{"duplicate expression", `{name: id, in: path, required: true, schema: {type: string}}`, "/{id}/{id}"},
+		{"query collision", `{name: whole, in: querystring, content: {application/json: {schema: {type: object}}}}, {name: q, in: query, schema: {type: string}}`, "/x", false},
+		{"two querystrings", `{name: one, in: querystring, content: {application/json: {schema: {type: object}}}}, {name: two, in: querystring, content: {application/json: {schema: {type: object}}}}`, "/x", false},
+		{"querystring schema", `{name: whole, in: querystring, schema: {type: string}}`, "/x", false},
+		{"querystring schema field", `{name: whole, in: querystring, allowReserved: false, content: {application/json: {schema: {type: object}}}}`, "/x", false},
+		{"querystring sequential media", `{name: whole, in: querystring, content: {application/json: {itemSchema: {type: object}}}}`, "/x", true},
+		{"querystring unsupported media", `{name: whole, in: querystring, content: {image/png: {schema: {type: string}}}}`, "/x", true},
+		{"undefined style cell", `{name: q, in: query, style: spaceDelimited, explode: true, schema: {type: array, items: {type: string}}}`, "/x", false},
+		{"compound member", `{name: q, in: query, style: form, explode: false, schema: {type: object, properties: {nested: {type: object}}}}`, "/x", false},
+		{"unmatched path parameter", `{name: id, in: path, required: true, schema: {type: string}}`, "/x", false},
+		{"duplicate expression", `{name: id, in: path, required: true, schema: {type: string}}`, "/{id}/{id}", false},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			artifact, err := LoadArtifact(context.Background(), Source{Content: []byte(`
@@ -217,7 +218,12 @@ paths:
 				t.Fatalf("target-local parameter defect became source refusal: %v", artifact.Refusal())
 			}
 			ref := "#/paths/" + escapeJSONPointerSegment(testCase.path) + "/get"
-			if _, err := artifact.ResolveOperation(ref); err == nil {
+			target, targetErr := artifact.ResolveOperation(ref)
+			if testCase.represented {
+				if targetErr != nil || len(effectiveParameters(target.PathItem, target.Operation)) != 0 {
+					t.Fatalf("parameter-lane exclusion did not preserve an empty target: target=%#v err=%v", target, targetErr)
+				}
+			} else if targetErr == nil {
 				t.Fatal("malformed parameter target was addressable")
 			}
 			if _, err := artifact.ResolveOperation("#/paths/~1survivor/get"); err != nil {

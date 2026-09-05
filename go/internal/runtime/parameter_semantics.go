@@ -157,7 +157,11 @@ func prepareEncodingPropertyValue(plan *bodyPlan, name string, value any, conver
 	}
 	encoding := plan.media.Encoding[name]
 	if !encodingUsesSerializationForPlan(plan, encoding) {
-		return prepareContentPropertyValue(plan, name, value, converter)
+		// Content-based form and multipart properties are serialized by the
+		// selected media lane. They never enter parameterConversion; that
+		// configuration point belongs only to schema-form parameters and this
+		// function's explicit RFC 6570-style Encoding branch below.
+		return value, nil
 	}
 	method := revision3EncodingSerializationMethod(encoding)
 	prepared, err := prepareParameterStyleValue(name, value, method.Style, converter)
@@ -178,89 +182,6 @@ func contentPropertyNullIsElided(plan *bodyPlan, name string, value any) bool {
 	}
 	root := resolveDeclaration(mediaSchema(plan.media), true)
 	return !root.requiresProperty(name) && root.property(name).admitsNull()
-}
-
-// prepareContentPropertyValue applies openbindings.openapi-3.0@1 §8.1's
-// converter on the content-based form and multipart lanes, and only where
-// that document names it: a §9.3 form or part property that "must convert a
-// JSON scalar to a string". §9.3 routes a content-based property through
-// §9.2's lane for its selected media type, so the text/plain lane -- the one
-// lane that carries a scalar as character data -- is the converter's only
-// content-lane site. The JSON lane serializes the supplied value as strict
-// JSON and never consults the converter; before 2026-09-03 the converter ran
-// by DECLARATION here, so an `integer` array bound for `application/json`
-// reached the wire as `["1","2"]`. The 3.1 and 3.2 lines scope the converter
-// to the schema-form and RFC 6570-style paths outright (openbindings.openapi-3.1@1
-// §8.1 "never for §9.3's content-based path"; openbindings.openapi-3.2@1 §8.1),
-// which the oas30 gate carries.
-func prepareContentPropertyValue(plan *bodyPlan, name string, value any, converter ParameterConverter) (any, error) {
-	if plan == nil || plan.media == nil || !plan.oas30 {
-		return value, nil
-	}
-	if !contentPropertySelectsTextLane(plan, name) {
-		return value, nil
-	}
-	root := resolveDeclaration(mediaSchema(plan.media), true)
-	converted, err := convertContentPropertyScalars(root.property(name), value, converter)
-	if err != nil {
-		return nil, fmt.Errorf("body property %q: %w", name, err)
-	}
-	return converted, nil
-}
-
-// contentPropertySelectsTextLane reports whether §9.3's content-lane media
-// selection names text/plain for the property: an explicit single concrete
-// Encoding contentType -- which the propertyMedia choice materializes onto
-// the invocation-local plan before routing -- else the declaration-keyed
-// default table, whose row for an array property is the item-type default,
-// the type each repeated multipart part carries. A selection this reports
-// false for either carries the value under another lane's own rule or is
-// refused by the body writer; neither is a conversion site.
-func contentPropertySelectsTextLane(plan *bodyPlan, name string) bool {
-	if enc := plan.media.Encoding[name]; enc != nil && enc.ContentType != "" {
-		parsed, err := parseRevision3MediaType(enc.ContentType)
-		return err == nil && parsed.base == "text/plain"
-	}
-	schema := resolvedMultipartPropertyFor(mediaSchema(plan.media), name, map[*openapi3.Schema]bool{}, hasDynamicObjectCarriage(plan.bindingSpec), true)
-	if schema == nil {
-		return false
-	}
-	schema, _ = effectiveRevision3PartSchema(schema, true)
-	selected, ok := defaultRevision3PartContentType(schema, true)
-	return ok && selected == "text/plain"
-}
-
-func convertContentPropertyScalars(declaration resolvedDeclaration, value any, converter ParameterConverter) (any, error) {
-	if value == nil || declaration.ambiguous || declaration.typeless() {
-		return value, nil
-	}
-	if declaration.declaresOnly("array", "null") {
-		array, ok := asArray(value)
-		if !ok {
-			return value, nil
-		}
-		items := declaration.items()
-		result := make([]any, len(array))
-		for index, member := range array {
-			converted, err := convertContentPropertyScalars(items, member, converter)
-			if err != nil {
-				return nil, fmt.Errorf("array member %d: %w", index, err)
-			}
-			result[index] = converted
-		}
-		return result, nil
-	}
-	if declaration.declaresOnly("boolean", "number", "integer", "null") && jsonBooleanOrNumber(value) {
-		if converter == nil {
-			return nil, fmt.Errorf("JSON boolean or number requires a ParameterConverter")
-		}
-		text, err := converter(value)
-		if err != nil {
-			return nil, fmt.Errorf("ParameterConverter: %w", err)
-		}
-		return text, nil
-	}
-	return value, nil
 }
 
 func convertParameterScalars(value any, converter ParameterConverter, member bool) (any, error) {

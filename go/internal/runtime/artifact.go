@@ -42,6 +42,7 @@ type Artifact struct {
 	Edition  Edition
 
 	entryBytes              []byte
+	schemaOverlays          *rawSchemaOverlayCollector
 	openAPI32               *OpenAPI32Overlay
 	operationTargets        map[string]*OperationTarget
 	operationErrors         map[string]error
@@ -58,7 +59,7 @@ func openAPI32ArtifactDisposition(document *openapi3.T) (refusal, exclusion stri
 		refusal = "OpenAPI 3.2 document omits components, paths, and webhooks, leaving no addressable-target position"
 	}
 	if document.JSONSchemaDialect != "" && document.JSONSchemaDialect != "https://spec.openapis.org/oas/3.1/dialect/base" {
-		exclusion = fmt.Sprintf("OpenAPI document jsonSchemaDialect %q is outside the supported default dialect", document.JSONSchemaDialect)
+		exclusion = fmt.Sprintf("whole-source exclusion: root jsonSchemaDialect %q is outside the supported default dialect", document.JSONSchemaDialect)
 	}
 	return refusal, exclusion
 }
@@ -84,7 +85,7 @@ func entryArtifactDisposition(data []byte, edition Edition) (refusal, exclusion 
 		}
 	}
 	if dialect, ok := root["jsonSchemaDialect"].(string); ok && dialect != "" && dialect != "https://spec.openapis.org/oas/3.1/dialect/base" {
-		exclusion = fmt.Sprintf("OpenAPI document jsonSchemaDialect %q is outside the supported default dialect", dialect)
+		exclusion = fmt.Sprintf("whole-source exclusion: root jsonSchemaDialect %q is outside the supported default dialect", dialect)
 	}
 	return refusal, exclusion
 }
@@ -109,7 +110,7 @@ func (o *OpenAPI32Overlay) artifactDisposition() (refusal, exclusion string) {
 		refusal = "OpenAPI 3.2 document omits components, paths, and webhooks, leaving no addressable-target position"
 	}
 	if dialect, ok := root["jsonSchemaDialect"].(string); ok && dialect != "" && dialect != "https://spec.openapis.org/oas/3.1/dialect/base" {
-		exclusion = fmt.Sprintf("OpenAPI 3.2 document jsonSchemaDialect %q is outside the supported default dialect", dialect)
+		exclusion = fmt.Sprintf("whole-source exclusion: root jsonSchemaDialect %q is outside the supported default dialect", dialect)
 	}
 	return refusal, exclusion
 }

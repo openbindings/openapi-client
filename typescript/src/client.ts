@@ -1,15 +1,25 @@
 import { OPENAPI_PROFILE_FULL } from "./profile.js";
 import {
+  OPENAPI_USE_DEFAULT as ENGINE_OPENAPI_USE_DEFAULT,
   OpenAPIEngine,
   OpenAPIExecutionError,
+  openAPIPortableFailureData,
   type OpenAPIExecutionEvent,
+  type OpenAPIExecutionHooks,
+  type OpenAPIHookResult,
+  type OpenAPIHookSite,
 } from "./engine.js";
 import type {
   OpenAPIDocument,
   OpenAPIOperation,
   OpenAPIPathItem,
+  OpenAPIResponse,
 } from "./types.js";
-import { effectiveParameters, type OpenAPIParameterConverter } from "./params.js";
+import {
+  duplicateDeclaredParameterIdentity,
+  effectiveParameters,
+  type OpenAPIParameterConverter,
+} from "./params.js";
 import { planAbstractInputRoutes } from "./input-routes-v2.js";
 import {
   configureRequestMedia,
@@ -19,8 +29,9 @@ import {
   responseUsesRawBoundary,
   type BodyPlan,
 } from "./media.js";
-import { planResolvedRequestBodies } from "./resolved-media.js";
+import { planResolvedRequestBodies, type OpenAPIResolvedBodyPlan } from "./resolved-media.js";
 import { decodeBytesByContentType } from "./invoke.js";
+import { ConfigRequired, effectiveServers, eligibleServers, resolveServer } from "./servers.js";
 import { openAPIFailureEvidence } from "./failure.js";
 import { isSSEContentType } from "./sse.js";
 import { errorMessage, parseJSONOrYAML } from "./util.js";
@@ -47,12 +58,18 @@ import { loadSwagger20, type Swagger20Client } from "./swagger20-loader.js";
 import {
   prepareSwagger20,
   Swagger20ExecutionError,
+  validateSwagger20Selector,
 } from "./swagger20-engine.js";
 import type {
   Swagger20Input,
   Swagger20ParameterInfo,
 } from "./swagger20-parameters.js";
 import type { Swagger20SecurityCredentials } from "./swagger20-security.js";
+import { escapePointerToken } from "./swagger20-reference.js";
+import type {
+  Swagger20SynthesisOperation,
+  Swagger20SynthesisSecurityAlternative,
+} from "./swagger20-synthesis.js";
 
 /** Exact artifact edition selected at load time. */
 export type OpenAPIEdition = "2.0" | OpenAPI3Edition;
@@ -79,6 +96,7 @@ export type OpenAPIOperationSelector =
 export type OpenAPIAuthValue =
   | string
   | { username: string; password: string }
+  | { accessToken: string; tokenType?: "Bearer"; scopes?: readonly string[] }
   | OpenAPISecurityHandler;
 
 export interface OpenAPISecurityHandlerContext {
@@ -144,6 +162,8 @@ export interface OpenAPICallOptions {
   responseContentCodings?: Record<string, OpenAPIContentCodec>;
   requestCharacterEncodings?: Record<string, OpenAPICharacterEncoder>;
   responseCharacterEncodings?: Record<string, OpenAPICharacterDecoder>;
+  /** Per-call response policy; takes precedence over client-level hooks. */
+  hooks?: OpenAPIClientHooks;
 }
 
 export interface OpenAPIClientMiddlewareContext {
@@ -156,6 +176,18 @@ export interface OpenAPIClientMiddleware {
   onResponse?(context: OpenAPIClientMiddlewareContext & { response: Response }): Response | void | Promise<Response | void>;
   onError?(context: OpenAPIClientMiddlewareContext & { error: unknown }): Response | Error | void | Promise<Response | Error | void>;
 }
+
+/** Protocol-native facts supplied to an optional response hook. */
+export type OpenAPIClientHookResult = OpenAPIHookResult;
+
+/** The resolved operation and target at which a response hook is consulted. */
+export type OpenAPIClientHookSite = OpenAPIHookSite;
+
+/** Declines a hook decision and continues to the OpenAPI client's builtin. */
+export const OPENAPI_USE_DEFAULT: typeof ENGINE_OPENAPI_USE_DEFAULT = ENGINE_OPENAPI_USE_DEFAULT;
+
+/** Optional application policy at the response seams OpenAPI does not own. */
+export type OpenAPIClientHooks = OpenAPIExecutionHooks;
 
 export interface OpenAPIClientOptions {
   auth?: Record<string, OpenAPIAuthValue>;
@@ -174,6 +206,7 @@ export interface OpenAPIClientOptions {
   /** Defaults to `manual`; set `follow` to opt into ordinary user-agent redirect behavior. */
   redirect?: OpenAPIRedirectPolicy;
   middleware?: OpenAPIClientMiddleware[];
+  hooks?: OpenAPIClientHooks;
   maxDeliveryUnitBytes?: number;
   parameterConverter?: OpenAPIParameterConverter;
   securityAlternative?: number;
@@ -197,6 +230,103 @@ export interface OpenAPIOperationInfo {
   operationId?: string;
   summary?: string;
   tags: readonly string[];
+}
+
+/** One effective OpenAPI parameter identity at the native call boundary. */
+export interface OpenAPIParameterInfo {
+  name: string;
+  in: "path" | "query" | "querystring" | "header" | "cookie" | "formData" | "body";
+  /** Stable flat-input key. Qualified only when one authored name occurs in multiple locations. */
+  inputKey: string;
+  required: boolean;
+  style?: string;
+  explode?: boolean;
+  allowEmpty: boolean;
+  sourceRef?: string;
+  schema?: Readonly<Record<string, unknown>> | boolean;
+}
+
+/** One admitted request representation at the native call boundary. */
+export interface OpenAPIRequestBodyAnalysis {
+  /** Canonical concrete declaration, or the authored range awaiting `mediaType`. */
+  mediaType: string;
+  family: string;
+  required: boolean;
+  mediaRange: boolean;
+  wholeValue: boolean;
+  /** The protocol adapter represents the body as canonical Base64 text. */
+  base64: boolean;
+  /** Named body properties represented as canonical Base64 text at this JSON-shaped call boundary. */
+  base64Properties: readonly string[];
+  properties: readonly string[];
+  propertyMedia: readonly string[];
+  schema?: Readonly<Record<string, unknown>> | boolean;
+}
+
+export interface OpenAPISupportDisposition {
+  sourceRef: string;
+  scope: "source" | "target" | "alternative" | "projection";
+  status: "represented" | "invalid" | "excluded" | "lossy";
+  code?: string;
+  rule?: string;
+  reason?: string;
+  requirements: readonly string[];
+}
+
+export interface OpenAPIServerAlternativeAnalysis {
+  index: number;
+  url: string;
+  variables: readonly string[];
+  usable: boolean;
+  reason?: string;
+}
+
+export interface OpenAPISecuritySchemeAnalysis {
+  name: string;
+  type?: string;
+  scheme?: string;
+  in?: string;
+  scopes: readonly string[];
+}
+
+export interface OpenAPISecurityAlternativeAnalysis {
+  index: number;
+  anonymous: boolean;
+  usable: boolean;
+  reason?: string;
+  schemes: readonly Readonly<OpenAPISecuritySchemeAnalysis>[];
+}
+
+export interface OpenAPIResponseAlternativeAnalysis {
+  key: string;
+  sourceRef: string;
+  canSucceed: boolean;
+  usable: boolean;
+  mediaTypes: readonly string[];
+  schema?: Readonly<Record<string, unknown>> | boolean;
+  reason?: string;
+}
+
+/** Detached operation facts used by generators and protocol adapters. */
+export interface OpenAPIOperationAnalysis {
+  info: Readonly<OpenAPIOperationInfo>;
+  description?: string;
+  deprecated: boolean;
+  parameters: readonly Readonly<OpenAPIParameterInfo>[];
+  requestBodies: readonly Readonly<OpenAPIRequestBodyAnalysis>[];
+  responses: readonly Readonly<OpenAPIResponseAlternativeAnalysis>[];
+  servers: readonly Readonly<OpenAPIServerAlternativeAnalysis>[];
+  security: readonly Readonly<OpenAPISecurityAlternativeAnalysis>[];
+  requirements: readonly string[];
+  coverage: readonly Readonly<OpenAPISupportDisposition>[];
+}
+
+/** Immutable, JSON-shaped analysis of the exact artifact loaded by this client. */
+export interface OpenAPIAnalysis {
+  edition: OpenAPIEdition;
+  location?: string;
+  operations: readonly Readonly<OpenAPIOperationAnalysis>[];
+  coverage: readonly Readonly<OpenAPISupportDisposition>[];
 }
 
 export interface OpenAPIDeclarationMatch {
@@ -285,6 +415,8 @@ export type OpenAPIConfigurationRequirement =
     /** Required credential family, such as `apiKey`, `basic`, `bearer`, or `oauth2`. */
     credential: string;
     description?: string;
+    /** OpenAPI-native acquisition facts such as scopes, grant type, and endpoint URLs. */
+    details?: Readonly<Record<string, unknown>>;
   };
 
 /** Alternatives are disjunctive; every requirement inside one alternative is conjunctive. */
@@ -299,11 +431,14 @@ export class OpenAPIClientError extends Error {
   readonly details?: unknown;
   /** Actionable alternatives when `code` is `CONFIGURATION_REQUIRED`. */
   readonly requirements?: OpenAPIConfigurationRequirements;
+  /** Application-authored failure data admitted by the governing Response declaration. */
+  readonly applicationFailure?: { readonly data: unknown };
 
   constructor(kind: OpenAPIClientErrorKind, code: string, message: string, options?: {
     cause?: unknown;
     details?: unknown;
     requirements?: OpenAPIConfigurationRequirements;
+    applicationFailure?: { readonly data: unknown };
   }) {
     super(message, options?.cause !== undefined ? { cause: options.cause } : undefined);
     this.name = "OpenAPIClientError";
@@ -311,17 +446,23 @@ export class OpenAPIClientError extends Error {
     this.code = code;
     if (options?.details !== undefined) this.details = options.details;
     if (options?.requirements !== undefined) this.requirements = options.requirements;
+    if (options?.applicationFailure !== undefined) this.applicationFailure = options.applicationFailure;
   }
 }
 
 export interface OpenAPIOperationClient {
   readonly info: OpenAPIOperationInfo;
+  preflight(input?: OpenAPICallInput, options?: OpenAPICallOptions): Promise<OpenAPIConfigurationRequirements | null>;
   call<T = unknown, E = unknown>(input?: OpenAPICallInput, options?: OpenAPICallOptions): Promise<OpenAPIResult<T, E>>;
   stream<T = unknown, E = unknown>(input?: OpenAPICallInput, options?: OpenAPICallOptions): Promise<OpenAPIStreamResult<T, E>>;
 }
 
 interface ResolvedOperation {
   info: OpenAPIOperationInfo;
+  parameters: readonly OpenAPIParameterInfo[];
+  requestBodies: readonly OpenAPIRequestBodyAnalysis[];
+  /** Native Swagger analysis retained so the immutable public view is not reconstructed. */
+  swagger20Synthesis?: Swagger20SynthesisOperation;
   pathItem?: OpenAPIPathItem;
   operation?: OpenAPIOperation;
   target?: OpenAPIResolvedOperation;
@@ -347,6 +488,7 @@ export class OpenAPIClient {
   private readonly document?: OpenAPIDocument;
   private readonly swagger20?: Swagger20Client;
   private readonly inventory: readonly ResolvedOperation[];
+  private readonly analysisSnapshot: OpenAPIAnalysis;
 
   private constructor(args: {
     edition: OpenAPIEdition;
@@ -357,30 +499,62 @@ export class OpenAPIClient {
     options: OpenAPIClientOptions;
   }) {
     this.artifact = args.artifact;
-    this.document = args.artifact?.document;
+    this.document = args.artifact?.document as OpenAPIDocument | undefined;
     this.swagger20 = args.swagger20;
     this.edition = args.edition;
     this.location = args.location;
     this.inventory = args.inventory;
     this.options = snapshotClientOptions(args.options);
+    this.analysisSnapshot = deepFreeze({
+      edition: args.edition,
+      ...(args.location ? { location: args.location } : {}),
+      operations: args.inventory.map((resolved) => operationAnalysis(resolved, args.location)),
+      coverage: [],
+    });
   }
 
   static async load(source: OpenAPISource, options: OpenAPIClientOptions = {}): Promise<OpenAPIClient> {
-    const normalized = await materializeSource(normalizeSource(source), options);
-    const family = sourceFamily(normalized.content);
+    const normalized = await materializeOpenAPISource(normalizeOpenAPISource(source), options);
+    let family: "2.0" | "3.x";
+    try {
+      family = openAPISourceFamily(normalized.content);
+    } catch (error: unknown) {
+      throw new OpenAPIClientError("source", "SOURCE_LOAD_FAILED", errorMessage(error), { cause: error });
+    }
     if (family === "2.0") {
       try {
         const swagger20 = await loadSwagger20(normalized, {
           signal: options.documentSignal,
           fetch: options.documentFetch,
         });
-        const inventory = (await swagger20.operations()).map((operation): ResolvedOperation => ({
-          info: {
-            ...operation,
-            wireMethod: operation.method.toUpperCase(),
-            additional: false,
-          },
-        }));
+        const inventory: ResolvedOperation[] = [];
+        for (const operation of await swagger20.operations()) {
+          let parameters: OpenAPIParameterInfo[] = [];
+          let requestBodies: OpenAPIRequestBodyAnalysis[] = [];
+          let swagger20Synthesis: Swagger20SynthesisOperation | undefined;
+          try {
+            const prepared = await prepareSwagger20({
+              source: { location: normalized.location, document: swagger20.document },
+              ref: operation.ref,
+            });
+            parameters = parameterAnalysis(await prepared.parameters());
+            swagger20Synthesis = await prepared.synthesisOperation();
+            requestBodies = swagger20RequestBodyAnalysis(swagger20Synthesis);
+          } catch {
+            // Per-target invalidity remains addressable so preflight/invocation
+            // can refuse it at operation scope without rejecting the source.
+          }
+          inventory.push({
+            info: {
+              ...operation,
+              wireMethod: operation.method.toUpperCase(),
+              additional: false,
+            },
+            parameters,
+            requestBodies,
+            ...(swagger20Synthesis ? { swagger20Synthesis } : {}),
+          });
+        }
         return new OpenAPIClient({
           edition: "2.0",
           location: normalized.location,
@@ -406,6 +580,14 @@ export class OpenAPIClient {
       if (!disposition.target) continue;
       const { reference } = disposition;
       const operation = disposition.target.operation;
+      let requestBodies: OpenAPIRequestBodyAnalysis[] = [];
+      try {
+        requestBodies = requestBodyAnalysis(disposition.target.document, operation);
+      } catch {
+        // Request-lane defects belong to the selected operation. Loading and
+        // sibling enumeration remain successful; preflight/call performs the
+        // authoritative operation-scoped refusal before dispatch.
+      }
       inventory.push({
         pathItem: disposition.target.pathItem,
         operation,
@@ -420,6 +602,8 @@ export class OpenAPIClient {
           ...(operation.summary ? { summary: operation.summary } : {}),
           tags: [...(operation.tags ?? [])],
         },
+        parameters: parameterAnalysis(effectiveParameters(disposition.target.pathItem, operation)),
+        requestBodies,
       });
     }
     inventory.sort((left, right) => left.info.ref < right.info.ref ? -1 : left.info.ref > right.info.ref ? 1 : 0);
@@ -438,15 +622,82 @@ export class OpenAPIClient {
     return result;
   }
 
+  /**
+   * Returns detached, deeply immutable declaration facts derived from this
+   * client's already-loaded artifact. It performs no retrieval and reparses
+   * no source; invocation and analysis therefore share one artifact snapshot.
+   */
+  analysis(): OpenAPIAnalysis {
+    return this.analysisSnapshot;
+  }
+
+  /**
+   * Resolves one selector and returns detached facts from the loaded artifact.
+   * This includes targets whose invalid siblings made eager enumeration
+   * incomplete while the selected smallest-owner projection still survives.
+   */
+  async analyzeOperation(selector: OpenAPIOperationSelector): Promise<Readonly<OpenAPIOperationAnalysis>> {
+    let resolved = this.selectOperation(selector);
+    if (this.swagger20 && resolved.parameters.length === 0) {
+      try {
+        const prepared = await prepareSwagger20({
+          source: { location: this.location, document: this.swagger20.document },
+          ref: resolved.info.ref,
+        });
+        const synthesis = await prepared.synthesisOperation();
+        resolved = {
+          ...resolved,
+          parameters: parameterAnalysis(await prepared.parameters()),
+          requestBodies: swagger20RequestBodyAnalysis(synthesis),
+          swagger20Synthesis: synthesis,
+        };
+      } catch (error: unknown) {
+        throw swagger20ClientError(error);
+      }
+    } else if (this.artifact && (!resolved.target || !resolved.operation || !resolved.pathItem)) {
+      try {
+        resolved = resolvedOperation(await this.artifact.resolveOperation(resolved.info.ref));
+      } catch (error: unknown) {
+        throw new OpenAPIClientError("operation", "OPERATION_UNAVAILABLE", errorMessage(error), { cause: error });
+      }
+    }
+    if (resolved.pathItem && resolved.operation) {
+      const duplicate = duplicateDeclaredParameterIdentity(resolved.pathItem, resolved.operation);
+      if (duplicate !== undefined) {
+        throw new OpenAPIClientError(
+          "input",
+          "DUPLICATE_PARAMETER",
+          `operation contains duplicate declared parameter identity ${JSON.stringify(duplicate)}`,
+        );
+      }
+    }
+    return operationAnalysis(resolved, this.location);
+  }
+
   operation(selector: OpenAPIOperationSelector): OpenAPIOperationClient {
     const resolved = this.selectOperation(selector);
     return {
       info: cloneOperationInfo(resolved.info),
+      preflight: (input: OpenAPICallInput = {}, options: OpenAPICallOptions = {}) =>
+        this.preflightResolved(resolved, input, options),
       call: <T = unknown, E = unknown>(input: OpenAPICallInput = {}, options: OpenAPICallOptions = {}) =>
         this.callResolved<T, E>(resolved, input, options),
       stream: <T = unknown, E = unknown>(input: OpenAPICallInput = {}, options: OpenAPICallOptions = {}) =>
         this.streamResolved<T, E>(resolved, input, options, false),
     };
+  }
+
+  /**
+   * Performs every artifact- and configuration-derived check known before
+   * dispatch and reports the native inputs, options, or credentials still
+   * required. The loaded artifact is reused; this method performs no I/O.
+   */
+  async preflight(
+    selector: OpenAPIOperationSelector,
+    input: OpenAPICallInput = {},
+    options: OpenAPICallOptions = {},
+  ): Promise<OpenAPIConfigurationRequirements | null> {
+    return this.preflightResolved(this.selectOperation(selector), input, options);
   }
 
   async call<T = unknown, E = unknown>(
@@ -478,6 +729,19 @@ export class OpenAPIClient {
         this.artifact.sourceExclusion,
       );
     }
+    if (typeof selector === "object" && "ref" in selector) {
+      try {
+        if (this.swagger20) validateSwagger20Selector(selector.ref);
+        else {
+          const reference = parseOpenAPI32OperationReference(selector.ref);
+          if (reference.additional && this.edition !== "3.2.0") {
+            throw new Error("additional-operation references require OpenAPI 3.2");
+          }
+        }
+      } catch (error: unknown) {
+        throw new OpenAPIClientError("operation", "INVALID_OPERATION_REF", errorMessage(error), { cause: error });
+      }
+    }
     try {
       return resolveOperation(this.inventory, selector);
     } catch (error: unknown) {
@@ -498,6 +762,8 @@ export class OpenAPIClient {
             additional: false,
             tags: [],
           },
+          parameters: [],
+          requestBodies: [],
         };
       }
       if (!this.artifact || this.edition !== "3.2.0") throw error;
@@ -519,6 +785,8 @@ export class OpenAPIClient {
           additional: reference.additional,
           tags: [],
         },
+        parameters: [],
+        requestBodies: [],
       };
     }
   }
@@ -560,6 +828,141 @@ export class OpenAPIClient {
     };
   }
 
+  private async preflightResolved(
+    resolved: ResolvedOperation,
+    input: OpenAPICallInput,
+    callOptions: OpenAPICallOptions,
+  ): Promise<OpenAPIConfigurationRequirements | null> {
+    if (this.swagger20) return this.preflightSwagger20(resolved, input, callOptions);
+    if (!this.artifact || !this.document) {
+      throw new OpenAPIClientError("internal", "INCOMPLETE_ARTIFACT", "loaded OpenAPI artifact is unavailable");
+    }
+    if (!resolved.pathItem || !resolved.operation || !resolved.target) {
+      try {
+        resolved = resolvedOperation(await this.artifact.resolveOperation(resolved.info.ref));
+      } catch (error: unknown) {
+        throw new OpenAPIClientError("operation", "OPERATION_UNAVAILABLE", errorMessage(error), { cause: error });
+      }
+    }
+    if (!resolved.pathItem || !resolved.operation || !resolved.target) {
+      throw new OpenAPIClientError("internal", "INCOMPLETE_OPERATION", "resolved operation has no executable target");
+    }
+    assertNoExcludedParameterInput(resolved.target, input);
+    if (Object.hasOwn(input, "body") && requestBodyIsForbiddenForClient(resolved.info.wireMethod, this.edition)) {
+      throw new OpenAPIClientError(
+        "input",
+        "BODY_FORBIDDEN_FOR_METHOD",
+        `method ${JSON.stringify(resolved.info.wireMethod)} cannot carry the supplied request body under the selected OpenAPI binding`,
+      );
+    }
+    const targetDocument = resolved.target.document ?? this.document;
+    const security = nativeContext(
+      targetDocument,
+      this.options,
+      callOptions,
+      input.mediaType,
+      input.propertyMediaTypes,
+      mergeHeaders(this.options.headers, callOptions.headers),
+    );
+    try {
+      resolveServer(targetDocument, resolved.pathItem, resolved.operation, security.context, this.location);
+    } catch (error: unknown) {
+      if (error instanceof ConfigRequired) {
+        const allowedValues = Array.isArray(error.schema?.enum)
+          ? structuredClone(error.schema.enum)
+          : undefined;
+        return {
+          target: this.location ?? "",
+          alternatives: [[{
+            kind: "option",
+            name: "server",
+            path: error.path,
+            ...(allowedValues ? { allowedValues } : {}),
+            description: error.message,
+          }]],
+        };
+      }
+      throw new OpenAPIClientError("configuration", "INVALID_SERVER_SELECTION", errorMessage(error), { cause: error });
+    }
+    const native = await nativeInput(targetDocument, resolved.pathItem, resolved.operation, input);
+    try {
+      const prepared = await this.engine.prepare({
+        source: { location: this.location, artifact: this.artifact },
+        ref: resolved.info.ref,
+        profile: OPENAPI_PROFILE_FULL,
+        context: security.context,
+        signal: callOptions.signal ?? this.options.signal,
+        securityHandlers: artifactSecurityHandlers(security.handlers, resolved.info),
+        parameterConverter: callOptions.parameterConverter ?? this.options.parameterConverter,
+        requestContentCodings: callOptions.requestContentCodings ?? this.options.requestContentCodings,
+        responseContentCodings: callOptions.responseContentCodings ?? this.options.responseContentCodings,
+        requestCharacterEncodings: callOptions.requestCharacterEncodings ?? this.options.requestCharacterEncodings,
+        responseCharacterEncodings: callOptions.responseCharacterEncodings ?? this.options.responseCharacterEncodings,
+        hooks: callOptions.hooks ?? this.options.hooks,
+      });
+      return configurationRequirements(prepared.prerequisites) ?? null;
+    } catch (error: unknown) {
+      throw clientError(error);
+    }
+  }
+
+  private async preflightSwagger20(
+    resolved: ResolvedOperation,
+    input: OpenAPICallInput,
+    callOptions: OpenAPICallOptions,
+  ): Promise<OpenAPIConfigurationRequirements | null> {
+    const swagger20 = this.swagger20;
+    if (!swagger20) throw new OpenAPIClientError("internal", "INCOMPLETE_ARTIFACT", "Swagger 2.0 artifact is unavailable");
+    assertNativeInputShape(input);
+    let operation: Swagger20SynthesisOperation;
+    try {
+      const prepared = await prepareSwagger20({
+        source: { location: this.location, document: swagger20.document },
+        ref: resolved.info.ref,
+      });
+      operation = await prepared.synthesisOperation();
+    } catch (error: unknown) {
+      throw swagger20ClientError(error);
+    }
+    if (operation.excluded) {
+      throw new OpenAPIClientError("input", "ERR_REFUSED", operation.reason ?? "operation is outside the binding's accepted surface");
+    }
+    const options: OpenAPIClientOptions & OpenAPICallOptions = { ...this.options, ...callOptions };
+    const requirements: OpenAPIConfigurationRequirement[] = [];
+    for (const declared of operation.requirements) {
+      const point = declared.startsWith("configuration.")
+        ? declared.slice("configuration.".length)
+        : declared;
+      if ([
+        "parameterConversion",
+        "emptyValueForm",
+        "requestContentCodings",
+        "responseContentCodings",
+        "requestCharacterEncodings",
+        "responseCharacterEncodings",
+      ].includes(point)) continue;
+      if (swagger20RequirementSatisfied(point, input, options, operation)) continue;
+      requirements.push(swagger20ConfigurationRequirement(point, operation));
+    }
+    const security = swagger20SecurityPreflight(operation, options);
+    if (security.selectionRequired) {
+      if (!requirements.some((requirement) => requirement.kind === "option" && requirement.name === "securityAlternative")) {
+        requirements.push({
+          kind: "option",
+          name: "securityAlternative",
+          path: "",
+          allowedValues: security.allowedValues,
+          description: "select one complete declared security alternative",
+        });
+      }
+    } else {
+      requirements.push(...security.credentials);
+    }
+    return requirements.length === 0
+      ? null
+      : { target: this.location ?? "", alternatives: [requirements] };
+  }
+
   private async streamResolved<T, E>(
     resolved: ResolvedOperation,
     input: OpenAPICallInput,
@@ -585,6 +988,7 @@ export class OpenAPIClient {
     if (!resolved.pathItem || !resolved.operation || !resolved.target) {
       throw new OpenAPIClientError("internal", "INCOMPLETE_OPERATION", "resolved operation has no executable target");
     }
+    assertNoExcludedParameterInput(resolved.target, input);
     if (Object.hasOwn(input, "body") && requestBodyIsForbiddenForClient(
       resolved.info.wireMethod,
       this.edition,
@@ -682,6 +1086,7 @@ export class OpenAPIClient {
         responseContentCodings: callOptions.responseContentCodings ?? this.options.responseContentCodings,
         requestCharacterEncodings: callOptions.requestCharacterEncodings ?? this.options.requestCharacterEncodings,
         responseCharacterEncodings: callOptions.responseCharacterEncodings ?? this.options.responseCharacterEncodings,
+        hooks: callOptions.hooks ?? this.options.hooks,
       });
       execution = await prepared.start<unknown, unknown>();
     } catch (error: unknown) {
@@ -842,7 +1247,8 @@ export class OpenAPIClient {
   }
 }
 
-function normalizeSource(source: OpenAPISource): { location?: string; content?: unknown } {
+/** @internal Shared by the detached provider projection to preserve one retrieval. */
+export function normalizeOpenAPISource(source: OpenAPISource): { location?: string; content?: unknown } {
   if (typeof source === "string") return { location: source };
   if (source instanceof URL) return { location: source.toString() };
   if (source !== null && typeof source === "object" && ("location" in source || "content" in source)) {
@@ -851,7 +1257,8 @@ function normalizeSource(source: OpenAPISource): { location?: string; content?: 
   return { content: source };
 }
 
-async function materializeSource(
+/** @internal Shared by the detached provider projection to preserve one retrieval. */
+export async function materializeOpenAPISource(
   source: { location?: string; content?: unknown },
   options: OpenAPIClientOptions,
 ): Promise<{ location?: string; content: unknown }> {
@@ -880,7 +1287,8 @@ async function materializeSource(
   }
 }
 
-function sourceFamily(content: unknown): "2.0" | "3.x" {
+/** @internal Discriminates a materialized entry document without retrieving it again. */
+export function openAPISourceFamily(content: unknown): "2.0" | "3.x" {
   let root = content;
   if (content instanceof Uint8Array) root = parseJSONOrYAML(new TextDecoder("utf-8", { fatal: true }).decode(content));
   else if (typeof content === "string") root = parseJSONOrYAML(content);
@@ -939,6 +1347,7 @@ function snapshotClientOptions(options: OpenAPIClientOptions): OpenAPIClientOpti
     ...(options.server ? { server: snapshotServer(options.server) } : {}),
     ...(options.headers ? { headers: new Headers(options.headers) } : {}),
     ...(options.middleware ? { middleware: [...options.middleware] } : {}),
+    ...(options.hooks ? { hooks: { ...options.hooks } } : {}),
     ...(options.requestContentCodings ? { requestContentCodings: { ...options.requestContentCodings } } : {}),
     ...(options.responseContentCodings ? { responseContentCodings: { ...options.responseContentCodings } } : {}),
     ...(options.requestCharacterEncodings ? { requestCharacterEncodings: { ...options.requestCharacterEncodings } } : {}),
@@ -955,6 +1364,105 @@ function snapshotServer(server: OpenAPIServerSelection): OpenAPIServerSelection 
     };
   }
   return { variables: { ...server.variables } };
+}
+
+function swagger20RequirementSatisfied(
+  point: string,
+  input: OpenAPICallInput,
+  options: OpenAPIClientOptions & OpenAPICallOptions,
+  operation: Swagger20SynthesisOperation,
+): boolean {
+  switch (point) {
+    case "server": return options.server !== undefined;
+    case "security": return options.securityAlternative !== undefined;
+    case "requestMedia": return input.mediaType !== undefined;
+    case "propertyMedia": {
+      const supplied = input.propertyMediaTypes ?? {};
+      return operation.parameters
+        .filter((parameter) => parameter.in === "formData" && parameter.required && parameter.schema.type === "file")
+        .every((parameter) => Object.hasOwn(supplied, parameter.name));
+    }
+    case "parameterConversion": return options.parameterConverter !== undefined;
+    case "emptyValueForm": return options.emptyValueForm !== undefined;
+    case "requestContentCodings": return Object.keys(options.requestContentCodings ?? {}).length > 0;
+    case "responseContentCodings": return Object.keys(options.responseContentCodings ?? {}).length > 0;
+    case "requestCharacterEncodings": return Object.keys(options.requestCharacterEncodings ?? {}).length > 0;
+    case "responseCharacterEncodings": return Object.keys(options.responseCharacterEncodings ?? {}).length > 0;
+    default: return true;
+  }
+}
+
+function swagger20ConfigurationRequirement(
+  point: string,
+  operation: Swagger20SynthesisOperation,
+): OpenAPIConfigurationRequirement {
+  if (point === "requestMedia") {
+    return { kind: "input", name: "mediaType", path: "", description: "select one concrete request media type" };
+  }
+  if (point === "propertyMedia") {
+    const name = operation.parameters.find(
+      (parameter) => parameter.in === "formData" && parameter.required && parameter.schema.type === "file",
+    )?.name;
+    return {
+      kind: "input",
+      name: "propertyMediaTypes",
+      path: name === undefined ? "" : `/${escapePointerToken(name)}`,
+      description: "select one concrete media type for each required file form parameter",
+    };
+  }
+  const name = point === "security" ? "securityAlternative"
+    : point === "parameterConversion" ? "parameterConverter"
+      : point;
+  return {
+    kind: "option",
+    name,
+    path: "",
+    ...(point === "emptyValueForm" ? { allowedValues: ["name-only", "empty"] } : {}),
+    ...(point === "security"
+      ? { allowedValues: operation.security.filter((alternative) => alternative.usable).map((alternative) => alternative.index) }
+      : {}),
+    description: point === "security"
+      ? "select one complete declared security alternative"
+      : `supply the Swagger 2.0 ${point} option`,
+  };
+}
+
+function swagger20SecurityPreflight(
+  operation: Swagger20SynthesisOperation,
+  options: OpenAPIClientOptions & OpenAPICallOptions,
+): {
+  selectionRequired: boolean;
+  allowedValues: number[];
+  credentials: OpenAPIConfigurationRequirement[];
+} {
+  const usable = operation.security.filter((alternative) => alternative.usable);
+  if (operation.security.length === 0) return { selectionRequired: false, allowedValues: [], credentials: [] };
+  let selected: Swagger20SynthesisSecurityAlternative | undefined;
+  if (options.securityAlternative !== undefined) {
+    selected = operation.security[options.securityAlternative];
+    if (!selected || !selected.usable) {
+      throw new OpenAPIClientError("configuration", "INVALID_SECURITY_ALTERNATIVE", "selected Swagger 2.0 security alternative is unusable");
+    }
+  } else if (operation.requirements.includes("configuration.security")) {
+    return { selectionRequired: true, allowedValues: usable.map((alternative) => alternative.index), credentials: [] };
+  } else {
+    selected = usable[0];
+  }
+  if (!selected || selected.anonymous) return { selectionRequired: false, allowedValues: [], credentials: [] };
+  const auth = options.auth ?? {};
+  const credentials: OpenAPIConfigurationRequirement[] = [];
+  for (const scheme of selected.schemes) {
+    if (Object.hasOwn(auth, scheme.name)) continue;
+    const credential = scheme.type === "basic" ? "basic"
+      : scheme.type === "apiKey" ? "apiKey"
+        : scheme.type === "oauth2" ? "oauth2"
+          : undefined;
+    if (!credential) {
+      throw new OpenAPIClientError("configuration", "UNSUPPORTED_SECURITY_SCHEME", `unsupported Swagger 2.0 security scheme ${JSON.stringify(scheme.name)}`);
+    }
+    credentials.push({ kind: "credential", name: scheme.name, credential });
+  }
+  return { selectionRequired: false, allowedValues: [], credentials };
 }
 
 function resolvedOperation(target: OpenAPIResolvedOperation): ResolvedOperation {
@@ -974,7 +1482,329 @@ function resolvedOperation(target: OpenAPIResolvedOperation): ResolvedOperation 
       ...(operation.summary ? { summary: operation.summary } : {}),
       tags: [...(operation.tags ?? [])],
     },
+    parameters: parameterAnalysis(effectiveParameters(target.pathItem, operation)),
+    requestBodies: requestBodyAnalysis(target.document, operation),
   };
+}
+
+function assertNoExcludedParameterInput(
+  target: OpenAPIResolvedOperation,
+  input: OpenAPICallInput,
+): void {
+  for (const exclusion of target.parameterLaneExclusions ?? []) {
+    const separator = exclusion.identity.indexOf("\u0000");
+    if (separator < 0) continue;
+    const location = exclusion.identity.slice(0, separator) as keyof OpenAPIParameterInput;
+    const name = exclusion.identity.slice(separator + 1);
+    const values = input.parameters?.[location];
+    if (values && Object.hasOwn(values, name)) {
+      throw new OpenAPIClientError("input", "ERR_REFUSED", exclusion.reason);
+    }
+  }
+}
+
+function requestBodyAnalysis(
+  document: OpenAPIDocument,
+  operation: OpenAPIOperation,
+): OpenAPIRequestBodyAnalysis[] {
+  return planResolvedRequestBodies(operation, {
+    profile: OPENAPI_PROFILE_FULL,
+    openapiVersion: document.openapi,
+    inventoryUnsupported: true,
+  }).filter((plan) => !plan.unsupported).map((plan) => {
+    const resolved = plan as OpenAPIResolvedBodyPlan;
+    return {
+      mediaType: resolved.mediaType,
+      family: resolved.family,
+      required: resolved.required,
+      mediaRange: resolved.range === true,
+      wholeValue: resolved.synthetic || resolved.wholeObject === true,
+      base64: resolved.rawBoundary === true,
+      base64Properties: [...(resolved.base64Properties ?? [])].sort(),
+      properties: [...(resolved.props ?? [])].sort(),
+      propertyMedia: [...(resolved.propertyMedia ?? [])].sort(),
+      ...(resolved.media?.schema !== undefined
+        ? { schema: detachedValue(resolved.media.schema) as Readonly<Record<string, unknown>> | boolean }
+        : {}),
+    };
+  });
+}
+
+function swagger20RequestBodyAnalysis(
+  operation: Swagger20SynthesisOperation,
+): OpenAPIRequestBodyAnalysis[] {
+  if (!operation.body) return [];
+  const schema = operation.body.schema;
+  return [{
+    mediaType: "",
+    family: "swagger-body",
+    required: operation.body.required,
+    mediaRange: false,
+    wholeValue: true,
+    base64: schema.type === "string" && schema.format === "binary",
+    base64Properties: [],
+    properties: [],
+    propertyMedia: [],
+    schema: detachedValue(schema) as Readonly<Record<string, unknown>>,
+  }];
+}
+
+function parameterAnalysis(
+  declarations: readonly {
+    name?: string;
+    in?: string;
+    required?: boolean;
+    style?: string;
+    explode?: boolean;
+    allowEmptyValue?: boolean;
+    schema?: Record<string, unknown> | boolean;
+  }[],
+): OpenAPIParameterInfo[] {
+  const parameters = declarations.filter(
+    (parameter) => typeof parameter.name === "string" && parameter.name !== "",
+  ) as Array<(typeof declarations)[number] & { name: string }>;
+  const locations = new Map<string, string>();
+  const qualified = new Set<string>();
+  for (const parameter of parameters) {
+    const location = parameter.in ?? "";
+    const previous = locations.get(parameter.name);
+    if (previous !== undefined && previous !== location) qualified.add(parameter.name);
+    else locations.set(parameter.name, location);
+  }
+  return parameters.map((parameter) => ({
+    name: parameter.name,
+    in: (parameter.in ?? "") as OpenAPIParameterInfo["in"],
+    inputKey: qualified.size > 0
+      ? `${parameter.in ?? ""}/${parameter.name.replaceAll("~", "~0").replaceAll("/", "~1")}`
+      : parameter.name,
+    required: parameter.required === true,
+    ...(typeof parameter.style === "string" ? { style: parameter.style } : {}),
+    ...(typeof parameter.explode === "boolean" ? { explode: parameter.explode } : {}),
+    allowEmpty: parameter.allowEmptyValue === true,
+    ...(parameter.schema !== undefined
+      ? { schema: detachedValue(parameter.schema) as Readonly<Record<string, unknown>> | boolean }
+      : {}),
+  }));
+}
+
+function operationAnalysis(
+  resolved: ResolvedOperation,
+  location: string | undefined,
+): Readonly<OpenAPIOperationAnalysis> {
+  if (resolved.swagger20Synthesis) {
+    return swagger20OperationAnalysis(resolved, resolved.swagger20Synthesis);
+  }
+  const operation = resolved.operation;
+  const target = resolved.target;
+  const parameters = resolved.parameters.map((parameter, index) => ({
+    ...detachedValue(parameter),
+    sourceRef: `${resolved.info.ref}/parameters/${index}`,
+  }));
+  const responses = operation ? responseAnalysis(operation, resolved.info.ref) : [];
+  const servers = target
+    ? serverAnalysis(target.document, target.pathItem, target.operation, location)
+    : [];
+  const security = target ? securityAnalysis(target.document, target.operation) : [];
+  const requirements: string[] = [];
+  if (servers.length !== 1 || servers.some((server) => !server.usable)) requirements.push("configuration.server");
+  if (resolved.requestBodies.some((body) => body.mediaRange)) requirements.push("configuration.requestMedia");
+  if (resolved.requestBodies.some((body) => body.propertyMedia.length > 0)) requirements.push("configuration.propertyMedia");
+  if (security.filter((alternative) => alternative.usable).length > 1) requirements.push("configuration.security");
+  return deepFreeze({
+    info: cloneOperationInfo(resolved.info),
+    ...(operation?.description ? { description: operation.description } : {}),
+    deprecated: operation?.deprecated === true,
+    parameters,
+    requestBodies: resolved.requestBodies.map((body) => detachedValue(body)),
+    responses,
+    servers,
+    security,
+    requirements,
+    coverage: [],
+  });
+}
+
+function swagger20OperationAnalysis(
+  resolved: ResolvedOperation,
+  operation: Swagger20SynthesisOperation,
+): Readonly<OpenAPIOperationAnalysis> {
+  const coverage: OpenAPISupportDisposition[] = operation.coverage.map((fact) => ({
+    sourceRef: fact.sourceRef,
+    scope: fact.scope,
+    status: fact.status,
+    ...(fact.rule ? { rule: fact.rule } : {}),
+    ...(fact.reason ? { reason: fact.reason } : {}),
+    requirements: [...fact.requirements],
+  }));
+  for (const alternative of operation.alternatives) {
+    coverage.push({
+      sourceRef: alternative.sourceRef,
+      scope: "alternative",
+      status: alternative.usable ? "represented" : alternative.disposition ?? "excluded",
+      ...(alternative.rule ? { rule: alternative.rule } : {}),
+      ...(alternative.reason ? { reason: alternative.reason } : {}),
+      requirements: [...alternative.requirements],
+    });
+  }
+  if (operation.excluded) {
+    coverage.push({
+      sourceRef: operation.ref,
+      scope: "target",
+      status: operation.disposition ?? "excluded",
+      ...(operation.rule ? { rule: operation.rule } : {}),
+      ...(operation.reason ? { reason: operation.reason } : {}),
+      requirements: [...operation.requirements],
+    });
+  }
+  return deepFreeze({
+    info: cloneOperationInfo(resolved.info),
+    ...(operation.description ? { description: operation.description } : {}),
+    deprecated: operation.deprecated,
+    parameters: resolved.parameters.map((parameter, index) => ({
+      ...detachedValue(parameter),
+      sourceRef: `${operation.ref}/parameters/${index}`,
+    })),
+    requestBodies: resolved.requestBodies.map((body) => detachedValue(body)),
+    responses: operation.responses.map((response) => ({
+      key: response.key,
+      sourceRef: response.sourceRef,
+      canSucceed: response.canSucceed,
+      usable: response.usable,
+      mediaTypes: [],
+      ...(response.schema !== undefined
+        ? { schema: detachedValue(response.schema) as Readonly<Record<string, unknown>> }
+        : {}),
+      ...(response.reason ? { reason: response.reason } : {}),
+    })),
+    servers: [],
+    security: operation.security.map((alternative) => ({
+      index: alternative.index,
+      anonymous: alternative.anonymous,
+      usable: alternative.usable,
+      schemes: alternative.schemes.map((scheme) => ({
+        name: scheme.name,
+        ...(scheme.type ? { type: scheme.type } : {}),
+        scopes: [...scheme.scopes],
+      })),
+      ...(alternative.reason ? { reason: alternative.reason } : {}),
+    })),
+    requirements: [...operation.requirements],
+    coverage,
+  });
+}
+
+function responseAnalysis(
+  operation: OpenAPIOperation,
+  operationRef: string,
+): OpenAPIResponseAlternativeAnalysis[] {
+  const responses = operation.responses ?? {};
+  const result: OpenAPIResponseAlternativeAnalysis[] = [];
+  for (const key of Object.keys(responses).sort()) {
+    const response = responses[key];
+    const usable = response !== null && typeof response === "object" && !Array.isArray(response);
+    const mediaTypes = usable ? Object.keys(response.content ?? {}).sort() : [];
+    let schema: Readonly<Record<string, unknown>> | boolean | undefined;
+    for (const mediaType of mediaTypes) {
+      const candidate = response?.content?.[mediaType]?.schema;
+      if (candidate !== undefined) {
+        schema = detachedValue(candidate) as Readonly<Record<string, unknown>> | boolean;
+        break;
+      }
+    }
+    result.push({
+      key,
+      sourceRef: `${operationRef}/responses/${escapePointerToken(key)}`,
+      canSucceed: responseKeyCanSucceed(key, responses),
+      usable,
+      mediaTypes,
+      ...(schema !== undefined ? { schema } : {}),
+      ...(!usable ? { reason: "response declaration is not a usable Response Object" } : {}),
+    });
+  }
+  return result;
+}
+
+function responseKeyCanSucceed(key: string, responses: Record<string, OpenAPIResponse>): boolean {
+  if (key === "2XX") return true;
+  if (/^2[0-9]{2}$/u.test(key)) return true;
+  if (key !== "default") return false;
+  if (Object.hasOwn(responses, "2XX")) return false;
+  for (let status = 200; status <= 299; status += 1) {
+    if (!Object.hasOwn(responses, String(status))) return true;
+  }
+  return false;
+}
+
+function serverAnalysis(
+  document: OpenAPIDocument,
+  pathItem: OpenAPIPathItem,
+  operation: OpenAPIOperation,
+  location: string | undefined,
+): OpenAPIServerAlternativeAnalysis[] {
+  const declared = effectiveServers(document, pathItem, operation);
+  let eligible: readonly { url: string; variables?: Record<string, unknown> }[];
+  try {
+    eligible = eligibleServers(declared, document.openapi ?? "", location);
+  } catch (error: unknown) {
+    return declared.map((server, index) => ({
+      index,
+      url: server.url,
+      variables: Object.keys(server.variables ?? {}).sort(),
+      usable: false,
+      reason: errorMessage(error),
+    }));
+  }
+  const usable = new Set(eligible);
+  return declared.map((server, index) => ({
+    index,
+    url: server.url,
+    variables: Object.keys(server.variables ?? {}).sort(),
+    usable: usable.has(server),
+    ...(!usable.has(server) ? { reason: "server alternative is not usable" } : {}),
+  }));
+}
+
+function securityAnalysis(
+  document: OpenAPIDocument,
+  operation: OpenAPIOperation,
+): OpenAPISecurityAlternativeAnalysis[] {
+  const raw = operation.security ?? document.security;
+  if (!Array.isArray(raw)) return [];
+  const schemes = securitySchemes(document);
+  return raw.map((member, index) => {
+    const requirement = asRecord(member) ?? {};
+    const entries = Object.entries(requirement).sort(([left], [right]) => left.localeCompare(right));
+    const analyzed = entries.map(([name, scopes]) => {
+      const scheme = schemes[name];
+      return {
+        name,
+        ...(scheme?.type ? { type: scheme.type } : {}),
+        ...(scheme?.scheme ? { scheme: scheme.scheme } : {}),
+        ...(scheme?.in ? { in: scheme.in } : {}),
+        scopes: Array.isArray(scopes) ? scopes.filter((scope): scope is string => typeof scope === "string") : [],
+      };
+    });
+    const usable = entries.length === 0 || entries.every(([name]) => schemes[name] !== undefined);
+    return {
+      index,
+      anonymous: entries.length === 0,
+      usable,
+      schemes: analyzed,
+      ...(!usable ? { reason: "security requirement references an unavailable scheme" } : {}),
+    };
+  });
+}
+
+function detachedValue<T>(value: T): T {
+  return structuredClone(value);
+}
+
+function deepFreeze<T>(value: T): T {
+  if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const member of Object.values(value)) deepFreeze(member);
+  }
+  return value;
 }
 
 async function nativeInput(
@@ -984,6 +1814,14 @@ async function nativeInput(
   input: OpenAPICallInput,
 ): Promise<{ supplied: boolean; value: unknown; mediaType?: string }> {
   assertNativeInputShape(input);
+  const duplicate = duplicateDeclaredParameterIdentity(pathItem, operation);
+  if (duplicate !== undefined) {
+    throw new OpenAPIClientError(
+      "input",
+      "DUPLICATE_PARAMETER",
+      `operation contains duplicate declared parameter identity ${JSON.stringify(duplicate)}`,
+    );
+  }
   const parameters = effectiveParameters(pathItem, operation);
   const plans = planResolvedRequestBodies(operation, {
     profile: OPENAPI_PROFILE_FULL,
@@ -1158,16 +1996,18 @@ function nativeContext(
       if (typeof credential !== "string") throw credentialShape(name, "a string API key");
       apiKeys[name] = credential;
     } else if (scheme.type === "http" && (scheme.scheme ?? "").toLowerCase() === "basic") {
-      if (typeof credential === "string") throw credentialShape(name, "{ username, password }");
+      if (!basicCredential(credential)) throw credentialShape(name, "{ username, password }");
       if (basicCredentialIsPortable(credential)) context.basic = credential;
     } else if (scheme.type === "http" && (scheme.scheme ?? "").toLowerCase() === "bearer") {
-      if (typeof credential !== "string") throw credentialShape(name, "a token string");
-      if (!bearerToken(credential)) throw credentialShape(name, "a nonempty RFC 6750 b64token");
-      context.bearerToken = credential;
+      const token = accessToken(credential);
+      if (token === undefined) throw credentialShape(name, "a token string or { accessToken }");
+      if (!bearerToken(token)) throw credentialShape(name, "a nonempty RFC 6750 b64token");
+      context.bearerToken = token;
     } else if (scheme.type === "oauth2" || scheme.type === "openIdConnect") {
-      if (typeof credential !== "string") throw credentialShape(name, "an access-token string");
-      if (!bearerToken(credential)) throw credentialShape(name, "a nonempty RFC 6750 b64token");
-      context.accessToken = credential;
+      const token = accessToken(credential);
+      if (token === undefined) throw credentialShape(name, "an access-token string or { accessToken }");
+      if (!bearerToken(token)) throw credentialShape(name, "a nonempty RFC 6750 b64token");
+      context.accessToken = token;
     } else {
       throw new OpenAPIClientError(
         "configuration",
@@ -1188,6 +2028,21 @@ function basicCredentialIsPortable(value: { username: string; password: string }
     }));
 }
 
+function basicCredential(value: OpenAPIAuthValue): value is { username: string; password: string } {
+  return typeof value === "object" && value !== null
+    && "username" in value && typeof value.username === "string"
+    && "password" in value && typeof value.password === "string";
+}
+
+function accessToken(value: OpenAPIAuthValue): string | undefined {
+  if (typeof value === "string") return value;
+  return typeof value === "object" && value !== null
+    && "accessToken" in value && typeof value.accessToken === "string"
+    && (!("tokenType" in value) || value.tokenType === undefined || value.tokenType === "Bearer")
+    ? value.accessToken
+    : undefined;
+}
+
 function requestBodyIsForbiddenForClient(method: string, edition: OpenAPIEdition): boolean {
   const normalized = method.toUpperCase();
   if (normalized === "TRACE") return true;
@@ -1197,6 +2052,8 @@ function requestBodyIsForbiddenForClient(method: string, edition: OpenAPIEdition
 interface NativeSecurityScheme extends Record<string, unknown> {
   type: string;
   scheme?: string;
+  name?: string;
+  in?: string;
 }
 
 interface NativeSecurityHandler {
@@ -1290,13 +2147,17 @@ function swagger20Credentials(
       continue;
     }
     if (definition.type === "basic") {
-      if (typeof supplied === "string") throw credentialShape(name, "{ username, password }");
+      if (!basicCredential(supplied)) throw credentialShape(name, "{ username, password }");
       (credentials.basic ??= {})[name] = { userId: supplied.username, password: supplied.password };
       continue;
     }
     if (definition.type === "oauth2") {
-      if (typeof supplied !== "string") throw credentialShape(name, "an access-token string");
-      (credentials.oauth2 ??= {})[name] = { accessToken: supplied, scopes: [] };
+      const token = accessToken(supplied);
+      if (token === undefined) throw credentialShape(name, "an access-token string or { accessToken, scopes? }");
+      const scopes = typeof supplied === "object" && supplied !== null && "scopes" in supplied && Array.isArray(supplied.scopes)
+        ? [...supplied.scopes]
+        : [];
+      (credentials.oauth2 ??= {})[name] = { accessToken: token, scopes };
       continue;
     }
     throw new OpenAPIClientError(
@@ -1674,6 +2535,7 @@ function responseFromEvidence(evidence: {
 function clientError(error: unknown): OpenAPIClientError {
   if (error instanceof OpenAPIClientError) return error;
   if (error instanceof OpenAPIExecutionError) {
+    const portableFailure = openAPIPortableFailureData(error);
     const kind: OpenAPIClientErrorKind =
       error.code === "ERR_SOURCE_LOAD_FAILED" ? "source"
       : error.code === "ERR_INVALID_REF" || error.code === "ERR_REF_NOT_FOUND" ? "operation"
@@ -1681,7 +2543,7 @@ function clientError(error: unknown): OpenAPIClientError {
       : error.code === "ERR_SOURCE_CONFIG_ERROR" || error.code === "CONTEXT_REQUIRED" ? "configuration"
       : error.code === "ERR_CONNECT_FAILED" ? "transport"
       : error.code === "ERR_PROTOCOL" ? "protocol"
-      : error.code === "ERR_RESPONSE_ERROR" || error.code === "ERR_STREAM_ERROR" ? "response"
+      : error.code === "ERR_RESPONSE_ERROR" || error.code === "ERR_STREAM_ERROR" || error.code === "ERR_EXECUTION_FAILED" ? "response"
       : error.code === "ERR_CANCELLED" || error.code === "ERR_TIMEOUT" ? "cancelled"
       : "internal";
     const requirements = error.code === "CONTEXT_REQUIRED"
@@ -1691,6 +2553,7 @@ function clientError(error: unknown): OpenAPIClientError {
       cause: error,
       details: requirements ?? error.details,
       ...(requirements ? { requirements } : {}),
+      ...(portableFailure.present ? { applicationFailure: { data: portableFailure.value } } : {}),
     });
   }
   return new OpenAPIClientError("internal", "INTERNAL_ERROR", errorMessage(error), { cause: error });
@@ -1727,11 +2590,14 @@ function configurationRequirements(value: unknown): OpenAPIConfigurationRequirem
           ? { kind: "input", name: native.name, ...common }
           : { kind: "option", name: native.name, ...common });
       } else if (requirement.type.startsWith("auth.") && typeof requirement.name === "string") {
+        const details = Object.fromEntries(Object.entries(requirement).filter(([name]) =>
+          !["type", "name", "durable", "description"].includes(name)));
         requirements.push({
           kind: "credential",
           name: requirement.name,
           credential: requirement.type.slice("auth.".length),
           ...(description ? { description } : {}),
+          ...(Object.keys(details).length > 0 ? { details } : {}),
         });
       } else {
         return undefined;

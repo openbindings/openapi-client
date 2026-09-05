@@ -4,24 +4,26 @@
 
 The product is the **OpenBindings OpenAPI Client**. Technically, it is a **document-driven OpenAPI client runtime**: a long-lived component loads an artifact and executes authored operations from it. “Client” is the user-facing noun; “execution engine” names the implementation below the public API.
 
-The repository has three intentional layers:
+The repository and its consumers have four intentional layers:
 
 1. **Native client API** — OpenAPI-native sources, operation selectors, grouped parameters, bodies, scheme-named credentials, HTTP outcomes, middleware, and streams.
-2. **Execution engine** — document loading/resolution, request planning, serialization, security placement, HTTP, declaration matching, decoding, and lifecycle mechanics.
-3. **OpenBindings adapter (separate package)** — OBI source resolution, binding selection integration, OpenBindings context negotiation, abstract input translation, and protocol-independent output/error/lifecycle translation.
+2. **Native provider API** — advanced OpenAPI declaration analysis and planning facts used by generators and protocol adapters.
+3. **Execution engine** — document loading/resolution, request planning, serialization, security placement, HTTP, declaration matching, decoding, and lifecycle mechanics.
+4. **OpenBindings adapter (separate package)** — OBI source resolution, binding selection integration, OpenBindings context negotiation, abstract input translation, and protocol-independent output/error/lifecycle translation.
 
-Only the first two belong to the standalone product. The adapter consumes the
+The first three belong to the standalone product. The adapter consumes the
 supported native client package; neither the client nor its private engine may
 import the adapter or require an OBI.
 
 ## Dependency direction
 
 ```text
-direct OpenAPI application ─────────────┐
-generated typed facade ────────────────┼──► native OpenAPI client API
-OpenBindings Core ─► OpenAPI adapter ──┘               │
-                                                       ▼
-                                      private execution engine ─► HTTP service
+direct OpenAPI application ───────────────► native OpenAPI client API
+generated typed facade ──────────────────► native client + provider API
+OpenBindings Core ─► OpenAPI adapter ─────► native client + provider API
+                                                          │
+                                                          ▼
+                                         private execution engine ─► HTTP service
 ```
 
 The adapter consumes the same supported native package as an unrelated

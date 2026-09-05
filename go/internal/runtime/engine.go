@@ -3,6 +3,7 @@ package openapiclient
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"sync"
 
@@ -209,14 +210,49 @@ func preflightPrerequisitesForTarget(document *openapi3.T, target *OperationTarg
 
 func preflightPrerequisitesForArtifactTarget(artifact *Artifact, target *OperationTarget, options PrepareOptions) (*Prerequisites, error) {
 	target = targetForImplicitConnectionScope(target, options.Context)
+	if artifact != nil {
+		target = requestTargetForEdition(target, artifact.Edition)
+	}
 	document := target.Document
 	pathItem := target.PathItem
 	operation := target.Operation
-	baseURL, err := resolveServer(document, pathItem, operation, options.Context, options.Source.Location)
+	var err error
+	operation, err = operationWithTraceSafeSecurity(document, operation, target.WireMethod())
 	if err != nil {
-		return nil, nil
+		return nil, &ExecutionError{Code: CodeRefused, Message: err.Error(), Cause: err}
 	}
 	parameters := effectiveParameters(pathItem, operation)
+	if name := unflattenableParamForRevision(parameters, profileCoordinate(options.Profile)); name != "" {
+		return nil, &ExecutionError{Code: CodeRefused, Message: fmt.Sprintf("operation declares parameter %q without a distinct wire identity", name)}
+	}
+	if member := styleLaneUndefinedExpansionParamFor(parameters, profileCoordinate(options.Profile), isOpenAPI30(document.OpenAPI)); member != "" {
+		return nil, &ExecutionError{Code: CodeRefused, Message: fmt.Sprintf("operation parameter member %q has no declaration-defined style expansion", member)}
+	}
+	if err := checkEffectiveParameterOwnership(parameters); err != nil {
+		return nil, &ExecutionError{Code: CodeRefused, Message: err.Error(), Cause: err}
+	}
+	if err := checkPathTemplateAddressability(target.Path, parameters); err != nil {
+		return nil, &ExecutionError{Code: CodeRefused, Message: err.Error(), Cause: err}
+	}
+	baseURL, err := resolveServer(document, pathItem, operation, options.Context, options.Source.Location)
+	if err != nil {
+		resolved := configOrSourceError(err, options.Source.Location)
+		if resolved.Code == CodeContextRequired {
+			if requirements, ok := resolved.Details.(*Prerequisites); ok {
+				return clonePrerequisites(requirements), nil
+			}
+		}
+		return nil, resolved
+	}
+	if err := securityConfigurationError(document, operation); err != nil {
+		return nil, &ExecutionError{Code: CodeRefused, Message: err.Error(), Cause: err}
+	}
+	if err := securitySelectionConfigurationError(document, operation, baseURL, parameters, options.Context); err != nil {
+		return nil, &ExecutionError{Code: CodeRefused, Message: err.Error(), Cause: err}
+	}
+	if err := securityAlternativesCollision(document, operation, baseURL, parameters); err != nil {
+		return nil, &ExecutionError{Code: CodeRefused, Message: err.Error(), Cause: err}
+	}
 	security := requiredContext(document, operation, options.Context, baseURL, parameters)
 	var plans []*bodyPlan
 	openAPI32 := artifact != nil && artifact.Edition.IsOpenAPI32()
@@ -234,7 +270,11 @@ func preflightPrerequisitesForArtifactTarget(artifact *Artifact, target *Operati
 	if err != nil {
 		return nil, &ExecutionError{Code: CodeSourceConfigError, Message: err.Error(), Cause: err}
 	}
-	return mergeRequirements(mergeRequirements(security, media), propertyMedia), nil
+	result := mergeRequirements(mergeRequirements(security, media), propertyMedia)
+	if result != nil && result.Target == "" {
+		result.Target = baseURL
+	}
+	return result, nil
 }
 
 func (p *PreparedOperation) Start(ctx context.Context) (*Execution, error) {
@@ -251,11 +291,24 @@ func (p *PreparedOperation) Start(ctx context.Context) (*Execution, error) {
 		runBinding(execution.ctx, client, args, execution, p.artifact)
 		execution.finishAfterRun()
 	}()
+	return awaitExecutionStart(ctx, execution)
+}
+
+// awaitExecutionStart preserves a successfully opened execution even when a
+// parameter-free unary exchange reaches its terminal state before Start's
+// select observes ready. Both channels can then be ready, and selecting done
+// must not turn normal completion into the impossible pair (nil, nil).
+func awaitExecutionStart(ctx context.Context, execution *Execution) (*Execution, error) {
 	select {
 	case <-execution.ready:
 		return execution, nil
 	case <-execution.done:
-		return nil, execution.Wait()
+		select {
+		case <-execution.ready:
+			return execution, nil
+		default:
+			return nil, execution.Wait()
+		}
 	case <-ctx.Done():
 		execution.Cancel()
 		return nil, executionError(CodeCancelled, ctx.Err())

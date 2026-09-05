@@ -461,6 +461,15 @@ func validateServerBaseSpelling(value string) error {
 	if parsed.ForceQuery || parsed.RawQuery != "" || parsed.Fragment != "" || strings.Contains(value, "#") {
 		return fmt.Errorf("server URL %q contains a query or fragment", value)
 	}
+	if denotesTargetBase(value) {
+		if parsed.User != nil {
+			return fmt.Errorf("server URL %q contains forbidden userinfo", value)
+		}
+		scheme := strings.ToLower(parsed.Scheme)
+		if scheme != "http" && scheme != "https" {
+			return fmt.Errorf("server URL %q does not use http or https", value)
+		}
+	}
 	return nil
 }
 

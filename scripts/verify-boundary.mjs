@@ -8,11 +8,15 @@ if (forbiddenDependencies.length > 0) {
 }
 
 const exportedPaths = Object.keys(packageJSON.exports ?? {});
-if (exportedPaths.join(",") !== ".") {
-  throw new Error(`standalone package must expose only its intentional native client-engine entry point, got ${exportedPaths.join(", ")}`);
+const expectedExportedPaths = [".", "./provider"];
+if (exportedPaths.join(",") !== expectedExportedPaths.join(",")) {
+  throw new Error(`standalone package must expose exactly its native client and provider entry points, got ${exportedPaths.join(", ")}`);
 }
 
-const declarations = await readFile(new URL("../typescript/dist/index.d.ts", import.meta.url), "utf8");
+const declarations = [
+  await readFile(new URL("../typescript/dist/index.d.ts", import.meta.url), "utf8"),
+  await readFile(new URL("../typescript/dist/provider.d.ts", import.meta.url), "utf8"),
+].join("\n");
 for (const forbidden of [
   "BindingInvocationArgs",
   "ContextRequiredDetails",
@@ -57,6 +61,12 @@ for (const name of goFiles) {
     if (source.includes(forbidden)) {
       throw new Error(`standalone Go source ${name} leaks internal/OpenBindings concept ${forbidden}`);
     }
+  }
+}
+const goProvider = await readFile(new URL("../go/provider/provider.go", import.meta.url), "utf8");
+for (const forbidden of ["github.com/openbindings/openbindings-go", "openbindings.openapi@", '"$openbindings"']) {
+  if (goProvider.includes(forbidden)) {
+    throw new Error(`standalone Go provider source leaks internal/OpenBindings concept ${forbidden}`);
   }
 }
 

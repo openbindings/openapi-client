@@ -24,6 +24,7 @@ type OperationResolutionKind string
 const (
 	OperationReferenceInvalid OperationResolutionKind = "invalid-reference"
 	OperationTargetNotFound   OperationResolutionKind = "not-found"
+	OperationTargetInvalid    OperationResolutionKind = "invalid"
 	OperationTargetExcluded   OperationResolutionKind = "excluded"
 )
 
@@ -185,7 +186,7 @@ func parseOperationReference(ref string, edition Edition) (OperationReference, e
 			// `post` is a different token from `POST`, and no fixed field
 			// defines it (openbindings.openapi-3.2@1 §6.1).
 			if method == strings.ToUpper(fixed) {
-				return OperationReference{}, operationResolutionError(OperationTargetExcluded, "additional operation method %q collides with fixed operation field %q", method, fixed)
+				return OperationReference{}, operationResolutionError(OperationTargetInvalid, "additional operation method %q collides with fixed operation field %q", method, fixed)
 			}
 		}
 		path := unescapeJSONPointerSegment(parts[0])
@@ -248,6 +249,10 @@ func (a *Artifact) ResolveOperation(ref string) (*OperationTarget, error) {
 	if err != nil {
 		return nil, err
 	}
+	if a.Edition.IsOpenAPI32() && reference.Additional && reference.Method == "CONNECT" {
+		return nil, operationResolutionError(OperationTargetExcluded,
+			"additional CONNECT operation creates a tunnel outside the unary OpenAPI operation model")
+	}
 	// openbindings.openapi-3.0@1 §8.2 / openbindings.openapi-3.1@1 §8.2: two
 	// Paths keys with equivalent templated hierarchies but different template
 	// names are an OAS-forbidden declaration defect with no unique target
@@ -264,7 +269,7 @@ func (a *Artifact) ResolveOperation(ref string) (*OperationTarget, error) {
 	}
 	if target := a.operationTargets[reference.Ref]; target != nil {
 		if target.Operation.Responses != nil && target.Operation.Responses.Len() == 0 {
-			return nil, operationResolutionError(OperationTargetExcluded, "operation %q has a present empty Responses Object", ref)
+			return nil, operationResolutionError(OperationTargetInvalid, "operation %q has a present empty Responses Object", ref)
 		}
 		return a.validateOpenAPI32Target(a.materializeReferringSecurityTarget(target))
 	}
@@ -292,7 +297,7 @@ func (a *Artifact) ResolveOperation(ref string) (*OperationTarget, error) {
 		return nil, operationResolutionError(OperationTargetNotFound, "operation %q was not found", ref)
 	}
 	if a.Edition.IsOpenAPI32() && operation.Responses != nil && operation.Responses.Len() == 0 {
-		return nil, operationResolutionError(OperationTargetExcluded, "operation %q has a present empty Responses Object", ref)
+		return nil, operationResolutionError(OperationTargetInvalid, "operation %q has a present empty Responses Object", ref)
 	}
 	return a.validateOpenAPI32Target(a.materializeReferringSecurityTarget(&OperationTarget{OperationReference: reference, Document: a.Document, PathItem: pathItem, Operation: operation}))
 }

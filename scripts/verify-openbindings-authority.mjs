@@ -15,8 +15,15 @@ function digest(value) {
   return createHash("sha256").update(value).digest("hex");
 }
 
-if (lock.source.commit !== source.commit || ledger.source.commit !== source.commit) {
-  failures.push("source, lock, and ledger commits differ");
+const sourceIdentity = {
+  repository: source.repository,
+  releaseBranch: source.releaseBranch,
+  commit: source.commit,
+  corpusRevision: source.corpusRevision,
+  candidateErrata: source.candidateErrata ?? [],
+};
+if (JSON.stringify(lock.source) !== JSON.stringify(sourceIdentity) || JSON.stringify(ledger.source) !== JSON.stringify(sourceIdentity)) {
+  failures.push("source, lock, and ledger authority identities differ");
 }
 
 for (const entry of lock.files) {

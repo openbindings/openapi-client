@@ -7,10 +7,11 @@ Swagger 2.0 and OpenAPI 3.0, 3.1, and 3.2 invocation. It includes the native
 client-engine facades, edition mechanics, transport integration, codecs,
 streaming, and native HTTP outcome model.
 
-It does not include an OpenBindings adapter, an OBI synthesizer, the
-OpenBindings SDK, OB CLI integration, generated schema types, or compatibility
-with this repository's earlier pre-release APIs. Those are downstream
-consumers or separate products.
+It includes the supported advanced provider surface used by generators and
+protocol adapters. OpenBindings adapters and OBI projection are qualified in
+their own repositories; the OpenBindings SDK, OB CLI integration, and generated
+schema types remain downstream consumers or separate products. Compatibility
+with this repository's earlier pre-release APIs is not a goal.
 
 The behavioral authority is the four `openbindings.openapi-*.@1` binding
 specifications on the OpenBindings 0.2 release line. Their source and portable
@@ -22,15 +23,16 @@ corpus are pinned under `authority/` and `conformance/upstream/`.
 revision it requires:
 
 1. authority source, file hashes, rule inventory, and corpus counts verify;
-2. all 888 processor scenarios pass through the public TypeScript and Go
+2. all 896 processor scenarios pass through the public TypeScript and Go
    client behavior;
 3. TypeScript type checking, native tests, and production ESM/CommonJS builds
    pass;
 4. the complete Go suite passes under the race detector;
-5. boundary inspection finds one intentional TypeScript export and no
-   OpenBindings runtime dependency or public compatibility type;
-6. reviewed TypeScript declarations and Go documentation match the intentional
-   public API snapshot;
+5. boundary inspection finds exactly the application root and advanced provider
+   TypeScript exports, their Go counterparts, and no OpenBindings runtime
+   dependency or public compatibility type;
+6. reviewed root and provider TypeScript declarations and Go documentation
+   match the intentional public API snapshot;
 7. a packed npm artifact works from clean ESM and CommonJS projects and its
    installed declarations compile for both module forms;
 8. the package bundles for a browser target without a Node-only static
@@ -44,13 +46,10 @@ necessary but cannot substitute for it.
 ## Current authority gate
 
 The hash-locked authority revision is
-`c5cbec60a739d26ff1bbc3ea9e8cf7fd8eaf25af` on `release/0.2`. It includes the
-published fixture corrections to `OAPI30-PS-199`, `OAPI31-PS-188`,
-`OAPI32-PS-237`, and `OAPI32-PS-243`.
-
-Both public clients pass all 888 scenarios directly from the pinned corpus.
-Qualification uses no fixture overlay, scenario-ID exception, or weakened
-operation/input enforcement.
+`ee5291ee5a5a23f7068d8c1d256792274a21167f` on `release/0.2`. It includes the
+smallest-owner correction to `OAPI32-PS-66`, the content-based `text/plain`
+correction to `OAPI30-PS-127`, and the complete provider-projection closure
+batch. No candidate erratum overlay or scenario-ID exception remains.
 
 ## Adversarial review gate
 
@@ -75,14 +74,17 @@ test. The review reruns against the changed snapshot. Qualification stops only
 when the mechanical gates remain green and a final review accepts the exact
 same bytes.
 
-## Adapter-phase gate
+## Adapter gate
 
 Full OpenBindings synthesis is deliberately not a standalone-client release
-gate. The later adapter phase must derive all 154 OpenAPI synthesis scenarios
-from engine-owned facts, add OBI operation and coverage projection, and prove
-that neither the adapter nor OB CLI contains OpenAPI wire logic. Adapter
-differentials must show the same HTTP exchange and application values as the
-standalone client.
+gate. The separate TypeScript and Go adapter qualification must derive every
+portable OAS-family synthesis scenario from native provider facts and prove
+that the adapters contain neither a second OpenAPI executor nor a second
+declaration planner. The current adapters pass all 154 OAS-family synthesis
+scenarios and have removed both kinds of duplicate implementation. Adapter
+differentials also exercise the same native execution path and compare HTTP
+exchange and application values. SDK and OB CLI cutover remains a later
+integration gate.
 
 ## Host security policy
 

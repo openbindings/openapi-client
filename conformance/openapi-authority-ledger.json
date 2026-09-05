@@ -3,8 +3,9 @@
   "source": {
     "repository": "https://github.com/openbindings/spec.git",
     "releaseBranch": "release/0.2",
-    "commit": "c5cbec60a739d26ff1bbc3ea9e8cf7fd8eaf25af",
-    "corpusRevision": 6
+    "commit": "ee5291ee5a5a23f7068d8c1d256792274a21167f",
+    "corpusRevision": 8,
+    "candidateErrata": []
   },
   "generated": [
     {
@@ -921,8 +922,8 @@
       "family": "openapi-3.0",
       "bindingSpec": "openbindings.openapi-3.0@1",
       "specPath": "binding-specs/openapi-3.0/openbindings.openapi-3.0.md",
-      "specSha256": "dd15ec4b37b25dd9889e3711965e818c3de32c71ed70988b905398f7ebba6cd7",
-      "processorScenarioCount": 193,
+      "specSha256": "3f87523d18f7647dfe30d2675318c91e13a610179f5bc78e8519db75b7ac7c04",
+      "processorScenarioCount": 195,
       "synthesisScenarioCount": 39,
       "rules": [
         {
@@ -997,7 +998,8 @@
             "OAPI30-PS-169",
             "OAPI30-PS-174",
             "OAPI30-PS-175",
-            "OAPI30-PS-241"
+            "OAPI30-PS-241",
+            "OAPI30-PS-251"
           ],
           "implementationEvidence": {
             "typescript": [],
@@ -1045,7 +1047,6 @@
             "OAPI30-PS-121",
             "OAPI30-PS-122",
             "OAPI30-PS-123",
-            "OAPI30-PS-127",
             "OAPI30-PS-129",
             "OAPI30-PS-132",
             "OAPI30-PS-133",
@@ -1981,6 +1982,23 @@
           "status": "upstream-scenario-pinned"
         },
         {
+          "id": "OAPI30-P-60",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§8.1 and §9.3 keep scalar conversion on the RFC 6570-style path separate from content-based media serialization: a number or boolean selected as content-based `text/plain` uses the binding-fixed lexical form without `parameterConversion`, while the same value on an explicitly style-selected Encoding path still requires that configuration.",
+          "upstreamScenarios": [
+            "OAPI30-PS-127",
+            "OAPI30-PS-250",
+            "OAPI30-PS-251"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
           "id": "OAPI30-S-01",
           "kind": "synthesis",
           "owner": "analysis-and-openbindings-adapter",
@@ -2316,8 +2334,8 @@
       "family": "openapi-3.1",
       "bindingSpec": "openbindings.openapi-3.1@1",
       "specPath": "binding-specs/openapi-3.1/openbindings.openapi-3.1.md",
-      "specSha256": "54876ba7b05d1fd8ad61b3752c90c450065f94a9f8e4274e4e391f6653ac23a1",
-      "processorScenarioCount": 215,
+      "specSha256": "ba0e8fba79f8f76c7a92056fac7487d8ad325366428ea55d6f8c6ee1634d7c37",
+      "processorScenarioCount": 218,
       "synthesisScenarioCount": 56,
       "rules": [
         {
@@ -2392,7 +2410,8 @@
             "OAPI31-PS-156",
             "OAPI31-PS-157",
             "OAPI31-PS-161",
-            "OAPI31-PS-227"
+            "OAPI31-PS-227",
+            "OAPI31-PS-238"
           ],
           "implementationEvidence": {
             "typescript": [],
@@ -3385,6 +3404,23 @@
           "status": "upstream-scenario-pinned"
         },
         {
+          "id": "OAPI31-P-59",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§8.1 and §9.3 keep scalar conversion on the RFC 6570-style path separate from content-based media serialization: a number or boolean selected as content-based `text/plain` uses the binding-fixed lexical form without `parameterConversion`, while the same value on an explicitly style-selected Encoding path still requires that configuration.",
+          "upstreamScenarios": [
+            "OAPI31-PS-236",
+            "OAPI31-PS-237",
+            "OAPI31-PS-238"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
           "id": "OAPI31-S-01",
           "kind": "synthesis",
           "owner": "analysis-and-openbindings-adapter",
@@ -3706,8 +3742,8 @@
       "family": "openapi-3.2",
       "bindingSpec": "openbindings.openapi-3.2@1",
       "specPath": "binding-specs/openapi-3.2/openbindings.openapi-3.2.md",
-      "specSha256": "28be92fec1426de876083cf589842f34cc907e57af2120ebecdfcc3c288c271f",
-      "processorScenarioCount": 294,
+      "specSha256": "93de708e55b6a753546378437549574f6404afeec301131e9325baa6b735fa4b",
+      "processorScenarioCount": 297,
       "synthesisScenarioCount": 34,
       "rules": [
         {
@@ -3824,7 +3860,8 @@
             "OAPI32-PS-196",
             "OAPI32-PS-210",
             "OAPI32-PS-211",
-            "OAPI32-PS-284"
+            "OAPI32-PS-284",
+            "OAPI32-PS-297"
           ],
           "implementationEvidence": {
             "typescript": [],
@@ -4904,6 +4941,23 @@
           "upstreamScenarios": [
             "OAPI32-PS-291",
             "OAPI32-PS-292"
+          ],
+          "implementationEvidence": {
+            "typescript": [],
+            "go": [],
+            "adapter": []
+          },
+          "status": "upstream-scenario-pinned"
+        },
+        {
+          "id": "OAPI32-P-63",
+          "kind": "processor",
+          "owner": "engine-and-native-client",
+          "description": "§8.1 and §§9.2–9.3 keep scalar conversion on the RFC 6570-style path separate from content-based media serialization: a number or boolean selected as content-based `text/plain` uses the binding-fixed lexical form without `parameterConversion`, while the same value on an explicitly style-selected Encoding path still requires that configuration.",
+          "upstreamScenarios": [
+            "OAPI32-PS-295",
+            "OAPI32-PS-296",
+            "OAPI32-PS-297"
           ],
           "implementationEvidence": {
             "typescript": [],

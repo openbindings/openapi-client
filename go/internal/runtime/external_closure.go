@@ -63,6 +63,7 @@ type externalComposition struct {
 	entryScanned     bool
 	traversalRefusal error
 	references       map[compositionTarget]string
+	authoredRefs     map[compositionTarget]string
 }
 
 // compositionTarget is one composed pointer into one resource. The fragment is
@@ -78,15 +79,45 @@ func newExternalComposition(
 	join func(*url.URL, *url.URL) *url.URL,
 ) *externalComposition {
 	return &externalComposition{
-		read:       read,
-		join:       join,
-		resources:  map[string]*url.URL{},
-		trees:      map[string]any{},
-		parsed:     map[string]bool{},
-		kept:       map[string]*retainedPointers{},
-		seen:       map[compositionTarget]bool{},
-		references: map[compositionTarget]string{},
+		read:         read,
+		join:         join,
+		resources:    map[string]*url.URL{},
+		trees:        map[string]any{},
+		parsed:       map[string]bool{},
+		kept:         map[string]*retainedPointers{},
+		seen:         map[compositionTarget]bool{},
+		references:   map[compositionTarget]string{},
+		authoredRefs: map[compositionTarget]string{},
 	}
+}
+
+// rememberEntryReferenceSpellings records the entry resource's authored ref
+// strings before private loader normalization. The closure still walks the
+// normalized tree, but a refusal names source text rather than a resolver's
+// absolute rewrite of it.
+func (c *externalComposition) rememberEntryReferenceSpellings(data []byte, base *url.URL) {
+	if c == nil || len(data) == 0 {
+		return
+	}
+	tree, ok := parseRawResource(data)
+	if !ok {
+		return
+	}
+	rawReferenceStrings(tree, func(ref string) {
+		parsed, err := url.Parse(ref)
+		if err != nil || ref == "" || strings.HasPrefix(ref, "#") {
+			return
+		}
+		resolved := c.resolvePath(base, parsed)
+		key := artifactResourceKey(resolved)
+		if key == "" {
+			return
+		}
+		target := compositionTarget{key: key, fragment: parsed.Fragment}
+		if _, exists := c.authoredRefs[target]; !exists {
+			c.authoredRefs[target] = ref
+		}
+	})
 }
 
 // setEntry names the ENTRY document, spelled exactly as the calling load lane
@@ -220,7 +251,11 @@ func (c *externalComposition) compose(target compositionTarget) {
 	// fragment a JSON-Pointer over the referenced document's literal contents
 	// and the reference is unresolvable. `reference_traversal.go` carries both
 	// branches with their authorities.
-	c.checkTraversal(c.references[target], target.fragment, tree)
+	reference := c.references[target]
+	if authored := c.authoredRefs[target]; authored != "" {
+		reference = authored
+	}
+	c.checkTraversal(reference, target.fragment, tree)
 	// A pointer that stops short — because a reference stands between it and
 	// its target on the following branch, or because it names nothing — still
 	// composes what it did reach: the reference standing in the way is itself

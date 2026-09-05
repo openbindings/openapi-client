@@ -106,7 +106,8 @@ function validateConfiguredServer(value: string): void {
   let parsed: URL;
   try { parsed = new URL(value); }
   catch (error: unknown) { throw new Error("Swagger 2.0 consumer server override is not an absolute target URL", { cause: error }); }
-  if ((parsed.protocol !== "http:" && parsed.protocol !== "https:") || parsed.host === "" || parsed.search !== "" || parsed.hash !== "") {
+  if ((parsed.protocol !== "http:" && parsed.protocol !== "https:") || parsed.host === ""
+    || parsed.username !== "" || parsed.password !== "" || parsed.search !== "" || parsed.hash !== "") {
     throw new Error("Swagger 2.0 consumer server override is not a complete HTTP target URL");
   }
 }

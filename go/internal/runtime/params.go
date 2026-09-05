@@ -24,11 +24,28 @@ import (
 // Effective parameter set
 // ---------------------------------------------------------------------------
 
+func duplicateDeclaredParameterIdentity(pathItem *openapi3.PathItem, op *openapi3.Operation) string {
+	for _, parameters := range []openapi3.Parameters{pathItem.Parameters, op.Parameters} {
+		seen := map[string]bool{}
+		for _, reference := range parameters {
+			if reference == nil || reference.Value == nil {
+				continue
+			}
+			identity := reference.Value.In + "\x00" + reference.Value.Name
+			if seen[identity] {
+				return reference.Value.In + "/" + reference.Value.Name
+			}
+			seen[identity] = true
+		}
+	}
+	return ""
+}
+
 // effectiveParameters merges path-item and operation `parameters` (operation
 // winning on same name-and-location collision, per the OAS) and drops header
 // parameters named Accept, Content-Type, or Authorization: the OAS declares
 // such parameter definitions SHALL be ignored.
-func effectiveParameters(pathItem *openapi3.PathItem, op *openapi3.Operation) openapi3.Parameters {
+func declaredEffectiveParameters(pathItem *openapi3.PathItem, op *openapi3.Operation) openapi3.Parameters {
 	merged := mergeParameters(pathItem.Parameters, op.Parameters)
 	out := make(openapi3.Parameters, 0, len(merged))
 	for _, pref := range merged {
@@ -36,17 +53,28 @@ func effectiveParameters(pathItem *openapi3.PathItem, op *openapi3.Operation) op
 			continue
 		}
 		p := pref.Value
-		if (p.In == openapi3.ParameterInHeader || p.In == openapi3.ParameterInCookie) && !httpToken(p.Name) && !p.Required {
-			// The malformed optional projection has no caller-envelope key. Its
-			// omission leaves the operation usable; supplying the would-be name
-			// is consequently handled as unknown input by the router.
-			continue
-		}
 		if p.In == openapi3.ParameterInHeader {
 			switch http.CanonicalHeaderKey(p.Name) {
 			case "Accept", "Content-Type", "Authorization":
 				continue // ignored per the OAS's parameter rules
 			}
+		}
+		out = append(out, pref)
+	}
+	return out
+}
+
+// effectiveParameters is the execution view. It removes an optional malformed
+// header/cookie projection after OAS override and ignore semantics have been
+// applied. Generator analysis starts from declaredEffectiveParameters instead,
+// because it must also report that confined declaration in coverage.
+func effectiveParameters(pathItem *openapi3.PathItem, op *openapi3.Operation) openapi3.Parameters {
+	declared := declaredEffectiveParameters(pathItem, op)
+	out := make(openapi3.Parameters, 0, len(declared))
+	for _, pref := range declared {
+		p := pref.Value
+		if (p.In == openapi3.ParameterInHeader || p.In == openapi3.ParameterInCookie) && !httpToken(p.Name) && !p.Required {
+			continue
 		}
 		out = append(out, pref)
 	}

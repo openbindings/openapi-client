@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/getkin/kin-openapi/openapi3"
 )
@@ -110,6 +112,7 @@ type ClientOptions struct {
 	ResponseContentCodings     map[string]ContentDecoder
 	RequestCharacterEncodings  map[string]CharacterEncoder
 	ResponseCharacterEncodings map[string]CharacterDecoder
+	Hooks                      *Hooks
 }
 
 type CallOptions struct {
@@ -127,6 +130,7 @@ type CallOptions struct {
 	ResponseContentCodings     map[string]ContentDecoder
 	RequestCharacterEncodings  map[string]CharacterEncoder
 	ResponseCharacterEncodings map[string]CharacterDecoder
+	Hooks                      *Hooks
 }
 
 type DeclarationMatch struct {
@@ -220,13 +224,18 @@ func (e *ClientError) Error() string {
 func (e *ClientError) Unwrap() error { return e.Cause }
 
 type Client struct {
-	artifact  *Artifact
-	document  *openapi3.T
-	swagger20 *Swagger20Client
-	edition   Edition
-	floor     *acceptanceFloor
-	source    Source
-	options   ClientOptions
+	artifact       *Artifact
+	document       *openapi3.T
+	swagger20      *Swagger20Client
+	edition        Edition
+	floor          *acceptanceFloor
+	source         Source
+	options        ClientOptions
+	analysisOnce   sync.Once
+	analysis       Analysis
+	projectionOnce sync.Once
+	projection     ProjectionAnalysis
+	projectionErr  error
 }
 
 func Load(ctx context.Context, source Source, options ClientOptions) (*Client, error) {
@@ -274,26 +283,17 @@ func materializeClientSource(ctx context.Context, client *http.Client, source So
 	if source.Location == "" {
 		return Source{}, fmt.Errorf("OpenAPI source requires location or content")
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, source.Location, nil)
+	resource, err := absoluteDocumentURL(source.Location)
 	if err != nil {
 		return Source{}, err
 	}
-	response, err := client.Do(request)
+	retrievalURIs := map[string]*url.URL{}
+	var retrievalMu sync.RWMutex
+	content, err := readArtifactResource(ctx, client, resource, false, retrievalURIs, &retrievalMu)
 	if err != nil {
 		return Source{}, err
 	}
-	defer response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return Source{}, fmt.Errorf("load OpenAPI source %q: HTTP %d", source.Location, response.StatusCode)
-	}
-	content, err := io.ReadAll(response.Body)
-	if err != nil {
-		return Source{}, err
-	}
-	location := source.Location
-	if response.Request != nil && response.Request.URL != nil {
-		location = response.Request.URL.String()
-	}
+	location := artifactRetrievalURI(resource, retrievalURIs, &retrievalMu).String()
 	return Source{Location: location, Content: content}, nil
 }
 
@@ -376,7 +376,7 @@ func (c *Client) ResolveOperationInfo(selector OperationSelector) (OperationInfo
 		return OperationInfo{}, &ClientError{Kind: ErrorInternal, Code: "NIL_CLIENT", Message: "OpenAPI client is nil"}
 	}
 	if c.swagger20 != nil {
-		return resolveOperationInfo(c.Operations(), selector)
+		return resolveOperationInfo(c.Operations(), selector, c.edition)
 	}
 	resolved, err := resolveOperation(c.artifact, c.floor, selector)
 	if err != nil {
@@ -397,7 +397,7 @@ func (c *Client) SelectOperationInfo(selector OperationSelector) (OperationInfo,
 		return OperationInfo{}, &ClientError{Kind: ErrorInternal, Code: "NIL_CLIENT", Message: "OpenAPI client is nil"}
 	}
 	if c.swagger20 != nil {
-		return resolveOperationInfo(c.Operations(), selector)
+		return resolveOperationInfo(c.Operations(), selector, c.edition)
 	}
 	if exclusion := c.artifact.SourceExclusion(); exclusion != nil {
 		return OperationInfo{}, &ClientError{Kind: ErrorOperation, Code: "SOURCE_EXCLUDED", Message: exclusion.Error(), Cause: exclusion}
@@ -406,19 +406,24 @@ func (c *Client) SelectOperationInfo(selector OperationSelector) (OperationInfo,
 	if err == nil {
 		return resolved.info, nil
 	}
-	if selector.ref == "" || !c.edition.IsOpenAPI32() || c.artifact.Refusal() == nil {
+	if selector.ref == "" || !c.edition.IsOpenAPI32() {
 		return OperationInfo{}, err
 	}
 	reference, parseErr := parseOperationReference(selector.ref, c.edition)
+	classifiedTarget := reference.Additional && reference.Method == "CONNECT"
 	if parseErr != nil {
 		var resolution *OperationResolutionError
-		if !errors.As(parseErr, &resolution) || resolution.Kind != OperationTargetExcluded {
+		if !errors.As(parseErr, &resolution) || (resolution.Kind != OperationTargetInvalid && resolution.Kind != OperationTargetExcluded) {
 			return OperationInfo{}, err
 		}
 		reference, parseErr = parseExcludedAdditionalOperationReference(selector.ref)
 		if parseErr != nil {
 			return OperationInfo{}, err
 		}
+		classifiedTarget = true
+	}
+	if c.artifact.Refusal() == nil && !classifiedTarget {
+		return OperationInfo{}, err
 	}
 	return OperationInfo{
 		Ref: reference.Ref, Path: reference.Path, Method: Method(reference.Method),
@@ -590,7 +595,7 @@ func (c *Client) streamSwagger20(ctx context.Context, selector OperationSelector
 	if len(options) == 1 {
 		call = options[0]
 	}
-	info, err := resolveOperationInfo(c.Operations(), selector)
+	info, err := resolveOperationInfo(c.Operations(), selector, c.edition)
 	if err != nil {
 		return nil, err
 	}
@@ -723,7 +728,7 @@ func (c *Client) streamSwagger20(ctx context.Context, selector OperationSelector
 	return &StreamResult{OK: true, Stream: &Stream{execution: execution}, Response: response, OpenAPI: declaration}, nil
 }
 
-func resolveOperationInfo(operations []OperationInfo, selector OperationSelector) (OperationInfo, error) {
+func resolveOperationInfo(operations []OperationInfo, selector OperationSelector, edition Edition) (OperationInfo, error) {
 	if selector.operationID != "" {
 		matches := make([]OperationInfo, 0, 1)
 		for _, operation := range operations {
@@ -740,6 +745,9 @@ func resolveOperationInfo(operations []OperationInfo, selector OperationSelector
 		return OperationInfo{}, &ClientError{Kind: ErrorOperation, Code: "OPERATION_NOT_FOUND", Message: fmt.Sprintf("operationId %q was not found", selector.operationID)}
 	}
 	if selector.ref != "" {
+		if _, err := parseOperationReference(selector.ref, edition); err != nil {
+			return OperationInfo{}, &ClientError{Kind: ErrorOperation, Code: "INVALID_OPERATION_REF", Message: err.Error(), Cause: err}
+		}
 		for _, operation := range operations {
 			if operation.Ref == selector.ref {
 				return operation, nil
@@ -1079,6 +1087,9 @@ type nativeInvocationInput struct {
 }
 
 func nativeInput(artifact *Artifact, ref string, document *openapi3.T, pathItem *openapi3.PathItem, operation *openapi3.Operation, input Input) (nativeInvocationInput, error) {
+	if duplicate := duplicateDeclaredParameterIdentity(pathItem, operation); duplicate != "" {
+		return nativeInvocationInput{}, inputError("DUPLICATE_PARAMETER", fmt.Sprintf("parameter identity %q is declared more than once in one parameter list", duplicate), nil)
+	}
 	parameters := effectiveParameters(pathItem, operation)
 	bodyPresent := input.BodyPresent || input.Body != nil
 	bypassOpenAPI32Media := artifact != nil && artifact.Edition.IsOpenAPI32() && !bodyPresent &&
@@ -1346,6 +1357,10 @@ func (c *Client) prepareOptions(operation resolvedOperation, input nativeInvocat
 	if responseCharacters == nil {
 		responseCharacters = c.options.ResponseCharacterEncodings
 	}
+	hooks := call.Hooks
+	if hooks == nil {
+		hooks = c.options.Hooks
+	}
 	responseCodings, err := normalizeContentDecoders(responseCodings)
 	if err != nil {
 		return PrepareOptions{}, &ClientError{Kind: ErrorConfiguration, Code: "INVALID_RESPONSE_CONTENT_CODINGS", Message: err.Error(), Cause: err}
@@ -1356,6 +1371,7 @@ func (c *Client) prepareOptions(operation resolvedOperation, input nativeInvocat
 		HTTPClient: client, MaxDeliveryUnitBytes: maxBytes, SecurityHandlers: handlers,
 		ParameterConverter: converter, RequestContentCodings: requestCodings, ResponseContentCodings: responseCodings,
 		RequestCharacterEncodings: requestCharacters, ResponseCharacterEncodings: responseCharacters,
+		Hooks: hooks,
 		// The published 3.0/3.1 binding is unary even for text/event-stream;
 		// only 3.2's explicit sequential media constructs create a stream.
 		BufferEventStreams: !c.edition.IsOpenAPI32(),

@@ -1,7 +1,7 @@
 # Go parity port
 
-Status: native-client parity complete; downstream OpenBindings migration is
-deferred until the standalone surface is accepted.
+Status: native-client, projection-provider, and adapter parity complete. SDK
+and OB CLI migration is the next downstream phase.
 
 The Go client implements the same native contract as the TypeScript client. It
 is not a façade that exposes native-looking methods while importing the
@@ -38,12 +38,15 @@ before a terminal error.
 4. Implement the native `Client` over the engine. **Complete.**
 5. Freeze the clean standalone surface without preserving current adapter, SDK,
    or OB CLI APIs. **In qualification.**
-6. Add the smallest public, immutable OpenAPI-native analysis capability needed
-   by generators and thin binding adapters. **Deferred to the analysis phase.**
+6. Add the smallest public, detached OpenAPI-native analysis capability needed
+   by generators and thin binding adapters, with advanced mechanics isolated in
+   `/provider`. **Complete.**
 7. Rewrite the Go binding package as an adapter over the accepted native
-   surface, then migrate the SDK and OB CLI. **Deferred.**
+   surface, then migrate the SDK and OB CLI. **Adapter complete; SDK/CLI
+   deferred.**
 8. Delete the displaced adapter execution mirror only after differential parity
-   and all portable synthesis scenarios pass. **Deferred.**
+   and all portable synthesis scenarios pass. **Complete: execution and
+   synthesis-planner mirrors removed.**
 
 ## Why this is not a wrapper-first port
 

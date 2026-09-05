@@ -17,6 +17,23 @@ function resourceFetch(resources: Record<string, unknown>, requests: string[] = 
 }
 
 describe("OpenAPI 3.2 artifact lane", () => {
+  it("exposes a deeply immutable provider document for every 3.x edition", async () => {
+    for (const openapi of ["3.0.4", "3.1.2", "3.2.0"]) {
+      const artifact = await loadOpenAPIArtifact({ content: {
+        openapi,
+        info: { title: "immutable", version: "1" },
+        paths: { "/x": { get: { responses: { "204": { description: "done" } } } } },
+      } });
+      expect(Object.isFrozen(artifact.document)).toBe(true);
+      expect(Object.isFrozen(artifact.document.info)).toBe(true);
+      expect(Object.isFrozen(artifact.document.paths?.["/x"])).toBe(true);
+      expect(() => {
+        (artifact.document.info as { title?: string }).title = "mutated";
+      }).toThrow(TypeError);
+      expect(artifact.document.info?.title).toBe("immutable");
+    }
+  });
+
   it("classifies the exact edition before resolving any reference", async () => {
     expect(classifyOpenAPIEdition({ openapi: "3.2.0", paths: {} })).toBe("3.2.0");
     const requests: string[] = [];
@@ -135,7 +152,7 @@ paths:
     } });
     await expect(responses.resolveOperation("#/paths/~1omitted/get")).resolves.toBeDefined();
     await expect(responses.resolveOperation("#/paths/~1empty/get")).rejects.toMatchObject({
-      kind: "excluded",
+      kind: "invalid",
     });
   });
 
@@ -179,7 +196,7 @@ paths:
       reference: { wireMethod: "get", additional: true },
     });
     await expect(artifact.resolveOperation("#/paths/~1x/additionalOperations/GET")).rejects.toMatchObject({
-      kind: "excluded",
+      kind: "invalid",
     });
   });
 });

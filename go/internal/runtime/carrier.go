@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 )
 
@@ -40,20 +41,26 @@ func profileCoordinate(profile Profile) string {
 	}
 }
 
+func isProjectionCoordinate(spec string) bool {
+	return strings.HasPrefix(spec, "projection:openapi-")
+}
+
 func hasRoutedInputs(spec string) bool { return spec != profileBaseCoordinate }
 func hasMediaFidelity(spec string) bool {
-	return spec == profileMediaCoordinate || spec == profileResponseCoordinate || spec == profileDynamicObjectCoordinate || spec == profileWholeJSONCoordinate || spec == profileFullCoordinate
+	return isProjectionCoordinate(spec) || spec == profileMediaCoordinate || spec == profileResponseCoordinate || spec == profileDynamicObjectCoordinate || spec == profileWholeJSONCoordinate || spec == profileFullCoordinate
 }
 func hasResponseFidelity(spec string) bool {
-	return spec == profileResponseCoordinate || spec == profileDynamicObjectCoordinate || spec == profileWholeJSONCoordinate || spec == profileFullCoordinate
+	return isProjectionCoordinate(spec) || spec == profileResponseCoordinate || spec == profileDynamicObjectCoordinate || spec == profileWholeJSONCoordinate || spec == profileFullCoordinate
 }
 func hasDynamicObjectCarriage(spec string) bool {
-	return spec == profileDynamicObjectCoordinate || spec == profileWholeJSONCoordinate || spec == profileFullCoordinate
+	return isProjectionCoordinate(spec) || spec == profileDynamicObjectCoordinate || spec == profileWholeJSONCoordinate || spec == profileFullCoordinate
 }
 func hasWholeJSONCarriage(spec string) bool {
-	return spec == profileWholeJSONCoordinate || spec == profileFullCoordinate
+	return isProjectionCoordinate(spec) || spec == profileWholeJSONCoordinate || spec == profileFullCoordinate
 }
-func hasSchemaOmittedOAS30ByteCarriage(spec string) bool { return spec == profileFullCoordinate }
+func hasSchemaOmittedOAS30ByteCarriage(spec string) bool {
+	return isProjectionCoordinate(spec) || spec == profileFullCoordinate
+}
 
 type executionSource struct {
 	Capability string

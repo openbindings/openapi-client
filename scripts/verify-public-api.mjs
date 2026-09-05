@@ -7,14 +7,21 @@ import { fileURLToPath } from "node:url";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const expected = JSON.parse(await readFile(resolve(root, "api/public-api-v1.json"), "utf8"));
 const typeScript = await readFile(resolve(root, "typescript/dist/index.d.ts"));
+const typeScriptProvider = await readFile(resolve(root, "typescript/dist/provider.d.ts"));
 const goDocumentation = execFileSync("go", ["doc", "-all", "."], {
+  cwd: resolve(root, "go"),
+  env: { ...process.env, GOWORK: "off" },
+});
+const goProviderDocumentation = execFileSync("go", ["doc", "-all", "./provider"], {
   cwd: resolve(root, "go"),
   env: { ...process.env, GOWORK: "off" },
 });
 
 const actual = {
   typescriptDeclarationSha256: digest(typeScript),
+  typescriptProviderDeclarationSha256: digest(typeScriptProvider),
   goDocumentationSha256: digest(goDocumentation),
+  goProviderDocumentationSha256: digest(goProviderDocumentation),
 };
 
 for (const [name, value] of Object.entries(actual)) {
