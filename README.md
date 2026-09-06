@@ -67,8 +67,11 @@ if err != nil {
 }
 if result.OK {
     fmt.Println(result.Data)
-} else {
+} else if result.ErrorPresent {
+    // Error may be nil: a JSON null body is still a present failure value.
     fmt.Println(result.Response.StatusCode, result.Error)
+} else {
+    fmt.Println(result.Response.StatusCode, "no failure body")
 }
 ```
 

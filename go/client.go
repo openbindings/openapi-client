@@ -455,11 +455,15 @@ type DeclarationMatch struct {
 // Result is an HTTP application outcome. Non-2xx outcomes return OK=false;
 // local, transport, and protocol failures return an error from Call.
 type Result struct {
-	OK       bool
-	Data     any
-	Error    any
-	Response *http.Response
-	OpenAPI  DeclarationMatch
+	OK    bool
+	Data  any
+	Error any
+	// ErrorPresent reports whether Error carries an HTTP failure value.
+	// It is true for a JSON null value (Error == nil), false for an absent
+	// failure body, and false for successful results.
+	ErrorPresent bool
+	Response     *http.Response
+	OpenAPI      DeclarationMatch
 }
 
 // SSEMetadata retains Server-Sent Events framing metadata when present.
@@ -524,11 +528,14 @@ var alreadyDone = func() <-chan struct{} {
 // On success Response contains metadata only and Stream owns the body. On an
 // HTTP failure Response.Body is a bounded replay.
 type StreamResult struct {
-	OK       bool
-	Stream   *Stream
-	Error    any
-	Response *http.Response
-	OpenAPI  DeclarationMatch
+	OK     bool
+	Stream *Stream
+	Error  any
+	// ErrorPresent distinguishes a present failure value, including JSON null,
+	// from an absent failure body. It is false for successful streams.
+	ErrorPresent bool
+	Response     *http.Response
+	OpenAPI      DeclarationMatch
 }
 
 // ErrorKind is the stable coarse category of a ClientError.
@@ -995,7 +1002,7 @@ func resultValue(value *runtime.Result) *Result {
 	if value == nil {
 		return nil
 	}
-	return &Result{OK: value.OK, Data: value.Data, Error: value.Error, Response: value.Response, OpenAPI: declaration(value.OpenAPI)}
+	return &Result{OK: value.OK, Data: value.Data, Error: value.Error, ErrorPresent: value.ErrorPresent, Response: value.Response, OpenAPI: declaration(value.OpenAPI)}
 }
 
 func streamResultValue(value *runtime.StreamResult) *StreamResult {
@@ -1010,7 +1017,7 @@ func streamResultValue(value *runtime.StreamResult) *StreamResult {
 	if value.OK {
 		response = responseMetadata(value.Response)
 	}
-	return &StreamResult{OK: value.OK, Stream: stream, Error: value.Error, Response: response, OpenAPI: declaration(value.OpenAPI)}
+	return &StreamResult{OK: value.OK, Stream: stream, Error: value.Error, ErrorPresent: value.ErrorPresent, Response: response, OpenAPI: declaration(value.OpenAPI)}
 }
 
 func responseMetadata(response *http.Response) *http.Response {

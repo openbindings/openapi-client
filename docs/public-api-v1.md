@@ -71,6 +71,14 @@ Wire behavior and outcome classification must be identical across TypeScript
 and Go. Host-language spelling, option construction, iteration, and error
 inspection should be idiomatic rather than textually identical.
 
+Go's `Result` and `StreamResult` expose `ErrorPresent` alongside `Error`.
+For an unsuccessful HTTP outcome, a present JSON `null` is represented by
+`ErrorPresent: true` and `Error: nil`; an absent failure body has
+`ErrorPresent: false`. The flag is false on success. Consumers must inspect
+the flag rather than infer presence from `Error != nil`. This additive field
+preserves the existing failure-value semantics; TypeScript already distinguishes
+`null` from absent (`undefined`) failure data.
+
 ## TypeScript surface
 
 The package root is deliberately small:
