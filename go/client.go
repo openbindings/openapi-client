@@ -1181,6 +1181,12 @@ func configurationRequirements(value any) *ConfigurationRequirements {
 					return nil
 				}
 				native.Path, _ = requirement.Extra["path"].(string)
+				// SecurityAlternative is already the native scalar option. The
+				// private engine's /index path belongs to the binding context
+				// representation and must not leak into the standalone API.
+				if native.Name == "SecurityAlternative" {
+					native.Path = ""
+				}
 				if schema, ok := requirement.Extra["schema"].(map[string]any); ok {
 					if allowed, ok := schema["enum"].([]any); ok {
 						native.AllowedValues = cloneJSONValues(allowed)

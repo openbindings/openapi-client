@@ -1,9 +1,9 @@
 # OpenBindings adapter contract
 
-The future OpenBindings OpenAPI binding packages are adapters over this
-repository's supported native client capabilities. Their job is translation,
-not a second OpenAPI implementation. Existing SDK and OB CLI APIs are migration
-inputs only; preserving them is not a requirement.
+The OpenBindings OpenAPI binding packages are adapters over this repository's
+supported native client capabilities. Their job is translation, not a second
+OpenAPI implementation. Earlier SDK and OB CLI APIs were migration inputs only;
+preserving them was not a requirement.
 
 ## Inputs to the engine
 
@@ -90,4 +90,7 @@ The OpenBindings TypeScript and Go format packages have completed the
 invocation and synthesis cutovers. They no longer contain a second OpenAPI
 executor or declaration planner, and all 154 portable OAS-family synthesis
 scenarios pass through projection derived from the supported provider model.
-SDK registration and OB CLI migration remain downstream work.
+SDK registration and OB CLI migration are complete on the integration cohort.
+They consume the adapter through the generic prepared-provider contract; the
+CLI neither parses OpenAPI binding identifiers nor owns OpenAPI execution
+decisions.

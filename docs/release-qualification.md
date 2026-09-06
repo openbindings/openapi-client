@@ -9,8 +9,9 @@ streaming, and native HTTP outcome model.
 
 It includes the supported advanced provider surface used by generators and
 protocol adapters. OpenBindings adapters and OBI projection are qualified in
-their own repositories; the OpenBindings SDK, OB CLI integration, and generated
-schema types remain downstream consumers or separate products. Compatibility
+their own repositories; the OpenBindings SDK and OB CLI are qualified as
+downstream cohort consumers, while generated schema types remain a separate
+product. Compatibility
 with this repository's earlier pre-release APIs is not a goal.
 
 The behavioral authority is the four `openbindings.openapi-*.@1` binding
@@ -83,8 +84,9 @@ that the adapters contain neither a second OpenAPI executor nor a second
 declaration planner. The current adapters pass all 154 OAS-family synthesis
 scenarios and have removed both kinds of duplicate implementation. Adapter
 differentials also exercise the same native execution path and compare HTTP
-exchange and application values. SDK and OB CLI cutover remains a later
-integration gate.
+exchange and application values. SDK and OB CLI cutover is complete and remains
+a separate cross-repository integration gate rather than a standalone-client
+release gate.
 
 ## Host security policy
 

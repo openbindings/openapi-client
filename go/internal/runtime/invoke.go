@@ -1279,6 +1279,26 @@ func requiredContext(doc *openapi3.T, op *openapi3.Operation, bindCtx map[string
 	if len(plans) == 0 {
 		return nil
 	}
+	if _, selected, _ := configuredSecurityAlternative(bindCtx); !selected {
+		indices := distinctSecurityAlternativeIndices(plans)
+		if len(indices) > 1 {
+			allowed := make([]any, len(indices))
+			for index, alternative := range indices {
+				allowed[index] = alternative
+			}
+			durable := true
+			return &Prerequisites{
+				Target: baseURL,
+				Alternatives: []RequirementAlternative{{Requirements: []Requirement{newConfigValueRequirementCompat(
+					"security",
+					"/index",
+					"select one complete declared security alternative",
+					map[string]any{"enum": allowed},
+					&durable,
+				)}}},
+			}
+		}
+	}
 	alternatives := make([]RequirementAlternative, 0, len(plans))
 	for _, plan := range plans {
 		if len(plan.context.Requirements) == 0 {
@@ -1298,6 +1318,20 @@ func requiredContext(doc *openapi3.T, op *openapi3.Operation, bindCtx map[string
 		return nil
 	}
 	return details
+}
+
+func distinctSecurityAlternativeIndices(plans []securityPlan) []int {
+	seen := map[int]bool{}
+	indices := make([]int, 0, len(plans))
+	for _, plan := range plans {
+		if seen[plan.alternativeIndex] {
+			continue
+		}
+		seen[plan.alternativeIndex] = true
+		indices = append(indices, plan.alternativeIndex)
+	}
+	sort.Ints(indices)
+	return indices
 }
 
 // effectiveSecurityRequirements applies OpenAPI's operation-over-document

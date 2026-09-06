@@ -50,13 +50,35 @@ redirect, selects response media, or parses a stream.
 8. Remove displaced engine mirrors only after the adapter, SDK, and CLI suites
    pass at one revision in both languages.
 
-Steps 2 through 5 are implemented in the TypeScript and Go native clients and
-format packages. Both adapters use the root client for execution and the
-detached provider projection for synthesis; neither retains a displaced
-OpenAPI executor, private-path dependency, or declaration-planner copy. Both
-pass the complete portable OAS-family synthesis corpus. The next architectural
-phase is step 6: migrate SDK registration and selection onto these accepted
-adapters, followed by OB CLI integration in step 7.
+Steps 2 through 7 are implemented. Both adapters use the root client for
+execution and the detached provider projection for synthesis; neither retains
+a displaced OpenAPI executor, private-path dependency, or
+declaration-planner copy. The SDKs expose immutable prepared providers and
+exact prepared realizations over the cohesive binding-provider registry. OB
+uses that provider capability generically, caches exact interface revisions,
+and never selects OpenAPI through identifier spelling or protocol-specific CLI
+branches.
+
+Operation validation diagnostics are a bounded process-local side channel.
+They identify phase and contract location without rejected values, credentials,
+transport evidence, or validator prose, and never enter portable
+`InvocationError.data`. The CLI renders this evidence for humans and offers
+the existing exact `binding invoke` lane for deliberate inspection below the
+operation contract. The `ob start` workbench resolves that same published
+Binding Invoker contract; its browser bundle contains no OpenAPI logic.
+
+Step 8 is now a compatibility-removal gate, not missing OpenAPI functionality.
+The OpenAPI adapter, SDK runtime, and OB execution route use the prepared
+provider path. Transitional generic `OperationRequirement` APIs remain marked
+deprecated for other consumers and receive no new OpenAPI behavior.
+
+External schema closure also stays below the adapter. One hash-locked
+multi-document case table runs through the native Go provider and both
+OpenBindings adapters. It proves pointer-scoped transitive retrieval,
+cross-language projection parity, and that documents reachable only outside
+the composed closure are not fetched. An unresolved reachable schema therefore
+fails closed as `ERR_SCHEMA_UNRESOLVED`; no layer substitutes partial operation
+validation.
 
 ## Native-to-OpenBindings translation
 
@@ -84,3 +106,9 @@ Cutover stops unless all of the following hold:
 - cancellation, streaming, redirects, credentials, and size limits retain the
   native behavior; and
 - deleting the displaced integration code leaves no second OpenAPI executor.
+
+The cutover additionally requires content-identical provider sources to reuse
+one executable native client, changed content at one location to create a new
+revision, advisory/no-fetch preparation never to poison an executable cache,
+and every cache to have an explicit bound. These are implementation lifecycle
+facts, not new binding-specification semantics.

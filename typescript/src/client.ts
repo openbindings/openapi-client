@@ -2582,7 +2582,7 @@ function configurationRequirements(value: unknown): OpenAPIConfigurationRequirem
         const native = nativeConfigurationPoint(requirement.point);
         if (!native) return undefined;
         const common = {
-          path: requirement.path,
+          path: native.name === "securityAlternative" ? "" : requirement.path,
           ...(allowedValues ? { allowedValues } : {}),
           ...(description ? { description } : {}),
         };

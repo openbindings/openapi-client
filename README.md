@@ -97,6 +97,12 @@ Missing artifact choices use `CodeConfigurationRequired` and carry typed
 native input fields, option fields, or authored security-scheme credentials;
 callers never need an OpenBindings context object.
 
+Security preflight is deliberately staged. When multiple complete authored
+security alternatives survive, the first requirement names the scalar
+`SecurityAlternative` option and its allowed indices. After that explicit
+choice, preflight names only the credentials required by the selected
+alternative; credentials never create an implicit preference.
+
 Unary and unsuccessful results retain a bounded replay of `Response.Body`.
 For successful streams, `Response.Body` is nil because the stream is its sole
 consumer; status, headers, request, and other response metadata remain native.
@@ -127,8 +133,9 @@ OpenBindings SDK ─► OpenAPI adapter ──────► native client + pr
 The adapter may select bindings and translate OpenBindings lifecycle and
 values. It consumes supported native package surface and may not import private
 engine files or reimplement OpenAPI request serialization, security, redirect,
-response, or streaming behavior. OB CLI migrates through the SDK and adapter
-only after the standalone substrate is accepted.
+response, or streaming behavior. The OpenBindings SDKs and OB CLI consume this
+adapter through their generic prepared-provider boundary; no OpenAPI-specific
+selection or invocation policy exists above it.
 
 ## Deterministic scope
 
@@ -173,7 +180,10 @@ separate adapters. Invocation already crosses a thin mechanical bridge to the
 client engines. Synthesis now derives from the detached native provider
 projection in both languages and passes the portable corpus; the displaced
 adapter-owned OpenAPI planners and executors have been removed. SDK
-registration and OB CLI migration remain downstream.
+registration and OB CLI migration are complete on the integration cohort. OB
+retains bounded prepared provider revisions, renders process-local
+operation-validation locations without changing portable error records, and
+keeps raw binding invocation as an explicit below-operation diagnostic lane.
 
 See [architecture](docs/architecture.md), [public API contract](docs/public-api-v1.md),
 [qualification ledger](docs/extraction-ledger.md), [release qualification](docs/release-qualification.md),

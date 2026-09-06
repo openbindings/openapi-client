@@ -158,6 +158,9 @@ application-facing package or introduce OpenBindings vocabulary.
    specifications' internal configuration point: `mediaType` and
    `propertyMediaTypes` are call inputs; `server`, `securityAlternative`, codec
    maps, and conversion are options; security scheme names are credentials.
+   Multiple complete security alternatives require `securityAlternative`
+   before credential discovery, so credentials never elect an authored OR
+   branch by accident.
 8. No compatibility aliases or deprecated shims are required for the current
    pre-release client, engine, OpenBindings adapters, SDKs, or OB CLI.
 
