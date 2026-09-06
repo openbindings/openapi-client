@@ -69,6 +69,7 @@ const (
 )
 
 var (
+	RecognizeRepresentation             = runtime.RecognizeRepresentation
 	ClassifyOpenAPI32SequentialResponse = runtime.ClassifyOpenAPI32SequentialResponse
 	DecodeResponseBody                  = runtime.DecodeResponseBody
 	DocumentInboundOperationInventory   = runtime.DocumentInboundOperationInventory

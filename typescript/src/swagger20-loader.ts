@@ -105,7 +105,7 @@ export function parseSwagger20Resource(content: unknown): unknown {
       json: false,
     });
   } catch (error: unknown) {
-    throw new Error("parse Swagger 2.0 representation", { cause: error });
+    throw new Error("parse OpenAPI representation", { cause: error });
   }
   if (documents.length !== 1) throw new Error("Swagger 2.0 representation must contain exactly one YAML document");
   return cloneAndCheckJSONImage(documents[0]);

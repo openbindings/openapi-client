@@ -5,10 +5,28 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"net/http"
 	"strings"
 	"testing"
 )
+
+func TestSwagger20LiteralIntegerRepresentations(t *testing.T) {
+	for _, tc := range []struct {
+		value any
+		want  bool
+	}{
+		{float64(2), true}, {float32(2), true}, {float64(-0.0), true},
+		{float64(9007199254740991), true}, {float64(9007199254740992), false},
+		{2.5, false}, {math.NaN(), false}, {math.Inf(1), false},
+		{json.Number("2"), true}, {json.Number("2.0"), false},
+		{json.Number("2e0"), false}, {"2", false},
+	} {
+		if got := swagger20LiteralInteger(tc.value); got != tc.want {
+			t.Errorf("%T(%v): got %v, want %v", tc.value, tc.value, got, tc.want)
+		}
+	}
+}
 
 type swagger20CaptureTransport struct {
 	requests []*http.Request

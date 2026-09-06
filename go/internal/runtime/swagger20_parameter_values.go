@@ -455,6 +455,13 @@ func swagger20LiteralInteger(value any) bool {
 		return true
 	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
 		return true
+	case float64:
+		// Programmatic JSON values have no lexical spelling. Match the TS
+		// client's safe-integer rule; json.Number above retains literal syntax.
+		return math.Abs(typed) <= 9007199254740991 && math.Trunc(typed) == typed
+	case float32:
+		value := float64(typed)
+		return math.Abs(value) <= 9007199254740991 && math.Trunc(value) == value
 	default:
 		return false
 	}
