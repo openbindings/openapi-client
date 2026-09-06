@@ -305,7 +305,7 @@ func handleSwagger20Response(request *http.Request, response *http.Response, pre
 			execution.closeOutputBoundary()
 			return
 		}
-		execution.failExecution(swagger20HTTPFailure(response, responseKey, nil, false))
+		execution.failExecution(swagger20HTTPFailure(response, responseKey, nil, false, body, ""))
 		return
 	}
 	if governing == nil {
@@ -346,7 +346,7 @@ func handleSwagger20Response(request *http.Request, response *http.Response, pre
 		return
 	}
 	if !success {
-		execution.failExecution(swagger20HTTPFailure(response, responseKey, value, true))
+		execution.failExecution(swagger20HTTPFailure(response, responseKey, value, true, body, selection.media.canonical))
 		return
 	}
 	if err := execution.emitOutput(value); err != nil {
@@ -500,7 +500,7 @@ func swagger20FailResponse(execution *Execution, err error) {
 	execution.failExecution(&ExecutionError{Code: CodeResponseError, Message: err.Error(), Cause: err})
 }
 
-func swagger20HTTPFailure(response *http.Response, responseKey string, details any, detailsPresent bool) *ExecutionError {
+func swagger20HTTPFailure(response *http.Response, responseKey string, details any, detailsPresent bool, body []byte, mediaType string) *ExecutionError {
 	failure := httpFailureError(response.StatusCode, response.Status)
 	failure.Details = details
 	failure.DetailsPresent = detailsPresent
@@ -510,6 +510,14 @@ func swagger20HTTPFailure(response *http.Response, responseKey string, details a
 		failure.Evidence = evidence
 		failure.Diagnostics = evidence
 	}
-	evidence["openapi"] = map[string]any{"declared": responseKey != "", "responseKey": responseKey}
+	evidence["openapi"] = map[string]any{"declared": responseKey != "", "responseKey": responseKey, "governingMedia": mediaType}
+	// Preserve the native selection and bounded decoded bytes through the
+	// same failure projection as the other editions. The adapter must not
+	// infer response media or decode the body again.
+	evidence["httpResponse"] = map[string]any{
+		"status":  response.StatusCode,
+		"headers": response.Header.Clone(),
+		"body":    map[string]any{"base64": base64.StdEncoding.EncodeToString(body), "byteLength": len(body)},
+	}
 	return failure
 }

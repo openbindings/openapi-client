@@ -19,7 +19,7 @@ the authority never overwrites the implementation's claims.
 | Portable OBI synthesis | behavior- and architecture-complete | TypeScript and Go adapters pass all 154 portable OAS-family synthesis scenarios as mechanical projections of native provider facts |
 | Cross-language parity | candidate-complete | normalized observations match on all 896 portable invocation scenarios |
 | OpenBindings adapters | provider cutover complete | thin invocation and synthesis bridges pass; no duplicate OpenAPI executor or declaration planner remains |
-| SDK and OB CLI | deferred | consumers migrated to the accepted native substrate |
+| SDK and OB CLI | cut over | generic prepared-provider routing, bounded revision reuse, safe local diagnostics, and exact raw-binding exploration pass together |
 | Standalone release quality | candidate-qualified | the complete repository-local release gate passes against the pinned authority |
 
 ## Evidence rules

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -525,6 +526,78 @@ paths:
 	requirement := clientError.Requirements.Alternatives[0].Requirements[0]
 	if requirement.Kind != openapi.RequirementCredential || requirement.Name != "session" || requirement.Credential != "apiKey" {
 		t.Fatalf("requirement = %#v", requirement)
+	}
+}
+
+func TestPublicClientRequiresAnExplicitSecurityAlternativeBeforeCredentials(t *testing.T) {
+	client, err := openapi.Load(context.Background(), openapi.FromText(`
+openapi: 3.1.2
+info: {title: Security selection, version: "1"}
+servers: [{url: https://api.example.test}]
+components:
+  securitySchemes:
+    oauth: {type: oauth2, flows: {clientCredentials: {tokenUrl: https://auth.example.test/token, scopes: {}}}}
+    bearer: {type: http, scheme: bearer}
+paths:
+  /secured:
+    get:
+      operationId: securedByChoice
+      security: [{oauth: []}, {bearer: []}]
+      responses: {"204": {description: done}}
+`), openapi.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation, err := client.Operation(openapi.OperationID("securedByChoice"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	requirements, err := operation.Preflight(context.Background(), openapi.Input{}, openapi.CallOptions{
+		Auth: openapi.Credentials{"oauth": openapi.Token("oauth-token"), "bearer": openapi.Token("bearer-token")},
+	})
+	if err != nil || requirements == nil || len(requirements.Alternatives) != 1 || len(requirements.Alternatives[0].Requirements) != 1 {
+		t.Fatalf("security selection preflight = %#v, err=%v", requirements, err)
+	}
+	requirement := requirements.Alternatives[0].Requirements[0]
+	if requirement.Kind != openapi.RequirementOption || requirement.Name != "SecurityAlternative" || requirement.Path != "" ||
+		!reflect.DeepEqual(requirement.AllowedValues, []any{float64(0), float64(1)}) && !reflect.DeepEqual(requirement.AllowedValues, []any{0, 1}) {
+		t.Fatalf("security selection requirement = %#v", requirement)
+	}
+	selected := 1
+	ready, err := operation.Preflight(context.Background(), openapi.Input{}, openapi.CallOptions{
+		SecurityAlternative: &selected,
+		Auth:                openapi.Credentials{"bearer": openapi.Token("bearer-token")},
+	})
+	if err != nil || ready != nil {
+		t.Fatalf("selected security preflight = %#v, err=%v", ready, err)
+	}
+}
+
+func TestPublicClientRequiresSelectionBetweenAnonymousAndCredentialedSecurity(t *testing.T) {
+	client, err := openapi.Load(context.Background(), openapi.FromText(`
+openapi: 3.1.2
+info: {title: Optional security selection, version: "1"}
+servers: [{url: https://api.example.test}]
+components:
+  securitySchemes:
+    bearer: {type: http, scheme: bearer}
+paths:
+  /optional:
+    get:
+      operationId: optionalSecurity
+      security: [{}, {bearer: []}]
+      responses: {"204": {description: done}}
+`), openapi.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requirements, err := client.Operation(openapi.OperationID("optionalSecurity"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	preflight, err := requirements.Preflight(context.Background(), openapi.Input{})
+	if err != nil || preflight == nil || preflight.Alternatives[0].Requirements[0].Name != "SecurityAlternative" {
+		t.Fatalf("anonymous security selection = %#v, err=%v", preflight, err)
 	}
 }
 

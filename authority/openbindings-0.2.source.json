@@ -3,6 +3,47 @@
   "releaseBranch": "release/0.2",
   "commit": "ee5291ee5a5a23f7068d8c1d256792274a21167f",
   "corpusRevision": 8,
+  "candidateErrata": [
+    {
+      "family": "openapi-3.0",
+      "kind": "processor",
+      "scenario": "OAPI30-PS-99",
+      "description": "Two complete security alternatives require an explicit configuration.security choice even when runtime credentials could satisfy both; artifact order creates no preference. The missing named point is context-required and nothing dispatches.",
+      "expected": [
+        {
+          "disposition": "context-required",
+          "phase": "pre-dispatch",
+          "assertions": [{ "path": "/dispatch", "absent": true }]
+        }
+      ]
+    },
+    {
+      "family": "openapi-3.1",
+      "kind": "processor",
+      "scenario": "OAPI31-PS-111",
+      "description": "Two complete security alternatives require an explicit configuration.security choice even when runtime credentials could satisfy both; artifact order creates no preference. The missing named point is context-required and nothing dispatches.",
+      "expected": [
+        {
+          "disposition": "context-required",
+          "phase": "pre-dispatch",
+          "assertions": [{ "path": "/dispatch", "absent": true }]
+        }
+      ]
+    },
+    {
+      "family": "openapi-3.2",
+      "kind": "processor",
+      "scenario": "OAPI32-PS-121",
+      "description": "Two complete security alternatives require explicit security selection even when runtime credentials satisfy both. The missing named point is context-required and nothing dispatches.",
+      "expected": [
+        {
+          "disposition": "context-required",
+          "phase": "pre-dispatch",
+          "assertions": [{ "path": "/dispatch", "absent": true }]
+        }
+      ]
+    }
+  ],
   "families": [
     {
       "family": "openapi-2.0",

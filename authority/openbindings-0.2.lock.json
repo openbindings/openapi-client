@@ -5,7 +5,62 @@
     "releaseBranch": "release/0.2",
     "commit": "ee5291ee5a5a23f7068d8c1d256792274a21167f",
     "corpusRevision": 8,
-    "candidateErrata": []
+    "candidateErrata": [
+      {
+        "family": "openapi-3.0",
+        "kind": "processor",
+        "scenario": "OAPI30-PS-99",
+        "description": "Two complete security alternatives require an explicit configuration.security choice even when runtime credentials could satisfy both; artifact order creates no preference. The missing named point is context-required and nothing dispatches.",
+        "expected": [
+          {
+            "disposition": "context-required",
+            "phase": "pre-dispatch",
+            "assertions": [
+              {
+                "path": "/dispatch",
+                "absent": true
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "family": "openapi-3.1",
+        "kind": "processor",
+        "scenario": "OAPI31-PS-111",
+        "description": "Two complete security alternatives require an explicit configuration.security choice even when runtime credentials could satisfy both; artifact order creates no preference. The missing named point is context-required and nothing dispatches.",
+        "expected": [
+          {
+            "disposition": "context-required",
+            "phase": "pre-dispatch",
+            "assertions": [
+              {
+                "path": "/dispatch",
+                "absent": true
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "family": "openapi-3.2",
+        "kind": "processor",
+        "scenario": "OAPI32-PS-121",
+        "description": "Two complete security alternatives require explicit security selection even when runtime credentials satisfy both. The missing named point is context-required and nothing dispatches.",
+        "expected": [
+          {
+            "disposition": "context-required",
+            "phase": "pre-dispatch",
+            "assertions": [
+              {
+                "path": "/dispatch",
+                "absent": true
+              }
+            ]
+          }
+        ]
+      }
+    ]
   },
   "files": [
     {
@@ -17,20 +72,20 @@
     {
       "upstreamPath": "conformance/binding-specs/processor/openapi-3.0.json",
       "localPath": "conformance/upstream/openbindings-0.2/processor/openapi-3.0.json",
-      "sha256": "590e5a7a6140b41d7621c983908cedab36439ab2b772ad50439f2034e864553f",
-      "bytes": 410438
+      "sha256": "f868648e3eb670787b28eed410063d4379cc724ac63b61ccee8a59bcd3246148",
+      "bytes": 410492
     },
     {
       "upstreamPath": "conformance/binding-specs/processor/openapi-3.1.json",
       "localPath": "conformance/upstream/openbindings-0.2/processor/openapi-3.1.json",
-      "sha256": "671de073832381182be3cd51aacfd1384f0587e4bd07ef839fa0d305295d6ed5",
-      "bytes": 453887
+      "sha256": "a5992eb419b5463962ada8f7d3a554771d9718b5b7cd4bd42f4670f4288201b3",
+      "bytes": 453941
     },
     {
       "upstreamPath": "conformance/binding-specs/processor/openapi-3.2.json",
       "localPath": "conformance/upstream/openbindings-0.2/processor/openapi-3.2.json",
-      "sha256": "8a22a1c51a13d157fcd0e60e815294385f9006d55f3fbf600eeec791f0d2a77b",
-      "bytes": 551854
+      "sha256": "73d34ec62607ee1482f65fd6a0715986226c3f0df38fd6e10c70a78c710367db",
+      "bytes": 551931
     },
     {
       "upstreamPath": "conformance/binding-specs/README.md",

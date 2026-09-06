@@ -71,6 +71,14 @@ Wire behavior and outcome classification must be identical across TypeScript
 and Go. Host-language spelling, option construction, iteration, and error
 inspection should be idiomatic rather than textually identical.
 
+Go's `Result` and `StreamResult` expose `ErrorPresent` alongside `Error`.
+For an unsuccessful HTTP outcome, a present JSON `null` is represented by
+`ErrorPresent: true` and `Error: nil`; an absent failure body has
+`ErrorPresent: false`. The flag is false on success. Consumers must inspect
+the flag rather than infer presence from `Error != nil`. This additive field
+preserves the existing failure-value semantics; TypeScript already distinguishes
+`null` from absent (`undefined`) failure data.
+
 ## TypeScript surface
 
 The package root is deliberately small:
@@ -158,6 +166,9 @@ application-facing package or introduce OpenBindings vocabulary.
    specifications' internal configuration point: `mediaType` and
    `propertyMediaTypes` are call inputs; `server`, `securityAlternative`, codec
    maps, and conversion are options; security scheme names are credentials.
+   Multiple complete security alternatives require `securityAlternative`
+   before credential discovery, so credentials never elect an authored OR
+   branch by accident.
 8. No compatibility aliases or deprecated shims are required for the current
    pre-release client, engine, OpenBindings adapters, SDKs, or OB CLI.
 

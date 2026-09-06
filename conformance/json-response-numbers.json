@@ -1,0 +1,11 @@
+[
+  {"name":"positive overflow","body":"1e400","expected":"1.7976931348623157e308"},
+  {"name":"negative overflow","body":"-1e400","expected":"-1.7976931348623157e308"},
+  {"name":"huge exponent","body":"1e999999999999999999999999","expected":"1.7976931348623157e308"},
+  {"name":"finite boundary","body":"1.7976931348623157e308","expected":"1.7976931348623157e308"},
+  {"name":"rounding","body":"9007199254740993","expected":"9007199254740992"},
+  {"name":"underflow","body":"1e-400","expected":"0"},
+  {"name":"negative underflow","body":"-1e-400","expected":"-0"},
+  {"name":"nested and strings","body":"{\"a\":[1e400,-1e400],\"s\":\"1e400\"}","expected":"{\"a\":[1.7976931348623157e308,-1.7976931348623157e308],\"s\":\"1e400\"}"},
+  {"name":"duplicate names","body":"{\"n\":1e400,\"n\":2}","expected":"{\"n\":2}"}
+]

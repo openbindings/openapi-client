@@ -9,8 +9,9 @@ streaming, and native HTTP outcome model.
 
 It includes the supported advanced provider surface used by generators and
 protocol adapters. OpenBindings adapters and OBI projection are qualified in
-their own repositories; the OpenBindings SDK, OB CLI integration, and generated
-schema types remain downstream consumers or separate products. Compatibility
+their own repositories; the OpenBindings SDK and OB CLI are qualified as
+downstream cohort consumers, while generated schema types remain a separate
+product. Compatibility
 with this repository's earlier pre-release APIs is not a goal.
 
 The behavioral authority is the four `openbindings.openapi-*.@1` binding
@@ -49,7 +50,23 @@ The hash-locked authority revision is
 `ee5291ee5a5a23f7068d8c1d256792274a21167f` on `release/0.2`. It includes the
 smallest-owner correction to `OAPI32-PS-66`, the content-based `text/plain`
 correction to `OAPI30-PS-127`, and the complete provider-projection closure
-batch. No candidate erratum overlay or scenario-ID exception remains.
+batch. The source/lock additionally record three explicit security-choice
+candidate errata: `OAPI30-PS-99`, `OAPI31-PS-111`, and `OAPI32-PS-121`.
+These require context rather than a plain refusal when the named security
+choice is absent. The resulting processor and synthesis files match the
+candidate spec commit `62ad87e654405310f9d3bf3e0625da5c46aba8d1`
+byte-for-byte. This is an explicit candidate authority record, not a claim
+that the base commit already contains those corrections.
+
+## Candidate consumers versus remote distribution
+
+The npm consumer checks install packed artifacts into empty projects. The Go
+consumer check disables workspaces but uses a local module replacement: it
+proves the external API and source graph, not remote installation. Qualifying
+remote Go distribution additionally requires exact remotely available revisions
+without filesystem replacements; published-tag consumption is checked only
+after the relevant tags exist. Passing the local gate does not publish artifacts
+or waive either distribution check.
 
 ## Adversarial review gate
 
@@ -83,8 +100,9 @@ that the adapters contain neither a second OpenAPI executor nor a second
 declaration planner. The current adapters pass all 154 OAS-family synthesis
 scenarios and have removed both kinds of duplicate implementation. Adapter
 differentials also exercise the same native execution path and compare HTTP
-exchange and application values. SDK and OB CLI cutover remains a later
-integration gate.
+exchange and application values. SDK and OB CLI cutover is complete and remains
+a separate cross-repository integration gate rather than a standalone-client
+release gate.
 
 ## Host security policy
 

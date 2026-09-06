@@ -144,12 +144,12 @@ func decodeSwagger20YAMLDocument(data []byte) (*yaml3.Node, error) {
 	decoder.DisableTimestamps(true)
 	var document yaml3.Node
 	if err := decoder.Decode(&document); err != nil {
-		return nil, fmt.Errorf("parse Swagger 2.0 representation: %w", err)
+		return nil, fmt.Errorf("parse OpenAPI representation: %w", err)
 	}
 	var extra yaml3.Node
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
 		if err != nil {
-			return nil, fmt.Errorf("parse Swagger 2.0 representation: %w", err)
+			return nil, fmt.Errorf("parse OpenAPI representation: %w", err)
 		}
 		return nil, fmt.Errorf("Swagger 2.0 representation must contain exactly one YAML document")
 	}

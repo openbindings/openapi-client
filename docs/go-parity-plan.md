@@ -1,7 +1,7 @@
 # Go parity port
 
-Status: native-client, projection-provider, and adapter parity complete. SDK
-and OB CLI migration is the next downstream phase.
+Status: native-client, projection-provider, adapter, SDK, and OB CLI cutover
+complete on the integration cohort.
 
 The Go client implements the same native contract as the TypeScript client. It
 is not a façade that exposes native-looking methods while importing the
@@ -42,8 +42,7 @@ before a terminal error.
    by generators and thin binding adapters, with advanced mechanics isolated in
    `/provider`. **Complete.**
 7. Rewrite the Go binding package as an adapter over the accepted native
-   surface, then migrate the SDK and OB CLI. **Adapter complete; SDK/CLI
-   deferred.**
+   surface, then migrate the SDK and OB CLI. **Complete.**
 8. Delete the displaced adapter execution mirror only after differential parity
    and all portable synthesis scenarios pass. **Complete: execution and
    synthesis-planner mirrors removed.**

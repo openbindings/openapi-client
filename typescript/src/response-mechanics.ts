@@ -1,3 +1,4 @@
+import { readResponseBytes, ResponseBodyLimitError } from "./response-body.js";
 import {
   governingResponse,
   governingResponseMediaMatch,
@@ -176,6 +177,7 @@ export async function governOpenAPIResponse(
   try {
     bytes = await readResponseBytes(response, deliveryLimit);
   } catch (error: unknown) {
+    if (error instanceof ResponseBodyLimitError) throw new OpenAPIWireMechanicsError("ERR_RESPONSE_ERROR");
     if (error instanceof OpenAPIWireMechanicsError) throw error;
     throw new OpenAPIWireMechanicsError("ERR_PROTOCOL");
   }
@@ -392,36 +394,6 @@ function requireSupportedCharset(
 async function bodyBytes(body: BodyInit | ReadableStream<Uint8Array> | null): Promise<Uint8Array> {
   if (body === null) return new Uint8Array();
   return new Uint8Array(await new Response(body as BodyInit).arrayBuffer());
-}
-
-async function readResponseBytes(response: Response, limit: number): Promise<Uint8Array> {
-  if (!response.body) return new Uint8Array();
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let length = 0;
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (!value) continue;
-      length += value.byteLength;
-      if (length > limit) {
-        await reader.cancel();
-        throw new OpenAPIWireMechanicsError("ERR_RESPONSE_ERROR");
-      }
-      chunks.push(value);
-    }
-  } catch (error: unknown) {
-    try { await reader.cancel(); } catch { /* best effort */ }
-    throw error;
-  }
-  const bytes = new Uint8Array(length);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return bytes;
 }
 
 function codingBytes(value: OpenAPIContentCodingResult): Uint8Array {

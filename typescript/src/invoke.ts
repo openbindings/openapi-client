@@ -1,3 +1,4 @@
+import { readResponseBytes } from "./response-body.js";
 import {
   InvocationError,
   contextRequiredError,
@@ -1845,6 +1846,23 @@ export function requiredContext(
 ): ContextRequiredDetails | null {
   const plans = configuredSecurityPlans(viableSecurityPlans(doc, op, baseURL, params, method), ctx);
   if (!plans) return null;
+  if (contextConfiguration(ctx)["security"] === undefined) {
+    const indices = [...new Set(plans.map((plan) => plan.alternativeIndex))].sort((left, right) => left - right);
+    if (indices.length > 1) {
+      return {
+        target: baseURL,
+        alternatives: [{
+          requirements: [configValueRequirement(
+            "security",
+            "/index",
+            "select one complete declared security alternative",
+            { enum: indices },
+            true,
+          )],
+        }],
+      };
+    }
+  }
   // An empty Security Requirement Object is an anonymous alternative. The
   // binding-invoker context shape intentionally has no empty alternatives,
   // so consume it here rather than emitting a malformed challenge.
@@ -1994,10 +2012,12 @@ function configuredSecurityPlans(
   ctx: Record<string, unknown> | undefined,
 ): SecurityPlan[] | null {
   if (!plans) return null;
-  const raw = contextConfiguration(ctx)["security"];
-  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return plans;
+  const configuration = contextConfiguration(ctx);
+  if (!Object.hasOwn(configuration, "security")) return plans;
+  const raw = configuration["security"];
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return null;
   const index = (raw as Record<string, unknown>)["index"];
-  if (typeof index !== "number" || !Number.isInteger(index)) return plans;
+  if (typeof index !== "number" || !Number.isInteger(index) || index < 0) return null;
   const selected = plans.filter((plan) => plan.alternativeIndex === index);
   return selected.length > 0 ? selected : null;
 }
@@ -2018,10 +2038,10 @@ function securitySelectionError(
   if (configured !== undefined) {
     return configuredSecurityPlans(plans, ctx) ? "" : "configuration.security does not select a usable alternative";
   }
-  const alternatives = new Set(plans.map((plan) => plan.alternativeIndex));
-  return alternatives.size > 1
-    ? "multiple complete security alternatives require an explicit configuration.security selection"
-    : "";
+  // An absent selection among multiple viable authored alternatives is a
+  // named configuration requirement, emitted by requiredContext. This check
+  // handles only supplied nonconforming selections.
+  return "";
 }
 
 /** Reports a collision only when every declared security alternative is unusable. */
@@ -2490,41 +2510,6 @@ async function peekResponseBody(
       headers: response.headers,
     }),
   };
-}
-
-async function readResponseBytes(resp: Response, maxBytes: number): Promise<Uint8Array> {
-  if (!resp.body) {
-    return new Uint8Array(await resp.arrayBuffer());
-  }
-
-  const reader = resp.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      total += value.byteLength;
-      if (total > maxBytes) {
-        // Cancel the body stream before bailing; releasing the lock alone
-        // leaves the response socket pinned on the remaining bytes.
-        await reader.cancel().catch(() => {});
-        throw new Error(`response exceeds ${maxBytes} byte limit`);
-      }
-      chunks.push(value);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-
-  const out = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    out.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return out;
 }
 
 // ---------------------------------------------------------------------------

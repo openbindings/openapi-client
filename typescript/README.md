@@ -156,6 +156,11 @@ unsatisfied security alternatives fail before dispatch. A scheme the built-in
 API-key, Basic, Bearer, OAuth 2, or OpenID Connect handling does not own can be
 implemented with a scheme-named function:
 
+When more than one complete authored security alternative survives,
+`preflight` first requires the `securityAlternative` option with the allowed
+indices. It reports the selected alternative's credential requirements only
+after that choice; merely supplying credentials never elects an alternative.
+
 ```ts
 await client.call("signedOperation", {}, {
   auth: {

@@ -684,6 +684,52 @@ describe("OpenAPIClient native API", () => {
     });
   });
 
+  it("requires an explicit choice among complete security alternatives before credentials", async () => {
+    const doc = document({
+      operationId: "securedByChoice",
+      security: [{ oauth: [] }, { bearer: [] }],
+      responses: { "204": { description: "ok" } },
+    }, "/security-choice", "get");
+    doc.components = { securitySchemes: {
+      oauth: {
+        type: "oauth2",
+        flows: { clientCredentials: { tokenUrl: "https://auth.example.test/token", scopes: {} } },
+      },
+      bearer: { type: "http", scheme: "bearer" },
+    } };
+    const client = await OpenAPIClient.load(doc);
+
+    await expect(client.operation("securedByChoice").preflight({}, {
+      auth: { oauth: "oauth-token", bearer: "bearer-token" },
+    })).resolves.toEqual({
+      target: "https://api.example.test/v1",
+      alternatives: [[{
+        kind: "option",
+        name: "securityAlternative",
+        path: "",
+        allowedValues: [0, 1],
+        description: "select one complete declared security alternative",
+      }]],
+    });
+    await expect(client.operation("securedByChoice").preflight({}, {
+      securityAlternative: 1,
+      auth: { bearer: "bearer-token" },
+    })).resolves.toBeNull();
+  });
+
+  it("requires selection between anonymous and credentialed security alternatives", async () => {
+    const doc = document({
+      operationId: "optionalSecurity",
+      security: [{}, { bearer: [] }],
+      responses: { "204": { description: "ok" } },
+    }, "/optional-security", "get");
+    doc.components = { securitySchemes: { bearer: { type: "http", scheme: "bearer" } } };
+    const client = await OpenAPIClient.load(doc);
+    await expect(client.operation("optionalSecurity").preflight()).resolves.toMatchObject({
+      alternatives: [[{ kind: "option", name: "securityAlternative", allowedValues: [0, 1] }]],
+    });
+  });
+
   it("names missing request-media choices in the native call input", async () => {
     const client = await OpenAPIClient.load(document({
       operationId: "createWithMedia",

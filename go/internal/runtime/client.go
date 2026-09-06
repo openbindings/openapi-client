@@ -1,6 +1,7 @@
 package openapiclient
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -140,11 +141,12 @@ type DeclarationMatch struct {
 }
 
 type Result struct {
-	OK       bool
-	Data     any
-	Error    any
-	Response *http.Response
-	OpenAPI  DeclarationMatch
+	OK           bool
+	Data         any
+	Error        any
+	ErrorPresent bool
+	Response     *http.Response
+	OpenAPI      DeclarationMatch
 }
 
 type StreamEvent struct {
@@ -184,13 +186,14 @@ func (s *Stream) Done() <-chan struct{} { return s.execution.Done() }
 func (s *Stream) Wait() error           { return clientError(s.execution.Wait()) }
 
 type StreamResult struct {
-	OK          bool
-	Stream      *Stream
-	Error       any
-	Response    *http.Response
-	OpenAPI     DeclarationMatch
-	rawBoundary bool
-	sequential  bool
+	OK           bool
+	Stream       *Stream
+	Error        any
+	ErrorPresent bool
+	Response     *http.Response
+	OpenAPI      DeclarationMatch
+	rawBoundary  bool
+	sequential   bool
 }
 
 type ErrorKind string
@@ -469,7 +472,7 @@ func (c *Client) Call(ctx context.Context, selector OperationSelector, input Inp
 		return nil, err
 	}
 	if !streamResult.OK {
-		return &Result{OK: false, Error: streamResult.Error, Response: streamResult.Response, OpenAPI: streamResult.OpenAPI}, nil
+		return &Result{OK: false, Error: streamResult.Error, ErrorPresent: streamResult.ErrorPresent, Response: streamResult.Response, OpenAPI: streamResult.OpenAPI}, nil
 	}
 	if streamResult.sequential || isSSEContentTypeFor(streamResult.Response.Header.Get("Content-Type"), profileFullCoordinate) {
 		streamResult.Stream.Cancel()
@@ -573,12 +576,12 @@ func (c *Client) Stream(ctx context.Context, selector OperationSelector, input I
 		if replay, replayErr := execution.Response(ctx); replayErr == nil {
 			response = replay
 		}
-		failure := decodeFailure(responseBody(response), response.Header.Get("Content-Type"))
+		failure, failurePresent := decodeFailure(responseBody(response), response.Header.Get("Content-Type"))
 		if evidence, ok := FailureEvidenceFrom(terminal); ok {
-			failure = decodeFailure(evidence.HTTPResponse.Body, headerValue(evidence.HTTPResponse.Headers, "content-type"))
+			failure, failurePresent = decodeFailure(evidence.HTTPResponse.Body, headerValue(evidence.HTTPResponse.Headers, "content-type"))
 			declaration = DeclarationMatch{Declared: evidence.OpenAPI.Declared, ResponseKey: evidence.OpenAPI.ResponseKey, MediaType: evidence.OpenAPI.GoverningMedia}
 		}
-		return &StreamResult{OK: false, Error: failure, Response: response, OpenAPI: declaration}, nil
+		return &StreamResult{OK: false, Error: failure, ErrorPresent: failurePresent, Response: response, OpenAPI: declaration}, nil
 	}
 	return &StreamResult{
 		OK: true, Stream: &Stream{execution: execution}, Response: response, OpenAPI: declaration,
@@ -718,12 +721,12 @@ func (c *Client) streamSwagger20(ctx context.Context, selector OperationSelector
 		if replay, replayErr := execution.Response(ctx); replayErr == nil {
 			response = replay
 		}
-		failure := decodeFailure(responseBody(response), response.Header.Get("Content-Type"))
+		failure, failurePresent := decodeFailure(responseBody(response), response.Header.Get("Content-Type"))
 		if evidence, ok := FailureEvidenceFrom(terminal); ok {
-			failure = decodeFailure(evidence.HTTPResponse.Body, headerValue(evidence.HTTPResponse.Headers, "content-type"))
+			failure, failurePresent = decodeFailure(evidence.HTTPResponse.Body, headerValue(evidence.HTTPResponse.Headers, "content-type"))
 			declaration = DeclarationMatch{Declared: evidence.OpenAPI.Declared, ResponseKey: evidence.OpenAPI.ResponseKey, MediaType: evidence.OpenAPI.GoverningMedia}
 		}
-		return &StreamResult{OK: false, Error: failure, Response: response, OpenAPI: declaration}, nil
+		return &StreamResult{OK: false, Error: failure, ErrorPresent: failurePresent, Response: response, OpenAPI: declaration}, nil
 	}
 	return &StreamResult{OK: true, Stream: &Stream{execution: execution}, Response: response, OpenAPI: declaration}, nil
 }
@@ -1508,9 +1511,9 @@ func declarationMatch(operation *openapi3.Operation, response *http.Response) De
 	return result
 }
 
-func decodeFailure(body []byte, contentType string) any {
+func decodeFailure(body []byte, contentType string) (any, bool) {
 	if len(body) == 0 {
-		return nil
+		return nil, false
 	}
 	if isJSONContentTypeFor(contentType, profileFullCoordinate) {
 		var value any
@@ -1518,14 +1521,14 @@ func decodeFailure(body []byte, contentType string) any {
 		// under the same §9.2 profile; what the profile will not decode stays
 		// opaque application-authored bytes rather than silently altered text.
 		if parseStrictJSON(body, &value) == nil {
-			return value
+			return value, true
 		}
-		return append([]byte(nil), body...)
+		return append([]byte(nil), body...), true
 	}
 	if value, err := decodeTextLaneFor(contentType, body, profileFullCoordinate); err == nil {
-		return value
+		return value, true
 	}
-	return append([]byte(nil), body...)
+	return append([]byte(nil), body...), true
 }
 
 func nativeSuccessValue(value any, rawBoundary bool) any {
@@ -1560,8 +1563,11 @@ func responseBody(response *http.Response) []byte {
 	if response == nil || response.Body == nil {
 		return nil
 	}
-	defer response.Body.Close()
 	value, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	// This is the engine's already-bounded replay, not the live transport.
+	// Reading it for the result value must not consume the caller's replay.
+	response.Body = io.NopCloser(bytes.NewReader(value))
 	return value
 }
 
