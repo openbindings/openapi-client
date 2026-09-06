@@ -1111,6 +1111,10 @@ export class OpenAPIClient {
           terminal = error;
         }
         const evidence = openAPIFailureEvidence(terminal);
+        if (!evidence && terminal !== undefined) {
+          void observed.response.body?.cancel().catch(() => undefined);
+          throw terminal;
+        }
         const bytes = evidence?.httpResponse.body
           ?? new Uint8Array(await observed.response.clone().arrayBuffer());
         return {
@@ -1125,6 +1129,7 @@ export class OpenAPIClient {
         };
       }
       const closed = execution.completed.catch((error: unknown) => {
+        void observed.response.body?.cancel().catch(() => undefined);
         throw clientError(error);
       });
       // Consumers normally observe termination by iterating events. This
@@ -1191,6 +1196,7 @@ export class OpenAPIClient {
     try {
       prepared = await prepareSwagger20({
         source: { location: this.location, document: swagger20.document },
+        maxDeliveryUnitBytes: callOptions.maxDeliveryUnitBytes ?? this.options.maxDeliveryUnitBytes,
         ref: resolved.info.ref,
         fetch: fetchFn,
         signal: callOptions.signal ?? this.options.signal,
@@ -1222,6 +1228,9 @@ export class OpenAPIClient {
       };
     } catch (error: unknown) {
       if (error instanceof Swagger20ExecutionError && error.code === "ERR_EXECUTION_FAILED") {
+        // The execution supplies its own bounded replay; release the facade's
+        // observational clone, which is not returned in this edition lane.
+        void exchange.promise.then(({ response }) => response.body?.cancel().catch(() => undefined)).catch(() => undefined);
         const evidence = asRecord(error.evidence);
         const declaration = asRecord(evidence?.openapi);
         const response = evidence?.response instanceof Response
@@ -1242,6 +1251,7 @@ export class OpenAPIClient {
           },
         };
       }
+      void exchange.promise.then(({ response }) => response.body?.cancel().catch(() => undefined)).catch(() => undefined);
       throw swagger20ClientError(error);
     }
   }

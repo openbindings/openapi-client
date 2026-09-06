@@ -33,6 +33,7 @@ export type Swagger20CharacterEncoder = (value: string) => Swagger20ContentCodin
 export type Swagger20CharacterDecoder = (bytes: Uint8Array) => string;
 
 export interface Swagger20PrepareOptions extends Swagger20LoadOptions {
+  maxDeliveryUnitBytes?: number;
   source: Swagger20Source;
   ref: string;
   /** OpenAPI-native execution configuration; later passes fill this surface. */

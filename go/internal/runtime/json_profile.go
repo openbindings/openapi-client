@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	"math"
+	"strconv"
 )
 
 // The strict-JSON profile every OpenAPI edition of this binding parses
@@ -37,11 +40,51 @@ var utf8BOM = []byte{0xEF, 0xBB, 0xBF}
 // parseStrictJSON parses one JSON body under the pinned profile. The returned
 // error names the profile rule it failed, so callers can wrap it with their own
 // media-type context.
-func parseStrictJSON(body []byte, value any) error {
+func parseStrictJSON(body []byte, value *any) error {
 	if err := checkLoneSurrogateEscape(body); err != nil {
 		return err
 	}
-	return json.Unmarshal(bytes.TrimPrefix(body, utf8BOM), value)
+	decoder := json.NewDecoder(bytes.NewReader(bytes.TrimPrefix(body, utf8BOM)))
+	decoder.UseNumber()
+	var parsed any
+	if err := decoder.Decode(&parsed); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("JSON body contains more than one value")
+	}
+	*value = nearestFiniteJSONNumbers(parsed)
+	return nil
+}
+
+// §9.2 permits nearest finite binary64, including saturation on overflow.
+// Keep normal round-to-nearest conversion and signed underflow; never expose
+// Infinity or fail merely because a syntactically valid number exceeds range.
+func nearestFiniteJSONNumbers(value any) any {
+	switch v := value.(type) {
+	case json.Number:
+		number, _ := strconv.ParseFloat(string(v), 64) // syntax was checked above
+		if math.IsInf(number, 1) {
+			return math.MaxFloat64
+		}
+		if math.IsInf(number, -1) {
+			return -math.MaxFloat64
+		}
+		return number
+	case []any:
+		for i := range v {
+			v[i] = nearestFiniteJSONNumbers(v[i])
+		}
+	case map[string]any:
+		for key := range v {
+			v[key] = nearestFiniteJSONNumbers(v[key])
+		}
+	}
+	return value
 }
 
 // checkLoneSurrogateEscape reports a `\uD800`–`\uDFFF` escape that is not half

@@ -1,4 +1,6 @@
 import { swagger20ConfigRequired } from "./swagger20-context.js";
+import { readResponseBytes } from "./response-body.js";
+import { resolveDeliveryUnitLimit } from "./internal/index.js";
 import { ConfigRequired } from "./servers.js";
 import { swagger20RefusalError } from "./swagger20-context.js";
 import {
@@ -19,6 +21,7 @@ import {
   effectiveSwagger20MediaSet,
   encodeSwagger20RequestPayload,
   governingSwagger20Response,
+  parseSwagger20ConcreteMedia,
   selectSwagger20RequestMedia,
   swagger20AcceptHeader,
   swagger20PayloadFor,
@@ -187,6 +190,7 @@ export async function executeSwagger20(
   let governing: Swagger20ResolvedResponse | undefined;
   const resultResponse = response.clone();
   try {
+  try {
     governing = await governingSwagger20Response(prepared.operation, responses, response.status);
   } catch (error: unknown) {
     throw responseError(error);
@@ -198,7 +202,14 @@ export async function executeSwagger20(
   } catch (error: unknown) {
     throw responseError(error);
   }
-  let bytes: Uint8Array<ArrayBufferLike> = new Uint8Array(await response.arrayBuffer());
+  let bytes: Uint8Array<ArrayBufferLike>;
+  const limit = resolveDeliveryUnitLimit(prepared.options);
+  try {
+    bytes = await readResponseBytes(response, limit);
+  } catch (error: unknown) {
+    void resultResponse.body?.cancel().catch(() => undefined);
+    throw responseError(error);
+  }
   const noContent = prepared.operation.method === "head"
     || response.status >= 100 && response.status < 200
     || [204, 205, 304].includes(response.status);
@@ -214,6 +225,7 @@ export async function executeSwagger20(
         bytes,
         prepared.options.responseContentCodings,
       );
+      if (bytes.byteLength > limit) throw new Error(`response exceeds ${limit} byte limit`);
     } catch (error: unknown) {
       throw responseError(error);
     }
@@ -224,11 +236,11 @@ export async function executeSwagger20(
     ...(governing ? { responseKey: governing.key } : {}),
   };
   if (bytes.byteLength === 0) {
-    if (!success) throw httpFailure(response, governing, undefined);
+    if (!success) throw httpFailure(resultResponse, governing, undefined);
     return { outputPresent: false, status: response.status, headers: response.headers, response: resultResponse, declaration };
   }
   if (!governing) {
-    if (!success) throw httpFailure(response, governing, undefined);
+    if (!success) throw httpFailure(resultResponse, governing, undefined);
     throw new Swagger20ExecutionError(
       "ERR_RESPONSE_ERROR",
       `non-empty response status ${response.status} has no governing exact or default Response Object`,
@@ -245,11 +257,20 @@ export async function executeSwagger20(
       prepared.options.responseCharacterEncodings,
     );
   } catch (error: unknown) {
-    if (!success && governing.invalid) throw httpFailure(response, governing, undefined);
+    if (!success && governing.invalid) throw httpFailure(resultResponse, governing, undefined);
     throw responseError(error);
   }
-  if (!success) throw httpFailure(response, governing, output);
+  const mediaType = parseSwagger20ConcreteMedia(response.headers.get("Content-Type") || "application/octet-stream").canonical;
+  if (!success) throw httpFailure(resultResponse, governing, output, mediaType);
+  Object.assign(declaration, { mediaType });
   return { outputPresent: true, output, status: response.status, headers: response.headers, response: resultResponse, declaration };
+  } catch (error: unknown) {
+    if (!(error instanceof Swagger20ExecutionError && error.code === "ERR_EXECUTION_FAILED")) {
+      void response.body?.cancel().catch(() => undefined);
+      void resultResponse.body?.cancel().catch(() => undefined);
+    }
+    throw error;
+  }
 }
 
 interface Swagger20PlannedRequest {
@@ -388,13 +409,13 @@ function codingBytes(value: Swagger20ContentCodingResult): Uint8Array {
   throw new Error("content-coding result is not a byte sequence");
 }
 
-function httpFailure(response: Response, governing: Swagger20ResolvedResponse | undefined, details: unknown): Swagger20ExecutionError {
+function httpFailure(response: Response, governing: Swagger20ResolvedResponse | undefined, details: unknown, mediaType?: string): Swagger20ExecutionError {
   return new Swagger20ExecutionError("ERR_EXECUTION_FAILED", `HTTP ${response.status}`, {
     ...(details === undefined ? {} : { details }),
     evidence: {
-      response: response.clone(),
+      response,
       status: response.status,
-      openapi: { declared: governing !== undefined, responseKey: governing?.key ?? "" },
+      openapi: { declared: governing !== undefined, responseKey: governing?.key ?? "", ...(mediaType ? { mediaType } : {}) },
     },
   });
 }

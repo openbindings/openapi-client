@@ -1,3 +1,4 @@
+import { readResponseBytes } from "./response-body.js";
 import {
   InvocationError,
   contextRequiredError,
@@ -2509,41 +2510,6 @@ async function peekResponseBody(
       headers: response.headers,
     }),
   };
-}
-
-async function readResponseBytes(resp: Response, maxBytes: number): Promise<Uint8Array> {
-  if (!resp.body) {
-    return new Uint8Array(await resp.arrayBuffer());
-  }
-
-  const reader = resp.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      total += value.byteLength;
-      if (total > maxBytes) {
-        // Cancel the body stream before bailing; releasing the lock alone
-        // leaves the response socket pinned on the remaining bytes.
-        await reader.cancel().catch(() => {});
-        throw new Error(`response exceeds ${maxBytes} byte limit`);
-      }
-      chunks.push(value);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-
-  const out = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    out.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return out;
 }
 
 // ---------------------------------------------------------------------------

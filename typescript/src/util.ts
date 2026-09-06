@@ -1437,7 +1437,9 @@ export function parseStrictResponseJSON(
 ): unknown {
   let value: unknown;
   try {
-    value = JSON.parse(text) as unknown;
+    value = JSON.parse(text, (_key: string, member: unknown) =>
+      member === Infinity ? Number.MAX_VALUE
+        : member === -Infinity ? -Number.MAX_VALUE : member) as unknown;
   } catch (cause: unknown) {
     throw onInvalid(cause);
   }
