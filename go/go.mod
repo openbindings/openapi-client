@@ -6,7 +6,7 @@ require (
 	github.com/dlclark/regexp2 v1.12.0
 	github.com/getkin/kin-openapi v0.149.0
 	github.com/oasdiff/yaml3 v0.0.14
-	github.com/openbindings/openbindings-go v0.1.1-0.20260910175039-0f85d0a56f3c
+	github.com/openbindings/openbindings-go v0.1.1-0.20260910180913-56f5d1f05cfb
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	golang.org/x/net v0.56.0
 	golang.org/x/text v0.39.0
