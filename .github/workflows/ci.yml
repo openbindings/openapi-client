@@ -19,7 +19,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: openbindings/openbindings-ts
-          ref: 99e7586fe377899b9d64d7f653adfacd0f790a48
+          ref: 1b4fdff3d37ecc17b81a4debfff2499db6d69668
           path: openbindings-ts
       - uses: pnpm/action-setup@v4
         with:
