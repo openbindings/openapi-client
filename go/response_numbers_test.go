@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"os"
 	"reflect"
@@ -22,7 +21,7 @@ func (t numericResponseTransport) RoundTrip(r *http.Request) (*http.Response, er
 	return &http.Response{StatusCode: t.status, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(t.body)), Request: r}, nil
 }
 
-func TestResponseNumbersAreNearestFiniteAcrossEditions(t *testing.T) {
+func TestResponseNumbersAreExactAcrossEditions(t *testing.T) {
 	raw, err := os.ReadFile("../conformance/json-response-numbers.json")
 	if err != nil {
 		t.Fatal(err)
@@ -47,15 +46,14 @@ func TestResponseNumbersAreNearestFiniteAcrossEditions(t *testing.T) {
 						t.Fatal(err)
 					}
 					var want any
-					if err = json.Unmarshal([]byte(tc.Expected), &want); err != nil {
+					decoder := json.NewDecoder(strings.NewReader(tc.Body))
+					decoder.UseNumber()
+					if err = decoder.Decode(&want); err != nil {
 						t.Fatal(err)
 					}
 					check := func(got any) {
 						if !reflect.DeepEqual(got, want) {
 							t.Fatalf("got %#v, want %#v", got, want)
-						}
-						if tc.Expected == "-0" && !math.Signbit(got.(float64)) {
-							t.Fatal("lost negative underflow sign")
 						}
 						if _, err := json.Marshal(got); err != nil {
 							t.Fatalf("not portable JSON: %v", err)

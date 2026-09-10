@@ -1,3 +1,4 @@
+import { cloneValueGraph } from "./value-graph.js";
 import {
   FAMILY_MULTIPART,
   FAMILY_URLENCODED,
@@ -61,7 +62,7 @@ export function planResolvedRequestBodies(
   // underlying planner and then restore them. Always apply that machinery to
   // a detached graph so a loaded provider artifact remains immutable.
   const operation = Object.isFrozen(sourceOperation)
-    ? structuredClone(sourceOperation)
+    ? cloneValueGraph(sourceOperation)
     : sourceOperation;
   const oas30 = options?.openapiVersion?.startsWith("3.0") ?? true;
   const facts = requestPropertyMediaFacts(operation, oas30);

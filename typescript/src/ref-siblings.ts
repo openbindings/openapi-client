@@ -1,3 +1,4 @@
+import { cloneValueGraph } from "./value-graph.js";
 type RefSemantics = "ignore" | "compose";
 
 const SCHEMA_MAP_KEYS = new Set([
@@ -108,7 +109,7 @@ export class OpenAPIRefSiblingNormalizer {
   }
 
   normalize(value: unknown, resourceUrl?: string, aliases: readonly string[] = []): unknown {
-    const document = structuredClone(value);
+    const document = cloneValueGraph(value);
     const protectedRefKey = unusedProtectedRefKey(document);
     const protectedRefToken = `openbindings-data-ref-${++protectedRefSequence}`;
     const referenceMarkerKey = unusedInternalKey(

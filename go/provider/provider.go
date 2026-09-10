@@ -69,6 +69,7 @@ const (
 )
 
 var (
+	SourceJSONImage                     = runtime.SourceJSONImage
 	RecognizeRepresentation             = runtime.RecognizeRepresentation
 	ClassifyOpenAPI32SequentialResponse = runtime.ClassifyOpenAPI32SequentialResponse
 	DecodeResponseBody                  = runtime.DecodeResponseBody

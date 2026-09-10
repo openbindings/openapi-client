@@ -1,7 +1,9 @@
+import { cloneValueGraph } from "./value-graph.js";
 import type { OpenAPIDocument, OpenAPIParameter } from "./types.js";
+import { isJSONNumber, parseJSON, stringifyJSON } from "@openbindings/json";
 import { VALID_METHODS } from "./constants.js";
 import { dereference } from "./internal/index.js";
-import yaml from "js-yaml";
+import { parseExactSourceDocuments } from "./exact-source.js";
 import { OpenAPIRefSiblingNormalizer } from "./ref-siblings.js";
 
 // The u flag makes the class match whole code points, so an astral-plane
@@ -173,7 +175,7 @@ export async function loadOpenAPIDocument(
   if (content !== undefined) {
     if (typeof content === "string") raw = parseJSONOrYAML(content);
     else if (typeof content === "object") raw = content;
-    else raw = structuredClone(content);
+    else raw = cloneValueGraph(content);
   } else {
     if (!location) {
       throw new Error("source must have location or content");
@@ -285,7 +287,7 @@ function normalizeExternalRefFetch(
       retrieval,
       requested !== retrieval ? [requested] : [],
     );
-    const wrapped = new Response(JSON.stringify(normalized), {
+    const wrapped = new Response(stringifyJSON(normalized), {
       status: response.status,
       statusText: response.statusText,
       headers: response.headers,
@@ -525,7 +527,9 @@ export function errorMessage(e: unknown): string {
  */
 export function parseJSONOrYAML(text: string): unknown {
   assertScalarMappingKeys(text);
-  return assertJSONDomain(yaml.load(text.trim(), { schema: yaml.CORE_SCHEMA }));
+  const documents = parseExactSourceDocuments(text.trim());
+  if (documents.length !== 1) throw new Error("OpenAPI representation must contain exactly one YAML document");
+  return assertJSONDomain(documents[0]);
 }
 
 /**
@@ -579,7 +583,7 @@ function assertJSONDomain(root: unknown): unknown {
   if (root === undefined) return root;
   const seen = new WeakSet<object>();
   const walk = (value: unknown, path: string): void => {
-    if (value === null) return;
+    if (value === null || isJSONNumber(value)) return;
     switch (typeof value) {
       case "string":
       case "boolean":
@@ -953,6 +957,7 @@ export function relativeDocumentName(base: string | undefined, document: string)
 export function shapeDigest(node: unknown): string {
   const path = new Map<object, number>();
   const write = (value: unknown, depth: number): string => {
+    if (isJSONNumber(value)) return stringifyJSON(value);
     if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
     const back = path.get(value);
     if (back !== undefined) return `^${depth - back}`;
@@ -1276,7 +1281,7 @@ export function decycleSchema(
   };
 
   const copy = (node: unknown, pos: SchemaPos): unknown => {
-    if (node === null || typeof node !== "object") return node;
+    if (node === null || typeof node !== "object" || isJSONNumber(node)) return node;
     const obj = node;
     // Hoisting emits a {$ref} object, which only means "reference" at a
     // schema position. Cycle participants at other positions (a shared
@@ -1353,7 +1358,7 @@ export function escapePointerSegment(segment: string): string {
 export function cycleSafeKey(value: unknown): string {
   const stack = new Set<object>();
   const walk = (node: unknown): unknown => {
-    if (node === null || typeof node !== "object") return node;
+    if (node === null || typeof node !== "object" || isJSONNumber(node)) return node;
     if (stack.has(node)) return { $cycle: true };
     stack.add(node);
     let out: unknown;
@@ -1368,7 +1373,7 @@ export function cycleSafeKey(value: unknown): string {
     stack.delete(node);
     return out;
   };
-  return JSON.stringify(walk(value));
+  return stringifyJSON(walk(value));
 }
 
 /**
@@ -1437,9 +1442,7 @@ export function parseStrictResponseJSON(
 ): unknown {
   let value: unknown;
   try {
-    value = JSON.parse(text, (_key: string, member: unknown) =>
-      member === Infinity ? Number.MAX_VALUE
-        : member === -Infinity ? -Number.MAX_VALUE : member) as unknown;
+    value = parseJSON(text);
   } catch (cause: unknown) {
     throw onInvalid(cause);
   }

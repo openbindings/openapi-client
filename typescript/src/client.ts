@@ -1,3 +1,4 @@
+import { cloneValueGraph } from "./value-graph.js";
 import { OPENAPI_PROFILE_FULL } from "./profile.js";
 import {
   OPENAPI_USE_DEFAULT as ENGINE_OPENAPI_USE_DEFAULT,
@@ -869,7 +870,7 @@ export class OpenAPIClient {
     } catch (error: unknown) {
       if (error instanceof ConfigRequired) {
         const allowedValues = Array.isArray(error.schema?.enum)
-          ? structuredClone(error.schema.enum)
+          ? cloneValueGraph(error.schema.enum)
           : undefined;
         return {
           target: this.location ?? "",
@@ -1806,7 +1807,7 @@ function securityAnalysis(
 }
 
 function detachedValue<T>(value: T): T {
-  return structuredClone(value);
+  return cloneValueGraph(value);
 }
 
 function deepFreeze<T>(value: T): T {
@@ -2099,7 +2100,7 @@ function artifactSecurityHandlers(
 
 function cloneJSONRecord(value: unknown): NativeSecurityScheme {
   const record = asRecord(value) ?? {};
-  return JSON.parse(JSON.stringify(record)) as NativeSecurityScheme;
+  return cloneValueGraph(record) as NativeSecurityScheme;
 }
 
 function unsupportedSchemeLabel(scheme: NativeSecurityScheme): string {
@@ -2587,7 +2588,7 @@ function configurationRequirements(value: unknown): OpenAPIConfigurationRequirem
         if (typeof requirement.point !== "string" || typeof requirement.path !== "string") return undefined;
         const schema = asRecord(requirement.schema);
         const allowedValues = Array.isArray(schema?.enum)
-          ? JSON.parse(JSON.stringify(schema.enum)) as unknown[]
+          ? cloneValueGraph(schema.enum)
           : undefined;
         const native = nativeConfigurationPoint(requirement.point);
         if (!native) return undefined;

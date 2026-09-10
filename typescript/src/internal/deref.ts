@@ -1,3 +1,5 @@
+import { cloneValueGraph } from "../value-graph.js";
+import { isJSONNumber, parseJSON } from "@openbindings/json";
 /**
  * Lightweight, browser-compatible JSON $ref dereferencer.
  *
@@ -164,7 +166,7 @@ function resolveURI(base: string | undefined, reference: string): string | undef
 function defaultParse(text: string): unknown {
   const trimmed = text.trimStart();
   if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
-    return JSON.parse(text);
+    return parseJSON(text);
   }
   // Can't parse non-JSON without a custom parser; throw a clear error.
   throw new Error("External $ref returned non-JSON content. Pass a 'parse' option to dereference() to handle YAML or other formats.");
@@ -243,7 +245,7 @@ export async function dereference<T = unknown>(
   // the caller's `doc`: resolving against the original both mutates the
   // caller's document in place (walkAsync rewrites nodes) and aliases resolved
   // output nodes back to the input, contradicting the no-mutate contract above.
-  const cloned = structuredClone(doc);
+  const cloned = cloneValueGraph(doc);
 
   // Every document is indexed before traversal. OAS 3.1 requires complete
   // document parsing because a later $id can establish the resource/base that
@@ -542,7 +544,7 @@ export async function dereference<T = unknown>(
   }
 
   async function walkAsync(node: unknown, document: DocumentContext): Promise<unknown> {
-    if (node == null || typeof node !== "object") return node;
+    if (node == null || typeof node !== "object" || isJSONNumber(node)) return node;
     if (resolvedNodes.has(node)) return resolvedNodes.get(node);
 
     if (Array.isArray(node)) {

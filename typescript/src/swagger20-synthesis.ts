@@ -1,3 +1,4 @@
+import { cloneValueGraph } from "./value-graph.js";
 import {
   SWAGGER20_METHODS,
   arrayMember,
@@ -330,7 +331,7 @@ const PARAMETER_SCHEMA_KEYS = [
 
 function parameterSchemaImage(parameter: Swagger20Parameter): Swagger20Object {
   const schema: Swagger20Object = {};
-  for (const key of PARAMETER_SCHEMA_KEYS) if (Object.hasOwn(parameter.raw, key)) schema[key] = structuredClone(parameter.raw[key]);
+  for (const key of PARAMETER_SCHEMA_KEYS) if (Object.hasOwn(parameter.raw, key)) schema[key] = cloneValueGraph(parameter.raw[key]);
   return schema;
 }
 
@@ -658,7 +659,7 @@ async function materializeSwagger20Schema(
         for (const name of Object.keys(child).sort()) projected[name] = await schema(child[name], rawResource);
         result[key] = projected;
       } else if (key === "allOf" && Array.isArray(child)) result[key] = await Promise.all(child.map((branch) => schema(branch, rawResource)));
-      else result[key] = structuredClone(child);
+      else result[key] = cloneValueGraph(child);
     }
     return result;
   };

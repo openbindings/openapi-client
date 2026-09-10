@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { equalJSON } from "@openbindings/json";
 import { parseRef, buildJsonPointerRef, sanitizeKey, uniqueKey, mergeParameters, loadOpenAPIDocument, parseJSONOrYAML } from "./util.js";
 
 describe("parseRef", () => {
@@ -266,20 +267,13 @@ paths:
     ["12e03", 12000],
     ["1_000", "1_000"],
   ] as const)("resolves %s by §10.3.2's patterns", async (spelling, want) => {
-    expect(await example(spelling)).toStrictEqual(want);
+    expect(equalJSON(await example(spelling), want)).toBe(true);
   });
 
-  // One spelling this parser still resolves by a YAML 1.1 rule the accepted
-  // OAS editions do not admit, recorded here so the divergence is named
-  // rather than absent: §10.3.2 has no binary int pattern, so 0b101 matches
-  // nothing and is the string "0b101". js-yaml resolves it under every
-  // schema it ships, and the Go twin's decoder does the same, so the twins
-  // agree with each other and not with the authority. Converging costs a
-  // conformant scalar-resolution layer in both; filed as F-O1-7 in
-  // corpus-lab/OPENAPI-RUNTIME.md rather than half-fixed in one twin. No
-  // corpus specimen's emitted OBI depends on it.
-  it("records the binary-int non-conformance both twins share (F-O1-7)", async () => {
-    expect(await example("0b101")).toBe(5);
+  // YAML 1.2.2 Core has no binary-int pattern; preserve the string. The exact
+  // source adapters now follow the same scalar rule in both implementations.
+  it("resolves a binary-int-shaped scalar as a string (F-O1-7)", async () => {
+    expect(await example("0b101")).toBe("0b101");
   });
 
   // ±.inf and .nan resolve to floats JSON cannot spell. The operation value

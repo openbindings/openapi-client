@@ -1,4 +1,6 @@
 import type { OpenAPIMediaType } from "./types.js";
+import { numberToken, integerNumberToken, isJSONNumber } from "@openbindings/json";
+import { stringifyRequestJSON } from "./request-json.js";
 import { resolveDeclaration, type SchemaDeclaration } from "./resolved-declaration.js";
 
 export type OpenAPI32SequentialRequestKind = "json-lines" | "json-seq";
@@ -86,8 +88,9 @@ export function serializeOpenAPI32NonJSONText(
   }
   if (typeof value === "string") return value;
   if (typeof value === "boolean") return value ? "true" : "false";
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return normalizeOpenAPI32JSONNumber(JSON.stringify(value));
+  const token = numberToken(value);
+  if (token !== undefined) {
+    return normalizeOpenAPI32JSONNumber(token);
   }
   throw new Error(`JSON ${kind} has no non-JSON text serialization`);
 }
@@ -644,7 +647,7 @@ function canonicalBase64Bytes(value: unknown, subject: string): Uint8Array<Array
 }
 
 function stringifyOpenAPI32JSON(value: unknown): string {
-  const serialized = JSON.stringify(value);
+  const serialized = stringifyRequestJSON(value);
   if (serialized === undefined) throw new Error("value has no JSON representation");
   return serialized.replace(/[<>&\u2028\u2029]/gu, (character) =>
     `\\u${character.codePointAt(0)!.toString(16).padStart(4, "0")}`);
@@ -653,7 +656,8 @@ function stringifyOpenAPI32JSON(value: unknown): string {
 function openAPI32JSONValueType(value: unknown): string {
   if (typeof value === "string") return "string";
   if (typeof value === "boolean") return "boolean";
-  if (typeof value === "number" && Number.isFinite(value)) return Number.isInteger(value) ? "integer" : "number";
+  const token = numberToken(value);
+  if (token !== undefined) return integerNumberToken(token) ? "integer" : "number";
   if (Array.isArray(value)) return "array";
   if (asRecord(value)) return "object";
   return "";
@@ -709,7 +713,7 @@ function concatBytes(chunks: readonly Uint8Array[]): Uint8Array<ArrayBuffer> {
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
+  return value !== null && typeof value === "object" && !Array.isArray(value) && !isJSONNumber(value)
     ? value as Record<string, unknown>
     : null;
 }

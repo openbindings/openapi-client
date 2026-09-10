@@ -1,6 +1,7 @@
 package openapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -1245,7 +1246,9 @@ func cloneJSONValues(input []any) []any {
 		return nil
 	}
 	var result []any
-	if json.Unmarshal(data, &result) != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if decoder.Decode(&result) != nil {
 		return nil
 	}
 	return result
@@ -1260,7 +1263,9 @@ func cloneStringAnyMap(input map[string]any) map[string]any {
 		return nil
 	}
 	var result map[string]any
-	if json.Unmarshal(data, &result) != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if decoder.Decode(&result) != nil {
 		return nil
 	}
 	return result

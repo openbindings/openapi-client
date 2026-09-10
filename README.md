@@ -14,6 +14,11 @@ dependency.
 > authority revision, together with the native, race, package, browser, API,
 > and clean-consumer qualification gates.
 
+> Development-branch qualification delta: the Go value-carriage migration
+> below has not yet passed a coordinated Go/TypeScript package-release gate.
+> TypeScript still uses its existing numeric representation; the stronger
+> cross-language fidelity target is not yet qualified.
+
 ## TypeScript
 
 ```ts
@@ -90,6 +95,16 @@ The Go module exposes the same concepts idiomatically:
   cancellation, backpressure, and SSE metadata;
 - non-2xx HTTP outcomes are native results, while local and protocol failures
   are typed `ClientError` values.
+
+Decoded JSON response numbers (including failure bodies and sequential JSON
+items) are `encoding/json.Number`, not `float64`. This implementation selects
+the binding's permitted exact-carriage alternative. `json.Marshal` preserves
+these as JSON numbers. For computation, explicitly choose `Int64`, `Float64`,
+or an appropriate decimal library and handle conversion errors/rounding.
+Generic typed-input adaptation and metadata clones also retain number tokens.
+Caller-supplied native floats retain only the value already supplied; they
+cannot recover precision lost before the call. Lexically constrained non-JSON
+parameter conversion and artifact-loader limitations are separate concerns.
 
 `ClientError.Kind` is the closed coarse classification for the public major
 version. `ClientError.Code` supplies a more specific reason; documented or

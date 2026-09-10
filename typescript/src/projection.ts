@@ -1,3 +1,5 @@
+import { cloneValueGraph } from "./value-graph.js";
+import { isJSONNumber } from "@openbindings/json";
 import type {
   OpenAPIDocument,
   OpenAPIMediaType,
@@ -322,7 +324,7 @@ export async function projectOpenAPIDocument(
     );
   }
   if (exactBindingSpec === BINDING_SPEC_OPENAPI_32) {
-    doc = structuredClone(artifact.document) as OpenAPIDocument;
+    doc = cloneValueGraph(artifact.document) as OpenAPIDocument;
     resources.push({ root: doc, baseURI: location });
     for (const disposition of await artifact.operationInventory()) {
       if (disposition.target) {
@@ -947,7 +949,7 @@ function installOpenAPI32SynthesisTarget(
   let operation: OpenAPIOperation = target.referringSecuritySchemes
     ? {
         ...target.operation,
-        [REFERRING_SECURITY_SCHEMES_MARKER]: structuredClone(target.referringSecuritySchemes),
+        [REFERRING_SECURITY_SCHEMES_MARKER]: cloneValueGraph(target.referringSecuritySchemes),
       }
     : target.operation;
   // The 3.2 execution closure does not need callback declarations, while
@@ -1634,7 +1636,7 @@ function candidateLocalSchemaClone<T>(
   memo: Map<object, unknown>,
   componentNames: ReadonlyMap<object, DeclaredComponent>,
 ): T {
-  if (value === null || typeof value !== "object") return value;
+  if (value === null || typeof value !== "object" || isJSONNumber(value)) return value;
   const cached = memo.get(value);
   if (cached !== undefined) return cached as T;
   if (Array.isArray(value)) {
@@ -1910,7 +1912,7 @@ function cloneProviderDocument(
 ): { document: OpenAPIDocument; schemaNames: Map<object, DeclaredComponent> } {
   const clones = new Map<object, object>();
   const clone = (value: unknown): unknown => {
-    if (value === null || typeof value !== "object") return value;
+    if (value === null || typeof value !== "object" || isJSONNumber(value)) return value;
     const existing = clones.get(value);
     if (existing) return existing;
     if (Array.isArray(value)) {

@@ -7,6 +7,7 @@ require (
 	github.com/getkin/kin-openapi v0.149.0
 	github.com/oasdiff/yaml v0.1.1
 	github.com/oasdiff/yaml3 v0.0.14
+	github.com/openbindings/openbindings-go v0.2.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	golang.org/x/net v0.56.0
 	golang.org/x/text v0.38.0
@@ -16,4 +17,5 @@ require (
 	github.com/go-openapi/jsonpointer v0.22.5 // indirect
 	github.com/go-openapi/swag/jsonname v0.25.5 // indirect
 	github.com/kr/pretty v0.3.1 // indirect
+	github.com/rogpeppe/go-internal v1.9.0 // indirect
 )

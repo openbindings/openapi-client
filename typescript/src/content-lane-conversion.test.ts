@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { numberToken } from "@openbindings/json";
+import type { OpenAPIParameterConverter } from "./params.js";
 import { OpenAPIEngine } from "./engine.js";
 import { OPENAPI_PROFILE_FULL } from "./profile.js";
 import {
@@ -53,7 +55,7 @@ const JSON_ENCODING = {
   flag: { contentType: "application/json" },
   styled: { explode: true },
 };
-const visibleConverter = (value: boolean | number): string => "n" + String(value);
+const visibleConverter: OpenAPIParameterConverter = (value) => "n" + (numberToken(value) ?? String(value));
 
 function plan(mediaType: string, encoding?: Record<string, unknown>, propertyMedia?: Record<string, string>) {
   const plans = planResolvedRequestBodies(operation(mediaType, encoding), {

@@ -400,7 +400,11 @@ func TestEnginePreservesDeclaredJSONFailureValuesIncludingNull(t *testing.T) {
 			if err := execution.Wait(); !errors.As(err, &terminal) {
 				t.Fatalf("terminal = %#v", err)
 			}
-			if !terminal.DetailsPresent || !reflect.DeepEqual(terminal.Details, value) {
+			want := value
+			if value == float64(0) {
+				want = json.Number("0")
+			}
+			if !terminal.DetailsPresent || !reflect.DeepEqual(terminal.Details, want) {
 				t.Fatalf("details = present %v, %#v; want %#v", terminal.DetailsPresent, terminal.Details, value)
 			}
 		})

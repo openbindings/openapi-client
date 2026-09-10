@@ -1,4 +1,5 @@
-import { CORE_SCHEMA, loadAll } from "js-yaml";
+import { cloneJSON } from "@openbindings/json";
+import { parseExactSourceDocuments } from "./exact-source.js";
 import { assertScalarMappingKeys } from "./util.js";
 import {
   Swagger20Document,
@@ -98,12 +99,9 @@ export function parseSwagger20Resource(content: unknown): unknown {
   // Outside the try: the key gate names its own refusal, and rewrapping it as
   // a parse failure would hide which load gate refused.
   assertScalarMappingKeys(content);
-  const documents: unknown[] = [];
+  let documents: unknown[];
   try {
-    loadAll(content, (document) => documents.push(document), {
-      schema: CORE_SCHEMA,
-      json: false,
-    });
+    documents = parseExactSourceDocuments(content);
   } catch (error: unknown) {
     throw new Error("parse OpenAPI representation", { cause: error });
   }
@@ -113,9 +111,7 @@ export function parseSwagger20Resource(content: unknown): unknown {
 
 function cloneAndCheckJSONImage(value: unknown): unknown {
   try {
-    const image = JSON.stringify(value);
-    if (image === undefined) throw new Error("value has no JSON image");
-    return JSON.parse(image) as unknown;
+    return cloneJSON(value);
   } catch (error: unknown) {
     throw new Error("Swagger 2.0 representation has no RFC 7159 JSON image", { cause: error });
   }

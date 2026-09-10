@@ -46,7 +46,8 @@
  * different validators name the same position (one reports a `uniqueItems`
  * failure at `/required`, the other at `/required/2`).
  */
-import { compileSchema, draft2020 } from "json-schema-library";
+import { compileSchema, EXACT_DRAFT_2020 } from "@openbindings/json-schema";
+import { isJSONNumber } from "@openbindings/json";
 import oasDialectBase from "./authority/oas-3.1-dialect-base.json" with { type: "json" };
 import oasMetaBase from "./authority/oas-3.1-meta-base.json" with { type: "json" };
 import jsonSchema202012 from "./authority/json-schema-2020-12.json" with { type: "json" };
@@ -60,7 +61,7 @@ import metaUnevaluated from "./authority/json-schema-2020-12-meta-unevaluated.js
 
 type Obj = Record<string, unknown>;
 
-const isObj = (v: unknown): v is Obj => v !== null && typeof v === "object" && !Array.isArray(v);
+const isObj = (v: unknown): v is Obj => v !== null && typeof v === "object" && !Array.isArray(v) && !isJSONNumber(v);
 
 /**
  * The Schema Object keyword inventory the floor's own walk follows. Kept here
@@ -111,11 +112,7 @@ const esc = (s: string): string => s.replace(/~/g, "~0").replace(/\//g, "~1");
  * well-formedness with, which is what makes the floor's verdict and the
  * downstream document rule's verdict the same verdict.
  */
-const BOUNDARY_DRAFT = {
-  ...draft2020,
-  formats: {},
-  keywords: draft2020.keywords.filter((k) => k.keyword !== "dependencies"),
-};
+const BOUNDARY_DRAFT = EXACT_DRAFT_2020;
 
 type CompiledDialect = { validate(value: unknown): { valid: boolean; errors?: Array<{ data?: { pointer?: string } }> } };
 

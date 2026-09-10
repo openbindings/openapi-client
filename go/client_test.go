@@ -560,7 +560,7 @@ paths:
 	}
 	requirement := requirements.Alternatives[0].Requirements[0]
 	if requirement.Kind != openapi.RequirementOption || requirement.Name != "SecurityAlternative" || requirement.Path != "" ||
-		!reflect.DeepEqual(requirement.AllowedValues, []any{float64(0), float64(1)}) && !reflect.DeepEqual(requirement.AllowedValues, []any{0, 1}) {
+		!reflect.DeepEqual(requirement.AllowedValues, []any{json.Number("0"), json.Number("1")}) {
 		t.Fatalf("security selection requirement = %#v", requirement)
 	}
 	selected := 1

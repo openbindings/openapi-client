@@ -490,7 +490,7 @@ func schemaImage(artifact *Artifact, reference *openapi3.SchemaRef) json.RawMess
 	}
 	if artifact != nil && artifact.schemaOverlays != nil {
 		var image map[string]any
-		if json.Unmarshal(data, &image) == nil {
+		if unmarshalJSONImage(data, &image) == nil {
 			delete(image, "__origin__")
 			artifact.schemaOverlays.apply(reference, image)
 			data, err = json.Marshal(image)
@@ -542,7 +542,7 @@ func cloneStringAnyMap(value map[string]any) map[string]any {
 		return nil
 	}
 	var result map[string]any
-	if err := json.Unmarshal(data, &result); err != nil {
+	if err := decodeJSONValue(data, &result); err != nil {
 		return nil
 	}
 	return result

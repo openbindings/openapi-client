@@ -1,3 +1,4 @@
+import { numberToken } from "@openbindings/json";
 import type {
   OpenAPIDocument,
   OpenAPIMediaType,
@@ -12,6 +13,7 @@ import {
   serializeQueryValue,
 } from "./params.js";
 import { bodySchemaFlattens, codePointCompare, valueHasLoneSurrogate } from "./util.js";
+import { stringifyRequestJSON } from "./request-json.js";
 import {
   hasDynamicObjectCarriage,
   hasMediaFidelity,
@@ -1957,7 +1959,7 @@ export function buildRequestBody(
         }
         const value = routed.bodyValue ?? null;
         if (valueHasLoneSurrogate(value)) throw new Error("request value carries an unpaired surrogate");
-        return { body: JSON.stringify(value), contentType: plan.mediaType };
+        return { body: stringifyRequestJSON(value), contentType: plan.mediaType };
       }
       if (Object.keys(routed.bodyFields).length === 0) {
         if (plan.required || routed.bodySet) return { body: "{}", contentType: plan.mediaType };
@@ -1966,7 +1968,7 @@ export function buildRequestBody(
       if (valueHasLoneSurrogate(routed.bodyFields)) {
         throw new Error("request value carries an unpaired surrogate");
       }
-      return { body: JSON.stringify(routed.bodyFields), contentType: plan.mediaType };
+      return { body: stringifyRequestJSON(routed.bodyFields), contentType: plan.mediaType };
     }
     case FAMILY_MULTIPART: {
       if (plan.revision3 === true) {
@@ -2512,14 +2514,14 @@ function writeMultipartPart(
     const ct = normalizeMediaType(encContentType);
     let body: string;
     if (isJSONMediaType(ct)) {
-      body = JSON.stringify(value ?? null);
+      body = stringifyRequestJSON(value ?? null);
     } else if (typeof value === "string") {
       body = value;
     } else {
       try {
         body = primitiveString(value);
       } catch {
-        body = JSON.stringify(value ?? null);
+        body = stringifyRequestJSON(value ?? null);
       }
     }
     fd.append(name, new Blob([body], { type: encContentType }), name);
@@ -2529,7 +2531,7 @@ function writeMultipartPart(
   // Per-type defaults: objects (and undeclared complex values) ride as
   // application/json parts; primitives as plain form fields.
   if (isComplexPartValue(value, schema)) {
-    fd.append(name, new Blob([JSON.stringify(value ?? null)], { type: "application/json" }), name);
+    fd.append(name, new Blob([stringifyRequestJSON(value ?? null)], { type: "application/json" }), name);
     return;
   }
   fd.append(name, primitiveString(value));
@@ -2605,7 +2607,7 @@ function writeRevision3MultipartPart(
   }
 
   if (isJSONMediaType(selected.base)) {
-    fd.append(name, new Blob([JSON.stringify(value ?? null)], { type: contentType }), name);
+    fd.append(name, new Blob([stringifyRequestJSON(value ?? null)], { type: contentType }), name);
     return;
   }
 
@@ -3145,7 +3147,7 @@ function buildRevision3URLEncodedBody(
       }
       text = fields[name];
     } else if (isJSONMediaType(selected.base)) {
-      text = JSON.stringify(fields[name] ?? null);
+      text = stringifyRequestJSON(fields[name] ?? null);
     } else if (selected.base === "text/plain") {
       text = openapiVersion === "3.2.0"
         ? serializeOpenAPI32NonJSONText(property, fields[name])
@@ -3167,9 +3169,9 @@ function buildRevision3URLEncodedBody(
  * use the binding family's shortest exact RFC 8259 representation.
  */
 function serializeRevision3ContentText(value: unknown): string {
-  if (typeof value === "number") {
-    if (!Number.isFinite(value)) throw new Error("non-finite number has no RFC 8259 lexical form");
-    return normalizeOpenAPI32JSONNumber(JSON.stringify(value));
+  const token = numberToken(value);
+  if (token !== undefined) {
+    return normalizeOpenAPI32JSONNumber(token);
   }
   return primitiveString(value);
 }
