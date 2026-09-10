@@ -89,10 +89,12 @@ demonstrate that wire, application, and lifecycle mismatches are detected.
 The TypeScript and Go native clients share the same declared support boundary
 and run the hash-locked portable processor corpus through their public
 facades. Their native suites add authority-derived wire, value, lifecycle,
-package, race, and external-consumer evidence. OpenBindings adapters,
-cross-SDK synthesis comparison, direct-versus-adapted differentials, and
-sealed acquisition cohorts remain later qualification gates; none is part of
-the current standalone-client claim.
+package, race, and external-consumer evidence. OpenBindings adapters now use
+the native provider for synthesis and invocation; cross-SDK synthesis and
+direct-versus-adapted differential checks run in the coordinated SDK cohort.
+Those checks are downstream evidence, not standalone-client responsibilities.
+Historical sealed acquisition results are not automatically qualification of a
+new candidate; final candidate and distribution gates remain separate.
 
 Passing this contract is evidence for the stated standard OpenAPI boundary; it
 is not a claim to infer private vendor-extension behavior or to operate an API

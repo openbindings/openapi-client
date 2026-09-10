@@ -50,6 +50,36 @@ The generic result types are caller assertions, not runtime schema
 validation. A generated typed facade can sit over this client without
 reimplementing OpenAPI wire behavior.
 
+## JSON number values
+
+Decoded JSON is not restricted to JavaScript's binary64 number range. Safe
+integer tokens use native `number` values; other numeric tokens use immutable
+`JSONNumber` carriers from the protocol-neutral `@openbindings/json` package.
+This applies to JSON success bodies, decoded failure bodies, and sequential
+JSON values. A result generic is only a caller assertion: declaring every
+numeric field as `number` does not convert its value.
+
+Use the same package to inspect, construct, or serialize exact values:
+
+```ts
+import { numberToken, parseJSON, stringifyJSON } from "@openbindings/json";
+
+const input = parseJSON('{"id":9223372036854775807,"amount":0.1234567890123456789}');
+console.log(stringifyJSON(input)); // Both values remain JSON numbers, unchanged.
+console.log(numberToken(42));      // "42"; also accepts a JSONNumber carrier.
+```
+
+For a decoded integer identifier, pass its `numberToken(value)` to `BigInt`
+only when the token is an integer spelling. For decimal arithmetic, use an
+appropriate decimal library. Conversion to `Number` is an explicit potentially
+lossy application choice. Ordinary `JSON.stringify` is not a portable carrier
+serializer across supported hosts; use `stringifyJSON`. Native numbers supplied
+by the caller retain only their already-represented value: parsing a large
+identifier with ordinary `JSON.parse` before calling the client cannot be undone.
+
+These helpers do not require an OBI or the OpenBindings SDK. This implementation
+policy does not change the binding's separately chosen parameter conversion.
+
 ## Supported artifacts
 
 The exact accepted editions are:

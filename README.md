@@ -14,10 +14,10 @@ dependency.
 > authority revision, together with the native, race, package, browser, API,
 > and clean-consumer qualification gates.
 
-> Development-branch qualification delta: the Go value-carriage migration
-> below has not yet passed a coordinated Go/TypeScript package-release gate.
-> TypeScript still uses its existing numeric representation; the stronger
-> cross-language fidelity target is not yet qualified.
+Both implementations preserve JSON numbers across source, request, and response
+boundaries. This is the official clients' implementation-quality policy, not a
+requirement that every implementation choose the same host representation.
+Candidate source and packed-consumer qualification do not publish packages.
 
 ## TypeScript
 
@@ -41,7 +41,7 @@ else console.error(result.response.status, result.error);
 
 See the [TypeScript package guide](typescript/README.md) for sources,
 selection, inputs, authentication, results, streaming, middleware, transports,
-and redirects.
+redirects, and [exact JSON number handling](typescript/README.md#json-number-values).
 
 ## Go
 
