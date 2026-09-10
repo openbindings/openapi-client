@@ -763,7 +763,7 @@ function declaredBase64TransferEncoding(
     : false;
 }
 
-function splitHTTPList(raw: string): string[] {
+export function splitHTTPList(raw: string): string[] {
   const result: string[] = [];
   let start = 0;
   let quoted = false;
@@ -787,7 +787,7 @@ function splitHTTPList(raw: string): string[] {
   return result;
 }
 
-function parseMediaDeclaration(raw: string): ParsedMediaType | ParsedMediaRange {
+export function parseMediaDeclaration(raw: string): ParsedMediaType | ParsedMediaRange {
   try { return parseMediaType(raw, true); } catch { return parseMediaRange(raw, true); }
 }
 

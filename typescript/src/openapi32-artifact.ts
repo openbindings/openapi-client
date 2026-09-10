@@ -1,5 +1,7 @@
 import { cloneValueGraph } from "./value-graph.js";
 import { schemaObjectDefects } from "./schema-dialect.js";
+import { resolveDeclaration, type ResolvedDeclaration, type SchemaDeclaration } from "./resolved-declaration.js";
+import { parseMediaDeclaration, splitHTTPList } from "./resolved-media.js";
 import type {
   OpenAPIDocument,
   OpenAPIMediaType,
@@ -804,8 +806,11 @@ class OpenAPI32Overlay {
         const clone = cloneJSON(media) as OpenAPIMediaType;
         if (Object.hasOwn(media, "schema")) clone.schema = await this.materializeSchema(media.schema, resolved.resource);
         if (Object.hasOwn(media, "itemSchema")) clone.itemSchema = await this.materializeSchema(media.itemSchema, resolved.resource);
-        for (const field of ["encoding", "prefixEncoding", "itemEncoding"]) {
-          if (Object.hasOwn(media, field)) clone[field] = await this.materializeEncoding(media[field], resolved.resource, 0);
+        const base = parseMediaDeclaration(mediaType).base;
+        if (base.startsWith("multipart/") || base === "application/x-www-form-urlencoded") {
+          const declaration = resolveDeclaration(clone.schema, false);
+          const item = Object.hasOwn(clone, "itemSchema") ? resolveDeclaration(clone.itemSchema as SchemaDeclaration, false) : declaration.items();
+          await this.materializeRequestEncodingFields(clone, resolved.resource, declaration, item, base.startsWith("multipart/"), 0);
         }
         result[mediaType] = clone;
       } catch {
@@ -831,12 +836,66 @@ class OpenAPI32Overlay {
     if (headers) {
       const materialized: Record<string, unknown> = {};
       for (const [name, value] of Object.entries(headers)) {
+        if (name.toLowerCase() === "content-type") continue;
         const node = await this.resolveReferenceObject(value, owner, "header");
         materialized[name] = asRecord(node.value)
           ? await this.materializeResponseHeader(node)
           : cloneJSON(node.value);
       }
       result.headers = materialized;
+    }
+    return result;
+  }
+
+  private async materializeRequestEncodingFields(
+    object: Record<string, unknown>, owner: RawResource, declaration: ResolvedDeclaration,
+    item: ResolvedDeclaration, multipart: boolean, depth: number,
+  ): Promise<void> {
+    const named = asRecord(object.encoding);
+    if (named) {
+      const materialized: Record<string, unknown> = {};
+      for (const name of declaration.propertyNames()) {
+        if (!Object.hasOwn(named, name)) continue;
+        const property = declaration.property(name);
+        materialized[name] = await this.materializeRequestEncoding(named[name], owner,
+          property.declaresOnly("array") ? property.items() : property, multipart, depth);
+      }
+      object.encoding = materialized;
+    }
+    if (!multipart) return;
+    if (Array.isArray(object.prefixEncoding)) {
+      object.prefixEncoding = await Promise.all(object.prefixEncoding.map(value =>
+        this.materializeRequestEncoding(value, owner, item, true, depth)));
+    }
+    if (Object.hasOwn(object, "itemEncoding")) {
+      object.itemEncoding = await this.materializeRequestEncoding(object.itemEncoding, owner, item, true, depth);
+    }
+  }
+
+  private async materializeRequestEncoding(
+    raw: unknown, owner: RawResource, declaration: ResolvedDeclaration, multipart: boolean, depth: number,
+  ): Promise<unknown> {
+    const object = asRecord(raw);
+    if (!object) return cloneJSON(raw);
+    const result = cloneJSON(object) as Record<string, unknown>;
+    if (multipart) {
+      const headers = asRecord(object.headers);
+      if (headers) {
+        const materialized: Record<string, unknown> = {};
+        for (const [name, value] of Object.entries(headers)) {
+          if (name.toLowerCase() === "content-type") continue;
+          const node = await this.resolveReferenceOnlyObject(value, owner, "header", "Header Object");
+          materialized[name] = await this.materializeResponseHeader(node);
+        }
+        result.headers = materialized;
+      }
+      const nested = typeof object.contentType === "string" && splitHTTPList(object.contentType).some(member => {
+        const base = parseMediaDeclaration(member).base;
+        return base.startsWith("multipart/") || base === "*/*";
+      });
+      if (depth < 1 && nested) {
+        await this.materializeRequestEncodingFields(result, owner, declaration, declaration.items(), true, depth + 1);
+      }
     }
     return result;
   }

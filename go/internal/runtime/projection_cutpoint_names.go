@@ -23,6 +23,9 @@ func internalizeProjectionRefs(ctx context.Context, doc *openapi3.T) map[string]
 	if doc == nil {
 		return externals
 	}
+	if doc.OpenAPI == "3.2.0" {
+		prepareOpenAPI32EncodingProjection(doc)
+	}
 	doc.InternalizeRefs(ctx, func(_ *openapi3.T, ref openapi3.ComponentRef) string {
 		identity := referenceIdentity(ref)
 		name := internalizedRefName(ref.CollectionName(), identity)

@@ -168,6 +168,11 @@ func (o *OpenAPI32Overlay) materializeOpenAPI32SchemaRefLocked(raw any, owner *o
 	}
 	object, isObject := raw.(map[string]any)
 	if !isObject {
+		// Use the same semantics-equivalent boolean lift as the typed loader;
+		// projection's map boundary subsequently restores the literal schema.
+		if _, boolean := raw.(bool); boolean {
+			raw, _, _ = (&rawBooleanLiftState{}).schema(raw, false)
+		}
 		encoded, err := json.Marshal(raw)
 		if err != nil {
 			return nil
@@ -378,7 +383,11 @@ func (o *OpenAPI32Overlay) resolveRawObjectLocked(node openAPI32RawNode, seen ma
 	if refText == "" {
 		return node, true
 	}
-	return o.resolveRawReferenceLocked(refText, node.resource, seen)
+	resolved, ok := o.resolveRawReferenceLocked(refText, node.resource, seen)
+	if !ok {
+		return openAPI32RawNode{}, false
+	}
+	return o.resolveRawObjectLocked(resolved, seen)
 }
 
 func (o *OpenAPI32Overlay) resolveRawReferenceLocked(refText string, owner *openAPI32RawResource, seen map[string]bool) (openAPI32RawNode, bool) {

@@ -62,7 +62,12 @@ func (a *Artifact) materializeOpenAPI32RequestTarget(target *OperationTarget) (*
 		}
 		parsed, parseErr := parseMediaDeclaration(key)
 		if parseErr == nil && strings.HasPrefix(parsed.base, "multipart/") {
-			if err := o.hydrateOpenAPI32EncodingHeaders(mediaNode, 0); err != nil {
+			declaration := resolveDeclaration(mediaSchema(media), false)
+			item := declaration.items()
+			if media.ItemSchema != nil {
+				item = resolveDeclaration(media.ItemSchema.Value, false)
+			}
+			if err := o.hydrateOpenAPI32EncodingHeaders(mediaNode, 0, declaration, item); err != nil {
 				continue
 			}
 		}
@@ -81,22 +86,34 @@ func (a *Artifact) materializeOpenAPI32RequestTarget(target *OperationTarget) (*
 // Only multipart Encoding headers have wire meaning. Walk the already admitted
 // nesting depth, hydrating through existing fetch-capable resolvers before the
 // request overlay reads its cache. Form headers and deeper ignored fields stay out.
-func (o *OpenAPI32Overlay) hydrateOpenAPI32EncodingHeaders(node openAPI32RawNode, depth int) error {
+func (o *OpenAPI32Overlay) hydrateOpenAPI32EncodingHeaders(node openAPI32RawNode, depth int, declaration, itemDeclaration resolvedDeclaration) error {
 	object, _ := node.value.(map[string]any)
-	var entries []any
+	type entry struct {
+		raw         any
+		declaration resolvedDeclaration
+	}
+	var entries []entry
 	if encoding, ok := object["encoding"].(map[string]any); ok {
-		for _, value := range encoding {
-			entries = append(entries, value)
+		for _, name := range declaration.propertyNames() {
+			if value, present := encoding[name]; present {
+				property := declaration.property(name)
+				if property.declaresOnly("array") {
+					property = property.items()
+				}
+				entries = append(entries, entry{value, property})
+			}
 		}
 	}
 	if prefix, ok := object["prefixEncoding"].([]any); ok {
-		entries = append(entries, prefix...)
+		for _, value := range prefix {
+			entries = append(entries, entry{value, itemDeclaration})
+		}
 	}
 	if item, present := object["itemEncoding"]; present {
-		entries = append(entries, item)
+		entries = append(entries, entry{item, itemDeclaration})
 	}
-	for _, raw := range entries {
-		encoding, _ := raw.(map[string]any)
+	for _, selected := range entries {
+		encoding, _ := selected.raw.(map[string]any)
 		headers, _ := encoding["headers"].(map[string]any)
 		for name, rawHeader := range headers {
 			if strings.EqualFold(name, "Content-Type") {
@@ -112,7 +129,7 @@ func (o *OpenAPI32Overlay) hydrateOpenAPI32EncodingHeaders(node openAPI32RawNode
 		}
 		contentType, _ := encoding["contentType"].(string)
 		if depth < 1 && openAPI32EncodingMaySelectMultipart(contentType) {
-			if err := o.hydrateOpenAPI32EncodingHeaders(openAPI32RawNode{value: encoding, resource: node.resource}, depth+1); err != nil {
+			if err := o.hydrateOpenAPI32EncodingHeaders(openAPI32RawNode{value: encoding, resource: node.resource}, depth+1, selected.declaration, selected.declaration.items()); err != nil {
 				return err
 			}
 		}
