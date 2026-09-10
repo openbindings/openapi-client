@@ -7,8 +7,20 @@ on:
 jobs:
   typescript:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: openapi-client
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: openapi-client
+      # Only the protocol-neutral JSON leaves are consumed. This exact source
+      # pin qualifies unreleased artifacts without publishing SDK packages.
+      - uses: actions/checkout@v4
+        with:
+          repository: openbindings/openbindings-ts
+          ref: 99e7586fe377899b9d64d7f653adfacd0f790a48
+          path: openbindings-ts
       - uses: pnpm/action-setup@v4
         with:
           version: 10.15.0
@@ -16,6 +28,15 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+          cache-dependency-path: openapi-client/pnpm-lock.yaml
+      - name: Build neutral JSON prerequisites
+        run: |
+          pnpm --dir ../openbindings-ts install --frozen-lockfile --ignore-scripts
+          pnpm --dir ../openbindings-ts --filter @openbindings/json --filter @openbindings/json-schema build
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: openapi-client/go/go.mod
+          cache-dependency-path: openapi-client/go/go.sum
       - run: pnpm install --frozen-lockfile
       - run: pnpm qualify:release
   go:

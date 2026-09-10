@@ -29,6 +29,17 @@ try {
   assert.equal(archives.length, 1, `expected one npm archive, got ${archives.join(", ")}`);
   const archive = join(packageDirectory, archives[0]);
 
+  // Qualify actual neutral-leaf artifacts, not workspace symlinks or packages
+  // assumed to exist in a registry before the coordinated release. The client
+  // has no dependency on OpenBindings Core, invoker or synthesis packages.
+  const jsonSource = process.env.OPENBINDINGS_TS_DIR ?? resolve(root, "..", "openbindings-ts");
+  const leafArchives = [];
+  for (const leaf of ["json", "json-schema"]) {
+    const leafArchive = join(packageDirectory, `${leaf}.tgz`);
+    await run("pnpm", ["pack", "--out", leafArchive], join(jsonSource, "packages", leaf));
+    leafArchives.push(leafArchive);
+  }
+
   await writeFile(join(typeScriptConsumer, "package.json"), `${JSON.stringify({
     name: "openapi-client-release-consumer",
     private: true,
@@ -41,6 +52,7 @@ try {
     "--no-fund",
     "--no-package-lock",
     archive,
+    ...leafArchives,
   ], typeScriptConsumer, npmEnvironment);
 
   const documents = JSON.stringify([
