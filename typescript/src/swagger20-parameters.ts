@@ -1,4 +1,5 @@
 import { swagger20ConfigRequired } from "./swagger20-context.js";
+import { numberToken, compareNumberTokens, multipleNumberTokens, equalJSON, isJSONNumber } from "@openbindings/json";
 import {
   Swagger20Number,
   arrayMember,
@@ -460,7 +461,7 @@ function validateAssertionDeclaration(raw: Swagger20Object): void {
     if (value.present && !value.valid) throw new Error(`${name} is not a boolean`);
   }
   for (const name of ["maxLength", "minLength", "maxItems", "minItems"]) {
-    if (member(raw, name).present && (!literalInteger(raw[name]) || numberValue(raw[name])! < 0)) {
+    if (member(raw, name).present && (!literalInteger(raw[name]) || compareNumberTokens(numberValue(raw[name])!, "0") < 0)) {
       throw new Error(`${name} is not a nonnegative integer`);
     }
   }
@@ -484,24 +485,26 @@ function validateAssertions(raw: Swagger20Object, value: unknown, type: string):
   if (Array.isArray(raw.enum) && !raw.enum.some((candidate) => jsonEqual(value, candidate))) throw new Error("value is outside enum");
   if (type === "number" || type === "integer") {
     const number = numberValue(value)!;
-    if (raw.multipleOf !== undefined && number % numberValue(raw.multipleOf)! !== 0) throw new Error("value violates multipleOf");
+    if (raw.multipleOf !== undefined && !multipleNumberTokens(number, numberValue(raw.multipleOf)!)) throw new Error("value violates multipleOf");
     if (raw.maximum !== undefined) {
       const maximum = numberValue(raw.maximum)!;
-      if (number > maximum || (number === maximum && raw.exclusiveMaximum === true)) throw new Error("value exceeds maximum");
+      const order = compareNumberTokens(number, maximum);
+      if (order > 0 || (order === 0 && raw.exclusiveMaximum === true)) throw new Error("value exceeds maximum");
     }
     if (raw.minimum !== undefined) {
       const minimum = numberValue(raw.minimum)!;
-      if (number < minimum || (number === minimum && raw.exclusiveMinimum === true)) throw new Error("value is below minimum");
+      const order = compareNumberTokens(number, minimum);
+      if (order < 0 || (order === 0 && raw.exclusiveMinimum === true)) throw new Error("value is below minimum");
     }
   } else if (type === "string") {
     const length = [...value as string].length;
-    if (raw.maxLength !== undefined && length > numberValue(raw.maxLength)!) throw new Error("string exceeds maxLength");
-    if (raw.minLength !== undefined && length < numberValue(raw.minLength)!) throw new Error("string is below minLength");
+    if (raw.maxLength !== undefined && compareNumberTokens(String(length), numberValue(raw.maxLength)!) > 0) throw new Error("string exceeds maxLength");
+    if (raw.minLength !== undefined && compareNumberTokens(String(length), numberValue(raw.minLength)!) < 0) throw new Error("string is below minLength");
     if (typeof raw.pattern === "string" && !new RegExp(raw.pattern, "u").test(value as string)) throw new Error("string does not match pattern");
   } else if (type === "array") {
     const array = value as unknown[];
-    if (raw.maxItems !== undefined && array.length > numberValue(raw.maxItems)!) throw new Error("array exceeds maxItems");
-    if (raw.minItems !== undefined && array.length < numberValue(raw.minItems)!) throw new Error("array is below minItems");
+    if (raw.maxItems !== undefined && compareNumberTokens(String(array.length), numberValue(raw.maxItems)!) > 0) throw new Error("array exceeds maxItems");
+    if (raw.minItems !== undefined && compareNumberTokens(String(array.length), numberValue(raw.minItems)!) < 0) throw new Error("array is below minItems");
     if (raw.uniqueItems === true && array.some((item, index) => array.slice(0, index).some((prior) => jsonEqual(item, prior)))) {
       throw new Error("array violates uniqueItems");
     }
@@ -582,19 +585,17 @@ function finiteNumber(value: unknown): boolean {
   return numberValue(value) !== undefined;
 }
 
-function numberValue(value: unknown): number | undefined {
-  if (value instanceof Swagger20Number) return value.value;
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+function numberValue(value: unknown): string | undefined {
+  return numberToken(value);
 }
 
 function literalInteger(value: unknown): boolean {
-  if (value instanceof Swagger20Number) return /^-?(?:0|[1-9][0-9]*)$/u.test(value.lexeme);
+  if (isJSONNumber(value)) return /^-?(?:0|[1-9][0-9]*)$/u.test(value.rawJSON);
   return typeof value === "number" && Number.isSafeInteger(value);
 }
 
 function jsonEqual(left: unknown, right: unknown): boolean {
-  if (finiteNumber(left) && finiteNumber(right)) return numberValue(left) === numberValue(right);
-  return JSON.stringify(left) === JSON.stringify(right);
+  return equalJSON(left, right);
 }
 
 export function canonicalBase64Bytes(value: string): Uint8Array {

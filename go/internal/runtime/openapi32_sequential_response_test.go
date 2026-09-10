@@ -3,6 +3,7 @@ package openapiclient
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -21,11 +22,11 @@ func TestOpenAPI32SequentialResponseFraming(t *testing.T) {
 		body        string
 		want        []any
 	}{
-		{"jsonl", "application/jsonl", "application/jsonl", "{\"n\":1}\n{\"n\":2}\n", []any{map[string]any{"n": float64(1)}, map[string]any{"n": float64(2)}}},
-		{"ndjson", "application/x-ndjson", "application/x-ndjson", "true\n12\n", []any{true, float64(12)}},
-		{"json-seq", "application/json-seq", "application/json-seq", "\x1e{\"n\":1}\n\x1e2\n", []any{map[string]any{"n": float64(1)}, float64(2)}},
+		{"jsonl", "application/jsonl", "application/jsonl", "{\"n\":1}\n{\"n\":2}\n", []any{map[string]any{"n": json.Number("1")}, map[string]any{"n": json.Number("2")}}},
+		{"ndjson", "application/x-ndjson", "application/x-ndjson", "true\n12\n", []any{true, json.Number("12")}},
+		{"json-seq", "application/json-seq", "application/json-seq", "\x1e{\"n\":1}\n\x1e2\n", []any{map[string]any{"n": json.Number("1")}, json.Number("2")}},
 		{"suffix-json-seq", "application/problem+json-seq", "application/problem+json-seq", "\x1efalse\n\x1enull\n", []any{false, nil}},
-		{"positional-multipart", "multipart/mixed", multipartType, multipartBody, []any{map[string]any{"n": float64(1)}, "second"}},
+		{"positional-multipart", "multipart/mixed", multipartType, multipartBody, []any{map[string]any{"n": json.Number("1")}, "second"}},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			transport := &openAPI32ResponseTransport{responses: map[string]*http.Response{"/x": {
@@ -76,7 +77,7 @@ func TestOpenAPI32SequentialMalformedItemRetainsEarlierSuccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, terminal := collectNativeStream(result.Stream)
-	want := []any{map[string]any{"ok": float64(1)}}
+	want := []any{map[string]any{"ok": json.Number("1")}}
 	if !reflect.DeepEqual(got, want) || terminal == nil || !strings.Contains(terminal.Error(), "item 1 is malformed JSON") {
 		t.Fatalf("values = %#v, terminal %v", got, terminal)
 	}
@@ -93,7 +94,7 @@ func TestOpenAPI32SequentialDeliveryBoundIsPerItem(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, terminal := collectNativeStream(result.Stream)
-	if !reflect.DeepEqual(got, []any{float64(1)}) || terminal == nil || !strings.Contains(terminal.Error(), "exceeds 8 byte limit") {
+	if !reflect.DeepEqual(got, []any{json.Number("1")}) || terminal == nil || !strings.Contains(terminal.Error(), "exceeds 8 byte limit") {
 		t.Fatalf("values = %#v, terminal %v", got, terminal)
 	}
 }

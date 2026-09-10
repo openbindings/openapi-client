@@ -1,8 +1,13 @@
 import { readFile, readdir } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { isForbiddenPackage, isForbiddenGoPackage } from "./boundary-policy.mjs";
+
+// Repository ownership is not an architectural dependency. These qualified
+// leaves are protocol-neutral; Core, invoker and synthesis remain forbidden.
 
 const packageJSON = JSON.parse(await readFile(new URL("../typescript/package.json", import.meta.url), "utf8"));
 const dependencies = Object.keys(packageJSON.dependencies ?? {});
-const forbiddenDependencies = dependencies.filter((name) => name.startsWith("@openbindings/"));
+const forbiddenDependencies = dependencies.filter(isForbiddenPackage);
 if (forbiddenDependencies.length > 0) {
   throw new Error(`standalone package has OpenBindings runtime dependencies: ${forbiddenDependencies.join(", ")}`);
 }
@@ -32,20 +37,34 @@ for (const forbidden of [
 // The Go block below has a TypeScript twin. Without it the same retired
 // identifier sat in four user-facing TypeScript strings while only the Go copy
 // ever turned this job red.
-const tsFiles = (await readdir(new URL("../typescript/src/", import.meta.url)))
+const tsFiles = (await readdir(new URL("../typescript/src/", import.meta.url), { recursive: true }))
   .filter((name) => name.endsWith(".ts") && !name.endsWith(".test.ts") && !name.endsWith(".d.ts"));
 for (const name of tsFiles) {
   const source = await readFile(new URL(`../typescript/src/${name}`, import.meta.url), "utf8");
-  for (const forbidden of ["openbindings.openapi@", "@openbindings/", '"$openbindings"']) {
-    if (source.includes(forbidden)) {
+  for (const imported of source.matchAll(/(?:from\s+|import\s*\()?["'](@openbindings\/[^"']+)["']/g)) {
+    if (isForbiddenPackage(imported[1])) {
+      throw new Error(`standalone TypeScript source ${name} depends on ${imported[1]}`);
+    }
+  }
+  // The existing vocabulary check targets the public-facing source layer;
+  // internal implementation comments are not exported API declarations.
+  for (const forbidden of ["openbindings.openapi@", '"$openbindings"']) {
+    if (!name.includes("/") && source.includes(forbidden)) {
       throw new Error(`standalone TypeScript source ${name} leaks internal/OpenBindings concept ${forbidden}`);
     }
   }
 }
 
-const goMod = await readFile(new URL("../go/go.mod", import.meta.url), "utf8");
-if (goMod.includes("github.com/openbindings/openbindings-go")) {
-  throw new Error("standalone Go module depends on the OpenBindings Go SDK");
+// jsonvalue is hosted in the SDK module but imports no OpenBindings runtime.
+// Inspect the complete compiled dependency closure, including internal files,
+// rather than granting that entire module a namespace exception.
+const goDependencies = execFileSync("go", ["list", "-deps", "./..."], {
+  cwd: new URL("../go/", import.meta.url), encoding: "utf8",
+}).trim().split("\n");
+for (const dependency of goDependencies) {
+  if (isForbiddenGoPackage(dependency)) {
+    throw new Error(`standalone Go dependency closure contains ${dependency}`);
+  }
 }
 const goFiles = (await readdir(new URL("../go/", import.meta.url)))
   .filter((name) => name.endsWith(".go") && !name.endsWith("_test.go"));

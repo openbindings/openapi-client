@@ -9,7 +9,6 @@ import (
 	"sync"
 
 	"github.com/getkin/kin-openapi/openapi3"
-	"github.com/oasdiff/yaml"
 )
 
 // rawRefSiblingNormalizer preserves the source edition's reference semantics
@@ -44,6 +43,8 @@ const (
 	rawResponseTarget
 	rawCallbackTarget
 	rawSecuritySchemeTarget
+	rawExampleTarget
+	rawLinkTarget
 )
 
 type rawRefSemantics uint8
@@ -85,8 +86,8 @@ func (n *rawRefSiblingNormalizer) normalizeResource(data []byte, resource *url.U
 // typed dependency otherwise discards the referring document's sibling root
 // members while resolving the Path Item fragment.
 func (n *rawRefSiblingNormalizer) markReferringSecuritySchemes(data []byte, requested, retrieval *url.URL) ([]byte, error) {
-	var root any
-	if _, err := yaml.Unmarshal(data, &root, yaml.DecodeOpts{DisableTimestamps: true}); err != nil {
+	root, err := parseRawOpenAPIResource(data)
+	if err != nil {
 		return data, nil
 	}
 	object, _ := root.(map[string]any)
@@ -126,8 +127,8 @@ func (n *rawRefSiblingNormalizer) markReferringSecuritySchemes(data []byte, requ
 // for target lookup, while JSON Schema base-URI and nested-reference semantics
 // must use the latter.
 func (n *rawRefSiblingNormalizer) normalizeResourceAt(data []byte, requested, retrieval *url.URL) ([]byte, error) {
-	var root any
-	if _, err := yaml.Unmarshal(data, &root, yaml.DecodeOpts{DisableTimestamps: true}); err != nil {
+	root, err := parseRawOpenAPIResource(data)
+	if err != nil {
 		// Preserve kin-openapi's own combined JSON/YAML diagnostic for malformed
 		// artifacts; this pass is semantic normalization, not a second parser API.
 		return data, nil
@@ -520,8 +521,13 @@ func supportedComposingDialect(dialect string) bool {
 
 func (n *rawRefSiblingNormalizer) normalizeOpenAPIDocument(root map[string]any, semantics rawRefSemantics, base *url.URL) (bool, error) {
 	changed := markRawServers(root["servers"], base)
+	changed = n.markValueMetadata(root) || changed
+	if paths, ok := root["paths"].(map[string]any); ok {
+		changed = n.markValueObject(paths) || changed
+	}
 	components, _ := root["components"].(map[string]any)
 	if components != nil {
+		changed = n.markValueObject(components) || changed
 		for _, item := range rawMapValues(components["schemas"]) {
 			c, err := n.normalizeTarget(item, rawSchemaTarget, semantics, base)
 			if err != nil {
@@ -540,6 +546,8 @@ func (n *rawRefSiblingNormalizer) normalizeOpenAPIDocument(root map[string]any, 
 			{"callbacks", rawCallbackTarget},
 			{"pathItems", rawPathItemTarget},
 			{"securitySchemes", rawSecuritySchemeTarget},
+			{"examples", rawExampleTarget},
+			{"links", rawLinkTarget},
 		}
 		for _, entry := range componentKinds {
 			for _, item := range rawMapValues(components[entry.key]) {
@@ -641,6 +649,7 @@ func (n *rawRefSiblingNormalizer) normalizeTarget(value any, kind rawRefTargetKi
 			if operation == nil {
 				continue
 			}
+			changed = n.markValueMetadata(operation) || changed
 			if parameters, ok := operation["parameters"].([]any); ok {
 				for _, parameter := range parameters {
 					if err := apply(parameter, rawParameterTarget); err != nil {
@@ -661,6 +670,10 @@ func (n *rawRefSiblingNormalizer) normalizeTarget(value any, kind rawRefTargetKi
 			}
 		}
 	case rawParameterTarget, rawHeaderTarget:
+		if err := applyMany(object["examples"], rawExampleTarget); err != nil {
+			return false, err
+		}
+		changed = n.markValueObject(object, "example") || changed
 		if err := apply(object["schema"], rawSchemaTarget); err != nil {
 			return false, err
 		}
@@ -677,6 +690,9 @@ func (n *rawRefSiblingNormalizer) normalizeTarget(value any, kind rawRefTargetKi
 		changed = changed || c
 	case rawResponseTarget:
 		changed = normalizeRawResponseObject(object) || changed
+		if err := applyMany(object["links"], rawLinkTarget); err != nil {
+			return false, err
+		}
 		if err := applyMany(object["headers"], rawHeaderTarget); err != nil {
 			return false, err
 		}
@@ -689,7 +705,22 @@ func (n *rawRefSiblingNormalizer) normalizeTarget(value any, kind rawRefTargetKi
 		if err := applyMany(object, rawPathItemTarget); err != nil {
 			return false, err
 		}
+	case rawExampleTarget:
+		changed = n.markValueObject(object, "value") || changed
+	case rawLinkTarget:
+		changed = n.markValueObject(object, "parameters", "requestBody") || changed
+		changed = n.markValueServer(object["server"]) || changed
+	case rawSecuritySchemeTarget:
+		if flows, ok := object["flows"].(map[string]any); ok {
+			changed = n.markValueObject(flows) || changed
+			for _, name := range []string{"implicit", "password", "clientCredentials", "authorizationCode"} {
+				if flow, ok := flows[name].(map[string]any); ok {
+					changed = n.markValueObject(flow) || changed
+				}
+			}
+		}
 	}
+	changed = n.markValueMetadata(object) || changed
 	return changed, nil
 }
 
@@ -698,7 +729,7 @@ func (n *rawRefSiblingNormalizer) normalizeResponseMembers(value any, semantics 
 	if responses == nil {
 		return false, nil
 	}
-	changed := false
+	changed := n.markValueObject(responses)
 	for key, raw := range responses {
 		if strings.HasPrefix(key, "x-") {
 			continue
@@ -826,7 +857,7 @@ func markRawServers(value any, base *url.URL) bool {
 
 func referenceMetadataCanMutateTarget(kind rawRefTargetKind) bool {
 	switch kind {
-	case rawParameterTarget, rawHeaderTarget, rawRequestBodyTarget, rawResponseTarget, rawSecuritySchemeTarget:
+	case rawParameterTarget, rawHeaderTarget, rawRequestBodyTarget, rawResponseTarget, rawSecuritySchemeTarget, rawExampleTarget, rawLinkTarget:
 		return true
 	default:
 		return false
@@ -858,6 +889,12 @@ func (n *rawRefSiblingNormalizer) normalizeContent(value any, semantics rawRefSe
 		if media == nil {
 			continue
 		}
+		examplesChanged, err := n.normalizeExamples(media["examples"], semantics, base)
+		if err != nil {
+			return false, err
+		}
+		changed = examplesChanged || changed
+		changed = n.markValueObject(media, "example") || changed
 		c, err := n.normalizeTarget(media["schema"], rawSchemaTarget, semantics, base)
 		if err != nil {
 			return false, err
@@ -868,6 +905,7 @@ func (n *rawRefSiblingNormalizer) normalizeContent(value any, semantics rawRefSe
 			if encoding == nil {
 				continue
 			}
+			changed = n.markValueObject(encoding) || changed
 			if _, present := encoding["allowReserved"]; present {
 				if _, hasStyle := encoding["style"]; !hasStyle {
 					if _, hasExplode := encoding["explode"]; !hasExplode {
@@ -983,6 +1021,13 @@ func (n *rawRefSiblingNormalizer) normalizeSchema(value any, inherited rawRefSem
 		}
 	}
 
+	// These are OAS annotation objects, not instance data or schema children.
+	// Their opaque extensions need the same pre-loader value retention.
+	for _, key := range []string{"xml", "externalDocs"} {
+		if child, ok := object[key].(map[string]any); ok {
+			changed = n.markValueMetadata(child) || changed
+		}
+	}
 	for key, child := range object {
 		switch {
 		case rawSchemaMapKeywords[key]:

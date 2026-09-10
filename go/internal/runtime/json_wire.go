@@ -1,10 +1,11 @@
 package openapiclient
 
 import (
-	"encoding/json"
 	"fmt"
 	"reflect"
 	"unicode/utf8"
+
+	"github.com/openbindings/openbindings-go/jsonvalue"
 )
 
 // marshalRequestJSON preserves the binding's JSON-value boundary. Go's
@@ -15,7 +16,7 @@ func marshalRequestJSON(value any) ([]byte, error) {
 	if err := validateJSONStrings(reflect.ValueOf(value), map[visit]bool{}); err != nil {
 		return nil, err
 	}
-	return json.Marshal(value)
+	return jsonvalue.Marshal(value)
 }
 
 type visit struct {

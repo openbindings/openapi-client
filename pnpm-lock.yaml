@@ -10,12 +10,15 @@ importers:
 
   typescript:
     dependencies:
+      '@openbindings/json':
+        specifier: 0.2.0
+        version: link:../../openbindings-ts/packages/json
+      '@openbindings/json-schema':
+        specifier: 0.2.0
+        version: link:../../openbindings-ts/packages/json-schema
       js-yaml:
         specifier: ^4.2.0
         version: 4.3.1
-      json-schema-library:
-        specifier: ^11.6.1
-        version: 11.6.2
     devDependencies:
       '@types/js-yaml':
         specifier: ^4.0.9

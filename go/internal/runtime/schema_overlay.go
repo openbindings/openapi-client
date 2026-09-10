@@ -2,6 +2,7 @@ package openapiclient
 
 import (
 	"crypto/rand"
+	"encoding/json"
 	"reflect"
 	"strconv"
 	"strings"
@@ -17,12 +18,12 @@ import (
 // key, the sidecar retains and restores its original value.
 const schemaOverlayMarker = "x-openapi-client-internal-schema-overlay"
 
-// rawSchemaOverlayCollector is owned by one synthesis load. kin-openapi's
-// typed Schema model intentionally uses zero values for several JSON Schema
-// fields, so marshaling cannot distinguish absence from an authored null,
-// empty, zero, or false value. The collector keeps only those authorial
-// presence facts (plus opaque x-* annotations), then binds them to typed object
-// identity before InternalizeRefs rewrites reference topology.
+// rawSchemaOverlayCollector is owned by one artifact load. It retains exact
+// numeric/instance-data fields, opaque annotations, and presence facts that
+// kin-openapi's native numeric and zero-value fields cannot represent. The
+// existing parser supplies these values; the existing resolver supplies typed
+// object identity before InternalizeRefs rewrites reference topology. Typed
+// models navigate the graph, while retained fields own their exact values.
 //
 // Both maps are instance-local and guarded because a loader may fetch parts of
 // a closure concurrently. There is deliberately no process-global cache.
@@ -85,6 +86,13 @@ func (c *rawSchemaOverlayCollector) markRawSchema(schema map[string]any) bool {
 	c.next++
 	id := c.namespace + "-" + strconv.FormatUint(c.next, 10)
 	c.pending[id] = overlay
+	// Typed navigation does not own numeric assertions or instance-data values.
+	// Keep those exact in the sidecar, not a rounded native shadow.
+	for key := range overlay {
+		if exactSchemaValueField(key) || strings.HasPrefix(strings.ToLower(key), "x-") {
+			delete(schema, key)
+		}
+	}
 	schema[schemaOverlayMarker] = id
 	return true
 }
@@ -92,18 +100,27 @@ func (c *rawSchemaOverlayCollector) markRawSchema(schema map[string]any) bool {
 func authorialPresenceOverlay(schema map[string]any) map[string]any {
 	overlay := map[string]any{}
 	for key, value := range schema {
-		if strings.HasPrefix(strings.ToLower(key), "x-") || erasedSchemaPresence(key, value) {
+		if strings.HasPrefix(strings.ToLower(key), "x-") || exactSchemaValueField(key) || erasedSchemaPresence(key, value) {
 			overlay[key] = value
 		}
 	}
 	return overlay
 }
 
-// erasedSchemaPresence is intentionally narrower than "all raw fields".
-// Typed kin-openapi remains the operational authority; the raw sidecar only
-// restores spellings whose values its MarshalJSON omits. In particular it
-// never overlays structural $ref/allOf/oneOf content or non-empty assertion
-// values from a second parser.
+func exactSchemaValueField(key string) bool {
+	switch key {
+	case "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf",
+		"minLength", "maxLength", "minItems", "maxItems", "minProperties", "maxProperties", "minContains", "maxContains",
+		"default", "example", "examples", "const", "enum":
+		return true
+	}
+	return false
+}
+
+// erasedSchemaPresence supplements exactSchemaValueField for typed fields
+// whose MarshalJSON omits authored empty/false/null values. Structural
+// $ref/allOf/oneOf graphs remain the existing resolver's responsibility; this
+// helper does not parse, resolve, or create a competing structural model.
 func erasedSchemaPresence(key string, value any) bool {
 	switch key {
 	case "default", "example", "const":
@@ -131,6 +148,8 @@ func erasedSchemaPresence(key string, value any) bool {
 
 func rawNumberIsZero(value any) bool {
 	switch number := value.(type) {
+	case json.Number:
+		return strings.Trim(strings.Split(strings.ToLower(string(number)), "e")[0], "-+.0") == ""
 	case int:
 		return number == 0
 	case int8:
@@ -223,6 +242,7 @@ func (c *rawSchemaOverlayCollector) bindDocument(doc *openapi3.T) {
 	if c == nil || doc == nil {
 		return
 	}
+	defer c.restoreValueGraph(doc)
 	seenRefs := map[*openapi3.SchemaRef]bool{}
 	seenSchemas := map[*openapi3.Schema]bool{}
 	var visitRef func(*openapi3.SchemaRef)
@@ -250,6 +270,20 @@ func (c *rawSchemaOverlayCollector) bindDocument(doc *openapi3.T) {
 			// schemas participate automatically in the ordinary typed marshal,
 			// including schemas later moved by InternalizeRefs.
 			applyMissingOverlay(schema.Extensions, overlay)
+			// These typed fields can carry exact JSON directly. Fixed float/count
+			// fields remain navigation-only; projection uses retained raw values.
+			if value, present := overlay["default"]; present {
+				schema.Default = value
+			}
+			if value, present := overlay["example"]; present {
+				schema.Example = value
+			}
+			if value, present := overlay["const"]; present {
+				schema.Const = value
+			}
+			if value, present := overlay["enum"].([]any); present {
+				schema.Enum = value
+			}
 		}
 		for _, refs := range []openapi3.SchemaRefs{schema.OneOf, schema.AnyOf, schema.AllOf, schema.PrefixItems} {
 			for _, ref := range refs {
@@ -406,7 +440,7 @@ func (c *rawSchemaOverlayCollector) apply(ref *openapi3.SchemaRef, target map[st
 
 func applyMissingOverlay(target, overlay map[string]any) {
 	for key, value := range overlay {
-		if _, present := target[key]; !present {
+		if _, present := target[key]; !present || exactSchemaValueField(key) {
 			target[key] = cloneOverlayValue(value, map[uintptr]any{})
 		}
 	}

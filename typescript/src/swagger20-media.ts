@@ -2,6 +2,7 @@ import { swagger20ConfigRequired } from "./swagger20-context.js";
 import { escapePointerToken } from "./swagger20-reference.js";
 import { parseMediaRange, parseMediaType, type ParsedMediaType } from "./media.js";
 import { parseStrictResponseJSON } from "./util.js";
+import { stringifyRequestJSON } from "./request-json.js";
 import {
   arrayMember,
   isSwagger20Object,
@@ -147,7 +148,7 @@ export function encodeSwagger20RequestPayload(
 ): { body: Uint8Array; contentType: string } {
   if (selection.lane === "json") {
     if (jsonValueHasLoneSurrogate(routed.body)) throw new Error("request value carries an unpaired surrogate");
-    const encoded = JSON.stringify(routed.body);
+    const encoded = stringifyRequestJSON(routed.body);
     if (encoded === undefined) throw new Error("request value has no strict JSON image");
     return { body: new TextEncoder().encode(encoded), contentType: selection.media.canonical };
   }

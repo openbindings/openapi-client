@@ -197,7 +197,7 @@ func cloneProjectionAnalysis(value ProjectionAnalysis) ProjectionAnalysis {
 		return ProjectionAnalysis{}
 	}
 	var result ProjectionAnalysis
-	if json.Unmarshal(data, &result) != nil {
+	if unmarshalJSONImage(data, &result) != nil {
 		return ProjectionAnalysis{}
 	}
 	return result
@@ -1763,7 +1763,7 @@ func schemaRefToMap(ref *openapi3.SchemaRef, schemaOverlays *rawSchemaOverlayCol
 	}
 
 	var result map[string]any
-	if err := json.Unmarshal(data, &result); err != nil {
+	if err := unmarshalJSONImage(data, &result); err != nil {
 		return map[string]any{"type": "object", "x-conversion-error": err.Error()}
 	}
 
@@ -1805,7 +1805,7 @@ func buildRefRegistry(doc *openapi3.T, schemaOverlays *rawSchemaOverlayCollector
 			continue
 		}
 		var v map[string]any
-		if err := json.Unmarshal(data, &v); err != nil {
+		if err := unmarshalJSONImage(data, &v); err != nil {
 			continue
 		}
 		delete(v, "__origin__")

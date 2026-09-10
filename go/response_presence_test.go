@@ -2,6 +2,7 @@ package openapi
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -21,7 +22,7 @@ func TestFailureValuePresenceAcrossEditions(t *testing.T) {
 			{"object", `{"reason":"missing"}`, map[string]any{"reason": "missing"}, true},
 			{"empty-string", `""`, "", true},
 			{"false", "false", false, true},
-			{"zero", "0", float64(0), true},
+			{"zero", "0", json.Number("0"), true},
 		} {
 			for _, status := range []int{200, 400} {
 				t.Run(fmt.Sprintf("%s/%d/%s", edition, status, tc.name), func(t *testing.T) {

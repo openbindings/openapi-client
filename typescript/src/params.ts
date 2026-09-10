@@ -1,5 +1,7 @@
 import type { OpenAPIParameter, OpenAPIPathItem, OpenAPIOperation } from "./types.js";
+import { isJSONNumber, type JSONNumber } from "@openbindings/json";
 import { codePointCompare, errorMessage, mergeParameters } from "./util.js";
+import { stringifyRequestJSON } from "./request-json.js";
 import { isJSONMediaType, normalizeMediaType, parseMediaType, styleLaneUndefinedExpansionMember, type BodyPlan } from "./media.js";
 import { hasMediaFidelity, hasRoutedInputs } from "./constants.js";
 import { OPENAPI_PROFILE_BASE, type OpenAPIExecutionProfile } from "./profile.js";
@@ -27,7 +29,7 @@ const IGNORED_HEADER_PARAMS = new Set(["accept", "content-type", "authorization"
 const HTTP_TOKEN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u;
 
 /** Deterministically converts a JSON boolean or number for parameter carriage. */
-export type OpenAPIParameterConverter = (value: boolean | number) => string;
+export type OpenAPIParameterConverter = (value: boolean | number | JSONNumber) => string;
 
 export function duplicateDeclaredParameterIdentity(
   pathItem: OpenAPIPathItem,
@@ -774,7 +776,7 @@ function serializeParamContentValue(
   const mt = parsed?.base ?? normalizeMediaType(mediaKey);
   let text: string;
   if (isJSONMediaType(mt)) {
-    text = JSON.stringify(value);
+    text = stringifyRequestJSON(value);
   } else if (mt === "text/plain") {
     if (typeof value !== "string") {
       throw new Error(
@@ -869,7 +871,7 @@ export function convertParameterScalars(
     }));
   }
   if (typeof value === "string") return value;
-  if (typeof value !== "boolean" && (typeof value !== "number" || !Number.isFinite(value))) {
+  if (typeof value !== "boolean" && !isJSONNumber(value) && (typeof value !== "number" || !Number.isFinite(value))) {
     throw new Error(`value of type ${typeof value} is outside the JSON scalar conversion domain`);
   }
   if (!converter) throw new Error("JSON boolean or number requires parameterConversion");
@@ -1438,7 +1440,7 @@ export function primitiveString(v: unknown): string {
   if (v === null || v === undefined) return "";
   if (typeof v === "string") return v;
   if (typeof v === "boolean") return v ? "true" : "false";
-  if (typeof v === "number") return JSON.stringify(v);
+  if (typeof v === "number" || isJSONNumber(v)) return stringifyRequestJSON(v);
   throw new Error(`value of type ${typeof v} is not a primitive`);
 }
 
@@ -1447,7 +1449,7 @@ export function asArray(v: unknown): unknown[] | null {
 }
 
 export function asObject(v: unknown): Record<string, unknown> | null {
-  if (v !== null && typeof v === "object" && !Array.isArray(v)) {
+  if (v !== null && typeof v === "object" && !Array.isArray(v) && !isJSONNumber(v)) {
     return v as Record<string, unknown>;
   }
   return null;

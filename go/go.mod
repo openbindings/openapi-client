@@ -5,15 +5,16 @@ go 1.25.12
 require (
 	github.com/dlclark/regexp2 v1.12.0
 	github.com/getkin/kin-openapi v0.149.0
-	github.com/oasdiff/yaml v0.1.1
 	github.com/oasdiff/yaml3 v0.0.14
+	github.com/openbindings/openbindings-go v0.1.1-0.20260910175039-0f85d0a56f3c
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	golang.org/x/net v0.56.0
-	golang.org/x/text v0.38.0
+	golang.org/x/text v0.39.0
 )
 
 require (
 	github.com/go-openapi/jsonpointer v0.22.5 // indirect
 	github.com/go-openapi/swag/jsonname v0.25.5 // indirect
 	github.com/kr/pretty v0.3.1 // indirect
+	github.com/oasdiff/yaml v0.1.1 // indirect
 )

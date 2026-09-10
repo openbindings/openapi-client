@@ -388,7 +388,7 @@ func toStringAnyMap(value any) (map[string]any, bool) {
 		return nil, false
 	}
 	var m map[string]any
-	if err := json.Unmarshal(b, &m); err != nil {
+	if err := decodeJSONValue(b, &m); err != nil {
 		return nil, false
 	}
 	return m, true
@@ -406,7 +406,7 @@ func toAnySlice(value any) ([]any, bool) {
 		return nil, false
 	}
 	var items []any
-	if err := json.Unmarshal(b, &items); err != nil {
+	if err := decodeJSONValue(b, &items); err != nil {
 		return nil, false
 	}
 	return items, true

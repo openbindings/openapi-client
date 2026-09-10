@@ -8,8 +8,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-
-	"github.com/oasdiff/yaml"
 )
 
 // externalComposition narrows external reference composition to the used
@@ -854,8 +852,8 @@ func escapeRawPointerToken(token string) string {
 }
 
 func parseRawResource(data []byte) (any, bool) {
-	var root any
-	if _, err := yaml.Unmarshal(data, &root, yaml.DecodeOpts{DisableTimestamps: true}); err != nil {
+	root, err := parseRawOpenAPIResource(data)
+	if err != nil {
 		return nil, false
 	}
 	return root, true

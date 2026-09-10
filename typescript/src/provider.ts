@@ -1,3 +1,4 @@
+import { cloneValueGraph } from "./value-graph.js";
 /**
  * Advanced, detached OpenAPI-native analysis for generators and protocol
  * adapters. Application invocation remains on the package root.
@@ -201,11 +202,16 @@ function projectionEditionForBindingSpec(bindingSpec: string): string {
 }
 
 function immutableProjection<T>(value: T): Readonly<T> {
-  return deepFreezeProjection(structuredClone(value));
+  return deepFreezeProjection(cloneValueGraph(value));
 }
 
 function deepFreezeProjection<T>(value: T): T {
   if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
+    // Optional model members are absent JSON fields. Only this builder-owned
+    // projection boundary omits them; authored source/input admission does not.
+    if (!Array.isArray(value)) for (const [key, member] of Object.entries(value)) {
+      if (member === undefined) Reflect.deleteProperty(value, key);
+    }
     Object.freeze(value);
     for (const member of Object.values(value)) deepFreezeProjection(member);
   }

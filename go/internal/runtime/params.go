@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/getkin/kin-openapi/openapi3"
+	"github.com/openbindings/openbindings-go/jsonvalue"
 )
 
 // This file implements the engine's flattened OpenAPI input model.
@@ -714,7 +715,7 @@ func serializeParamContentFor(p *openapi3.Parameter, value any, bindingSpec stri
 	}
 	switch {
 	case isJSONMediaType(mt):
-		b, err := json.Marshal(value)
+		b, err := marshalRequestJSON(value)
 		if err != nil {
 			return "", fmt.Errorf("parameter %q: serialize as %s: %w", p.Name, mt, err)
 		}
@@ -1080,6 +1081,9 @@ func primitiveString(v any) (string, error) {
 	case bool:
 		return strconv.FormatBool(t), nil
 	case json.Number:
+		if !jsonvalue.IsNumber(t) {
+			return "", fmt.Errorf("invalid JSON numeric parameter")
+		}
 		return t.String(), nil
 	case float64, float32, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
 		b, err := json.Marshal(t)

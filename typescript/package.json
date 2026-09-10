@@ -60,8 +60,9 @@
     "node": ">=18"
   },
   "dependencies": {
-    "js-yaml": "^4.2.0",
-    "json-schema-library": "^11.6.1"
+    "@openbindings/json": "0.2.0",
+    "@openbindings/json-schema": "0.2.0",
+    "js-yaml": "^4.2.0"
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",

@@ -1,19 +1,13 @@
 package openapiclient
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"net/url"
 	"strings"
 	"sync"
 
 	"github.com/getkin/kin-openapi/openapi3"
-	"github.com/oasdiff/yaml"
-	yaml3 "github.com/oasdiff/yaml3"
 )
 
 // Edition is the exact OpenAPI value that governed a loaded artifact.
@@ -68,8 +62,8 @@ func entryArtifactDisposition(data []byte, edition Edition) (refusal, exclusion 
 	if len(data) == 0 || !(strings.HasPrefix(string(edition), "3.1.") || edition.IsOpenAPI32()) {
 		return "", ""
 	}
-	var decoded any
-	if _, err := yaml.Unmarshal(data, &decoded, yaml.DecodeOpts{DisableTimestamps: true}); err != nil {
+	decoded, err := parseRawOpenAPIResource(data)
+	if err != nil {
 		return "", ""
 	}
 	root, _ := decoded.(map[string]any)
@@ -592,31 +586,8 @@ func rawPointerCrossesSchemaResource(root any, fragment string) bool {
 }
 
 func parseRawOpenAPIResource(data []byte) (any, error) {
-	// oasdiff/yaml intentionally decodes the first stream document. The 3.2
-	// binding admits exactly one, so inspect the stream with the same underlying
-	// YAML implementation before performing its YAML-to-JSON conversion.
-	decoder := yaml3.NewDecoder(bytes.NewReader(data))
-	decoder.DisableTimestamps(true)
-	var first any
-	if err := decoder.Decode(&first); err != nil {
-		return nil, err
-	}
-	var second any
-	if err := decoder.Decode(&second); err == nil {
-		return nil, fmt.Errorf("OpenAPI YAML stream must contain exactly one document")
-	} else if !errors.Is(err, io.EOF) {
-		return nil, err
-	}
-	var root any
-	if _, err := yaml.Unmarshal(data, &root, yaml.DecodeOpts{DisableTimestamps: true}); err != nil {
-		return nil, err
-	}
-	// This is the YAML-to-JSON compatibility gate. Marshaling is used only as
-	// a representability proof; the raw tree above remains the overlay image.
-	if _, err := json.Marshal(root); err != nil {
-		return nil, fmt.Errorf("OpenAPI YAML value has no JSON image: %w", err)
-	}
-	return root, nil
+	// Reuse the established YAML-node/JSON-image gate; no native-number pass.
+	return parseSwagger20Resource(data)
 }
 
 // ClassifyOpenAPIEdition applies the closed representation/root/edition load

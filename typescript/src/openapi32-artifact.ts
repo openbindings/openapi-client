@@ -1,3 +1,4 @@
+import { cloneValueGraph } from "./value-graph.js";
 import type {
   OpenAPIDocument,
   OpenAPIMediaType,
@@ -1193,7 +1194,7 @@ function assertJSONDomain(root: unknown): void {
 }
 
 function immutableClone<T>(value: T): T {
-  const clone = structuredClone(value);
+  const clone = cloneValueGraph(value);
   return freezeObjectGraph(clone);
 }
 
@@ -1210,7 +1211,7 @@ function freezeObjectGraph<T>(value: T): T {
 }
 
 function cloneJSON<T>(value: T): T {
-  return structuredClone(value);
+  return cloneValueGraph(value);
 }
 
 function omitOpenAPI32ParameterLanes(

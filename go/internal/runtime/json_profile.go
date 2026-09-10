@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math"
-	"strconv"
 )
 
 // The strict-JSON profile every OpenAPI edition of this binding parses
@@ -44,10 +42,16 @@ func parseStrictJSON(body []byte, value *any) error {
 	if err := checkLoneSurrogateEscape(body); err != nil {
 		return err
 	}
-	decoder := json.NewDecoder(bytes.NewReader(bytes.TrimPrefix(body, utf8BOM)))
+	// This implementation selects the binding's exact-preservation alternative.
+	return decodeJSONValue(bytes.TrimPrefix(body, utf8BOM), value)
+}
+
+// decodeJSONValue is also used by ordinary typed/generic clone boundaries.
+// It owns only JSON decoding; the response lane owns BOM/surrogate policy.
+func decodeJSONValue(body []byte, value any) error {
+	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.UseNumber()
-	var parsed any
-	if err := decoder.Decode(&parsed); err != nil {
+	if err := decoder.Decode(value); err != nil {
 		return err
 	}
 	var trailing any
@@ -57,34 +61,7 @@ func parseStrictJSON(body []byte, value *any) error {
 		}
 		return fmt.Errorf("JSON body contains more than one value")
 	}
-	*value = nearestFiniteJSONNumbers(parsed)
 	return nil
-}
-
-// §9.2 permits nearest finite binary64, including saturation on overflow.
-// Keep normal round-to-nearest conversion and signed underflow; never expose
-// Infinity or fail merely because a syntactically valid number exceeds range.
-func nearestFiniteJSONNumbers(value any) any {
-	switch v := value.(type) {
-	case json.Number:
-		number, _ := strconv.ParseFloat(string(v), 64) // syntax was checked above
-		if math.IsInf(number, 1) {
-			return math.MaxFloat64
-		}
-		if math.IsInf(number, -1) {
-			return -math.MaxFloat64
-		}
-		return number
-	case []any:
-		for i := range v {
-			v[i] = nearestFiniteJSONNumbers(v[i])
-		}
-	case map[string]any:
-		for key := range v {
-			v[key] = nearestFiniteJSONNumbers(v[key])
-		}
-	}
-	return value
 }
 
 // checkLoneSurrogateEscape reports a `\uD800`–`\uDFFF` escape that is not half
