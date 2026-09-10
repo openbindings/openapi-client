@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 )
@@ -66,7 +68,11 @@ func readArtifactResource(
 		if resource.Scheme == "" {
 			return nil, fmt.Errorf("relative reference %q has no absolute artifact base", resource)
 		}
-		data, err = os.ReadFile(resource.Path)
+		path, pathErr := localArtifactPath(resource)
+		if pathErr != nil {
+			return nil, pathErr
+		}
+		data, err = os.ReadFile(path)
 	default:
 		return nil, fmt.Errorf("unsupported OpenAPI artifact URI scheme %q", resource.Scheme)
 	}
@@ -74,4 +80,26 @@ func readArtifactResource(
 		return nil, err
 	}
 	return data, nil
+}
+
+// File URI decoding belongs to acquisition, not to an edition's resolver.
+// URL.Path has already been decoded by net/url, including literal percent data.
+func localArtifactPath(u *url.URL) (string, error) {
+	if !strings.EqualFold(u.Scheme, "file") || u.Opaque != "" || u.User != nil || (u.Host != "" && !strings.EqualFold(u.Host, "localhost")) {
+		return "", fmt.Errorf("only local file URIs are supported; remote file authorities and opaque paths are unavailable")
+	}
+	path := u.Path
+	if runtime.GOOS == "windows" {
+		if len(path) >= 4 && path[0] == '/' && path[2] == ':' && path[3] == '/' {
+			path = path[1:]
+		}
+		path = filepath.FromSlash(path)
+		if strings.HasPrefix(path, `\\`) {
+			return "", fmt.Errorf("remote file shares and device paths are unavailable")
+		}
+	}
+	if !filepath.IsAbs(path) {
+		return "", fmt.Errorf("file URI requires an absolute local path")
+	}
+	return path, nil
 }

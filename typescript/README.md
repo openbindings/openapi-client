@@ -9,9 +9,9 @@ specifications as an OpenAPI-native client contract. OpenBindings Core, the
 OpenBindings SDK, and OB CLI are not runtime dependencies and do not appear in
 the public API.
 
-> Status: candidate under qualification. The invocation behavior passes all 896
+> Status: candidate under qualification. Invocation is checked against the 964
 > hash-locked processor scenarios at the pinned OpenBindings 0.2 authority
-> revision, and the public API is candidate-frozen.
+> revision. The public API is candidate-frozen; this is not a published release.
 
 ## Install
 
@@ -283,6 +283,28 @@ Redirects default to `manual`, so the response to the authored operation stays
 observable. `redirect: "follow"` follows only method-and-body-preserving hops.
 Selected credentials and Cookie are not forwarded or reconstructed across an
 origin boundary.
+
+Browser and dedicated Worker Fetch cannot send an explicitly authored `Cookie`
+header. With the built-in Fetch path, cookie security, cookie parameters, and raw
+Cookie headers therefore refuse before any target request, including a Cookie
+added by request middleware. The client does not substitute ambient cookies or
+change its existing ambient-credential policy. Use Node/Go or an explicitly
+injected Fetch adapter that can faithfully carry the request. Adapter injection
+is the caller's responsibility; wrapping browser Fetch does not remove its limits.
+
+Browsers can also return unreadable `opaque`/`opaqueredirect` responses for
+redirects. These produce a response-phase error, without a successful output or
+an automatic follow/replay. The method-only transport fallback is not a general
+redirect solution. These browser-native limits do not describe `ob start`'s
+browser UI: its operations run through the Go backend.
+
+For OpenAPI 3.2 non-JSON character bodies, the declaration selects the scalar
+codec: sole `boolean` decodes `true`/`false`; sole `number` or `integer` decodes a
+complete JSON-number token, preserving its exact value. For example, a numeric
+`text/plain` response of `9007199254740993` yields the existing exact-number
+carrier, while `01` is a response error. A string declaration keeps the same text
+as a string. Ambiguous scalar declarations cannot be resolved by guessing from
+the supplied value. This codec is not general schema or integrality validation.
 
 Middleware is HTTP-native and ordered:
 

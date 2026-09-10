@@ -1,5 +1,6 @@
 import { swagger20ConfigRequired } from "./swagger20-context.js";
 import { readResponseBytes } from "./response-body.js";
+import { OpenAPIWireMechanicsError, requireReadableOpenAPIResponse } from "./response-mechanics.js";
 import { resolveDeliveryUnitLimit } from "./internal/index.js";
 import { ConfigRequired } from "./servers.js";
 import { swagger20RefusalError } from "./swagger20-context.js";
@@ -185,8 +186,13 @@ export async function executeSwagger20(
       redirect: prepared.options.redirect ?? "manual",
     }, security);
   } catch (error: unknown) {
+    if (error instanceof OpenAPIWireMechanicsError) {
+      throw new Swagger20ExecutionError(error.code, error.message, { cause: error });
+    }
     throw new Swagger20ExecutionError("ERR_CONNECT_FAILED", errorMessage(error), { cause: error });
   }
+  try { requireReadableOpenAPIResponse(response); }
+  catch (error: unknown) { throw responseError(error); }
   let governing: Swagger20ResolvedResponse | undefined;
   const resultResponse = response.clone();
   try {

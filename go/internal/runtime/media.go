@@ -1899,6 +1899,10 @@ func mediaSchema(media *openapi3.MediaType) *openapi3.Schema {
 // boundary. JSON, text, and SSE retain their application-value lanes.
 func responseUsesRawBoundary(doc *openapi3.T, media *openapi3.MediaType, actualContentType string, bindingSpec string, exactDeclaration bool) bool {
 	actual, err := parseRevision3MediaType(actualContentType)
+	if err == nil && doc != nil && doc.OpenAPI == "3.2.0" && !isJSONMediaType(actual.base) &&
+		!strings.HasPrefix(actual.base, "multipart/") && actual.base != "application/x-www-form-urlencoded" {
+		return exactDeclaration && resolveDeclaration(mediaSchema(media), false).typeless()
+	}
 	if err != nil || isJSONMediaType(actual.base) || strings.HasPrefix(actual.base, "text/") {
 		return false
 	}
@@ -1914,6 +1918,9 @@ func responseUsesRawBoundary(doc *openapi3.T, media *openapi3.MediaType, actualC
 func booleanSchemaLiteral(schema *openapi3.Schema) (bool, bool) {
 	if schema == nil {
 		return false, false
+	}
+	if schema.Always != nil {
+		return *schema.Always, true
 	}
 	encoded, err := json.Marshal(schema)
 	if err != nil {

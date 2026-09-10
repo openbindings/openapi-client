@@ -24,7 +24,7 @@ corpus are pinned under `authority/` and `conformance/upstream/`.
 revision it requires:
 
 1. authority source, file hashes, rule inventory, and corpus counts verify;
-2. all 896 processor scenarios pass through the public TypeScript and Go
+2. all pinned processor scenarios pass through the public TypeScript and Go
    client behavior;
 3. TypeScript type checking, native tests, and production ESM/CommonJS builds
    pass;
@@ -46,17 +46,19 @@ necessary but cannot substitute for it.
 
 ## Current authority gate
 
-The hash-locked authority revision is
-`ee5291ee5a5a23f7068d8c1d256792274a21167f` on `release/0.2`. It includes the
-smallest-owner correction to `OAPI32-PS-66`, the content-based `text/plain`
-correction to `OAPI30-PS-127`, and the complete provider-projection closure
-batch. The source/lock additionally record three explicit security-choice
-candidate errata: `OAPI30-PS-99`, `OAPI31-PS-111`, and `OAPI32-PS-121`.
-These require context rather than a plain refusal when the named security
-choice is absent. The resulting processor and synthesis files match the
-candidate spec commit `62ad87e654405310f9d3bf3e0625da5c46aba8d1`
-byte-for-byte. This is an explicit candidate authority record, not a claim
-that the base commit already contains those corrections.
+The exact committed spec revision is recorded in
+[`authority/openbindings-0.2.source.json`](../authority/openbindings-0.2.source.json),
+with prose and corpus hashes in its lock. It includes the generation/reporting
+cleanup, security-choice corrections, scalar-text inverse, and secondary-root
+confinement decisions. No candidate errata are layered over this revision.
+The current processor corpus has 964 scenarios; removed generation mandates
+are not restored as universal synthesis requirements.
+
+Candidate qualification runs `node scripts/verify-openbindings-authority.mjs
+/absolute/path/to/selected/spec` to compare the selected repository's actual
+commit, prose, and corpus bytes with the recorded authority. The ordinary
+self-contained verifier checks the package's internal lock. Neither check
+is a requirement imposed on other binding implementations.
 
 ## Candidate consumers versus remote distribution
 

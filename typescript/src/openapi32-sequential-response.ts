@@ -8,7 +8,7 @@ import {
   type Metadata,
 } from "./internal/index.js";
 import { isJSONMediaType, parseMediaType } from "./media.js";
-import { openAPI32PositionalMultipart } from "./openapi32-media.js";
+import { openAPI32PositionalMultipart, openAPI32NonJSONTextKind, parseOpenAPI32NonJSONText } from "./openapi32-media.js";
 import { resolveDeclaration, type SchemaDeclaration } from "./resolved-declaration.js";
 import { streamSSE } from "./sse.js";
 import type { OpenAPIMediaType } from "./types.js";
@@ -385,18 +385,22 @@ function decodeSequentialPart(
       () => new Error(`part declares ${JSON.stringify(contentType)} but carries an unpaired surrogate`),
     );
   }
+  const declaration = resolveDeclaration(schema, false);
+  if (declaration.typeless()) return bytesToBase64(body);
   if (parsed.base.startsWith("text/") || parsed.base === "application/xml" || parsed.base.endsWith("+xml")) {
-    return decodePartText(body, parsed.params.charset ?? "utf-8");
+    const kind = openAPI32NonJSONTextKind(schema);
+    if (kind && (parsed.base !== "text/json" || kind === "string")) {
+      return parseOpenAPI32NonJSONText(schema, decodePartText(body, parsed.params.charset ?? "utf-8", kind !== "string"));
+    }
   }
-  if (resolveDeclaration(schema, false).typeless()) return bytesToBase64(body);
   throw new Error(`part media ${JSON.stringify(contentType)} and its declaration select no incorporated carriage lane`);
 }
 
-function decodePartText(body: Uint8Array, charset: string): string {
+function decodePartText(body: Uint8Array, charset: string, preserveBOM = false): string {
   switch (charset.toLowerCase()) {
     case "utf-8":
     case "utf8":
-      return new TextDecoder("utf-8", { fatal: true }).decode(body);
+      return new TextDecoder("utf-8", { fatal: true, ignoreBOM: preserveBOM }).decode(body);
     case "us-ascii":
     case "ascii":
       if (body.some((byte) => byte >= 0x80)) throw new Error("part is not valid US-ASCII");

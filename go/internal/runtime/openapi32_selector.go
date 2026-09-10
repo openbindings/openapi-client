@@ -282,7 +282,7 @@ func (a *Artifact) ResolveOperation(ref string) (*OperationTarget, error) {
 		}
 		_, _, err = a.openAPI32.selectedPathItem(reference.Path, reference.Method, reference.Additional)
 		if err != nil {
-			return nil, &OperationResolutionError{Kind: OperationTargetExcluded, Message: err.Error(), Cause: err}
+			return nil, openAPI32ResolutionError(err)
 		}
 	}
 	if a.Document.Paths == nil {

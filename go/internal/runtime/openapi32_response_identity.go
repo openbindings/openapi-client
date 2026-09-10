@@ -302,6 +302,9 @@ func (o *OpenAPI32Overlay) resolveOpenAPI32ObjectNode(node openAPI32RawNode, kin
 	if !ok {
 		return openAPI32RawNode{}, fmt.Errorf("reference %q names no %s", refText, label)
 	}
+	if err := openAPI32ReferencedRoot(resource, target, false); err != nil {
+		return openAPI32RawNode{}, err
+	}
 	return o.resolveOpenAPI32ObjectNode(openAPI32RawNode{value: target, resource: resource}, kind, label, seen)
 }
 
@@ -331,10 +334,10 @@ func (o *OpenAPI32Overlay) openAPI32ReferenceResource(refText string, resolved *
 		return nil, fmt.Errorf("reference %q is unresolvable", refText)
 	}
 	if resource.selfError != "" {
-		return nil, fmt.Errorf("reference %q reaches a resource with unusable %s", refText, resource.selfError)
+		return nil, openAPI32ReferenceError("reference %q reaches a resource with unusable %s", refText, resource.selfError)
 	}
 	if resource.self != nil && resourceKey != artifactResourceKey(resource.self) {
-		return nil, fmt.Errorf("reference uses retrieval alias %q instead of declared $self identity %q", resourceKey, artifactResourceKey(resource.self))
+		return nil, openAPI32ReferenceError("reference uses retrieval alias %q instead of declared $self identity %q", resourceKey, artifactResourceKey(resource.self))
 	}
 	return resource, nil
 }
@@ -441,23 +444,27 @@ func (o *OpenAPI32Overlay) openAPI32ResponseSchemaTarget(refText string, resolve
 	o.mu.RLock()
 	resource := o.resources[resourceKey]
 	scope := o.schemaScopes[resourceKey]
+	scopeOwner := o.schemaOwners[resourceKey]
 	o.mu.RUnlock()
 	if resource == nil && strings.HasPrefix(refText, "#") {
 		resource = owner
 	}
 	if resource != nil {
 		if resource.selfError != "" {
-			return nil, nil, fmt.Errorf("Schema Object reference reaches a resource with unusable %s", resource.selfError)
+			return nil, nil, openAPI32ReferenceError("Schema Object reference reaches a resource with unusable %s", resource.selfError)
 		}
 		if resource.self != nil && resourceKey != artifactResourceKey(resource.self) {
-			return nil, nil, fmt.Errorf("Schema Object reference uses retrieval alias %q instead of declared $self identity %q", resourceKey, artifactResourceKey(resource.self))
+			return nil, nil, openAPI32ReferenceError("Schema Object reference uses retrieval alias %q instead of declared $self identity %q", resourceKey, artifactResourceKey(resource.self))
 		}
 		if rawPointerCrossesSchemaResource(resource.root, resolved.Fragment) {
-			return nil, nil, fmt.Errorf("Schema Object reference crosses a nearer $id resource boundary noncanonically")
+			return nil, nil, openAPI32ReferenceError("Schema Object reference crosses a nearer $id resource boundary noncanonically")
 		}
 	}
 	if scope != nil {
 		if target, targetBase, ok := scope.fragment(resolved.Fragment); ok {
+			if err := openAPI32ReferencedRoot(scopeOwner, target, true); err != nil {
+				return nil, nil, err
+			}
 			return target, targetBase, nil
 		}
 	}
@@ -469,9 +476,13 @@ func (o *OpenAPI32Overlay) openAPI32ResponseSchemaTarget(refText string, resolve
 		}
 		o.mu.RLock()
 		scope = o.schemaScopes[resourceKey]
+		scopeOwner = o.schemaOwners[resourceKey]
 		o.mu.RUnlock()
 		if scope != nil {
 			if target, targetBase, ok := scope.fragment(resolved.Fragment); ok {
+				if err := openAPI32ReferencedRoot(scopeOwner, target, true); err != nil {
+					return nil, nil, err
+				}
 				return target, targetBase, nil
 			}
 		}
@@ -479,6 +490,9 @@ func (o *OpenAPI32Overlay) openAPI32ResponseSchemaTarget(refText string, resolve
 	target, ok := rawFragmentTarget(resource.root, resolved.Fragment, rawSchemaTarget)
 	if !ok {
 		return nil, nil, fmt.Errorf("Schema Object reference %q names no target", refText)
+	}
+	if err := openAPI32ReferencedRoot(resource, target, true); err != nil {
+		return nil, nil, err
 	}
 	return target, cloneURL(resource.base), nil
 }

@@ -1,4 +1,5 @@
 import { cloneValueGraph } from "./value-graph.js";
+import { schemaObjectDefects } from "./schema-dialect.js";
 import type {
   OpenAPIDocument,
   OpenAPIMediaType,
@@ -91,6 +92,7 @@ export interface OpenAPIOperationDisposition {
 
 interface RawResource {
   root: unknown;
+  otherRoot: boolean;
   retrieval?: string;
   base?: string;
   self?: string;
@@ -414,6 +416,7 @@ class OpenAPI32Overlay {
     const root = immutableClone(raw);
     const resource: RawResource = {
       root,
+      otherRoot: !entry && !admittedSecondaryRoot(root),
       ...(retrieval ? { retrieval: stripHash(retrieval), base: stripHash(retrieval) } : {}),
       selfPresent: false,
       entry,
@@ -779,6 +782,9 @@ class OpenAPI32Overlay {
     const result = cloneJSON(body) as OpenAPIRequestBody;
     if (Object.hasOwn(body, "content")) {
       result.content = await this.materializeContent(body.content, resolved.resource);
+      if (body.required === true && Object.keys(result.content).length === 0) {
+        throw new OpenAPIOperationResolutionError("excluded", "required Request Body has no available media alternative");
+      }
     }
     return result;
   }
@@ -791,16 +797,20 @@ class OpenAPI32Overlay {
     if (!content) throw new Error("selected content declaration is not an object");
     const result: Record<string, OpenAPIMediaType> = {};
     for (const [mediaType, value] of Object.entries(content)) {
-      const resolved = await this.resolveReferenceObject(value, owner, "mediaType");
-      const media = asRecord(resolved.value);
-      if (!media) throw new Error(`selected Media Type ${JSON.stringify(mediaType)} is not an object`);
-      const clone = cloneJSON(media) as OpenAPIMediaType;
-      if (Object.hasOwn(media, "schema")) clone.schema = await this.materializeSchema(media.schema, resolved.resource);
-      if (Object.hasOwn(media, "itemSchema")) clone.itemSchema = await this.materializeSchema(media.itemSchema, resolved.resource);
-      for (const field of ["encoding", "prefixEncoding", "itemEncoding"]) {
-        if (Object.hasOwn(media, field)) clone[field] = await this.materializeEncoding(media[field], resolved.resource, 0);
+      try {
+        const resolved = await this.resolveReferenceObject(value, owner, "mediaType");
+        const media = asRecord(resolved.value);
+        if (!media) throw new Error(`selected Media Type ${JSON.stringify(mediaType)} is not an object`);
+        const clone = cloneJSON(media) as OpenAPIMediaType;
+        if (Object.hasOwn(media, "schema")) clone.schema = await this.materializeSchema(media.schema, resolved.resource);
+        if (Object.hasOwn(media, "itemSchema")) clone.itemSchema = await this.materializeSchema(media.itemSchema, resolved.resource);
+        for (const field of ["encoding", "prefixEncoding", "itemEncoding"]) {
+          if (Object.hasOwn(media, field)) clone[field] = await this.materializeEncoding(media[field], resolved.resource, 0);
+        }
+        result[mediaType] = clone;
+      } catch {
+        // Reference defects belong to this media alternative, not its siblings.
       }
-      result[mediaType] = clone;
     }
     return result;
   }
@@ -1114,18 +1124,25 @@ class OpenAPI32Overlay {
       resource = await this.fetchResource(resolved.resource);
     }
     if (resource.selfError) {
-      throw new Error(`selected ${kind} reference reaches a resource with unusable ${resource.selfError}`);
+      throw new OpenAPIOperationResolutionError("invalid", `selected ${kind} reference reaches a resource with unusable ${resource.selfError}`);
     }
     if (resource.self && resolved.resource !== resource.self) {
-      throw new Error(
+      throw new OpenAPIOperationResolutionError("invalid",
         `selected ${kind} reference uses retrieval alias ${JSON.stringify(resolved.resource)} instead of declared $self identity ${JSON.stringify(resource.self)}`,
       );
     }
     if (kind === "schema" && pointerCrossesSchemaResource(resource.root, resolved.fragment)) {
-      throw new Error("selected Schema Object reference crosses a nearer $id resource boundary noncanonically");
+      throw new OpenAPIOperationResolutionError("invalid", "selected Schema Object reference crosses a nearer $id resource boundary noncanonically");
     }
     const target = fragmentTarget(resource.root, resolved.fragment);
     if (target === undefined) throw new Error(`selected ${kind} reference ${JSON.stringify(refText)} names no target`);
+    if (!asRecord(target) && !(kind === "schema" && typeof target === "boolean")) {
+      throw new OpenAPIOperationResolutionError("invalid", `selected ${kind} reference does not name the required Object type`);
+    }
+    if (resource.otherRoot) {
+      throw new OpenAPIOperationResolutionError("excluded",
+        "selected reference reaches a document rooted at neither an OpenAPI nor a Schema Object");
+    }
     return {
       value: target,
       resource,
@@ -1140,9 +1157,24 @@ class OpenAPI32Overlay {
     const response = await (this.options.fetch ?? fetch)(resourceURL, { signal: this.options.signal });
     if (!response.ok) throw new Error(`failed to fetch ${resourceURL}: ${response.status} ${response.statusText}`);
     const retrieval = response.url || resourceURL;
-    const root = parseOpenAPI32Text(await response.text());
+    const bytes = await response.arrayBuffer();
+    let root: unknown;
+    try {
+      root = parseOpenAPI32Text(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+    } catch (error: unknown) {
+      throw new OpenAPIOperationResolutionError("invalid", "selected reference document is not an accepted UTF-8 JSON or YAML representation", { cause: error });
+    }
     return this.capture(root, resourceURL, retrieval, false);
   }
+}
+
+// Inspect only the resource's own source shape. Unknown Schema keywords are
+// allowed, so a Parameter-shaped object is not excluded by field-name guessing.
+function admittedSecondaryRoot(root: unknown): boolean {
+  if (typeof root === "boolean") return true;
+  const object = asRecord(root);
+  return object !== undefined && object !== null
+    && (typeof object.openapi === "string" || schemaObjectDefects(object, "3.1").length === 0);
 }
 
 async function readEntry(

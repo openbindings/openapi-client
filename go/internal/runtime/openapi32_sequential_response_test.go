@@ -26,7 +26,7 @@ func TestOpenAPI32SequentialResponseFraming(t *testing.T) {
 		{"ndjson", "application/x-ndjson", "application/x-ndjson", "true\n12\n", []any{true, json.Number("12")}},
 		{"json-seq", "application/json-seq", "application/json-seq", "\x1e{\"n\":1}\n\x1e2\n", []any{map[string]any{"n": json.Number("1")}, json.Number("2")}},
 		{"suffix-json-seq", "application/problem+json-seq", "application/problem+json-seq", "\x1efalse\n\x1enull\n", []any{false, nil}},
-		{"positional-multipart", "multipart/mixed", multipartType, multipartBody, []any{map[string]any{"n": json.Number("1")}, "second"}},
+		{"positional-multipart", "multipart/mixed", multipartType, multipartBody, []any{map[string]any{"n": json.Number("1")}, "c2Vjb25k"}},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			transport := &openAPI32ResponseTransport{responses: map[string]*http.Response{"/x": {
@@ -41,6 +41,28 @@ func TestOpenAPI32SequentialResponseFraming(t *testing.T) {
 			got, terminal := collectNativeStream(result.Stream)
 			if terminal != nil || !reflect.DeepEqual(got, testCase.want) {
 				t.Fatalf("values = %#v, terminal %v; want %#v", got, terminal, testCase.want)
+			}
+		})
+	}
+}
+
+func TestOpenAPI32SequentialScalarParts(t *testing.T) {
+	for _, token := range []string{"9007199254740993", "1e-400", "", "01", "\ufeff1"} {
+		t.Run(token, func(t *testing.T) {
+			body := "--b\r\nContent-Type: text/plain\r\n\r\n" + token + "\r\n--b--\r\n"
+			transport := &openAPI32ResponseTransport{responses: map[string]*http.Response{"/x": {StatusCode: 200, Status: "200 OK", Header: http.Header{"Content-Type": {"multipart/mixed; boundary=b"}}, Body: io.NopCloser(strings.NewReader(body))}}}
+			client := loadOpenAPI32SequentialClient(t, transport, "multipart/mixed", "itemSchema: {type: number}", 0)
+			result, err := client.Stream(context.Background(), PathOperation("/x", GET), Input{})
+			if err != nil || !result.OK {
+				t.Fatalf("framing response: %v", err)
+			}
+			values, terminal := collectNativeStream(result.Stream)
+			if token == "9007199254740993" || token == "1e-400" {
+				if terminal != nil || !reflect.DeepEqual(values, []any{json.Number(token)}) {
+					t.Fatalf("values=%#v terminal=%v", values, terminal)
+				}
+			} else if terminal == nil || len(values) != 0 {
+				t.Fatalf("invalid scalar emitted values=%#v terminal=%v", values, terminal)
 			}
 		})
 	}

@@ -114,6 +114,9 @@ func (a *Artifact) openAPI32RequestMediaOverlays(target *OperationTarget) map[st
 
 	result := make(map[string]*openAPI32MediaOverlay, len(content))
 	for mediaType, raw := range content {
+		if target.Operation.RequestBody == nil || target.Operation.RequestBody.Value == nil || target.Operation.RequestBody.Value.Content[mediaType] == nil {
+			continue
+		}
 		rawObject, _ := raw.(map[string]any)
 		_, mediaReference := rawObject["$ref"]
 		mediaNode, resolved := o.resolveRawObjectLocked(openAPI32RawNode{value: raw, resource: body.resource}, map[string]bool{})
@@ -309,6 +312,9 @@ func (o *OpenAPI32Overlay) resolveOpenAPI32SchemaNodeLocked(refText string, owne
 	key := resolved.String()
 	if scope := o.schemaScopes[artifactResourceKey(resolved)]; scope != nil {
 		if value, targetBase, ok := scope.fragment(resolved.Fragment); ok {
+			if openAPI32ReferencedRoot(o.schemaOwners[artifactResourceKey(resolved)], value, true) != nil {
+				return nil, nil, key, false
+			}
 			return value, targetBase, key, true
 		}
 	}
@@ -320,6 +326,9 @@ func (o *OpenAPI32Overlay) resolveOpenAPI32SchemaNodeLocked(refText string, owne
 		return nil, nil, key, false
 	}
 	target, ok := rawFragmentTarget(resource.root, resolved.Fragment, rawSchemaTarget)
+	if ok && openAPI32ReferencedRoot(resource, target, true) != nil {
+		return nil, nil, key, false
+	}
 	return target, cloneURL(resource.base), key, ok
 }
 
@@ -1004,13 +1013,52 @@ func buildOpenAPI32URLEncodedBody(plan *bodyPlan, fields map[string]any) (string
 	return strings.Join(units, "&"), nil
 }
 
+// openAPI32NonJSONTextKind selects the codec from declarations alone. Integer
+// selects the number codec, not a schema-validation or integrality check.
+func openAPI32NonJSONTextKind(schema *openapi3.Schema) string {
+	d := resolveDeclaration(schema, false)
+	if d.admitsStringAsSoleNonNullType() {
+		return "string"
+	}
+	if d.ambiguous || d.admitsNoInstance() || len(d.types) != 1 {
+		return ""
+	}
+	if d.types["boolean"] {
+		return "boolean"
+	}
+	if d.types["number"] || d.types["integer"] {
+		return "number"
+	}
+	return ""
+}
+
+func parseOpenAPI32NonJSONText(schema *openapi3.Schema, text string) (any, error) {
+	kind := openAPI32NonJSONTextKind(schema)
+	if kind == "string" {
+		return text, nil
+	}
+	token := strings.Trim(text, " \t\r\n")
+	if kind == "boolean" && (token == "true" || token == "false") {
+		return token == "true", nil
+	}
+	if kind == "number" && len(token) > 0 && (token[0] == '-' || (token[0] >= '0' && token[0] <= '9')) && json.Valid([]byte(token)) {
+		var value any
+		if err := parseStrictJSON([]byte(token), &value); err != nil {
+			return nil, err
+		}
+		return value, nil
+	}
+	return nil, fmt.Errorf("non-JSON scalar text does not match its declaration-selected boolean or number codec")
+}
+
 func serializeOpenAPI32NonJSONText(schema *openapi3.Schema, value any) (string, error) {
 	if value == nil {
 		return "", fmt.Errorf("non-JSON text serialization has no null lexical form")
 	}
 	kind := openAPI32JSONValueType(value)
-	if kind == "" || !openAPI32SchemaAdmitsRuntimeType(schema, kind) {
-		return "", fmt.Errorf("supplied %T does not determine one permitted non-JSON serialization type", value)
+	codec := openAPI32NonJSONTextKind(schema)
+	if codec == "" || !(kind == codec || (codec == "number" && kind == "integer")) {
+		return "", fmt.Errorf("declaration and supplied value select no single permitted non-JSON serialization codec")
 	}
 	switch kind {
 	case "string":

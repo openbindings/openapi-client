@@ -45,7 +45,7 @@ import {
   type OpenAPIPlannedRequest,
   type OpenAPIRedirectPolicy,
 } from "./host-transport.js";
-import type { OpenAPICharacterDecoder, OpenAPICharacterEncoder } from "./response-mechanics.js";
+import { OpenAPIWireMechanicsError, type OpenAPICharacterDecoder, type OpenAPICharacterEncoder } from "./response-mechanics.js";
 import {
   loadOpenAPIArtifact,
   type OpenAPIArtifact,
@@ -1030,6 +1030,8 @@ export class OpenAPIClient {
       exchange,
       callOptions.redirect ?? this.options.redirect ?? "manual",
       preserveSuccessfulResponseBody,
+      undefined,
+      injectedFetch === undefined,
     );
     const configuredTransport = callOptions.transport !== undefined
       ? callOptions.transport
@@ -1192,6 +1194,7 @@ export class OpenAPIClient {
       callOptions.redirect ?? this.options.redirect ?? "manual",
       false,
       mergeHeaders(this.options.headers, callOptions.headers),
+      callOptions.fetch === undefined && this.options.fetch === undefined,
     );
     let prepared;
     try {
@@ -2303,6 +2306,7 @@ function observedFetch(
   logicalRedirect: OpenAPIRedirectPolicy,
   preserveSuccessfulResponseBody: boolean,
   additionalHeaders?: Headers,
+  usesHostFetch = false,
 ): typeof globalThis.fetch {
   operation = cloneOperationInfo(operation);
   return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
@@ -2341,6 +2345,10 @@ function observedFetch(
       // WHATWG Request here would normalize dot segments before an adapter can
       // observe or carry them, and would reject otherwise valid extension
       // method tokens before the selected transport sees the plan.
+      if (usesHostFetch && isBrowserFetchRealm() && request.headers.has("Cookie")) {
+        throw new OpenAPIWireMechanicsError("ERR_REFUSED",
+          "This browser/Worker Fetch cannot send an authored Cookie header. No request was sent. Use Node/Go or an explicit adapter that can carry the planned headers.");
+      }
       let response = await baseFetch(request.url, init);
       response = await applyResponseMiddleware(middleware, operation, request, response);
       const intermediate = logicalRedirect === "follow"
@@ -2361,10 +2369,18 @@ function observedFetch(
       }
       exchange.reject(error instanceof OpenAPIClientError
         ? error
+        : error instanceof OpenAPIWireMechanicsError ? clientError(error)
         : new OpenAPIClientError("transport", "FETCH_FAILED", errorMessage(error), { cause: error }));
       throw error;
     }
   };
+}
+
+function isBrowserFetchRealm(): boolean {
+  return ["Window", "WorkerGlobalScope"].some((name) => {
+    const constructor: unknown = Reflect.get(globalThis, name);
+    return typeof constructor === "function" && globalThis instanceof constructor;
+  });
 }
 
 function clientRedirectRewritesMethod(status: number, method: string): boolean {
@@ -2427,6 +2443,7 @@ function observedHostTransport(
  */
 function observedResponse(response: Response, preserveSuccessfulBody: boolean): Response {
   const observed = response.clone();
+  if (response.status === 0) void observed.body?.cancel().catch(() => undefined);
   if (!preserveSuccessfulBody && response.status >= 200 && response.status < 300 && observed.body) {
     void observed.body.cancel().catch(() => undefined);
   }
@@ -2545,6 +2562,10 @@ function responseFromEvidence(evidence: {
 
 function clientError(error: unknown): OpenAPIClientError {
   if (error instanceof OpenAPIClientError) return error;
+  if (error instanceof OpenAPIWireMechanicsError) {
+    return new OpenAPIClientError(error.code === "ERR_REFUSED" ? "input" : error.code === "ERR_PROTOCOL" ? "protocol" : "response",
+      error.code, error.message, { cause: error });
+  }
   if (error instanceof OpenAPIExecutionError) {
     const portableFailure = openAPIPortableFailureData(error);
     const kind: OpenAPIClientErrorKind =

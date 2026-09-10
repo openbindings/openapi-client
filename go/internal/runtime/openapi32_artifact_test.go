@@ -443,8 +443,9 @@ paths:
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := artifact.ResolveOperation("#/paths/~1x/post"); err == nil || !strings.Contains(err.Error(), "$id") {
-			t.Fatalf("schema identity error = %v", err)
+		target, err := artifact.ResolveOperation("#/paths/~1x/post")
+		if err != nil || len(target.Operation.RequestBody.Value.Content) != 0 {
+			t.Fatalf("optional body must retain its target with no available media: %v", err)
 		}
 	})
 }
@@ -839,8 +840,9 @@ paths:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := artifact.ResolveOperation("#/paths/~1selected/post"); err == nil || !strings.Contains(err.Error(), "$schema") {
-		t.Fatalf("selected schema dialect error = %v", err)
+	target, err := artifact.ResolveOperation("#/paths/~1selected/post")
+	if err != nil || len(target.Operation.RequestBody.Value.Content) != 0 {
+		t.Fatalf("optional unsupported media must not remove its target: %v", err)
 	}
 	if _, err := artifact.ResolveOperation("#/paths/~1unrelated/get"); err != nil {
 		t.Fatalf("schema dialect leaked outside selected closure: %v", err)

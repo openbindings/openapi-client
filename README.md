@@ -9,10 +9,10 @@ OpenBindings OpenAPI binding specifications supply the deterministic behavior,
 but the published clients are OpenAPI-native and have no OpenBindings runtime
 dependency.
 
-> Status: release candidate. Both language implementations pass all 896
-> hash-locked portable processor scenarios at the pinned OpenBindings 0.2
-> authority revision, together with the native, race, package, browser, API,
-> and clean-consumer qualification gates.
+> Status: candidate under qualification. The current authority includes 964
+> hash-locked portable processor scenarios. Native, race, package, real-host,
+> API, and clean-consumer checks are separate gates; a source candidate is not
+> a published release or a claim that every ecosystem gate has passed.
 
 Both implementations preserve JSON numbers across source, request, and response
 boundaries. This is the official clients' implementation-quality policy, not a
@@ -184,7 +184,7 @@ development and release evidence, never runtime dependencies.
 
 The release loop requires:
 
-- all 896 portable processor scenarios in both languages;
+- all pinned portable processor scenarios in both languages;
 - native and race-enabled test suites;
 - exact public API snapshots;
 - exactly two intentional TypeScript exports and matching clean Go root and

@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { numberToken } from "@openbindings/json";
 
 import {
   buildOpenAPI32MultipartBody,
   buildOpenAPI32SequentialBody,
   normalizeOpenAPI32JSONNumber,
+  parseOpenAPI32NonJSONText,
   openAPI32RequestMediaAdmission,
   serializeOpenAPI32NonJSONText,
   validateOpenAPI32MultipartFields,
@@ -26,8 +28,19 @@ describe("OpenAPI 3.2 request media", () => {
       .toBe("{\"n\":1}\n{\"n\":2}\n");
     expect(buildOpenAPI32SequentialBody("json-seq", [true, 12.5]))
       .toBe("\u001etrue\n\u001e12.5\n");
-    expect(serializeOpenAPI32NonJSONText({ type: ["boolean", "number"] }, true)).toBe("true");
-    expect(serializeOpenAPI32NonJSONText({ type: ["boolean", "number"] }, 1000)).toBe("1e3");
+    expect(serializeOpenAPI32NonJSONText({ type: "boolean" }, true)).toBe("true");
+    expect(serializeOpenAPI32NonJSONText({ type: "number" }, 1000)).toBe("1e3");
+    expect(() => serializeOpenAPI32NonJSONText({ type: ["boolean", "number"] }, true)).toThrow(/single/u);
+    expect(() => serializeOpenAPI32NonJSONText({ type: ["boolean", "number"] }, 1000)).toThrow(/single/u);
+  });
+
+  it("preserves exact scalar tokens and rejects empty framed tokens and BOM", () => {
+    for (const token of ["9007199254740993", "0.12345678901234567890123456789", "1e400", "1e-400", "-0"]) {
+      expect(numberToken(parseOpenAPI32NonJSONText({ type: "number" }, token))).toBe(token === "-0" ? "0" : token);
+    }
+    for (const token of ["", "\ufeff1", "\u00a01", "1 2"]) {
+      expect(() => parseOpenAPI32NonJSONText({ type: "number" }, token)).toThrow();
+    }
   });
 
   it("confines request-only SSE and unframed itemSchema alternatives", () => {

@@ -1854,6 +1854,10 @@ export function responseUsesRawBoundary(
   exactDeclaration = true,
 ): boolean {
   const actual = parseMediaType(actualContentType, true).base;
+  if (openapiVersion === "3.2.0" && !isJSONMediaType(actual)
+      && !actual.startsWith("multipart/") && actual !== "application/x-www-form-urlencoded") {
+    return exactDeclaration && resolveDeclaration(mediaSchema(media), false).typeless();
+  }
   if (isJSONMediaType(actual) || actual.startsWith("text/")) return false;
   const schema = mediaSchema(media);
   if (openapiVersion.startsWith("3.0")) {

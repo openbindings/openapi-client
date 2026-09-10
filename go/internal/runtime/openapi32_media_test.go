@@ -42,7 +42,7 @@ paths:
         required: true
         content:
           text/plain; charset=utf-8:
-            schema: {type: [boolean, number]}
+            schema: {type: number}
       responses: {'204': {description: ok}}
   /range-text:
     post:

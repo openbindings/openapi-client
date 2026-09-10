@@ -2,12 +2,14 @@ package openapiclient
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
 	"sync"
 
 	"github.com/getkin/kin-openapi/openapi3"
+	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
 // Edition is the exact OpenAPI value that governed a loaded artifact.
@@ -158,12 +160,72 @@ type OpenAPI32Resource struct {
 type openAPI32RawResource struct {
 	public      OpenAPI32Resource
 	root        any
+	otherRoot   bool
 	retrieval   *url.URL
 	base        *url.URL
 	self        *url.URL
 	selfPresent bool
 	selfError   string
 	entry       bool
+}
+
+type openAPI32RootExclusion struct{}
+
+func (*openAPI32RootExclusion) Error() string {
+	return "selected reference reaches a document rooted at neither an OpenAPI nor a Schema Object"
+}
+
+func openAPI32ReferenceError(format string, args ...any) error {
+	return operationResolutionError(OperationTargetInvalid, format, args...)
+}
+
+func openAPI32ResolutionError(err error) error {
+	var resolution *OperationResolutionError
+	if errors.As(err, &resolution) {
+		return resolution
+	}
+	return &OperationResolutionError{Kind: OperationTargetExcluded, Message: err.Error(), Cause: err}
+}
+
+func openAPI32ReferencedRoot(resource *openAPI32RawResource, target any, schema bool) error {
+	_, object := target.(map[string]any)
+	_, boolean := target.(bool)
+	if !object && !(schema && boolean) {
+		return openAPI32ReferenceError("selected reference does not name the required Object type")
+	}
+	if resource != nil && resource.otherRoot {
+		return &openAPI32RootExclusion{}
+	}
+	return nil
+}
+
+func admittedOpenAPI32SecondaryRoot(root any) (bool, error) {
+	if _, ok := root.(bool); ok {
+		return true, nil
+	}
+	object, ok := root.(map[string]any)
+	if !ok {
+		return false, nil
+	}
+	if _, ok := object["openapi"].(string); ok {
+		return true, nil
+	}
+	dialect, err := oas31Dialect()
+	if err != nil {
+		return false, err
+	}
+	if dialect == nil {
+		return false, fmt.Errorf("vendored OAS dialect is unavailable")
+	}
+	err = dialect.Validate(floorSchemaNodeShape(object))
+	if err == nil {
+		return true, nil
+	}
+	var validation *jsonschema.ValidationError
+	if errors.As(err, &validation) {
+		return false, nil
+	}
+	return false, err
 }
 
 // OpenAPI32Overlay preserves 3.2 fields that kin-openapi's typed model does
@@ -174,6 +236,7 @@ type OpenAPI32Overlay struct {
 	entry        *openAPI32RawResource
 	resources    map[string]*openAPI32RawResource
 	schemaScopes map[string]*rawSchemaResourceScope
+	schemaOwners map[string]*openAPI32RawResource
 	resolve      func(*url.URL) ([]byte, *url.URL, error)
 }
 
@@ -181,6 +244,7 @@ func newOpenAPI32Overlay() *OpenAPI32Overlay {
 	return &OpenAPI32Overlay{
 		resources:    map[string]*openAPI32RawResource{},
 		schemaScopes: map[string]*rawSchemaResourceScope{},
+		schemaOwners: map[string]*openAPI32RawResource{},
 	}
 }
 
@@ -209,10 +273,20 @@ func (o *OpenAPI32Overlay) Entry() (OpenAPI32Resource, bool) {
 func (o *OpenAPI32Overlay) capture(data []byte, requested, retrieval *url.URL, entry bool) error {
 	root, err := parseRawOpenAPIResource(data)
 	if err != nil {
+		if !entry {
+			return &OperationResolutionError{Kind: OperationTargetInvalid, Message: "selected reference document is not an accepted UTF-8 JSON or YAML representation", Cause: err}
+		}
 		return err
 	}
 	object, _ := root.(map[string]any)
 	resource := &openAPI32RawResource{root: root, entry: entry}
+	if !entry {
+		admitted, err := admittedOpenAPI32SecondaryRoot(root)
+		if err != nil {
+			return fmt.Errorf("secondary root recognition failed: %w", err)
+		}
+		resource.otherRoot = !admitted
+	}
 	if retrieval != nil {
 		resource.retrieval = cloneURL(retrieval)
 		resource.base = cloneURL(retrieval)
@@ -263,6 +337,7 @@ func (o *OpenAPI32Overlay) capture(data []byte, requested, retrieval *url.URL, e
 	}
 	for identity, scope := range rawSchemaResourceScopes(root, resource.base) {
 		o.schemaScopes[identity] = scope
+		o.schemaOwners[identity] = resource
 	}
 	return nil
 }
@@ -347,14 +422,17 @@ func (o *OpenAPI32Overlay) selectedPathItem(path, method string, additional bool
 		return nil, false, nil // the typed loader owns an ordinary unresolved-reference error
 	}
 	if resource.selfError != "" {
-		return nil, false, fmt.Errorf("selected Path Item reaches a resource with unusable %s", resource.selfError)
+		return nil, false, openAPI32ReferenceError("selected Path Item reaches a resource with unusable %s", resource.selfError)
 	}
 	if resource.self != nil && resourceKey != artifactResourceKey(resource.self) {
-		return nil, false, fmt.Errorf("selected Path Item reference uses retrieval alias %q instead of declared $self identity %q", resourceKey, artifactResourceKey(resource.self))
+		return nil, false, openAPI32ReferenceError("selected Path Item reference uses retrieval alias %q instead of declared $self identity %q", resourceKey, artifactResourceKey(resource.self))
 	}
 	target, ok := rawFragmentTarget(resource.root, resolved.Fragment, rawPathItemTarget)
 	if !ok {
 		return nil, false, nil
+	}
+	if err := openAPI32ReferencedRoot(resource, target, false); err != nil {
+		return nil, false, err
 	}
 	referenced, _ := target.(map[string]any)
 	if referenced == nil {
@@ -434,7 +512,7 @@ func (o *OpenAPI32Overlay) validateSelectedRequestReferences(pathItem map[string
 	}
 	if rawOperation, ok := operation.(map[string]any); ok {
 		request := map[string]any{}
-		for _, field := range []string{"parameters", "requestBody", "servers", "security"} {
+		for _, field := range []string{"parameters", "servers", "security"} {
 			if value, present := rawOperation[field]; present {
 				request[field] = value
 			}
@@ -495,9 +573,19 @@ func (o *OpenAPI32Overlay) validateRawReferences(value any, base *url.URL, schem
 }
 
 func (o *OpenAPI32Overlay) validateOneRawReference(refText string, base *url.URL, schema bool, seen map[string]bool) error {
+	target, targetBase, err := o.rawReferenceTargetLocked(refText, base, schema, seen)
+	if err != nil {
+		return err
+	}
+	return o.validateRawReferences(target, targetBase, schema, seen)
+}
+
+// Validate resource boundaries before traversal, using the raw-resource
+// inventory already acquired by the existing loader.
+func (o *OpenAPI32Overlay) rawReferenceTargetLocked(refText string, base *url.URL, schema bool, seen map[string]bool) (any, *url.URL, error) {
 	parsed, err := url.Parse(refText)
 	if err != nil {
-		return fmt.Errorf("selected request reference %q is invalid", refText)
+		return nil, nil, openAPI32ReferenceError("selected request reference %q is invalid", refText)
 	}
 	var resolved *url.URL
 	switch {
@@ -512,11 +600,11 @@ func (o *OpenAPI32Overlay) validateOneRawReference(refText string, base *url.URL
 	case base != nil:
 		resolved = base.ResolveReference(parsed)
 	default:
-		return fmt.Errorf("selected request reference %q has no document base", refText)
+		return nil, nil, openAPI32ReferenceError("selected request reference %q has no document base", refText)
 	}
 	key := resolved.String()
 	if seen[key] {
-		return nil
+		return nil, nil, nil
 	}
 	seen[key] = true
 	resourceKey := artifactResourceKey(resolved)
@@ -526,13 +614,13 @@ func (o *OpenAPI32Overlay) validateOneRawReference(refText string, base *url.URL
 	}
 	if resource != nil {
 		if resource.selfError != "" {
-			return fmt.Errorf("selected request reference reaches a resource with unusable %s", resource.selfError)
+			return nil, nil, openAPI32ReferenceError("selected request reference reaches a resource with unusable %s", resource.selfError)
 		}
 		if resource.self != nil && resourceKey != artifactResourceKey(resource.self) {
-			return fmt.Errorf("selected request reference uses retrieval alias %q instead of declared $self identity %q", resourceKey, artifactResourceKey(resource.self))
+			return nil, nil, openAPI32ReferenceError("selected request reference uses retrieval alias %q instead of declared $self identity %q", resourceKey, artifactResourceKey(resource.self))
 		}
 		if schema && rawPointerCrossesSchemaResource(resource.root, resolved.Fragment) {
-			return fmt.Errorf("selected Schema Object reference crosses a nearer $id resource boundary noncanonically")
+			return nil, nil, openAPI32ReferenceError("selected Schema Object reference crosses a nearer $id resource boundary noncanonically")
 		}
 		kind := rawParameterTarget
 		if schema {
@@ -540,19 +628,25 @@ func (o *OpenAPI32Overlay) validateOneRawReference(refText string, base *url.URL
 		}
 		target, ok := rawFragmentTarget(resource.root, resolved.Fragment, kind)
 		if !ok {
-			return nil
+			return nil, nil, openAPI32ReferenceError("selected request reference %q names no target", refText)
 		}
-		return o.validateRawReferences(target, resource.base, schema, seen)
+		if err := openAPI32ReferencedRoot(resource, target, schema); err != nil {
+			return nil, nil, err
+		}
+		return target, resource.base, nil
 	}
 	if schema {
 		if scope := o.schemaScopes[resourceKey]; scope != nil {
 			target, targetBase, ok := scope.fragment(resolved.Fragment)
 			if ok {
-				return o.validateRawReferences(target, targetBase, true, seen)
+				if err := openAPI32ReferencedRoot(o.schemaOwners[resourceKey], target, true); err != nil {
+					return nil, nil, err
+				}
+				return target, targetBase, nil
 			}
 		}
 	}
-	return nil
+	return nil, nil, nil
 }
 
 func rawPointerCrossesSchemaResource(root any, fragment string) bool {
