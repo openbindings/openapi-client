@@ -242,6 +242,7 @@ type Client struct {
 }
 
 func Load(ctx context.Context, source Source, options ClientOptions) (*Client, error) {
+	var entryRoot map[string]any
 	loadClient := options.LoadHTTPClient
 	if loadClient == nil {
 		loadClient = defaultHTTPClient()
@@ -252,7 +253,11 @@ func Load(ctx context.Context, source Source, options ClientOptions) (*Client, e
 			return nil, &ClientError{Kind: ErrorSource, Code: "SOURCE_LOAD_FAILED", Message: err.Error(), Cause: err}
 		}
 		source = materialized
-		swagger20Source, err := classifyClientSource(source.Content)
+		parsed, err := parseSwagger20Resource(source.Content)
+		if err != nil {
+			return nil, &ClientError{Kind: ErrorSource, Code: "SOURCE_LOAD_FAILED", Message: err.Error(), Cause: err}
+		}
+		swagger20Source, err := classifyClientRoot(parsed)
 		if err != nil {
 			return nil, &ClientError{Kind: ErrorSource, Code: "SOURCE_LOAD_FAILED", Message: err.Error(), Cause: err}
 		}
@@ -267,8 +272,9 @@ func Load(ctx context.Context, source Source, options ClientOptions) (*Client, e
 				swagger20: swagger20, edition: EditionSwagger20, source: source, options: options,
 			}, nil
 		}
+		entryRoot = parsed.(map[string]any)
 	}
-	artifact, floor, err := loadArtifact(ctx, loadClient, source, true)
+	artifact, floor, err := loadArtifactWithEntry(ctx, loadClient, source, true, entryRoot)
 	if err != nil {
 		return nil, &ClientError{Kind: ErrorSource, Code: "SOURCE_LOAD_FAILED", Message: err.Error(), Cause: err}
 	}
@@ -300,11 +306,7 @@ func materializeClientSource(ctx context.Context, client *http.Client, source So
 	return Source{Location: location, Content: content}, nil
 }
 
-func classifyClientSource(content []byte) (bool, error) {
-	root, err := parseSwagger20Resource(content)
-	if err != nil {
-		return false, err
-	}
+func classifyClientRoot(root any) (bool, error) {
 	object, ok := root.(map[string]any)
 	if !ok {
 		return false, fmt.Errorf("OpenAPI entry resource must be a JSON object")

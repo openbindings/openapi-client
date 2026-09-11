@@ -20,6 +20,12 @@ func loadDocument(ctx context.Context, client *http.Client, source Source, allow
 }
 
 func loadArtifact(ctx context.Context, client *http.Client, source Source, allowExternalRefs bool) (*Artifact, *acceptanceFloor, error) {
+	return loadArtifactWithEntry(ctx, client, source, allowExternalRefs, nil)
+}
+
+// entryRoot, when supplied by Load, is the owned result of the unchanged raw
+// representation gate over source.Content. Reuse is scoped to this load.
+func loadArtifactWithEntry(ctx context.Context, client *http.Client, source Source, allowExternalRefs bool, entryRoot map[string]any) (*Artifact, *acceptanceFloor, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -65,8 +71,27 @@ func loadArtifact(ctx context.Context, client *http.Client, source Source, allow
 		entryBytes = append([]byte(nil), source.Content...)
 	}
 	var edition Edition
+	// These entry checks all inspect the original image. Keep that owned tree
+	// alongside entryBytes; retries and normalization still use their own bytes.
+	classifyEntry := func(data []byte) (Edition, error) {
+		root, err := parseRawOpenAPIResource(data)
+		if err != nil {
+			return "", err
+		}
+		classified, err := classifyOpenAPIRoot(root)
+		if err == nil && entryRoot == nil {
+			entryRoot = root.(map[string]any)
+		}
+		return classified, err
+	}
 	if entryBytes != nil {
-		classified, err := ClassifyOpenAPIEdition(entryBytes)
+		var classified Edition
+		var err error
+		if entryRoot == nil {
+			classified, err = classifyEntry(entryBytes)
+		} else {
+			classified, err = classifyOpenAPIRoot(entryRoot)
+		}
 		if err != nil {
 			return nil, nil, err
 		}
@@ -145,7 +170,7 @@ func loadArtifact(ctx context.Context, client *http.Client, source Source, allow
 				if entryBytes == nil {
 					entryBytes = append([]byte(nil), data...)
 				}
-				classified, classifyErr := ClassifyOpenAPIEdition(data)
+				classified, classifyErr := classifyEntry(data)
 				if classifyErr != nil {
 					return nil, classifyErr
 				}
@@ -355,7 +380,7 @@ func loadArtifact(ctx context.Context, client *http.Client, source Source, allow
 			// declines because it cannot gate itself now leaves the loader's
 			// error standing where it used to leave a confined document that
 			// then reached this refusal a few lines later.
-			if floor := computeAcceptanceFloorFromBytes(entryBytes); floor != nil && floor.Refusal != "" {
+			if floor := computeAcceptanceFloor(entryRoot); floor != nil && floor.Refusal != "" {
 				return nil, nil, errors.New(floor.Refusal)
 			}
 			return nil, nil, err
@@ -369,7 +394,7 @@ func loadArtifact(ctx context.Context, client *http.Client, source Source, allow
 	// computed over the entry document's raw image. Part 2's single derived
 	// whole-source refusal is returned as a load failure; per-target
 	// verdicts ride with the document for the prepare-time inventory filter.
-	floor := computeAcceptanceFloorFromBytes(entryBytes)
+	floor := computeAcceptanceFloor(entryRoot)
 	if floor != nil && floor.Refusal != "" {
 		return nil, nil, errors.New(floor.Refusal)
 	}
@@ -377,7 +402,7 @@ func loadArtifact(ctx context.Context, client *http.Client, source Source, allow
 	if edition.IsOpenAPI32() && artifactOverlay != nil {
 		sourceRefusal, sourceExclusion = artifactOverlay.artifactDisposition()
 	}
-	if rawRefusal, rawExclusion := entryArtifactDisposition(entryBytes, edition); rawRefusal != "" || rawExclusion != "" {
+	if rawRefusal, rawExclusion := entryRootDisposition(entryRoot, edition); rawRefusal != "" || rawExclusion != "" {
 		if rawRefusal != "" {
 			sourceRefusal = rawRefusal
 		}

@@ -60,12 +60,8 @@ func openAPI32ArtifactDisposition(document *openapi3.T) (refusal, exclusion stri
 	return refusal, exclusion
 }
 
-func entryArtifactDisposition(data []byte, edition Edition) (refusal, exclusion string) {
-	if len(data) == 0 || !(strings.HasPrefix(string(edition), "3.1.") || edition.IsOpenAPI32()) {
-		return "", ""
-	}
-	decoded, err := parseRawOpenAPIResource(data)
-	if err != nil {
+func entryRootDisposition(decoded any, edition Edition) (refusal, exclusion string) {
+	if !(strings.HasPrefix(string(edition), "3.1.") || edition.IsOpenAPI32()) {
 		return "", ""
 	}
 	root, _ := decoded.(map[string]any)
