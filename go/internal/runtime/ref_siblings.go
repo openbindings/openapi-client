@@ -86,6 +86,19 @@ func (n *rawRefSiblingNormalizer) normalizeResource(data []byte, resource *url.U
 // typed dependency otherwise discards the referring document's sibling root
 // members while resolving the Path Item fragment.
 func (n *rawRefSiblingNormalizer) markReferringSecuritySchemes(data []byte, requested, retrieval *url.URL) ([]byte, error) {
+	targets := n.targetsForResources(requested, retrieval)
+	hasPathItem := false
+	for _, target := range targets {
+		if target.kind == rawPathItemTarget {
+			hasPathItem = true
+			break
+		}
+	}
+	// This pass only marks an already-recorded external Path Item target.
+	// With no such target it is inert and need not parse the resource.
+	if !hasPathItem {
+		return data, nil
+	}
 	root, err := parseRawOpenAPIResource(data)
 	if err != nil {
 		return data, nil
@@ -97,7 +110,7 @@ func (n *rawRefSiblingNormalizer) markReferringSecuritySchemes(data []byte, requ
 		return data, nil
 	}
 	changed := false
-	for _, target := range n.targetsForResources(requested, retrieval) {
+	for _, target := range targets {
 		if target.kind != rawPathItemTarget {
 			continue
 		}

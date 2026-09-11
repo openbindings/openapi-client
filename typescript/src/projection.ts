@@ -69,6 +69,7 @@ import {
   type AcceptanceFloor,
   type FloorOp,
 } from "./acceptance-floor.js";
+import { openAPI32NonJSONTextKind } from "./openapi32-media.js";
 import { classifyOpenAPI32SequentialResponse } from "./openapi32-sequential-response.js";
 import {
   documentInboundOperationInventory,
@@ -1345,7 +1346,8 @@ function projectedSuccessSchemaRoots(op: OpenAPIOperation, bindingSpec: string):
           admitsJSON = range.base === "*/*" || range.base === "application/*";
         } catch { continue; }
       }
-      if (!admitsJSON) continue;
+      const scalar = bindingSpec === BINDING_SPEC_OPENAPI_32 && openAPI32NonJSONTextKind(media.schema);
+      if (!admitsJSON && !scalar) continue;
       // One unconstrained JSON lane makes the entire synthesized output
       // unconstrained, so no response schema is projected at all.
       if (!Object.hasOwn(media, "schema")) return [];
@@ -1831,6 +1833,12 @@ function buildOutputSchema(
 
       const admitsNonJSON = !isJSONMediaType(base) || range;
       if (admitsNonJSON) {
+        // Match the declaration-selected 3.2 scalar value, including its
+        // schema constraints and reference closure.
+        if (bindingSpec === BINDING_SPEC_OPENAPI_32 && openAPI32NonJSONTextKind(media.schema)) {
+          schemas.push(projector.project(media.schema) as ProjectionSchema);
+          continue;
+        }
         const rawBoundary = hasResponseFidelity(bindingSpec)
           && !base.startsWith("text/")
           && (

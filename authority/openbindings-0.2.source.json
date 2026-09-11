@@ -1,7 +1,7 @@
 {
   "repository": "https://github.com/openbindings/spec.git",
   "releaseBranch": "release/0.2",
-  "commit": "efcfc127e05978a85fe1c2f15417e2920f232184",
+  "commit": "5ae3a9a997c8d5b8e5dc55a6246d38e0410281c7",
   "corpusRevision": 9,
   "candidateErrata": [],
   "families": [

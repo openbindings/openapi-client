@@ -1689,6 +1689,17 @@ func buildOutputSchemaWithCyclicRefs(op *openapi3.Operation, schemaOverlays *raw
 			}
 			admitsNonJSON := !isJSONMediaType(parsed.base) || parsed.rangeSpecificity < 2
 			if admitsNonJSON {
+				// The 3.2 scalar codec returns the declaration-selected
+				// application value, so its operation contract must retain
+				// that schema instead of unconditionally claiming string.
+				if bindingSpec == projectionOpenAPI32 && mediaSchema(media) != nil && openAPI32NonJSONTextKind(mediaSchema(media)) != "" {
+					cyclicRootRef := ""
+					if media.Schema.Ref != "" && graph.isCyclic(media.Schema.Ref) {
+						cyclicRootRef = media.Schema.Ref
+					}
+					appendSchema(graph.rootForm(media.Schema, schemaOverlays), cyclicRootRef)
+					continue
+				}
 				rawBoundary := hasResponseFidelity(bindingSpec) && !strings.HasPrefix(parsed.base, "text/") &&
 					((isOpenAPI30(majorMinor(openapiVersion)) &&
 						((hasSchemaOmittedOAS30ByteCarriage(bindingSpec) && parsed.rangeSpecificity == 2 && mediaSchema(media) == nil) || binarySignaled(mediaSchema(media), true))) ||
@@ -1987,7 +1998,8 @@ func projectedOutputSchemaRefs(op *openapi3.Operation, bindingSpec string) []*op
 				}
 			}
 			admitsJSON := err == nil && (isJSONMediaType(parsed.base) || (hasResponseFidelity(bindingSpec) && parsed.rangeSpecificity < 2 && (parsed.base == "application/*" || parsed.base == "*/*")))
-			if !admitsJSON {
+			scalar := err == nil && bindingSpec == projectionOpenAPI32 && mediaSchema(media) != nil && openAPI32NonJSONTextKind(mediaSchema(media)) != ""
+			if !admitsJSON && !scalar {
 				continue
 			}
 			if media == nil || media.Schema == nil {

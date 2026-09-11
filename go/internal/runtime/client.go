@@ -324,7 +324,7 @@ func classifyClientSource(content []byte) (bool, error) {
 		if !ok {
 			return false, fmt.Errorf("OpenAPI entry resource openapi field must be a string")
 		}
-		if _, err := ClassifyOpenAPIEdition(content); err != nil {
+		if _, err := classifyOpenAPIRoot(root); err != nil {
 			return false, err
 		}
 		return false, nil
