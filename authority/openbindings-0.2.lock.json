@@ -3,64 +3,9 @@
   "source": {
     "repository": "https://github.com/openbindings/spec.git",
     "releaseBranch": "release/0.2",
-    "commit": "ee5291ee5a5a23f7068d8c1d256792274a21167f",
-    "corpusRevision": 8,
-    "candidateErrata": [
-      {
-        "family": "openapi-3.0",
-        "kind": "processor",
-        "scenario": "OAPI30-PS-99",
-        "description": "Two complete security alternatives require an explicit configuration.security choice even when runtime credentials could satisfy both; artifact order creates no preference. The missing named point is context-required and nothing dispatches.",
-        "expected": [
-          {
-            "disposition": "context-required",
-            "phase": "pre-dispatch",
-            "assertions": [
-              {
-                "path": "/dispatch",
-                "absent": true
-              }
-            ]
-          }
-        ]
-      },
-      {
-        "family": "openapi-3.1",
-        "kind": "processor",
-        "scenario": "OAPI31-PS-111",
-        "description": "Two complete security alternatives require an explicit configuration.security choice even when runtime credentials could satisfy both; artifact order creates no preference. The missing named point is context-required and nothing dispatches.",
-        "expected": [
-          {
-            "disposition": "context-required",
-            "phase": "pre-dispatch",
-            "assertions": [
-              {
-                "path": "/dispatch",
-                "absent": true
-              }
-            ]
-          }
-        ]
-      },
-      {
-        "family": "openapi-3.2",
-        "kind": "processor",
-        "scenario": "OAPI32-PS-121",
-        "description": "Two complete security alternatives require explicit security selection even when runtime credentials satisfy both. The missing named point is context-required and nothing dispatches.",
-        "expected": [
-          {
-            "disposition": "context-required",
-            "phase": "pre-dispatch",
-            "assertions": [
-              {
-                "path": "/dispatch",
-                "absent": true
-              }
-            ]
-          }
-        ]
-      }
-    ]
+    "commit": "efcfc127e05978a85fe1c2f15417e2920f232184",
+    "corpusRevision": 9,
+    "candidateErrata": []
   },
   "files": [
     {
@@ -84,14 +29,14 @@
     {
       "upstreamPath": "conformance/binding-specs/processor/openapi-3.2.json",
       "localPath": "conformance/upstream/openbindings-0.2/processor/openapi-3.2.json",
-      "sha256": "73d34ec62607ee1482f65fd6a0715986226c3f0df38fd6e10c70a78c710367db",
-      "bytes": 551931
+      "sha256": "3471f074e861fdbcf5e713d43abb22ae53d9690923e5735df574161c69f0678c",
+      "bytes": 682415
     },
     {
       "upstreamPath": "conformance/binding-specs/README.md",
       "localPath": "conformance/upstream/openbindings-0.2/README.md",
-      "sha256": "1c06db509cae9415fd49b8254c674749ec702bd6e1166c5609a13438aed0a93f",
-      "bytes": 40946
+      "sha256": "230a08d35802cc805d62ad0f5702ed0caa8c8d258fd5f36ca8220a49c9e6de09",
+      "bytes": 39600
     },
     {
       "upstreamPath": "conformance/binding-specs/processor-scenario.schema.json",
@@ -102,38 +47,38 @@
     {
       "upstreamPath": "conformance/binding-specs/synthesis-scenario.schema.json",
       "localPath": "conformance/upstream/openbindings-0.2/schemas/synthesis-scenario.schema.json",
-      "sha256": "99217e5cac851613041d66c30666031a81245af226ffdc08884315ee6fc8f9a6",
-      "bytes": 11867
+      "sha256": "d6db21fd9d171f4e5303806cf3615415970f4be008ef9998da33321c6385d3b0",
+      "bytes": 11606
     },
     {
       "upstreamPath": "conformance/binding-specs/synthesis/openapi-2.0.json",
       "localPath": "conformance/upstream/openbindings-0.2/synthesis/openapi-2.0.json",
-      "sha256": "ed2775fcce72fa9318485bd4ea214df9378d2fc7c9709c12bbcd7057018e9418",
-      "bytes": 71482
+      "sha256": "ae6766d62fa4f06e87818eb2d9f1674cc318e29f179db1fbd0aa15d0e76b6a7b",
+      "bytes": 71644
     },
     {
       "upstreamPath": "conformance/binding-specs/synthesis/openapi-3.0.json",
       "localPath": "conformance/upstream/openbindings-0.2/synthesis/openapi-3.0.json",
-      "sha256": "e96ffbe898cdf931a66d0b6d05c6541c9e82dece5cb06d4afda0ccb3f0ec6e3d",
-      "bytes": 154375
+      "sha256": "98b28fe3b5c7d523ddb04e3c68eb4e5deee03f51b83bdb3f0197c4069a2c3877",
+      "bytes": 154476
     },
     {
       "upstreamPath": "conformance/binding-specs/synthesis/openapi-3.1.json",
       "localPath": "conformance/upstream/openbindings-0.2/synthesis/openapi-3.1.json",
-      "sha256": "bba2a6c1246dbafafd4d97d0dc4faf580813f08fa6ee5578cddc7a494aa2ea02",
-      "bytes": 227703
+      "sha256": "064c99690046efbc0228520affed7fb741c223832b86335fcc08ec472ade28e9",
+      "bytes": 227987
     },
     {
       "upstreamPath": "conformance/binding-specs/synthesis/openapi-3.2.json",
       "localPath": "conformance/upstream/openbindings-0.2/synthesis/openapi-3.2.json",
-      "sha256": "7024b3278a9239af0a8de34086870bec747807fbad4d31fb1eaab58bdd94e125",
-      "bytes": 119011
+      "sha256": "3fff2272e3d2011e024dee82c8c4b3f956c9a70cb97a347233a974bba8de4ca4",
+      "bytes": 119112
     }
   ],
   "totals": {
     "processorRules": 218,
-    "synthesisRules": 76,
-    "processorScenarios": 896,
+    "synthesisRules": 72,
+    "processorScenarios": 964,
     "synthesisScenarios": 154
   }
 }

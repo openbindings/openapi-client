@@ -9,9 +9,9 @@ specifications as an OpenAPI-native client contract. OpenBindings Core, the
 OpenBindings SDK, and OB CLI are not runtime dependencies and do not appear in
 the public API.
 
-> Status: candidate under qualification. The invocation behavior passes all 896
+> Status: candidate under qualification. Invocation is checked against the 964
 > hash-locked processor scenarios at the pinned OpenBindings 0.2 authority
-> revision, and the public API is candidate-frozen.
+> revision. The public API is candidate-frozen; this is not a published release.
 
 ## Install
 
@@ -49,6 +49,36 @@ if (result.ok) {
 The generic result types are caller assertions, not runtime schema
 validation. A generated typed facade can sit over this client without
 reimplementing OpenAPI wire behavior.
+
+## JSON number values
+
+Decoded JSON is not restricted to JavaScript's binary64 number range. Safe
+integer tokens use native `number` values; other numeric tokens use immutable
+`JSONNumber` carriers from the protocol-neutral `@openbindings/json` package.
+This applies to JSON success bodies, decoded failure bodies, and sequential
+JSON values. A result generic is only a caller assertion: declaring every
+numeric field as `number` does not convert its value.
+
+Use the same package to inspect, construct, or serialize exact values:
+
+```ts
+import { numberToken, parseJSON, stringifyJSON } from "@openbindings/json";
+
+const input = parseJSON('{"id":9223372036854775807,"amount":0.1234567890123456789}');
+console.log(stringifyJSON(input)); // Both values remain JSON numbers, unchanged.
+console.log(numberToken(42));      // "42"; also accepts a JSONNumber carrier.
+```
+
+For a decoded integer identifier, pass its `numberToken(value)` to `BigInt`
+only when the token is an integer spelling. For decimal arithmetic, use an
+appropriate decimal library. Conversion to `Number` is an explicit potentially
+lossy application choice. Ordinary `JSON.stringify` is not a portable carrier
+serializer across supported hosts; use `stringifyJSON`. Native numbers supplied
+by the caller retain only their already-represented value: parsing a large
+identifier with ordinary `JSON.parse` before calling the client cannot be undone.
+
+These helpers do not require an OBI or the OpenBindings SDK. This implementation
+policy does not change the binding's separately chosen parameter conversion.
 
 ## Supported artifacts
 
@@ -253,6 +283,28 @@ Redirects default to `manual`, so the response to the authored operation stays
 observable. `redirect: "follow"` follows only method-and-body-preserving hops.
 Selected credentials and Cookie are not forwarded or reconstructed across an
 origin boundary.
+
+Browser and dedicated Worker Fetch cannot send an explicitly authored `Cookie`
+header. With the built-in Fetch path, cookie security, cookie parameters, and raw
+Cookie headers therefore refuse before any target request, including a Cookie
+added by request middleware. The client does not substitute ambient cookies or
+change its existing ambient-credential policy. Use Node/Go or an explicitly
+injected Fetch adapter that can faithfully carry the request. Adapter injection
+is the caller's responsibility; wrapping browser Fetch does not remove its limits.
+
+Browsers can also return unreadable `opaque`/`opaqueredirect` responses for
+redirects. These produce a response-phase error, without a successful output or
+an automatic follow/replay. The method-only transport fallback is not a general
+redirect solution. These browser-native limits do not describe `ob start`'s
+browser UI: its operations run through the Go backend.
+
+For OpenAPI 3.2 non-JSON character bodies, the declaration selects the scalar
+codec: sole `boolean` decodes `true`/`false`; sole `number` or `integer` decodes a
+complete JSON-number token, preserving its exact value. For example, a numeric
+`text/plain` response of `9007199254740993` yields the existing exact-number
+carrier, while `01` is a response error. A string declaration keeps the same text
+as a string. Ambiguous scalar declarations cannot be resolved by guessing from
+the supplied value. This codec is not general schema or integrality validation.
 
 Middleware is HTTP-native and ordered:
 

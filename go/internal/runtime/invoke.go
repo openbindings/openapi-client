@@ -814,6 +814,22 @@ func runBinding(ctx context.Context, client *http.Client, args *executionArgs, i
 	}
 
 	decoder := decodeByContentTypeWith(actualContentType, args.Source.Capability, args.ResponseCharacterEncodings)
+	if doc.OpenAPI == "3.2.0" && !isJSONMediaType(normalizeMediaType(actualContentType)) {
+		kind := openAPI32NonJSONTextKind(mediaSchema(matched.media))
+		if kind == "boolean" || kind == "number" {
+			decoder = func(_ HookSite, raw RawResult) (any, error) {
+				text, err := decodeTextLaneWith(actualContentType, raw.Body, args.Source.Capability, args.ResponseCharacterEncodings)
+				if err != nil {
+					return nil, err
+				}
+				value, err := parseOpenAPI32NonJSONText(mediaSchema(matched.media), text.(string))
+				if err != nil {
+					return nil, &ExecutionError{Code: CodeResponseError, Message: err.Error(), Cause: err}
+				}
+				return value, nil
+			}
+		}
+	}
 	if hasResponseFidelity(args.Source.Capability) && responseUsesRawBoundary(doc, matched.media, actualContentType, args.Source.Capability, matched.declared.rangeSpecificity == 2) {
 		decoder = func(_ HookSite, raw RawResult) (any, error) {
 			return base64.StdEncoding.EncodeToString(raw.Body), nil

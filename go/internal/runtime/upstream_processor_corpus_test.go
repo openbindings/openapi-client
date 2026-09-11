@@ -22,6 +22,7 @@ import (
 	"unicode/utf8"
 
 	openapi "github.com/openbindings/openapi-client/go"
+	"github.com/openbindings/openbindings-go/jsonvalue"
 )
 
 type CallOptions = openapi.CallOptions
@@ -1253,7 +1254,8 @@ func processorSetPointer(root map[string]any, path string, replacement any) erro
 }
 
 func processorJSONEqual(left, right any) bool {
-	return reflect.DeepEqual(processorNormalized(left), processorNormalized(right))
+	equal, err := jsonvalue.Equal(processorNormalized(left), processorNormalized(right))
+	return err == nil && equal
 }
 
 func processorNormalized(value any) any {

@@ -7,6 +7,7 @@ import {
 } from "./media.js";
 import { resolveDeclaration, type SchemaDeclaration } from "./resolved-declaration.js";
 import { classifyOpenAPI32SequentialResponse } from "./openapi32-sequential-response.js";
+import { openAPI32NonJSONTextKind } from "./openapi32-media.js";
 import type {
   OpenAPIDocument,
   OpenAPIMediaType,
@@ -26,6 +27,14 @@ export class OpenAPIWireMechanicsError extends Error {
     super(message);
     this.name = "OpenAPIWireMechanicsError";
   }
+}
+
+/** A filtered Fetch response supplies no evidence to interpret as an HTTP result. */
+export function requireReadableOpenAPIResponse(response: Response): void {
+  if (response.type !== "opaque" && response.type !== "opaqueredirect" && response.status !== 0) return;
+  void response.body?.cancel().catch(() => undefined);
+  throw new OpenAPIWireMechanicsError("ERR_RESPONSE_ERROR",
+    "This host returned an unreadable filtered response: HTTP status, headers and body are unavailable. Use Node/Go or an explicit adapter that returns readable response evidence; no redirect was followed by this client.");
 }
 
 export type OpenAPIContentCodingResult = Uint8Array | ArrayBuffer | ArrayBufferView;
@@ -117,6 +126,7 @@ export async function governOpenAPIResponse(
   model: OpenAPIResponseMechanicsModel,
   codecs: ReadonlyMap<string, OpenAPIContentDecoder>,
 ): Promise<Response> {
+  requireReadableOpenAPIResponse(response);
   const governing = governingResponse(model.operation, response.status);
   if (governing) requireGovernedResponseHeaders(governing.response, response.headers);
 
@@ -246,6 +256,7 @@ export async function governOpenAPIResponse(
         contentType,
         model.document.openapi?.startsWith("3.0") ?? true,
         model.responseCharacterDecodings,
+        model.document.openapi === "3.2.0",
       );
     } catch (error: unknown) {
       if (successful) throw error;
@@ -357,11 +368,13 @@ function validateResponseMediaLane(
   contentType: string,
   oas30: boolean,
   decoders?: ReadonlyMap<string, OpenAPICharacterDecoder>,
+  oas32 = false,
 ): void {
   const parsed = parseMediaType(contentType, true);
   if (isJSONMediaType(parsed.base)) return;
   const declaration = resolveDeclaration(media.schema, oas30);
-  if (isCharacterDataMedia(parsed.base) && declaration.admitsStringAsSoleNonNullType()) {
+  if (isCharacterDataMedia(parsed.base) && (declaration.admitsStringAsSoleNonNullType()
+      || (oas32 && parsed.base !== "text/json" && openAPI32NonJSONTextKind(media.schema)))) {
     requireSupportedCharset(parsed.params.charset ?? "utf-8", decoders);
     return;
   }

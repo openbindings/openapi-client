@@ -9,15 +9,15 @@ OpenBindings OpenAPI binding specifications supply the deterministic behavior,
 but the published clients are OpenAPI-native and have no OpenBindings runtime
 dependency.
 
-> Status: release candidate. Both language implementations pass all 896
-> hash-locked portable processor scenarios at the pinned OpenBindings 0.2
-> authority revision, together with the native, race, package, browser, API,
-> and clean-consumer qualification gates.
+> Status: candidate under qualification. The current authority includes 964
+> hash-locked portable processor scenarios. Native, race, package, real-host,
+> API, and clean-consumer checks are separate gates; a source candidate is not
+> a published release or a claim that every ecosystem gate has passed.
 
-> Development-branch qualification delta: the Go value-carriage migration
-> below has not yet passed a coordinated Go/TypeScript package-release gate.
-> TypeScript still uses its existing numeric representation; the stronger
-> cross-language fidelity target is not yet qualified.
+Both implementations preserve JSON numbers across source, request, and response
+boundaries. This is the official clients' implementation-quality policy, not a
+requirement that every implementation choose the same host representation.
+Candidate source and packed-consumer qualification do not publish packages.
 
 ## TypeScript
 
@@ -41,7 +41,7 @@ else console.error(result.response.status, result.error);
 
 See the [TypeScript package guide](typescript/README.md) for sources,
 selection, inputs, authentication, results, streaming, middleware, transports,
-and redirects.
+redirects, and [exact JSON number handling](typescript/README.md#json-number-values).
 
 ## Go
 
@@ -184,7 +184,7 @@ development and release evidence, never runtime dependencies.
 
 The release loop requires:
 
-- all 896 portable processor scenarios in both languages;
+- all pinned portable processor scenarios in both languages;
 - native and race-enabled test suites;
 - exact public API snapshots;
 - exactly two intentional TypeScript exports and matching clean Go root and

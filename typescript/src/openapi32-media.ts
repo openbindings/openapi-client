@@ -1,5 +1,5 @@
 import type { OpenAPIMediaType } from "./types.js";
-import { numberToken, integerNumberToken, isJSONNumber } from "@openbindings/json";
+import { numberToken, integerNumberToken, isJSONNumber, parseJSON } from "@openbindings/json";
 import { stringifyRequestJSON } from "./request-json.js";
 import { resolveDeclaration, type SchemaDeclaration } from "./resolved-declaration.js";
 
@@ -75,16 +75,36 @@ export function openAPI32NonJSONTextSchema(schema: SchemaDeclaration): boolean {
   return nonNull;
 }
 
-/** Serializes a runtime-selected scalar without JSON string quoting. */
+/** Select the codec from declarations, never from unvalidated runtime data. */
+export function openAPI32NonJSONTextKind(schema: SchemaDeclaration): "string" | "boolean" | "number" | undefined {
+  const declaration = resolveDeclaration(schema, false);
+  if (declaration.admitsStringAsSoleNonNullType()) return "string";
+  if (declaration.ambiguous || declaration.admitsNoInstance() || declaration.types?.size !== 1) return undefined;
+  if (declaration.types.has("boolean")) return "boolean";
+  if (declaration.types.has("number") || declaration.types.has("integer")) return "number";
+  return undefined;
+}
+
+/** Parse the entire decoded scalar text; this is not schema validation. */
+export function parseOpenAPI32NonJSONText(schema: SchemaDeclaration, text: string): unknown {
+  const kind = openAPI32NonJSONTextKind(schema);
+  if (kind === "string") return text;
+  const token = text.replace(/^[ \t\r\n]+|[ \t\r\n]+$/gu, "");
+  if (kind === "boolean" && (token === "true" || token === "false")) return token === "true";
+  if (kind === "number" && /^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$/u.test(token)) return parseJSON(token);
+  throw new Error("non-JSON scalar text does not match its declaration-selected boolean or number codec");
+}
+
+/** Serialize through the already selected codec without JSON string quoting. */
 export function serializeOpenAPI32NonJSONText(
   schema: SchemaDeclaration,
   value: unknown,
 ): string {
   if (value === null) throw new Error("non-JSON text serialization has no null lexical form");
-  const resolved = resolveDeclaration(schema, false);
+  const codec = openAPI32NonJSONTextKind(schema);
   const kind = openAPI32JSONValueType(value);
-  if (!kind || !resolvedTypeAdmits(resolved.types, kind)) {
-    throw new Error(`supplied ${kind || typeof value} does not determine one permitted non-JSON serialization type`);
+  if (!codec || !(kind === codec || (codec === "number" && kind === "integer"))) {
+    throw new Error("declaration and supplied value select no single permitted non-JSON serialization codec");
   }
   if (typeof value === "string") return value;
   if (typeof value === "boolean") return value ? "true" : "false";

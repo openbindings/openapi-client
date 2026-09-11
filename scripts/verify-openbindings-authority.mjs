@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,6 +11,25 @@ const source = JSON.parse(readFileSync(join(root, "authority", "openbindings-0.2
 const lock = JSON.parse(readFileSync(join(root, "authority", "openbindings-0.2.lock.json"), "utf8"));
 const ledger = JSON.parse(readFileSync(join(root, "conformance", "openapi-authority-ledger.json"), "utf8"));
 const failures = [];
+// Optional qualification against an explicitly selected source checkout. The
+// ordinary package verifier remains self-contained; this is not Core conformance.
+const specRepo = process.argv[2] ? resolve(process.argv[2]) : undefined;
+if (specRepo) {
+  const selected = execFileSync("git", ["rev-parse", "HEAD"], { cwd: specRepo, encoding: "utf8" }).trim();
+  if (selected !== source.commit) failures.push(`selected spec ${selected} differs from pinned ${source.commit}`);
+  for (const family of ledger.generated) {
+    if (digest(readFileSync(join(specRepo, family.specPath))) !== family.specSha256) {
+      failures.push(`${family.specPath}: selected spec prose differs from the authority ledger`);
+    }
+  }
+  if ((source.candidateErrata ?? []).length === 0) {
+    for (const entry of lock.files) {
+      if (digest(readFileSync(join(specRepo, entry.upstreamPath))) !== entry.sha256) {
+        failures.push(`${entry.upstreamPath}: selected corpus differs from the authority lock`);
+      }
+    }
+  }
+}
 
 function digest(value) {
   return createHash("sha256").update(value).digest("hex");

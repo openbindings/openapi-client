@@ -1,4 +1,5 @@
 import { readResponseBytes } from "./response-body.js";
+import { openAPI32NonJSONTextKind, parseOpenAPI32NonJSONText } from "./openapi32-media.js";
 import {
   InvocationError,
   contextRequiredError,
@@ -737,7 +738,8 @@ export async function runBinding(
     // cancel or another terminal transition); stay silent.
     if (inv.signal.aborted) return;
     // The request never produced a response: a transport-level failure.
-    inv.fireError(new InvocationError(ERR_CONNECT_FAILED, errorMessage(e)));
+    inv.fireError(e instanceof OpenAPIWireMechanicsError ? toInvocationError(e)
+      : new InvocationError(ERR_CONNECT_FAILED, errorMessage(e)));
     return;
   }
 
@@ -1162,7 +1164,7 @@ export async function runBinding(
 
   let output: unknown;
   try {
-    const builtin = responseFidelity
+    let builtin = responseFidelity
       && contentType !== null
       && mediaMatch !== null
       && responseUsesRawBoundary(
@@ -1174,6 +1176,18 @@ export async function runBinding(
       )
       ? ((_site: InvokeSite, _raw: RawResult): unknown => bytesToBase64(bodyBytes))
       : decodeBytesByContentType(contentType, bodyBytes, revision3, args.responseCharacterEncodings);
+    if (doc.openapi === "3.2.0" && mediaMatch && contentType
+        && !isJSONMediaType(normalizeMediaType(contentType))
+        && ["boolean", "number"].includes(openAPI32NonJSONTextKind(mediaMatch.media.schema) ?? "")) {
+      builtin = () => {
+        try {
+          return parseOpenAPI32NonJSONText(mediaMatch.media.schema,
+            decodeTextLane(contentType, bodyBytes, revision3, args.responseCharacterEncodings, true));
+        } catch (error: unknown) {
+          throw new InvocationError(ERR_RESPONSE_ERROR, errorMessage(error));
+        }
+      };
+    }
     output = await decodeThroughHooks(args.hooks, site, raw, builtin);
   } catch (e: unknown) {
     inv.fireError(toInvocationError(e));
@@ -1570,6 +1584,7 @@ export function decodeTextLane(
   bytes: Uint8Array,
   revision3 = false,
   characterDecoders?: ReadonlyMap<string, OpenAPICharacterDecoder>,
+  preserveBOM = false,
 ): string {
   let charset = "utf-8";
   if (contentType) {
@@ -1593,7 +1608,7 @@ export function decodeTextLane(
     case "utf-8":
     case "utf8":
       try {
-        return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+        return new TextDecoder("utf-8", { fatal: true, ignoreBOM: preserveBOM }).decode(bytes);
       } catch {
         throw new InvocationError(
           ERR_RESPONSE_ERROR,

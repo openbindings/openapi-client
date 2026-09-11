@@ -130,7 +130,8 @@ paths:
         } } } } },
       },
     } });
-    await expect(schema.resolveOperation("#/paths/~1x/post")).rejects.toThrow(/\$id/u);
+    const target = await schema.resolveOperation("#/paths/~1x/post");
+    expect(target.operation.requestBody?.content).toEqual({});
   });
 
   it("keeps post-load refusal, dialect exclusion, and target exclusion distinct", async () => {

@@ -4,6 +4,25 @@ import {OpenAPIClient} from "./client.js";
 
 const raw = '{"id":9007199254740993,"huge":1e400,"tiny":1e-400,"money":0.10000000000000001,"nested":[null,[],{},"9007199254740993"]}';
 
+it.each([
+  ["9007199254740993", "9007199254740993"],
+  ["1e-400", "1e-400"],
+  ["", undefined],
+  ["01", undefined],
+  ["\ufeff1", undefined],
+] as const)("applies the scalar codec to a framed multipart item: %j", async (token, expected) => {
+  let requests=0;
+  const client=await OpenAPIClient.load({openapi:"3.2.0",info:{title:"Scalar parts",version:"1"},servers:[{url:"https://example.invalid"}],paths:{"/x":{get:{operationId:"test",responses:{"200":{content:{"multipart/mixed":{itemSchema:{type:"number"}}}}}}}}},
+    {fetch:async()=>{requests++;return new Response(`--b\r\nContent-Type: text/plain\r\n\r\n${token}\r\n--b--\r\n`,{headers:{"Content-Type":"multipart/mixed; boundary=b"}})}});
+  const result=await client.stream("test");
+  expect(result.ok).toBe(true); if(!result.ok)throw Error("expected framing response");
+  const values:string[]=[];
+  const consume=async()=>{for await(const event of result.events)values.push(stringifyJSON(event.data));};
+  if(expected===undefined){await expect(consume()).rejects.toMatchObject({code:"ERR_RESPONSE_ERROR"});expect(values).toEqual([]);}
+  else {await consume();expect(values).toEqual([expected]);}
+  expect(requests).toBe(1);
+});
+
 for (const edition of ["3.0.4", "3.1.2", "3.2.0"]) {
   for (const media of ["multipart/form-data", "application/x-www-form-urlencoded"]) {
     it(`preserves public ${edition} JSON parts and parameter content in ${media}`, async () => {

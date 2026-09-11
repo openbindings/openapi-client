@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { equalJSON } from "@openbindings/json";
 import {
   OpenAPIClient,
   OpenAPIClientError,
@@ -544,7 +545,7 @@ function matchAlternative(observation: Observation, expected: Expected): void {
     if (assertion.absent === true) {
       expect(selected.present, assertion.path).toBe(false);
     } else if (Object.hasOwn(assertion, "equals")) {
-      expect(selected.value, assertion.path).toEqual(assertion.equals);
+      expect(selected.present && equalJSON(selected.value, assertion.equals), assertion.path).toBe(true);
     } else if (Array.isArray(assertion.oneOf)) {
       expect(assertion.oneOf, assertion.path).toContainEqual(selected.value);
     } else if (Array.isArray(assertion.setEquals)) {

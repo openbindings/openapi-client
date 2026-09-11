@@ -316,11 +316,18 @@ func decodeOpenAPI32SequentialPart(contentType string, body []byte, schema *open
 		}
 		return value, nil
 	}
-	if isCharacterDataMedia(parsed.base) {
-		return decodeTextLaneFor(contentType, body, profileFullCoordinate)
-	}
 	if resolveDeclaration(schema, false).typeless() {
 		return base64.StdEncoding.EncodeToString(body), nil
+	}
+	if isCharacterDataMedia(parsed.base) {
+		kind := openAPI32NonJSONTextKind(schema)
+		if kind != "" && (parsed.base != "text/json" || kind == "string") {
+			text, err := decodeTextLaneFor(contentType, body, profileFullCoordinate)
+			if err != nil {
+				return nil, err
+			}
+			return parseOpenAPI32NonJSONText(schema, text.(string))
+		}
 	}
 	return nil, fmt.Errorf("part media %q and its resolved declaration select no incorporated carriage lane", contentType)
 }

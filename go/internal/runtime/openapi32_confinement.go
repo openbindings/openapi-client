@@ -65,9 +65,7 @@ func buildOpenAPI32Targets(overlay *OpenAPI32Overlay, references []OperationRefe
 			}
 		}
 		if err != nil {
-			result.errors[reference.Ref] = &OperationResolutionError{
-				Kind: OperationTargetExcluded, Message: fmt.Sprintf("selected operation closure is unresolvable: %v", err), Cause: err,
-			}
+			result.errors[reference.Ref] = openAPI32ResolutionError(err)
 			continue
 		}
 		pathItem := document.Paths.Find(reference.Path)
@@ -223,14 +221,17 @@ func (o *OpenAPI32Overlay) referencedPathItemLocked(adjacent map[string]any, bas
 		return nil, nil, fmt.Errorf("Path Item reference %q is unresolvable", refText)
 	}
 	if resource.selfError != "" {
-		return nil, nil, fmt.Errorf("Path Item reaches a resource with unusable %s", resource.selfError)
+		return nil, nil, openAPI32ReferenceError("Path Item reaches a resource with unusable %s", resource.selfError)
 	}
 	if resource.self != nil && artifactResourceKey(resolved) != artifactResourceKey(resource.self) {
-		return nil, nil, fmt.Errorf("Path Item reference uses retrieval alias %q instead of declared $self identity %q", artifactResourceKey(resolved), artifactResourceKey(resource.self))
+		return nil, nil, openAPI32ReferenceError("Path Item reference uses retrieval alias %q instead of declared $self identity %q", artifactResourceKey(resolved), artifactResourceKey(resource.self))
 	}
 	target, ok := rawFragmentTarget(resource.root, resolved.Fragment, rawPathItemTarget)
 	if !ok {
 		return nil, nil, fmt.Errorf("Path Item reference %q names no target", refText)
+	}
+	if err := openAPI32ReferencedRoot(resource, target, false); err != nil {
+		return nil, nil, err
 	}
 	referenced, _ := target.(map[string]any)
 	if referenced == nil {
@@ -346,6 +347,11 @@ func (o *OpenAPI32Overlay) operationImage(reference OperationReference, attempt 
 		}
 	}
 	operationCopy := cloneOverlayValue(rawOperation, map[uintptr]any{})
+	// The raw Request Body owner restores its independently confined media
+	// after loading this private image, retaining the original resource bases.
+	if operationObject, ok := operationCopy.(map[string]any); ok {
+		delete(operationObject, "requestBody")
+	}
 	if attempt.dropNonSuccess {
 		pruneOpenAPI32DefectiveNonSuccessResponses(root, operationCopy)
 	}

@@ -22,13 +22,18 @@ func (a *Artifact) validateOpenAPI32Target(target *OperationTarget) (*OperationT
 	}
 	target = a.materializeOpenAPI32ServerTarget(target)
 	target = a.materializeOpenAPI32SecurityTarget(target)
+	var requestErr error
+	target, requestErr = a.materializeOpenAPI32RequestTarget(target)
+	if requestErr != nil {
+		return nil, openAPI32ResolutionError(requestErr)
+	}
 	var responseErr error
 	target, responseErr = a.materializeOpenAPI32ResponseTarget(target)
 	if responseErr != nil {
-		return nil, &OperationResolutionError{Kind: OperationTargetExcluded, Message: responseErr.Error(), Cause: responseErr}
+		return nil, openAPI32ResolutionError(responseErr)
 	}
 	if err := a.openAPI32.validateSelectedResponseDeclarations(target.OperationReference); err != nil {
-		return nil, &OperationResolutionError{Kind: OperationTargetExcluded, Message: err.Error(), Cause: err}
+		return nil, openAPI32ResolutionError(err)
 	}
 	if err := a.openAPI32.validateSelectedParameterDeclarations(target.OperationReference); err != nil {
 		return nil, &OperationResolutionError{Kind: OperationTargetInvalid, Message: err.Error(), Cause: err}

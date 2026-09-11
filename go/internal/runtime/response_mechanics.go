@@ -351,7 +351,8 @@ func validateResponseMediaLane(document *openapi3.T, media *openapi3.MediaType, 
 	}
 	oas30 := document != nil && isOpenAPI30(majorMinor(document.OpenAPI))
 	declaration := resolveDeclaration(mediaSchema(media), oas30)
-	if isCharacterDataMedia(parsed.base) && declaration.admitsStringAsSoleNonNullType() {
+	if isCharacterDataMedia(parsed.base) && (declaration.admitsStringAsSoleNonNullType() ||
+		(document != nil && document.OpenAPI == "3.2.0" && parsed.base != "text/json" && openAPI32NonJSONTextKind(mediaSchema(media)) != "")) {
 		return supportedTextCharset(parsed)
 	}
 	if declaration.typeless() {

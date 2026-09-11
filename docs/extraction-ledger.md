@@ -14,10 +14,10 @@ the authority never overwrites the implementation's claims.
 | Product contract | candidate-frozen | reviewed TypeScript declarations and Go documentation snapshots pass |
 | TypeScript native client | candidate-complete | pinned corpus, lifecycle, browser, package, and consumer gates pass |
 | Go native client | candidate-complete | pinned corpus, race, package, and external-consumer gates pass |
-| Portable processor corpus | pinned and complete | all 896 pinned scenarios pass unchanged through both public clients |
+| Portable processor corpus | candidate qualification | all pinned scenarios must pass through both public clients |
 | Engine-owned analysis | complete for adapter cutover | detached immutable provider projections own parameter, media, security, response, schema, and coverage decisions in both languages |
 | Portable OBI synthesis | behavior- and architecture-complete | TypeScript and Go adapters pass all 154 portable OAS-family synthesis scenarios as mechanical projections of native provider facts |
-| Cross-language parity | candidate-complete | normalized observations match on all 896 portable invocation scenarios |
+| Cross-language parity | candidate qualification | normalized observations must satisfy the same permitted alternatives across the pinned corpus |
 | OpenBindings adapters | provider cutover complete | thin invocation and synthesis bridges pass; no duplicate OpenAPI executor or declaration planner remains |
 | SDK and OB CLI | cut over | generic prepared-provider routing, bounded revision reuse, safe local diagnostics, and exact raw-binding exploration pass together |
 | Standalone release quality | candidate-qualified | the complete repository-local release gate passes against the pinned authority |

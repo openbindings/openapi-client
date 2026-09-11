@@ -3,71 +3,16 @@
   "source": {
     "repository": "https://github.com/openbindings/spec.git",
     "releaseBranch": "release/0.2",
-    "commit": "ee5291ee5a5a23f7068d8c1d256792274a21167f",
-    "corpusRevision": 8,
-    "candidateErrata": [
-      {
-        "family": "openapi-3.0",
-        "kind": "processor",
-        "scenario": "OAPI30-PS-99",
-        "description": "Two complete security alternatives require an explicit configuration.security choice even when runtime credentials could satisfy both; artifact order creates no preference. The missing named point is context-required and nothing dispatches.",
-        "expected": [
-          {
-            "disposition": "context-required",
-            "phase": "pre-dispatch",
-            "assertions": [
-              {
-                "path": "/dispatch",
-                "absent": true
-              }
-            ]
-          }
-        ]
-      },
-      {
-        "family": "openapi-3.1",
-        "kind": "processor",
-        "scenario": "OAPI31-PS-111",
-        "description": "Two complete security alternatives require an explicit configuration.security choice even when runtime credentials could satisfy both; artifact order creates no preference. The missing named point is context-required and nothing dispatches.",
-        "expected": [
-          {
-            "disposition": "context-required",
-            "phase": "pre-dispatch",
-            "assertions": [
-              {
-                "path": "/dispatch",
-                "absent": true
-              }
-            ]
-          }
-        ]
-      },
-      {
-        "family": "openapi-3.2",
-        "kind": "processor",
-        "scenario": "OAPI32-PS-121",
-        "description": "Two complete security alternatives require explicit security selection even when runtime credentials satisfy both. The missing named point is context-required and nothing dispatches.",
-        "expected": [
-          {
-            "disposition": "context-required",
-            "phase": "pre-dispatch",
-            "assertions": [
-              {
-                "path": "/dispatch",
-                "absent": true
-              }
-            ]
-          }
-        ]
-      }
-    ]
+    "commit": "efcfc127e05978a85fe1c2f15417e2920f232184",
+    "corpusRevision": 9,
+    "candidateErrata": []
   },
   "generated": [
     {
       "family": "openapi-2.0",
       "bindingSpec": "openbindings.openapi-2.0@1",
       "specPath": "binding-specs/openapi-2.0/openbindings.openapi-2.0.md",
-      "specSha256": "d7632c7a125a525c8b0e91bf302292d37dc0c4dc51244ea67089cd6a80baea2c",
+      "specSha256": "b83525d2b00e30f663c2fbefade2405aac2351e6b9ffff5f0d8ecd049e89a604",
       "processorScenarioCount": 186,
       "synthesisScenarioCount": 25,
       "rules": [
@@ -282,7 +227,7 @@
           "id": "OAPI20-P-05",
           "kind": "processor",
           "owner": "engine-and-native-client",
-          "description": "§3.2's source, addressability, synthesis-status, and invocation-outcome axes remain independent, including when every addressable target is invalid or excluded.",
+          "description": "§3.2's source, addressability, generation-classification, and invocation-outcome axes remain independent, including when every addressable target is invalid or excluded.",
           "upstreamScenarios": [
             "OAPI20-PS-95",
             "OAPI20-SS-13"
@@ -794,22 +739,7 @@
           "id": "OAPI20-S-01",
           "kind": "synthesis",
           "owner": "analysis-and-openbindings-adapter",
-          "description": "it preserves §12.2's binding/transform boundary, emits no artifact-derived inbound dependency, accounts every lossy or non-equivalent Schema Object translation as coverage loss, and reports complete operation coverage under Core OBI-B-02.",
-          "upstreamScenarios": [
-            "OAPI20-SS-13"
-          ],
-          "implementationEvidence": {
-            "typescript": [],
-            "go": [],
-            "adapter": []
-          },
-          "status": "upstream-scenario-pinned"
-        },
-        {
-          "id": "OAPI20-S-02",
-          "kind": "synthesis",
-          "owner": "analysis-and-openbindings-adapter",
-          "description": "it uses §3.2's locally defined status vocabulary for targets and subordinate projections without depending on any project interface contract.",
+          "description": "its emitted correspondences preserve §12.2's operation/binding/transform boundary and schema-translation soundness, including truthful generation claims, and it emits no artifact-derived inbound dependency.",
           "upstreamScenarios": [
             "OAPI20-SS-13"
           ],
@@ -929,7 +859,7 @@
           "id": "OAPI20-S-10",
           "kind": "synthesis",
           "owner": "analysis-and-openbindings-adapter",
-          "description": "§7 derives the operation input from the post-confinement effective parameter set, leaving a surviving same-named cross-location parameter unqualified when its only collision was removed.",
+          "description": "its generated correspondence uses §7's post-confinement effective parameter set and binding-facing keys, leaving a surviving same-named cross-location parameter unqualified when its only collision was removed.",
           "upstreamScenarios": [
             "OAPI20-SS-22"
           ],
@@ -977,7 +907,7 @@
       "family": "openapi-3.0",
       "bindingSpec": "openbindings.openapi-3.0@1",
       "specPath": "binding-specs/openapi-3.0/openbindings.openapi-3.0.md",
-      "specSha256": "3f87523d18f7647dfe30d2675318c91e13a610179f5bc78e8519db75b7ac7c04",
+      "specSha256": "0b02a31bc9b39d7286c37855022ed37366ccca2c3254437dbbd724c5a759fca9",
       "processorScenarioCount": 195,
       "synthesisScenarioCount": 39,
       "rules": [
@@ -1168,7 +1098,7 @@
           "id": "OAPI30-P-05",
           "kind": "processor",
           "owner": "engine-and-native-client",
-          "description": "§3.2's source, addressability, synthesis-status, and invocation-outcome axes remain independent, including when every addressable target is invalid or excluded.",
+          "description": "§3.2's source, addressability, generation-classification, and invocation-outcome axes remain independent, including when every addressable target is invalid or excluded.",
           "upstreamScenarios": [
             "OAPI30-PS-157",
             "OAPI30-SS-49"
@@ -2057,22 +1987,7 @@
           "id": "OAPI30-S-01",
           "kind": "synthesis",
           "owner": "analysis-and-openbindings-adapter",
-          "description": "it preserves §12.2's binding/transform boundary, emits §6.2's targetless unconstrained dependencies, accounts every lossy or non-equivalent Schema Object translation as coverage loss, and reports complete coverage under Core OBI-B-02.",
-          "upstreamScenarios": [
-            "OAPI30-SS-49"
-          ],
-          "implementationEvidence": {
-            "typescript": [],
-            "go": [],
-            "adapter": []
-          },
-          "status": "upstream-scenario-pinned"
-        },
-        {
-          "id": "OAPI30-S-02",
-          "kind": "synthesis",
-          "owner": "analysis-and-openbindings-adapter",
-          "description": "it uses §3.2's locally defined status vocabulary for targets and subordinate projections without depending on any project interface contract.",
+          "description": "its emitted correspondences preserve §12.2's operation/binding/transform boundary and schema-translation soundness, including truthful generation claims, and its emitted dependencies preserve §6.2's role-inverted, targetless, unconstrained correspondence.",
           "upstreamScenarios": [
             "OAPI30-SS-49"
           ],
@@ -2102,7 +2017,7 @@
           "id": "OAPI30-S-04",
           "kind": "synthesis",
           "owner": "analysis-and-openbindings-adapter",
-          "description": "it reports §8.3's non-token cookie parameter and §9.4's non-token response Header Object key at their specified smallest owners and propagates only their required forms.",
+          "description": "it confines §8.3's non-token cookie parameter and §9.4's non-token response Header Object key at their specified smallest owners and propagates only their required forms.",
           "upstreamScenarios": [
             "OAPI30-SS-53"
           ],
@@ -2177,7 +2092,7 @@
           "id": "OAPI30-S-09",
           "kind": "synthesis",
           "owner": "analysis-and-openbindings-adapter",
-          "description": "§10 retains a target recoverable from unusable Server alternatives and records its actual `configuration.server` requirement.",
+          "description": "§10 retains a target recoverable from unusable Server alternatives and preserves its actual `configuration.server` prerequisite.",
           "upstreamScenarios": [
             "OAPI30-SS-52"
           ],
@@ -2297,7 +2212,7 @@
           "id": "OAPI30-S-17",
           "kind": "synthesis",
           "owner": "analysis-and-openbindings-adapter",
-          "description": "§10 preserves a Server URL expression without a matching Server Variable Object, represents the target, and records its actual `configuration.server` requirement rather than excluding the alternative.",
+          "description": "§10 preserves a Server URL expression without a matching Server Variable Object, represents the target, and preserves its actual `configuration.server` prerequisite rather than excluding the alternative.",
           "upstreamScenarios": [
             "OAPI30-SS-64"
           ],
@@ -2312,7 +2227,7 @@
           "id": "OAPI30-S-18",
           "kind": "synthesis",
           "owner": "analysis-and-openbindings-adapter",
-          "description": "§7 derives the operation input from the post-confinement effective parameter set, leaving a surviving same-named cross-location parameter unqualified when its only collision was removed.",
+          "description": "its generated correspondence uses §7's post-confinement effective parameter set and binding-facing keys, leaving a surviving same-named cross-location parameter unqualified when its only collision was removed.",
           "upstreamScenarios": [
             "OAPI30-SS-65"
           ],
@@ -2389,7 +2304,7 @@
       "family": "openapi-3.1",
       "bindingSpec": "openbindings.openapi-3.1@1",
       "specPath": "binding-specs/openapi-3.1/openbindings.openapi-3.1.md",
-      "specSha256": "ba0e8fba79f8f76c7a92056fac7487d8ad325366428ea55d6f8c6ee1634d7c37",
+      "specSha256": "49a4e521dfa929843ec29be46560260504dabd77786e71ac254307895b7e0a22",
       "processorScenarioCount": 218,
       "synthesisScenarioCount": 56,
       "rules": [
@@ -2603,7 +2518,7 @@
           "id": "OAPI31-P-05",
           "kind": "processor",
           "owner": "engine-and-native-client",
-          "description": "§3.2's source, addressability, synthesis-status, and invocation-outcome axes remain independent, including source-scope dialect exclusion and an all-invalid target inventory.",
+          "description": "§3.2's source, addressability, generation-classification, and invocation-outcome axes remain independent, including source-scope dialect exclusion and an all-invalid target inventory.",
           "upstreamScenarios": [
             "OAPI31-PS-80",
             "OAPI31-PS-132",
@@ -3479,22 +3394,7 @@
           "id": "OAPI31-S-01",
           "kind": "synthesis",
           "owner": "analysis-and-openbindings-adapter",
-          "description": "it preserves §12.2's binding/transform boundary, emits §6.2's targetless unconstrained dependencies, accounts every lossy or non-equivalent Schema Object translation as coverage loss, and reports complete coverage under Core OBI-B-02.",
-          "upstreamScenarios": [
-            "OAPI31-SS-51"
-          ],
-          "implementationEvidence": {
-            "typescript": [],
-            "go": [],
-            "adapter": []
-          },
-          "status": "upstream-scenario-pinned"
-        },
-        {
-          "id": "OAPI31-S-02",
-          "kind": "synthesis",
-          "owner": "analysis-and-openbindings-adapter",
-          "description": "it uses §3.2's locally defined status vocabulary for sources, targets, dependencies, and subordinate projections without depending on any project interface contract.",
+          "description": "its emitted correspondences preserve §12.2's operation/binding/transform boundary and schema-translation soundness, including truthful generation claims, and its emitted dependencies preserve §6.2's role-inverted, targetless, unconstrained correspondence.",
           "upstreamScenarios": [
             "OAPI31-SS-51"
           ],
@@ -3524,7 +3424,7 @@
           "id": "OAPI31-S-04",
           "kind": "synthesis",
           "owner": "analysis-and-openbindings-adapter",
-          "description": "it reports §8.3's non-token cookie parameter and §9.4's non-token response Header Object key at their specified smallest owners and propagates only their required forms.",
+          "description": "it confines §8.3's non-token cookie parameter and §9.4's non-token response Header Object key at their specified smallest owners and propagates only their required forms.",
           "upstreamScenarios": [
             "OAPI31-SS-55"
           ],
@@ -3599,7 +3499,7 @@
           "id": "OAPI31-S-09",
           "kind": "synthesis",
           "owner": "analysis-and-openbindings-adapter",
-          "description": "§10 retains a target recoverable from unusable Server alternatives and records its actual `configuration.server` requirement.",
+          "description": "§10 retains a target recoverable from unusable Server alternatives and preserves its actual `configuration.server` prerequisite.",
           "upstreamScenarios": [
             "OAPI31-SS-22",
             "OAPI31-SS-54"
@@ -3705,7 +3605,7 @@
           "id": "OAPI31-S-16",
           "kind": "synthesis",
           "owner": "analysis-and-openbindings-adapter",
-          "description": "§10 preserves a Server URL expression without a matching Server Variable Object, represents the target, and records its actual `configuration.server` requirement rather than excluding the alternative.",
+          "description": "§10 preserves a Server URL expression without a matching Server Variable Object, represents the target, and preserves its actual `configuration.server` prerequisite rather than excluding the alternative.",
           "upstreamScenarios": [
             "OAPI31-SS-65"
           ],
@@ -3720,7 +3620,7 @@
           "id": "OAPI31-S-17",
           "kind": "synthesis",
           "owner": "analysis-and-openbindings-adapter",
-          "description": "§7 derives the operation input from the post-confinement effective parameter set, leaving a surviving same-named cross-location parameter unqualified when its only collision was removed.",
+          "description": "its generated correspondence uses §7's post-confinement effective parameter set and binding-facing keys, leaving a surviving same-named cross-location parameter unqualified when its only collision was removed.",
           "upstreamScenarios": [
             "OAPI31-SS-66"
           ],
@@ -3797,8 +3697,8 @@
       "family": "openapi-3.2",
       "bindingSpec": "openbindings.openapi-3.2@1",
       "specPath": "binding-specs/openapi-3.2/openbindings.openapi-3.2.md",
-      "specSha256": "93de708e55b6a753546378437549574f6404afeec301131e9325baa6b735fa4b",
-      "processorScenarioCount": 297,
+      "specSha256": "6a23be3a88f9f73bfb125751690748b1cc33c214d6c3ee7899e7ea14650e5221",
+      "processorScenarioCount": 365,
       "synthesisScenarioCount": 34,
       "rules": [
         {
@@ -3858,7 +3758,21 @@
             "OAPI32-PS-205",
             "OAPI32-PS-206",
             "OAPI32-PS-207",
-            "OAPI32-PS-208"
+            "OAPI32-PS-208",
+            "OAPI32-PS-352",
+            "OAPI32-PS-353",
+            "OAPI32-PS-354",
+            "OAPI32-PS-355",
+            "OAPI32-PS-356",
+            "OAPI32-PS-357",
+            "OAPI32-PS-358",
+            "OAPI32-PS-359",
+            "OAPI32-PS-360",
+            "OAPI32-PS-361",
+            "OAPI32-PS-362",
+            "OAPI32-PS-363",
+            "OAPI32-PS-364",
+            "OAPI32-PS-365"
           ],
           "implementationEvidence": {
             "typescript": [],
@@ -4037,7 +3951,65 @@
             "OAPI32-PS-209",
             "OAPI32-PS-212",
             "OAPI32-PS-213",
-            "OAPI32-PS-276"
+            "OAPI32-PS-276",
+            "OAPI32-PS-298",
+            "OAPI32-PS-299",
+            "OAPI32-PS-300",
+            "OAPI32-PS-301",
+            "OAPI32-PS-302",
+            "OAPI32-PS-303",
+            "OAPI32-PS-304",
+            "OAPI32-PS-305",
+            "OAPI32-PS-306",
+            "OAPI32-PS-307",
+            "OAPI32-PS-308",
+            "OAPI32-PS-309",
+            "OAPI32-PS-310",
+            "OAPI32-PS-311",
+            "OAPI32-PS-312",
+            "OAPI32-PS-313",
+            "OAPI32-PS-314",
+            "OAPI32-PS-315",
+            "OAPI32-PS-316",
+            "OAPI32-PS-317",
+            "OAPI32-PS-318",
+            "OAPI32-PS-319",
+            "OAPI32-PS-320",
+            "OAPI32-PS-321",
+            "OAPI32-PS-322",
+            "OAPI32-PS-323",
+            "OAPI32-PS-324",
+            "OAPI32-PS-325",
+            "OAPI32-PS-326",
+            "OAPI32-PS-327",
+            "OAPI32-PS-328",
+            "OAPI32-PS-329",
+            "OAPI32-PS-330",
+            "OAPI32-PS-331",
+            "OAPI32-PS-332",
+            "OAPI32-PS-333",
+            "OAPI32-PS-334",
+            "OAPI32-PS-335",
+            "OAPI32-PS-336",
+            "OAPI32-PS-337",
+            "OAPI32-PS-338",
+            "OAPI32-PS-339",
+            "OAPI32-PS-340",
+            "OAPI32-PS-341",
+            "OAPI32-PS-342",
+            "OAPI32-PS-343",
+            "OAPI32-PS-344",
+            "OAPI32-PS-345",
+            "OAPI32-PS-346",
+            "OAPI32-PS-347",
+            "OAPI32-PS-348",
+            "OAPI32-PS-349",
+            "OAPI32-PS-350",
+            "OAPI32-PS-351",
+            "OAPI32-PS-362",
+            "OAPI32-PS-363",
+            "OAPI32-PS-364",
+            "OAPI32-PS-365"
           ],
           "implementationEvidence": {
             "typescript": [],
@@ -4086,10 +4058,20 @@
           "id": "OAPI32-P-05",
           "kind": "processor",
           "owner": "engine-and-native-client",
-          "description": "§3.2's source, addressability, synthesis-status, and invocation-outcome axes remain independent, including source-scope dialect exclusion and an all-invalid target inventory.",
+          "description": "§3.2's source, addressability, generation-classification, and invocation-outcome axes remain independent, including source-scope dialect exclusion and an all-invalid target inventory.",
           "upstreamScenarios": [
             "OAPI32-PS-11",
             "OAPI32-PS-12",
+            "OAPI32-PS-352",
+            "OAPI32-PS-353",
+            "OAPI32-PS-354",
+            "OAPI32-PS-355",
+            "OAPI32-PS-356",
+            "OAPI32-PS-357",
+            "OAPI32-PS-358",
+            "OAPI32-PS-359",
+            "OAPI32-PS-360",
+            "OAPI32-PS-361",
             "OAPI32-SS-13",
             "OAPI32-SS-16"
           ],
@@ -4136,7 +4118,61 @@
           "owner": "engine-and-native-client",
           "description": "§9.2 never treats unvalidated supplied data as OAS `validated runtime data` for non-JSON type selection.",
           "upstreamScenarios": [
-            "OAPI32-PS-108"
+            "OAPI32-PS-108",
+            "OAPI32-PS-298",
+            "OAPI32-PS-299",
+            "OAPI32-PS-300",
+            "OAPI32-PS-301",
+            "OAPI32-PS-302",
+            "OAPI32-PS-303",
+            "OAPI32-PS-304",
+            "OAPI32-PS-305",
+            "OAPI32-PS-306",
+            "OAPI32-PS-307",
+            "OAPI32-PS-308",
+            "OAPI32-PS-309",
+            "OAPI32-PS-310",
+            "OAPI32-PS-311",
+            "OAPI32-PS-312",
+            "OAPI32-PS-313",
+            "OAPI32-PS-314",
+            "OAPI32-PS-315",
+            "OAPI32-PS-316",
+            "OAPI32-PS-317",
+            "OAPI32-PS-318",
+            "OAPI32-PS-319",
+            "OAPI32-PS-320",
+            "OAPI32-PS-321",
+            "OAPI32-PS-322",
+            "OAPI32-PS-323",
+            "OAPI32-PS-324",
+            "OAPI32-PS-325",
+            "OAPI32-PS-326",
+            "OAPI32-PS-327",
+            "OAPI32-PS-328",
+            "OAPI32-PS-329",
+            "OAPI32-PS-330",
+            "OAPI32-PS-331",
+            "OAPI32-PS-332",
+            "OAPI32-PS-333",
+            "OAPI32-PS-334",
+            "OAPI32-PS-335",
+            "OAPI32-PS-336",
+            "OAPI32-PS-337",
+            "OAPI32-PS-338",
+            "OAPI32-PS-339",
+            "OAPI32-PS-340",
+            "OAPI32-PS-341",
+            "OAPI32-PS-342",
+            "OAPI32-PS-343",
+            "OAPI32-PS-344",
+            "OAPI32-PS-345",
+            "OAPI32-PS-346",
+            "OAPI32-PS-347",
+            "OAPI32-PS-348",
+            "OAPI32-PS-349",
+            "OAPI32-PS-350",
+            "OAPI32-PS-351"
           ],
           "implementationEvidence": {
             "typescript": [],
@@ -5025,22 +5061,7 @@
           "id": "OAPI32-S-01",
           "kind": "synthesis",
           "owner": "analysis-and-openbindings-adapter",
-          "description": "it preserves §12.2's binding/transform boundary, emits §6.2's targetless unconstrained dependencies, accounts every lossy or non-equivalent Schema Object translation as coverage loss, and reports complete coverage under Core OBI-B-02.",
-          "upstreamScenarios": [
-            "OAPI32-SS-13"
-          ],
-          "implementationEvidence": {
-            "typescript": [],
-            "go": [],
-            "adapter": []
-          },
-          "status": "upstream-scenario-pinned"
-        },
-        {
-          "id": "OAPI32-S-02",
-          "kind": "synthesis",
-          "owner": "analysis-and-openbindings-adapter",
-          "description": "it uses §3.2's locally defined status vocabulary for sources, targets, dependencies, and subordinate projections without depending on any project interface contract.",
+          "description": "its emitted correspondences preserve §12.2's operation/binding/transform boundary and schema-translation soundness, including truthful generation claims, and its emitted dependencies preserve §6.2's role-inverted, targetless, unconstrained correspondence.",
           "upstreamScenarios": [
             "OAPI32-SS-13"
           ],
@@ -5070,7 +5091,7 @@
           "id": "OAPI32-S-04",
           "kind": "synthesis",
           "owner": "analysis-and-openbindings-adapter",
-          "description": "it reports §8.3's non-token cookie parameter and §9.4's non-token response Header Object key at their specified smallest owners and propagates only their required forms.",
+          "description": "it confines §8.3's non-token cookie parameter and §9.4's non-token response Header Object key at their specified smallest owners and propagates only their required forms.",
           "upstreamScenarios": [
             "OAPI32-SS-19"
           ],
@@ -5145,7 +5166,7 @@
           "id": "OAPI32-S-09",
           "kind": "synthesis",
           "owner": "analysis-and-openbindings-adapter",
-          "description": "§10 retains a target recoverable from unusable Server alternatives and records its actual `configuration.server` requirement.",
+          "description": "§10 retains a target recoverable from unusable Server alternatives and preserves its actual `configuration.server` prerequisite.",
           "upstreamScenarios": [
             "OAPI32-SS-18"
           ],
@@ -5250,7 +5271,7 @@
           "id": "OAPI32-S-16",
           "kind": "synthesis",
           "owner": "analysis-and-openbindings-adapter",
-          "description": "§10 preserves a Server URL expression without a matching Server Variable Object, represents the target, and records its actual `configuration.server` requirement rather than excluding the alternative.",
+          "description": "§10 preserves a Server URL expression without a matching Server Variable Object, represents the target, and preserves its actual `configuration.server` prerequisite rather than excluding the alternative.",
           "upstreamScenarios": [
             "OAPI32-SS-29"
           ],
@@ -5265,7 +5286,7 @@
           "id": "OAPI32-S-17",
           "kind": "synthesis",
           "owner": "analysis-and-openbindings-adapter",
-          "description": "§7 derives the operation input from the post-confinement effective parameter set, leaving a surviving same-named cross-location parameter unqualified when its only collision was removed.",
+          "description": "its generated correspondence uses §7's post-confinement effective parameter set and binding-facing keys, leaving a surviving same-named cross-location parameter unqualified when its only collision was removed.",
           "upstreamScenarios": [
             "OAPI32-SS-30"
           ],
