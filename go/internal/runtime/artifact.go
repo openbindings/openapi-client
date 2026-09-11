@@ -691,6 +691,12 @@ func ClassifyOpenAPIEdition(data []byte) (Edition, error) {
 	if err != nil {
 		return "", err
 	}
+	return classifyOpenAPIRoot(root)
+}
+
+// A caller that already passed the representation gate can classify that
+// owned image without parsing the same source bytes again.
+func classifyOpenAPIRoot(root any) (Edition, error) {
 	object, ok := root.(map[string]any)
 	if !ok {
 		return "", fmt.Errorf("OpenAPI entry resource must be a JSON object")
