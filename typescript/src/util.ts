@@ -1,6 +1,7 @@
 import { cloneValueGraph } from "./value-graph.js";
 import type { OpenAPIDocument, OpenAPIParameter } from "./types.js";
-import { isJSONNumber, parseJSON, stringifyJSON } from "@openbindings/json";
+import { isDecimal, isEncoded, isNumber, parse, stringify } from "@openbindings/json";
+
 import { VALID_METHODS } from "./constants.js";
 import { dereference } from "./internal/index.js";
 import { parseExactSourceDocuments } from "./exact-source.js";
@@ -287,7 +288,7 @@ function normalizeExternalRefFetch(
       retrieval,
       requested !== retrieval ? [requested] : [],
     );
-    const wrapped = new Response(stringifyJSON(normalized), {
+    const wrapped = new Response(stringify(normalized as never), {
       status: response.status,
       statusText: response.statusText,
       headers: response.headers,
@@ -583,7 +584,7 @@ function assertJSONDomain(root: unknown): unknown {
   if (root === undefined) return root;
   const seen = new WeakSet<object>();
   const walk = (value: unknown, path: string): void => {
-    if (value === null || isJSONNumber(value)) return;
+    if (value === null || isDecimal(value)) return;
     switch (typeof value) {
       case "string":
       case "boolean":
@@ -957,7 +958,7 @@ export function relativeDocumentName(base: string | undefined, document: string)
 export function shapeDigest(node: unknown): string {
   const path = new Map<object, number>();
   const write = (value: unknown, depth: number): string => {
-    if (isJSONNumber(value)) return stringifyJSON(value);
+    if (isDecimal(value)) return stringify(value);
     if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
     const back = path.get(value);
     if (back !== undefined) return `^${depth - back}`;
@@ -1281,7 +1282,7 @@ export function decycleSchema(
   };
 
   const copy = (node: unknown, pos: SchemaPos): unknown => {
-    if (node === null || typeof node !== "object" || isJSONNumber(node)) return node;
+    if (node === null || typeof node !== "object" || isDecimal(node)) return node;
     const obj = node;
     // Hoisting emits a {$ref} object, which only means "reference" at a
     // schema position. Cycle participants at other positions (a shared
@@ -1358,7 +1359,7 @@ export function escapePointerSegment(segment: string): string {
 export function cycleSafeKey(value: unknown): string {
   const stack = new Set<object>();
   const walk = (node: unknown): unknown => {
-    if (node === null || typeof node !== "object" || isJSONNumber(node)) return node;
+    if (node === null || typeof node !== "object" || isDecimal(node)) return node;
     if (stack.has(node)) return { $cycle: true };
     stack.add(node);
     let out: unknown;
@@ -1373,7 +1374,7 @@ export function cycleSafeKey(value: unknown): string {
     stack.delete(node);
     return out;
   };
-  return stringifyJSON(walk(value));
+  return stringify(walk(value) as never);
 }
 
 /**
@@ -1442,7 +1443,7 @@ export function parseStrictResponseJSON(
 ): unknown {
   let value: unknown;
   try {
-    value = parseJSON(text);
+    value = parse(text);
   } catch (cause: unknown) {
     throw onInvalid(cause);
   }

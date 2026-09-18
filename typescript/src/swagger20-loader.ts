@@ -1,6 +1,7 @@
-import { cloneJSON } from "@openbindings/json";
+
 import { parseExactSourceDocuments } from "./exact-source.js";
 import { assertScalarMappingKeys } from "./util.js";
+import { cloneValueGraph } from "./value-graph.js";
 import {
   Swagger20Document,
   isSwagger20Object,
@@ -111,7 +112,7 @@ export function parseSwagger20Resource(content: unknown): unknown {
 
 function cloneAndCheckJSONImage(value: unknown): unknown {
   try {
-    return cloneJSON(value);
+    return cloneValueGraph(value);
   } catch (error: unknown) {
     throw new Error("Swagger 2.0 representation has no RFC 7159 JSON image", { cause: error });
   }

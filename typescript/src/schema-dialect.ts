@@ -46,8 +46,9 @@
  * different validators name the same position (one reports a `uniqueItems`
  * failure at `/required`, the other at `/required/2`).
  */
-import { compileSchema, EXACT_DRAFT_2020 } from "@openbindings/json-schema";
-import { isJSONNumber } from "@openbindings/json";
+import { compile, type Schema } from "@openbindings/json-schema";
+import type { Value } from "@openbindings/json";
+import { isDecimal, isEncoded } from "@openbindings/json";
 import oasDialectBase from "./authority/oas-3.1-dialect-base.json" with { type: "json" };
 import oasMetaBase from "./authority/oas-3.1-meta-base.json" with { type: "json" };
 import jsonSchema202012 from "./authority/json-schema-2020-12.json" with { type: "json" };
@@ -61,7 +62,7 @@ import metaUnevaluated from "./authority/json-schema-2020-12-meta-unevaluated.js
 
 type Obj = Record<string, unknown>;
 
-const isObj = (v: unknown): v is Obj => v !== null && typeof v === "object" && !Array.isArray(v) && !isJSONNumber(v);
+const isObj = (v: unknown): v is Obj => v !== null && typeof v === "object" && !Array.isArray(v) && !isDecimal(v);
 
 /**
  * The Schema Object keyword inventory the floor's own walk follows. Kept here
@@ -107,16 +108,12 @@ export const isSchemaValued = (v: unknown, line: string): boolean => isObj(v) ||
 const esc = (s: string): string => s.replace(/~/g, "~0").replace(/\//g, "~1");
 
 /**
- * The OBI boundary draft: 2020-12 with an empty format registry, so `format`
- * annotates rather than asserts. The same draft the SDK core decides schema
- * well-formedness with, which is what makes the floor's verdict and the
- * downstream document rule's verdict the same verdict.
+ * `compile` decides under the OBI boundary draft: 2020-12 with an empty format
+ * registry, so `format` annotates rather than asserts. The same draft the SDK
+ * core decides schema well-formedness with, which is what makes the floor's
+ * verdict and the downstream document rule's verdict the same verdict.
  */
-const BOUNDARY_DRAFT = EXACT_DRAFT_2020;
-
-type CompiledDialect = { validate(value: unknown): { valid: boolean; errors?: Array<{ data?: { pointer?: string } }> } };
-
-let compiledDialect: CompiledDialect | null = null;
+let compiledDialect: Schema | null = null;
 
 /**
  * Compiles the vendored OAS 3.1 dialect once, as a compound document: the
@@ -125,7 +122,7 @@ let compiledDialect: CompiledDialect | null = null;
  * under `$defs`. The artifacts are byte copies of the published ones and are
  * never fetched.
  */
-function oas31Dialect(): CompiledDialect {
+function oas31Dialect(): Schema {
   if (compiledDialect) return compiledDialect;
   const embedded = [
     jsonSchema202012, oasMetaBase, metaCore, metaApplicator, metaValidation,
@@ -141,7 +138,7 @@ function oas31Dialect(): CompiledDialect {
   const compound: Obj = { ...(oasDialectBase as unknown as Obj) };
   delete compound["$schema"];
   compound["$defs"] = Object.fromEntries(embedded.map((artifact, index) => [`authority${index}`, artifact]));
-  compiledDialect = compileSchema(compound, { drafts: [BOUNDARY_DRAFT] }) as unknown as CompiledDialect;
+  compiledDialect = compile(compound as Value);
   return compiledDialect;
 }
 
@@ -165,7 +162,7 @@ export function schemaObjectDefects(node: Obj, line: "3.0" | "3.1"): string[] {
  * decided where they sit.
  */
 function oas31DialectDefects(node: Obj): string[] {
-  const result = oas31Dialect().validate(schemaNodeShape(node));
+  const result = oas31Dialect().validate(schemaNodeShape(node) as Value);
   if (result.valid) return [];
   const positions = new Set<string>();
   for (const failure of result.errors ?? []) {

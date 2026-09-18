@@ -1,5 +1,6 @@
 import { CORE_SCHEMA, Type, loadAll } from "js-yaml";
-import { cloneJSON, parseJSON } from "@openbindings/json";
+import { parse } from "@openbindings/json";
+import { cloneValueGraph } from "./value-graph.js";
 
 // Parser-local scalar, not a public number carrier. js-yaml stringifies mapping
 // keys during construction; the authored scalar spelling must survive that step.
@@ -43,7 +44,7 @@ export function parseExactSourceDocuments(text: string): unknown[] {
   const active = new Set<object>();
   const memo = new Map<object, unknown>();
   const convert = (value: unknown): unknown => {
-    if (value instanceof SourceNumber) return parseJSON(value.token);
+    if (value instanceof SourceNumber) return parse(value.token);
     if (value === null || typeof value !== "object") return value;
     if (active.has(value)) throw new TypeError("cyclic YAML alias graph has no JSON image");
     if (memo.has(value)) return memo.get(value);
@@ -56,5 +57,5 @@ export function parseExactSourceDocuments(text: string): unknown[] {
     active.delete(value);
     return out;
   };
-  return documents.map((doc) => cloneJSON(convert(doc)));
+  return documents.map((doc) => cloneValueGraph(convert(doc)));
 }

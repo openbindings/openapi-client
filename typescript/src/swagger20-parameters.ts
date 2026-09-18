@@ -1,5 +1,5 @@
 import { swagger20ConfigRequired } from "./swagger20-context.js";
-import { numberToken, compareNumberTokens, multipleNumberTokens, equalJSON, isJSONNumber } from "@openbindings/json";
+import { isNumber, compareNumberTokens, multipleNumberTokens, equal, isDecimal, isEncoded } from "@openbindings/json";
 import {
   Swagger20Number,
   arrayMember,
@@ -586,16 +586,16 @@ function finiteNumber(value: unknown): boolean {
 }
 
 function numberValue(value: unknown): string | undefined {
-  return numberToken(value);
+  return (isNumber(value) ? String(value) : undefined);
 }
 
 function literalInteger(value: unknown): boolean {
-  if (isJSONNumber(value)) return /^-?(?:0|[1-9][0-9]*)$/u.test(value.rawJSON);
+  if (isDecimal(value)) return /^-?(?:0|[1-9][0-9]*)$/u.test(String(value));
   return typeof value === "number" && Number.isSafeInteger(value);
 }
 
 function jsonEqual(left: unknown, right: unknown): boolean {
-  return equalJSON(left, right);
+  return equal(left as never, right as never);
 }
 
 export function canonicalBase64Bytes(value: string): Uint8Array {

@@ -1,5 +1,5 @@
 import type { OpenAPIMediaType } from "./types.js";
-import { numberToken, integerNumberToken, isJSONNumber, parseJSON } from "@openbindings/json";
+import { isNumber, integerNumberToken, isDecimal, parse, isEncoded } from "@openbindings/json";
 import { stringifyRequestJSON } from "./request-json.js";
 import { resolveDeclaration, type SchemaDeclaration } from "./resolved-declaration.js";
 
@@ -91,7 +91,7 @@ export function parseOpenAPI32NonJSONText(schema: SchemaDeclaration, text: strin
   if (kind === "string") return text;
   const token = text.replace(/^[ \t\r\n]+|[ \t\r\n]+$/gu, "");
   if (kind === "boolean" && (token === "true" || token === "false")) return token === "true";
-  if (kind === "number" && /^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$/u.test(token)) return parseJSON(token);
+  if (kind === "number" && /^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$/u.test(token)) return parse(token);
   throw new Error("non-JSON scalar text does not match its declaration-selected boolean or number codec");
 }
 
@@ -108,7 +108,7 @@ export function serializeOpenAPI32NonJSONText(
   }
   if (typeof value === "string") return value;
   if (typeof value === "boolean") return value ? "true" : "false";
-  const token = numberToken(value);
+  const token = (isNumber(value) ? String(value) : undefined);
   if (token !== undefined) {
     return normalizeOpenAPI32JSONNumber(token);
   }
@@ -676,7 +676,7 @@ function stringifyOpenAPI32JSON(value: unknown): string {
 function openAPI32JSONValueType(value: unknown): string {
   if (typeof value === "string") return "string";
   if (typeof value === "boolean") return "boolean";
-  const token = numberToken(value);
+  const token = (isNumber(value) ? String(value) : undefined);
   if (token !== undefined) return integerNumberToken(token) ? "integer" : "number";
   if (Array.isArray(value)) return "array";
   if (asRecord(value)) return "object";
@@ -733,7 +733,7 @@ function concatBytes(chunks: readonly Uint8Array[]): Uint8Array<ArrayBuffer> {
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === "object" && !Array.isArray(value) && !isJSONNumber(value)
+  return value !== null && typeof value === "object" && !Array.isArray(value) && !isDecimal(value)
     ? value as Record<string, unknown>
     : null;
 }

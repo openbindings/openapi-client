@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { prepareSwagger20 } from "./swagger20-engine.js";
-import { Swagger20Number } from "./swagger20-model.js";
+import { number } from "@openbindings/json";
 
 const response204 = () => new Response(null, { status: 204 });
 
@@ -100,23 +100,41 @@ describe("native Swagger 2.0 parameter execution", () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe("https://peer.example/pets?tag=a%20b&tag=c%2Fd");
   });
 
-  it("retains the literal integer token when the host supplies it", async () => {
+  const integerCount = async (fetchMock: ReturnType<typeof vi.fn<typeof fetch>>) => prepareSwagger20({
+    source: { content: {
+      swagger: "2.0",
+      paths: { "/pets": { get: {
+        parameters: [{ name: "count", in: "query", type: "integer" }],
+        responses: { 204: { description: "empty" } },
+      } } },
+    } },
+    ref: "#/paths/~1pets/get",
+    server: "https://peer.example",
+    fetch: fetchMock,
+    parameterConverter: String,
+  });
+
+  // `type: integer` decides on the value's own digits, so the check keeps live
+  // work: a Decimal carries digits binary64 cannot hold, and a non-integral one
+  // is refused before any request leaves.
+  it("refuses a non-integer number for an integer parameter", async () => {
     const fetchMock = vi.fn<typeof fetch>(async () => response204());
-    const prepared = await prepareSwagger20({
-      source: { content: {
-        swagger: "2.0",
-        paths: { "/pets": { get: {
-          parameters: [{ name: "count", in: "query", type: "integer" }],
-          responses: { 204: { description: "empty" } },
-        } } },
-      } },
-      ref: "#/paths/~1pets/get",
-      server: "https://peer.example",
-      fetch: fetchMock,
-      parameterConverter: String,
-    });
-    await expect(prepared.execute({ parameters: { query: { count: new Swagger20Number("1.0") } } }))
+    const prepared = await integerCount(fetchMock);
+    await expect(prepared.execute({ parameters: { query: { count: number("1.5") } } }))
       .rejects.toMatchObject({ code: "ERR_REFUSED" });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  // A safe-integer spelling is not a distinguishable input: the value model
+  // normalizes "1.0" to 1 (README, "Numbers and conversion"), so the host has
+  // supplied the integer 1 and the parameter carries it. An exact integer past
+  // binary64 stays a Decimal and carries its own digits.
+  it("carries an integer a host spells exactly, past binary64 and below it", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => response204());
+    const prepared = await integerCount(fetchMock);
+    await prepared.execute({ parameters: { query: { count: number("1.0") } } });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://peer.example/pets?count=1");
+    await prepared.execute({ parameters: { query: { count: number("9007199254740993") } } });
+    expect(fetchMock.mock.calls[1]?.[0]).toBe("https://peer.example/pets?count=9007199254740993");
   });
 });

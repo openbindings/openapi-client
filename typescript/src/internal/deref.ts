@@ -1,5 +1,5 @@
 import { cloneValueGraph } from "../value-graph.js";
-import { isJSONNumber, parseJSON } from "@openbindings/json";
+import { isDecimal, isEncoded, parse as parseJSONText } from "@openbindings/json";
 /**
  * Lightweight, browser-compatible JSON $ref dereferencer.
  *
@@ -166,7 +166,7 @@ function resolveURI(base: string | undefined, reference: string): string | undef
 function defaultParse(text: string): unknown {
   const trimmed = text.trimStart();
   if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
-    return parseJSON(text);
+    return parseJSONText(text);
   }
   // Can't parse non-JSON without a custom parser; throw a clear error.
   throw new Error("External $ref returned non-JSON content. Pass a 'parse' option to dereference() to handle YAML or other formats.");
@@ -199,7 +199,10 @@ async function fetchDocument(
     throw new Error(`external $ref ${url} did not return an object document`);
   }
   return {
-    document: parsed as Record<string, unknown>,
+    // walkAsync rewrites nodes in place, so the fetched document becomes a
+    // mutable working tree here. Parsers hand back frozen graphs — the shared
+    // value parser always, a custom one whenever it admits its result.
+    document: cloneValueGraph(parsed) as Record<string, unknown>,
     // Fetch exposes the final retrieval URI after redirects. When a test or
     // host fetch implementation cannot provide it, the requested URI remains
     // the only available base.
@@ -544,7 +547,7 @@ export async function dereference<T = unknown>(
   }
 
   async function walkAsync(node: unknown, document: DocumentContext): Promise<unknown> {
-    if (node == null || typeof node !== "object" || isJSONNumber(node)) return node;
+    if (node == null || typeof node !== "object" || isDecimal(node) || isEncoded(node)) return node;
     if (resolvedNodes.has(node)) return resolvedNodes.get(node);
 
     if (Array.isArray(node)) {

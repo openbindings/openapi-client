@@ -1,5 +1,5 @@
 import {expect, it} from "vitest";
-import {parseJSON, stringifyJSON} from "@openbindings/json";
+import { parse, stringify, type Value } from "@openbindings/json";
 import {OpenAPIClient} from "./client.js";
 
 const raw = '{"id":9007199254740993,"huge":1e400,"tiny":1e-400,"money":0.10000000000000001,"nested":[null,[],{},"9007199254740993"]}';
@@ -17,7 +17,7 @@ it.each([
   const result=await client.stream("test");
   expect(result.ok).toBe(true); if(!result.ok)throw Error("expected framing response");
   const values:string[]=[];
-  const consume=async()=>{for await(const event of result.events)values.push(stringifyJSON(event.data));};
+  const consume=async()=>{for await(const event of result.events)values.push(stringify(event.data as Value));};
   if(expected===undefined){await expect(consume()).rejects.toMatchObject({code:"ERR_RESPONSE_ERROR"});expect(values).toEqual([]);}
   else {await consume();expect(values).toEqual([expected]);}
   expect(requests).toBe(1);
@@ -40,16 +40,16 @@ for (const edition of ["3.0.4", "3.1.2", "3.2.0"]) {
       }, {fetch: async (input, init) => {
         requests++;
         const request = new Request(input, init);
-        expect(stringifyJSON(parseJSON(new URL(request.url).searchParams.get("q")!))).toBe(raw);
+        expect(stringify(parse(new URL(request.url).searchParams.get("q")!))).toBe(raw);
         const fields = await request.formData();
         const payload = fields.get("payload");
         const encoded = typeof payload === "string" ? payload : await payload!.text();
-        expect(stringifyJSON(parseJSON(encoded))).toBe(raw);
+        expect(stringify(parse(encoded))).toBe(raw);
         return new Response(raw, {headers: {"Content-Type": "application/json"}});
       }});
-      const result = await client.call("test", {body: {payload: parseJSON(raw)}, parameters: {query: {q: parseJSON(raw)}}});
+      const result = await client.call("test", {body: {payload: parse(raw)}, parameters: {query: {q: parse(raw)}}});
       expect(result.ok).toBe(true);
-      if (result.ok) expect(stringifyJSON(result.data)).toBe(raw);
+      if (result.ok) expect(stringify(result.data as Value)).toBe(raw);
       expect(requests).toBe(1);
     });
   }
@@ -67,7 +67,7 @@ for (const media of ["application/jsonl", "application/x-ndjson", "application/j
     expect(result.ok).toBe(true);
     if (!result.ok) throw Error("expected successful sequence");
     const actual: string[] = [];
-    for await (const event of result.events) actual.push(stringifyJSON(event.data));
+    for await (const event of result.events) actual.push(stringify(event.data as Value));
     expect(actual).toEqual(items);
   });
 }

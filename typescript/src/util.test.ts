@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { equalJSON } from "@openbindings/json";
+import { equal, type Value } from "@openbindings/json";
 import { parseRef, buildJsonPointerRef, sanitizeKey, uniqueKey, mergeParameters, loadOpenAPIDocument, parseJSONOrYAML } from "./util.js";
 
 describe("parseRef", () => {
@@ -267,7 +267,7 @@ paths:
     ["12e03", 12000],
     ["1_000", "1_000"],
   ] as const)("resolves %s by §10.3.2's patterns", async (spelling, want) => {
-    expect(equalJSON(await example(spelling), want)).toBe(true);
+    expect(equal(await example(spelling) as Value, want as Value)).toBe(true);
   });
 
   // YAML 1.2.2 Core has no binary-int pattern; preserve the string. The exact
