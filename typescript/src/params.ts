@@ -1,5 +1,5 @@
 import type { OpenAPIParameter, OpenAPIPathItem, OpenAPIOperation } from "./types.js";
-import { isJSONNumber, type JSONNumber } from "@openbindings/json";
+import { isDecimal, type Decimal, isEncoded } from "@openbindings/json";
 import { codePointCompare, errorMessage, mergeParameters } from "./util.js";
 import { stringifyRequestJSON } from "./request-json.js";
 import { isJSONMediaType, normalizeMediaType, parseMediaType, styleLaneUndefinedExpansionMember, type BodyPlan } from "./media.js";
@@ -29,7 +29,7 @@ const IGNORED_HEADER_PARAMS = new Set(["accept", "content-type", "authorization"
 const HTTP_TOKEN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u;
 
 /** Deterministically converts a JSON boolean or number for parameter carriage. */
-export type OpenAPIParameterConverter = (value: boolean | number | JSONNumber) => string;
+export type OpenAPIParameterConverter = (value: boolean | number | Decimal) => string;
 
 export function duplicateDeclaredParameterIdentity(
   pathItem: OpenAPIPathItem,
@@ -871,7 +871,7 @@ export function convertParameterScalars(
     }));
   }
   if (typeof value === "string") return value;
-  if (typeof value !== "boolean" && !isJSONNumber(value) && (typeof value !== "number" || !Number.isFinite(value))) {
+  if (typeof value !== "boolean" && !isDecimal(value) && (typeof value !== "number" || !Number.isFinite(value))) {
     throw new Error(`value of type ${typeof value} is outside the JSON scalar conversion domain`);
   }
   if (!converter) throw new Error("JSON boolean or number requires parameterConversion");
@@ -1440,7 +1440,7 @@ export function primitiveString(v: unknown): string {
   if (v === null || v === undefined) return "";
   if (typeof v === "string") return v;
   if (typeof v === "boolean") return v ? "true" : "false";
-  if (typeof v === "number" || isJSONNumber(v)) return stringifyRequestJSON(v);
+  if (typeof v === "number" || isDecimal(v)) return stringifyRequestJSON(v);
   throw new Error(`value of type ${typeof v} is not a primitive`);
 }
 
@@ -1449,7 +1449,7 @@ export function asArray(v: unknown): unknown[] | null {
 }
 
 export function asObject(v: unknown): Record<string, unknown> | null {
-  if (v !== null && typeof v === "object" && !Array.isArray(v) && !isJSONNumber(v)) {
+  if (v !== null && typeof v === "object" && !Array.isArray(v) && !isDecimal(v)) {
     return v as Record<string, unknown>;
   }
   return null;

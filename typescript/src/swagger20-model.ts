@@ -1,4 +1,4 @@
-import { isJSONNumber } from "@openbindings/json";
+import { isDecimal, isEncoded } from "@openbindings/json";
 /** A JSON object retained exactly as authored by a Swagger 2.0 resource. */
 export type Swagger20Object = Record<string, unknown>;
 
@@ -31,7 +31,7 @@ export interface Swagger20OperationInfo {
 
 export type Swagger20Method = "get" | "put" | "post" | "delete" | "options" | "head" | "patch";
 
-export { JSONNumber as Swagger20Number } from "@openbindings/json";
+export { Decimal as Swagger20Number } from "@openbindings/json";
 
 export const SWAGGER20_METHODS: readonly Swagger20Method[] =
   Object.freeze(["get", "put", "post", "delete", "options", "head", "patch"]);
@@ -158,7 +158,7 @@ export function arrayMember(object: Swagger20Object, name: string): Swagger20Mem
 
 /** @internal */
 export function isSwagger20Object(value: unknown): value is Swagger20Object {
-  return value !== null && typeof value === "object" && !Array.isArray(value) && !isJSONNumber(value);
+  return value !== null && typeof value === "object" && !Array.isArray(value) && !isDecimal(value);
 }
 
 /** @internal */

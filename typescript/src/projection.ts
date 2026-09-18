@@ -1,5 +1,5 @@
 import { cloneValueGraph } from "./value-graph.js";
-import { isJSONNumber } from "@openbindings/json";
+import { isDecimal, isEncoded } from "@openbindings/json";
 import type {
   OpenAPIDocument,
   OpenAPIMediaType,
@@ -1638,7 +1638,7 @@ function candidateLocalSchemaClone<T>(
   memo: Map<object, unknown>,
   componentNames: ReadonlyMap<object, DeclaredComponent>,
 ): T {
-  if (value === null || typeof value !== "object" || isJSONNumber(value)) return value;
+  if (value === null || typeof value !== "object" || isDecimal(value)) return value;
   const cached = memo.get(value);
   if (cached !== undefined) return cached as T;
   if (Array.isArray(value)) {
@@ -1920,7 +1920,7 @@ function cloneProviderDocument(
 ): { document: OpenAPIDocument; schemaNames: Map<object, DeclaredComponent> } {
   const clones = new Map<object, object>();
   const clone = (value: unknown): unknown => {
-    if (value === null || typeof value !== "object" || isJSONNumber(value)) return value;
+    if (value === null || typeof value !== "object" || isDecimal(value)) return value;
     const existing = clones.get(value);
     if (existing) return existing;
     if (Array.isArray(value)) {

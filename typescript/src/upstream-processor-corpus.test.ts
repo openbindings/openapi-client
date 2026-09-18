@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { equalJSON } from "@openbindings/json";
+import { equal, type Value } from "@openbindings/json";
 import {
   OpenAPIClient,
   OpenAPIClientError,
@@ -452,7 +452,7 @@ function scenarioHostTransport(scenario: Scenario, dispatches: ObjectValue[]): O
       };
       if (bytes.byteLength > 0) {
         const text = new TextDecoder().decode(bytes);
-        const parsed = parseJSON(text);
+        const parsed = parse(text);
         dispatch.body = parsed.parsed ? parsed.value : text;
         dispatch.bodyBase64 = bytesToBase64(bytes);
         dispatch.bodyByteLength = bytes.byteLength;
@@ -498,7 +498,7 @@ async function normalizedDispatch(request: Request): Promise<ObjectValue> {
   const dispatch: ObjectValue = { method: request.method, url: request.url, headers };
   if (bytes.byteLength > 0) {
     const text = new TextDecoder().decode(bytes);
-    const parsed = parseJSON(text);
+    const parsed = parse(text);
     dispatch.body = parsed.parsed ? parsed.value : text;
     dispatch.bodyBase64 = bytesToBase64(bytes);
     dispatch.bodyByteLength = bytes.byteLength;
@@ -545,7 +545,7 @@ function matchAlternative(observation: Observation, expected: Expected): void {
     if (assertion.absent === true) {
       expect(selected.present, assertion.path).toBe(false);
     } else if (Object.hasOwn(assertion, "equals")) {
-      expect(selected.present && equalJSON(selected.value, assertion.equals), assertion.path).toBe(true);
+      expect(selected.present && equal(selected.value as Value, assertion.equals as Value), assertion.path).toBe(true);
     } else if (Array.isArray(assertion.oneOf)) {
       expect(assertion.oneOf, assertion.path).toContainEqual(selected.value);
     } else if (Array.isArray(assertion.setEquals)) {
@@ -784,7 +784,7 @@ function stringRecord(value: ObjectValue): Record<string, string> {
   return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, String(item)]));
 }
 
-function parseJSON(value: string): { parsed: true; value: unknown } | { parsed: false } {
+function parse(value: string): { parsed: true; value: unknown } | { parsed: false } {
   try { return { parsed: true, value: JSON.parse(value) as unknown }; } catch { return { parsed: false }; }
 }
 

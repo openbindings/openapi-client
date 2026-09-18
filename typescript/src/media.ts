@@ -1,4 +1,4 @@
-import { numberToken } from "@openbindings/json";
+import { isNumber } from "@openbindings/json";
 import type {
   OpenAPIDocument,
   OpenAPIMediaType,
@@ -3173,7 +3173,7 @@ function buildRevision3URLEncodedBody(
  * use the binding family's shortest exact RFC 8259 representation.
  */
 function serializeRevision3ContentText(value: unknown): string {
-  const token = numberToken(value);
+  const token = (isNumber(value) ? String(value) : undefined);
   if (token !== undefined) {
     return normalizeOpenAPI32JSONNumber(token);
   }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { numberToken } from "@openbindings/json";
+import { isNumber } from "@openbindings/json";
 
 import {
   buildOpenAPI32MultipartBody,
@@ -36,7 +36,8 @@ describe("OpenAPI 3.2 request media", () => {
 
   it("preserves exact scalar tokens and rejects empty framed tokens and BOM", () => {
     for (const token of ["9007199254740993", "0.12345678901234567890123456789", "1e400", "1e-400", "-0"]) {
-      expect(numberToken(parseOpenAPI32NonJSONText({ type: "number" }, token))).toBe(token === "-0" ? "0" : token);
+      const value = parseOpenAPI32NonJSONText({ type: "number" }, token);
+      expect(isNumber(value) ? String(value) : undefined).toBe(token === "-0" ? "0" : token);
     }
     for (const token of ["", "\ufeff1", "\u00a01", "1 2"]) {
       expect(() => parseOpenAPI32NonJSONText({ type: "number" }, token)).toThrow();

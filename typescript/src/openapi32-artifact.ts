@@ -1,3 +1,4 @@
+import { isDecimal, isEncoded } from "@openbindings/json";
 import { cloneValueGraph } from "./value-graph.js";
 import { schemaObjectDefects } from "./schema-dialect.js";
 import { resolveDeclaration, type ResolvedDeclaration, type SchemaDeclaration } from "./resolved-declaration.js";
@@ -641,7 +642,7 @@ class OpenAPI32Overlay {
       return this.resolveSecuritySchemeObject(target, seen);
     }
     const scheme = openAPI32SecurityScheme(node.value);
-    return scheme ? cloneJSON(scheme) as Record<string, unknown> : null;
+    return scheme ? cloneValueGraph(scheme) as Record<string, unknown> : null;
   }
 
   private async resolvePathItem(
@@ -708,7 +709,7 @@ class OpenAPI32Overlay {
   }> {
     const result: Record<string, unknown> = {};
     for (const field of ["summary", "description"]) {
-      if (Object.hasOwn(selected.value, field)) result[field] = cloneJSON(selected.value[field]);
+      if (Object.hasOwn(selected.value, field)) result[field] = cloneValueGraph(selected.value[field]);
     }
     if (Object.hasOwn(selected.value, "parameters")) {
       result.parameters = await this.materializeParameters(selected.value.parameters, selected.parameterOwner);
@@ -740,7 +741,7 @@ class OpenAPI32Overlay {
     if (!source) throw new Error("selected operation is not an object");
     const result: Record<string, unknown> = {};
     for (const field of ["operationId", "summary", "description", "deprecated", "tags", "security"]) {
-      if (Object.hasOwn(source, field)) result[field] = cloneJSON(source[field]);
+      if (Object.hasOwn(source, field)) result[field] = cloneValueGraph(source[field]);
     }
     if (Object.hasOwn(source, "parameters")) {
       result.parameters = await this.materializeParameters(source.parameters, owner);
@@ -765,7 +766,7 @@ class OpenAPI32Overlay {
       const resolved = await this.resolveReferenceObject(value, owner, "parameter");
       const parameter = asRecord(resolved.value);
       if (!parameter) throw new Error("selected Parameter is not an object");
-      const clone = cloneJSON(parameter) as OpenAPIParameter;
+      const clone = cloneValueGraph(parameter) as OpenAPIParameter;
       if (Object.hasOwn(parameter, "schema")) {
         clone.schema = await this.materializeSchema(parameter.schema, resolved.resource);
       }
@@ -781,7 +782,7 @@ class OpenAPI32Overlay {
     const resolved = await this.resolveReferenceObject(raw, owner, "requestBody");
     const body = asRecord(resolved.value);
     if (!body) throw new Error("selected Request Body is not an object");
-    const result = cloneJSON(body) as OpenAPIRequestBody;
+    const result = cloneValueGraph(body) as OpenAPIRequestBody;
     if (Object.hasOwn(body, "content")) {
       result.content = await this.materializeContent(body.content, resolved.resource);
       if (body.required === true && Object.keys(result.content).length === 0) {
@@ -803,7 +804,7 @@ class OpenAPI32Overlay {
         const resolved = await this.resolveReferenceObject(value, owner, "mediaType");
         const media = asRecord(resolved.value);
         if (!media) throw new Error(`selected Media Type ${JSON.stringify(mediaType)} is not an object`);
-        const clone = cloneJSON(media) as OpenAPIMediaType;
+        const clone = cloneValueGraph(media) as OpenAPIMediaType;
         if (Object.hasOwn(media, "schema")) clone.schema = await this.materializeSchema(media.schema, resolved.resource);
         if (Object.hasOwn(media, "itemSchema")) clone.itemSchema = await this.materializeSchema(media.itemSchema, resolved.resource);
         const base = parseMediaDeclaration(mediaType).base;
@@ -825,8 +826,8 @@ class OpenAPI32Overlay {
       return Promise.all(raw.map((value) => this.materializeEncoding(value, owner, depth)));
     }
     const encoding = asRecord(raw);
-    if (!encoding) return cloneJSON(raw);
-    const result = cloneJSON(encoding) as Record<string, unknown>;
+    if (!encoding) return cloneValueGraph(raw);
+    const result = cloneValueGraph(encoding) as Record<string, unknown>;
     if (depth < 2) {
       for (const field of ["encoding", "prefixEncoding", "itemEncoding"]) {
         if (Object.hasOwn(encoding, field)) result[field] = await this.materializeEncoding(encoding[field], owner, depth + 1);
@@ -840,7 +841,7 @@ class OpenAPI32Overlay {
         const node = await this.resolveReferenceObject(value, owner, "header");
         materialized[name] = asRecord(node.value)
           ? await this.materializeResponseHeader(node)
-          : cloneJSON(node.value);
+          : cloneValueGraph(node.value);
       }
       result.headers = materialized;
     }
@@ -876,8 +877,8 @@ class OpenAPI32Overlay {
     raw: unknown, owner: RawResource, declaration: ResolvedDeclaration, multipart: boolean, depth: number,
   ): Promise<unknown> {
     const object = asRecord(raw);
-    if (!object) return cloneJSON(raw);
-    const result = cloneJSON(object) as Record<string, unknown>;
+    if (!object) return cloneValueGraph(raw);
+    const result = cloneValueGraph(object) as Record<string, unknown>;
     if (multipart) {
       const headers = asRecord(object.headers);
       if (headers) {
@@ -930,7 +931,7 @@ class OpenAPI32Overlay {
       if (Object.keys(siblings).length === 0) return placeholder;
       return { ...siblings, allOf: [placeholder, ...(Array.isArray(siblings.allOf) ? siblings.allOf : [])] };
     }
-    const result = cloneJSON(schema) as Record<string, unknown>;
+    const result = cloneValueGraph(schema) as Record<string, unknown>;
     const mapKeys = ["properties", "patternProperties", "$defs", "definitions", "dependentSchemas"];
     for (const key of mapKeys) {
       const values = asRecord(schema[key]);
@@ -953,9 +954,9 @@ class OpenAPI32Overlay {
   }
 
   private materializeServers(raw: unknown, owner: RawResource): unknown {
-    if (!Array.isArray(raw)) return cloneJSON(raw);
+    if (!Array.isArray(raw)) return cloneValueGraph(raw);
     return raw.map((value) => {
-      const server = cloneJSON(value) as Record<string, unknown>;
+      const server = cloneValueGraph(value) as Record<string, unknown>;
       if (owner.retrieval) server["x-openbindings-internal-server-document"] = owner.retrieval;
       return server;
     });
@@ -993,7 +994,7 @@ class OpenAPI32Overlay {
         result[key] = {};
         continue;
       }
-      const clone = cloneJSON(response) as Record<string, unknown>;
+      const clone = cloneValueGraph(response) as Record<string, unknown>;
       if (Object.hasOwn(response, "description") && typeof response.description !== "string") {
         delete clone.description;
       }
@@ -1029,7 +1030,7 @@ class OpenAPI32Overlay {
               "link",
               "Link Object",
             );
-            materialized[name] = cloneJSON(linkNode.value);
+            materialized[name] = cloneValueGraph(linkNode.value);
           }
           clone.links = materialized;
         }
@@ -1082,7 +1083,7 @@ class OpenAPI32Overlay {
       "Media Type Object",
     );
     const media = asRecord(resolved.value)!;
-    const clone = cloneJSON(media) as OpenAPIMediaType;
+    const clone = cloneValueGraph(media) as OpenAPIMediaType;
     if (Object.hasOwn(media, "schema")) {
       clone.schema = await this.materializeSchema(media.schema, resolved.resource);
     }
@@ -1099,7 +1100,7 @@ class OpenAPI32Overlay {
 
   private async materializeResponseHeader(node: ResolvedRawNode): Promise<Record<string, unknown>> {
     const header = asRecord(node.value)!;
-    const clone = cloneJSON(header) as Record<string, unknown>;
+    const clone = cloneValueGraph(header) as Record<string, unknown>;
     if (Object.hasOwn(header, "schema")) {
       clone.schema = await this.materializeSchema(header.schema, node.resource);
     }
@@ -1143,7 +1144,7 @@ class OpenAPI32Overlay {
   ): OpenAPIDocument {
     const document: Record<string, unknown> = {};
     for (const field of ["openapi", "$self", "info", "jsonSchemaDialect", "servers", "security", "tags", "externalDocs", "components"]) {
-      if (Object.hasOwn(root, field)) document[field] = cloneJSON(root[field]);
+      if (Object.hasOwn(root, field)) document[field] = cloneValueGraph(root[field]);
     }
     if (Array.isArray(document.servers) && this.entry) {
       document.servers = this.materializeServers(document.servers, this.entry);
@@ -1165,8 +1166,8 @@ class OpenAPI32Overlay {
     const target = asRecord(resolved.value);
     if (!target) return resolved;
     const annotations: Record<string, unknown> = {};
-    if (Object.hasOwn(object, "summary")) annotations.summary = cloneJSON(object.summary);
-    if (Object.hasOwn(object, "description")) annotations.description = cloneJSON(object.description);
+    if (Object.hasOwn(object, "summary")) annotations.summary = cloneValueGraph(object.summary);
+    if (Object.hasOwn(object, "description")) annotations.description = cloneValueGraph(object.description);
     return { ...resolved, value: { ...target, ...annotations } };
   }
 
@@ -1268,6 +1269,9 @@ function assertJSONDomain(root: unknown): void {
       return;
     }
     if (typeof value !== "object") throw new Error(`OpenAPI value of type ${typeof value} has no JSON image`);
+    // Exact numbers and byte-backed strings are in-domain scalars carried as
+    // objects; they are leaves here, not containers with a foreign prototype.
+    if (isDecimal(value) || isEncoded(value)) return;
     if (seen.has(value)) throw new Error("OpenAPI parsed content contains a cycle and has no JSON image");
     seen.add(value);
     if (Array.isArray(value)) {
@@ -1293,16 +1297,13 @@ function freezeObjectGraph<T>(value: T): T {
   const seen = new WeakSet<object>();
   const freeze = (member: unknown): void => {
     if (!member || typeof member !== "object" || seen.has(member)) return;
+    if (isDecimal(member) || isEncoded(member)) return; // already immutable
     seen.add(member);
     for (const child of Object.values(member)) freeze(child);
     Object.freeze(member);
   };
   freeze(value);
   return value;
-}
-
-function cloneJSON<T>(value: T): T {
-  return cloneValueGraph(value);
 }
 
 function omitOpenAPI32ParameterLanes(
@@ -1376,7 +1377,7 @@ function referringSecurityScopes(
     const cloned: Record<string, Record<string, unknown>> = {};
     for (const [name, scheme] of Object.entries(schemes)) {
       const object = asRecord(scheme);
-      if (object) cloned[name] = cloneJSON(object);
+      if (object) cloned[name] = cloneValueGraph(object);
     }
     if (Object.keys(cloned).length > 0) result.set(path, cloned);
   }
