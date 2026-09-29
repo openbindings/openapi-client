@@ -11,12 +11,11 @@ test("only the exact protocol-neutral TypeScript leaves are allowed", () => {
   }
 });
 
-test("Go module ownership never grants access to Core or other internal packages", () => {
-  const prefix = "github.com/openbindings/openbindings-go";
-  for (const name of ["jsonvalue", "internal/jstring", "internal/thirdparty/jsoncodec"]) {
-    assert.equal(isForbiddenGoPackage(`${prefix}/${name}`), false, name);
+test("the Go module depends on no OpenBindings package but its own", () => {
+  for (const name of ["openapi-client/go", "openapi-client/go/openapi", "openapi-client/go/openapi/schema2020"]) {
+    assert.equal(isForbiddenGoPackage(`github.com/openbindings/${name}`), false, name);
   }
-  for (const suffix of ["", "/sdk", "/invoke", "/synthesize", "/jsonvalue/extra", "/internal/thirdparty/jsonschema"]) {
-    assert.equal(isForbiddenGoPackage(prefix + suffix), true, suffix);
+  for (const name of ["openbindings-go", "openbindings-go/jsonvalue", "openbindings-go/internal/jstring", "openapi-client/gox", "asyncapi-client/go"]) {
+    assert.equal(isForbiddenGoPackage(`github.com/openbindings/${name}`), true, name);
   }
 });

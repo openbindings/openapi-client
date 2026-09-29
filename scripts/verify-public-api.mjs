@@ -8,11 +8,11 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const expected = JSON.parse(await readFile(resolve(root, "api/public-api-v1.json"), "utf8"));
 const typeScript = await readFile(resolve(root, "typescript/dist/index.d.ts"));
 const typeScriptProvider = await readFile(resolve(root, "typescript/dist/provider.d.ts"));
-const goDocumentation = execFileSync("go", ["doc", "-all", "."], {
+const goDocumentation = execFileSync("go", ["doc", "-all", "./openapi"], {
   cwd: resolve(root, "go"),
   env: { ...process.env, GOWORK: "off" },
 });
-const goProviderDocumentation = execFileSync("go", ["doc", "-all", "./provider"], {
+const goSchema2020Documentation = execFileSync("go", ["doc", "-all", "./openapi/schema2020"], {
   cwd: resolve(root, "go"),
   env: { ...process.env, GOWORK: "off" },
 });
@@ -21,7 +21,7 @@ const actual = {
   typescriptDeclarationSha256: digest(typeScript),
   typescriptProviderDeclarationSha256: digest(typeScriptProvider),
   goDocumentationSha256: digest(goDocumentation),
-  goProviderDocumentationSha256: digest(goProviderDocumentation),
+  goSchema2020DocumentationSha256: digest(goSchema2020Documentation),
 };
 
 for (const [name, value] of Object.entries(actual)) {

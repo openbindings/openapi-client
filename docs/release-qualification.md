@@ -24,21 +24,24 @@ corpus are pinned under `authority/` and `conformance/upstream/`.
 revision it requires:
 
 1. authority source, file hashes, rule inventory, and corpus counts verify;
-2. all pinned processor scenarios pass through the public TypeScript and Go
-   client behavior;
+2. all pinned processor scenarios pass through the public TypeScript client
+   behavior (the Go client, which restarted from its public API, is not a
+   binding processor);
 3. TypeScript type checking, native tests, and production ESM/CommonJS builds
    pass;
 4. the complete Go suite passes under the race detector;
 5. boundary inspection finds exactly the application root and advanced provider
-   TypeScript exports, their Go counterparts, and no OpenBindings runtime
-   dependency or public compatibility type;
-6. reviewed root and provider TypeScript declarations and Go documentation
-   match the intentional public API snapshot;
+   TypeScript exports and no OpenBindings runtime dependency or public
+   compatibility type, and no OpenBindings package or vocabulary anywhere in
+   the Go module;
+6. reviewed root and provider TypeScript declarations and the Go `openapi`
+   and `openapi/schema2020` documentation match the intentional public API
+   snapshot;
 7. a packed npm artifact works from clean ESM and CommonJS projects and its
    installed declarations compile for both module forms;
 8. the package bundles for a browser target without a Node-only static
    dependency;
-9. a clean external Go module loads and invokes every supported edition; and
+9. a clean external Go module builds and vets against the Go API; and
 10. formatting and repository integrity checks pass.
 
 The corpus gate uses the public client facade. Internal helper tests are

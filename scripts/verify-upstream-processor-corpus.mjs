@@ -15,9 +15,8 @@ const environment = {
 };
 
 await run("pnpm", ["--dir", "typescript", "exec", "vitest", "run", "src/upstream-processor-corpus.test.ts"]);
-await run("go", ["-C", "go", "test", "./internal/runtime", "-run", "TestUpstreamProcessorCorpus", "-count=1"]);
 
-console.log(`public TypeScript and Go clients passed the processor corpus at ${corpusRoot}`);
+console.log(`public TypeScript client passed the processor corpus at ${corpusRoot}`);
 
 function run(command, args) {
   return new Promise((resolveRun, rejectRun) => {
