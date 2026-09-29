@@ -77,10 +77,16 @@ func (e *Error) Unwrap() []error {
 
 // Project converts a supported schema to JSON Schema 2020-12 for direction.
 // It applies the edition's request/response rules for readOnly, writeOnly
-// and required, including through references. OpenAPI 3.0 nullable becomes
-// a type list and boolean exclusiveMinimum a number. Binary content is
-// represented with contentMediaType, and base64 content with
-// contentEncoding. It never validates an instance or invents schema facts.
+// and required, including through references; in Swagger 2.0, whose
+// readOnly properties must not be sent, a Request projection forbids them.
+// In Swagger 2.0 and OpenAPI 3.0, members beside $ref are dropped, and a
+// boolean exclusiveMinimum or exclusiveMaximum becomes a number; OpenAPI
+// 3.0 nullable becomes a type list where the schema has a type. In those
+// editions format: binary drops type: string, and Swagger 2.0 type: file
+// drops its type; for either, the use site's single concrete media type
+// becomes contentMediaType at Root only, and Defs entries state none.
+// format: byte becomes contentEncoding: base64. It never validates an
+// instance or invents schema facts.
 //
 // Project returns no partial projection and an *Error when a reference
 // cannot be resolved, $dynamicRef needs dynamic scope, or a custom dialect

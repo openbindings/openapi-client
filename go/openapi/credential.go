@@ -40,9 +40,9 @@ func Secret(secret string) Credential {
 // operation: a request f makes is not labelled or retried as the call's
 // operation by middleware that asks OperationFromContext.
 //
-// f is called once for each request the client builds: the call's first
-// request, and each redirect hop within the origin that the client
-// follows, where credentials are placed again. A retry made by the caller's
+// f is called once for each request the client builds that carries its
+// credential: the call's first request, and each redirect hop on which
+// [Redirects] says credentials are placed again. A retry made by the caller's
 // own transport resends the request as built, credential included, without
 // calling f. f is called concurrently from every goroutine that sends, so
 // it must be safe for concurrent use, and should cache what it returns and

@@ -20,11 +20,13 @@ import (
 // or ignored where nothing depends on it, as a missing info is.
 //
 // Load also fails, with a *RequestError, when opts would refuse every call:
-// a Credentials name the document never uses, a Variables name no server
-// URL uses, a Server or ServerID that matches no server, a Security or
-// SecurityKey that matches no alternative, a BaseURL without a scheme and host
-// or is set with Server or ServerID, conflicting exact and name selectors,
-// or a Header field that is always refused.
+// a Credentials name the document never uses, or a credential its schemes
+// cannot use (see Credentials in the package documentation), a Variables
+// name no server URL uses, a Server or ServerID that matches no server, a
+// Security or SecurityKey that matches no alternative, a BaseURL without a
+// scheme and host, with userinfo, a query or a fragment, or set with Server
+// or ServerID, conflicting exact and name selectors, or a Header field that
+// is always refused.
 func Load(ctx context.Context, uri string, opts *Options) (*Client, error) {
 	var l Loader
 	return l.Load(ctx, uri, opts)
@@ -33,8 +35,8 @@ func Load(ctx context.Context, uri string, opts *Options) (*Client, error) {
 // Parse returns a Client for a document the caller already holds, such as
 // one embedded with go:embed, using the zero [Loader], and fails as Load
 // does. The content is JSON or YAML text. The uri, if not empty, is the
-// absolute URI the document is meant to live at: the base for its relative
-// references and relative server URLs, never fetched itself. With an empty
+// absolute URI the document is meant to live at, which stands for the URI
+// it was retrieved from and is never fetched itself. With an empty
 // uri, the document may reference only itself, a call whose server URL is
 // relative needs Options.BaseURL, and Sources name the document by a
 // "urn:uuid:" URI derived from the content (a name-based UUID, RFC 9562
@@ -48,27 +50,47 @@ func Parse(ctx context.Context, content []byte, uri string, opts *Options) (*Cli
 // settings apply only while a document is read; a Client keeps none of
 // them.
 //
-// A document is UTF-8, or UTF-16 or UTF-32 with a byte order mark; a UTF-8
-// byte order mark is ignored. JSON is detected by a first significant byte
-// of '{'; anything else is read as YAML 1.2 under its Core schema, so yes
-// and no stay strings, << is an ordinary key, and a scalar key such as an
-// unquoted 200 is read as the string it spells. A duplicate key, a key that
-// is not a scalar, a tag outside the Core schema, .inf or .nan, or a second
-// document in the stream rejects the document. A document whose aliases
-// would expand it past 1,000,000 nodes, or past 100 times its own node
-// count, or that nests deeper than 1,000 levels, is rejected too. A
-// rejection names the document's URI and the line and column of the
-// problem. Reference cycles are detected, never followed forever.
+// A document is UTF-8, or UTF-16 or UTF-32 with a byte order mark or, for
+// YAML, as YAML 1.2.2 section 5.2 deduces it; a UTF-8 byte order mark is
+// ignored. A document whose first significant byte is '{' is read as JSON
+// and, if it is not JSON, as YAML; anything else is read as YAML 1.2 under
+// its Core schema, so yes and no stay strings, << is an ordinary key, and
+// a scalar key such as an unquoted 200 is read as the string it spells.
+// Numbers keep the exact value written. A duplicate key, a key that is not
+// a scalar, or a second document in the stream rejects the document, and
+// so, in every edition, does a value JSON cannot hold (.inf, .nan, or a tag
+// outside the Core schema, such as !!timestamp), since Document and Raw are
+// JSON. A document whose aliases would add more than 1,000,000 nodes, or
+// more than 100 times its own node count, or that nests deeper than 1,000
+// levels, is rejected too. A rejection names the document's URI and the
+// line and column of the problem. Reference cycles are detected, never
+// followed forever.
 //
-// References resolve against each document's base: its $self in OpenAPI
-// 3.2, else the URI it was retrieved from. Inside a 3.1 or 3.2 schema, the
-// nearest $id sets the base, as JSON Schema says. A reference that names a
-// 3.2 document by the URI it was retrieved from rather than its $self, or
-// that reaches a schema by a JSON Pointer crossing a nearer $id, still
-// resolves; it stays visible as written where it is written, in a Schema's
-// Raw or in Document at the Source of the object holding it. In OpenAPI
-// 3.2, a security requirement's name that is not a component name is a URI
-// reference to a Security Scheme Object, resolved like any other.
+// The references followed are $ref in Reference Objects, Path Items and
+// Schema Objects, $dynamicRef, Discriminator mapping and defaultMapping
+// values that are not component names, and OpenAPI 3.2 security
+// requirement URIs, anywhere in a document, webhooks and callbacks
+// included; operationRef and externalValue are not retrieved. They resolve
+// against each document's base: its OpenAPI 3.2 $self, itself resolved
+// first against the URI the document was retrieved from when relative, or
+// else that URI.
+// Inside a 3.1 or 3.2 schema, the nearest $id sets the base, as JSON Schema
+// 2020-12 says (see Schema for other dialects). A fragment is
+// percent-decoded as UTF-8 before it is read as a JSON Pointer or a plain
+// name.
+//
+// A reference resolves first to what loaded documents identify: a document
+// by its retrieval URI or 3.2 $self, a schema by $id, a plain name by
+// $anchor or $dynamicAnchor. This is decided once every document reached is
+// parsed. Only a URI no loaded document identifies is admitted and fetched,
+// and the fetched document is then searched the same way. A URI claimed by
+// two documents or schemas is unresolvable, and the error names both. A
+// reference that names a 3.2 document by the URI it was retrieved from
+// rather than its $self, or that reaches a schema by a JSON Pointer
+// crossing a nearer $id, still resolves; it stays visible as written where
+// it is written, in a Schema's Raw or in Document at the Source of the
+// object holding it. Security requirement names resolve as [SchemeLookup]
+// says.
 type Loader struct {
 	// Fetch, if set, retrieves each document the loader needs in place of
 	// the default (http and https with the Options' HTTPClient, file URLs
@@ -122,12 +144,15 @@ type Loader struct {
 }
 
 // A SchemeLookup says where the component names that a security
-// requirement in a referenced document uses are looked up. OpenAPI allows
-// two readings, the entry document and the document holding the
-// requirement; SchemesInEntry and SchemesInReferrer each follow one
-// exactly, and a name that document does not define is a defect of the
-// requirement. The default, SchemesInEntryFirst, looks in the entry
-// document, then, for a name it does not define, in the referring one.
+// requirement in a referenced document uses are looked up; it governs
+// component names only. OpenAPI allows two readings, the entry document
+// and the document holding the requirement; SchemesInEntry and
+// SchemesInReferrer each follow one exactly. The default,
+// SchemesInEntryFirst, looks in the entry document, then, for a name it
+// does not define, in the referring one. In OpenAPI 3.2, a name that is not
+// a component name where it is looked up is a URI reference to a Security
+// Scheme Object, resolved against the base of the document holding the
+// requirement; in earlier editions it is a defect of the requirement.
 type SchemeLookup int
 
 const (
@@ -145,7 +170,8 @@ func (l *Loader) Load(ctx context.Context, uri string, opts *Options) (*Client, 
 // Parse returns a Client for content as the package's Parse function does,
 // with l's settings, which govern the documents its references reach. With
 // an empty uri, absolute external references can be fetched only when
-// AllowReference admits them; relative external references have no base.
+// AllowReference admits them; relative external references have no base
+// unless an OpenAPI 3.2 absolute $self supplies one.
 func (l *Loader) Parse(ctx context.Context, content []byte, uri string, opts *Options) (*Client, error) {
 	panic("unimplemented")
 }
@@ -173,13 +199,18 @@ func (c *Client) DocumentURIs() []string {
 // loaded from uri. An empty uri means the entry document. A document is
 // named by the URI it was retrieved from (for Parse, the uri given or the
 // one derived from the content), which is what the descriptions' Source
-// fields name; Document also accepts an OpenAPI 3.2 document's $self. Each
+// fields name; Document also accepts an OpenAPI 3.2 document's $self, as
+// resolved. Each
 // call copies the whole document, so call it once per document and keep the
 // result.
 //
+// A Source's fragment, like a SchemaReference.URI's, is a JSON Pointer
+// percent-encoded as RFC 6901 section 6 says, as in
+// #/paths/~1pets~1%7BpetId%7D/get; Client.Schema accepts these URIs.
+//
 // Document lets a caller check what the descriptions do not model, such as
-// an extension, or whether a Path Item $ref had sibling fields, without the
-// client growing a field for each such fact.
+// an extension, or which of a Path Item's fields were written beside its
+// $ref, without the client growing a field for each such fact.
 func (c *Client) Document(uri string) []byte {
 	panic("unimplemented")
 }

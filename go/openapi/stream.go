@@ -21,12 +21,12 @@ import (
 // an EOF on the response does not imply that the upload completed. The
 // client never presents an incomplete upload as complete.
 //
-// The caller must close Body. Closing it signals an outstanding upload to
-// stop. An iterator that honors its yield result then stops, but a caller's
-// arbitrary io.Reader may remain blocked in Read; use a source that responds
-// to cancellation for long-running uploads. ctx bounds the whole stream: cancelling it before the headers
-// arrive is an error from Stream, and after them it is observable from
-// WaitRequest and from an affected response read.
+// The caller must close Body. Closing it signals an outstanding upload to stop.
+// An iterator that honors its yield result then stops, but a caller's arbitrary
+// io.Reader may remain blocked in Read; use a source that responds to
+// cancellation for long-running uploads. ctx bounds the whole stream:
+// cancelling it before the headers arrive is an error from Stream, and after
+// them it is observable from WaitRequest and from an affected response read.
 func (c *Client) Stream(ctx context.Context, key string, in *Input) (*Response, error) {
 	panic("unimplemented")
 }
@@ -49,19 +49,25 @@ var ErrItem = errors.New("openapi: bad item")
 //   - application/jsonl and application/x-ndjson: one JSON value per line;
 //     blank lines are skipped.
 //   - application/json-seq and any +json-seq type: one per RFC 7464 record.
+//     A record holding a top-level number, true, false or null not followed
+//     by whitespace, which may be truncated, is dropped and reported: an
+//     ErrItem here, a *DecodeError from Call.
 //   - text/event-stream: one per dispatched event, as the JSON object
 //     OpenAPI 3.2 defines for it, whose members are only the fields the
 //     event set: "data", "event" and "id" as strings, "retry" as a number.
 //     T is the type the operation's itemSchema describes; to decode each
 //     event's data instead, use [Events].
 //   - multipart types: one per part, decoded by the part's own
-//     Content-Type as Call decodes a body. With T = *multipart.Part, each
-//     item is the part itself as mime/multipart reads it, its body read as
-//     it arrives and valid until the next iteration.
+//     Content-Type as Call decodes a body, text/plain where it has none
+//     (message/rfc822 in multipart/digest), after any base64 or
+//     quoted-printable Content-Transfer-Encoding is removed. With T =
+//     *multipart.Part, each item is the part as mime/multipart's NextPart
+//     returns it, its body read as it arrives and valid until the next
+//     iteration.
 //   - any other media type: the whole body, as one item.
 //
-// The media type is the response's Content-Type, or application/octet-stream
-// when it has none, so a T of any receives that body as one []byte.
+// The media type is the response's Content-Type, read as Call reads it, so
+// a T of any receives a body without one as one []byte.
 // An empty body yields no items. JSON decodes as Call decodes, so a T of
 // any keeps numbers exact. An error that concerns one item wraps [ErrItem]
 // and is yielded in its place, and the iteration goes on. Any other error
@@ -75,12 +81,12 @@ func Items[T any](r *Response) iter.Seq2[T, error] {
 	panic("unimplemented")
 }
 
-// Events returns the server-sent events of r's open text/event-stream body
-// as they arrive, one per dispatched event, parsed as the HTML standard
-// says. Events that set no field are skipped. A body of another media type,
-// or a Response not from Stream or Request.Send, yields one error. Errors, and closing
-// Body, are as for [Items]. The client never reconnects; to resume, call
-// again with a Last-Event-ID field in Input.Header.
+// Events returns the server-sent events of r's open text/event-stream body as
+// they arrive, one per dispatched event, parsed as the HTML standard says.
+// Events that set no field are skipped. A body of another media type, or a
+// Response not from Stream or Request.Send, yields one error. Errors, and
+// closing Body, are as for [Items]. The client never reconnects; to resume,
+// call again with a Last-Event-ID field in Input.Header.
 func Events(r *Response) iter.Seq2[Event, error] {
 	panic("unimplemented")
 }

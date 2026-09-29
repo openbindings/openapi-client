@@ -1,7 +1,8 @@
 // Package openapi calls the operations of an OpenAPI document with ordinary
 // Go values. It reads Swagger 2.0 and OpenAPI 3.0, 3.1 and 3.2 documents,
 // written in JSON or YAML, and needs no generated code. Its only authorities
-// are the OpenAPI specifications and the RFCs they rely on.
+// are the OpenAPI specifications and the RFCs they rely on. A document is
+// read by the latest patch of its minor line: 3.0.4, 3.1.2 or 3.2.1.
 // Client operations are outbound requests under paths. Callbacks and
 // webhooks describe provider-initiated requests toward the API consumer;
 // their authored declarations are available through Client.Document but
@@ -54,14 +55,36 @@
 // MarshalJSON, TextMarshaler map keys), then serializes that data as the
 // document says. Where a parameter or a form or multipart field needs text,
 // a number or boolean is written in its JSON spelling (10, 2.5, true) and a
-// string or json.Number as it is. In a parameter or a form or multipart
-// field serialized by a style, a nil value, an empty slice and an empty map
-// are undefined and omitted, as RFC 6570 says, and "" is a value. A
-// parameter serialized by content applies its media codec instead: under
-// application/json, [] and {} are present values. A JSON body or JSON part
-// is exactly what encoding/json writes, null members, [] and {} included.
-// Schema defaults are never sent, and values are never validated against
-// schemas. How bytes, readers and iterators are sent is on Input.Body.
+// string or json.Number as it is.
+//
+// The client's codecs sort media types into four classes, for requests
+// and responses alike, taking the first that applies:
+//
+//   - sequential: the types [Items] frames item by item (JSON Lines, JSON
+//     text sequences, server-sent events), multipart excepted;
+//   - JSON: application/json and any +json type;
+//   - XML: application/xml, text/xml and any +xml type;
+//   - text: any other text/* type.
+//
+// A body under a form, multipart or sequential type takes the shapes
+// Input.Body lists. Otherwise a JSON type is written as encoding/json writes
+// the value; any other type takes only a string, as its UTF-8 bytes, and a
+// text type also a number or boolean, in its JSON spelling.
+//
+// In a parameter not serialized by content, and in a form or multipart
+// field serialized by a style or a Swagger 2.0 collectionFormat, null, an
+// empty array and an object whose members are all undefined are undefined,
+// as RFC 6570 says, and "" is a value. An undefined member is skipped, a
+// null array item is refused, an undefined optional parameter is omitted,
+// and an undefined required one is missing. A form or multipart property or
+// array item whose JSON data is null is omitted, whatever its
+// serialization. A parameter serialized by content is encoded as a body of
+// its media type is, except that nil is absent: json.RawMessage("null")
+// sends null, and under application/json [] and {} are present values. A
+// JSON body or JSON part is exactly what encoding/json writes, null
+// members, [] and {} included. Schema defaults are never sent, and values
+// are never validated against schemas. How bytes, readers and iterators are
+// sent is on Input.Body.
 //
 // Where the client creates the values, as when out is a *any, a
 // *map[string]any or a *[]any, and for Items[any] and StatusError.Decode
@@ -86,9 +109,9 @@
 // An upload error may be joined with a response error; errors.As can find
 // both. Send leaves every status open and unclassified. Response.Decode
 // applies the same codecs and bounds to any status, while WaitRequest
-// reports whether the transport consumed the complete request body. Whenever a response
-// arrived, the [*Response] is returned, even with an error. When the call's
-// context is done before the call completes, the
+// reports whether the transport consumed the complete request body.
+// Whenever a response arrived, the [*Response] is returned, even with an
+// error. When the call's context is done before the call completes, the
 // error matches ctx.Err() with errors.Is, and also context.Cause(ctx), even
 // where net/http would report only the cause; so does a read of a Stream's
 // Body. Test for the package's three types first: a *RequestError may wrap
@@ -112,19 +135,25 @@
 // alternatives:
 //
 //   - One usable server selects itself. Several require Options.Server,
-//     Options.ServerID or Options.BaseURL. ServerID identifies one even when
-//     URL or name collides. A relative server without a base URI requires BaseURL.
-//     Server variables use their OpenAPI defaults; a variable without a
-//     usable default requires Options.Variables.
+//     Options.ServerID or Options.BaseURL, and none requires BaseURL.
+//     ServerID identifies one even when URL or name collides. Server
+//     variables use their declared defaults; a variable without one
+//     requires Options.Variables.
 //   - One security alternative selects itself. Several require
 //     Options.Security, Options.SecurityKey or Input.Security, including an
 //     anonymous alternative. SecurityKey names an exact alternative.
 //     The selected alternative requires its own Credentials; credentials
 //     never select an alternative implicitly.
-//   - A body with one concrete declared request media type uses it. Several,
-//     a media range without a concrete type, or no declared type require
-//     Input.MediaType. A multipart part takes an OpenAPI-defined default
-//     or sole concrete Encoding type; otherwise it requires Part.MediaType.
+//   - A body uses the declared request media type when exactly one is
+//     declared and it is concrete; otherwise, a range counting as an
+//     alternative, it requires Input.MediaType. A form field or multipart
+//     part uses its Encoding contentType on the same terms, or its default
+//     type when the Encoding gives none; a list or a range requires
+//     Part.MediaType. The default is read from the field's schema (the
+//     property's, or, for a positional part, the prefixItems, items or
+//     itemSchema entry for its position), never from the Go value; in
+//     Swagger 2.0, and where an OpenAPI 3.0 schema has no type, it is
+//     text/plain, or application/octet-stream for a file parameter.
 //
 // These are setting requirements, not a decision history. A caller that
 // needs another spelling for a scalar parameter can pass a string, or use
@@ -160,100 +189,156 @@
 // Where OpenAPI is silent and offers no alternatives, the client follows
 // these documented rules. Their request-side results are visible in the
 // prepared request and may be changed there when preparation succeeds.
-// Redirects follow [Redirects]; filenames follow [Part].
+// Redirects follow [Redirects]; part names and filenames follow [Part].
 //
-//   - URL: the server URL and the path are joined as written, except that
-//     one "/" is dropped where the server URL ends with one and the path
-//     begins with one. A relative server URL resolves against the URI of
-//     the document that contains the Server Object, the one it was retrieved
-//     from, never its OpenAPI 3.2 $self. In Swagger 2.0, as 2.0 says, a
-//     missing host is the host and port the document was retrieved from, a
-//     missing schemes list its scheme, and a missing basePath adds nothing.
-//   - Bodies by method: in OpenAPI 3.0, a request body declared on GET,
-//     HEAD or DELETE is ignored, as 3.0 says, so the operation takes none;
-//     in the other editions a declared body is sent with any method but
-//     TRACE. An OpenAPI 3.2 CONNECT additional operation can be prepared
-//     and sent; a 2xx tunnel needs a caller-provided transport that exposes
-//     its duplex connection. Request.Send leaves the response open.
-//   - Parameter order: the path item's parameters, then the operation's, in
-//     declared order; query credentials last.
-//   - Percent-encoding: path, query and cookie values encode every byte
-//     outside RFC 3986's unreserved set as %XX in uppercase hex. With
-//     allowReserved, RFC 6570 reserved expansion applies: reserved
-//     characters and existing %XX triples pass through. OpenAPI 3.2 cookie
-//     style values, header values, and an apiKey sent in a cookie are
-//     written as given; a cookie value holding a ";" or a control character
-//     is refused. deepObject nests objects as a[b][c]=v; nesting in any
-//     other style is refused.
+//   - URL: server variables are substituted first, as given. A relative
+//     result then resolves, by RFC 3986 section 5.2, against the URI of the
+//     document that contains the Server Object, the one it was retrieved
+//     from, never its OpenAPI 3.2 $self; only an http or https URI is such
+//     a base, and otherwise the server cannot be used. The path is then
+//     appended as written, except that one "/" is dropped where the URL
+//     ends with one and the path begins with one. A server URL with
+//     userinfo, a query or a fragment after substitution cannot be used
+//     either (Server.Err, where the document alone decides it). An empty
+//     servers array on a path item or operation, and an empty Swagger 2.0
+//     schemes list, are read as absent, as OpenAPI says of the root's
+//     servers. In Swagger 2.0, as 2.0 says, a missing host is the host and
+//     port as written in the http or https URI the document was retrieved
+//     from, a missing schemes list that URI's scheme, and a missing basePath
+//     adds nothing; without such a URI, a server missing host or schemes
+//     cannot be used.
+//   - Bodies by method: a request body declared on TRACE or CONNECT, and in
+//     OpenAPI 3.0 on GET, HEAD, DELETE or OPTIONS, as 3.0 says, is ignored,
+//     so the operation takes none; otherwise a declared body is sent with
+//     any method. An OpenAPI 3.2 CONNECT additional operation can be
+//     prepared and sent; its prepared URL is the OpenAPI URL, so for RFC
+//     9110's authority-form target the caller clears URL.Path and gives the
+//     port, or its transport does. A 2xx tunnel needs a caller-provided
+//     transport that exposes its duplex connection. Request.Send leaves the
+//     response open.
+//   - Order: the path item's parameters, then the operation's, in declared
+//     order, an overriding parameter taking the place of the one it
+//     overrides; query credentials last. An object value's members, and a
+//     form or multipart body's fields, follow the order encoding/json
+//     writes members in (a struct's fields in declaration order, a map's
+//     keys sorted), and items keep their order.
+//   - Percent-encoding: path, query and cookie values (content-serialized
+//     ones included, application/x-www-form-urlencoded too) and parameter
+//     and member names encode every byte outside RFC 3986's unreserved set
+//     as %XX in uppercase hex. So deepObject nests objects
+//     as a%5Bb%5D%5Bc%5D=v, and the spaceDelimited and pipeDelimited
+//     delimiters are %20 and %7C. allowReserved applies to query
+//     parameters, and in OpenAPI 3.2 to path parameters and form-style
+//     cookie parameters too; elsewhere it is ignored. Where it applies, RFC
+//     6570 reserved expansion is used exactly: reserved characters and
+//     existing %XX triples pass through, and the caller supplies any
+//     percent-encoding OpenAPI leaves to the application. Header values
+//     are written as given in every edition, never percent-encoded, as
+//     OpenAPI 3.1.2 corrects. OpenAPI 3.2 cookie style names and values,
+//     and an apiKey sent in a cookie, are written as given too; a cookie
+//     value holding a ";" or a control character is refused.
+//   - Styles: deepObject ignores explode. Nesting in any style but
+//     deepObject is refused, and so are an array in a deepObject value, a
+//     primitive for spaceDelimited, pipeDelimited or deepObject, explode
+//     true with spaceDelimited or pipeDelimited, and, in OpenAPI 3.2, an
+//     array or object for a cookie parameter with explode false. Each is
+//     refused at the parameter's key, with Param.Err set where the document
+//     alone decides it.
+//   - Querystring: an OpenAPI 3.2 querystring parameter is the whole query,
+//     and its name is not written. Under application/x-www-form-urlencoded
+//     its value is an object written by the form-body rules, Encoding
+//     included, and is not encoded again; under any other media type the
+//     encoded value is percent-encoded as a query value is. An undefined
+//     value or an empty result sends no query. A query credential follows,
+//     after "&".
 //   - Form bodies use the WHATWG application/x-www-form-urlencoded encoder
 //     in every edition (a space as +, letters, digits and *-._ literal,
 //     every other byte as %XX), except that a property whose Encoding sets
 //     style, explode or allowReserved is written by RFC 6570, as OpenAPI
-//     says, and a Swagger 2.0 formData array by its collectionFormat (csv
-//     unless declared; multi repeats the field). Multipart/form-data fields
-//     are never URI percent-encoded. Fields of a form or multipart body
-//     follow the order encoding/json writes members in (a struct's fields in
-//     declaration order, a map's keys sorted), and items keep their order.
-//     A body is encoded once, so HTTP.Body and every GetBody give the same
-//     bytes.
+//     says, and a Swagger 2.0 formData array by its collectionFormat.
+//     Multipart/form-data fields are never URI percent-encoded. A body is
+//     encoded once, so HTTP.Body and every GetBody give the same bytes.
+//   - Swagger 2.0 arrays and empty values: an array's items are encoded
+//     first, then joined by its collectionFormat's delimiter (csv unless
+//     declared), a nested items array by its own first; multi repeats the
+//     name and value. In a path or query the delimiter is percent-encoded
+//     (a space as %20, a tab as %09, | as %7C) and a comma stays literal;
+//     in a header it is written as given; in a formData field the joined
+//     value is then encoded as any form field is. A query or formData parameter
+//     given "" is sent as name=; set Options.NameOnlyEmpty to send an
+//     allowEmptyValue parameter's name alone.
 //   - Cookies: one Cookie field, pairs joined by "; ", parameters in
-//     declared order, then credentials.
-//   - Swagger 2.0 empty values: an allowEmptyValue parameter given "" is
-//     sent as name=; set Options.NameOnlyEmpty to send the name alone.
+//     declared order, then credentials. A Cookie field in Options.Header or
+//     Input.Header is refused when the call sends cookie parameters or a
+//     cookie credential, and a value for a header parameter named Cookie,
+//     whose effect OpenAPI leaves undefined, is refused at its key.
 //   - Accept: none is synthesized. Set Options.Header or Input.Header to
 //     request a particular representation.
-//   - Header fields: the client generates Content-Type,
-//     Content-Length when known, header parameters and credentials, and no
-//     User-Agent beyond net/http's. Options.Header and then Input.Header
-//     are applied over the generated fields: a field replaces the same field
-//     set before, and one with no values removes it. At either level,
-//     Content-Type is refused (Input.MediaType chooses the media type), and
-//     so is a field that a header parameter the call supplies, or the call's
-//     credential, sets; a declared header parameter the call leaves unset
-//     may come from a header field. A declared Swagger 2.0 Content-Type
-//     header parameter, required or not, is satisfied by the media type the
-//     call sends and is never set by value. A credential is added at send
-//     time and replaces a field of the same name edited into Request.HTTP.
+//   - Header fields: the client generates Content-Type, Content-Length for
+//     a body that can be sent again (see Input.Body), header parameters and
+//     credentials, and no User-Agent beyond net/http's. Options.Header and
+//     then Input.Header are applied over the generated fields: a field
+//     replaces the same field set before, and one with no values removes
+//     it. At either level, Content-Type, Content-Length and
+//     Transfer-Encoding are refused (Input.MediaType chooses the media
+//     type), and so is a field that a header parameter the call supplies,
+//     or the call's credential, sets; a declared header parameter the call
+//     leaves unset may come from a header field. A declared Swagger 2.0
+//     Content-Type header parameter, required or not, is satisfied by the
+//     media type the call sends and is never set by value, except on a
+//     call that sends no body, where it is an ordinary header parameter.
 //   - Content codings are Go's: the transport may ask for gzip and remove it,
 //     and every bound counts decoded bytes. A header field that sets
-//     Accept-Encoding turns that off, and the coded bytes then pass
-//     through unchanged, for a *[]byte or io.Writer to receive.
+//     Accept-Encoding turns that off. A body whose Content-Encoding, other
+//     than identity, remains passes through unchanged to a *[]byte or
+//     io.Writer; any other target, Items and Events report an error naming
+//     the coding.
 //
 // # Credentials
 //
 // Options.Credentials holds a [Credential] for each security scheme, by
 // the scheme's name as a requirement writes it: a component name, or, in
-// OpenAPI 3.2, a URI naming a Security Scheme Object, which the client
-// resolves as a reference. For each call the client applies one security
-// alternative selected by the caller or the sole one in the document, calls
-// the credential sources it needs when
-// the request is sent, never when it is prepared, and adds credentials only
-// while the request's URL has the origin of the server the call resolved
-// to.
+// OpenAPI 3.2, a URI naming a Security Scheme Object (see [SchemeLookup]).
+// Where one name resolves to different schemes in different operations, its
+// Credential is checked and used as the scheme each call resolves; use
+// [Client.With] for different credentials per operation. An http scheme,
+// such as bearer or basic, is compared without regard to case, as RFC 9110
+// says.
+//
+// For each call the client applies one security alternative selected by the
+// caller or the sole one in the document, calls the credential sources it
+// needs when the request is sent, never when it is prepared, and adds
+// credentials only to requests with the origin of the server the call
+// resolved to, as [Redirects] says. A header credential replaces a field of
+// the same name, and a cookie or query credential a pair of the same name,
+// including one edited into Request.HTTP.
 //
 // Bearer tokens (http bearer, oauth2, openIdConnect) and Basic credentials
 // are sent only over https, wss, or to a loopback host (a loopback address, or
 // localhost or a name under .localhost, as RFC 6761 reserves them, matched
 // without resolving), as RFC 6750 requires and RFC 7617 advises; a call
 // that would send one over plain http or ws elsewhere is refused. The
-// caller's transport is responsible for actually securing wss. Other
-// custom schemes require FromTransport for these credentials. API keys,
-// which no RFC governs, are not restricted by this rule. A caller whose
-// network secures plain http or ws another way places the credential
-// through its own transport, with
-// [FromTransport].
+// caller's transport is responsible for actually securing wss. A URL scheme
+// other than http, https, ws or wss requires FromTransport for these
+// credentials. API keys, which no RFC governs, are not restricted by this
+// rule. A caller whose network secures plain http or ws another way places
+// the credential through its own transport, with [FromTransport].
 //
-// A credential and a parameter never share a destination: a call that
-// supplies a parameter for the header field, query name or cookie name its
-// applied credential sets is refused at the parameter's key, and an
-// alternative two of whose schemes set the same field cannot be used, and
-// is refused naming both.
+// A credential and a parameter never share a destination. A declared
+// parameter at the header field, query name or cookie name the applied
+// credential sets is supplied by the credential: a required one counts as
+// given, and a call that also supplies it is refused at the parameter's
+// key. An alternative two of whose schemes set the same field cannot be
+// used, and is refused naming both. A FromTransport scheme places nothing,
+// so it takes part in no destination rule.
 //
 // A call is refused, never sent without the authorization the caller
 // selected, when a scheme in its selected alternative has no credential,
-// or has an empty or zero one. Unselected alternatives have no effect on
-// the call. Load refuses a Credentials name the document never
-// uses, as a likely misspelling, and a [Basic] credential for a scheme that
-// is not http basic. FromTransport also satisfies a scheme a requirement
-// names but the document never declares, or declares defectively.
+// or has an empty or zero one, or, for a mutualTLS scheme, which needs
+// none, has any credential but FromTransport. Unselected alternatives have
+// no effect on the call. Load refuses a Credentials name the document never
+// uses, as a likely misspelling, and a [Basic] credential for a name none
+// of whose schemes is http basic. FromTransport also satisfies a scheme a
+// requirement names but the document never declares, or declares
+// defectively.
 package openapi

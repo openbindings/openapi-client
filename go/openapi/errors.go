@@ -11,8 +11,10 @@ var ErrNoOperation = errors.New("openapi: no such operation")
 // ErrUnresolved is wrapped by the Err of a part whose defect is a reference
 // that cannot be resolved, as distinct from a malformed declaration. The Err
 // names the reference, and wraps the retrieval error too when fetching its
-// document failed, so a caller can tell a fixable fetch (see Loader.Origins
-// and Loader.Fetch) from a broken document.
+// document failed, or an error naming the refused URI when admission
+// refused it, so a caller can tell a fixable fetch or admission (see
+// Loader.Origins, Loader.AllowReference and Loader.Fetch) from a broken
+// document.
 var ErrUnresolved = errors.New("openapi: unresolved reference")
 
 // A RequestError is an API call refused before it was sent, or Options
@@ -49,13 +51,13 @@ type RequestError struct {
 	Inputs map[string]error
 
 	// Err is the reason for any other refusal, or nil: ErrNoOperation, the
-	// operation's own Err, a credential source's error (naming the scheme),
-	// an Options setting the document cannot use or a field set to a media
-	// range, a bearer or Basic credential that would go over plain http or ws, a
-	// selected alternative two of whose schemes set the same field, an out
-	// that cannot receive a result, a prepared request whose URL was changed
-	// to another origin, or a second send of a body that can be read only
-	// once. Several are joined, as by errors.Join.
+	// operation's own Err, a credential source's error (naming the scheme), an
+	// Options setting the document cannot use or a field set to a media range,
+	// a bearer or Basic credential that would go over plain http or ws, a
+	// selected alternative two of whose schemes set the same field, an out that
+	// cannot receive a result, a prepared request whose URL was changed to
+	// another origin, or a second send of a body that can be read only once.
+	// Several are joined, as by errors.Join.
 	Err error
 }
 
@@ -73,8 +75,9 @@ func (e *RequestError) Unwrap() []error {
 
 // A StatusError is a response whose final status is not 2xx, including a
 // 3xx that was not followed. It stands whenever such a status arrived, even
-// when reading its body failed. Its body has been read, up to
-// Options.MaxErrorBytes, and the connection released. The promoted Body
+// when reading its body failed. Its body, for a status that has one (see
+// Client.Call), has been read, up to Options.MaxErrorBytes, and the
+// connection released. The promoted Body
 // reads Content again, and when Content is incomplete the promoted
 // ContentLength is len(Content), so reading Body, se.Write(w) and
 // httputil.DumpResponse work as in net/http.
@@ -97,9 +100,9 @@ func (e *StatusError) Error() string {
 }
 
 // Decode decodes Content into v by the response's media type, as
-// Response.Decode does for an open body, any number of times. When Err is set it returns Err
-// instead of decoding an incomplete body, except into a *[]byte, which
-// receives the bytes read along with Err.
+// Response.Decode does for an open body, any number of times. When Err is set
+// it returns Err instead of decoding an incomplete body, except into a *[]byte,
+// which receives the bytes read along with Err.
 func (e *StatusError) Decode(v any) error {
 	panic("unimplemented")
 }
@@ -110,8 +113,8 @@ func (e *StatusError) Unwrap() error {
 }
 
 // A DecodeError is a response whose body could not be used by Call or
-// Response.Decode: it was empty where the operation declares content
-// (Err is io.EOF), it was longer
+// Response.Decode: it was empty where Call's empty-body rule requires
+// content (Err is io.EOF), it was longer
 // than Options.MaxBodyBytes (an *http.MaxBytesError), it did not decode
 // into the value given, or reading it failed, as when the context ended
 // (Err then matches the context's error). The server has handled the call.

@@ -8,9 +8,11 @@ import "encoding/json"
 // as listed. Operations that cannot be called are included, with Err set.
 // So are two defects that are not operations: a Paths entry whose $ref
 // cannot be read, listed once with its Path and Err, and an OpenAPI 3.2
-// additional operation spelled like a fixed method, which OpenAPI forbids;
-// each has an empty Key. Webhooks and callbacks describe requests the
-// server sends and are not operations of the Client.
+// additional operation whose method is exactly GET, PUT, POST, DELETE,
+// OPTIONS, HEAD, PATCH, TRACE or QUERY, which OpenAPI forbids; each has an
+// empty Key. Methods are compared exactly, so an additional operation
+// "Post" is an ordinary one, "Post /path". Webhooks and callbacks describe
+// requests the server sends and are not operations of the Client.
 //
 // The slice is new on each call; the Operations it points to are shared by
 // every caller and must not be modified. Listing them does no schema work.
@@ -25,8 +27,8 @@ func (c *Client) Operations() []*Operation {
 // cannot be called is returned with Err set, and so is the entry for a
 // Paths entry that cannot be read, for a key with any method and that path;
 // calling with the same key is refused with an error wrapping that Err. A
-// method-and-path key always reaches the fixed method, never an additional
-// operation spelled like it.
+// method-and-path key always reaches the fixed method, never the forbidden
+// additional operation of the same method (see Client.Operations).
 func (c *Client) Operation(key string) (*Operation, error) {
 	panic("unimplemented")
 }
@@ -34,14 +36,20 @@ func (c *Client) Operation(key string) (*Operation, error) {
 // An Operation describes one operation, in the same terms for every
 // edition: Swagger 2.0 body and formData parameters appear as Body, its
 // host, basePath and schemes as Servers, and its securityDefinitions in
-// Security. Inherited declarations (path-level parameters, root servers
-// and security) are already applied.
+// Security. Inherited declarations (path-level parameters, the entry
+// document's root servers, and root security) are already applied.
 //
-// The descriptions follow references. In OpenAPI 3.1 and 3.2, where a
-// parameter, request body, response, media type or security scheme is a
-// Reference Object that gives a summary or description, that text replaces
-// the target's, while Source still names the target; in Swagger 2.0 and
-// OpenAPI 3.0, a reference's siblings are ignored.
+// The descriptions follow references. A Path Item's $ref and the Path
+// Item's own fields are read together: a field on one side only is used,
+// and a field on both sides, which OpenAPI leaves undefined, sets Err on
+// each operation whose request it affects (that method's operation, or
+// every operation that uses the parameters or servers), except that the
+// Path Item's own summary and description win. In OpenAPI 3.1 and 3.2,
+// where a parameter, request body, response, media type, header or
+// security scheme is a Reference Object that gives a description, that
+// description replaces the target's, the Reference Object nearest the use
+// site winning, while Source still names the target; in Swagger 2.0 and
+// OpenAPI 3.0, a Reference Object's siblings are ignored.
 type Operation struct {
 	// Key addresses this operation in Call, Stream, Prepare and
 	// Client.Operation: its operationId when that names this operation
@@ -63,17 +71,19 @@ type Operation struct {
 	Deprecated  bool
 
 	// Params lists the parameters, the path item's and the operation's
-	// merged, in document order. It holds no Swagger 2.0 body or formData
-	// parameter (see Body), and no header parameter that OpenAPI 3.x tells
-	// clients to ignore (Accept, Content-Type, Authorization). A Swagger 2.0
-	// Content-Type header parameter is listed, but giving it a value is
-	// refused, since Input.MediaType chooses the media type; a Swagger 2.0
-	// Accept parameter's value is sent as the Accept field.
+	// merged, in the order the package documentation gives. It holds no
+	// Swagger 2.0 body or formData parameter (see Body), and no header
+	// parameter that OpenAPI 3.x tells clients to ignore (Accept,
+	// Content-Type, Authorization, matched without regard to case). A
+	// Swagger 2.0 Content-Type header parameter is listed; the package
+	// documentation, under Header fields, says how it is satisfied. A
+	// Swagger 2.0 Accept parameter's value is sent as the Accept field.
 	Params []*Param
 
 	// Body describes the request body, or is nil when the operation takes
-	// none, as for an OpenAPI 3.0 GET, HEAD or DELETE. In Swagger 2.0 it
-	// comes from the body parameter, or from the formData parameters.
+	// none, as for an OpenAPI 3.0 GET (see Bodies by method in the package
+	// documentation). In Swagger 2.0 it comes from the body parameter, or
+	// from the formData parameters.
 	Body *Message
 
 	// Responses lists the declared responses, in document order.
@@ -86,7 +96,7 @@ type Operation struct {
 
 	// Security lists the effective security alternatives, in document
 	// order: one of them must be satisfied. An empty Security means the
-	// operation takes no credentials.
+	// operation declares no requirement; the client adds no credentials.
 	Security []SecurityRequirement
 
 	// Source is where the operation is written: the absolute URI of its
@@ -97,8 +107,12 @@ type Operation struct {
 
 	// Err is why the operation cannot be called, or nil. It is set by a
 	// defect without which no request can be built: an unresolvable
-	// operation or path reference, or a path template that does not match
-	// any knowable parameter key. A required parameter with a known Key but
+	// operation or path reference; an unresolvable parameter or request
+	// body reference, whose identity and requiredness cannot be known, and
+	// whose part's Source is the reference's own location; a Path Item
+	// field that both the Path Item and its $ref target define (see
+	// Operation); or a path template that does not match any knowable
+	// parameter key. A required parameter with a known Key but
 	// unsupported serialization has its own Param.Err, which Input.ParamWriters
 	// may bypass. Calling an operation with Err set returns a
 	// *RequestError wrapping Err. A defect in an optional part is reported
@@ -136,11 +150,12 @@ type Param struct {
 	Style string
 
 	// Explode is the effective explode, and ExplodeSet whether the document
-	// writes it, which matters for deepObject: OpenAPI defaults explode to
-	// false for it, a combination it does not define.
+	// writes it.
 	Explode    bool
 	ExplodeSet bool
 
+	// AllowReserved is the effective allowReserved: false where the edition
+	// ignores it (see Percent-encoding in the package documentation).
 	AllowReserved   bool
 	AllowEmptyValue bool
 
@@ -157,7 +172,8 @@ type Param struct {
 
 	// Schema is the value's schema: the declared schema, the schema of the
 	// single content entry, or, for a Swagger 2.0 parameter, one made from
-	// its type, format, items, enum and bounds. It is nil when none is
+	// every schema field it declares (type, format, items, default, enum,
+	// bounds, multipleOf, pattern and uniqueItems). It is nil when none is
 	// declared, and then any value is accepted.
 	Schema *Schema
 
@@ -172,7 +188,9 @@ type Param struct {
 
 	// Err is why built-in serialization cannot use the value, or nil. A
 	// parameter with Err set can be supplied by Input.ParamWriters when
-	// its Key is known; otherwise a required one refuses the call.
+	// its Key is known; otherwise a required one refuses the call. A
+	// pre-encoded body is never checked against a field's Err (see
+	// Input.Body).
 	Err error
 }
 
@@ -189,19 +207,20 @@ type Message struct {
 	// Required reports that a call must send the request body.
 	Required bool
 
-	// Headers lists a response's declared header fields.
+	// Headers lists a response's declared header fields, without the
+	// Content-Type that OpenAPI 3.x ignores.
 	Headers []*Param
 
 	// Media lists the declared media types, in document order. It is empty
 	// for a response that declares no content, or a 3.x requestBody with an
 	// empty content map. In the latter case a raw body with explicit
 	// Input.MediaType can still be sent, but no structured encoder governs it.
-	// In Swagger 2.0 it pairs the
-	// schema with each consumes or produces entry, formData with the form
-	// types among them; where the operation declares none, it holds one
-	// Media with an empty Type. Swagger 2.0 formData whose consumes names no
-	// form type also has an empty Type; Input.MediaType selects a concrete
-	// form type for the call.
+	// In Swagger 2.0, the schema of a body parameter, or of a response that
+	// has one, is paired with each consumes or produces entry, and formData
+	// with the form types among them; where the operation declares none,
+	// one Media with an empty Type holds it. Swagger 2.0 formData whose
+	// consumes names no form type also has an empty Type; Input.MediaType
+	// selects a concrete form type for the call.
 	Media []*Media
 
 	// Source is where the request body or response is declared: the
@@ -247,12 +266,12 @@ type Media struct {
 	// fragment. See Client.Document.
 	Source string
 
-	// Err is why the media type declaration itself cannot govern a call,
-	// such as an invalid media key or an unreadable Media Type reference.
-	// A schema or Encoding defect that affects structured value encoding
-	// does not set Media.Err: it is reported by Schema.References or the
-	// relevant Encoding Param.Err. A pre-encoded []byte or io.Reader body can use a
-	// governable media type without interpreting either.
+	// Err is why the media type declaration itself cannot govern a
+	// structured body, such as an invalid media key or an unreadable Media
+	// Type reference. A schema or Encoding defect that affects structured
+	// value encoding does not set Media.Err: it is reported by
+	// Schema.References or the relevant Encoding Param.Err. A pre-encoded
+	// []byte or io.Reader body is checked against neither (see Input.Body).
 	Err error
 }
 
@@ -278,9 +297,10 @@ type Server struct {
 	Variables []Variable
 
 	// Source is where the Server Object is written: the absolute URI of its
-	// document, with a JSON Pointer as the fragment, and the base a
-	// relative URL resolves against. Empty for a Swagger 2.0 server, which
-	// the client assembles from host, basePath and schemes.
+	// document, with a JSON Pointer as the fragment. Empty for a Swagger 2.0
+	// server, which the client assembles from host, basePath and schemes.
+	// The package documentation, under URL, says what a relative URL
+	// resolves against.
 	Source string
 
 	// Err is why the server cannot be used, or nil.
@@ -303,8 +323,8 @@ type Variable struct {
 	Default    string
 	DefaultSet bool
 
-	// Enum lists the permitted values, or is nil when any value is
-	// permitted.
+	// Enum lists the declared enum, or is nil when none is declared. What
+	// it permits is on Options.Variables.
 	Enum []string
 }
 
@@ -402,7 +422,10 @@ type SecurityScheme struct {
 }
 
 // A Flow describes one OAuth 2.0 flow of a security scheme. The client
-// never runs flows; a caller that signs users in uses these URLs.
+// never runs flows; a caller that signs users in uses these URLs. They, and
+// a SecurityScheme's OpenIDConnectURL and OAuth2MetadataURL, are as
+// written; a relative one resolves against the URL of the server the call
+// uses.
 type Flow struct {
 	// Type is "implicit", "password", "clientCredentials",
 	// "authorizationCode" or, in OpenAPI 3.2, "deviceAuthorization". Swagger
@@ -424,10 +447,17 @@ type Flow struct {
 // meaning and resolved references. A caller may build its own schema view
 // from this authored graph without changing how an operation is called.
 //
-// A handle is the schema where it is used. In OpenAPI 3.1 and 3.2, a $ref
-// with siblings remains at that site. In Swagger 2.0 and OpenAPI 3.0, whose
-// references ignore their siblings, the handle follows the reference to its
-// target. Source identifies the resulting handle in either case.
+// A handle is the schema where it is used. In OpenAPI 3.1 and 3.2 it stays
+// at that site, whether or not a $ref there has siblings. In Swagger 2.0
+// and OpenAPI 3.0, whose references ignore their siblings, it follows $ref
+// to a schema that is not only a $ref; when it cannot, it stays at the
+// site, and References reports the Err. Source identifies the resulting
+// handle in either case.
+//
+// Identifiers and references are read as JSON Schema 2020-12 and OpenAPI's
+// dialects define them. In a schema resource that declares another
+// dialect, identifiers are not interpreted, Base is the base outside the
+// resource, and References returns an error.
 type Schema struct {
 	loc string
 }
@@ -470,19 +500,21 @@ type SchemaReference struct {
 // References lists standard schema references in Raw, in document order.
 // It follows schema-bearing keywords of the declared dialect, accounting
 // for nested $id bases, but does not traverse a reference's target; each
-// target is its own Schema. The slice is new. An unsupported custom dialect
-// returns an error rather than silently omitting references in its unknown
-// vocabulary. The caller can always inspect Raw and the loaded documents.
+// target is its own Schema. The slice is new. A schema in another dialect
+// (see Schema) returns an error rather than silently omitting references in
+// its unknown vocabulary. The caller can always inspect Raw and the loaded
+// documents.
 func (s *Schema) References() ([]SchemaReference, error) {
 	panic("unimplemented")
 }
 
 // Raw returns a copy of the Schema Object exactly as written, as JSON (from
-// YAML if need be), its references unchanged. References at its root resolve
+// YAML if need be, as the Loader converts it), its references unchanged.
+// References at its root resolve
 // against Base; a nested $id may change the base within the tree. References
 // reports each standard reference's resolved URI.
-// For a Swagger 2.0 parameter, it holds the parameter's schema keywords
-// (type, format, items, enum and bounds).
+// For a Swagger 2.0 parameter, it holds the parameter's schema fields (see
+// Param.Schema).
 func (s *Schema) Raw() json.RawMessage {
 	panic("unimplemented")
 }
@@ -498,16 +530,18 @@ func (s *Schema) Source() string {
 // Base is the base URI that the references in Raw resolve against: that of
 // Source's document, or, in OpenAPI 3.1 and 3.2, the nearest $id at or
 // above the schema, its own $id included, resolved against the base outside
-// it.
+// it (see Schema for other dialects).
 func (s *Schema) Base() string {
 	panic("unimplemented")
 }
 
 // Dialect is the JSON Schema dialect the schema is written in, in OpenAPI
-// 3.1 and 3.2: the URI its $schema, or its document's jsonSchemaDialect,
-// names, or else OpenAPI's own base dialect. It is empty in Swagger 2.0 and
-// OpenAPI 3.0, whose schemas are those editions' own subset of JSON Schema
-// (see Client.Version).
+// 3.1 and 3.2: the URI named by the $schema of the nearest schema resource
+// root at or above it, or else by its document's jsonSchemaDialect, or else
+// OpenAPI's default dialect, https://spec.openapis.org/oas/3.1/dialect/base
+// in 3.1 and https://spec.openapis.org/oas/3.2/dialect/2025-09-17 in 3.2. It
+// is empty in Swagger 2.0 and OpenAPI 3.0, whose schemas are those
+// editions' own subset of JSON Schema (see Client.Version).
 func (s *Schema) Dialect() string {
 	panic("unimplemented")
 }

@@ -147,8 +147,9 @@ func Example_credentialsAPIKey() {
 
 // Scenario 4a, two mistakes. A credential under a name the document does
 // not use is refused by Load, as a misspelling. An environment variable
-// that was never set gives an empty secret, refused at the call, even on an
-// operation that also allows anonymous access. Neither sends anything.
+// that was never set gives an empty secret, refused at a call that selects
+// its alternative, even on an operation that also allows anonymous access.
+// Neither sends anything.
 func Example_credentialsTypo() {
 	ctx := context.Background()
 	_, err := openapi.Load(ctx, docURL, &openapi.Options{
@@ -171,7 +172,7 @@ func Example_credentialsTypo() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	_, err = c.Call(ctx, "searchPets", nil, nil)
+	_, err = c.Call(ctx, "searchPets", &openapi.Input{Security: `{"api_key":[]}`}, nil)
 	if errors.As(err, &re) {
 		// no credential for security scheme "api_key" (set
 		// Options.Credentials["api_key"])
@@ -357,8 +358,8 @@ func Example_credentialsOptionalAuth() {
 	ctx := context.Background()
 	c, err := openapi.Load(ctx, docURL, &openapi.Options{
 		Credentials: map[string]openapi.Credential{
-			// Refused on every call to searchPets if PETS_API_KEY is unset,
-			// rather than falling back to anonymous access.
+			// Refused on every call that selects it if PETS_API_KEY is
+			// unset, rather than falling back to anonymous access.
 			"api_key": openapi.Secret(os.Getenv("PETS_API_KEY")),
 		},
 	})
@@ -379,11 +380,13 @@ func Example_credentialsOptionalAuth() {
 	fmt.Println(resp.Security) // {}
 
 	// With an OAuth token too, prefer it wherever an operation offers it.
+	// searchPets offers no oauth alternative, so Security does not apply to
+	// it, and a call to it still selects one of its own.
 	both := c.With(func(o *openapi.Options) {
 		o.Credentials["oauth"] = openapi.Secret(os.Getenv("PETS_TOKEN"))
 		o.Security = []string{"oauth"} // whatever scopes each operation asks for
 	})
-	if _, err := both.Call(ctx, "searchPets", nil, nil); err != nil {
+	if _, err := both.Call(ctx, "searchPets", &openapi.Input{Security: `{"api_key":[]}`}, nil); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -1330,8 +1333,9 @@ func sign(method, path string, body []byte) string { return "" }
 // credential source; credentials are added when the request is sent.
 func Example_prepare() {
 	ctx := context.Background()
-	// A field edited into the request follows a redirect to another origin,
-	// so a signed call follows no redirect at all.
+	// A field edited into the request stays on a redirect within the
+	// origin, where the signature no longer matches the path, so a signed
+	// call follows no redirect at all.
 	signed := client.With(func(o *openapi.Options) { o.Redirects = openapi.FollowNone })
 	req, err := signed.Prepare("createOrder", &openapi.Input{
 		Body: map[string]any{"sku": "A-1", "quantity": 2},
@@ -1531,7 +1535,7 @@ func Example_sloppyDocument() {
 	for _, op := range c.Operations() {
 		if op.Key == "" {
 			// Not an operation: a Paths entry that could not be read, or an
-			// additional operation spelled like a fixed method.
+			// additional operation named exactly as a fixed method.
 			fmt.Printf("%s: %v\n", op.Path, op.Err)
 			continue
 		}
@@ -1906,11 +1910,13 @@ func Example_fixedConventions() {
 	fmt.Println(out.Status, out.Declared, out.BodyErr)
 }
 
-// Scenario 22: a rare serialization convention can be supplied before Prepare checks a
-// required parameter, while the client still handles the other parameters.
+// Scenario 22: a rare serialization convention can be supplied before Prepare
+// checks a required parameter, while the client still handles the other
+// parameters.
 func Example_parameterWriter() {
 	ctx := context.Background()
 	req, err := client.Prepare("searchPets", &openapi.Input{
+		Security: "{}", // searchPets also offers api_key; this call is anonymous
 		ParamWriters: map[string]func(*http.Request) error{
 			"query.filter": func(r *http.Request) error {
 				if r.URL.RawQuery != "" {

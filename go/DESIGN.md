@@ -42,19 +42,25 @@ only when conversion is faithful; invocation does not depend on it.
 ## Where each rule lives
 
 Every rule has one home; other docs point to it.
-Package doc: values, outcomes and their test order, the required selections,
-serialization rules (URL joining, bodies by method, parameter
-order, percent-encoding, forms, cookies, empty values, header
-fields, content codings), and credentials (naming, placement, transport
-security, refusals). `Redirects`: which 3xx are followed and what a hop
-strips or re-places. `Response.MediaType`: media matching, for requests too.
-`Input.Body`: body shapes, replay, lifetime, iterators. `Call` and
-`Response.Decode`: decoding by target. `Loader`: document acceptance and
-reference admission. `Load`:
-fatal defects and the fail-fast Options list. `SecurityRequirement.Key`: the
-canonical key. `Operation`: how descriptions follow references. `Schema`:
-raw reference edges. The optional `schema2020` package owns projection
-fidelity.
+Package doc: the governing patch of each edition, values, codec classes
+and empty values, outcomes and their test order, the required selections
+and default part types, serialization rules (URL building, bodies by
+method, order, percent-encoding, styles, querystring, forms, Swagger 2.0
+arrays, cookies, header fields, content codings), and credentials (naming,
+placement, destinations, transport security, refusals). `Redirects`: which
+3xx are followed, how method and body change, and what a hop strips or
+re-places. `Response.MediaType`: media matching, for requests too.
+`Input.Body`: body shapes, replay, lifetime, iterators. `Part`: part names
+and filenames. `Options.Variables`: server variable values. `Call` and
+`Response.Decode`: decoding by target, and responses without a body.
+`Items`: response item framing. `Loader`: document acceptance, which
+references are followed, how they resolve, and admission. `SchemeLookup`:
+security scheme names. `Load`: fatal defects and the fail-fast Options
+list. `SecurityRequirement.Key`: the canonical key. `Operation`: how
+descriptions follow references, Path Item `$ref` included. `Flow`: security
+URLs. `Client.Document`: the spelling of Source URIs. `Schema`: the handle,
+other dialects and raw reference edges. The optional `schema2020` package
+owns projection fidelity.
 
 ## Implementation scope
 
