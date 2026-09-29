@@ -53,9 +53,10 @@ OpenAPI, HTTP, and Go.
     Schema for an AI tool's input and to render a form.
 14. **Dynamic call.** Call with inputs from JSON (`map[string]any`, numbers
     kept exact) and get a dynamic JSON result, numbers kept exact.
-15. **What is missing.** Before calling, find out what the caller still has
-    to choose or supply (a server, credentials, a security alternative, a
-    media type), present it to a user, supply it, and call.
+15. **Configuration required.** Before calling, get actionable errors for
+    settings the document cannot determine (a server, credentials, a
+    security alternative, a media type), inspect the operation description,
+    supply the settings, and call. No interaction model belongs in the client.
 16. **Streaming.** Consume server-sent events and JSON Lines as they arrive;
     stop early; read the raw stream when the caller wants its own framing.
 17. **Sloppy documents.** Load a document with a defect in one operation;
@@ -63,10 +64,10 @@ OpenAPI, HTTP, and Go.
 
 ## Building on top of the client (a generic library author)
 
-18. **Exact behavior, no defaults.** A library wrapping the client for
-    arbitrary documents wants every open choice made explicitly (no
-    convenience defaults), gets a refusal it can present when a choice is
-    missing, and can classify responses and decode custom media itself.
+18. **Policy above the transport.** A library wrapping the client for
+    arbitrary documents makes its own consequential selections, gets a
+    refusal naming missing settings, and receives every HTTP status with an
+    open response body so it can classify and decode custom media itself.
     It asks only for OpenAPI and HTTP facts, never for anything shaped for
     its own purposes.
 
@@ -76,3 +77,29 @@ OpenAPI, HTTP, and Go.
     are safe or impossible; errors work with `errors.Is` and `errors.As`;
     options compose; the exported surface is as small as the scenarios
     allow; nothing would need to break to add the obvious next features.
+
+## Building typed clients and other libraries
+
+20. **Generated typed facade.** A code generator uses effective operation
+    descriptors and authored schemas for signatures, optionally asking the
+    separate `schema2020` helper for a request-direction projection.
+    It then wraps the runtime without duplicating parameter serialization
+    or response codecs. It handles several success statuses and an explicit
+    JSON byte value.
+21. **Library with fixed conventions.** A library that wraps APIs under
+    conventions of its own selects exact server, security and media
+    alternatives from the descriptions. It uses the same selected identifiers for invocation,
+    maps all response statuses itself, and can authorize its own reference
+    graph. Its conventions are not built into this client.
+22. **Rare parameter spelling.** A caller provides an exact serialization
+    for one declared parameter before preparation while the client retains
+    responsibility for the rest of the OpenAPI request.
+23. **Pre-encoded declared body.** A caller sends a complete body for a
+    declared media type the built-in structured encoder cannot represent,
+    including a Swagger 2.0 file formData field under urlencoded media.
+    Preparation still applies method, path, server and security semantics;
+    schema and form-field inspection do not block the caller's bytes.
+24. **Swagger 2.0 WebSocket scheme.** A caller selects a declared `ws` or
+    `wss` server with a transport that implements its exchange, prepares
+    the operation, and handles a 101 response without the client's 2xx
+    convenience policy or built-in WebSocket framing.

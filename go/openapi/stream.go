@@ -11,22 +11,22 @@ import (
 // as soon as a 2xx response's headers arrive, leaving its Body open to be
 // read as it arrives: with [Items] or [Events], or directly for the caller's
 // own framing. Any other final status is a *StatusError, its body read as
-// Call reads it.
+// Call reads it. The returned Response still exposes WaitRequest if its
+// upload was outstanding when that status arrived.
 //
 // A server may answer before it has read the whole request body, so the
 // request body goes on being sent after Stream returns, until it ends, the
-// response Body is closed, or ctx ends; it is never ended early as though
-// complete. If sending it fails after the headers arrived, the body is
-// aborted, so the server never receives a complete one, and the error is
-// yielded by the iteration, or returned by reading Body, wrapping the cause.
+// response Body is closed, or ctx ends. A late request-body failure is
+// observable through Response.WaitRequest independently of response reads;
+// an EOF on the response does not imply that the upload completed. The
+// client never presents an incomplete upload as complete.
 //
-// The caller must close Body. Closing it waits for a read of the request
-// body in progress, or an iterator body, to stop, but never for the
-// network: it discards what is already buffered and otherwise closes the
-// connection, as net/http does. ctx bounds the whole stream: cancelling it
-// before the headers arrive is an error from Stream, and after them an
-// error from the iteration or from reading Body, which matches ctx.Err() as
-// the package documentation says.
+// The caller must close Body. Closing it signals an outstanding upload to
+// stop. An iterator that honors its yield result then stops, but a caller's
+// arbitrary io.Reader may remain blocked in Read; use a source that responds
+// to cancellation for long-running uploads. ctx bounds the whole stream: cancelling it before the headers
+// arrive is an error from Stream, and after them it is observable from
+// WaitRequest and from an affected response read.
 func (c *Client) Stream(ctx context.Context, key string, in *Input) (*Response, error) {
 	panic("unimplemented")
 }
@@ -60,8 +60,8 @@ var ErrItem = errors.New("openapi: bad item")
 //     it arrives and valid until the next iteration.
 //   - any other media type: the whole body, as one item.
 //
-// The media type is the response's Content-Type, or when it has none, as
-// Call takes it, so a T of any receives an undeclared body as one []byte.
+// The media type is the response's Content-Type, or application/octet-stream
+// when it has none, so a T of any receives that body as one []byte.
 // An empty body yields no items. JSON decodes as Call decodes, so a T of
 // any keeps numbers exact. An error that concerns one item wraps [ErrItem]
 // and is yielded in its place, and the iteration goes on. Any other error
@@ -69,8 +69,8 @@ var ErrItem = errors.New("openapi: bad item")
 // is yielded last. Items yielded before an error stand. When the loop ends,
 // by break or otherwise, Body is closed.
 //
-// r must come from Stream, and may be iterated once; for any other
-// Response, Items yields one error.
+// r must come from Stream or Request.Send, and may be iterated once; for
+// any other Response, Items yields one error.
 func Items[T any](r *Response) iter.Seq2[T, error] {
 	panic("unimplemented")
 }
@@ -78,7 +78,7 @@ func Items[T any](r *Response) iter.Seq2[T, error] {
 // Events returns the server-sent events of r's open text/event-stream body
 // as they arrive, one per dispatched event, parsed as the HTML standard
 // says. Events that set no field are skipped. A body of another media type,
-// or a Response not from Stream, yields one error. Errors, and closing
+// or a Response not from Stream or Request.Send, yields one error. Errors, and closing
 // Body, are as for [Items]. The client never reconnects; to resume, call
 // again with a Last-Event-ID field in Input.Header.
 func Events(r *Response) iter.Seq2[Event, error] {

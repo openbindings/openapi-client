@@ -2,6 +2,10 @@
 // Go values. It reads Swagger 2.0 and OpenAPI 3.0, 3.1 and 3.2 documents,
 // written in JSON or YAML, and needs no generated code. Its only authorities
 // are the OpenAPI specifications and the RFCs they rely on.
+// Client operations are outbound requests under paths. Callbacks and
+// webhooks describe provider-initiated requests toward the API consumer;
+// their authored declarations are available through Client.Document but
+// are not outbound operations of this Client.
 //
 // # The model
 //
@@ -20,12 +24,17 @@
 // "GET /pets/{petId}". Parameters are given by name whatever their
 // location, and the body separately.
 //
-// [Client.Stream] is Call with the body left open, for server-sent events,
-// JSON Lines, multipart parts, and anything read as it arrives.
-// [Client.Prepare] is Call without sending: it returns the exact
-// [*http.Request] that will be sent, credentials aside, which may be
-// inspected and changed, and a [Choice] for each decision the document left
-// open. [Client.Operations] describes the document for tools.
+// [Client.Stream] is Call with a successful response body left open, for
+// server-sent events, JSON Lines, multipart parts, and anything read as it
+// arrives. An outstanding request body has a separate completion result,
+// [Response.WaitRequest].
+// [Client.Prepare] builds a request without sending. The resulting [Request]
+// exposes its [*http.Request] before credentials are placed and can send it
+// through [Request.Send] without classifying the HTTP status. The request
+// is editable, although the transport may still add wire fields. A call
+// whose server, security alternative or request media type is ambiguous
+// refuses before dispatch and names the setting needed. [Client.Operations]
+// describes the document for callers that need its alternatives.
 //
 // [Options] says where calls go, as whom, and how: the http.Client, the
 // server, credentials, redirects, extra header fields and memory bounds.
@@ -46,9 +55,11 @@
 // document says. Where a parameter or a form or multipart field needs text,
 // a number or boolean is written in its JSON spelling (10, 2.5, true) and a
 // string or json.Number as it is. In a parameter or a form or multipart
-// field, a nil value, an empty slice and an empty map are undefined and
-// omitted, as RFC 6570 says, and "" is a value. A JSON body or JSON part is
-// exactly what encoding/json writes, null members, [] and {} included.
+// field serialized by a style, a nil value, an empty slice and an empty map
+// are undefined and omitted, as RFC 6570 says, and "" is a value. A
+// parameter serialized by content applies its media codec instead: under
+// application/json, [] and {} are present values. A JSON body or JSON part
+// is exactly what encoding/json writes, null members, [] and {} included.
 // Schema defaults are never sent, and values are never validated against
 // schemas. How bytes, readers and iterators are sent is on Input.Body.
 //
@@ -60,9 +71,10 @@
 //
 // # Outcomes
 //
-// A call ends in exactly one of these ways:
+// Call and Stream classify the response as follows:
 //
-//   - Not sent: a [*RequestError]. Nothing reached the network.
+//   - API request not sent: a [*RequestError]. A credential source may have
+//     made its own request before returning an error.
 //   - Transport failure: the *url.Error from the http.Client. The request
 //     may have reached the server.
 //   - A final status other than 2xx: a [*StatusError], holding the response
@@ -71,8 +83,12 @@
 //     server has handled the call; do not assume it can be repeated.
 //   - A 2xx, decoded: a nil error.
 //
-// Whenever a response arrived, the [*Response] is returned, even with an
-// error. When the call's context is done before the call completes, the
+// An upload error may be joined with a response error; errors.As can find
+// both. Send leaves every status open and unclassified. Response.Decode
+// applies the same codecs and bounds to any status, while WaitRequest
+// reports whether the transport consumed the complete request body. Whenever a response
+// arrived, the [*Response] is returned, even with an error. When the call's
+// context is done before the call completes, the
 // error matches ctx.Err() with errors.Is, and also context.Cause(ctx), even
 // where net/http would report only the cause; so does a read of a Stream's
 // Body. Test for the package's three types first: a *RequestError may wrap
@@ -86,60 +102,65 @@
 // added to a URL are redacted there. Errors made by the caller's own code,
 // such as its transport or a credential source, are passed on as they are.
 //
-// # Choices
+// # Configuration when the document is incomplete
 //
-// Where the document offers several alternatives, or none, and leaves the
-// pick to the client, the client picks by the default below, records the
-// decision as a Choice in Request.Choices, marked Choice.Default, and
-// lets the caller make it instead. A caller who wants no defaults refuses
-// any Choice with Default set. There is no strict mode.
+// The client applies defaults that OpenAPI or HTTP defines. It does not
+// elect among multiple authored alternatives merely because one is first,
+// a credential happens to be present, or a Go value resembles one media
+// type. When a value is needed to form a request, a *RequestError names the
+// setting; [Client.Operation] and [Client.Operations] describe the offered
+// alternatives:
 //
-//   - Server, when the operation lists several: the first (in Swagger 2.0,
-//     https when declared). Set Options.Server or Options.BaseURL. Kind
-//     [ServerChoice].
-//   - Server variable: its declared default, which OpenAPI requires and so
-//     is not a choice; one without a default needs a value in
-//     Options.Variables. Kind [VariableChoice].
-//   - Security alternative, when several are offered: of those the caller
-//     has satisfied, the first in document order from the first of these
-//     groups that has one: alternatives with a scheme satisfied by a
-//     credential or [FromTransport], their mutualTLS schemes counting as
-//     satisfied; alternatives whose schemes are all mutualTLS; alternatives
-//     that use a deprecated scheme; the anonymous {}. So a credential the
-//     caller supplied is sent. Set Options.Security for the client, or
-//     Input.Security for one call. Kind [SecurityChoice]; Response.Security
-//     reports it.
-//   - Request media type, when several are declared, or a range, or none:
-//     a body holding a [Part], []byte or io.Reader field goes as the
-//     declared multipart or form type, preferring multipart/form-data, and
-//     Swagger 2.0 formData with no form type declared goes as
-//     multipart/form-data when a formData parameter is of type file, else
-//     as application/x-www-form-urlencoded; a []byte or io.Reader body goes
-//     as application/octet-stream when that is declared or within a
-//     declared range; an iterator body as the only declared sequential
-//     type; any other value as application/json, else the only +json type.
-//     A single range */* or application/*, and a Swagger 2.0 body parameter
-//     with no consumes, send application/json for a value and
-//     application/octet-stream for bytes. Otherwise the call asks. Set
-//     Input.MediaType. Kind [MediaTypeChoice].
-//   - Part media type: when the property's Encoding lists several types or
-//     a range, the call asks. When an OpenAPI 3.0 property has no type,
-//     which 3.0 leaves open, it defaults to application/octet-stream, as
-//     3.1 says. Otherwise the part takes the Encoding's one type, or
-//     OpenAPI's default for the property's schema (a binary string
-//     application/octet-stream, other scalars text/plain, objects
-//     application/json); an array property sends one part per item, typed
-//     from its items the same way. Set Part.MediaType. Kind
-//     MediaTypeChoice, with Name.
+//   - One usable server selects itself. Several require Options.Server,
+//     Options.ServerID or Options.BaseURL. ServerID identifies one even when
+//     URL or name collides. A relative server without a base URI requires BaseURL.
+//     Server variables use their OpenAPI defaults; a variable without a
+//     usable default requires Options.Variables.
+//   - One security alternative selects itself. Several require
+//     Options.Security, Options.SecurityKey or Input.Security, including an
+//     anonymous alternative. SecurityKey names an exact alternative.
+//     The selected alternative requires its own Credentials; credentials
+//     never select an alternative implicitly.
+//   - A body with one concrete declared request media type uses it. Several,
+//     a media range without a concrete type, or no declared type require
+//     Input.MediaType. A multipart part takes an OpenAPI-defined default
+//     or sole concrete Encoding type; otherwise it requires Part.MediaType.
 //
-// A refusal also records a missing credential, as a [CredentialChoice].
+// These are setting requirements, not a decision history. A caller that
+// needs another spelling for a scalar parameter can pass a string, or use
+// Input.ParamWriters for a parameter the built-in serializer cannot encode.
+// A body codec the client does not implement can supply pre-encoded []byte
+// or an io.Reader; a caller with its own response policy can use Request.Send.
+//
+// # Raw invocation boundary
+//
+// A resolvable operation does not depend on the client's ability to
+// interpret its schemas. For a declared request media type whose key can
+// govern the call, Input.Body as []byte or io.Reader supplies the complete
+// encoded body. The client does not inspect its schema, multipart Encoding
+// or Swagger 2.0 formData fields; the caller owns their wire validity.
+// Input.ParamWriters supplies a known parameter whose built-in serializer
+// cannot produce the needed spelling, before Prepare could refuse it.
+// Options.BaseURL supplies a usable server when an authored one cannot be
+// used, and FromTransport delegates a security scheme the client cannot
+// place. Request.Send leaves every final status and response body to the
+// caller. These paths can be combined in one call.
+//
+// The client still needs the operation's method and path, the identity of
+// every required parameter, a concrete request media type when a body is
+// sent, and a selected security alternative. A broken or inaccessible
+// reference that hides one of those facts can prevent preparation. A
+// caller may configure Loader.Fetch and AllowReference to supply trusted
+// referenced documents. For a complete, valid OpenAPI description, an
+// unsupported schema or structured serializer alone must not prevent a
+// caller-encoded request from reaching Request.Send.
 //
 // # Fixed rules
 //
 // Where OpenAPI is silent and offers no alternatives, the client follows
-// these rules. Their results are visible in the prepared request, and can
-// be changed there. Redirects follow the rules on [Redirects]; filenames
-// those on [Part].
+// these documented rules. Their request-side results are visible in the
+// prepared request and may be changed there when preparation succeeds.
+// Redirects follow [Redirects]; filenames follow [Part].
 //
 //   - URL: the server URL and the path are joined as written, except that
 //     one "/" is dropped where the server URL ends with one and the path
@@ -151,7 +172,9 @@
 //   - Bodies by method: in OpenAPI 3.0, a request body declared on GET,
 //     HEAD or DELETE is ignored, as 3.0 says, so the operation takes none;
 //     in the other editions a declared body is sent with any method but
-//     TRACE. CONNECT operations are refused.
+//     TRACE. An OpenAPI 3.2 CONNECT additional operation can be prepared
+//     and sent; a 2xx tunnel needs a caller-provided transport that exposes
+//     its duplex connection. Request.Send leaves the response open.
 //   - Parameter order: the path item's parameters, then the operation's, in
 //     declared order; query credentials last.
 //   - Percent-encoding: path, query and cookie values encode every byte
@@ -177,10 +200,9 @@
 //     declared order, then credentials.
 //   - Swagger 2.0 empty values: an allowEmptyValue parameter given "" is
 //     sent as name=; set Options.NameOnlyEmpty to send the name alone.
-//   - Accept: the JSON types the operation's responses declare, then the
-//     other declared types in document order, without q-values; none when
-//     none are declared. An Accept header field replaces it.
-//   - Header fields: the client generates Accept, Content-Type,
+//   - Accept: none is synthesized. Set Options.Header or Input.Header to
+//     request a particular representation.
+//   - Header fields: the client generates Content-Type,
 //     Content-Length when known, header parameters and credentials, and no
 //     User-Agent beyond net/http's. Options.Header and then Input.Header
 //     are applied over the generated fields: a field replaces the same field
@@ -192,7 +214,7 @@
 //     header parameter, required or not, is satisfied by the media type the
 //     call sends and is never set by value. A credential is added at send
 //     time and replaces a field of the same name edited into Request.HTTP.
-//   - Content codings are Go's: the transport asks for gzip and removes it,
+//   - Content codings are Go's: the transport may ask for gzip and remove it,
 //     and every bound counts decoded bytes. A header field that sets
 //     Accept-Encoding turns that off, and the coded bytes then pass
 //     through unchanged, for a *[]byte or io.Writer to receive.
@@ -203,18 +225,22 @@
 // the scheme's name as a requirement writes it: a component name, or, in
 // OpenAPI 3.2, a URI naming a Security Scheme Object, which the client
 // resolves as a reference. For each call the client applies one security
-// alternative (see Choices), calls the credential sources it needs when
+// alternative selected by the caller or the sole one in the document, calls
+// the credential sources it needs when
 // the request is sent, never when it is prepared, and adds credentials only
 // while the request's URL has the origin of the server the call resolved
 // to.
 //
 // Bearer tokens (http bearer, oauth2, openIdConnect) and Basic credentials
-// are sent only over https or to a loopback host (a loopback address, or
+// are sent only over https, wss, or to a loopback host (a loopback address, or
 // localhost or a name under .localhost, as RFC 6761 reserves them, matched
 // without resolving), as RFC 6750 requires and RFC 7617 advises; a call
-// that would send one over plain http elsewhere is refused. API keys, which
-// no RFC governs, are not. A caller whose network secures plain http
-// another way places the credential through its own transport, with
+// that would send one over plain http or ws elsewhere is refused. The
+// caller's transport is responsible for actually securing wss. Other
+// custom schemes require FromTransport for these credentials. API keys,
+// which no RFC governs, are not restricted by this rule. A caller whose
+// network secures plain http or ws another way places the credential
+// through its own transport, with
 // [FromTransport].
 //
 // A credential and a parameter never share a destination: a call that
@@ -224,10 +250,9 @@
 // is refused naming both.
 //
 // A call is refused, never sent without the authorization the caller
-// configured, when a scheme it needs has no credential, or has an empty or
-// zero one: a scheme present in Options.Credentials with such a value
-// refuses every operation that names it, even one that also allows
-// anonymous access. Load refuses a Credentials name the document never
+// selected, when a scheme in its selected alternative has no credential,
+// or has an empty or zero one. Unselected alternatives have no effect on
+// the call. Load refuses a Credentials name the document never
 // uses, as a likely misspelling, and a [Basic] credential for a scheme that
 // is not http basic. FromTransport also satisfies a scheme a requirement
 // names but the document never declares, or declares defectively.

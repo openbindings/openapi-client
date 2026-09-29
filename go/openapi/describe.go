@@ -97,8 +97,10 @@ type Operation struct {
 
 	// Err is why the operation cannot be called, or nil. It is set by a
 	// defect without which no request can be built: an unresolvable
-	// reference, a malformed required parameter, a path template that does
-	// not match the path parameters. Calling the operation then returns a
+	// operation or path reference, or a path template that does not match
+	// any knowable parameter key. A required parameter with a known Key but
+	// unsupported serialization has its own Param.Err, which Input.ParamWriters
+	// may bypass. Calling an operation with Err set returns a
 	// *RequestError wrapping Err. A defect in an optional part is reported
 	// on that part instead, and fails a call only when the call uses it.
 	// Wherever an Err's cause is a reference that could not be resolved, it
@@ -168,9 +170,9 @@ type Param struct {
 	// Object as the fragment. See Client.Document.
 	Source string
 
-	// Err is why the value cannot be used, or nil. An optional parameter
-	// with Err set cannot be supplied; a required one disables the
-	// operation.
+	// Err is why built-in serialization cannot use the value, or nil. A
+	// parameter with Err set can be supplied by Input.ParamWriters when
+	// its Key is known; otherwise a required one refuses the call.
 	Err error
 }
 
@@ -191,13 +193,15 @@ type Message struct {
 	Headers []*Param
 
 	// Media lists the declared media types, in document order. It is empty
-	// for a response that declares no content. In Swagger 2.0 it pairs the
+	// for a response that declares no content, or a 3.x requestBody with an
+	// empty content map. In the latter case a raw body with explicit
+	// Input.MediaType can still be sent, but no structured encoder governs it.
+	// In Swagger 2.0 it pairs the
 	// schema with each consumes or produces entry, formData with the form
 	// types among them; where the operation declares none, it holds one
 	// Media with an empty Type. Swagger 2.0 formData whose consumes names no
-	// form type is described by one Media of the type the call would send
-	// (multipart/form-data when a field is of type file, otherwise
-	// application/x-www-form-urlencoded), which Input.MediaType may pin.
+	// form type also has an empty Type; Input.MediaType selects a concrete
+	// form type for the call.
 	Media []*Media
 
 	// Source is where the request body or response is declared: the
@@ -207,7 +211,8 @@ type Message struct {
 
 	// Err is why the request body or response cannot be used, or nil, as
 	// for a response whose key is not a status code, a range such as "4XX",
-	// or "default".
+	// or "default". An empty requestBody.content is not an Err: a caller
+	// may send a raw body with an explicit Input.MediaType.
 	Err error
 }
 
@@ -216,8 +221,8 @@ type Media struct {
 	// Type is the media type or range as declared, such as
 	// "application/json" or "image/*". It is empty where a Swagger 2.0
 	// operation declares no consumes or produces; such a Media matches any
-	// type, as */* would, and a body sent under it takes the defaults the
-	// package documentation gives for that case, under Choices.
+	// type, as */* would. A body sent under it requires a concrete
+	// Input.MediaType.
 	Type string
 
 	// Schema is the content's schema, or nil when none is declared. For
@@ -242,12 +247,24 @@ type Media struct {
 	// fragment. See Client.Document.
 	Source string
 
-	// Err is why this media type cannot be used, or nil.
+	// Err is why the media type declaration itself cannot govern a call,
+	// such as an invalid media key or an unreadable Media Type reference.
+	// A schema or Encoding defect that affects structured value encoding
+	// does not set Media.Err: it is reported by Schema.References or the
+	// relevant Encoding Param.Err. A pre-encoded []byte or io.Reader body can use a
+	// governable media type without interpreting either.
 	Err error
 }
 
 // A Server describes one server an operation may be sent to.
 type Server struct {
+	// ID is an opaque identifier unique among distinct server declarations
+	// in one Client, including entries with the same URL and name. An
+	// inherited declaration keeps its ID across operations. It is stable
+	// for the same loaded document and retained by derived Clients. Use it
+	// with Options.ServerID; do not compose it yourself.
+	ID string
+
 	// URL is the server URL as written, with its {variables}. It may be
 	// relative. Options.Server selects the server by it.
 	URL string
@@ -295,8 +312,8 @@ type Variable struct {
 // operation: a Security Requirement Object, every scheme of which must be
 // satisfied.
 type SecurityRequirement struct {
-	// Key names the alternative in Input.Security, Response.Security and a
-	// SecurityChoice's Offered and Value. It is the Security Requirement
+	// Key names the alternative in Input.Security and Response.Security.
+	// It is the Security Requirement
 	// Object written as canonical JSON, with no whitespace:
 	//
 	//   - An object with one member for each scheme, in increasing order of
@@ -369,8 +386,7 @@ type SecurityScheme struct {
 	// authorization server metadata URL (RFC 8414).
 	OAuth2MetadataURL string
 
-	// Deprecated reports an OpenAPI 3.2 scheme marked deprecated, which the
-	// default security choice ranks low.
+	// Deprecated reports an OpenAPI 3.2 scheme marked deprecated.
 	Deprecated bool
 
 	// Source is where the scheme is declared: the absolute URI of its
@@ -403,58 +419,68 @@ type Flow struct {
 	Scopes map[string]string
 }
 
-// A Schema is a Schema Object of the document. It is a lazy handle: nothing
-// about it is computed until it is used, so describing operations costs no
-// schema work. It offers the schema two ways: as written, through Raw,
-// Source, Base and Dialect, and as JSON Schema 2020-12, through MarshalJSON
-// and Defs.
+// A Schema is a lazy handle to one Schema Object. Describing operations does
+// no schema work. Raw, Source, Base, Dialect and References expose its authored
+// meaning and resolved references. A caller may build its own schema view
+// from this authored graph without changing how an operation is called.
 //
-// A handle is the schema where it is used. In OpenAPI 3.1 and 3.2, a
-// schema that is a $ref with siblings, such as a description, keeps them:
-// the handle is that site, and the schema it references is among its Defs.
-// In Swagger 2.0 and OpenAPI 3.0, whose references ignore their siblings, a
-// reference is followed, and the handle is its target.
+// A handle is the schema where it is used. In OpenAPI 3.1 and 3.2, a $ref
+// with siblings remains at that site. In Swagger 2.0 and OpenAPI 3.0, whose
+// references ignore their siblings, the handle follows the reference to its
+// target. Source identifies the resulting handle in either case.
 type Schema struct {
 	loc string
 }
 
-// MarshalJSON renders the schema as JSON Schema 2020-12, translated from
-// the document's dialect, with no $schema, $defs, $id, $anchor or
-// $dynamicAnchor at any depth, so it can be placed anywhere inside another
-// schema without changing what its references mean. readOnly, writeOnly and
-// required are kept as written; in OpenAPI 3.0 a required readOnly
-// property is required only in responses, so a caller building request
-// input leaves readOnly properties out. OpenAPI 3.0 nullable
-// becomes a type list, and a boolean exclusiveMinimum a number. Binary
-// content, however each edition writes it (Swagger 2.0 type file, OpenAPI
-// 3.0 format binary, a 3.1 schema with contentMediaType or with no type
-// for raw content), becomes {"contentMediaType": T}, where T is the type
-// the document gives, else application/octet-stream; base64 content
-// (format byte) becomes {"type": "string", "contentEncoding": "base64"}.
-// So one check, for contentMediaType, finds file inputs in every edition.
-//
-// Each reference to another schema becomes "#/$defs/KEY". KEY is made from
-// the component's name, or, where two schemas would share that, from its
-// document and JSON Pointer; every byte other than a letter, a digit, "."
-// or "-" is written as "_" and two uppercase hex digits. So KEY needs no
-// escaping in a JSON Pointer or a URI fragment, different names give
-// different KEYs, and a KEY is the same in every Schema of one Client. Defs
-// holds the schemas behind those references. Marshaling fails, naming the
-// reference, when a reference cannot be resolved, or uses $dynamicRef.
-func (s *Schema) MarshalJSON() ([]byte, error) {
+// Schema returns the Schema Object identified by an absolute URI in the
+// loaded graph, including a JSON Pointer, $anchor or $id resource URI. It
+// never fetches a document. A URI outside the loaded graph, one claimed by
+// multiple distinct schemas, or one whose target is not a Schema Object,
+// returns an error rather than selecting one. This lets generators
+// follow authored references without reimplementing document retrieval and
+// URI resolution. It is safe to call concurrently.
+func (c *Client) Schema(uri string) (*Schema, error) {
 	panic("unimplemented")
 }
 
-// Defs returns every schema that s references, directly or through other
-// schemas, by the KEY its references use, or nil for a nil Schema. The map
-// is new on each call. Because keys are stable across one Client, the Defs
-// of several schemas merge into one $defs without conflict.
-func (s *Schema) Defs() map[string]*Schema {
+// A SchemaReference is one standard $ref or $dynamicRef in a Schema's Raw
+// tree. A custom dialect can have additional reference keywords; the client
+// does not interpret those. Raw preserves them for the dialect-aware caller.
+type SchemaReference struct {
+	// At is a JSON Pointer from the root of Schema.Raw to the reference
+	// keyword. It distinguishes multiple references in the same schema.
+	At string
+
+	// Keyword is "$ref" or "$dynamicRef"; Value is its authored string.
+	Keyword string
+	Value   string
+
+	// URI is Value resolved against the base effective at At, including
+	// nested $id resources. It can be passed to Client.Schema.
+	URI string
+
+	// Target is the resolved static target. For $dynamicRef it is only the
+	// lexical fallback; the final target depends on the dynamic scope of a
+	// validator and cannot be elected from one document node alone. It is
+	// nil when Err is set.
+	Target *Schema
+	Err    error
+}
+
+// References lists standard schema references in Raw, in document order.
+// It follows schema-bearing keywords of the declared dialect, accounting
+// for nested $id bases, but does not traverse a reference's target; each
+// target is its own Schema. The slice is new. An unsupported custom dialect
+// returns an error rather than silently omitting references in its unknown
+// vocabulary. The caller can always inspect Raw and the loaded documents.
+func (s *Schema) References() ([]SchemaReference, error) {
 	panic("unimplemented")
 }
 
 // Raw returns a copy of the Schema Object exactly as written, as JSON (from
-// YAML if need be), its references unchanged: they resolve against Base.
+// YAML if need be), its references unchanged. References at its root resolve
+// against Base; a nested $id may change the base within the tree. References
+// reports each standard reference's resolved URI.
 // For a Swagger 2.0 parameter, it holds the parameter's schema keywords
 // (type, format, items, enum and bounds).
 func (s *Schema) Raw() json.RawMessage {

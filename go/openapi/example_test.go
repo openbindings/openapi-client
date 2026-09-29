@@ -22,12 +22,12 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/openbindings/openapi-client/go/openapi"
+	"github.com/openbindings/openapi-client/go/openapi/schema2020"
 )
 
 const docURL = "https://api.example.com/openapi.json"
@@ -46,10 +46,7 @@ type Problem struct {
 	Detail string `json:"detail"`
 }
 
-// ask and choose stand in for asking a user to type a value or pick one of
-// several options; record stands in for a metrics sink.
-func ask(prompt string, options []string) string    { return "" }
-func choose(prompt string, options []string) int    { return 0 }
+// record stands in for a metrics sink.
 func record(label, outcome string, d time.Duration) {}
 
 // Scenario 1: load a document, call an operation with a path parameter and
@@ -312,9 +309,8 @@ func Example_credentialsOwnTransport() {
 }
 
 // Scenario 4g: the operation offers several security alternatives and the
-// caller holds credentials for more than one. By default the first
-// alternative whose schemes all have credentials is used; Input.Security
-// picks another by its key, and Response.Security says which was used.
+// caller holds credentials for more than one. Input.Security selects one
+// by its key, and Response.Security says which was used.
 func Example_credentialsAlternatives() {
 	ctx := context.Background()
 	c, err := openapi.Load(ctx, docURL, &openapi.Options{
@@ -354,10 +350,9 @@ func Example_credentialsAlternatives() {
 //
 //	security: [{}, {api_key: []}]
 //
-// The credential the caller supplied is sent: anonymous access is the
-// default only when no supplied credential satisfies an alternative. A call
-// may still ask for anonymous access, and a client may state which schemes
-// it prefers wherever an operation offers an alternative of exactly those.
+// The caller selects authenticated or anonymous access explicitly; the
+// presence of a credential does not select the alternative. A client may
+// select by scheme names when operations ask for different scopes.
 func Example_credentialsOptionalAuth() {
 	ctx := context.Background()
 	c, err := openapi.Load(ctx, docURL, &openapi.Options{
@@ -371,7 +366,7 @@ func Example_credentialsOptionalAuth() {
 		log.Fatal(err)
 	}
 
-	resp, err := c.Call(ctx, "searchPets", nil, nil)
+	resp, err := c.Call(ctx, "searchPets", &openapi.Input{Security: `{"api_key":[]}`}, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -948,12 +943,9 @@ func Example_classifyFailures() {
 	record("listPets", outcome(err), time.Since(start))
 }
 
-// Scenario 11: redirects, in their three modes. By default the client
-// follows a 3xx the operation does not declare and returns a declared one;
-// FollowAll follows declared ones too, and FollowNone follows none. On a hop
-// to another origin, every credential the client added and every
-// Options.Header field is removed, while Input.Header fields, here Range, go
-// on.
+// Scenario 11: redirects are manual by default; FollowAll opts into following
+// them. A cross-origin hop drops credentials and caller header fields,
+// including Range, unless CheckRedirect intentionally restores one.
 func Example_redirects() {
 	ctx := context.Background()
 	c := client.With(func(o *openapi.Options) {
@@ -964,7 +956,7 @@ func Example_redirects() {
 		Header: http.Header{"Range": {"bytes=0-1023"}},
 	}
 
-	// getPetPhoto declares its 303, so by default the 303 is the outcome.
+	// getPetPhoto declares its 303; by default the 303 is the outcome.
 	_, err := c.Call(ctx, "getPetPhoto", in, nil)
 	var se *openapi.StatusError
 	if errors.As(err, &se) && se.StatusCode == http.StatusSeeOther {
@@ -977,14 +969,25 @@ func Example_redirects() {
 
 	// An app that only wants the bytes follows it.
 	var photo []byte
-	follow := c.With(func(o *openapi.Options) { o.Redirects = openapi.FollowAll })
+	follow := c.With(func(o *openapi.Options) {
+		o.Redirects = openapi.FollowAll
+		base := o.HTTPClient
+		if base == nil {
+			base = http.DefaultClient
+		}
+		copy := *base
+		copy.CheckRedirect = func(r *http.Request, via []*http.Request) error {
+			r.Header.Set("Range", "bytes=0-1023") // deliberate cross-origin forwarding
+			return nil
+		}
+		o.HTTPClient = &copy
+	})
 	if _, err := follow.Call(ctx, "getPetPhoto", in, &photo); err != nil {
 		log.Fatal(err)
 	}
 
-	// A proxy that hands every 3xx to its own caller follows none.
-	manual := c.With(func(o *openapi.Options) { o.Redirects = openapi.FollowNone })
-	_, err = manual.Call(ctx, "getPet", &openapi.Input{Params: map[string]any{"petId": "p-7"}}, nil)
+	// A proxy that hands every 3xx to its own caller uses the zero mode.
+	_, err = c.Call(ctx, "getPet", &openapi.Input{Params: map[string]any{"petId": "p-7"}}, nil)
 	if errors.As(err, &se) && se.StatusCode/100 == 3 {
 		fmt.Println(se.Status, se.Header.Get("Location"))
 	}
@@ -1083,28 +1086,29 @@ func serialization(p *openapi.Param) string {
 		p.Style, p.Explode, p.AllowReserved, p.AllowEmptyValue)
 }
 
-// bodyMedia picks the body media a tool can collect, and the media type to
-// send it as. For a range such as */* or application/*, and a Swagger 2.0
-// body with no consumes, sendAs is "", so the client's default decides (a
-// value goes as application/json). binary reports a type whose content is
-// raw bytes, which a tool collects as a base64 string.
+// bodyMedia is this tool builder's policy: choose its first concrete,
+// representable body media type. A range or absent type needs a separate
+// concrete selection, so this helper leaves it unsupported. A richer tool
+// builder could publish one tool per type or expose a media-type argument.
+// binary reports a type whose content is raw bytes, collected as base64.
 func bodyMedia(body *openapi.Message) (m *openapi.Media, sendAs string, binary bool) {
 	for _, m := range body.Media {
 		if m.Err != nil {
 			continue
 		}
 		if m.Type == "" {
-			return m, "", false
+			continue
 		}
 		t, _, err := mime.ParseMediaType(m.Type)
 		if err != nil {
 			continue
 		}
 		switch {
-		case t == "*/*", t == "application/*":
-			return m, "", false
+		case strings.HasSuffix(t, "/*"):
+			continue
+		case t == "application/x-www-form-urlencoded", t == "multipart/form-data":
+			continue // this example has no conversion for nested binary fields
 		case t == "application/json", strings.HasSuffix(t, "+json"),
-			t == "application/x-www-form-urlencoded", t == "multipart/form-data",
 			strings.HasPrefix(t, "text/") && t != "text/*":
 			return m, m.Type, false
 		case !strings.HasSuffix(t, "/*"):
@@ -1117,29 +1121,28 @@ func bodyMedia(body *openapi.Message) (m *openapi.Media, sendAs string, binary b
 // toolInput builds the JSON Schema 2020-12 of an AI tool's input for op: its
 // parameters under "params", by the exact keys Input.Params takes, each
 // with its description, and its body under "body", with the media type to
-// send it as. Every schema's
-// references point into one shared $defs, so they compose without
-// rewriting, and a schema that cannot be rendered costs only its own place:
-// it becomes true, accepting any value.
-func toolInput(op *openapi.Operation) (schema map[string]any, mediaType string, binary bool) {
+// send it as. Every schema's references point into one shared $defs, so
+// they compose without rewriting.
+// A schema that cannot be rendered stops this tool; it is not silently
+// replaced with a schema accepting anything.
+func toolInput(op *openapi.Operation) (schema map[string]any, mediaType string, binary bool, err error) {
 	defs := map[string]any{}
+	var renderErr error
 	render := func(s *openapi.Schema) any {
-		b, err := json.Marshal(s)
+		p, err := schema2020.Project(s, schema2020.Request)
 		if err != nil {
-			log.Printf("%s: %v", op.Key, err)
-			return true
+			renderErr = errors.Join(renderErr, err)
+			return nil
 		}
-		return json.RawMessage(b)
+		for key, d := range p.Defs {
+			defs[key] = d
+		}
+		return p.Root
 	}
 	withDescription := func(s *openapi.Schema, description string) any {
 		var out any = true // no schema declared: any value
 		if s != nil {
 			out = render(s)
-			for key, d := range s.Defs() {
-				if _, done := defs[key]; !done {
-					defs[key] = render(d)
-				}
-			}
 		}
 		if description == "" {
 			return out
@@ -1163,17 +1166,22 @@ func toolInput(op *openapi.Operation) (schema map[string]any, mediaType string, 
 	}
 	top := []string{"params"}
 	if op.Body != nil {
-		if m, sendAs, bin := bodyMedia(op.Body); m != nil {
-			if bin {
-				props["body"] = map[string]any{"type": "string", "contentEncoding": "base64", "description": op.Body.Description}
-			} else {
-				props["body"] = withDescription(m.Schema, op.Body.Description)
-			}
-			if op.Body.Required {
-				top = append(top, "body")
-			}
-			mediaType, binary = sendAs, bin
+		m, sendAs, bin := bodyMedia(op.Body)
+		if m == nil {
+			return nil, "", false, fmt.Errorf("%s: tool builder needs a concrete request media type", op.Key)
 		}
+		if bin {
+			props["body"] = map[string]any{"type": "string", "contentEncoding": "base64", "description": op.Body.Description}
+		} else {
+			props["body"] = withDescription(m.Schema, op.Body.Description)
+		}
+		if op.Body.Required {
+			top = append(top, "body")
+		}
+		mediaType, binary = sendAs, bin
+	}
+	if renderErr != nil {
+		return nil, "", false, fmt.Errorf("%s: schema projection: %w", op.Key, renderErr)
 	}
 	return map[string]any{
 		"$schema":    "https://json-schema.org/draft/2020-12/schema",
@@ -1181,17 +1189,21 @@ func toolInput(op *openapi.Operation) (schema map[string]any, mediaType string, 
 		"properties": props,
 		"required":   top,
 		"$defs":      defs,
-	}, mediaType, binary
+	}, mediaType, binary, nil
 }
 
-// Scenario 13b: a JSON Schema 2020-12 tool definition for every callable
-// operation, whatever the document's edition.
+// Scenario 13b: a JSON Schema 2020-12 tool definition for each operation
+// this one-format tool builder can represent, whatever the edition.
 func Example_toolSchema() {
 	for _, op := range client.Operations() {
 		if op.Err != nil || op.Deprecated {
 			continue
 		}
-		input, _, _ := toolInput(op)
+		input, _, _, err := toolInput(op)
+		if err != nil {
+			log.Printf("skipping %s: %v", op.Key, err)
+			continue
+		}
 		schema, err := json.Marshal(input)
 		if err != nil {
 			log.Fatal(err)
@@ -1223,7 +1235,10 @@ func Example_dynamicCall() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	_, mediaType, binary := toolInput(op) // how the tool's body was described
+	_, mediaType, binary, err := toolInput(op) // how the tool's body was described
+	if err != nil {
+		log.Fatal(err)
+	}
 	if in.Body == nil {
 		mediaType = ""
 	}
@@ -1261,77 +1276,11 @@ func Example_dynamicCall() {
 	fmt.Println(string(result))
 }
 
-// schemeNamed finds the declaration of scheme name among op's alternatives.
-func schemeNamed(op *openapi.Operation, name string) (openapi.SecurityScheme, bool) {
-	for _, alt := range op.Security {
-		for _, s := range alt.Schemes {
-			if s.Name == name {
-				return s, true
-			}
-		}
-	}
-	return openapi.SecurityScheme{}, false
-}
-
-// signInPrompt tells a user what secret a scheme wants and where to get it.
-func signInPrompt(s openapi.SecurityScheme) string {
-	switch s.Type {
-	case "apiKey":
-		return fmt.Sprintf("%s: an API key, sent in %s %s", s.Name, s.In, s.ParamName)
-	case "http":
-		return fmt.Sprintf("%s: HTTP %s credentials %s", s.Name, s.Scheme, s.BearerFormat)
-	case "openIdConnect":
-		return fmt.Sprintf("%s: a token from %s", s.Name, s.OpenIDConnectURL)
-	case "oauth2":
-		var where []string
-		for _, f := range s.Flows {
-			for _, u := range []string{f.AuthorizationURL, f.DeviceAuthorizationURL, f.TokenURL, f.RefreshURL} {
-				if u != "" {
-					where = append(where, f.Type+" "+u)
-				}
-			}
-		}
-		if s.OAuth2MetadataURL != "" {
-			where = append(where, "metadata "+s.OAuth2MetadataURL)
-		}
-		return fmt.Sprintf("%s: an OAuth token with scopes %v, from %s", s.Name, s.Scopes, strings.Join(where, ", "))
-	}
-	return s.Name + ": " + s.Description
-}
-
-// setPartType sets the media type of the part a Choice's JSON Pointer names
-// in body: a property ("/file") or an item of one ("/files/1").
-func setPartType(body map[string]any, pointer, mediaType string) {
-	var tokens []string
-	for _, t := range strings.Split(pointer, "/")[1:] {
-		tokens = append(tokens, strings.NewReplacer("~1", "/", "~0", "~").Replace(t))
-	}
-	part := func(v any) openapi.Part {
-		p, ok := v.(openapi.Part)
-		if !ok {
-			p = openapi.Part{Content: v}
-		}
-		p.MediaType = mediaType
-		return p
-	}
-	switch len(tokens) {
-	case 1:
-		body[tokens[0]] = part(body[tokens[0]])
-	case 2:
-		items, _ := body[tokens[0]].([]any)
-		if i, err := strconv.Atoi(tokens[1]); err == nil && i < len(items) {
-			items[i] = part(items[i])
-		}
-	}
-}
-
-// Scenario 15: before calling, find out what the caller still has to choose
-// or supply, present it, supply it, then show the call and send it. The
-// recipe covers a map body whose files are values or []any items; a
-// positional body, or a typed slice of Parts, needs setPartType extended.
+// Scenario 15: the client names required settings; a caller can inspect the
+// operation description, then supply its own policy through ordinary fields.
 func Example_whatIsMissing() {
 	ctx := context.Background()
-	c, err := openapi.Parse(ctx, reportsYAML, "", nil) // no URI: its relative server needs a URL
+	c, err := openapi.Parse(ctx, reportsYAML, "", nil)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -1339,61 +1288,37 @@ func Example_whatIsMissing() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	// The file makes multipart/form-data the body's type; the file's own
-	// type is one of two the document offers, so the call asks.
-	body := map[string]any{"title": "Q3", "file": []byte("...")}
-	in := &openapi.Input{Body: body}
-
-	for range 10 { // each round answers every open question; a few suffice
-		req, err := c.Prepare(op.Key, in)
-		var re *openapi.RequestError
-		if !errors.As(err, &re) || len(re.Choices) == 0 || len(re.Inputs) > 0 || re.Err != nil {
-			if err != nil {
-				log.Fatal(err) // not something a choice fixes
-			}
-			// Show the user what will be sent, and what was chosen for them.
-			fmt.Println(req.HTTP.Method, req.HTTP.URL)
-			for _, ch := range req.Choices {
-				fmt.Printf("%s %s = %q of %q (by default: %t)\n", ch.Kind, ch.Name, ch.Value, ch.Offered, ch.Default)
-			}
-			if _, err := req.Call(ctx, nil); err != nil {
-				log.Fatal(err)
-			}
-			return
-		}
-
-		for _, ch := range re.Choices {
-			switch ch.Kind {
-			case openapi.ServerChoice:
-				server := ask("Server URL", ch.Offered)
-				c = c.With(func(o *openapi.Options) {
-					if slices.Contains(ch.Offered, server) {
-						o.Server = server
-					} else {
-						o.BaseURL = server // nil Offered: only an absolute URL will do
-					}
-				})
-			case openapi.VariableChoice:
-				value := ask("Value for "+ch.Name, ch.Offered)
-				c = c.With(func(o *openapi.Options) { o.Variables[ch.Name] = value })
-			case openapi.SecurityChoice:
-				// Each offer is an alternative's key, such as {"api_key":[]}.
-				in.Security = ch.Offered[choose("Sign in with", ch.Offered)]
-			case openapi.CredentialChoice:
-				s, _ := schemeNamed(op, ch.Name)
-				secret := ask(signInPrompt(s), nil)
-				c = c.With(func(o *openapi.Options) { o.Credentials[ch.Name] = openapi.Secret(secret) })
-			case openapi.MediaTypeChoice:
-				mediaType := ask("Send "+ch.Name+" as", ch.Offered)
-				if ch.Name == "" {
-					in.MediaType = mediaType
-				} else {
-					setPartType(body, ch.Name, mediaType)
-				}
-			}
-		}
+	in := &openapi.Input{Body: map[string]any{
+		"title": "Q3", "file": openapi.Part{Content: []byte("...")},
+	}}
+	_, err = c.Prepare(op.Key, in)
+	var re *openapi.RequestError
+	if !errors.As(err, &re) {
+		log.Fatal("expected missing settings: ", err)
 	}
-	log.Fatal("still refused after 10 rounds of answers")
+	for field, problem := range re.Settings {
+		fmt.Println(field, problem)
+	}
+	// op.Servers, op.Security and op.Body.Media describe the alternatives.
+	c = c.With(func(o *openapi.Options) {
+		o.BaseURL = "https://reports.example/v1"
+		o.Credentials["api_key"] = openapi.Secret(os.Getenv("REPORTS_API_KEY"))
+	})
+	in.Security = `{"api_key":[]}`
+	in.MediaType = "multipart/form-data"
+	in.Body.(map[string]any)["file"] = openapi.Part{
+		Content: []byte("..."), MediaType: "application/pdf",
+	}
+	req, err := c.Prepare(op.Key, in)
+	if err != nil {
+		log.Fatal(err)
+	}
+	resp, err := req.Send(ctx)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer resp.Body.Close()
+	fmt.Println(resp.StatusCode)
 }
 
 // sign stands in for a partner's request-signing scheme, which the document
@@ -1420,6 +1345,7 @@ func Example_prepare() {
 		log.Fatal(err)
 	}
 	encoded, err := io.ReadAll(body)
+	body.Close()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -1659,35 +1585,21 @@ type Outcome struct {
 	BodyErr   error // why Body is incomplete, or nil
 }
 
-// invoke is a library's one entry point over any document. It sends a call
-// exactly as its own caller specified: it refuses any decision the client
-// would make by default, and classifies and decodes responses itself.
+// invoke is a wrapper's entry point over any document. It uses the client
+// for OpenAPI request construction and owns response classification itself.
 func invoke(ctx context.Context, c *openapi.Client, key string, in *openapi.Input) (*Outcome, error) {
 	req, err := c.Prepare(key, in)
 	if err != nil {
-		return nil, err // a *openapi.RequestError, presentable as it is
-	}
-	var defaulted []openapi.Choice
-	for _, ch := range req.Choices {
-		if ch.Default {
-			defaulted = append(defaulted, ch)
-		}
-	}
-	if len(defaulted) > 0 {
-		// Its text names each decision and the field that makes it.
-		return nil, &openapi.RequestError{Choices: defaulted}
-	}
-
-	var raw []byte
-	resp, err := req.Call(ctx, &raw)
-	var se *openapi.StatusError
-	switch {
-	case errors.As(err, &se):
-		return &Outcome{se.StatusCode, se.Declared, se.MediaType, se.Content, se.Err}, nil
-	case err != nil:
 		return nil, err
 	}
-	return &Outcome{resp.StatusCode, resp.Declared, resp.MediaType, raw, nil}, nil
+	resp, err := req.Send(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var raw []byte
+	bodyErr := resp.Decode(&raw) // status-neutral, same media handling as Call
+	uploadErr := resp.WaitRequest(ctx)
+	return &Outcome{resp.StatusCode, resp.Declared, resp.MediaType, raw, bodyErr}, uploadErr
 }
 
 type report struct {
@@ -1699,13 +1611,12 @@ type report struct {
 // pinned, copied from Operation.Security.
 const reportsWrite = `{"oauth":["reports:write"]}`
 
-// Scenario 18a: a library pins every open decision, gets a refusal it can
-// present when one is missing or left to a default, and classifies and
-// decodes custom media itself.
+// Scenario 18a: a wrapper selects its request behavior and classifies and
+// decodes every status and custom media itself.
 func Example_exactBehavior() {
 	ctx := context.Background()
 	pinned := client.With(func(o *openapi.Options) {
-		o.Redirects = openapi.FollowUndeclared // every mode pinned by name
+		o.Redirects = openapi.FollowNone
 		o.BaseURL = "https://api.example.com/v2"
 		o.Credentials = map[string]openapi.Credential{"oauth": openapi.Secret(os.Getenv("TOKEN"))}
 	})
@@ -1717,8 +1628,6 @@ func Example_exactBehavior() {
 		Header:    http.Header{"Accept": {"application/xml, application/problem+json"}},
 	})
 	if err != nil {
-		// For example: security alternative left to the default
-		// {"oauth":["reports:write"]} (set Input.Security).
 		log.Fatal(err)
 	}
 
@@ -1747,14 +1656,16 @@ var schemas validator
 
 // Scenario 18b: the schemas as the document writes them, in its own
 // dialect: a keyword the library checks itself, and the library's own
-// validator compiling each response schema where it is written. Each
-// document is copied out once.
+// validator compiling each response schema where it is written. Every
+// loaded document is copied out once, including unused components.
 func Example_schemasAsWritten() {
 	op, err := client.Operation("getPetPhoto")
 	if err != nil {
 		log.Fatal(err)
 	}
-	added := map[string]bool{}
+	for _, uri := range client.DocumentURIs() {
+		schemas.AddDocument(uri, client.Document(uri))
+	}
 	for _, r := range op.Responses {
 		for _, m := range r.Media {
 			if m.Schema == nil {
@@ -1772,17 +1683,25 @@ func Example_schemasAsWritten() {
 			raw := strings.HasPrefix(client.Version(), "3.0") && kw.Format == "binary"
 			fmt.Println(r.Key, m.Type, "raw bytes:", raw, "ref:", kw.Ref, "against", m.Schema.Base())
 
-			src := m.Schema.Source() // "https://api.example.com/openapi.json#/components/schemas/Photo"
-			doc, _, _ := strings.Cut(src, "#")
-			if !added[doc] {
-				schemas.AddDocument(doc, client.Document(doc))
-				added[doc] = true
+			for _, ref := range mustReferences(m.Schema) {
+				fmt.Println("reference", ref.At, ref.Keyword, ref.URI)
+				if ref.Target != nil {
+					fmt.Println("target source", ref.Target.Source())
+				}
 			}
-			if err := schemas.Compile(src, m.Schema.Dialect()); err != nil {
+			if err := schemas.Compile(m.Schema.Source(), m.Schema.Dialect()); err != nil {
 				log.Fatal(err)
 			}
 		}
 	}
+}
+
+func mustReferences(s *openapi.Schema) []openapi.SchemaReference {
+	refs, err := s.References()
+	if err != nil {
+		log.Fatal(err)
+	}
+	return refs
 }
 
 // specs stands in for documents a library ships with, by URI, such as a
@@ -1816,7 +1735,10 @@ func Example_loadExactly() {
 			}
 			return io.NopCloser(bytes.NewReader(content)), uri, nil
 		},
-		Origins:      []string{"https://schemas.partner.example.com"},
+		AllowReference: func(from, to string) bool {
+			_, ok := specs[to] // this library trusts only the documents it ships
+			return ok
+		},
 		SchemeLookup: lookup,
 	}
 	c, err := loader.Load(ctx, "https://partner.example.com/openapi/root.yaml", nil)
@@ -1855,6 +1777,206 @@ func Example_decodeFailure() {
 	fmt.Println(resp.StatusCode, o.ID)
 }
 
+// A generated client can expose the response variants of one API as Go
+// types while the dynamic engine still owns request construction and codecs.
+type GetPetResult struct {
+	Status  int
+	Pet     *Pet
+	Job     *Job
+	Problem *Problem
+}
+
+type Job struct {
+	ID string `json:"id"`
+}
+
+type GeneratedPets struct{ Client *openapi.Client }
+
+func (g GeneratedPets) GetPet(ctx context.Context, id string) (GetPetResult, error) {
+	req, err := g.Client.Prepare("getPet", &openapi.Input{
+		Params: map[string]any{"petId": id},
+	})
+	if err != nil {
+		return GetPetResult{}, err
+	}
+	resp, err := req.Send(ctx)
+	if err != nil {
+		return GetPetResult{}, err
+	}
+	result := GetPetResult{Status: resp.StatusCode}
+	switch resp.StatusCode {
+	case 200:
+		result.Pet = new(Pet)
+		err = resp.Decode(result.Pet)
+	case 202:
+		result.Job = new(Job)
+		err = resp.Decode(result.Job)
+	case 204:
+		err = resp.Decode(nil)
+	default:
+		result.Problem = new(Problem)
+		err = resp.Decode(result.Problem)
+	}
+	return result, errors.Join(err, resp.WaitRequest(ctx))
+}
+
+func (g GeneratedPets) PutChecksum(ctx context.Context, id string, checksum []byte) error {
+	_, err := g.Client.Call(ctx, "putChecksum", &openapi.Input{
+		Params:    map[string]any{"petId": id},
+		Body:      openapi.EncodedBody{Value: checksum}, // JSON base64, not raw bytes
+		MediaType: "application/json",
+	}, nil)
+	return err
+}
+
+// Scenario 20: a generated typed facade can have its own result union and
+// ordinary Go method signatures without duplicating OpenAPI serialization.
+func Example_generatedFacade() {
+	ctx := context.Background()
+	api := GeneratedPets{Client: client}
+	result, err := api.GetPet(ctx, "p-7")
+	if err != nil {
+		log.Fatal(err)
+	}
+	if result.Pet != nil {
+		fmt.Println(result.Pet.Name)
+	}
+	if err := api.PutChecksum(ctx, "p-7", []byte{0, 1, 2}); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// Scenario 21: a library with its own fixed conventions selects a named
+// deployment and a particular auth alternative while describing the
+// operation to its users. The same exact identifiers drive invocation; the
+// client applies the OpenAPI mechanics, while the library owns its own
+// result mapping.
+func Example_fixedConventions() {
+	ctx := context.Background()
+	op, err := client.Operation("uploadReport")
+	if err != nil {
+		log.Fatal(err)
+	}
+	var serverID string
+	for _, s := range op.Servers {
+		if s.Name == "staging" { // this library's deployment convention
+			if serverID != "" {
+				log.Fatal("staging is not unique")
+			}
+			serverID = s.ID
+		}
+	}
+	if serverID == "" {
+		log.Fatal("staging is unavailable")
+	}
+	securityKey := reportsWrite // this library pins the exact scope requirement
+	if !slices.ContainsFunc(op.Security, func(alt openapi.SecurityRequirement) bool { return alt.Key == securityKey }) {
+		log.Fatal("required authentication is unavailable")
+	}
+	mediaType := "application/json" // this library's request representation
+	foundMedia := false
+	for _, m := range op.Body.Media {
+		if m.Type != mediaType {
+			continue
+		}
+		foundMedia = true
+		if m.Schema == nil {
+			continue
+		}
+		projection, err := schema2020.Project(m.Schema, schema2020.Request)
+		if err != nil {
+			log.Fatal(err) // do not publish a lossy input schema
+		}
+		fmt.Println("input schema definitions", len(projection.Defs))
+	}
+	if !foundMedia {
+		log.Fatal("required representation is unavailable")
+	}
+	pinned := client.With(func(o *openapi.Options) {
+		o.ServerID = serverID
+		o.SecurityKey = securityKey
+	})
+	out, err := invoke(ctx, pinned, op.Key, &openapi.Input{
+		Body:      map[string]any{"title": "Q3"},
+		MediaType: mediaType,
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(out.Status, out.Declared, out.BodyErr)
+}
+
+// Scenario 22: a rare serialization convention can be supplied before Prepare checks a
+// required parameter, while the client still handles the other parameters.
+func Example_parameterWriter() {
+	ctx := context.Background()
+	req, err := client.Prepare("searchPets", &openapi.Input{
+		ParamWriters: map[string]func(*http.Request) error{
+			"query.filter": func(r *http.Request) error {
+				if r.URL.RawQuery != "" {
+					r.URL.RawQuery += "&"
+				}
+				r.URL.RawQuery += "filter%5Bname%5D=Rex"
+				return nil
+			},
+		},
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	resp, err := req.Send(ctx)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer resp.Body.Close()
+	fmt.Println(resp.StatusCode)
+}
+
+// Scenario 23: the caller owns an unusual but declared representation.
+// Raw bytes bypass the structured form encoder and its field checks; the
+// operation still supplies method, path, server and security semantics.
+func Example_rawBodyFallback() {
+	ctx := context.Background()
+	encoded := []byte("file=a%2Bb%0Ac")
+	req, err := client.Prepare("uploadLegacyFile", &openapi.Input{
+		Body:      encoded,
+		MediaType: "application/x-www-form-urlencoded",
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	resp, err := req.Send(ctx)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer resp.Body.Close()
+	fmt.Println(resp.StatusCode)
+}
+
+// The caller's transport speaks WebSocket for a Swagger 2.0 wss server.
+// The OpenAPI client prepares the operation but does not frame WebSocket
+// messages or classify the 101 response as an application success.
+var webSocketTransport http.RoundTripper
+
+// Scenario 24: a Swagger 2.0 ws/wss server stays selectable.
+func Example_webSocketScheme() {
+	ctx := context.Background()
+	socket := client.With(func(o *openapi.Options) {
+		o.BaseURL = "wss://socket.example.com/v1"
+		o.HTTPClient = &http.Client{Transport: webSocketTransport}
+	})
+	req, err := socket.Prepare("GET /events", nil)
+	if err != nil {
+		log.Fatal(err)
+	}
+	resp, err := req.Send(ctx)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer resp.Body.Close()
+	fmt.Println(resp.StatusCode) // the caller's transport owns the upgrade
+}
+
 // Scenario 19: the package's conventions. Zero values are safe, zero Options
 // are the defaults, With composes and can reset, errors work with errors.Is
 // and errors.As, a mistaken out is caught before sending, and credentials
@@ -1886,7 +2008,7 @@ func Example_package() {
 	})
 	anonymous := tenant.With(func(o *openapi.Options) {
 		clear(o.Credentials) // drop every inherited credential
-		o.Server = ""        // back to the document's first server
+		o.Server = ""        // sole usable server, or a refusal when several exist
 	})
 
 	req, err := anonymous.Prepare("getPet", &openapi.Input{Params: map[string]any{"petID": "p-7"}})

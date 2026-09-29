@@ -15,37 +15,34 @@ var ErrNoOperation = errors.New("openapi: no such operation")
 // and Loader.Fetch) from a broken document.
 var ErrUnresolved = errors.New("openapi: unresolved reference")
 
-// A RequestError is a call refused before anything was sent, or Options
-// that Load refuses. It lists every problem found, so a form can show them
-// all at once and a caller can supply them all before trying again. Its
-// text names, for each problem, the field that fixes it, as in: no
-// credential for security scheme "api_key" (set
-// Options.Credentials["api_key"]). When no alternative is satisfied, it
-// names Options.Credentials for the schemes of each offered alternative,
-// and Input.Security for picking one.
+// A RequestError is an API call refused before it was sent, or Options
+// that Load refuses. It reports every independently detectable problem.
+// Settings names the option that needs to be supplied or corrected; Inputs
+// names request values that cannot be serialized. The operation description
+// lists the servers, security alternatives and media types the document
+// offers. The error does not choose among them.
 //
 // Why a call was refused is told, in this order, by: errors.Is(err,
 // ErrNoOperation), for a key that names no operation; errors.Is(err,
-// op.Err), for a defective operation; Choices and Inputs, for what the
+// op.Err), for a defective operation; Settings and Inputs, for what the
 // caller must supply or correct; and otherwise Err.
-//
-// A library that insists on explicit choices can return a RequestError of
-// its own, listing the Choices of a Request that have Default set.
 type RequestError struct {
-	// Choices lists each decision that stops the call: missing, with an
-	// empty Value; supplied but not offered, with a Value not among
-	// Offered; or, in an error a library builds, made by default, with
-	// Default set. When no security alternative can be satisfied and the
-	// operation offers several, Choices holds one SecurityChoice rather
-	// than guessing which credentials to ask for; once one is selected, it
-	// holds a CredentialChoice for each of its schemes without a credential.
-	Choices []Choice
+	// Settings holds missing or invalid configuration, keyed by the Go
+	// setting that fixes it: "Options.Server" (its error may also suggest
+	// Options.ServerID or Options.BaseURL), "Options.Variables[\"region\"]",
+	// "Input.Security" (or Options.SecurityKey for a client-wide selection),
+	// "Options.Credentials[\"api_key\"]", "Input.MediaType", or a
+	// Part.MediaType at "Input.Body/file/MediaType". A caller may inspect
+	// the operation description for offered values. The values are errors,
+	// never credentials or caller-supplied secrets.
+	Settings map[string]error
 
 	// Inputs holds each input the operation cannot accept, and why: an
 	// unknown parameter, a missing required one, a value its style cannot
 	// serialize or a header cannot carry, a body the operation does not
-	// take, a []byte, reader or Part where the media type cannot carry one,
-	// or a Part that sets both Filename and NoFilename. The key is the
+	// take, a reader or Part where the media type cannot carry one, a
+	// ParamWriters failure or conflict, or a Part that sets both Filename
+	// and NoFilename. The key is the
 	// Input.Params key or, for the body, a JSON Pointer to the part of Body
 	// concerned: "" for the body itself, "/photo" for its property photo.
 	// The two never collide (see Input.Params).
@@ -54,7 +51,7 @@ type RequestError struct {
 	// Err is the reason for any other refusal, or nil: ErrNoOperation, the
 	// operation's own Err, a credential source's error (naming the scheme),
 	// an Options setting the document cannot use or a field set to a media
-	// range, a bearer or Basic credential that would go over plain http, a
+	// range, a bearer or Basic credential that would go over plain http or ws, a
 	// selected alternative two of whose schemes set the same field, an out
 	// that cannot receive a result, a prepared request whose URL was changed
 	// to another origin, or a second send of a body that can be read only
@@ -69,7 +66,7 @@ func (e *RequestError) Error() string {
 	panic("unimplemented")
 }
 
-// Unwrap returns Err and the errors of Inputs, in key order.
+// Unwrap returns Err and the errors of Settings and Inputs, in key order.
 func (e *RequestError) Unwrap() []error {
 	panic("unimplemented")
 }
@@ -99,8 +96,8 @@ func (e *StatusError) Error() string {
 	panic("unimplemented")
 }
 
-// Decode decodes Content into v by the response's media type, as Call
-// decodes a 2xx body, any number of times. When Err is set it returns Err
+// Decode decodes Content into v by the response's media type, as
+// Response.Decode does for an open body, any number of times. When Err is set it returns Err
 // instead of decoding an incomplete body, except into a *[]byte, which
 // receives the bytes read along with Err.
 func (e *StatusError) Decode(v any) error {
@@ -112,8 +109,9 @@ func (e *StatusError) Unwrap() error {
 	return e.Err
 }
 
-// A DecodeError is a 2xx response whose body could not be used: it was
-// empty where the operation declares content (Err is io.EOF), it was longer
+// A DecodeError is a response whose body could not be used by Call or
+// Response.Decode: it was empty where the operation declares content
+// (Err is io.EOF), it was longer
 // than Options.MaxBodyBytes (an *http.MaxBytesError), it did not decode
 // into the value given, or reading it failed, as when the context ended
 // (Err then matches the context's error). The server has handled the call.

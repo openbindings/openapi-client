@@ -76,7 +76,7 @@ func Basic(username, password string) Credential {
 // FromTransport returns a Credential that marks a scheme as satisfied by
 // the HTTPClient itself, such as an oauth2.Transport or a request-signing
 // RoundTripper. The client adds nothing for the scheme, but counts it as
-// satisfied when it chooses a security alternative.
+// satisfied after the caller selects a security alternative.
 //
 // Such a transport sees every hop of a redirect, other origins included,
 // and plain http too: it must decide for itself where its credential goes,

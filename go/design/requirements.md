@@ -1,14 +1,14 @@
 # OpenAPI client requirements from OAS and its RFCs
 
-Derived only from the authorities themselves: OAS 2.0, 3.0.0 to 3.0.4, 3.1.0 to 3.1.2, 3.2.0, and the RFCs, YAML, WHATWG and JSON Schema texts they rely on.
+Derived only from the authorities themselves: OAS 2.0, 3.0.0 to 3.0.4, 3.1.0 to 3.1.2, 3.2.0, and the RFCs, YAML, WHATWG and JSON Schema texts they rely on. The subsequently published [OAS 3.2.1](https://spec.openapis.org/oas/v3.2.1.html) remains to be audited against this inventory.
 
-Section 2's defaults were the starting point for the API design, and review refined several of them (the security alternative, the request media type, redirects, and others). Where this report and the package documentation differ, the package documentation is the decision.
+Section 2 is a record of design alternatives and early recommendations, not a normative client contract. The current decisions are in the public package documentation; some older recommendations here remain as research context. The revision deliberately requires explicit settings for consequential ambiguity. This report and prior-art.md are evidence, not additional authorities over OpenAPI and HTTP.
 
 ## 0. How to read this
 
 **Edition labels.** `2.0` is Swagger 2.0. `3.0` means 3.0.0 to 3.0.4, read per 3.0.4 unless a row says otherwise. `3.1` means 3.1.0 to 3.1.2, read per 3.1.2. `3.2` is 3.2.0. `3.x` is all three 3.x lines.
 
-**Patches.** OAS says patch releases "address errors in, or provide clarifications to, this document, not the feature set", and that "the patch version SHOULD NOT be considered by tooling" (3.0 §4.1, 3.1 §4.1, 3.2 §2.1). This report therefore reads each line by its latest patch. Appendix A lists every place where an earlier patch says something materially different.
+**Patches.** OAS says patch releases "address errors in, or provide clarifications to, this document, not the feature set", and that "the patch version SHOULD NOT be considered by tooling" (3.0 §4.1, 3.1 §4.1, 3.2 §2.1). This report reads each line by the latest patch available when the inventory was first researched: 3.0.4, 3.1.2 and 3.2.0. Appendix A lists every place where an earlier patch says something materially different. The 3.2.1 audit is open.
 
 **Citations.** Section numbers are those of the cached renderings: 2.0 uses `§6.4.x` for objects, 3.0 uses 3.0.4's `§4.7.x`, 3.1 uses 3.1.2's `§4.8.x`, 3.2 uses `§4.x`. "App" is an appendix. RFC citations name the RFC section.
 
@@ -206,7 +206,7 @@ A second cross-cutting rule removes a whole class of gaps: **convert any Go inpu
 **G2. YAML 1.1 versus 1.2 quirks.**
 - Unspecified: OAS recommends YAML 1.2 (D4) but real documents are written against 1.1-era parsers. Differences that change meaning: `yes/no/on/off/y/n` booleans (1.1) versus strings (1.2, RFC 9512 §4.4); `0777` octal (1.1) versus decimal 777 (1.2 Core); `1:20` sexagesimal; unquoted dates as timestamps; `<<` merge keys (1.1 only); `.inf`/`.nan`; unquoted numeric keys such as `200:`; `swagger: 2.0` written unquoted (a float).
 - Options: strict 1.2 JSON schema (rejects ordinary unquoted strings, see X16); 1.2 Core schema; 1.1 emulation.
-- Default: YAML 1.2 Core schema resolution; treat a `%YAML 1.1` directive as 1.2 (YAML 1.2.2 §6.8.1 says to warn, not fail). Stringify scalar mapping keys (so `200:` is `"200"`, matching D4's Failsafe-string rule and D5's intent); reject non-scalar keys. Timestamps stay strings. Reject `.inf`/`.nan` (not representable in the JSON data model; RFC 9512 §3.4; 3.2 §3.1 SHOULD NOT). Honour `<<` merge keys, because an author who wrote `<<:` never meant a literal key and RFC 9512 §3.5 notes deployments rely on them. Accept an unquoted numeric `swagger: 2.0` as `"2.0"`, since the intent cannot be mistaken.
+- Default: YAML 1.2 Core schema resolution; treat a `%YAML 1.1` directive as 1.2 (YAML 1.2.2 §6.8.1 says to warn, not fail). Stringify scalar mapping keys (so `200:` is `"200"`, matching D4's Failsafe-string rule and D5's intent); reject non-scalar keys. Timestamps stay strings. Reject `.inf`/`.nan` (not representable in the JSON data model; RFC 9512 §3.4; 3.2 §3.1 SHOULD NOT). Treat `<<` as an ordinary key under YAML 1.2 Core; this deliberately does not interpret YAML 1.1 merge keys. Accept an unquoted numeric `swagger: 2.0` as `"2.0"`, since the intent cannot be mistaken.
 - Caller change: rarely.
 - Nothing configured: as above; a 1.1-only boolean like `yes` stays the string `"yes"`.
 
@@ -218,7 +218,7 @@ A second cross-cutting rule removes a whole class of gaps: **convert any Go inpu
 - Nothing configured: as above.
 
 **G4. Which version strings to accept.**
-- Unspecified: behaviour for future patches (3.1.3, 3.2.1), pre-release suffixes (`3.1.0-rc1`), unknown minors (3.3.0), or missing patch (`3.1`).
+- Unspecified: behaviour for future patches (such as 3.1.3 or a 3.2 patch beyond 3.2.1), pre-release suffixes (`3.1.0-rc1`), unknown minors (3.3.0), or missing patch (`3.1`).
 - Default: accept any `3.0.*`, `3.1.*`, `3.2.*` patch, including future ones, because OAS says tooling for a minor line SHOULD accept all its patches (D6). Reject unknown minors and majors with a clear error; accept a pre-release suffix of a known line. Reject `3.1` without a patch (it is not a version number).
 - Caller change: rarely; a "treat as edition X" override covers experiments.
 - Nothing configured: unknown minor fails at load.
@@ -233,13 +233,13 @@ A second cross-cutting rule removes a whole class of gaps: **convert any Go inpu
 **G6. External reference retrieval and local files.**
 - Unspecified: retrieval is MAY (R4); OAS warns that external resources may be untrusted (D15) but sets no policy.
 - Options: never fetch; fetch anything; same-origin only; caller-supplied fetcher.
-- Default: fetch only within the entry document's origin. Entry loaded from a file: `file:` references allowed, network references not. Entry loaded over http(s): same scheme, host and port only; no `file:`; cross-origin needs explicit permission. Entry supplied as bytes: nothing fetched unless the caller supplies more documents or a fetcher. Every fetch honours the caller's context, timeout and size limit (G8). Rationale: split specs work in the two common layouts, while a network-loaded document cannot read local files or reach internal hosts (SSRF). restish applies the same rule (prior-art §4.6), and JSON Schema 2020-12 §9.1.2 expects implementations to know their schemas ahead of time.
-- Caller change: yes, often: to allow a specific other origin, or to supply documents under their intended URIs (3.2 R4 SHOULD). Provide one hook: a map of URI to document plus an optional fetch function.
+- Current design: http(s) references stay within the entry document's original origin plus listed Origins. File references stay under the entry file's directory after symlink resolution. Loader.AllowReference can replace either boundary for a trusted source graph, including one retrieved by a custom Fetch. Every observed redirect hop is checked; a custom Fetch owns its intermediate hops. Every fetch honours the caller's context, timeout and size limit (G8).
+- Caller change: yes, often: permit another origin or selected files through Origins or AllowReference, or supply documents under their intended URIs through Fetch. Client.DocumentURIs inventories what was loaded.
 - Nothing configured: out-of-policy references fail and are reported against the operations they reach (G5).
 
 **G7. Documents without a URI.**
 - Unspecified: a caller may pass bytes. Relative references and relative servers then have no base.
-- Default: give the document an internal base (a random `urn:uuid:`, as 3.2 App F.4 suggests) so fragment-only references work. Relative server URLs (including the default `/`) cannot be resolved; see G15.
+- Current design: give the document an internal base derived deterministically from its content, as a `urn:uuid:` URI, so fragment-only references work and source identifiers remain stable. Relative server URLs (including the default `/`) cannot be resolved; see G15.
 - Caller change: yes when the document has relative servers: set the document's URI or a base URL.
 - Nothing configured: internal references resolve; a call whose server is relative fails with an error that says to supply a base URL.
 
@@ -272,8 +272,8 @@ A second cross-cutting rule removes a whole class of gaps: **convert any Go inpu
 
 **G12. Unusual methods.**
 - Unspecified: `additionalOperations` keys such as `Post` or `get` (case-distinct from the fixed fields but distinct methods under RFC 9110 §9.1), `CONNECT`, and bodies on TRACE.
-- Default: send additional-operation keys exactly as spelled. Refuse `CONNECT` operations (tunnel semantics, RFC 9112 §6.3 item 2, have no API-call meaning). Refuse a body on TRACE (RFC 9110 §9.3.8 MUST NOT).
-- Caller change: no.
+- Current design: send additional-operation keys exactly as spelled, including `CONNECT`. A successful CONNECT tunnel requires a caller-provided transport that exposes the duplex connection; the ordinary `http.Client` path can still report its status. Refuse a body on TRACE (RFC 9110 §9.3.8 MUST NOT).
+- Caller change: supply a transport for tunnel use.
 - Nothing configured: as above.
 
 ### 2.3 Servers and the base URL
@@ -281,9 +281,9 @@ A second cross-cutting rule removes a whole class of gaps: **convert any Go inpu
 **G13. Choosing among several servers.**
 - Unspecified: OAS lists alternatives but never says which one a client uses.
 - Options: first listed; require a choice; choose by `name` (3.2); prefer https; caller base URL.
-- Default: the first entry of the effective list (operation, then path item, then root), with variable defaults. `servers` is an array, so order is authored and meaningful. swagger-client and openapi-client-axios default to the first server (prior-art §4.2, §4.3).
-- Caller change: yes, commonly (staging versus production). Offer selection by index, by 3.2 `name`, by URL match, and a full base-URL override that replaces the server entirely, per client or per call.
-- Nothing configured: first server.
+- Current design: the sole usable effective server is selected; several require Options.Server, Options.ServerID or Options.BaseURL. Document order is not a priority rule for invocation.
+- Caller change: yes, commonly (staging versus production). Options.Server selects by 3.2 name or authored URL, Options.ServerID by an exact stable descriptor ID, and Options.BaseURL replaces the server entirely. Client.With derives a client for one call.
+- Nothing configured: the sole usable server, or an actionable refusal.
 
 **G14. Server variable values.**
 - Unspecified: a supplied value outside `enum`; a supplied variable the template lacks; encoding of substituted values; `{name}` with no declaration.
@@ -293,7 +293,7 @@ A second cross-cutting rule removes a whole class of gaps: **convert any Go inpu
 
 **G15. Relative servers, and 2.0 host, scheme and basePath gaps.**
 - Unspecified: relative server URLs with no document URI; 2.0 with no `host` or `schemes` and no document URI; several 2.0 `schemes`; `ws`/`wss`.
-- Default: resolve relative 3.x server URLs against the document's retrieval URI (not `$self` in 3.2, S2); with no URI, require a base URL (error naming it). 2.0: `host` absent means the document's host and port; `schemes` absent means the document's scheme; with several schemes prefer `https`, then the document's own scheme, then the first listed; skip `ws`/`wss` for HTTP calls. With no document URI and no `schemes`, use `https`.
+- Default: resolve relative 3.x server URLs against the document's retrieval URI (not `$self` in 3.2, S2); with no URI, require a base URL (error naming it). 2.0: `host` absent means the document's host and port; `schemes` absent means the document's scheme; with several schemes require explicit target selection. Keep `ws`/`wss` servers available; a caller-supplied HTTPClient.Transport must implement their exchange. With no document URI and no usable target, require Options.BaseURL.
 - Caller change: yes when the document is supplied as bytes.
 - Nothing configured: as above, or an actionable error.
 
@@ -362,7 +362,7 @@ A second cross-cutting rule removes a whole class of gaps: **convert any Go inpu
 
 **G26. Headers the document cannot express.**
 - Unspecified: 3.x ignores `Accept`, `Content-Type`, `Authorization` header parameters (P4), so documents that modelled a bearer token as a header parameter lose it; 2.0 has no such rule.
-- Default: 3.x: ignore them as required, and offer a per-client and per-call extra-headers option plus a request hook as the escape hatch. 2.0: honour them as ordinary parameters: a supplied `Authorization` is sent, a supplied `Accept` replaces the generated one (G45), and a supplied `Content-Type` selects the request media type from `consumes` (G27).
+- Default: 3.x: ignore them as required, and offer a per-client and per-call extra-headers option plus a request hook as the escape hatch. 2.0: honour them as ordinary parameters: a supplied `Authorization` is sent, a supplied `Accept` is sent as given (G45), and a supplied `Content-Type` selects the request media type from `consumes` (G27).
 - Caller change: yes, for 3.x documents that relied on such parameters.
 - Nothing configured: 3.x ignores them; 2.0 treats them as normal inputs.
 
@@ -371,8 +371,8 @@ A second cross-cutting rule removes a whole class of gaps: **convert any Go inpu
 **G27. Choosing a request media type.**
 - Unspecified: which of several `content` keys (or `consumes` entries) to use; how to send a media range key such as `*/*` or `image/*`. OAS only says the most specific key applies to a given request (B2). Content maps are unordered (RFC 8259 §4; YAML 1.2.2 §3.2.2.1).
 - Options: caller always chooses; first listed; prefer JSON; infer from the Go value.
-- Default: (1) a caller-chosen media type, which must equal a key or fall within a declared range; (2) otherwise, if one key, use it; (3) otherwise by value kind: `[]byte`, `io.Reader` or a file value prefers `application/octet-stream`, then another concrete non-JSON, non-text, non-form key; everything else prefers `application/json`, then any `+json`, then `application/x-www-form-urlencoded`, then `multipart/form-data`, then `text/plain`; (4) remaining ties go to document order, documented as a heuristic. A range key needs a concrete type: `*/*` and `application/*` become `application/octet-stream` for bytes and `application/json` otherwise; `text/*` with a string becomes `text/plain`; any other range (for example `image/*`) is an error asking for the type, since sniffing is not an acceptable default (B8). swagger-client exposes the same choice as `requestContentType` (prior-art §4.3).
-- Caller change: yes, when an API offers several and the heuristic picks the wrong one.
+- Current design: a sole concrete key selects itself. Several keys, a range, or no declared type require Input.MediaType. The Go value does not choose a representation.
+- Caller change: yes, when an API offers several or only a range.
 - Nothing configured: as above.
 
 **G28. Encoding the body for the chosen media type.**
@@ -390,7 +390,7 @@ A second cross-cutting rule removes a whole class of gaps: **convert any Go inpu
 **G30. Multipart parts: content types, filenames, headers.**
 - Unspecified: which type to put on a part whose `contentType` is a list or wildcard; whether to send `filename` (OAS never mentions it); what to do with Encoding `headers` whose values the document cannot fix; `Content-Transfer-Encoding`.
 - Default:
-  - Part type: a caller-supplied type (a file value carrying name and type); else the single concrete type if the list has one; else, for bytes, `application/octet-stream`, which RFC 7578 §4.4 names for unknown file types; for other values, the Encoding default (B7). Never sniff.
+  - Part type: a caller-supplied type, or an OpenAPI-defined default or sole concrete Encoding type. When neither determines the type, require Part.MediaType. Never sniff.
   - Filename: send `filename` for binary parts (bytes, readers, file values), taken from the file value's name, else the part name. RFC 7578 §4.2 says a filename SHOULD be supplied for file content, and common servers (including Go's own `multipart.Reader` form parsing) treat a part without `filename` as a text field, not a file. Escape `"` and `\`; never emit `filename*` (RFC 7578 §4.2 MUST NOT).
   - Part headers: send caller-supplied values for declared Encoding headers only. Do not send `Content-Transfer-Encoding` even when `format: byte` or `contentEncoding` implies it (RFC 7578 §4.7 SHOULD NOT; X12).
   - Arrays: one part per item with the same name (B10). Boundary: random, RFC 2046 compliant.
@@ -399,8 +399,8 @@ A second cross-cutting rule removes a whole class of gaps: **convert any Go inpu
 
 **G31. Bodies on GET, HEAD, DELETE, and bodies the operation does not declare.**
 - Unspecified: 2.0 says nothing; 3.0 says ignore; 3.1/3.2 permit (B3, X7).
-- Default: 3.0 GET/HEAD/DELETE: the `requestBody` declaration is ignored, so the operation has no body input. 2.0, 3.1, 3.2: send a declared body on any method except TRACE; the declaration is the out-of-band indication RFC 9110 §9.3.1 asks for. In every edition, a body supplied to an operation with no effective request body is an error, never silently dropped.
-- Caller change: no.
+- Default: 3.0 GET/HEAD/DELETE: the `requestBody` declaration is ignored, so the operation has no body input. 2.0, 3.1, 3.2: send a declared body on any method except TRACE; the declaration is the out-of-band indication RFC 9110 §9.3.1 asks for. In every edition, Input.Body supplied to an operation with no effective request body is an error, never silently dropped.
+- Caller change: yes, after a bodyless operation is prepared, caller code may set Request.HTTP.Body, GetBody and ContentLength for a use outside the document's description. The client does not infer a media declaration for it.
 - Nothing configured: as above.
 
 **G32. Streaming request bodies and length.**
@@ -426,8 +426,8 @@ A second cross-cutting rule removes a whole class of gaps: **convert any Go inpu
 **G35. Several security alternatives.**
 - Unspecified: which alternative to apply; what to do when several are satisfiable; what to do when none is.
 - Options: apply everything the caller supplied; first alternative; first satisfiable alternative; refuse or send anonymously when none is satisfiable.
-- Default: apply exactly one alternative: the first, in document order, whose every scheme is satisfiable. A scheme is satisfiable when the caller supplied its credential; `mutualTLS` counts as satisfiable (the client adds nothing; the caller's TLS config decides); `{}` is satisfiable with no credentials; a scheme the caller marked "handled by my transport" (for example an `oauth2.Transport` round tripper) counts as satisfied. Never mix credentials from different alternatives (RFC 6750 §2 also forbids sending a bearer token two ways). If none is satisfiable and there is no `{}`, fail before sending with an error that lists the alternatives and the missing credentials without printing secrets (restish, prior-art §4.6). `security: []` sends nothing.
-- Caller change: yes: forcing a specific alternative, or marking transport-provided schemes.
+- Current design: a sole alternative selects itself. Several alternatives, including `{}`, require Options.Security, Options.SecurityKey or Input.Security. The exact key distinguishes scope variants and lets a derived tenant client pin anonymous access. The selected alternative must be satisfiable; credentials never elect one. `security: []` sends nothing. Never mix credentials from different alternatives.
+- Caller change: yes: selecting an alternative, or marking transport-provided schemes.
 - Nothing configured: an operation that requires credentials fails locally with an actionable message, not a 401. The "list can be incomplete" sentence (C1) is covered by the transport marker and by the extra-headers escape hatch (G26).
 
 **G36. Putting credentials on the wire.**
@@ -465,7 +465,7 @@ A second cross-cutting rule removes a whole class of gaps: **convert any Go inpu
 
 **G41. Matching the response media type.**
 - Unspecified: parameter handling (`application/json; charset=utf-8` against a declared `application/json`), undeclared types, missing or repeated `Content-Type`.
-- Default: compare type/subtype case-insensitively; a declared key matches when its type/subtype matches (or its range covers it) and all its parameters are present with equal values; among matches the most specific wins (Q4, H3). No match: decode by structured suffix (`+json` as JSON, RFC 6839) or generically (G40). Missing `Content-Type`: if the governing response declares exactly one media type, use it; otherwise bytes (RFC 9110 §8.3 allows assuming `application/octet-stream`; never sniff). Several `Content-Type` values: bytes, with a decode error if a typed target was requested.
+- Default: compare type/subtype case-insensitively; a declared key matches when its type/subtype matches (or its range covers it) and all its parameters are present with equal values; among matches the most specific wins (Q4, H3). No match: decode by structured suffix (`+json` as JSON, RFC 6839) or generically (G40). Missing `Content-Type`: treat it as `application/octet-stream` (RFC 9110 §8.3), regardless of declarations; never sniff or infer from the document. Several `Content-Type` values: bytes, with a decode error if a typed target was requested.
 - Caller change: rarely (a per-call "decode as" override).
 - Nothing configured: as above.
 
@@ -489,7 +489,7 @@ A second cross-cutting rule removes a whole class of gaps: **convert any Go inpu
 
 **G45. The `Accept` header.**
 - Unspecified: OAS never says to send `Accept`; 2.0's `produces` and 3.x's ignoring of `Accept` parameters imply the tool generates it.
-- Default: send `Accept` listing the union of declared response media keys for the operation (success and failure responses, so error bodies such as `application/problem+json` are negotiated too), in declaration order, without `q`; omit it when none are declared. A caller value replaces it (and in 2.0 a supplied `Accept` parameter does, G26).
+- Current design: synthesize no `Accept` field. Options.Header, Input.Header or a Swagger 2.0 header parameter can supply it.
 - Caller change: sometimes (to ask for one representation).
 - Nothing configured: as above.
 
@@ -503,8 +503,8 @@ A second cross-cutting rule removes a whole class of gaps: **convert any Go inpu
 
 **G47. Redirects.**
 - Unspecified by OAS; RFC 9110 makes following MAY (H1).
-- Default: follow, as Go's `http.Client` does (up to 10 hops), preserving method and body on 307/308 and following RFC 9110 on 301/302/303. On any hop to a different origin (scheme, host, port), drop every credential the client added: `Authorization`, header `apiKey`s, and cookie credentials. Go strips only `Authorization`, `WWW-Authenticate` and `Cookie` (and only for non-subdomain hosts), so custom `apiKey` headers need the client's own redirect check. Query credentials are never re-added to a `Location`. Classify by the final response. Detect loops (RFC 9110 SHOULD).
-- Caller change: yes (disable following, or supply their own `http.Client` policy).
+- Current design: follow none by default. Options.Redirects=FollowAll opts into eligible redirects. On a hop to a different origin, remove client-added credentials, header parameters, and all caller header fields from Options.Header, Input.Header or Request.HTTP edits; CheckRedirect may restore a field deliberately. Query credentials are never re-added to a Location. Inspect the final response after following. Detect loops (RFC 9110 SHOULD).
+- Caller change: yes (enable following, or supply their own `http.Client` policy).
 - Nothing configured: as above.
 
 **G48. Content codings.**
@@ -530,7 +530,7 @@ A second cross-cutting rule removes a whole class of gaps: **convert any Go inpu
 | Topic | 2.0 | 3.0 | 3.1 | 3.2 | How the client absorbs it |
 |---|---|---|---|---|---|
 | Edition detection | `swagger: "2.0"` | `openapi: 3.0.x` | `3.1.x` | `3.2.x` | Detected at load (G4); never a caller input. |
-| Where the target lives | `schemes` + `host` + `basePath`, defaults from the document URL | `servers` + variables | same | same, plus `name` | One concept: pick a server (first by default), optionally set variables, or override the base URL (G13 to G16). |
+| Where the target lives | `schemes` + `host` + `basePath`, defaults from the document URL | `servers` + variables | same | same, plus `name` | One concept: select among multiple servers explicitly, optionally set variables, or override the base URL (G13 to G16). |
 | Where the body lives | one `in: body` parameter, or `formData` parameters | `requestBody.content` | same | same | One body input. 2.0 `formData` parameters become the properties of a form object. |
 | Request media types | operation `consumes` (replaces root) | per-body `content` map | same | same | Same selection algorithm over a list of keys (G27). |
 | Response media types | operation `produces`, response `schema` | per-response `content` map | same | same | Same matching (G41); 2.0 pairs each response `schema` with `produces`. |
@@ -592,7 +592,7 @@ Each item names both sides and the client action. "Latest patch wins" applies OA
 
 **X10. Part headers in `multipart/form-data` versus RFC 7578.** 3.x Encoding examples attach headers such as `X-Rate-Limit-Limit` to `multipart/form-data` parts (3.0.4 §4.7.15.3.2, 3.1.2 §4.8.15.3.2, 3.2 §4.15.4.4). RFC 7578 §4.8 says form-data parts MUST NOT include headers other than `Content-Type`, `Content-Disposition` and (limited) `Content-Transfer-Encoding`. OAS itself notes "significant restrictions". **Action:** send only caller-supplied values for declared part headers, and document the RFC 7578 limit (G30).
 
-**X11. 2.0 files over urlencoded.** 2.0 §6.4.9 lets a `file` parameter's `consumes` be multipart, urlencoded "or both". HTML 4.01 §17.13.4 says multipart "should be used for submitting forms that contain files". **Action:** send files only as multipart; if urlencoded is the only declared form type, a file input is an error.
+**X11. 2.0 files over urlencoded.** 2.0 §6.4.9 lets a `file` parameter's `consumes` be multipart, urlencoded "or both". HTML 4.01 §17.13.4 says multipart "should be used for submitting forms that contain files". **Action:** the structured file-form encoder uses multipart; for a declared urlencoded media type, a caller may supply a complete pre-encoded []byte or io.Reader body. The client does not inspect formData fields inside that raw body.
 
 **X12. `Content-Transfer-Encoding`.** 3.0 says `format: byte` in multipart is equivalent to a `Content-Transfer-Encoding: base64` requirement, and 3.1/3.2 say the same of `contentEncoding`. RFC 7578 §4.7 says senders SHOULD NOT generate `Content-Transfer-Encoding` in HTTP. **Action:** never send it (G30).
 

@@ -21,9 +21,10 @@ import (
 //
 // Load also fails, with a *RequestError, when opts would refuse every call:
 // a Credentials name the document never uses, a Variables name no server
-// URL uses, a Server that matches no server, a Security that matches no
-// alternative, a BaseURL that is not absolute or is set with Server, or a
-// Header field that is always refused.
+// URL uses, a Server or ServerID that matches no server, a Security or
+// SecurityKey that matches no alternative, a BaseURL without a scheme and host
+// or is set with Server or ServerID, conflicting exact and name selectors,
+// or a Header field that is always refused.
 func Load(ctx context.Context, uri string, opts *Options) (*Client, error) {
 	var l Loader
 	return l.Load(ctx, uri, opts)
@@ -77,19 +78,36 @@ type Loader struct {
 	// Fetch from several goroutines at once, so that a document split into
 	// several files loads in parallel.
 	//
-	// Fetch only retrieves. The loader still allows a reference to reach
-	// only the entry document's origin (that of the URI requested, before
-	// any redirect: the same scheme, host and port, or local files for a
-	// file) and the Origins below. The default retrieval holds every
-	// redirect hop to that rule, and a final URI outside it, from Fetch or
-	// the default, disables what reaches the document.
+	// Fetch only retrieves. Reference admission is decided by
+	// AllowReference, or by the default boundary and Origins when it is nil.
+	// The loader checks the requested URI before Fetch and checks the final
+	// URI it returns. A custom Fetch owns admission of its intermediate
+	// redirect hops, which the loader cannot observe.
 	Fetch func(ctx context.Context, uri string) (content io.ReadCloser, final string, err error)
 
 	// Origins lists further origins, as "https://host" or
 	// "https://host:port", whose documents references may reach. A
 	// reference to any other origin, or its retrieval failing, disables
-	// only what reaches it.
+	// only what reaches it. Origins is used only when AllowReference is nil.
 	Origins []string
+
+	// AllowReference, when set, decides whether one document may retrieve
+	// another. from is the absolute retrieval URI of the referring document;
+	// to is the resolved absolute URI requested, or a redirect hop/final
+	// URI. It is called before the fetch or hop, may run concurrently, and
+	// must be safe for concurrent use. Returning false disables only the
+	// reference that needs to cross that boundary; the rest of the document
+	// remains usable. A callback replaces the default boundary and Origins:
+	// it can admit an arbitrary trusted source graph, or restrict one further.
+	// It does not apply to fragment-only references within a document.
+	//
+	// With nil, http and https references may reach the entry document's
+	// original origin and Origins. For a file entry, references may reach
+	// only files under the entry file's directory, after cleaning paths and
+	// resolving symlinks; Origins does not enlarge that file boundary. The
+	// default retrieval checks every redirect hop. A custom Fetch must
+	// enforce its own rules for unobservable intermediate hops.
+	AllowReference func(from, to string) bool
 
 	// MaxBytes bounds the bytes one load retrieves, all documents together.
 	// Zero means 64 MiB, and a negative value means no limit. Past it, an
@@ -125,7 +143,9 @@ func (l *Loader) Load(ctx context.Context, uri string, opts *Options) (*Client, 
 }
 
 // Parse returns a Client for content as the package's Parse function does,
-// with l's settings, which govern the documents its references reach.
+// with l's settings, which govern the documents its references reach. With
+// an empty uri, absolute external references can be fetched only when
+// AllowReference admits them; relative external references have no base.
 func (l *Loader) Parse(ctx context.Context, content []byte, uri string, opts *Options) (*Client, error) {
 	panic("unimplemented")
 }
@@ -134,6 +154,17 @@ func (l *Loader) Parse(ctx context.Context, content []byte, uri string, opts *Op
 // value ("2.0") or its openapi value (such as "3.1.0"). It decides the
 // dialect of the document's schemas as written (see [Schema.Dialect]).
 func (c *Client) Version() string {
+	panic("unimplemented")
+}
+
+// DocumentURIs lists every document the Client loaded, including the entry
+// document and external references, by retrieval URI. The entry is first;
+// the rest are sorted by URI, independent of concurrent fetch order.
+// OpenAPI 3.2 $self values are aliases, not extra entries. The returned
+// slice is new and may be changed by the caller. Use [Client.Document] to
+// obtain a copy of one document's contents. This includes loaded documents
+// whose declarations are not exposed by Operations.
+func (c *Client) DocumentURIs() []string {
 	panic("unimplemented")
 }
 
