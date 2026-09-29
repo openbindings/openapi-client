@@ -2,6 +2,7 @@ package openapi
 
 import (
 	"context"
+	"io"
 	"net/http"
 )
 
@@ -74,27 +75,32 @@ type Options struct {
 
 	// Security selects, for every operation that offers it, the security
 	// alternative whose schemes are exactly these, whatever scopes each
-	// operation asks for. If several alternatives have the same scheme
-	// names, the call requires Input.Security to distinguish their scope
-	// requirements. A missing credential for the selected alternative
-	// refuses the call. An operation that offers no alternative with exactly
-	// these schemes is called as if Security were unset. An operation with
-	// several alternatives requires Security, SecurityKey or Input.Security,
-	// even when credentials satisfy only one or one alternative is
-	// anonymous. A set of names no alternative of the document uses is
-	// refused by Load. Input.Security overrides it for one call.
+	// operation asks for; it is a preference, as the package documentation
+	// says. If several alternatives have the same scheme names, the call
+	// requires Input.Security to distinguish their scope requirements. A
+	// missing credential for the selected alternative refuses the call. An
+	// operation with several alternatives requires Security, SecurityKey
+	// or Input.Security, even when credentials satisfy only one or one
+	// alternative is anonymous. A set of names no alternative of the
+	// document uses is refused by Load. Input.Security overrides it for one
+	// call.
 	Security []string
 
 	// SecurityKey selects one exact SecurityRequirement.Key for every
-	// operation that offers it, including "{}" for an anonymous alternative.
-	// It takes precedence over an absent Input.Security. Security and
-	// SecurityKey cannot both be set. Unlike Security's scheme-name match,
-	// this distinguishes alternatives with the same schemes but different
-	// scopes. A key that names no alternative or credential-free operation
-	// is refused by Load; a call to an operation
-	// without the key is refused, except that "{}" also permits an operation
-	// whose Security is empty (it takes no credentials).
+	// operation that offers it, including "{}" for an anonymous alternative;
+	// it is a preference, as Security is. It takes precedence over an absent
+	// Input.Security. Security and SecurityKey cannot both be set. Unlike
+	// Security's scheme-name match, this distinguishes alternatives with the
+	// same schemes but different scopes. A key that names no alternative or
+	// credential-free operation is refused by Load.
 	SecurityKey string
+
+	// MediaType selects a concrete request media type, as Input.MediaType
+	// does, for every operation whose request body declares it, matched as
+	// Request.Media is; it is a preference, as Security is.
+	// Input.MediaType overrides it for one call. A type no operation
+	// declares is refused by Load.
+	MediaType string
 
 	// Redirects says whether the client follows redirects; zero means none.
 	// See [Redirects].
@@ -104,6 +110,25 @@ type Options struct {
 	// the package documentation, under Fixed rules. How its fields fare on a
 	// redirect is on [Redirects].
 	Header http.Header
+
+	// Codecs adds codecs, or replaces the client's own, by media type. A key
+	// is a media type without parameters, such as "application/cbor", or a
+	// structured syntax suffix, such as "+cbor" (RFC 6838 section 4.2.8),
+	// compared without regard to case; a type key wins over a suffix key,
+	// which wins over a built-in codec. A codec applies wherever the client
+	// encodes or decodes a value of its type: request bodies, parts and
+	// content-serialized parameters, and responses that Call,
+	// Response.Decode, StatusError.Decode and Items decode, their items and
+	// parts included. So entries for "application/json" and "+json" replace
+	// encoding/json everywhere, *any included, and decide how numbers are
+	// represented. A *[]byte or io.Writer target, and a []byte or io.Reader
+	// body, bypass codecs. Load refuses any other key, and one that names a
+	// sequential or multipart type, whose framing stays the client's; their
+	// items and parts use the codec for their own type. An Encode error
+	// refuses the call at the body's or parameter's Inputs key, or aborts
+	// the body for an iterator's item; a Decode error is a *DecodeError, or
+	// an ErrItem for one item.
+	Codecs map[string]Codec
 
 	// MaxBodyBytes bounds a body decoded by Call or Response.Decode into a
 	// value, read into a *[]byte, or discarded for a nil out. Zero means
@@ -129,6 +154,14 @@ type Options struct {
 	// that allows empty values as its name alone (?flag), instead of the
 	// default, its name and an equals sign (?flag=).
 	NameOnlyEmpty bool
+}
+
+// A Codec encodes values to, and decodes them from, one media type. The
+// client may call its methods concurrently. Where one applies is on
+// Options.Codecs.
+type Codec interface {
+	Encode(w io.Writer, v any) error
+	Decode(r io.Reader, v any) error
 }
 
 // Redirects says which 3xx responses the client follows. Only 301, 302, 303,
@@ -171,8 +204,10 @@ const (
 // to its zero value to restore the default. Nothing f does affects c. With
 // is cheap enough to call for each tenant or each call, and the new Client
 // keeps a copy of the Options f leaves, maps and slices included. With(nil)
-// returns c. Since With returns no error, Options the document cannot use
-// are refused when the derived Client calls, rather than here.
+// returns c. With returns no error: a derived Client skips Load's checks for
+// names the document never uses (in Credentials, Variables and MediaType),
+// and any other Options the document cannot use refuse each call they
+// affect.
 func (c *Client) With(f func(*Options)) *Client {
 	panic("unimplemented")
 }
@@ -186,11 +221,12 @@ func (c *Client) With(f func(*Options)) *Client {
 type Input struct {
 	// Params holds parameter values by Param.Key. A parameter's key is its
 	// name, unless another parameter Operation.Params lists has the same
-	// name, or the name is empty, begins with "/", or begins with a location
-	// and a dot (as "query.id" does); then its key is its location, a dot
-	// and its name: "query.id", "header.query.id", "query./photo". So no two
-	// parameters share a key, and none looks like a body pointer in
-	// RequestError.Inputs. A key the operation does not declare, or a
+	// name, or the name is empty, begins with "/" or "Input.Body", or begins
+	// with a location and a dot (as "query.id" does); then its key is its
+	// location, a dot and its name: "query.id", "header.query.id",
+	// "query./photo". So no two parameters share a key, and none looks like
+	// a body key in RequestError.Inputs. A key the operation does not
+	// declare, or a
 	// missing required parameter, refuses the call; a header parameter
 	// supplied as an Options.Header or Input.Header field counts as given,
 	// and so does one the applied credential supplies (see Credentials in
@@ -222,21 +258,19 @@ type Input struct {
 	// safer and follow the edition's OpenAPI rules.
 	ParamWriters map[string]func(*http.Request) error
 
-	// Body is the request body, or nil for none:
+	// Body is the request body, or a nil interface for none (a typed nil is
+	// a value; see Values in the package documentation):
 	//
-	//   - A []byte, or an io.Reader, is sent as its bytes, under whatever
-	//     media type is chosen, JSON types included. This is a complete
-	//     pre-encoded body: the client does not inspect its schema, encode
-	//     form fields or parts, or check it against a Media.Err, a field's
-	//     Param.Err or required formData fields.
-	//     The caller owns its framing and content. It can therefore send a
-	//     declared media type whose structured encoder cannot represent the
-	//     intended value, including a Swagger 2.0 file formData value under
-	//     application/x-www-form-urlencoded.
-	//   - An EncodedBody forces its Value through the chosen media codec,
-	//     even when the Value is nil or []byte. Under a JSON media type,
-	//     EncodedBody{Value: nil} sends null and []byte encodes as a base64
-	//     JSON string, following encoding/json.
+	//   - A value whose type is exactly []byte, or an io.Reader, is sent as
+	//     its bytes, under whatever media type is chosen, JSON types
+	//     included. This is a complete pre-encoded body: the client does not
+	//     inspect its schema, encode form fields or parts, or check it
+	//     against a Media.Err, a field's Param.Err or required formData
+	//     fields. The caller owns its framing and content. It can therefore
+	//     send a declared media type whose structured encoder cannot
+	//     represent the intended value, including a Swagger 2.0 file
+	//     formData value under application/x-www-form-urlencoded. Any other
+	//     type, a named byte-slice type included, is a value for the codec.
 	//   - For form and multipart media, Body is an object (a map or a
 	//     struct) whose properties are the fields. A property may be a
 	//     []byte, an io.Reader or a [Part]; an array property sends one field
@@ -277,9 +311,11 @@ type Input struct {
 	//     iter.Seq2[any, error], or
 	//     an io.Reader the caller frames avoids per-item reflection.
 	//   - Any other value is written by the media type's codec (see Values in
-	//     the package documentation); use json.RawMessage("null") to send
-	//     null under a JSON type. In Swagger 2.0, the body parameter is Body
-	//     itself.
+	//     the package documentation). Under a JSON type,
+	//     json.RawMessage("null") sends null, and bytes go as a base64
+	//     string: give the string, or the bytes as a named byte-slice type,
+	//     which encoding/json writes in base64. In Swagger 2.0, the body
+	//     parameter is Body itself.
 	//
 	// A body can be sent again, by a redirect, a retry or a second send of
 	// a Request, when every source in it can: a []byte, a *bytes.Buffer, a
@@ -292,15 +328,15 @@ type Input struct {
 	// A Part or io.Reader inside a JSON value is refused with an Inputs
 	// entry at its place in Body. A []byte nested in a JSON value is encoded
 	// by encoding/json as a base64 string; in a form or multipart value it
-	// remains raw part bytes. A nil Body
-	// where the request body is required is refused at Inputs[""], and a
-	// missing required Swagger 2.0 formData field in a structured form body
-	// at its pointer, as the parameter it is. A pre-encoded body bypasses
-	// those field checks. The client never closes a reader it is given.
+	// remains raw part bytes. A nil Body where the request body is required
+	// is refused at Inputs["Input.Body"], and a missing required Swagger 2.0
+	// formData field in a structured form body at "Input.Body" followed by
+	// its pointer, as the parameter it is. A pre-encoded body bypasses those
+	// field checks. The client never closes a reader it is given.
 	Body any
 
 	// MediaType is the body's media type: a concrete type matching one the
-	// operation declares, by the rules on Response.MediaType; any concrete
+	// operation declares, by the rules on Response.Media; any concrete
 	// type where Swagger 2.0 declares none; or, for Swagger 2.0 formData
 	// with no form type declared, either form type. When an OpenAPI 3.x
 	// requestBody has an empty content map, a pre-encoded []byte or
@@ -308,9 +344,10 @@ type Input struct {
 	// governing Media descriptor or structured encoder. A range is refused.
 	// MediaType may carry parameters, which are sent as given: a pre-encoded
 	// multipart body requires its boundary here, and a boundary given for a
-	// multipart body the client encodes is used. Empty uses the declared
-	// type where one selects itself (see the package documentation);
-	// otherwise a body requires MediaType before dispatch.
+	// multipart body the client encodes is used. Empty means
+	// Options.MediaType, else the declared type where one selects itself
+	// (see the package documentation); otherwise a body requires MediaType
+	// before dispatch.
 	MediaType string
 
 	// Security selects the security alternative by its
@@ -328,16 +365,6 @@ type Input struct {
 	Header http.Header
 }
 
-// An EncodedBody tells the client to encode Value through the selected
-// request media type even when Value is nil or []byte. It distinguishes a
-// JSON null from an absent Input.Body and a JSON base64 string from raw
-// bytes. It applies only at the top level of Input.Body; nested JSON []byte
-// values already follow encoding/json. A Value unsupported by the selected
-// media codec refuses the call before dispatch.
-type EncodedBody struct {
-	Value any
-}
-
 // A Part is one field of a form or multipart body, or one part of a
 // positional multipart body, given where its media type, filename or part
 // header fields matter. An empty field means its default. A part's name and
@@ -350,7 +377,7 @@ type Part struct {
 	Content any
 
 	// MediaType is the part's Content-Type: a concrete type matching, by the
-	// rules on Response.MediaType, one its Encoding lists, or, where the
+	// rules on Response.Media, one its Encoding lists, or, where the
 	// Encoding lists no type (as always in Swagger 2.0), any concrete type.
 	// A range is refused. Empty uses the part's type where one selects
 	// itself (see the package documentation); otherwise the call requires
@@ -396,7 +423,8 @@ type Part struct {
 //   - An io.Writer receives the raw bytes as they arrive, unbounded, without
 //     holding them in memory.
 //   - Any other pointer receives the body decoded straight from the
-//     connection by its media type's codec class (see Values in the
+//     connection by the caller's codec for its media type (see
+//     Options.Codecs), or else by its codec class (see Values in the
 //     package documentation): JSON types (and a sequential type, as a
 //     JSON array of its items) with encoding/json, anything but whitespace
 //     after the value being a failure, as for json.Unmarshal; XML types
@@ -412,6 +440,12 @@ type Part struct {
 //     solely from the document. A type these rules cannot decode into out
 //     is a *DecodeError, whose Content keeps the start of the bytes; a
 //     *[]byte takes any body as it is.
+//
+// When out is a pointer to decode into (not a *[]byte, an io.Writer or a
+// *any) and the operation's 2xx responses declare concrete media types of
+// more than one codec class (a type with a caller's codec is a class of its
+// own), a call whose request carries no Accept field is refused before
+// sending, at Settings key "Options.Header", naming the offered types.
 //
 // A 1xx, 204, 205 or 304 response, a response to HEAD, and a 2xx response
 // to CONNECT have no body: Call, Stream and StatusError do not read one,
@@ -475,18 +509,21 @@ type Request struct {
 	// sending it is refused; set Options.BaseURL instead.
 	HTTP *http.Request
 
-	// MediaType is the Type of the operation's request body Media that
-	// governs the body, as Response.MediaType is for a response: the
-	// declared type or range the Content-Type matched, whose schema and
-	// Encoding a structured body follows. It is empty when there is no
-	// body or when an empty requestBody.content declares no governing Media;
-	// HTTP.Header.Get("Content-Type") still reports the concrete type sent.
-	MediaType string
+	// Media is the operation's request body Media that governs the body,
+	// the one the Content-Type sent matches by the rules on Response.Media,
+	// whose schema and Encoding a structured body follows. It is nil when
+	// there is no body or none is declared, as for an empty
+	// requestBody.content with a raw body; HTTP.Header.Get("Content-Type")
+	// still reports the concrete type sent. It is the same immutable
+	// descriptor Operation.Body.Media exposes.
+	Media *Media
 
-	// BodyMedia is that governing Media descriptor, or nil when none was
-	// declared, including an empty requestBody.content with a raw body.
-	// It is the same immutable descriptor Operation.Body.Media exposes.
-	BodyMedia *Media
+	// Security is the Key of the security alternative the request will
+	// carry, as Response.Security will report it: "{}" for the anonymous
+	// one, or empty when the operation takes no credentials. It is known
+	// when the call is prepared; the credentials are still placed when it
+	// is sent.
+	Security string
 }
 
 // Send sends r with ctx, adding credentials, and returns at the response
@@ -529,41 +566,29 @@ func (r *Request) Call(ctx context.Context, out any) (*Response, error) {
 type Response struct {
 	*http.Response
 
-	// Declared is the Message.Key of the operation's response that
-	// governs StatusCode: the exact code ("201"), else its range ("2XX"),
-	// else "default". It is empty when the operation declares nothing for
-	// the status, which is not in itself an error. A lowercase range such as
-	// "2xx" is not a range key: it is reported on its Message, and never
-	// governs.
-	Declared string
-
-	// Declaration is the governing response Message, or nil when the
-	// operation declares nothing for the status. It is the same immutable
-	// descriptor Operation.Responses exposes.
+	// Declaration is the operation's response Message that governs
+	// StatusCode: the one whose Key is the exact code ("201"), else its
+	// range ("2XX"), else "default". It is nil when the operation declares
+	// nothing for the status, which is not in itself an error. A lowercase
+	// range such as "2xx" is not a range key: it is reported on its
+	// Message, and never governs. It is the same immutable descriptor
+	// Operation.Responses exposes.
 	Declaration *Message
 
-	// MediaType is the Type of the governing response's Media that the
-	// Content-Type matches. A Type matches when its type and subtype equal
-	// the Content-Type's, compared without regard to case, or cover them as
-	// a range does, and every parameter it names is present with an equal
-	// value: parameter names are compared without regard to case, and values
-	// after removing quoted-string quoting, a charset without regard to case
-	// and others exactly. The most specific match wins: a concrete type over
-	// type/*, type/* over */*, then more parameters over fewer; a tie
-	// matches none. An absent Content-Type is treated as
-	// application/octet-stream for matching; a repeated Content-Type matches
-	// none.
-	//
-	// A Swagger 2.0 response with a schema that declares no produces has one
-	// Media with an empty Type, which matches any Content-Type, as */* would.
-	// So MediaType is empty both when nothing matched and when that Media
-	// did; the governing Message tells which.
-	MediaType string
-
-	// Media is the governing response Media matched by Content-Type, or nil
-	// when nothing matched. Unlike MediaType, it distinguishes a Swagger 2.0
-	// Media with an empty Type from no match. It is the same immutable
-	// descriptor Declaration.Media exposes.
+	// Media is the Declaration's Media that the Content-Type matches, or
+	// nil when none does. A Media matches when its Type's type and subtype
+	// equal the Content-Type's, compared without regard to case, or cover
+	// them as a range does, and every parameter it names is present with an
+	// equal value: parameter names are compared without regard to case, and
+	// values after removing quoted-string quoting, a charset without regard
+	// to case and others exactly. The most specific match wins: a concrete
+	// type over type/*, type/* over */*, then more parameters over fewer; a
+	// tie matches none. An absent Content-Type is treated as
+	// application/octet-stream for matching; a repeated Content-Type
+	// matches none. A Swagger 2.0 response with a schema that declares no
+	// produces has one Media with an empty Type, which matches any
+	// Content-Type, as */* would. It is the same immutable descriptor
+	// Declaration.Media exposes.
 	Media *Media
 
 	// Security is the Key of the security alternative applied, "{}" for the
@@ -585,6 +610,7 @@ type Response struct {
 // body can be consumed only once. An outstanding upload error is joined to
 // a decode error, or returned alone, and is also available from WaitRequest.
 // A failed or bounded response read may close Body early and abort an upload.
+// Stream followed by Decode, its target chosen for the response, is Call.
 func (r *Response) Decode(out any) error {
 	panic("unimplemented")
 }

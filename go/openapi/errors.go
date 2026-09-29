@@ -30,13 +30,21 @@ var ErrUnresolved = errors.New("openapi: unresolved reference")
 // caller must supply or correct; and otherwise Err.
 type RequestError struct {
 	// Settings holds missing or invalid configuration, keyed by the Go
-	// setting that fixes it: "Options.Server" (its error may also suggest
-	// Options.ServerID or Options.BaseURL), "Options.Variables[\"region\"]",
-	// "Input.Security" (or Options.SecurityKey for a client-wide selection),
-	// "Options.Credentials[\"api_key\"]", "Input.MediaType", or a
-	// Part.MediaType at "Input.Body/file/MediaType". A caller may inspect
-	// the operation description for offered values. The values are errors,
-	// never credentials or caller-supplied secrets.
+	// setting that fixes it, in one of these forms:
+	//
+	//   - Options.<Field>, as "Options.Server";
+	//   - Options.<Field>[<name>], for Credentials and Variables, the name
+	//     quoted as strconv.Quote does: "Options.Credentials[\"api_key\"]";
+	//   - Input.<Field>, as "Input.MediaType";
+	//   - for a part's media type, "Input.Body" followed by the part's JSON
+	//     Pointer: "Input.Body/file".
+	//
+	// Several security alternatives with none selected are keyed
+	// "Options.Security", the error naming Options.SecurityKey and
+	// Input.Security too. An empty secret from a credential source is keyed
+	// as a missing credential is. A caller may inspect the operation
+	// description for offered values. The values are errors, never
+	// credentials or caller-supplied secrets.
 	Settings map[string]error
 
 	// Inputs holds each input the operation cannot accept, and why: an
@@ -44,10 +52,10 @@ type RequestError struct {
 	// serialize or a header cannot carry, a body the operation does not
 	// take, a reader or Part where the media type cannot carry one, a
 	// ParamWriters failure or conflict, or a Part that sets both Filename
-	// and NoFilename. The key is the
-	// Input.Params key or, for the body, a JSON Pointer to the part of Body
-	// concerned: "" for the body itself, "/photo" for its property photo.
-	// The two never collide (see Input.Params).
+	// and NoFilename. The key is the Param.Key or, for the body, "Input.Body"
+	// followed by a JSON Pointer to the part of Body concerned:
+	// "Input.Body" alone for the body itself, "Input.Body/photo" for its
+	// property photo. The two never collide (see Input.Params).
 	Inputs map[string]error
 
 	// Err is the reason for any other refusal, or nil: ErrNoOperation, the
@@ -119,7 +127,8 @@ func (e *StatusError) Unwrap() error {
 // into the value given, or reading it failed, as when the context ended
 // (Err then matches the context's error). The server has handled the call.
 // The promoted Body reads Content again, and ContentLength is
-// len(Content), as for a StatusError.
+// len(Content), as for a StatusError; the promoted Decode therefore reads
+// only Content.
 type DecodeError struct {
 	*Response
 

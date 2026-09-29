@@ -68,8 +68,9 @@ var ErrItem = errors.New("openapi: bad item")
 //
 // The media type is the response's Content-Type, read as Call reads it, so
 // a T of any receives a body without one as one []byte.
-// An empty body yields no items. JSON decodes as Call decodes, so a T of
-// any keeps numbers exact. An error that concerns one item wraps [ErrItem]
+// An empty body yields no items. Items decode as Call decodes, so with the
+// client's own JSON codec a T of any keeps numbers exact. An error that
+// concerns one item wraps [ErrItem]
 // and is yielded in its place, and the iteration goes on. Any other error
 // (a read failure, the context's error, an item over Options.MaxItemBytes)
 // is yielded last. Items yielded before an error stand. When the loop ends,

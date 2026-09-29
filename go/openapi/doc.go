@@ -38,7 +38,8 @@
 // describes the document for callers that need its alternatives.
 //
 // [Options] says where calls go, as whom, and how: the http.Client, the
-// server, credentials, redirects, extra header fields and memory bounds.
+// server, credentials, redirects, extra header fields, codecs and memory
+// bounds.
 // Load takes a Client's Options, and [Client.With] derives a Client that
 // shares the loaded document and changes some of them, for a tenant or for
 // one call.
@@ -50,12 +51,15 @@
 //
 // # Values
 //
-// Params values, Body, and Part contents take any Go value. The client first
-// converts a value to JSON data as encoding/json would (struct tags,
-// MarshalJSON, TextMarshaler map keys), then serializes that data as the
-// document says. Where a parameter or a form or multipart field needs text,
-// a number or boolean is written in its JSON spelling (10, 2.5, true) and a
-// string or json.Number as it is.
+// Params values, Body, and Part contents take any Go value. Only a nil
+// interface is absent; a typed nil, such as a nil pointer or map, is a
+// value, which encoding/json writes as null. The client first converts a
+// value to JSON data as encoding/json would (struct tags, MarshalJSON,
+// TextMarshaler map keys), then serializes that data as the document says;
+// a caller's codec (see [Options.Codecs]) receives the value as given.
+// Where a parameter or a form or multipart field needs text, a number or
+// boolean is written in its JSON spelling (10, 2.5, true) and a string or
+// json.Number as it is.
 //
 // The client's codecs sort media types into four classes, for requests
 // and responses alike, taking the first that applies:
@@ -67,9 +71,11 @@
 //   - text: any other text/* type.
 //
 // A body under a form, multipart or sequential type takes the shapes
-// Input.Body lists. Otherwise a JSON type is written as encoding/json writes
-// the value; any other type takes only a string, as its UTF-8 bytes, and a
-// text type also a number or boolean, in its JSON spelling.
+// Input.Body lists. Otherwise a type with a caller's codec takes a value of
+// any Go type, which that codec encodes; a JSON type is written as
+// encoding/json writes the value; and any other type takes only a string,
+// as its UTF-8 bytes, and a text type also a number or boolean, in its JSON
+// spelling.
 //
 // In a parameter not serialized by content, and in a form or multipart
 // field serialized by a style or a Swagger 2.0 collectionFormat, null, an
@@ -79,18 +85,17 @@
 // and an undefined required one is missing. A form or multipart property or
 // array item whose JSON data is null is omitted, whatever its
 // serialization. A parameter serialized by content is encoded as a body of
-// its media type is, except that nil is absent: json.RawMessage("null")
-// sends null, and under application/json [] and {} are present values. A
-// JSON body or JSON part is exactly what encoding/json writes, null
+// its media type is, so under application/json null, [] and {} are present
+// values. A JSON body or JSON part is exactly what its codec writes, null
 // members, [] and {} included. Schema defaults are never sent, and values
 // are never validated against schemas. How bytes, readers and iterators are
 // sent is on Input.Body.
 //
-// Where the client creates the values, as when out is a *any, a
-// *map[string]any or a *[]any, and for Items[any] and StatusError.Decode
-// into those, JSON numbers are kept exact as json.Number. A caller's own
-// type decodes exactly as json.Unmarshal would, its any-typed fields
-// included.
+// Where the client's own JSON codec creates the values, as when out is a
+// *any, a *map[string]any or a *[]any, and for Items[any] and
+// StatusError.Decode into those, JSON numbers are kept exact as
+// json.Number. A caller's own type decodes exactly as json.Unmarshal
+// would, its any-typed fields included.
 //
 // # Outcomes
 //
@@ -146,7 +151,8 @@
 //     never select an alternative implicitly.
 //   - A body uses the declared request media type when exactly one is
 //     declared and it is concrete; otherwise, a range counting as an
-//     alternative, it requires Input.MediaType. A form field or multipart
+//     alternative, it requires Options.MediaType or Input.MediaType. A
+//     form field or multipart
 //     part uses its Encoding contentType on the same terms, or its default
 //     type when the Encoding gives none; a list or a range requires
 //     Part.MediaType. The default is read from the field's schema (the
@@ -155,11 +161,19 @@
 //     Swagger 2.0, and where an OpenAPI 3.0 schema has no type, it is
 //     text/plain, or application/octet-stream for a file parameter.
 //
+// Options.Security, Options.SecurityKey and Options.MediaType are
+// preferences: each applies to the operations that offer its selection,
+// and any other operation is called as if it were unset. The Input fields
+// select exactly, for one call, and refuse an operation that does not
+// offer their selection. Options.Server and Options.ServerID refuse such
+// an operation too, since falling back would change where credentials go.
+//
 // These are setting requirements, not a decision history. A caller that
 // needs another spelling for a scalar parameter can pass a string, or use
 // Input.ParamWriters for a parameter the built-in serializer cannot encode.
-// A body codec the client does not implement can supply pre-encoded []byte
-// or an io.Reader; a caller with its own response policy can use Request.Send.
+// A media type the client has no codec for can be given one in
+// Options.Codecs, or be sent as a pre-encoded []byte or io.Reader body; a
+// caller with its own response policy can use Request.Send.
 //
 // # Raw invocation boundary
 //
@@ -273,15 +287,16 @@
 //     cookie credential, and a value for a header parameter named Cookie,
 //     whose effect OpenAPI leaves undefined, is refused at its key.
 //   - Accept: none is synthesized. Set Options.Header or Input.Header to
-//     request a particular representation.
+//     request a particular representation; Call requires one where a
+//     typed out could receive several (see Client.Call).
 //   - Header fields: the client generates Content-Type, Content-Length for
 //     a body that can be sent again (see Input.Body), header parameters and
 //     credentials, and no User-Agent beyond net/http's. Options.Header and
 //     then Input.Header are applied over the generated fields: a field
 //     replaces the same field set before, and one with no values removes
 //     it. At either level, Content-Type, Content-Length and
-//     Transfer-Encoding are refused (Input.MediaType chooses the media
-//     type), and so is a field that a header parameter the call supplies,
+//     Transfer-Encoding are refused (the MediaType settings choose the
+//     media type), and so is a field that a header parameter the call supplies,
 //     or the call's credential, sets; a declared header parameter the call
 //     leaves unset may come from a header field. A declared Swagger 2.0
 //     Content-Type header parameter, required or not, is satisfied by the
@@ -337,8 +352,10 @@
 // or has an empty or zero one, or, for a mutualTLS scheme, which needs
 // none, has any credential but FromTransport. Unselected alternatives have
 // no effect on the call. Load refuses a Credentials name the document never
-// uses, as a likely misspelling, and a [Basic] credential for a name none
-// of whose schemes is http basic. FromTransport also satisfies a scheme a
+// uses, as a likely misspelling, an empty static credential (Secret(""),
+// Basic("", "") or the zero Credential), and a [Basic] credential for a
+// name none of whose schemes is http basic. FromTransport also satisfies a
+// scheme a
 // requirement names but the document never declares, or declares
 // defectively.
 package openapi

@@ -26,13 +26,17 @@ const (
 
 // Projection is a composable JSON Schema 2020-12 view. Root has no $schema
 // or $defs; references in Root and Defs point to #/$defs/KEY. Defs contains
-// the complete transitive closure. Both values are caller-owned copies.
-// Keys are stable within one openapi.Client and direction, so projections
-// of the same direction may merge their Defs without collision. A key may
-// have a different value in another direction.
+// the complete transitive closure. All three fields are caller-owned
+// copies. Keys are stable within one openapi.Client and direction, so
+// projections of the same direction may merge their Defs without
+// collision. A key may have a different value in another direction.
 type Projection struct {
 	Root json.RawMessage
 	Defs map[string]json.RawMessage
+
+	// Sources maps each Defs key to the openapi.Schema.Source of the
+	// authored schema it came from.
+	Sources map[string]string
 }
 
 // Issue names one schema location that cannot be translated faithfully.
@@ -42,9 +46,9 @@ type Issue struct {
 	Err    error
 }
 
-// Error reports every independently detectable loss that stops Project.
-// No partial projection is returned. Issues distinguish unresolved
-// references, dynamic scope, and unsupported dialect semantics.
+// Error reports every independently detectable loss in a projection.
+// Issues distinguish unresolved references, dynamic scope, and unsupported
+// dialect semantics.
 type Error struct {
 	Issues []Issue
 }
@@ -88,12 +92,13 @@ func (e *Error) Unwrap() []error {
 // format: byte becomes contentEncoding: base64. It never validates an
 // instance or invents schema facts.
 //
-// Project returns no partial projection and an *Error when a reference
-// cannot be resolved, $dynamicRef needs dynamic scope, or a custom dialect
-// or vocabulary cannot be translated without loss. Such callers can use
-// the authored graph through openapi.Schema and openapi.Client.DocumentURIs
-// with their own dialect-aware processor. Project is lazy and retrieves no
-// documents.
+// Project returns an *Error when a reference cannot be resolved,
+// $dynamicRef needs dynamic scope, or a custom dialect or vocabulary cannot
+// be translated without loss, and with it the Projection, each Issue's
+// site replaced by true, the schema that accepts anything. Callers that
+// need the lost parts can use the authored graph through openapi.Schema
+// and openapi.Client.DocumentURIs with their own dialect-aware processor.
+// Project is lazy and retrieves no documents.
 func Project(s *openapi.Schema, direction Direction) (*Projection, error) {
 	panic("unimplemented")
 }

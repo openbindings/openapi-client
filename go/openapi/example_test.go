@@ -106,7 +106,7 @@ func Example_failure() {
 	switch {
 	case err == nil:
 		fmt.Println("updated", pet.Name)
-	case errors.As(err, &se) && se.Declared != "":
+	case errors.As(err, &se) && se.Declaration != nil:
 		// 404 or 422, with the body the document declares for it.
 		var p Problem
 		if err := se.Decode(&p); err != nil {
@@ -147,8 +147,7 @@ func Example_credentialsAPIKey() {
 
 // Scenario 4a, two mistakes. A credential under a name the document does
 // not use is refused by Load, as a misspelling. An environment variable
-// that was never set gives an empty secret, refused at a call that selects
-// its alternative, even on an operation that also allows anonymous access.
+// that was never set gives an empty secret, which Load refuses too.
 // Neither sends anything.
 func Example_credentialsTypo() {
 	ctx := context.Background()
@@ -164,18 +163,13 @@ func Example_credentialsTypo() {
 		log.Print(re)
 	}
 
-	c, err := openapi.Load(ctx, docURL, &openapi.Options{
+	_, err = openapi.Load(ctx, docURL, &openapi.Options{
 		Credentials: map[string]openapi.Credential{
 			"api_key": openapi.Secret(os.Getenv("PETS_API_KEY_TYPO")), // never set
 		},
 	})
-	if err != nil {
-		log.Fatal(err)
-	}
-	_, err = c.Call(ctx, "searchPets", &openapi.Input{Security: `{"api_key":[]}`}, nil)
 	if errors.As(err, &re) {
-		// no credential for security scheme "api_key" (set
-		// Options.Credentials["api_key"])
+		// Options.Credentials["api_key"] is an empty secret
 		log.Fatal(re)
 	}
 }
@@ -358,8 +352,8 @@ func Example_credentialsOptionalAuth() {
 	ctx := context.Background()
 	c, err := openapi.Load(ctx, docURL, &openapi.Options{
 		Credentials: map[string]openapi.Credential{
-			// Refused on every call that selects it if PETS_API_KEY is
-			// unset, rather than falling back to anonymous access.
+			// Refused by Load if PETS_API_KEY is unset, rather than
+			// leaving calls to fall back to anonymous access.
 			"api_key": openapi.Secret(os.Getenv("PETS_API_KEY")),
 		},
 	})
@@ -511,7 +505,7 @@ func Example_filesUploadRepeated() {
 	}, nil)
 	var re *openapi.RequestError
 	if errors.As(err, &re) {
-		log.Fatal(re) // names "/attachments/1" if, say, its type is not offered
+		log.Fatal(re) // names "Input.Body/attachments/1" if, say, its type is not offered
 	}
 	if err != nil {
 		log.Fatal(err)
@@ -1061,7 +1055,7 @@ func Example_describe() {
 			fmt.Printf("  header %s, required %t\n", h.Name, h.Required)
 		}
 		for _, m := range r.Media {
-			fmt.Println("  as", m.Type, "streamed:", m.ItemSchema != nil)
+			fmt.Println("  as", m.Type, "streamed:", m.Sequential)
 		}
 	}
 	for _, alt := range op.Security {
@@ -1262,7 +1256,7 @@ func Example_dynamicCall() {
 	switch {
 	case errors.As(err, &re) && len(re.Inputs) > 0:
 		for name, err := range re.Inputs {
-			fmt.Printf("fix %q: %v\n", name, err) // "" is the body
+			fmt.Printf("fix %q: %v\n", name, err) // "Input.Body" is the body
 		}
 		return
 	case errors.As(err, &se):
@@ -1353,7 +1347,7 @@ func Example_prepare() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Printf("%s %s (declared as %s)\n%s\n", req.HTTP.Method, req.HTTP.URL, req.MediaType, encoded)
+	fmt.Printf("%s %s (%s)\n%s\n", req.HTTP.Method, req.HTTP.URL, req.HTTP.Header.Get("Content-Type"), encoded)
 	req.HTTP.Header.Set("X-Signature", sign(req.HTTP.Method, req.HTTP.URL.Path, encoded))
 
 	var o order
@@ -1582,11 +1576,11 @@ func Example_sloppyDocument() {
 
 // Outcome is how a wrapper library reports a response it classified itself.
 type Outcome struct {
-	Status    int
-	Declared  string // the responses key that governs Status, or ""
-	MediaType string // the declared media type the body matched, or ""
-	Body      []byte
-	BodyErr   error // why Body is incomplete, or nil
+	Status      int
+	Declaration *openapi.Message // the response that governs Status, or nil
+	Media       *openapi.Media   // the declared media the body matched, or nil
+	Body        []byte
+	BodyErr     error // why Body is incomplete, or nil
 }
 
 // invoke is a wrapper's entry point over any document. It uses the client
@@ -1603,7 +1597,7 @@ func invoke(ctx context.Context, c *openapi.Client, key string, in *openapi.Inpu
 	var raw []byte
 	bodyErr := resp.Decode(&raw) // status-neutral, same media handling as Call
 	uploadErr := resp.WaitRequest(ctx)
-	return &Outcome{resp.StatusCode, resp.Declared, resp.MediaType, raw, bodyErr}, uploadErr
+	return &Outcome{resp.StatusCode, resp.Declaration, resp.Media, raw, bodyErr}, uploadErr
 }
 
 type report struct {
@@ -1636,11 +1630,11 @@ func Example_exactBehavior() {
 	}
 
 	switch {
-	case out.Declared == "":
+	case out.Declaration == nil:
 		fmt.Printf("status %d is not declared\n", out.Status)
 	case out.Status/100 != 2:
-		fmt.Printf("declared failure %s (%d): %s (complete: %t)\n", out.Declared, out.Status, out.Body, out.BodyErr == nil)
-	case out.MediaType == "application/xml":
+		fmt.Printf("declared failure %s (%d): %s (complete: %t)\n", out.Declaration.Key, out.Status, out.Body, out.BodyErr == nil)
+	case out.Media != nil && out.Media.Type == "application/xml":
 		var r report
 		if err := xml.Unmarshal(out.Body, &r); err != nil {
 			log.Fatal(err)
@@ -1766,7 +1760,7 @@ func Example_decodeFailure() {
 	}, &o)
 	var de *openapi.DecodeError
 	if errors.As(err, &de) {
-		fmt.Println("created:", de.StatusCode, de.Header.Get("Location"), de.MediaType)
+		fmt.Println("created:", de.StatusCode, de.Header.Get("Location"), de.Header.Get("Content-Type"))
 		switch {
 		case errors.Is(err, io.EOF):
 			fmt.Println("but the reply had no content")
@@ -1781,13 +1775,13 @@ func Example_decodeFailure() {
 	fmt.Println(resp.StatusCode, o.ID)
 }
 
-// A generated client can expose the response variants of one API as Go
-// types while the dynamic engine still owns request construction and codecs.
+// A generated client can expose the 2xx variants of one API as Go types
+// while the dynamic engine still owns request construction, codecs and
+// Call's failure contract: any other status is a *StatusError.
 type GetPetResult struct {
-	Status  int
-	Pet     *Pet
-	Job     *Job
-	Problem *Problem
+	Status int
+	Pet    *Pet
+	Job    *Job
 }
 
 type Job struct {
@@ -1797,13 +1791,10 @@ type Job struct {
 type GeneratedPets struct{ Client *openapi.Client }
 
 func (g GeneratedPets) GetPet(ctx context.Context, id string) (GetPetResult, error) {
-	req, err := g.Client.Prepare("getPet", &openapi.Input{
+	// Stream, then Decode into the target this status declares, is Call.
+	resp, err := g.Client.Stream(ctx, "getPet", &openapi.Input{
 		Params: map[string]any{"petId": id},
 	})
-	if err != nil {
-		return GetPetResult{}, err
-	}
-	resp, err := req.Send(ctx)
 	if err != nil {
 		return GetPetResult{}, err
 	}
@@ -1815,19 +1806,16 @@ func (g GeneratedPets) GetPet(ctx context.Context, id string) (GetPetResult, err
 	case 202:
 		result.Job = new(Job)
 		err = resp.Decode(result.Job)
-	case 204:
-		err = resp.Decode(nil)
 	default:
-		result.Problem = new(Problem)
-		err = resp.Decode(result.Problem)
+		err = resp.Decode(nil)
 	}
-	return result, errors.Join(err, resp.WaitRequest(ctx))
+	return result, err
 }
 
 func (g GeneratedPets) PutChecksum(ctx context.Context, id string, checksum []byte) error {
 	_, err := g.Client.Call(ctx, "putChecksum", &openapi.Input{
 		Params:    map[string]any{"petId": id},
-		Body:      openapi.EncodedBody{Value: checksum}, // JSON base64, not raw bytes
+		Body:      base64.StdEncoding.EncodeToString(checksum), // a JSON base64 string
 		MediaType: "application/json",
 	}, nil)
 	return err
@@ -1839,6 +1827,15 @@ func Example_generatedFacade() {
 	ctx := context.Background()
 	api := GeneratedPets{Client: client}
 	result, err := api.GetPet(ctx, "p-7")
+	var se *openapi.StatusError
+	if errors.As(err, &se) {
+		var p Problem
+		if err := se.Decode(&p); err != nil {
+			log.Fatal(err)
+		}
+		fmt.Println(se.StatusCode, p.Title)
+		return
+	}
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -1907,7 +1904,7 @@ func Example_fixedConventions() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println(out.Status, out.Declared, out.BodyErr)
+	fmt.Println(out.Status, out.Declaration != nil, out.BodyErr)
 }
 
 // Scenario 22: a rare serialization convention can be supplied before Prepare

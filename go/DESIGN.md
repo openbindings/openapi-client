@@ -42,25 +42,31 @@ only when conversion is faithful; invocation does not depend on it.
 ## Where each rule lives
 
 Every rule has one home; other docs point to it.
-Package doc: the governing patch of each edition, values, codec classes
-and empty values, outcomes and their test order, the required selections
-and default part types, serialization rules (URL building, bodies by
-method, order, percent-encoding, styles, querystring, forms, Swagger 2.0
-arrays, cookies, header fields, content codings), and credentials (naming,
-placement, destinations, transport security, refusals). `Redirects`: which
-3xx are followed, how method and body change, and what a hop strips or
-re-places. `Response.MediaType`: media matching, for requests too.
-`Input.Body`: body shapes, replay, lifetime, iterators. `Part`: part names
-and filenames. `Options.Variables`: server variable values. `Call` and
-`Response.Decode`: decoding by target, and responses without a body.
-`Items`: response item framing. `Loader`: document acceptance, which
-references are followed, how they resolve, and admission. `SchemeLookup`:
-security scheme names. `Load`: fatal defects and the fail-fast Options
-list. `SecurityRequirement.Key`: the canonical key. `Operation`: how
-descriptions follow references, Path Item `$ref` included. `Flow`: security
-URLs. `Client.Document`: the spelling of Source URIs. `Schema`: the handle,
-other dialects and raw reference edges. The optional `schema2020` package
-owns projection fidelity.
+Package doc: the governing patch of each edition, values (absent and
+typed nil), codec classes and empty values, outcomes and their test order,
+the required selections, client-wide preferences against exact per-call
+selections, and default part types, serialization rules (URL building,
+bodies by method, order, percent-encoding, styles, querystring, forms,
+Swagger 2.0 arrays, cookies, header fields, content codings), and
+credentials (naming, placement, destinations, transport security,
+refusals). `Options.Codecs`: codec keys and where a caller's codec
+applies. `Redirects`: which 3xx are followed, how method and body change,
+and what a hop strips or re-places. `Response.Declaration` and
+`Response.Media`: the governing response and media matching, for requests
+too. `Input.Body`: body shapes, what is pre-encoded, replay, lifetime,
+iterators. `Part`: part names and filenames. `Options.Variables`: server
+variable values. `Call` and `Response.Decode`: decoding by target, the
+representation a typed target needs, and responses without a body.
+`Items`: response item framing. `RequestError.Settings` and `Inputs`: the
+refusal key grammar. `Loader`: document acceptance, which references are
+followed, how they resolve, and admission. `SchemeLookup`: security scheme
+names. `Load`: fatal defects and the fail-fast Options list; `With`: which
+of those checks a derived Client skips. `SecurityRequirement.Key`: the
+canonical key. `Operation`: how descriptions follow references, Path Item
+`$ref` included. `Flow`: security URLs. `Client.Document`: the spelling of
+Source URIs and reading one node. `Schema`: the handle, other dialects;
+`SchemaReference`: reference edges, discriminator mappings included. The
+optional `schema2020` package owns projection fidelity.
 
 ## Implementation scope
 
@@ -90,7 +96,7 @@ as code before the next begins.
    stable server identity, credential placement, the plain-http rule,
    `Redirects` and hop stripping, `FromTransport`.
 4. **Request bodies**: JSON, text, form, multipart with
-   Encoding and parts, octets, EncodedBody presence, replay rules, 3.2
+   Encoding and parts, octets, caller codecs, replay rules, 3.2
    sequential and iterator bodies.
 5. **Documents**: YAML, references across documents, the
    admission callback, origin and local-file defaults, bounds, `Loader`.

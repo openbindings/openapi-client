@@ -19,14 +19,16 @@ import (
 // required field included, is reported on the part it reaches, in its Err,
 // or ignored where nothing depends on it, as a missing info is.
 //
-// Load also fails, with a *RequestError, when opts would refuse every call:
-// a Credentials name the document never uses, or a credential its schemes
-// cannot use (see Credentials in the package documentation), a Variables
-// name no server URL uses, a Server or ServerID that matches no server, a
-// Security or SecurityKey that matches no alternative, a BaseURL without a
-// scheme and host, with userinfo, a query or a fragment, or set with Server
-// or ServerID, conflicting exact and name selectors, or a Header field that
-// is always refused.
+// Load also fails, with a *RequestError, on Options the document cannot
+// use: a Credentials name the document never uses, an empty static
+// credential, or a credential its schemes cannot use (see Credentials in
+// the package documentation), a Variables name no server URL uses, a
+// MediaType no operation declares, a Codecs key Options.Codecs refuses, a
+// Server or ServerID that matches no server, a Security or SecurityKey
+// that matches no alternative, a BaseURL without a scheme and host, with
+// userinfo, a query or a fragment, or set with Server or ServerID,
+// conflicting exact and name selectors, or a Header field that is always
+// refused.
 func Load(ctx context.Context, uri string, opts *Options) (*Client, error) {
 	var l Loader
 	return l.Load(ctx, uri, opts)
@@ -110,7 +112,8 @@ type Loader struct {
 	// Origins lists further origins, as "https://host" or
 	// "https://host:port", whose documents references may reach. A
 	// reference to any other origin, or its retrieval failing, disables
-	// only what reaches it. Origins is used only when AllowReference is nil.
+	// only what reaches it. A Loader that sets both Origins and
+	// AllowReference is refused by its Load and Parse.
 	Origins []string
 
 	// AllowReference, when set, decides whether one document may retrieve
@@ -119,8 +122,8 @@ type Loader struct {
 	// URI. It is called before the fetch or hop, may run concurrently, and
 	// must be safe for concurrent use. Returning false disables only the
 	// reference that needs to cross that boundary; the rest of the document
-	// remains usable. A callback replaces the default boundary and Origins:
-	// it can admit an arbitrary trusted source graph, or restrict one further.
+	// remains usable. A callback replaces the default boundary: it can
+	// admit an arbitrary trusted source graph, or restrict one further.
 	// It does not apply to fragment-only references within a document.
 	//
 	// With nil, http and https references may reach the entry document's
@@ -200,13 +203,16 @@ func (c *Client) DocumentURIs() []string {
 // named by the URI it was retrieved from (for Parse, the uri given or the
 // one derived from the content), which is what the descriptions' Source
 // fields name; Document also accepts an OpenAPI 3.2 document's $self, as
-// resolved. Each
-// call copies the whole document, so call it once per document and keep the
-// result.
+// resolved. With a JSON Pointer fragment, as any Source has, it returns a
+// copy of only that node, or nil when there is none; a Reference Object
+// there is returned as written, and resolves against its document's base.
+// Without one, each call copies the whole document, so call it once per
+// document and keep the result.
 //
 // A Source's fragment, like a SchemaReference.URI's, is a JSON Pointer
 // percent-encoded as RFC 6901 section 6 says, as in
-// #/paths/~1pets~1%7BpetId%7D/get; Client.Schema accepts these URIs.
+// #/paths/~1pets~1%7BpetId%7D/get; Client.Schema and Document accept
+// these URIs.
 //
 // Document lets a caller check what the descriptions do not model, such as
 // an extension, or which of a Path Item's fields were written beside its

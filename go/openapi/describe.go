@@ -125,8 +125,8 @@ type Operation struct {
 
 // A Param describes a value serialized into a request or response: a
 // parameter of an operation; a header of a response (In is "header", Key
-// is empty); or a field of a form or multipart body as its Encoding
-// declares it, or a Swagger 2.0 formData parameter (In and Key are empty).
+// is empty); or a field of a form or multipart body, or a Swagger 2.0
+// formData parameter (In and Key are empty).
 type Param struct {
 	// Key is the parameter's key in Input.Params: its Name, or its In and
 	// Name joined by a dot where the name alone would be ambiguous (see
@@ -161,8 +161,9 @@ type Param struct {
 
 	// ContentType is the media type the value is serialized with when it is
 	// described by content rather than by schema and style, or, for a form
-	// or multipart field, its Encoding contentType, which may be a
-	// comma-separated list or a range.
+	// or multipart field, its effective contentType: its Encoding's, which
+	// may be a comma-separated list or a range, or else the default the
+	// client uses (see the package documentation).
 	ContentType string
 
 	// CollectionFormat is, in Swagger 2.0, the collectionFormat of an array
@@ -197,9 +198,9 @@ type Param struct {
 // A Message describes the request body of an operation, or one of its
 // declared responses.
 type Message struct {
-	// Key is a response's key in the operation's responses, which
-	// Response.Declared reports: a code such as "404", a range such as
-	// "4XX", or "default". It is empty for a request body.
+	// Key is a response's key in the operation's responses: a code such as
+	// "404", a range such as "4XX", or "default". It is empty for a request
+	// body.
 	Key string
 
 	Description string
@@ -253,10 +254,17 @@ type Media struct {
 	// content, or nil.
 	ItemSchema *Schema
 
+	// Sequential reports that Items frames content of this Type item by
+	// item, in any edition: a sequential or multipart type (see Values in
+	// the package documentation), or a range that covers only such types.
+	Sequential bool
+
 	// Encoding describes the fields of form or multipart content, in
-	// document order, as Params whose Name is the field: each property
-	// that declares an Encoding Object, and in Swagger 2.0 every formData
-	// parameter. For a positional multipart type in OpenAPI 3.2, it
+	// document order, as Params whose Name is the field, each with its
+	// effective ContentType: each property that declares an Encoding Object
+	// or that the schema lists at its top level (after following $ref),
+	// and in Swagger 2.0 every formData parameter. For a positional
+	// multipart type in OpenAPI 3.2, it
 	// describes the parts: those of prefixEncoding in order, named "0", "1"
 	// and so on, then that of itemEncoding, named "*".
 	Encoding []*Param
@@ -332,7 +340,8 @@ type Variable struct {
 // operation: a Security Requirement Object, every scheme of which must be
 // satisfied.
 type SecurityRequirement struct {
-	// Key names the alternative in Input.Security and Response.Security.
+	// Key names the alternative in Input.Security, Request.Security and
+	// Response.Security.
 	// It is the Security Requirement
 	// Object written as canonical JSON, with no whitespace:
 	//
@@ -473,15 +482,20 @@ func (c *Client) Schema(uri string) (*Schema, error) {
 	panic("unimplemented")
 }
 
-// A SchemaReference is one standard $ref or $dynamicRef in a Schema's Raw
-// tree. A custom dialect can have additional reference keywords; the client
-// does not interpret those. Raw preserves them for the dialect-aware caller.
+// A SchemaReference is one reference in a Schema's Raw tree: a standard
+// $ref or $dynamicRef, or a value of a discriminator's mapping or, in
+// OpenAPI 3.2, its defaultMapping, a component name there resolved as
+// OpenAPI says. A custom dialect can have additional reference keywords;
+// the client does not interpret those. Raw preserves them for the
+// dialect-aware caller.
 type SchemaReference struct {
 	// At is a JSON Pointer from the root of Schema.Raw to the reference
-	// keyword. It distinguishes multiple references in the same schema.
+	// keyword or mapping value. It distinguishes multiple references in the
+	// same schema.
 	At string
 
-	// Keyword is "$ref" or "$dynamicRef"; Value is its authored string.
+	// Keyword is "$ref", "$dynamicRef", "mapping" or "defaultMapping";
+	// Value is its authored string.
 	Keyword string
 	Value   string
 
@@ -497,7 +511,8 @@ type SchemaReference struct {
 	Err    error
 }
 
-// References lists standard schema references in Raw, in document order.
+// References lists the references in Raw (see SchemaReference), in
+// document order.
 // It follows schema-bearing keywords of the declared dialect, accounting
 // for nested $id bases, but does not traverse a reference's target; each
 // target is its own Schema. The slice is new. A schema in another dialect
