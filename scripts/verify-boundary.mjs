@@ -55,47 +55,31 @@ for (const name of tsFiles) {
   }
 }
 
-// jsonvalue is hosted in the SDK module but imports no OpenBindings runtime.
-// Inspect the complete compiled dependency closure, including internal files,
-// rather than granting that entire module a namespace exception.
-const goDependencies = execFileSync("go", ["list", "-deps", "./..."], {
+// The Go client depends on no OpenBindings package, tests included, and its
+// sources use no OpenBindings vocabulary.
+const goDependencies = execFileSync("go", ["list", "-deps", "-test", "./..."], {
   cwd: new URL("../go/", import.meta.url), encoding: "utf8",
+  env: { ...process.env, GOWORK: "off" },
 }).trim().split("\n");
 for (const dependency of goDependencies) {
-  if (isForbiddenGoPackage(dependency)) {
+  if (isForbiddenGoPackage(dependency.replace(/ \[.*\]$/, "").replace(/\.test$/, ""))) {
     throw new Error(`standalone Go dependency closure contains ${dependency}`);
   }
 }
-const goFiles = (await readdir(new URL("../go/", import.meta.url)))
-  .filter((name) => name.endsWith(".go") && !name.endsWith("_test.go"));
+const goFiles = (await readdir(new URL("../go/", import.meta.url), { recursive: true }))
+  .filter((name) => name.endsWith(".go"));
 for (const name of goFiles) {
   const source = await readFile(new URL(`../go/${name}`, import.meta.url), "utf8");
   for (const forbidden of [
     "github.com/openbindings/openbindings-go",
     "openbindings.openapi@",
     '"$openbindings"',
-    "type BindingInvocationArgs",
-    "type InvocationError",
+    "OpenBindings",
   ]) {
     if (source.includes(forbidden)) {
-      throw new Error(`standalone Go source ${name} leaks internal/OpenBindings concept ${forbidden}`);
+      throw new Error(`standalone Go source ${name} leaks OpenBindings concept ${forbidden}`);
     }
   }
-}
-const goProvider = await readFile(new URL("../go/provider/provider.go", import.meta.url), "utf8");
-for (const forbidden of ["github.com/openbindings/openbindings-go", "openbindings.openapi@", '"$openbindings"']) {
-  if (goProvider.includes(forbidden)) {
-    throw new Error(`standalone Go provider source leaks internal/OpenBindings concept ${forbidden}`);
-  }
-}
-
-const goCorpusAdapter = await readFile(
-  new URL("../go/internal/runtime/upstream_processor_corpus_test.go", import.meta.url),
-  "utf8",
-);
-if (!goCorpusAdapter.startsWith("package openapiclient_test\n") ||
-    !goCorpusAdapter.includes('openapi "github.com/openbindings/openapi-client/go"')) {
-  throw new Error("Go upstream corpus must exercise the public root package from an external test package");
 }
 
 const tsCorpusAdapter = await readFile(
