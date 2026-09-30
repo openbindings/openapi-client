@@ -389,32 +389,69 @@ func countValues(t *testing.T, b []byte) int {
 }
 
 // F7, as ruled (ledger, "Regression-test questions, ruled": "any document
-// stays within document bytes plus 16 bytes per JSON value retained"): the
-// worst case, an array of zeros with one value per two bytes. (The 3x and
-// 6x budgets stay on the synthetic document, TestF7TreeMemoryBudget.)
+// stays within document bytes plus 16 bytes per JSON value retained"), and
+// G1 (#1, ledger "Focused second review": the node estimate must not count
+// structural bytes inside strings): an array of zeros with one value per
+// two bytes; one string of commas, and one of braces, which hold a handful
+// of values; and an array of empty objects. Each document is about 1 MiB.
+// (The 3x and 6x budgets stay on the synthetic document,
+// TestF7TreeMemoryBudget.)
 func TestF7WorstCaseRetainedBudget(t *testing.T) {
-	var buf strings.Builder
-	buf.WriteString(`{"openapi":"3.1.0","info":{"title":"t","version":"1"},"paths":{},"components":{"x":[0`)
-	for buf.Len() < 1<<20 {
-		buf.WriteString(",0")
+	const size = 1 << 20
+	const head = `{"openapi":"3.1.0","info":{"title":"t","version":"1"},"paths":{},"components":{"x":`
+	fill := func(open, item, sep, close string) []byte {
+		var buf strings.Builder
+		buf.WriteString(head + open + item)
+		for buf.Len() < size {
+			buf.WriteString(sep + item)
+		}
+		buf.WriteString(close + "}}")
+		return []byte(buf.String())
 	}
-	buf.WriteString("]}}")
-	doc := []byte(buf.String())
-	values := countValues(t, doc)
-	var before, after runtime.MemStats
-	runtime.GC()
-	runtime.ReadMemStats(&before)
-	c, err := openapi.Parse(context.Background(), doc, largeDocURI, nil)
-	if err != nil {
-		t.Fatal(err)
+	docs := map[string][]byte{
+		"array of zeros":         fill("[", "0", ",", "]"),
+		"string of commas":       []byte(head + `"` + strings.Repeat(",", size) + `"}}`),
+		"string of braces":       []byte(head + `"` + strings.Repeat("{", size) + `"}}`),
+		"string of brackets":     []byte(head + `"` + strings.Repeat("[", size) + `"}}`),
+		"array of empty objects": fill("[", "{}", ",", "]"),
 	}
-	runtime.GC()
-	runtime.ReadMemStats(&after)
-	runtime.KeepAlive(c)
-	retained := int64(after.HeapAlloc) - int64(before.HeapAlloc)
-	budget := int64(len(doc)) + 16*int64(values)
-	t.Logf("document %d bytes, %d values: retained %d bytes, budget %d", len(doc), values, retained, budget)
-	if retained > budget {
-		t.Errorf("retained %d bytes, over the budget of %d (document bytes plus 16 per value)", retained, budget)
+	for name, doc := range docs {
+		t.Run(name, func(t *testing.T) {
+			values := countValues(t, doc)
+			var before, after runtime.MemStats
+			runtime.GC()
+			runtime.ReadMemStats(&before)
+			c, err := openapi.Parse(context.Background(), doc, largeDocURI, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			runtime.GC()
+			runtime.ReadMemStats(&after)
+			runtime.KeepAlive(c)
+			retained := int64(after.HeapAlloc) - int64(before.HeapAlloc)
+			budget := int64(len(doc)) + 16*int64(values)
+			t.Logf("document %d bytes, %d values: retained %d bytes, budget %d", len(doc), values, retained, budget)
+			if retained > budget {
+				t.Errorf("retained %d bytes, over the budget of %d (document bytes plus 16 per value)", retained, budget)
+			}
+		})
+	}
+}
+
+// G1 (#1): a document rejected at its second byte pays no reservation
+// beyond what a document of its length could need: its allocation stays
+// within the worst-case budget for its length, the document's bytes plus 16
+// bytes for each value its bytes could hold (one per two bytes).
+func TestG1RejectedDocumentAllocation(t *testing.T) {
+	doc := []byte("{" + strings.Repeat(",", 4<<20))
+	var err error
+	n := allocated(func() { _, err = openapi.Parse(context.Background(), doc, testDocURI, nil) })
+	if err == nil {
+		t.Fatal("the document was accepted")
+	}
+	budget := uint64(len(doc)) + 16*uint64(len(doc)/2+1) + 1<<20
+	t.Logf("rejected %d bytes: allocated %d, budget %d", len(doc), n, budget)
+	if n > budget {
+		t.Errorf("allocated %d MiB rejecting a %d MiB document; budget %d MiB", n>>20, len(doc)>>20, budget>>20)
 	}
 }
