@@ -182,27 +182,26 @@ type Codec interface {
 // that drops the body drops Content-Type and the other content fields, and
 // a hop that must resend a body that cannot be sent again (see Input.Body)
 // is not followed. A 3xx not followed is the outcome, a *StatusError. The
-// HTTPClient's CheckRedirect is still consulted on every hop the client
-// follows, after the client applies the rules below and before it places
-// credentials on the hop, and can restore a
-// field the caller deliberately wants to forward; with a nil
-// CheckRedirect, net/http's limit of 10 hops applies.
+// client adds no Referer. The HTTPClient's CheckRedirect is still consulted
+// on every hop the client follows, after the client applies the rules below
+// and before it places credentials on the hop, and can restore a field the
+// caller deliberately wants to forward; with a nil CheckRedirect, net/http's
+// limit of 10 hops applies.
 //
 // On a hop to another origin (scheme, host and port), the client removes the
 // credentials it added and any header a security scheme placed, the
 // Authorization and Cookie fields (cookie parameters included), all header
 // parameters, and every field supplied through Options.Header, Input.Header, or
 // an edit to Request.HTTP.Header. Generated fields needed to describe a
-// replayed body, such as Content-Type and Content-Length, are rebuilt. Referer
-// is removed if it holds a query credential the client added. CheckRedirect may
-// restore a field intentionally, such as Range or Accept; the client does not
-// infer whether an arbitrary caller header is a secret. On a hop within the
-// origin, header and cookie credentials are placed again; a query credential
-// goes only on the request the client builds, never onto a Location. Once a hop
-// has left the call's origin, no later hop has credentials, header parameters
-// or caller fields placed again, even one back on that origin. A transport that
-// satisfies a FromTransport scheme sees every hop, other origins included and
-// must apply its own origin policy.
+// replayed body, such as Content-Type and Content-Length, are rebuilt.
+// CheckRedirect may restore a field intentionally, such as Range or Accept;
+// the client does not infer whether an arbitrary caller header is a secret.
+// On a hop within the origin, header and cookie credentials are placed again;
+// a query credential goes only on the request the client builds, never onto a
+// Location. Once a hop has left the call's origin, no later hop has
+// credentials, header parameters or caller fields placed again, even one back
+// on that origin. A transport that satisfies a FromTransport scheme sees every
+// hop, other origins included and must apply its own origin policy.
 type Redirects int
 
 const (
@@ -646,8 +645,8 @@ func (r *Request) Call(ctx context.Context, out any) (*Response, error) {
 // StatusError or a DecodeError, when it reads that error's Content. For one
 // from Stream or Send, Body is open and must be closed. Its Request is the last
 // request sent, after any redirects, with the credentials the client added
-// removed, from its URL, its header fields and its Referer, and so is every
-// earlier request reachable from it.
+// removed from its URL and its header fields, and so is every earlier request
+// reachable from it.
 type Response struct {
 	*http.Response
 
