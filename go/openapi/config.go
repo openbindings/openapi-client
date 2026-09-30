@@ -80,7 +80,7 @@ func newConfig(o Options, parent *config) *config {
 		case o.Server != "" || o.ServerID != "":
 			refuse("Options.BaseURL", errors.New("cannot be set with Options.Server or Options.ServerID"))
 		default:
-			cfg.base = &endpoint{u.Scheme, u.Host, escapePath(u.EscapedPath())}
+			cfg.base = &endpoint{u.Scheme, u.Host, escape(u.EscapedPath(), pathSet)}
 		}
 	}
 	if o.Server != "" && o.ServerID != "" {

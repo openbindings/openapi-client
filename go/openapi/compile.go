@@ -83,10 +83,10 @@ func (e *entry) build() *operation {
 // path its Path Item chain reaches it from: all but the Key and what the
 // path template decides.
 func (e *entry) shape() *operation {
-	d, n, ptr := e.doc, e.node, e.ptr()
+	d, n, src := e.doc, e.node, e.doc.source(e.ptr())
 	o := &operation{doc: d}
 	op := &o.Operation
-	op.ID, op.Method, op.Source = e.id, methods[e.m].upper, d.source(ptr)
+	op.ID, op.Method, op.Source = e.id, methods[e.m].upper, src
 	var params, body, responses, servers, security value
 	for name, m := range n.members() { // one pass: a member's name is read from the source
 		switch name {
@@ -116,13 +116,13 @@ func (e *entry) shape() *operation {
 	list, at, err := e.field(parametersField)
 	errs = append(errs, err)
 	errs = o.addParams(list, at, ids, errs)
-	errs = o.addParams(params, ptr+"/parameters", ids, errs)
+	errs = o.addParams(params, src+"/parameters", ids, errs)
 	o.assignKeys()
 
 	if body.ok() && op.Method != "TRACE" {
 		var target value
 		var c *content
-		op.Body, target, c = d.message(body, ptr+"/requestBody")
+		op.Body, target, c = d.message(body, src+"/requestBody")
 		if !target.ok() {
 			errs = append(errs, op.Body.Err)
 		}
@@ -132,7 +132,7 @@ func (e *entry) shape() *operation {
 	if responses.kind() == '{' {
 		for key, r := range responses.members() {
 			if !strings.HasPrefix(key, "x-") {
-				m, _, c := d.message(r, ptr+"/responses/"+escapeToken(key))
+				m, _, c := d.message(r, src+"/responses/"+token(key))
 				m.Key = key
 				o.addResponse(m, c)
 			}
@@ -142,7 +142,7 @@ func (e *entry) shape() *operation {
 	var sl *serverList
 	switch s, at, err := e.field(serversField); {
 	case servers.hasMembers():
-		sl = d.parseServers(servers, ptr+"/servers")
+		sl = d.parseServers(servers, src+"/servers")
 	case s.ok():
 		errs = append(errs, err)
 		sl = d.serverLists.get(s.i, func() *serverList { return d.parseServers(s, at) })
@@ -161,7 +161,7 @@ func (e *entry) shape() *operation {
 }
 
 // field returns the Path Item field f, parametersField or serversField,
-// from the level of the chain that has it, with its pointer, and an error
+// from the level of the chain that has it, with its Source, and an error
 // when several do.
 func (e *entry) field(f int) (value, string, error) {
 	name := "parameters"
@@ -176,7 +176,7 @@ func (e *entry) field(f int) (value, string, error) {
 	if e.sum.dup&(1<<f) != 0 {
 		err = fmt.Errorf("the Path Item and its $ref target both define %s", name)
 	}
-	return l.v.get(name), l.ptr + "/" + name, err
+	return l.v.get(name), e.doc.source(l.ptr + "/" + name), err
 }
 
 // A paramID identifies a parameter by location and name, a header's name
@@ -185,13 +185,13 @@ type paramID struct{ in, name string }
 
 // addParams adds the parameters of list, each taking the place of an
 // earlier one it identifies.
-func (o *operation) addParams(list value, ptr string, ids map[paramID]int, errs []error) []error {
+func (o *operation) addParams(list value, src string, ids map[paramID]int, errs []error) []error {
 	if list.kind() != '[' {
 		return errs
 	}
 	i := 0
 	for _, v := range list.members() {
-		p := o.doc.param(v, ptr+"/"+strconv.Itoa(i))
+		p := o.doc.param(v, src+"/"+strconv.Itoa(i))
 		i++
 		if p.In == "header" && (strings.EqualFold(p.Name, "Accept") || strings.EqualFold(p.Name, "Content-Type") || strings.EqualFold(p.Name, "Authorization")) {
 			continue
@@ -207,7 +207,7 @@ func (o *operation) addParams(list value, ptr string, ids map[paramID]int, errs 
 			pp.field = textproto.CanonicalMIMEHeaderKey(p.Name)
 			id.name = strings.ToLower(p.Name)
 		case "query":
-			pp.name = escape(p.Name)
+			pp.name = escape(p.Name, unreservedSet)
 		}
 		switch {
 		case p.Err != nil:
@@ -255,12 +255,13 @@ func (o *operation) assignKeys() {
 	}
 }
 
-// param describes the Parameter Object v at ptr, following references. A
-// target that references reach is compiled once, and copied for each.
-func (d *document) param(v value, ptr string) *Param {
-	t, at, desc, err := d.follow(v, ptr)
+// param describes the Parameter Object v, whose Source is src, following
+// references. A target that references reach is compiled once, and copied
+// for each.
+func (d *document) param(v value, src string) *Param {
+	t, at, desc, err := d.follow(v, src)
 	if err != nil {
-		return &Param{Source: d.source(ptr), Err: err}
+		return &Param{Source: src, Err: err}
 	}
 	if t.i == v.i { // only this place reaches it
 		p := d.newParam(t, at)
@@ -272,9 +273,9 @@ func (d *document) param(v value, ptr string) *Param {
 	return &c
 }
 
-// newParam compiles the Parameter Object t at at.
+// newParam compiles the Parameter Object t, whose Source is at.
 func (d *document) newParam(t value, at string) *Param {
-	p := &Param{Source: d.source(at)}
+	p := &Param{Source: at}
 	var explode, content value
 	for name, m := range t.members() { // one pass: a member's name is read from the source
 		switch name {
@@ -295,7 +296,7 @@ func (d *document) newParam(t value, at string) *Param {
 		case "explode":
 			explode = m
 		case "schema":
-			p.Schema = d.schema(m, at+"/schema")
+			p.Schema = d.schema(m, at, "/schema")
 		case "content":
 			content = m
 		}
@@ -304,7 +305,7 @@ func (d *document) newParam(t value, at string) *Param {
 	if content.kind() == '{' && content.hasMembers() {
 		for typ, m := range content.members() {
 			p.ContentType = typ
-			p.Schema = d.schema(m.get("schema"), at+"/content/"+escapeToken(typ)+"/schema")
+			p.Schema = d.schema(m.get("schema"), at, "/content/"+token(typ)+"/schema")
 			break
 		}
 	} else {
@@ -356,13 +357,13 @@ type content struct {
 // noContent is the content of an object a reference cannot reach.
 var noContent content
 
-// message describes the Request Body or Response Object v at ptr,
-// following references, with its content. The target is absent when a
+// message describes the Request Body or Response Object v, whose Source is
+// src, following references, with its content. The target is absent when a
 // reference cannot be resolved; the Message then reports it in Err.
-func (d *document) message(v value, ptr string) (*Message, value, *content) {
-	t, at, desc, err := d.follow(v, ptr)
+func (d *document) message(v value, src string) (*Message, value, *content) {
+	t, at, desc, err := d.follow(v, src)
 	if err != nil {
-		return &Message{Source: d.source(ptr), Err: err}, value{}, &noContent
+		return &Message{Source: src, Err: err}, value{}, &noContent
 	}
 	var c *content
 	if t.i == v.i { // only this place reaches it
@@ -373,13 +374,13 @@ func (d *document) message(v value, ptr string) (*Message, value, *content) {
 	return &Message{Description: desc, Source: c.source, Media: c.media}, t, c
 }
 
-// content compiles the content map of the object t at at.
+// content compiles the content map of the object t, whose Source is at.
 func (d *document) content(t value, at string) *content {
-	c := &content{source: d.source(at)}
+	c := &content{source: at}
 	if m := t.get("content"); m.kind() == '{' {
 		for typ, mv := range m.members() {
-			mat := at + "/content/" + escapeToken(typ)
-			md := &Media{Type: typ, Source: d.source(mat), Schema: d.schema(mv.get("schema"), mat+"/schema")}
+			mat := at + "/content/" + token(typ)
+			md := &Media{Type: typ, Source: mat, Schema: d.schema(mv.get("schema"), mat, "/schema")}
 			pm, ok := parseMedia(typ)
 			switch {
 			case !ok:
@@ -457,10 +458,10 @@ func (o *operation) parsePath() error {
 		if !ok {
 			return fmt.Errorf("path template %q names %q, which no path parameter declares", o.Path, name)
 		}
-		o.path = append(o.path, pathPart{escapePath(text[i]), -1}, pathPart{param: o.pathParams[j]})
+		o.path = append(o.path, pathPart{escape(text[i], pathSet), -1}, pathPart{param: o.pathParams[j]})
 		named[j] = true
 	}
-	o.path = append(o.path, pathPart{escapePath(text[len(names)]), -1})
+	o.path = append(o.path, pathPart{escape(text[len(names)], pathSet), -1})
 	copied := false
 	for j, i := range o.pathParams {
 		if p := o.params[i].Param; !named[j] && p.Err == nil {
@@ -579,7 +580,7 @@ type serverList struct {
 func (d *document) inherited() (*serverList, []SecurityRequirement) {
 	d.rootOnce.Do(func() {
 		if s := d.root().get("servers"); s.hasMembers() {
-			d.servers = d.parseServers(s, "/servers")
+			d.servers = d.parseServers(s, d.source("/servers"))
 		} else {
 			sv := d.newServer(&Server{ID: "default", URL: "/"}, value{})
 			d.servers = &serverList{[]*server{sv}, []*Server{sv.Server}}
@@ -589,10 +590,11 @@ func (d *document) inherited() (*serverList, []SecurityRequirement) {
 	return d.servers, d.security
 }
 
-func (d *document) parseServers(list value, ptr string) *serverList {
+// parseServers compiles the Server Objects of list, whose Source is src.
+func (d *document) parseServers(list value, src string) *serverList {
 	sl := &serverList{}
 	for _, v := range list.members() {
-		at := d.source(ptr + "/" + strconv.Itoa(len(sl.servers)))
+		at := src + "/" + strconv.Itoa(len(sl.servers))
 		s := &Server{ID: at, URL: v.str("url"), Description: v.str("description"), Source: at}
 		sl.servers, sl.desc = append(sl.servers, d.newServer(s, v.get("variables"))), append(sl.desc, s)
 	}

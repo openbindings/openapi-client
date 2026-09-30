@@ -421,7 +421,7 @@ func isUndefined(v value) bool {
 func (d data) write(b *strings.Builder, name string, form, explode, escaped bool) {
 	put := func(s string) {
 		if escaped {
-			escapeTo(b, s)
+			escapeTo(b, s, unreservedSet)
 		} else {
 			b.WriteString(s)
 		}
@@ -613,7 +613,7 @@ func (d *document) resolveServerURL(s string) (endpoint, error) {
 	if u.Host == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || strings.Contains(s, "#") {
 		return endpoint{}, errors.New("it has no host, or has userinfo, a query or a fragment")
 	}
-	return endpoint{u.Scheme, u.Host, escapePath(u.EscapedPath())}, nil
+	return endpoint{u.Scheme, u.Host, escape(u.EscapedPath(), pathSet)}, nil
 }
 
 // httpBase reports whether relative server URLs resolve against the
