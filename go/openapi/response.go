@@ -87,6 +87,7 @@ type upload struct {
 	mu       sync.Mutex
 	gen      int           // the generation that counts
 	memory   *bytes.Reader // its reader, for an in-memory body
+	carried  bool          // net/http's connection code carries it, and reports its end
 	ended    bool          // it has ended
 	result   error         // how it ended
 	returned bool          // the round trip has returned
@@ -113,7 +114,7 @@ func (u *upload) newGeneration(memory *bytes.Reader) int {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	u.gen++
-	u.ended, u.result, u.memory = false, nil, memory
+	u.ended, u.result, u.memory, u.carried = false, nil, memory, false
 	return u.gen
 }
 
@@ -148,23 +149,20 @@ func (u *upload) waitUpload(ctx context.Context) error {
 	}
 }
 
-// attach sets req's body from p. net/http's own transport gets an
-// in-memory body it writes with its header, its end taken from a trace and
-// its remaining length; any other body reports its own reading.
+// attach sets req's body from p. For net/http's own transport, an
+// in-memory body is written with the header, and its end taken from a trace
+// when net/http's connection code carries it, else from what remains when
+// the round trip returns; any other body reports its own reading.
 func (x *exchange) attach(req *http.Request, p payload) {
 	x.payload = p
 	switch {
 	case p.size == 0:
 		x.ended = true
-	case x.cfg.native && (p.data != nil || p.inMemory && p.size <= 4096):
-		if p.data == nil {
-			x.payload.data = make([]byte, p.size)
-			p.ra.ReadAt(x.payload.data, p.off)
-		}
+	case (p.data != nil || p.inMemory && p.size <= 4096) && native(x.cfg.client) && x.hold():
 		x.mem.Reset(x.payload.data)
 		x.memory = &x.mem
 		req.Body, req.GetBody = io.NopCloser(&x.mem), x.replayMemory
-		x.Context = httptrace.WithClientTrace(x.Context, &httptrace.ClientTrace{WroteRequest: x.wroteRequest})
+		x.Context = httptrace.WithClientTrace(x.Context, &httptrace.ClientTrace{GotConn: x.gotConn, WroteRequest: x.wroteRequest})
 	default:
 		x.first = sentBody{x: x, p: p}
 		req.Body = &x.first
@@ -172,6 +170,39 @@ func (x *exchange) attach(req *http.Request, p payload) {
 			req.GetBody = x.replay
 		}
 	}
+}
+
+// native reports whether c sends through net/http's own transport, as far
+// as the type of the transport in effect tells.
+func native(c *http.Client) bool {
+	t := c.Transport
+	if t == nil {
+		t = http.DefaultTransport
+	}
+	_, ok := t.(*http.Transport)
+	return ok
+}
+
+// hold makes the payload's content data, copying a small in-memory reader,
+// and reports whether the reader still holds all of it.
+func (x *exchange) hold() bool {
+	p := &x.payload
+	if p.data == nil {
+		data := make([]byte, p.size)
+		if n, _ := p.ra.ReadAt(data, p.off); n < len(data) {
+			return false
+		}
+		p.data = data
+	}
+	return true
+}
+
+// gotConn notes that net/http's connection code carries the current
+// generation.
+func (x *exchange) gotConn(httptrace.GotConnInfo) {
+	x.mu.Lock()
+	x.carried = true
+	x.mu.Unlock()
 }
 
 // replayMemory returns an in-memory body afresh.
@@ -249,6 +280,12 @@ func (x *exchange) send(req *http.Request) (*Response, error) {
 	resp, err := x.cfg.client.Do(req)
 	x.mu.Lock()
 	x.returned = true
+	if x.memory != nil && !x.carried && !x.ended { // no trace will report its end
+		x.ended = true
+		if x.memory.Len() > 0 {
+			x.result = withContext(x, errClosedEarly)
+		}
+	}
 	x.publish()
 	x.mu.Unlock()
 	if err != nil {
@@ -608,14 +645,19 @@ func (b *sentBody) Read(buf []byte) (n int, err error) {
 	case b.pos >= b.p.size:
 		err = io.EOF
 	case b.p.ra != nil:
-		buf = buf[:min(int64(len(buf)), b.p.size-b.pos)]
-		if n, err = b.p.ra.ReadAt(buf, b.p.off+b.pos); err == io.EOF && n == len(buf) {
-			err = nil
-		}
+		n, err = b.p.ra.ReadAt(buf[:min(int64(len(buf)), b.p.size-b.pos)], b.p.off+b.pos)
 	default:
 		n = copy(buf, b.p.data[b.pos:])
 	}
 	b.pos += int64(n)
+	if b.rc == nil && b.p.once == nil { // a payload of known length: read at its length, short before it
+		switch {
+		case err == nil && b.pos >= b.p.size:
+			err = io.EOF
+		case err == io.EOF && b.pos < b.p.size:
+			err = io.ErrUnexpectedEOF
+		}
+	}
 	if err != nil && b.x != nil {
 		if err == io.EOF {
 			b.x.end(b.gen, nil)

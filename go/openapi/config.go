@@ -18,7 +18,6 @@ import (
 type config struct {
 	Options
 	client       *http.Client     // HTTPClient, following no redirects
-	native       bool             // client's transport is net/http's own
 	base         *endpoint        // BaseURL, parsed
 	mediaType    parsedMedia      // MediaType, parsed
 	mediaTypeErr error            // why MediaType cannot be used, refusing calls that send a body
@@ -65,9 +64,6 @@ func newConfig(o Options, parent *config) *config {
 		client.CheckRedirect = followNone
 		cfg.client = &client
 	}
-	_, isTransport := cfg.client.Transport.(*http.Transport)
-	cfg.native = isTransport || cfg.client.Transport == nil
-
 	switch {
 	case o.Redirects == FollowAll:
 		refuse("Options.Redirects", notYet("following redirects"))
