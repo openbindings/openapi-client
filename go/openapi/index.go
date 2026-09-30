@@ -56,7 +56,7 @@ type entry struct {
 	m      int      // the method, an index into methods; -1 for a Paths entry that cannot be read
 	node   value    // the Operation Object
 	levels *level   // the Path Item chain
-	sum    *summary // what its levels define
+	sum    *summary // what its levels define, shared with every chain that defines the same
 	err    error    // why the entry cannot be read, or its method is defined twice
 	once   sync.Once
 	op     *operation
@@ -73,7 +73,8 @@ type level struct {
 
 // A summary says which level of a Path Item chain defines each field the
 // client reads, each method's and then parameters and servers: the nearest
-// that does, a bit in dup saying a farther one does too.
+// that does, a bit in dup saying a farther one does too. Nil summarizes a
+// chain that defines none.
 type summary struct {
 	at  [serversField + 1]*level
 	dup uint16
@@ -85,8 +86,10 @@ const (
 	serversField
 )
 
-// add returns the summary of the chain from l, whose rest s summarizes.
-func (s summary) add(l *level) summary {
+// add returns the summary of the chain from l, whose rest s summarizes: s
+// itself when l defines none of the fields.
+func (s *summary) add(l *level) *summary {
+	sum := s
 	for name, v := range l.v.members() {
 		f, present := -1, v.kind() == '{'
 		for m := range methods {
@@ -100,14 +103,21 @@ func (s summary) add(l *level) summary {
 		case "servers":
 			f, present = serversField, v.hasMembers()
 		}
-		if f >= 0 && present {
-			if s.at[f] != nil {
-				s.dup |= 1 << f
-			}
-			s.at[f] = l
+		if f < 0 || !present {
+			continue
 		}
+		if sum == s {
+			sum = new(summary)
+			if s != nil {
+				*sum = *s
+			}
+		}
+		if sum.at[f] != nil {
+			sum.dup |= 1 << f
+		}
+		sum.at[f] = l
 	}
-	return s
+	return sum
 }
 
 // compile completes the entry's descriptor and plan once.
@@ -369,14 +379,9 @@ func (d *document) index(ctx context.Context) error {
 			d.broken[path] = e
 			continue
 		}
-		var shared *summary // by the chain's operations
 		for m := range methods {
-			if sum.at[m] != nil {
-				if shared == nil {
-					shared = new(summary)
-					*shared = sum
-				}
-				d.addOperation(path, m, levels, shared)
+			if sum != nil && sum.at[m] != nil {
+				d.addOperation(path, m, levels, sum)
 			}
 		}
 	}
@@ -443,7 +448,7 @@ func (d *document) lookup(key string) (*entry, error) {
 // not done while the chain through it is being followed.
 type link struct {
 	l    *level
-	sum  summary
+	sum  *summary
 	err  error
 	done bool
 }
@@ -451,10 +456,10 @@ type link struct {
 // chain follows the Path Item $refs from v, at ptr, returning its level,
 // followed by each target's, and its summary. The chain from each target is
 // followed once, and kept in *targets.
-func (d *document) chain(v value, ptr string, targets *map[int32]link) (*level, summary, error) {
+func (d *document) chain(v value, ptr string, targets *map[int32]link) (*level, *summary, error) {
 	head := &level{v: v, ptr: ptr}
 	var walked []*level // the targets reached, not yet kept
-	var rest summary    // the chain after the last level walked
+	var rest *summary   // the chain after the last level walked
 	var err error
 	for l := head; ; {
 		ref := l.v.get("$ref")
@@ -486,7 +491,7 @@ func (d *document) chain(v value, ptr string, targets *map[int32]link) (*level, 
 		(*targets)[walked[i].v.i] = link{walked[i], rest, err, true}
 	}
 	if err != nil {
-		return nil, summary{}, err
+		return nil, nil, err
 	}
 	return head, rest.add(head), nil
 }
@@ -506,8 +511,9 @@ type resolution struct {
 // one: in OpenAPI 3.1 a Reference Object's description replaces its
 // target's. Each Reference Object is followed once per document.
 func (d *document) follow(v value, ptr string) (value, string, string, error) {
-	if !v.ok() {
-		return v, ptr, "", nil
+	ref, desc, described := reference(v)
+	if !ref.ok() {
+		return v, ptr, desc, nil
 	}
 	d.refsMu.Lock()
 	defer d.refsMu.Unlock()
@@ -518,39 +524,30 @@ func (d *document) follow(v value, ptr string) (value, string, string, error) {
 	}
 	var walked []step // the Reference Objects followed, not yet kept
 	var r resolution
-	for last := ""; ; {
+	for at, last := "", ""; ; {
 		if k, ok := d.refs[v.i]; ok {
 			if r = k; !k.done {
 				r = resolution{err: fmt.Errorf("%w %q: a reference cycle", ErrUnresolved, last)}
 			}
 			break
 		}
-		var ref value
-		s := step{i: v.i}
-		for name, m := range v.members() {
-			switch {
-			case name == "$ref":
-				ref = m
-			case name == "description" && m.kind() == '"':
-				s.desc, s.described = m.text(), true
-			}
-		}
-		if ref.kind() != '"' {
-			r = resolution{v: v, ptr: ptr, desc: s.desc}
+		if !ref.ok() {
+			r = resolution{v: v, ptr: at, desc: desc}
 			break
 		}
 		if d.refs == nil {
 			d.refs = map[int32]resolution{}
 		}
 		d.refs[v.i] = resolution{}
-		walked = append(walked, s)
+		walked = append(walked, step{v.i, desc, described})
 		last = ref.text()
-		next, at, err := d.target(last)
+		next, nextAt, err := d.target(last)
 		if err != nil {
 			r = resolution{err: err}
 			break
 		}
-		v, ptr = next, at
+		v, at = next, nextAt
+		ref, desc, described = reference(v)
 	}
 	r.done = true
 	for k := len(walked) - 1; k >= 0; k-- {
@@ -560,6 +557,20 @@ func (d *document) follow(v value, ptr string) (value, string, string, error) {
 		d.refs[walked[k].i] = r
 	}
 	return r.v, r.ptr, r.desc, r.err
+}
+
+// reference returns v's $ref, if it is a string, and its description, if
+// it gives one.
+func reference(v value) (ref value, desc string, described bool) {
+	for name, m := range v.members() {
+		switch {
+		case name == "$ref" && m.kind() == '"':
+			ref = m
+		case name == "description" && m.kind() == '"':
+			desc, described = m.text(), true
+		}
+	}
+	return ref, desc, described
 }
 
 // target returns the node a local reference names, and its pointer.
