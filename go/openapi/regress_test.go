@@ -362,8 +362,10 @@ func TestF5NilBytePointerOut(t *testing.T) {
 // Values) does not allow is a document defect on Param.Err, not a missing
 // feature (errors.ErrUnsupported), and fails a call only when the call uses
 // the parameter (describe.go, Operation.Err: "A defect in an optional part
-// is reported on that part instead"). Valid pairs stage 1 does not serialize
-// stay not implemented.
+// is reported on that part instead"). Since stage 2 every valid pair is
+// serialized, so its Param.Err is nil; explode false, since explode true
+// with spaceDelimited or pipeDelimited is an undefined combination (doc.go,
+// Fixed rules, Styles; TestStyleRefusals).
 func TestF9StyleLocationPairs(t *testing.T) {
 	w := newWire(t, nil)
 	invalid := []struct{ path, in, style string }{
@@ -409,11 +411,11 @@ func TestF9StyleLocationPairs(t *testing.T) {
 		{"/c", "cookie", "form"},
 	}
 	for _, tt := range valid {
-		doc := doc31(fmt.Sprintf(`"%s":{"get":{"operationId":"op","parameters":[{"name":"v","in":"%s","required":%t,"style":"%s","explode":true,"schema":{}}]}}`,
+		doc := doc31(fmt.Sprintf(`"%s":{"get":{"operationId":"op","parameters":[{"name":"v","in":"%s","required":%t,"style":"%s","explode":false,"schema":{}}]}}`,
 			tt.path, tt.in, tt.in == "path", tt.style))
 		c := parseFor(t, w, doc, nil)
-		if p := param(t, mustOp(t, c, "op"), 0); p.Err != nil && !errors.Is(p.Err, errors.ErrUnsupported) {
-			t.Errorf("%s %s: Param.Err = %v, a defect for a valid pair", tt.in, tt.style, p.Err)
+		if p := param(t, mustOp(t, c, "op"), 0); p.Err != nil {
+			t.Errorf("%s %s: Param.Err = %v for a valid pair", tt.in, tt.style, p.Err)
 		}
 	}
 }
@@ -990,7 +992,9 @@ func TestF36PathParameterNotInTemplate(t *testing.T) {
 // "X-Id" is overridden by an operation-level "x-id"; OAS 3.1.2 section 4.3:
 // names that map to HTTP concepts follow HTTP's case rules): Operation.Params
 // lists one header parameter, the operation's, and the call writes the field
-// once. A required parameter that was given is not also reported missing.
+// once. A required parameter that was given is not also reported missing:
+// since stage 2 the given required content parameter is sent, its JSON
+// written as given (doc.go, Values and Fixed rules, Percent-encoding).
 func TestF37HeaderRefusalCauses(t *testing.T) {
 	w := newWire(t, nil)
 	doc := doc31(`"/a":{"parameters":[{"name":"X-Id","in":"header","schema":{}}],"get":{"operationId":"op","parameters":[{"name":"x-id","in":"header","description":"operation level","schema":{}}]}},
@@ -1019,14 +1023,9 @@ func TestF37HeaderRefusalCauses(t *testing.T) {
 	re := refusedSince(t, w, before, resp, err)
 	wantKeys(t, "Inputs", re.Inputs, true, "X-Id")
 
-	before = w.count()
-	resp, err = c.Call(t.Context(), "content", &openapi.Input{Params: map[string]any{"X-V": "a"}}, nil)
-	re = refusedSince(t, w, before, resp, err)
-	if !errors.Is(re, errors.ErrUnsupported) {
-		t.Errorf("error %v, want the not-implemented refusal", re)
-	}
-	if e := re.Inputs["X-V"]; e != nil && !errors.Is(e, errors.ErrUnsupported) {
-		t.Errorf("Inputs[\"X-V\"] = %v: a given parameter reported for another cause", e)
+	mustCall(t, c, "content", &openapi.Input{Params: map[string]any{"X-V": "a"}}, nil)
+	if v := w.last(t).Header.Values("X-V"); len(v) != 1 || v[0] != `"a"` {
+		t.Errorf("X-V sent as %q, want [%q]", v, `"a"`)
 	}
 }
 
