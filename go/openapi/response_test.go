@@ -64,7 +64,7 @@ func TestCallDecodesJSON(t *testing.T) {
 		t.Errorf("pet = %+v", pet)
 	}
 	op := mustOp(t, c, "getPet")
-	if resp.StatusCode != 200 || resp.Declaration != op.Responses[0] || resp.Media != op.Responses[0].Media[0] {
+	if resp.StatusCode != 200 || resp.Declaration != response(t, op, 0) || resp.Media != responseMedia(t, op, 0, 0) {
 		t.Errorf("StatusCode %d, Declaration %p, Media %p", resp.StatusCode, resp.Declaration, resp.Media)
 	}
 	if resp.Security != "" {
@@ -127,7 +127,7 @@ func TestDecodeRawTargets(t *testing.T) {
 	big := c.With(func(o *openapi.Options) { o.MaxBodyBytes = 0 })
 	mustCall(t, big, "getPet", nil, &buf)
 	if string(buf) != body || cap(buf) != 100 || &buf[0] != first {
-		t.Errorf("*[]byte = %q (cap %d, same array %t)", buf, cap(buf), &buf[0] == first)
+		t.Errorf("*[]byte = %q (cap %d), want the body in the same array", buf, cap(buf))
 	}
 
 	// An io.Writer is not bounded by MaxBodyBytes.
@@ -461,7 +461,7 @@ func TestStatusError(t *testing.T) {
 	if se.StatusCode != 404 || string(se.Content) != body || se.Err != nil {
 		t.Errorf("StatusError = %d %q Err %v", se.StatusCode, se.Content, se.Err)
 	}
-	if se.Declaration != op.Responses[1] || se.Media != op.Responses[1].Media[0] {
+	if se.Declaration != response(t, op, 1) || se.Media != responseMedia(t, op, 1, 0) {
 		t.Errorf("Declaration %p, Media %p; want the 404 Message and its Media", se.Declaration, se.Media)
 	}
 	for range 2 {
@@ -493,7 +493,7 @@ func TestStatusError(t *testing.T) {
 	// An undeclared status is governed by "default", or by nothing.
 	w.setAnswer(typedAnswer(500, "text/plain", "boom"))
 	_, err = c.Call(t.Context(), "getPet", nil, nil)
-	if !errors.As(err, &se) || se.Declaration != op.Responses[2] {
+	if !errors.As(err, &se) || se.Declaration != response(t, op, 2) {
 		t.Errorf("500: %v, want a *StatusError governed by default", err)
 	}
 	_, err = c.Call(t.Context(), "undeclared", nil, nil)
@@ -694,7 +694,7 @@ func TestResponseDeclaration(t *testing.T) {
 		op := mustOp(t, c, tt.key)
 		var want *openapi.Message
 		if tt.want >= 0 {
-			want = op.Responses[tt.want]
+			want = response(t, op, tt.want)
 		}
 		if resp.StatusCode != tt.status || resp.Declaration != want {
 			t.Errorf("%s %d: Declaration %+v, want %+v", tt.key, tt.status, resp.Declaration, want)
@@ -753,13 +753,13 @@ func TestResponseMediaMatching(t *testing.T) {
 			})
 			c := parseFor(t, w, doc, nil)
 			resp := sendAndClose(t, mustPrepare(t, c, "m", nil))
-			decl := mustOp(t, c, "m").Responses[0]
+			decl := response(t, mustOp(t, c, "m"), 0)
 			if resp.Declaration != decl {
 				t.Fatalf("Declaration = %p, want the 200 Message", resp.Declaration)
 			}
 			var want *openapi.Media
 			if tt.want >= 0 {
-				want = decl.Media[tt.want]
+				want = responseMedia(t, mustOp(t, c, "m"), 0, tt.want)
 			}
 			if resp.Media != want {
 				got := "nil"
@@ -788,7 +788,7 @@ func TestSendAndDecode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Send of a 404: %v", err)
 	}
-	if resp.StatusCode != 404 || resp.Declaration != mustOp(t, c, "getPet").Responses[1] {
+	if resp.StatusCode != 404 || resp.Declaration != response(t, mustOp(t, c, "getPet"), 1) {
 		t.Errorf("status %d, Declaration %+v", resp.StatusCode, resp.Declaration)
 	}
 	var p Problem

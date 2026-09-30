@@ -560,13 +560,15 @@ func TestDocument(t *testing.T) {
 	}
 
 	// Each call returns a copy.
-	d := c.Document("")
-	d[0] = 'X'
-	if c.Document("")[0] != '{' {
-		t.Errorf("changing a returned document changed the Client's")
+	if d := c.Document(""); len(d) > 0 {
+		d[0] = 'X'
+		if d := c.Document(""); len(d) == 0 || d[0] != '{' {
+			t.Errorf("changing a returned document changed the Client's")
+		}
 	}
-	n := c.Document(uri + "#/openapi")
-	n[1] = 'X'
+	if n := c.Document(uri + "#/openapi"); len(n) > 1 {
+		n[1] = 'X'
+	}
 	if string(c.Document(uri+"#/openapi")) != `"3.1.0"` {
 		t.Errorf("changing a returned node changed the Client's")
 	}
@@ -603,9 +605,12 @@ func TestDocumentPointerEscapes(t *testing.T) {
 func TestDocumentURIsNewSlice(t *testing.T) {
 	c := parseAt(t, string(readPets(t)), "", testDocURI, nil)
 	u := c.DocumentURIs()
+	if len(u) == 0 {
+		t.Fatal("DocumentURIs() is empty")
+	}
 	u[0] = "changed"
-	if got := c.DocumentURIs(); got[0] != testDocURI {
-		t.Errorf("DocumentURIs()[0] = %q after changing an earlier slice", got[0])
+	if got := c.DocumentURIs(); len(got) == 0 || got[0] != testDocURI {
+		t.Errorf("DocumentURIs() = %q after changing an earlier slice", got)
 	}
 }
 

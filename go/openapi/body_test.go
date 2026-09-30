@@ -238,7 +238,7 @@ func TestMediaTypeSelection(t *testing.T) {
 				if req.Media != nil {
 					t.Errorf("Request.Media = %+v, want nil", req.Media)
 				}
-			} else if req.Media != op.Body.Media[tt.media] {
+			} else if req.Media != reqMedia(t, op, tt.media) {
 				t.Errorf("Request.Media = %+v, want Operation.Body.Media[%d]", req.Media, tt.media)
 			}
 			sendAndClose(t, req)

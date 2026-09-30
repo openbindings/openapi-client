@@ -390,3 +390,49 @@ func (c *countingTransport) snapshot() []*openapi.Operation {
 	defer c.mu.Unlock()
 	return slices.Clone(c.ops)
 }
+
+// response returns op's i-th declared response, failing when there is none.
+func response(t testing.TB, op *openapi.Operation, i int) *openapi.Message {
+	t.Helper()
+	if i >= len(op.Responses) {
+		t.Fatalf("%s has %d responses, want at least %d", op.Key, len(op.Responses), i+1)
+	}
+	return op.Responses[i]
+}
+
+// responseMedia returns the j-th Media of op's i-th declared response.
+func responseMedia(t testing.TB, op *openapi.Operation, i, j int) *openapi.Media {
+	t.Helper()
+	r := response(t, op, i)
+	if j >= len(r.Media) {
+		t.Fatalf("%s response %q has %d media, want at least %d", op.Key, r.Key, len(r.Media), j+1)
+	}
+	return r.Media[j]
+}
+
+// reqMedia returns the i-th Media of op's request body.
+func reqMedia(t testing.TB, op *openapi.Operation, i int) *openapi.Media {
+	t.Helper()
+	if op.Body == nil || i >= len(op.Body.Media) {
+		t.Fatalf("%s has no request body Media %d", op.Key, i)
+	}
+	return op.Body.Media[i]
+}
+
+// server returns op's i-th server.
+func server(t testing.TB, op *openapi.Operation, i int) *openapi.Server {
+	t.Helper()
+	if i >= len(op.Servers) {
+		t.Fatalf("%s has %d servers, want at least %d", op.Key, len(op.Servers), i+1)
+	}
+	return op.Servers[i]
+}
+
+// param returns op's i-th parameter.
+func param(t testing.TB, op *openapi.Operation, i int) *openapi.Param {
+	t.Helper()
+	if i >= len(op.Params) {
+		t.Fatalf("%s has %d parameters, want at least %d", op.Key, len(op.Params), i+1)
+	}
+	return op.Params[i]
+}

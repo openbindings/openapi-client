@@ -50,6 +50,9 @@ func TestOperationsOrder(t *testing.T) {
 func TestOperationsNewSlice(t *testing.T) {
 	c := parseAt(t, bare31(`"/a":{"get":{}},"/b":{"get":{}}`), "", testDocURI, nil)
 	ops := c.Operations()
+	if len(ops) != 2 {
+		t.Fatalf("Operations keys = %q", opKeys(ops))
+	}
 	ops[0], ops[1] = ops[1], nil
 	if got := opKeys(c.Operations()); !slices.Equal(got, []string{"GET /a", "GET /b"}) {
 		t.Errorf("Operations keys = %q after changing an earlier slice", got)
@@ -541,8 +544,8 @@ func TestServersDescriptor(t *testing.T) {
 			t.Errorf("server %d ID %q is empty or repeated", i, s.ID)
 		}
 		ids[s.ID] = true
-		if b.Servers[i].ID != s.ID {
-			t.Errorf("server %d has ID %q in a and %q in b", i, s.ID, b.Servers[i].ID)
+		if bs := server(t, b, i); bs.ID != s.ID {
+			t.Errorf("server %d has ID %q in a and %q in b", i, s.ID, bs.ID)
 		}
 	}
 
@@ -724,9 +727,15 @@ func TestSchemaHandles(t *testing.T) {
 func TestSchemaRawIsACopy(t *testing.T) {
 	doc := bare31(`"/s":{"get":{"operationId":"s","parameters":[{"name":"q","in":"query","schema":{"type":"string"}}]}}`)
 	op := mustOp(t, parseAt(t, doc, "", testDocURI, nil), "s")
-	raw := op.Params[0].Schema.Raw()
-	raw[0] = 'X'
-	if got := compact(t, op.Params[0].Schema.Raw()); got != `{"type":"string"}` {
+	p := param(t, op, 0)
+	if p.Schema == nil {
+		t.Fatal("Schema = nil")
+	}
+	raw := p.Schema.Raw()
+	if len(raw) > 0 {
+		raw[0] = 'X'
+	}
+	if got := compact(t, p.Schema.Raw()); got != `{"type":"string"}` {
 		t.Errorf("Raw = %s after changing an earlier copy", got)
 	}
 }

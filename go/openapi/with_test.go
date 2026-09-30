@@ -58,7 +58,9 @@ func TestWithCopies(t *testing.T) {
 		captured = o.Header
 	})
 	// Changing the maps f saw, after With returns, changes nothing.
-	captured.Set("X-Late", "late")
+	if captured != nil {
+		captured.Set("X-Late", "late")
+	}
 
 	mustCall(t, c, "listPets", nil, nil)
 	base := w.last(t)

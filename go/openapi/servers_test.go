@@ -88,7 +88,7 @@ func TestServerSelection(t *testing.T) {
 		{"Server", func(o *openapi.Options) { o.Server = w.URL + "/b" }, "/b/pets"},
 		// client.go, Options.ServerID: "an exact Server.ID from
 		// Operation.Servers".
-		{"ServerID", func(o *openapi.Options) { o.ServerID = mustOp(t, c, "listPets").Servers[0].ID }, "/a/pets"},
+		{"ServerID", func(o *openapi.Options) { o.ServerID = server(t, mustOp(t, c, "listPets"), 0).ID }, "/a/pets"},
 		// client.go, Options.BaseURL: "replaces every server of every
 		// operation ... joined to the operation's path".
 		{"BaseURL", func(o *openapi.Options) { o.BaseURL = w.URL + "/base/" }, "/base/pets"},
@@ -167,7 +167,7 @@ func TestServerOverrideLevels(t *testing.T) {
 	}
 	wantKeys(t, "Settings", re.Settings, false, "Options.Server")
 
-	id := mustOp(t, c, "root").Servers[0].ID
+	id := server(t, mustOp(t, c, "root"), 0).ID
 	resp, err = c.With(func(o *openapi.Options) { o.ServerID = id }).Call(t.Context(), "op", nil, nil)
 	re = asRequestError(t, err)
 	if resp != nil || w.count() != before {

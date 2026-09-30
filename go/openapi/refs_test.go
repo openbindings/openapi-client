@@ -367,10 +367,14 @@ func TestSchemasNotInterpreted(t *testing.T) {
 		"requestBody":{"content":{"application/json":{"schema":{"$ref":"#/components/schemas/Missing"}}}}}}`)
 	c := parseFor(t, w, doc, nil)
 	op := mustOp(t, c, "s")
-	if op.Err != nil || op.Params[0].Err != nil || op.Body.Media[0].Err != nil {
-		t.Errorf("a broken schema reference set Err: op %v, param %v, media %v", op.Err, op.Params[0].Err, op.Body.Media[0].Err)
+	p, m := param(t, op, 0), reqMedia(t, op, 0)
+	if op.Err != nil || p.Err != nil || m.Err != nil {
+		t.Errorf("a broken schema reference set Err: op %v, param %v, media %v", op.Err, p.Err, m.Err)
 	}
-	if got := compact(t, op.Params[0].Schema.Raw()); got != `{"$ref":"#/components/schemas/Nope"}` {
+	if p.Schema == nil {
+		t.Fatal("Schema = nil")
+	}
+	if got := compact(t, p.Schema.Raw()); got != `{"$ref":"#/components/schemas/Nope"}` {
 		t.Errorf("Raw = %s", got)
 	}
 	mustCall(t, c, "s", &openapi.Input{Params: map[string]any{"q": "v"}, Body: map[string]any{"any": []int{1}}}, nil)
