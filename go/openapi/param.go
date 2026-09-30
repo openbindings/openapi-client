@@ -257,8 +257,9 @@ func (e *emitter) primitive(s string) (bool, error) {
 	return true, nil
 }
 
-// next writes what precedes an item or member, whose first text is empty
-// if empty: the value's start before the first, else a separator.
+// next writes what precedes an item or member: the value's start before
+// the first, else a separator. A named value not exploded defers the "="
+// after its name while its first item, empty says, is "".
 func (e *emitter) next(empty bool) error {
 	switch {
 	case e.n == 0:
@@ -477,13 +478,13 @@ func (o *operation) runWriters(req *http.Request, writers map[string]func(*http.
 		}
 	}
 	u := req.URL
-	encodes := pathOf(u.RawPath) == u.Path // RawPath is an encoding of Path
 	for _, i := range o.pathParams {
 		p := &o.params[i]
 		if writers[p.Key] == nil {
 			continue
 		}
-		if token := "{" + p.Name + "}"; strings.Contains(u.RawPath, token) || !encodes && strings.Contains(u.Path, token) {
+		// Path may hold the token as part of a value, if RawPath encodes it.
+		if token := "{" + p.Name + "}"; strings.Contains(u.RawPath, token) || strings.Contains(u.Path, token) && pathOf(u.RawPath) != u.Path {
 			re.input(p.Key, errors.New("the writer left the parameter's {name} token in URL.Path or URL.RawPath"))
 		}
 	}

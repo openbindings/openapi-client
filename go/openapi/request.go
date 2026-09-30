@@ -213,7 +213,7 @@ func (c *Client) newRequest(ctx context.Context, o *operation, in *Input, re *Re
 			default:
 				re.input(p.Key, errors.New("a header field cannot carry the value"))
 			}
-		default: // a path parameter the template does not name: refused
+		default: // a path parameter with Err (see writePath): refused
 			cfg.writeParam(&b, "", p, v, re)
 		}
 		switch {
