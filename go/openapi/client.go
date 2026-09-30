@@ -65,8 +65,10 @@ type Options struct {
 	// Values are substituted as given, within the part of the URL their
 	// variable occupies. Each variable is placed by where its default falls
 	// in the URL with every default substituted. A variable whose default
-	// spans "://" supplies a whole URL and is not restricted. Otherwise a
-	// value may change only its own part: in the scheme, the resulting
+	// spans "://", or that is the whole URL template, supplies a whole URL
+	// and is not restricted. An empty default at the boundary between two
+	// parts may take a value belonging to either. Otherwise a value may
+	// change only its own part: in the scheme, the resulting
 	// scheme must be one (RFC 3986 section 3.1); in the authority, a value
 	// may not hold "/", "?", "#", "@" or "\\", though it may change the
 	// host (a document restricts that with an enum); in the path, a value
