@@ -1,14 +1,10 @@
 package openapi
 
 import (
-	"bytes"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
-	"slices"
 	"strconv"
 	"strings"
+	"unicode/utf16"
 	"unicode/utf8"
 )
 
@@ -19,11 +15,11 @@ const maxDepth = 1000
 // A node is one JSON value of a document, with its byte span in the source,
 // so that Document and Schema.Raw return values exactly as written.
 type node struct {
-	kind       byte     // '{', '[', '"', '0' (a number), 't', 'f' or 'n'
-	start, end int      // the value's bytes in the source
-	text       string   // a string's value, or a number as written
-	keys       []string // an object's member names, in order
-	kids       []node   // an object's member values, or an array's items
+	kind       byte   // '{', '[', '"', '0' (a number), 't', 'f' or 'n'
+	start, end int    // the value's bytes in the source
+	key        string // the member name of an object's member
+	text       string // a string's value, or a number as written
+	kids       []node // an object's members or an array's items, in order
 }
 
 // get returns the member of an object named key, or nil.
@@ -31,8 +27,10 @@ func (n *node) get(key string) *node {
 	if n == nil || n.kind != '{' {
 		return nil
 	}
-	if i := slices.Index(n.keys, key); i >= 0 {
-		return &n.kids[i]
+	for i := range n.kids {
+		if n.kids[i].key == key {
+			return &n.kids[i]
+		}
 	}
 	return nil
 }
@@ -51,14 +49,13 @@ func (n *node) flag(key string) bool {
 	return m != nil && m.kind == 't'
 }
 
-// strs returns the strings of the array member named key, or nil.
-func (n *node) strs(key string) []string {
-	m := n.get(key)
-	if m == nil || m.kind != '[' {
+// strs returns the strings of array n, or nil.
+func (n *node) strs() []string {
+	if n == nil || n.kind != '[' {
 		return nil
 	}
-	s := make([]string, 0, len(m.kids))
-	for _, k := range m.kids {
+	s := make([]string, 0, len(n.kids))
+	for _, k := range n.kids {
 		if k.kind == '"' {
 			s = append(s, k.text)
 		}
@@ -66,121 +63,263 @@ func (n *node) strs(key string) []string {
 	return s
 }
 
-// parseTree reads src, a JSON text, as a document retrieved from uri.
-func parseTree(src []byte, uri string) (node, error) {
-	p := treeParser{src: src, uri: uri, dec: json.NewDecoder(bytes.NewReader(src))}
-	if !utf8.Valid(src) {
+// parseTree reads src, a JSON text (RFC 8259), as a document retrieved from
+// uri. Strings without escapes share src's memory.
+func parseTree(src, uri string) (node, error) {
+	p := scanner{src: src, uri: uri}
+	if !utf8.ValidString(src) {
 		i := 0
-		for i < len(src) {
-			r, size := utf8.DecodeRune(src[i:])
-			if r == utf8.RuneError && size == 1 {
-				break
+		for {
+			if r, size := utf8.DecodeRuneInString(src[i:]); r != utf8.RuneError || size != 1 {
+				i += size
+				continue
 			}
-			i += size
+			break
 		}
 		return node{}, p.errorAt(i, "invalid UTF-8")
 	}
-	p.dec.UseNumber()
+	p.space()
 	root, err := p.value(1)
 	if err != nil {
 		return node{}, err
 	}
-	if i := p.skip(int(p.dec.InputOffset())); i < len(src) {
-		return node{}, p.errorAt(i, "data after the document")
+	if p.space(); p.i < len(src) {
+		return node{}, p.errorAt(p.i, "data after the document")
 	}
 	return root, nil
 }
 
-type treeParser struct {
-	src []byte
-	uri string
-	dec *json.Decoder
+// A scanner reads a JSON text into a tree.
+type scanner struct {
+	src, uri string
+	i        int    // the read position
+	stack    []node // the members of the containers being read
+	arena    []node // storage for the members of containers read
 }
 
-func (p *treeParser) value(depth int) (node, error) {
-	start := p.skip(int(p.dec.InputOffset()))
+func (p *scanner) value(depth int) (node, error) {
 	if depth > maxDepth {
-		return node{}, p.errorAt(start, "nesting deeper than 1,000 levels")
+		return node{}, p.errorAt(p.i, "nesting deeper than 1,000 levels")
 	}
-	tok, err := p.dec.Token()
-	if err != nil {
-		return node{}, p.tokenError(err)
+	n := node{start: p.i}
+	if p.i == len(p.src) {
+		return n, p.errorAt(p.i, "unexpected end of the document")
 	}
-	n := node{start: start}
-	switch t := tok.(type) {
-	case json.Delim:
-		n.kind = byte(t)
-		if err := p.children(&n, depth); err != nil {
-			return node{}, err
-		}
-	case string:
-		n.kind, n.text = '"', t
-	case json.Number:
-		n.kind, n.text = '0', string(t)
-	case bool:
-		n.kind = 'f'
-		if t {
-			n.kind = 't'
-		}
+	var err error
+	switch c := p.src[p.i]; {
+	case c == '{' || c == '[':
+		return p.container(depth)
+	case c == '"':
+		n.kind = '"'
+		n.text, err = p.string()
+	case c == '-' || '0' <= c && c <= '9':
+		n.kind = '0'
+		err = p.number()
+		n.text = p.src[n.start:p.i]
+	case strings.HasPrefix(p.src[p.i:], "true"), strings.HasPrefix(p.src[p.i:], "null"):
+		n.kind = c
+		p.i += 4
+	case strings.HasPrefix(p.src[p.i:], "false"):
+		n.kind = c
+		p.i += 5
 	default:
-		n.kind = 'n'
+		return n, p.errorAt(p.i, fmt.Sprintf("invalid character %q", c))
 	}
-	n.end = int(p.dec.InputOffset())
-	return n, nil
+	n.end = p.i
+	return n, err
 }
 
-func (p *treeParser) children(n *node, depth int) error {
-	for p.dec.More() {
+func (p *scanner) container(depth int) (node, error) {
+	n := node{kind: p.src[p.i], start: p.i}
+	end := n.kind + 2 // '}' or ']'
+	p.i++
+	base := len(p.stack)
+	var names map[string]bool // for an object too large to search
+	for first := true; ; first = false {
+		p.space()
+		if first && p.i < len(p.src) && p.src[p.i] == end {
+			break
+		}
+		var key string
 		if n.kind == '{' {
-			at := p.skip(int(p.dec.InputOffset()))
-			tok, err := p.dec.Token()
-			if err != nil {
-				return p.tokenError(err)
+			at := p.i
+			if p.i == len(p.src) || p.src[p.i] != '"' {
+				return n, p.errorAt(p.i, "expected a member name")
 			}
-			key := tok.(string)
-			if slices.Contains(n.keys, key) {
-				return p.errorAt(at, "duplicate key "+strconv.Quote(key))
+			var err error
+			if key, err = p.string(); err != nil {
+				return n, err
 			}
-			n.keys = append(n.keys, key)
+			members := p.stack[base:]
+			if names == nil && len(members) > 16 {
+				names = make(map[string]bool, 2*len(members))
+				for _, m := range members {
+					names[m.key] = true
+				}
+			}
+			if names[key] || names == nil && p.has(members, key) {
+				return n, p.errorAt(at, "duplicate key "+strconv.Quote(key))
+			}
+			if names != nil {
+				names[key] = true
+			}
+			if p.space(); p.i == len(p.src) || p.src[p.i] != ':' {
+				return n, p.errorAt(p.i, "expected a colon")
+			}
+			p.i++
+			p.space()
 		}
 		kid, err := p.value(depth + 1)
 		if err != nil {
-			return err
+			return n, err
 		}
-		n.kids = append(n.kids, kid)
+		kid.key = key
+		p.stack = append(p.stack, kid)
+		if p.space(); p.i < len(p.src) && p.src[p.i] == end {
+			break
+		}
+		if p.i == len(p.src) || p.src[p.i] != ',' {
+			return n, p.errorAt(p.i, fmt.Sprintf("expected a comma or %q", end))
+		}
+		p.i++
 	}
-	if _, err := p.dec.Token(); err != nil {
-		return p.tokenError(err)
+	p.i++
+	n.end = p.i
+	if k := len(p.stack) - base; k > 0 {
+		if cap(p.arena)-len(p.arena) < k {
+			p.arena = make([]node, 0, max(k, 2*cap(p.arena), 64))
+		}
+		n.kids = append(p.arena[len(p.arena):len(p.arena):len(p.arena)+k], p.stack[base:]...)
+		p.arena = p.arena[:len(p.arena)+k]
+		p.stack = p.stack[:base]
 	}
-	return nil
+	return n, nil
 }
 
-// skip returns the offset of the first byte at or after i that is not
-// whitespace or a separator.
-func (p *treeParser) skip(i int) int {
-	for i < len(p.src) && strings.IndexByte(" \t\r\n:,", p.src[i]) >= 0 {
+func (p *scanner) has(members []node, key string) bool {
+	for i := range members {
+		if members[i].key == key {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *scanner) space() {
+	for p.i < len(p.src) && (p.src[p.i] == ' ' || p.src[p.i] == '\t' || p.src[p.i] == '\n' || p.src[p.i] == '\r') {
+		p.i++
+	}
+}
+
+// string reads the string at p.i and returns its value.
+func (p *scanner) string() (string, error) {
+	start := p.i + 1
+	for i := start; i < len(p.src); i++ {
+		switch c := p.src[i]; {
+		case c == '"':
+			p.i = i + 1
+			return p.src[start:i], nil
+		case c == '\\':
+			return p.unescape(start)
+		case c < ' ':
+			return "", p.errorAt(i, "control character in a string")
+		}
+	}
+	return "", p.errorAt(len(p.src), "unexpected end of the document")
+}
+
+// unescape reads the string beginning at start, which holds an escape, as
+// encoding/json does: an unpaired surrogate is U+FFFD.
+func (p *scanner) unescape(start int) (string, error) {
+	var b strings.Builder
+	for i := start; i < len(p.src); {
+		c := p.src[i]
+		switch {
+		case c == '"':
+			p.i = i + 1
+			return b.String(), nil
+		case c < ' ':
+			return "", p.errorAt(i, "control character in a string")
+		case c != '\\':
+			b.WriteByte(c)
+			i++
+			continue
+		}
+		if i+1 == len(p.src) {
+			break
+		}
+		if e := strings.IndexByte(`"\/bfnrt`, p.src[i+1]); e >= 0 {
+			b.WriteByte("\"\\/\b\f\n\r\t"[e])
+			i += 2
+			continue
+		}
+		r, ok := hex4(p.src[i:])
+		if !ok {
+			return "", p.errorAt(i, "invalid escape in a string")
+		}
+		i += 6
+		if utf16.IsSurrogate(r) {
+			if r2, ok := hex4(p.src[i:]); ok && utf16.DecodeRune(r, r2) != utf8.RuneError {
+				r, i = utf16.DecodeRune(r, r2), i+6
+			} else {
+				r = utf8.RuneError
+			}
+		}
+		b.WriteRune(r)
+	}
+	return "", p.errorAt(len(p.src), "unexpected end of the document")
+}
+
+// hex4 reads the \uXXXX escape at the start of s.
+func hex4(s string) (rune, bool) {
+	if len(s) < 6 || s[0] != '\\' || s[1] != 'u' {
+		return 0, false
+	}
+	r, err := strconv.ParseUint(s[2:6], 16, 16)
+	return rune(r), err == nil
+}
+
+// number reads the number at p.i.
+func (p *scanner) number() error {
+	s, i := p.src, p.i
+	digits := func() bool {
+		j := i
+		for i < len(s) && '0' <= s[i] && s[i] <= '9' {
+			i++
+		}
+		return i > j
+	}
+	if s[i] == '-' {
 		i++
 	}
-	return i
-}
-
-func (p *treeParser) tokenError(err error) error {
-	var se *json.SyntaxError
 	switch {
-	case errors.As(err, &se):
-		return p.errorAt(int(se.Offset), se.Error())
-	case err == io.EOF || err == io.ErrUnexpectedEOF:
-		return p.errorAt(len(p.src), "unexpected end of the document")
+	case i < len(s) && s[i] == '0':
+		i++
+	case !digits():
+		return p.errorAt(i, "invalid number")
 	}
-	return p.errorAt(int(p.dec.InputOffset()), err.Error())
+	if i < len(s) && s[i] == '.' {
+		if i++; !digits() {
+			return p.errorAt(i, "invalid number")
+		}
+	}
+	if i < len(s) && (s[i] == 'e' || s[i] == 'E') {
+		if i++; i < len(s) && (s[i] == '+' || s[i] == '-') {
+			i++
+		}
+		if !digits() {
+			return p.errorAt(i, "invalid number")
+		}
+	}
+	p.i = i
+	return nil
 }
 
 // errorAt reports a rejection at byte offset i, by line and column, both
 // counted from 1, the column in bytes.
-func (p *treeParser) errorAt(i int, msg string) error {
-	i = min(i, len(p.src))
-	line := 1 + bytes.Count(p.src[:i], []byte{'\n'})
-	col := i - bytes.LastIndexByte(p.src[:i], '\n')
+func (p *scanner) errorAt(i int, msg string) error {
+	line := 1 + strings.Count(p.src[:i], "\n")
+	col := i - strings.LastIndexByte(p.src[:i], '\n')
 	return fmt.Errorf("openapi: %s:%d:%d: %s", p.uri, line, col, msg)
 }
 

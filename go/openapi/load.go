@@ -1,7 +1,6 @@
 package openapi
 
 import (
-	"bytes"
 	"context"
 	"io"
 	"maps"
@@ -197,7 +196,7 @@ func (l *Loader) Parse(ctx context.Context, content []byte, uri string, opts *Op
 	if opts != nil {
 		o = *opts
 	}
-	return newClient(content, uri, o)
+	return newClient(string(content), uri, o)
 }
 
 // Version reports the version the entry document declares: its swagger
@@ -263,11 +262,11 @@ func (c *Client) Document(uri string) []byte {
 			return nil
 		}
 	}
-	return bytes.Clone(d.src[n.start:n.end])
+	return []byte(d.src[n.start:n.end])
 }
 
 // newClient returns a Client for content, retrieved from uri, with o.
-func newClient(content []byte, uri string, o Options) (*Client, error) {
+func newClient(content, uri string, o Options) (*Client, error) {
 	d, err := newDocument(content, uri)
 	if err != nil {
 		return nil, err

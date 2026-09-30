@@ -1,7 +1,6 @@
 package openapi
 
 import (
-	"bytes"
 	"encoding/json"
 	"strings"
 )
@@ -548,7 +547,7 @@ func (s *Schema) References() ([]SchemaReference, error) {
 // For a Swagger 2.0 parameter, it holds the parameter's schema fields (see
 // Param.Schema).
 func (s *Schema) Raw() json.RawMessage {
-	return bytes.Clone(s.doc.src[s.n.start:s.n.end])
+	return json.RawMessage(s.doc.src[s.n.start:s.n.end])
 }
 
 // Source is where the schema is written: the absolute URI of its document,

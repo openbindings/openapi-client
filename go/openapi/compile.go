@@ -75,7 +75,7 @@ func (o *operation) build() {
 		errs = append(errs, o.conflict)
 	}
 	op.Summary, op.Description = n.str("summary"), n.str("description")
-	op.Tags, op.Deprecated = n.strs("tags"), n.flag("deprecated")
+	op.Tags, op.Deprecated = n.get("tags").strs(), n.flag("deprecated")
 
 	params, paramsAt, err := o.itemField("parameters")
 	if err != nil {
@@ -95,7 +95,8 @@ func (o *operation) build() {
 		o.body = parseMedias(op.Body.Media)
 	}
 	if rs := n.get("responses"); rs != nil && rs.kind == '{' {
-		for i, key := range rs.keys {
+		for i := range rs.kids {
+			key := rs.kids[i].key
 			m, _ := d.message(&rs.kids[i], ptr+"/responses/"+escapeToken(key))
 			m.Key = key
 			o.addResponse(m)
@@ -227,9 +228,9 @@ func (d *document) param(n *node, ptr string) *Param {
 		Source:          d.source(t.ptr),
 		Schema:          d.schema(t.n.get("schema"), t.ptr+"/schema"),
 	}
-	if c := t.n.get("content"); c != nil && c.kind == '{' && len(c.keys) > 0 {
-		p.ContentType = c.keys[0]
-		p.Schema = d.schema(c.kids[0].get("schema"), t.ptr+"/content/"+escapeToken(c.keys[0])+"/schema")
+	if c := t.n.get("content"); c != nil && c.kind == '{' && len(c.kids) > 0 {
+		p.ContentType = c.kids[0].key
+		p.Schema = d.schema(c.kids[0].get("schema"), t.ptr+"/content/"+escapeToken(p.ContentType)+"/schema")
 	} else {
 		p.Style = t.n.str("style")
 		switch {
@@ -273,7 +274,8 @@ func (d *document) message(n *node, ptr string) (*Message, *node) {
 	t := levels[len(levels)-1]
 	m := &Message{Description: description(levels), Source: d.source(t.ptr)}
 	if c := t.n.get("content"); c != nil && c.kind == '{' {
-		for i, typ := range c.keys {
+		for i := range c.kids {
+			typ := c.kids[i].key
 			at := t.ptr + "/content/" + escapeToken(typ)
 			md := &Media{Type: typ, Source: d.source(at), Schema: d.schema(c.kids[i].get("schema"), at+"/schema")}
 			if mt, ok := parseMedia(typ); !ok {
@@ -364,8 +366,8 @@ func securityRequirement(n *node) SecurityRequirement {
 		scopes []string
 	}
 	var entries []entry
-	for i, name := range n.keys {
-		scopes := n.kids[i].strsOf()
+	for _, k := range n.kids {
+		name, scopes := k.key, k.strs()
 		r.Schemes = append(r.Schemes, SecurityScheme{Name: name, Scopes: scopes})
 		sorted := slices.Compact(slices.Sorted(slices.Values(scopes)))
 		entries = append(entries, entry{name, sorted})
@@ -390,17 +392,6 @@ func securityRequirement(n *node) SecurityRequirement {
 	b.WriteByte('}')
 	r.Key = b.String()
 	return r
-}
-
-// strsOf returns the strings of array n.
-func (n *node) strsOf() []string {
-	var s []string
-	for _, k := range n.kids {
-		if n.kind == '[' && k.kind == '"' {
-			s = append(s, k.text)
-		}
-	}
-	return s
 }
 
 // canonicalString writes s as a JSON string escaped as RFC 8785 escapes
@@ -491,7 +482,7 @@ func (d *document) newServer(s *Server, vars *node) *server {
 			v.Declared, v.Description = true, n.str("description")
 			v.Default, v.DefaultSet = n.str("default"), n.get("default") != nil
 			if e := n.get("enum"); e != nil && e.kind == '[' {
-				v.Enum = append([]string{}, e.strsOf()...)
+				v.Enum = e.strs()
 			}
 		}
 		s.Variables = append(s.Variables, v)

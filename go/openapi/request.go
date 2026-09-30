@@ -133,6 +133,7 @@ func (c *Client) newRequest(ctx context.Context, o *operation, in *Input, re *Re
 
 	// The path, then the query.
 	var b strings.Builder
+	b.Grow(len(ep.path) + len(o.Path) + 16*len(o.params))
 	used := 0
 	for i, part := range o.path {
 		if part.param < 0 {
@@ -152,7 +153,7 @@ func (c *Client) newRequest(ctx context.Context, o *operation, in *Input, re *Re
 			used++
 		}
 		if d, ok := p.data(v, given, re); ok {
-			d.writeSimple(&b, p.Explode, escapeTo)
+			d.writeSimple(&b, p.Explode, true)
 		}
 	}
 	query := b.Len()
@@ -185,7 +186,7 @@ func (c *Client) newRequest(ctx context.Context, o *operation, in *Input, re *Re
 			re.setting(setter, fmt.Errorf("sets %s, which the parameter %s supplies", p.field, p.Key))
 		default:
 			var sb strings.Builder
-			d.writeSimple(&sb, p.Explode, writeAsIs)
+			d.writeSimple(&sb, p.Explode, false)
 			if s := sb.String(); validFieldValue(s) {
 				h[p.field] = []string{s}
 			} else {
@@ -325,7 +326,7 @@ func jsonData(v any) (data, error) {
 	if err != nil {
 		return data{}, err
 	}
-	n, err := parseTree(b, "")
+	n, err := parseTree(string(b), "")
 	if err != nil {
 		return data{}, err
 	}
@@ -348,13 +349,13 @@ func jsonData(v any) (data, error) {
 		}
 	case '{':
 		d.kind = object
-		for i, k := range n.kids {
+		for _, k := range n.kids {
 			switch {
 			case isUndefined(&k):
 			case k.kind == '[' || k.kind == '{':
 				return data{}, errors.New("the style cannot serialize nested values")
 			default:
-				d.items = append(d.items, n.keys[i], text(k))
+				d.items = append(d.items, k.key, text(k))
 			}
 		}
 	}
@@ -392,11 +393,18 @@ func isUndefined(n *node) bool {
 	return false
 }
 
-// writeSimple writes d in RFC 6570 simple style, each name and value
-// written by write.
-func (d data) writeSimple(b *strings.Builder, explode bool, write func(*strings.Builder, string)) {
+// writeSimple writes d in RFC 6570 simple style, its names and values
+// percent-encoded when escaped.
+func (d data) writeSimple(b *strings.Builder, explode, escaped bool) {
+	write := func(s string) {
+		if escaped {
+			escapeTo(b, s)
+		} else {
+			b.WriteString(s)
+		}
+	}
 	if d.kind == primitive {
-		write(b, d.text)
+		write(d.text)
 		return
 	}
 	for i, s := range d.items {
@@ -407,11 +415,9 @@ func (d data) writeSimple(b *strings.Builder, explode bool, write func(*strings.
 		default:
 			b.WriteByte(',')
 		}
-		write(b, s)
+		write(s)
 	}
 }
-
-func writeAsIs(b *strings.Builder, s string) { b.WriteString(s) }
 
 // writeForm writes d in RFC 6570 form style as query pairs, name already
 // percent-encoded.
@@ -438,7 +444,7 @@ func (d data) writeForm(b *strings.Builder, name string, explode bool) {
 	default:
 		b.WriteString(name)
 		b.WriteByte('=')
-		d.writeSimple(b, false, escapeTo)
+		d.writeSimple(b, false, true)
 	}
 }
 

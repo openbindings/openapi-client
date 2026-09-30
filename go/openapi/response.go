@@ -51,6 +51,7 @@ type exchange struct {
 	payload  payload                       // the body, for a request Call built
 	getBody  func() (io.ReadCloser, error) // or the source of a prepared request's body
 	first    sentBody                      // the body as the transport first reads it
+	resp     Response                      // the response, once it arrives
 
 	mu       sync.Mutex
 	gen      int  // which reading of the body counts, one more for each replay
@@ -158,7 +159,8 @@ func (x *exchange) send(req *http.Request) (*Response, error) {
 	if err != nil {
 		return nil, withContext(x, err)
 	}
-	r := &Response{Response: resp, Security: x.security}
+	r := &x.resp
+	r.Response, r.Security = resp, x.security
 	if d := x.op.declaration(resp.StatusCode); d != nil {
 		r.Declaration = d.Message
 		if ct, ok := contentType(resp.Header["Content-Type"]); ok {

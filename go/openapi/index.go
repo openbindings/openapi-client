@@ -1,7 +1,6 @@
 package openapi
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha1"
 	"errors"
@@ -22,7 +21,7 @@ import (
 type document struct {
 	uri     string   // the URI the document was retrieved from
 	base    *url.URL // uri, parsed
-	src     []byte   // the content, without a byte order mark
+	src     string   // the content, without a byte order mark
 	root    node
 	version string
 	dialect string // jsonSchemaDialect
@@ -42,7 +41,7 @@ var methods = [...]string{"get", "put", "post", "delete", "options", "head", "pa
 
 // fetch retrieves the document at uri, returning its content and the URI it
 // was finally retrieved from.
-func (l *Loader) fetch(ctx context.Context, uri string, hc *http.Client) ([]byte, string, error) {
+func (l *Loader) fetch(ctx context.Context, uri string, hc *http.Client) (string, string, error) {
 	var (
 		r     io.ReadCloser
 		final = uri
@@ -66,39 +65,59 @@ func (l *Loader) fetch(ctx context.Context, uri string, hc *http.Client) ([]byte
 				r, final, size = resp.Body, resp.Request.URL.String(), resp.ContentLength
 				if resp.StatusCode/100 != 2 {
 					r.Close()
-					return nil, "", fmt.Errorf("openapi: load %s: %s", uri, resp.Status)
+					return "", "", fmt.Errorf("openapi: load %s: %s", uri, resp.Status)
 				}
 			}
 		}
 	case u.Scheme == "file":
-		r, err = os.Open(filepath.FromSlash(u.Path))
+		r, size, err = open(filepath.FromSlash(u.Path))
 	case len(u.Scheme) <= 1: // a path, perhaps with a drive letter
 		var abs string
 		if abs, err = filepath.Abs(uri); err == nil {
 			final = (&url.URL{Scheme: "file", Path: filepath.ToSlash(abs)}).String()
-			r, err = os.Open(abs)
+			r, size, err = open(abs)
 		}
 	default:
 		err = fmt.Errorf("unsupported URI scheme %q", u.Scheme)
 	}
+	if err == nil {
+		defer r.Close()
+		var b strings.Builder
+		bound := limit(l.MaxBytes, 64<<20)
+		if bound < 0 {
+			bound = 1<<63 - 2
+		}
+		if size > 0 && size <= bound {
+			b.Grow(int(size))
+		}
+		var n int64
+		if n, err = io.Copy(&b, io.LimitReader(r, bound+1)); n > bound {
+			err = &http.MaxBytesError{Limit: bound}
+		}
+		if err == nil {
+			return b.String(), final, nil
+		}
+	}
+	return "", "", fmt.Errorf("openapi: load %s: %w", uri, err)
+}
+
+// open opens the file at path, returning its size.
+func open(path string) (*os.File, int64, error) {
+	f, err := os.Open(path)
 	if err != nil {
-		return nil, "", fmt.Errorf("openapi: load %s: %w", uri, err)
+		return nil, 0, err
 	}
-	defer r.Close()
-	limit := l.MaxBytes
-	if limit == 0 {
-		limit = 64 << 20
-	}
-	content, err := readAll(nil, r, size, limit)
+	fi, err := f.Stat()
 	if err != nil {
-		return nil, "", fmt.Errorf("openapi: load %s: %w", uri, err)
+		f.Close()
+		return nil, 0, err
 	}
-	return content, final, nil
+	return f, fi.Size(), nil
 }
 
 // newDocument parses content, retrieved from uri, and indexes its
 // operations.
-func newDocument(content []byte, uri string) (*document, error) {
+func newDocument(content, uri string) (*document, error) {
 	if uri == "" {
 		uri = contentURN(content)
 	}
@@ -106,8 +125,8 @@ func newDocument(content []byte, uri string) (*document, error) {
 	if err != nil || !base.IsAbs() {
 		return nil, fmt.Errorf("openapi: document URI %q is not absolute", uri)
 	}
-	src := bytes.Clone(bytes.TrimPrefix(content, []byte("\xEF\xBB\xBF")))
-	if i := bytes.IndexFunc(src, func(r rune) bool { return !strings.ContainsRune(" \t\r\n", r) }); i >= 0 && src[i] != '{' {
+	src := strings.TrimPrefix(content, "\xEF\xBB\xBF")
+	if s := strings.TrimLeft(src, " \t\r\n"); s != "" && s[0] != '{' {
 		return nil, fmt.Errorf("openapi: %s: YAML documents are not implemented yet: %w", uri, errors.ErrUnsupported)
 	}
 	root, err := parseTree(src, uri)
@@ -143,10 +162,10 @@ func isPatchOf(version, minor string) bool {
 
 // contentURN names content by a version 5 UUID (RFC 9562) derived from it,
 // under the nil namespace.
-func contentURN(content []byte) string {
+func contentURN(content string) string {
 	h := sha1.New()
 	h.Write(make([]byte, 16))
-	h.Write(content)
+	io.WriteString(h, content)
 	u := h.Sum(nil)[:16]
 	u[6] = u[6]&0x0f | 0x50
 	u[8] = u[8]&0x3f | 0x80
@@ -169,7 +188,8 @@ func (d *document) index() {
 	if paths == nil {
 		return
 	}
-	for i, path := range paths.keys {
+	for i := range paths.kids {
+		path := paths.kids[i].key
 		ptr := "/paths/" + escapeToken(path)
 		levels, err := d.chain(&paths.kids[i], ptr)
 		if err != nil {
