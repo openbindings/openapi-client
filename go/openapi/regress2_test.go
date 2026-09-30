@@ -534,3 +534,66 @@ func TestG18ServerVariableDotSegments(t *testing.T) {
 		})
 	}
 }
+
+// T1-22 (ledger: "a value followed by a literal "://" must be a URI scheme
+// (RFC 3986 3.1); only a variable that starts the URL and is not followed
+// by "://" is an unrestricted whole URL"; client.go, Options.Variables): in
+// "{scheme}://{host}/v1", the scheme must match ALPHA *( ALPHA / DIGIT /
+// "+" / "-" / "." ), and anything else is refused at
+// Options.Variables["scheme"] with nothing sent, so a scheme value cannot
+// carry a host. "{endpoint}/v1" stays an unrestricted whole URL.
+func TestT1_22SchemeVariableIsAScheme(t *testing.T) {
+	w := newWire(t, nil)
+	doc := `{"openapi":"3.1.0","info":{"title":"t","version":"1"},
+		"servers":[{"url":"{scheme}://{host}/v1","variables":{"scheme":{"default":"https"},"host":{"default":"` + w.hostport() + `"}}}],
+		"paths":{"/x":{"get":{"operationId":"op"}}}}`
+	t.Run("http", func(t *testing.T) {
+		c := parseAt(t, doc, "", testDocURI, &openapi.Options{Variables: map[string]string{"scheme": "http"}})
+		before := w.count()
+		mustCall(t, c, "op", nil, nil)
+		if got := w.last(t).RequestURI; w.count() != before+1 || got != "/v1/x" {
+			t.Errorf("request target %q, want /v1/x", got)
+		}
+	})
+	t.Run("https", func(t *testing.T) {
+		// Accepted; the test server speaks plain http, so only the refusal
+		// matters here: preparing the call is not refused.
+		c := parseAt(t, doc, "", testDocURI, &openapi.Options{Variables: map[string]string{"scheme": "https"}})
+		req := mustPrepare(t, c, "op", nil)
+		if req.HTTP.URL.Scheme != "https" || req.HTTP.URL.Host != w.hostport() {
+			t.Errorf("prepared URL %s, want https://%s/v1/x", req.HTTP.URL, w.hostport())
+		}
+	})
+	for _, v := range []string{"http://evil.example#", "1http", "ht tp", ""} {
+		t.Run(fmt.Sprintf("refused %q", v), func(t *testing.T) {
+			before := w.count()
+			c, err := openapi.Parse(t.Context(), []byte(doc), testDocURI, &openapi.Options{Variables: map[string]string{"scheme": v}})
+			if err != nil {
+				wantKeys(t, "Settings", asRequestError(t, err).Settings, false, `Options.Variables["scheme"]`)
+				return
+			}
+			resp, err := c.Call(t.Context(), "op", nil, nil)
+			re := refusedSince(t, w, before, resp, err)
+			wantKeys(t, "Settings", re.Settings, false, `Options.Variables["scheme"]`)
+		})
+	}
+
+	t.Run("whole URL", func(t *testing.T) {
+		endpoint := `{"openapi":"3.1.0","info":{"title":"t","version":"1"},
+			"servers":[{"url":"{endpoint}/v1","variables":{"endpoint":{"default":"https://api.example/x"}}}],
+			"paths":{"/x":{"get":{"operationId":"op"}}}}`
+		// The default, a URL with a path, is used as given.
+		c := parseAt(t, endpoint, "", testDocURI, nil)
+		req := mustPrepare(t, c, "op", nil)
+		if got := req.HTTP.URL.String(); got != "https://api.example/x/v1/x" {
+			t.Errorf("prepared URL %q, want https://api.example/x/v1/x", got)
+		}
+		// The test server's URL, given in Options.Variables, is sent.
+		c = parseAt(t, endpoint, "", testDocURI, &openapi.Options{Variables: map[string]string{"endpoint": w.URL + "/x"}})
+		before := w.count()
+		mustCall(t, c, "op", nil, nil)
+		if got := w.last(t).RequestURI; w.count() != before+1 || got != "/x/v1/x" {
+			t.Errorf("request target %q, want /x/v1/x", got)
+		}
+	})
+}

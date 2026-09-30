@@ -394,8 +394,11 @@ func countValues(t *testing.T, b []byte) int {
 // structural bytes inside strings): an array of zeros with one value per
 // two bytes; one string of commas, and one of braces, which hold a handful
 // of values; and an array of empty objects. Each document is about 1 MiB.
-// (The 3x and 6x budgets stay on the synthetic document,
-// TestF7TreeMemoryBudget.)
+// The budget has a fixed allowance of 64 KiB (ledger, "TestF7 string cases
+// ruled wrong": Go's allocator rounds a large allocation up to whole 8 KiB
+// pages, so the copy of a document of few values alone exceeds bytes plus
+// 16 per value), as TestG1RejectedDocumentAllocation has. (The 3x and 6x
+// budgets stay on the synthetic document, TestF7TreeMemoryBudget.)
 func TestF7WorstCaseRetainedBudget(t *testing.T) {
 	const size = 1 << 20
 	const head = `{"openapi":"3.1.0","info":{"title":"t","version":"1"},"paths":{},"components":{"x":`
@@ -429,10 +432,10 @@ func TestF7WorstCaseRetainedBudget(t *testing.T) {
 			runtime.ReadMemStats(&after)
 			runtime.KeepAlive(c)
 			retained := int64(after.HeapAlloc) - int64(before.HeapAlloc)
-			budget := int64(len(doc)) + 16*int64(values)
+			budget := int64(len(doc)) + 16*int64(values) + 64<<10
 			t.Logf("document %d bytes, %d values: retained %d bytes, budget %d", len(doc), values, retained, budget)
 			if retained > budget {
-				t.Errorf("retained %d bytes, over the budget of %d (document bytes plus 16 per value)", retained, budget)
+				t.Errorf("retained %d bytes, over the budget of %d (document bytes plus 16 per value, plus 64 KiB)", retained, budget)
 			}
 		})
 	}
