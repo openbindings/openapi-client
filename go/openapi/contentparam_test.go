@@ -1,11 +1,13 @@
 package openapi_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/openbindings/openapi-client/go/openapi"
@@ -44,6 +46,10 @@ const contentDoc = `
 	"/x":{"get":{"operationId":"custom","parameters":[{"name":"p","in":"query","content":{"application/x-custom":{}}}]}},
 	"/xh":{"get":{"operationId":"customHeader","parameters":[{"name":"X-C","in":"header","content":{"application/x-custom":{}}}]}}`
 
+// htmlEsc is the JSON escape \u followed by hex, spelled with the backslash
+// byte so the literal survives any tool that decodes escapes.
+func htmlEsc(hex string) string { return "\x5c" + "u" + hex }
+
 // uri percent-encodes JSON text as a content-serialized query, path or
 // cookie value is.
 func uri(s string) string { return pctName(s) }
@@ -72,7 +78,9 @@ func TestContentParamJSON(t *testing.T) {
 		{"null member kept", map[string]any{"a": nil}, `{"a":null}`},
 		// Nesting is no refusal here: the value is one JSON document.
 		{"nested", map[string]any{"a": []any{1, map[string]any{"b": []int{}}}}, `{"a":[1,{"b":[]}]}`},
-		{"HTML escaping", "<&>", `"<&>"`},
+		// json.Marshal escapes <, & and > as \u003c, \u0026 and \u003e; the
+		// expected text is built from its pieces so no escape is decoded.
+		{"HTML escaping", "<&>", `"` + htmlEsc("003c") + htmlEsc("0026") + htmlEsc("003e") + `"`},
 		{"reserved characters", map[string]string{"k": "a/b?c#d"}, `{"k":"a/b?c#d"}`},
 	}
 	for _, tt := range tests {
@@ -361,5 +369,44 @@ func TestContentParamMalformedCodecKey(t *testing.T) {
 	mustCall(t, e, "q", nil, nil)
 	if got := w.last(t).RequestURI; got != "/q" {
 		t.Errorf("request target %q, want /q", got)
+	}
+}
+
+// readerHolder is a struct with an io.Reader field.
+type readerHolder struct {
+	Name string    `json:"name"`
+	R    io.Reader `json:"r"`
+}
+
+// doc.go, Values (2f4418d): "a reader or Part inside its JSON value is
+// refused at its key", as a reader or Part inside a JSON body is (client.go,
+// Input.Body: "A Part or io.Reader inside a JSON value is refused"): at
+// Inputs[Param.Key], with nothing sent, in a query, header or +json content
+// parameter, whether the reader is the value, a map member or a struct
+// field, and for a Part.
+func TestContentParamRefusesReaders(t *testing.T) {
+	w := newWire(t, nil)
+	c := parseFor(t, w, doc31(contentDoc), nil)
+	values := []struct {
+		name string
+		v    func() any
+	}{
+		{"reader", func() any { return strings.NewReader("x") }},
+		{"reader in a map", func() any { return map[string]any{"a": 1, "r": strings.NewReader("x")} }},
+		{"reader in a struct field", func() any { return readerHolder{Name: "n", R: strings.NewReader("x")} }},
+		{"reader in an array", func() any { return []any{"a", bytes.NewReader([]byte("x"))} }},
+		{"Part", func() any { return openapi.Part{Content: "x"} }},
+		{"Part pointer in a map", func() any { return map[string]any{"p": &openapi.Part{Content: []byte("x")}} }},
+	}
+	for _, tt := range values {
+		for _, target := range []struct{ key, param string }{{"q", "p"}, {"h", "X-P"}, {"vnd", "p"}, {"cookie", "p"}} {
+			t.Run(tt.name+"/"+target.key, func(t *testing.T) {
+				_, re := callOne(t, w, c, target.key, target.param, tt.v())
+				if re == nil {
+					t.Fatalf("sent, want a refusal at Inputs[%q]", target.param)
+				}
+				wantKeys(t, "Inputs", re.Inputs, true, target.param)
+			})
+		}
 	}
 }
