@@ -225,10 +225,8 @@ func (c *Client) newRequest(ctx context.Context, o *operation, in *Input, re *Re
 	if query < len(s) {
 		u.RawQuery = s[query+1:]
 	}
-	if strings.IndexByte(u.Path, '%') >= 0 {
-		u.RawPath = u.Path
-		u.Path, _ = url.PathUnescape(u.Path)
-	}
+	u.RawPath = u.Path // as written: net/http would otherwise escape sub-delimiters
+	u.Path, _ = url.PathUnescape(u.RawPath)
 	req.ContentLength = p.size
 	return req, p, media, security
 }
@@ -525,8 +523,13 @@ func (c *Client) resolve(s *server, setting string, re *RequestError) (endpoint,
 			re.setting("Options.Variables["+strconv.Quote(name)+"]", err)
 		}
 	}
-	u := s.substitute(func(uv urlVar) string {
-		v := s.Variables[uv.index]
+	type span struct {
+		name, value string
+		at          int
+	}
+	var values []span // the values given, and where each begins
+	u := s.substitute(func(j, at int) string {
+		v := s.Variables[j]
 		value, given := cfg.Variables[v.Name]
 		switch {
 		case !given && v.DefaultSet:
@@ -535,11 +538,22 @@ func (c *Client) resolve(s *server, setting string, re *RequestError) (endpoint,
 			refuse(v.Name, errors.New("the server variable has no default; give it a value"))
 		case value != v.Default && v.Enum != nil && !slices.Contains(v.Enum, value):
 			refuse(v.Name, fmt.Errorf("the value is not one of the variable's enum %q", v.Enum))
-		case uv.authority && strings.ContainsAny(value, `/?#@\`):
-			refuse(v.Name, errors.New(`a value in the scheme or authority cannot hold "/", "?", "#", "@" or "\"`))
+		case value != "":
+			values = append(values, span{v.Name, value, at})
 		}
 		return value
 	})
+	path, authority := urlParts(u)
+	for _, v := range values {
+		switch {
+		case authority >= 0 && authority <= v.at && v.at < path:
+			if strings.ContainsAny(v.value, `/?#@\`) {
+				refuse(v.name, errors.New(`a value in the authority cannot hold "/", "?", "#", "@" or "\"`))
+			}
+		case v.at >= path && dotSegment(u, max(path, strings.LastIndexByte(u[:v.at], '/')+1), v.at+len(v.value)):
+			refuse(v.name, errDotSegment)
+		}
+	}
 	if !ok {
 		return endpoint{}, false
 	}
@@ -552,6 +566,25 @@ func (c *Client) resolve(s *server, setting string, re *RequestError) (endpoint,
 	}
 	cfg.endpoints.Store(s, ep)
 	return ep, true
+}
+
+// dotSegment reports whether one of the path segments of u from start,
+// where one begins, to end is "." or "..".
+func dotSegment(u string, start, end int) bool {
+	for start < end {
+		n := strings.IndexAny(u[start:], "/?#")
+		if n < 0 {
+			n = len(u) - start
+		}
+		if s := u[start : start+n]; s == "." || s == ".." {
+			return true
+		}
+		if start += n; start == len(u) || u[start] != '/' {
+			return false
+		}
+		start++
+	}
+	return false
 }
 
 // resolveServerURL resolves the server URL s by the URL rule.

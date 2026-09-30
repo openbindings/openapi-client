@@ -563,7 +563,8 @@ func (d *document) checkNames(ctx context.Context, cfg *config, re *RequestError
 			server = server || u == cfg.Server
 			serverID = serverID || d.source(ptr()+"/servers/"+strconv.Itoa(i)) == cfg.ServerID
 			if len(unused) > 0 {
-				for _, name := range templateNames(u) {
+				_, names, _ := splitTemplate(u)
+				for _, name := range names {
 					delete(unused, name)
 				}
 			}

@@ -389,25 +389,20 @@ func (o *operation) parsePath() error {
 			byName[p.Name] = i
 		}
 	}
+	text, names, ok := splitTemplate(o.Path)
+	if !ok {
+		return fmt.Errorf("path template %q has an unclosed {", o.Path)
+	}
 	named := make([]bool, len(o.params))
-	for rest := o.Path; rest != ""; {
-		i := strings.IndexByte(rest, '{')
-		if i < 0 {
-			o.path = append(o.path, pathPart{escapePath(rest), -1})
-			break
-		}
-		name, after, ok := strings.Cut(rest[i+1:], "}")
-		if !ok {
-			return fmt.Errorf("path template %q has an unclosed {", o.Path)
-		}
+	for i, name := range names {
 		j, ok := byName[name]
 		if !ok {
 			return fmt.Errorf("path template %q names %q, which no path parameter declares", o.Path, name)
 		}
-		o.path = append(o.path, pathPart{escapePath(rest[:i]), -1}, pathPart{param: j})
+		o.path = append(o.path, pathPart{escapePath(text[i]), -1}, pathPart{param: j})
 		named[j] = true
-		rest = after
 	}
+	o.path = append(o.path, pathPart{escapePath(text[len(names)]), -1})
 	for i, p := range o.params {
 		if p.In == "path" && !named[i] && p.Err == nil {
 			p.Err = fmt.Errorf("path parameter %q is not named in the path template", p.Name)
@@ -468,15 +463,9 @@ func canonicalString(b *strings.Builder, s string) {
 // literal text and variables alternating.
 type server struct {
 	*Server
-	text  []string // the literal text around the variables
-	vars  []urlVar
+	text  []string  // the literal text around the variables
+	vars  []int     // each variable, an index into Server.Variables
 	fixed *endpoint // the URL with every variable at its default, if usable
-}
-
-// A urlVar is one variable of a server URL.
-type urlVar struct {
-	index     int  // into Server.Variables
-	authority bool // substituted into the scheme or authority
 }
 
 // An endpoint is a usable server URL, its variables substituted.
@@ -507,38 +496,15 @@ func (d *document) parseServers(list value, ptr string) []*server {
 
 // newServer completes s from its URL template and declared variables.
 func (d *document) newServer(s *Server, declared value) *server {
-	sv := &server{Server: s}
+	text, names, _ := splitTemplate(s.URL)
+	sv := &server{Server: s, text: text}
 	var index map[string]int
-	// Where the text so far ends: in the scheme, with or without a "/" seen,
-	// in the authority, or in the path.
-	authority, path, slash := false, false, false
-	advance := func(text string) {
-		if i := strings.Index(text, "://"); !authority && !path && i >= 0 {
-			authority, text = true, text[i+3:]
-		}
-		slash = slash || strings.Contains(text, "/")
-		path = path || authority && slash
-		authority = authority && !path
-	}
-	for rest := s.URL; ; {
-		i := strings.IndexByte(rest, '{')
-		var name, after string
-		found := false
-		if i >= 0 {
-			name, after, found = strings.Cut(rest[i+1:], "}")
-		}
-		if !found {
-			sv.text = append(sv.text, rest)
-			break
-		}
-		sv.text = append(sv.text, rest[:i])
-		advance(rest[:i])
-		rest = after
-		if index == nil {
-			index = map[string]int{}
-		}
+	for _, name := range names {
 		j, seen := index[name]
 		if !seen {
+			if index == nil {
+				index = map[string]int{}
+			}
 			j = len(s.Variables)
 			index[name] = j
 			v := Variable{Name: name}
@@ -551,53 +517,72 @@ func (d *document) newServer(s *Server, declared value) *server {
 			}
 			s.Variables = append(s.Variables, v)
 		}
-		sv.vars = append(sv.vars, urlVar{j, authority || !path && !slash && strings.HasPrefix(rest, ":")})
+		sv.vars = append(sv.vars, j)
 	}
 	// Only a defect no value can repair makes the server unusable for good:
 	// a query or fragment in its text, or userinfo in its authority.
-	literal := sv.substitute(func(urlVar) string { return "x" })
-	_, rest, absolute := strings.Cut(literal, "://")
-	host, _, _ := strings.Cut(rest, "/")
+	literal := sv.substitute(func(int, int) string { return "x" })
+	path, authority := urlParts(literal)
 	if len(sv.vars) == 0 {
 		if _, err := d.resolveServerURL(literal); err != nil {
 			s.Err = fmt.Errorf("server URL %q cannot be used: %w", s.URL, err)
 		}
-	} else if strings.ContainsAny(literal, "?#") || absolute && strings.Contains(host, "@") ||
+	} else if strings.ContainsAny(literal, "?#") || authority >= 0 && strings.Contains(literal[authority:path], "@") ||
 		strings.HasPrefix(sv.text[0], "/") && !d.httpBase() {
 		s.Err = fmt.Errorf("server URL %q cannot be used whatever its variables' values", s.URL)
 	}
 	if s.Err == nil && !slices.ContainsFunc(s.Variables, func(v Variable) bool { return !v.DefaultSet }) {
-		if ep, err := d.resolveServerURL(sv.substitute(func(v urlVar) string { return s.Variables[v.index].Default })); err == nil {
+		if ep, err := d.resolveServerURL(sv.substitute(func(j, _ int) string { return s.Variables[j].Default })); err == nil {
 			sv.fixed = &ep
 		}
 	}
 	return sv
 }
 
-// substitute returns the server URL with each variable replaced by value.
-func (s *server) substitute(value func(urlVar) string) string {
+// substitute returns the server URL with each variable replaced by
+// value(j, at), j being its index into Server.Variables and at where its
+// value begins.
+func (s *server) substitute(value func(j, at int) string) string {
 	var b strings.Builder
 	for i, t := range s.text {
 		b.WriteString(t)
 		if i < len(s.vars) {
-			b.WriteString(value(s.vars[i]))
+			b.WriteString(value(s.vars[i], b.Len()))
 		}
 	}
 	return b.String()
 }
 
-// templateNames returns the names of the variables in a server URL.
-func templateNames(u string) []string {
-	var names []string
+// urlParts returns where the path of the URL reference u begins, and where
+// its authority does (RFC 3986 sections 3.2 and 4.2): after "//", following
+// a scheme or leading, or -1 when it has none.
+func urlParts(u string) (path, authority int) {
+	if i := strings.IndexAny(u, ":/?#"); i > 0 && u[i] == ':' {
+		path = i + 1
+	}
+	if !strings.HasPrefix(u[path:], "//") {
+		return path, -1
+	}
+	authority = path + 2
+	if i := strings.IndexAny(u[authority:], "/?#"); i >= 0 {
+		return authority + i, authority
+	}
+	return len(u), authority
+}
+
+// splitTemplate splits a URL template into its literal text and the names
+// of its {variables}, one more text than names. It reports false when a
+// "{" is not closed, the rest then being text.
+func splitTemplate(s string) (text, names []string, ok bool) {
 	for {
-		i := strings.IndexByte(u, '{')
+		i := strings.IndexByte(s, '{')
 		if i < 0 {
-			return names
+			return append(text, s), names, true
 		}
-		name, after, found := strings.Cut(u[i+1:], "}")
+		name, after, found := strings.Cut(s[i+1:], "}")
 		if !found {
-			return names
+			return append(text, s), names, false
 		}
-		names, u = append(names, name), after
+		text, names, s = append(text, s[:i]), append(names, name), after
 	}
 }
