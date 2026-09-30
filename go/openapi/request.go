@@ -744,9 +744,9 @@ func readerPayload(r io.Reader) payload {
 	case *bytes.Buffer:
 		return payload{data: r.Bytes(), size: int64(r.Len())}
 	case *bytes.Reader:
-		return payload{ra: r, off: r.Size() - int64(r.Len()), size: int64(r.Len()), inMemory: true}
+		return payload{ra: r, off: r.Size() - int64(r.Len()), size: int64(r.Len())}
 	case *strings.Reader:
-		return payload{ra: r, off: r.Size() - int64(r.Len()), size: int64(r.Len()), inMemory: true}
+		return payload{ra: r, off: r.Size() - int64(r.Len()), size: int64(r.Len())}
 	case *os.File:
 		if fi, err := r.Stat(); err == nil && fi.Mode().IsRegular() {
 			if off, err := r.Seek(0, io.SeekCurrent); err == nil {

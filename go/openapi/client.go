@@ -1,7 +1,6 @@
 package openapi
 
 import (
-	"bytes"
 	"context"
 	"io"
 	"net/http"
@@ -537,11 +536,7 @@ func (c *Client) Prepare(key string, in *Input) (*Request, error) {
 	if err := re.refused(); err != nil {
 		return nil, err
 	}
-	switch {
-	case p.data != nil:
-		req.Body = io.NopCloser(bytes.NewReader(p.data))
-		req.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(p.data)), nil }
-	case p.size != 0:
+	if p.size != 0 {
 		req.Body = &sentBody{p: p}
 		if p.once == nil {
 			req.GetBody = func() (io.ReadCloser, error) { return &sentBody{p: p}, nil }

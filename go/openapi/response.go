@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/http/httptrace"
 	"slices"
 	"strings"
 	"sync"
@@ -79,19 +78,16 @@ func exchangeOf(r *http.Response) *exchange {
 // is the final generation's, published once the round trip has returned,
 // when no replay can follow.
 type upload struct {
-	payload payload                       // the body, when the client made it
-	getBody func() (io.ReadCloser, error) // or the source of a body the caller set
-	first   sentBody                      // the first generation, when the body reports its reading
-	mem     bytes.Reader                  // the first generation, when net/http reads it in memory
+	payload payload                       // the body the client made, or the size of one the caller set
+	getBody func() (io.ReadCloser, error) // the source of a body the caller set
+	first   sentBody                      // the first generation
 
 	mu       sync.Mutex
-	gen      int           // the generation that counts
-	memory   *bytes.Reader // its reader, for an in-memory body
-	carried  bool          // net/http's connection code carries it, and reports its end
-	ended    bool          // it has ended
-	result   error         // how it ended
-	returned bool          // the round trip has returned
-	done     bool          // the result is published
+	gen      int   // the generation that counts
+	ended    bool  // it has ended
+	result   error // how it ended
+	returned bool  // the round trip has returned
+	done     bool  // the result is published
 	err      error
 	wait     chan struct{}
 }
@@ -108,13 +104,12 @@ func (u *upload) end(gen int, err error) {
 	}
 }
 
-// newGeneration starts the reading of a replay, with its in-memory reader
-// if it has one.
-func (u *upload) newGeneration(memory *bytes.Reader) int {
+// newGeneration starts the reading of a replay.
+func (u *upload) newGeneration() int {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	u.gen++
-	u.ended, u.result, u.memory, u.carried = false, nil, memory, false
+	u.ended, u.result = false, nil
 	return u.gen
 }
 
@@ -149,82 +144,17 @@ func (u *upload) waitUpload(ctx context.Context) error {
 	}
 }
 
-// attach sets req's body from p. For net/http's own transport, an
-// in-memory body is written with the header, and its end taken from a trace
-// when net/http's connection code carries it, else from what remains when
-// the round trip returns; any other body reports its own reading.
+// attach sets req's body to one that reports its reading of p.
 func (x *exchange) attach(req *http.Request, p payload) {
 	x.payload = p
-	switch {
-	case p.size == 0:
+	if p.size == 0 {
 		x.ended = true
-	case (p.data != nil || p.inMemory && p.size <= 4096) && native(x.cfg.client) && x.hold():
-		x.mem.Reset(x.payload.data)
-		x.memory = &x.mem
-		req.Body, req.GetBody = io.NopCloser(&x.mem), x.replayMemory
-		x.Context = httptrace.WithClientTrace(x.Context, &httptrace.ClientTrace{GotConn: x.gotConn, WroteRequest: x.wroteRequest})
-	default:
-		x.first = sentBody{x: x, p: p}
-		req.Body = &x.first
-		if p.once == nil {
-			req.GetBody = x.replay
-		}
+		return
 	}
-}
-
-// native reports whether c sends through net/http's own transport, as far
-// as the type of the transport in effect tells.
-func native(c *http.Client) bool {
-	t := c.Transport
-	if t == nil {
-		t = http.DefaultTransport
-	}
-	_, ok := t.(*http.Transport)
-	return ok
-}
-
-// hold makes the payload's content data, copying a small in-memory reader,
-// and reports whether the reader still holds all of it.
-func (x *exchange) hold() bool {
-	p := &x.payload
-	if p.data == nil {
-		data := make([]byte, p.size)
-		if n, _ := p.ra.ReadAt(data, p.off); n < len(data) {
-			return false
-		}
-		p.data = data
-	}
-	return true
-}
-
-// gotConn notes that net/http's connection code carries the current
-// generation.
-func (x *exchange) gotConn(httptrace.GotConnInfo) {
-	x.mu.Lock()
-	x.carried = true
-	x.mu.Unlock()
-}
-
-// replayMemory returns an in-memory body afresh.
-func (x *exchange) replayMemory() (io.ReadCloser, error) {
-	r := bytes.NewReader(x.payload.data)
-	x.newGeneration(r)
-	return io.NopCloser(r), nil
-}
-
-// wroteRequest ends the in-memory generation the transport has written or
-// stopped writing, complete when nothing of it remains.
-func (x *exchange) wroteRequest(info httptrace.WroteRequestInfo) {
-	x.mu.Lock()
-	gen, left := x.gen, x.memory.Len()
-	x.mu.Unlock()
-	switch {
-	case left == 0:
-		x.end(gen, nil)
-	case info.Err != nil:
-		x.end(gen, withContext(x, info.Err))
-	default:
-		x.end(gen, withContext(x, errClosedEarly))
+	x.first = sentBody{x: x, p: p}
+	req.Body = &x.first
+	if p.once == nil {
+		req.GetBody = x.replay
 	}
 }
 
@@ -236,9 +166,9 @@ func (x *exchange) replay() (io.ReadCloser, error) {
 		if err != nil {
 			return nil, err
 		}
-		b = &sentBody{x: x, rc: rc}
+		b.rc = rc
 	}
-	b.gen = x.newGeneration(nil)
+	b.gen = x.newGeneration()
 	return b, nil
 }
 
@@ -264,9 +194,12 @@ func (r *Request) newExchange(ctx context.Context) (*exchange, *http.Request, er
 		x.ended = true
 	case body == pr.body:
 		x.attach(req, pr.payload)
-	default: // a body the caller set
-		x.getBody = req.GetBody
-		x.first = sentBody{x: x, rc: body}
+	default: // a body the caller set, of the length it declares, if any
+		x.getBody, x.payload.size = req.GetBody, -1
+		if req.ContentLength > 0 {
+			x.payload.size = req.ContentLength
+		}
+		x.first = sentBody{x: x, p: x.payload, rc: body}
 		req.Body = &x.first
 		if req.GetBody != nil {
 			req.GetBody = x.replay
@@ -280,12 +213,6 @@ func (x *exchange) send(req *http.Request) (*Response, error) {
 	resp, err := x.cfg.client.Do(req)
 	x.mu.Lock()
 	x.returned = true
-	if x.memory != nil && !x.carried && !x.ended { // no trace will report its end
-		x.ended = true
-		if x.memory.Len() > 0 {
-			x.result = withContext(x, errClosedEarly)
-		}
-	}
 	x.publish()
 	x.mu.Unlock()
 	if err != nil {
@@ -617,12 +544,11 @@ func (e *contextError) Unwrap() []error { return append([]error{e.err}, e.also..
 // A payload is the content of a request body: bytes, a reader that can be
 // read again from where it stood, or a reader that can be read once.
 type payload struct {
-	data     []byte
-	ra       io.ReaderAt
-	off      int64
-	size     int64 // the length, or -1 for a reader read once
-	inMemory bool  // ra holds its content in memory
-	once     io.Reader
+	data []byte
+	ra   io.ReaderAt
+	off  int64
+	size int64 // the length, or -1 for a reader read once
+	once io.Reader
 }
 
 // A sentBody is one generation of a request body that reports its reading:
@@ -633,7 +559,7 @@ type sentBody struct {
 	gen int
 	p   payload
 	pos int64
-	rc  io.ReadCloser // read instead of p when set
+	rc  io.ReadCloser // read instead of p when set, p.size being its declared length or -1
 }
 
 func (b *sentBody) Read(buf []byte) (n int, err error) {
@@ -650,7 +576,7 @@ func (b *sentBody) Read(buf []byte) (n int, err error) {
 		n = copy(buf, b.p.data[b.pos:])
 	}
 	b.pos += int64(n)
-	if b.rc == nil && b.p.once == nil { // a payload of known length: read at its length, short before it
+	if b.p.size >= 0 { // a body of known length: read at its length, short before it
 		switch {
 		case err == nil && b.pos >= b.p.size:
 			err = io.EOF
