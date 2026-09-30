@@ -179,39 +179,49 @@ func TestF14ReplayGenerations(t *testing.T) {
 }
 
 // slowRT returns the response at once and reads the body on its own
-// goroutine, one byte at a time, then closes it.
+// goroutine, one byte per Read, sleeping 5ms before each Read, then closes
+// it. Since a sleep is never shorter than asked, the body cannot reach EOF
+// sooner than 5ms per byte after RoundTrip began.
 type slowRT struct {
+	read atomic.Int64
 	done atomic.Bool
 }
+
+const slowRTPause = 5 * time.Millisecond
 
 func (rt *slowRT) RoundTrip(req *http.Request) (*http.Response, error) {
 	go func() {
 		b := make([]byte, 1)
 		for {
-			time.Sleep(5 * time.Millisecond)
-			if _, err := req.Body.Read(b); err != nil {
+			time.Sleep(slowRTPause)
+			n, err := req.Body.Read(b)
+			rt.read.Add(int64(n))
+			if err != nil {
 				break
 			}
 		}
-		rt.done.Store(true)
 		req.Body.Close()
+		rt.done.Store(true)
 	}()
 	return &http.Response{StatusCode: 200, Proto: "HTTP/1.1", ProtoMajor: 1, ProtoMinor: 1,
 		Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader("{}")), ContentLength: 2, Request: req}, nil
 }
 
 // The blocking-wait path (#26): WaitRequest blocks while a slow transport is
-// still reading and returns nil once it has read to EOF; "A cancellation of
-// ctx ends only this wait".
+// still reading, returning nil only once the body can have reached EOF; "A
+// cancellation of ctx ends only this wait".
 func TestF14BlockingWait(t *testing.T) {
+	const payload = `{"k":"abcdefgh"}`
 	for name, body := range map[string]func() any{
-		"read once": func() any { return newOnce(`{"k":"abcdefgh"}`) },
-		"bytes":     func() any { return []byte(`{"k":"abcdefgh"}`) },
+		"read once": func() any { return newOnce(payload) },
+		"bytes":     func() any { return []byte(payload) },
 	} {
 		t.Run(name, func(t *testing.T) {
 			rt := &slowRT{}
 			c := uploadClient(t, rt, nil)
-			resp, err := mustPrepare(t, c, "put", &openapi.Input{Body: body()}).Send(t.Context())
+			req := mustPrepare(t, c, "put", &openapi.Input{Body: body()})
+			start := time.Now()
+			resp, err := req.Send(t.Context())
 			if err != nil {
 				t.Fatalf("Send: %v", err)
 			}
@@ -225,8 +235,15 @@ func TestF14BlockingWait(t *testing.T) {
 			if err := waitResult(t, resp); err != nil {
 				t.Errorf("WaitRequest = %v, want nil", err)
 			}
-			if !rt.done.Load() {
-				t.Errorf("WaitRequest returned before the transport finished reading")
+			if floor := time.Duration(len(payload)) * slowRTPause; time.Since(start) < floor {
+				t.Errorf("WaitRequest returned %v after Send began; the transport could not have read the body in under %v",
+					time.Since(start).Round(time.Millisecond), floor)
+			}
+			for deadline := time.Now().Add(time.Second); !rt.done.Load() && time.Now().Before(deadline); {
+				time.Sleep(time.Millisecond)
+			}
+			if got := rt.read.Load(); got != int64(len(payload)) {
+				t.Errorf("the transport read %d bytes, want %d", got, len(payload))
 			}
 		})
 	}
