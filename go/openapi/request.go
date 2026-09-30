@@ -165,7 +165,7 @@ func (c *Client) newRequest(ctx context.Context, o *operation, in *Input, re *Re
 	} else {
 		b.WriteString(ep.path)
 	}
-	cfg.writePath(&b, o, in, re)
+	c.writePath(&b, o, in, re)
 	query, given, written, sendsCookies := b.Len(), 0, 0, false
 	for i := range o.params {
 		p := &o.params[i]
@@ -197,16 +197,16 @@ func (c *Client) newRequest(ctx context.Context, o *operation, in *Input, re *Re
 			if b.Len() == query {
 				lead = "?"
 			}
-			defined = cfg.writeParam(&b, lead, p, v, re)
+			defined = c.writeParam(&b, lead, p, v, re)
 		case p.In == "cookie":
 			lead := "; "
 			if cookies.Len() == 0 {
 				lead = ""
 			}
-			defined = cfg.writeParam(&cookies, lead, p, v, re)
+			defined = c.writeParam(&cookies, lead, p, v, re)
 		case p.In == "header":
 			var sb strings.Builder
-			switch defined = cfg.writeParam(&sb, "", p, v, re); {
+			switch defined = c.writeParam(&sb, "", p, v, re); {
 			case !defined || preset:
 			case validFieldValue(sb.String()):
 				h[p.field] = []string{sb.String()}
@@ -214,7 +214,7 @@ func (c *Client) newRequest(ctx context.Context, o *operation, in *Input, re *Re
 				re.input(p.Key, errors.New("a header field cannot carry the value"))
 			}
 		default: // a path parameter with Err (see writePath): refused
-			cfg.writeParam(&b, "", p, v, re)
+			c.writeParam(&b, "", p, v, re)
 		}
 		switch {
 		case defined && preset:
@@ -287,7 +287,7 @@ func setter(fields http.Header, field string) string {
 // writePath writes the path template's parts, with the values of its
 // parameters or their writers' {name} tokens, refusing a value that forms a
 // "." or ".." segment.
-func (cfg *config) writePath(b *strings.Builder, o *operation, in *Input, re *RequestError) {
+func (c *Client) writePath(b *strings.Builder, o *operation, in *Input, re *RequestError) {
 	segment, valued := b.Len(), -1 // where the segment begins, and a parameter in it
 	endSegment := func() {
 		if s := b.String()[segment:]; valued >= 0 && (s == "." || s == "..") {
@@ -315,7 +315,7 @@ func (cfg *config) writePath(b *strings.Builder, o *operation, in *Input, re *Re
 			b.WriteByte('{')
 			b.WriteString(p.Name)
 			b.WriteByte('}')
-		case v != nil && cfg.writeParam(b, p.first, p, v, re):
+		case v != nil && c.writeParam(b, p.first, p, v, re):
 			valued = part.param
 		default:
 			re.input(p.Key, errMissing) // unless refused already
@@ -582,13 +582,10 @@ func (c *Client) body(o *operation, in *Input, h http.Header, re *RequestError) 
 		err = codec.Encode(&buf, in.Body)
 		b = buf.Bytes()
 	} else if m.class() == jsonClass {
-		if b, err = json.Marshal(in.Body); err != nil {
-			err = &encodingError{err}
-		} else if at, found, levels := c.doc.findReader(in.Body, 1); found {
-			re.input("Input.Body"+at, errors.New("a JSON value cannot hold an io.Reader or a Part"))
+		var at string
+		if b, at, err = c.doc.encodeJSON(in.Body); err != nil {
+			re.input("Input.Body"+at, err)
 			return payload{}, nil
-		} else if levels > maxDepth || levels == 0 && tooDeep(b) {
-			err = errDepth
 		}
 	} else {
 		re.fail(notYet("encoding a " + m.full + " body"))
@@ -598,6 +595,23 @@ func (c *Client) body(o *operation, in *Input, h http.Header, re *RequestError) 
 		re.input("Input.Body", err)
 	}
 	return payload{data: b, size: int64(len(b))}, md
+}
+
+// encodeJSON returns v as encoding/json writes it, refusing a value nested
+// deeper than 1,000 levels, and an io.Reader or Part inside v, whose JSON
+// Pointer from v it also returns.
+func (d *document) encodeJSON(v any) ([]byte, string, error) {
+	b, err := json.Marshal(v) // first, as it refuses a cycle, which the walk would follow
+	if err != nil {
+		return nil, "", &encodingError{err}
+	}
+	switch at, found, levels := d.findReader(v, 1); {
+	case found:
+		return nil, at, errReader
+	case levels > maxDepth || levels == 0 && tooDeep(b):
+		return nil, "", errDepth
+	}
+	return b, "", nil
 }
 
 // mediaType selects the request body's media type: as sent, parsed, and

@@ -606,11 +606,16 @@ func (d *document) parseServers(list value, src string) *serverList {
 	sl := &serverList{}
 	for _, v := range list.members() {
 		at := src + "/" + strconv.Itoa(len(sl.servers))
-		s := &Server{ID: at, URL: v.str("url"), Description: v.str("description"), Source: at}
+		s := &Server{ID: idOf(v), URL: v.str("url"), Description: v.str("description"), Source: at}
 		sl.servers, sl.desc = append(sl.servers, d.newServer(s, v.get("variables"))), append(sl.desc, s)
 	}
 	return sl
 }
+
+// idOf returns the Server.ID of the Server Object v: its node's index, which
+// no other declaration in the document has, and which every operation that
+// inherits it shares.
+func idOf(v value) string { return strconv.Itoa(int(v.i)) }
 
 // newServer completes s from its URL template and declared variables.
 func (d *document) newServer(s *Server, declared value) *server {

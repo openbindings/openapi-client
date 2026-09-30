@@ -691,23 +691,21 @@ func (d *document) checkNames(ctx context.Context, cfg *config, re *RequestError
 	server, serverID := cfg.Server == "", cfg.ServerID == ""
 	media := cfg.MediaType == "" || cfg.mediaTypeErr != nil
 	unused := maps.Clone(cfg.Variables)
-	check := func(list value, ptr func() string) {
-		i := 0
+	check := func(list value) {
 		for _, s := range list.members() {
 			u := s.str("url")
 			server = server || u == cfg.Server
-			serverID = serverID || d.source(ptr()+"/servers/"+strconv.Itoa(i)) == cfg.ServerID
+			serverID = serverID || idOf(s) == cfg.ServerID
 			if len(unused) > 0 {
 				_, names, _ := splitTemplate(u)
 				for _, name := range names {
 					delete(unused, name)
 				}
 			}
-			i++
 		}
 	}
 	if s := d.root().get("servers"); s.hasMembers() {
-		check(s, func() string { return "" })
+		check(s)
 	} else {
 		server, serverID = server || cfg.Server == "/", serverID || cfg.ServerID == "default"
 	}
@@ -730,12 +728,12 @@ func (d *document) checkNames(ctx context.Context, cfg *config, re *RequestError
 			continue
 		}
 		for l := e.levels; l != nil && first(l.v); l = l.next { // a level checked has its rest checked
-			check(l.v.get("servers"), func() string { return l.ptr })
+			check(l.v.get("servers"))
 		}
 		if !first(e.node) {
 			continue
 		}
-		check(e.node.get("servers"), e.ptr)
+		check(e.node.get("servers"))
 		if rb := e.node.get("requestBody"); !media && rb.ok() && methods[e.m].upper != "TRACE" {
 			body, _, _, err := d.follow(rb, "")
 			if err != nil || !first(body) {

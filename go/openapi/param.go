@@ -38,12 +38,13 @@ var (
 	errComposite  = errors.New("the style takes an array or object")
 	errDeepObject = errors.New("the deepObject style takes an object without arrays")
 	errDepth      = errors.New("the value nests deeper than 1,000 levels")
+	errReader     = errors.New("a JSON value cannot hold an io.Reader or a Part")
 )
 
 // writeParam writes the value v given for p into b, after lead unless v
 // is undefined, and reports whether it wrote a value, recording in re why
 // it cannot. In a path, lead is the style's first.
-func (cfg *config) writeParam(b *strings.Builder, lead string, p *param, v any, re *RequestError) bool {
+func (c *Client) writeParam(b *strings.Builder, lead string, p *param, v any, re *RequestError) bool {
 	if p.ContentType == "" {
 		e := emitter{param: p, b: b, lead: lead}
 		defined, err := e.write(v)
@@ -52,13 +53,13 @@ func (cfg *config) writeParam(b *strings.Builder, lead string, p *param, v any, 
 		}
 		return defined && err == nil
 	}
-	if cfg.codecsErr != nil {
-		re.setting("Options.Codecs", cfg.codecsErr)
+	if c.cfg.codecsErr != nil {
+		re.setting("Options.Codecs", c.cfg.codecsErr)
 	}
 	var s string
 	err := p.Err
 	if err == nil {
-		s, err = cfg.encode(p.media, v)
+		s, err = c.encode(p.media, v)
 	}
 	if err != nil {
 		re.input(p.Key, err)
@@ -78,22 +79,24 @@ func (cfg *config) writeParam(b *strings.Builder, lead string, p *param, v any, 
 }
 
 // encode returns v encoded as a body of media type m is.
-func (cfg *config) encode(m parsedMedia, v any) (string, error) {
-	if codec, _ := cfg.codec(m); codec != nil {
+func (c *Client) encode(m parsedMedia, v any) (string, error) {
+	if codec, _ := c.cfg.codec(m); codec != nil {
 		var b strings.Builder
 		err := codec.Encode(&b, v)
 		return b.String(), err
 	}
 	k := m.class()
-	if s, ok := v.(string); ok && k != jsonClass {
+	if k == jsonClass {
+		b, _, err := c.doc.encodeJSON(v)
+		return string(b), err
+	}
+	if s, ok := v.(string); ok {
 		return jsonText(s), nil
 	}
 	b, err := marshal(v)
 	switch {
 	case err != nil:
 		return "", err
-	case k == jsonClass:
-		return string(b), nil
 	case b[0] == '"':
 		return jsonString(string(b)), nil
 	case k == textClass && b[0] != '{' && b[0] != '[' && b[0] != 'n':
