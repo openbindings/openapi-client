@@ -81,17 +81,18 @@ caller, a code generator, or another library can apply its own conventions.
 Each stage lands a user-visible capability with its tests and is reviewed
 as code before the next begins.
 
-1. **Vertical slice**: `Load` of a 3.1 JSON document over
-   http or from a file, local `$ref` resolution, the operation index
-   (operationId and `"METHOD /path"`), one server with variable defaults,
-   path and query parameters in their default styles, `Call` decoding JSON
-   into a struct, `*any`, `*[]byte` and `io.Writer`, and the outcomes
-   (`RequestError`, `StatusError`, `DecodeError`, `Response`) with the
-   bounds. Tests against `httptest` servers; a benchmark of `Call` against
-   the same call written by hand with net/http (allocations and latency).
-2. **Parameters, fully**: every style, `explode`,
-   `allowReserved`, content parameters, headers, cookies, 3.2 querystring,
-   and the per-parameter writer escape hatch.
+1. **Vertical slice** (landed): `Load` and `Parse` of 3.1 JSON documents
+   with local references, the operation index and descriptors, servers and
+   the URL rule, path, query and header parameters in their default
+   styles, JSON and pre-encoded bodies, caller codecs, `Call`, `Prepare`,
+   `Request.Send`, `Response.Decode`, `WaitRequest`, the outcomes and
+   bounds, and `With`, with benchmarks against hand-written net/http.
+2. **Parameters, fully** (for the editions that load): every style and
+   `explode` value, `allowReserved`, content parameters, header and
+   cookie parameters, and the per-parameter writer escape hatch. The
+   OpenAPI 3.2 querystring and cookie style, 3.2's wider `allowReserved`,
+   and Swagger 2.0's `collectionFormat` and `allowEmptyValue` land with
+   their editions in stage 6.
 3. **Credentials, security and redirects**: explicit and exact alternatives,
    stable server identity, credential placement, the plain-http rule,
    `Redirects` and hop stripping, `FromTransport`.
@@ -101,7 +102,8 @@ as code before the next begins.
 5. **Documents**: YAML, references across documents, the
    admission callback, origin and local-file defaults, bounds, `Loader`.
 6. **Editions**: Swagger 2.0 normalization and 3.0 and 3.2
-   specifics, run against every scenario so far.
+   specifics, their edition-specific parameters included, run against
+   every scenario so far.
 7. **Streaming**: `Stream`, `Items`, `Events`, positional
    multipart reading, and independent upload completion.
 8. **Prepare and raw send**: `Prepare`, `Request.Send`, `Response.Decode`,
