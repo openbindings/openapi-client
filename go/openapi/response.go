@@ -242,7 +242,10 @@ func limit(n, def int64) int64 {
 
 // bodiless reports whether r has no body to read.
 func bodiless(r *http.Response) bool {
-	s, m := r.StatusCode, r.Request.Method
+	s, m := r.StatusCode, ""
+	if r.Request != nil {
+		m = r.Request.Method
+	}
 	return s/100 == 1 || s == 204 || s == 205 || s == 304 || m == "HEAD" || m == "CONNECT" && s/100 == 2
 }
 
@@ -323,6 +326,8 @@ func (cfg *config) decodeData(h http.Header, decl *Message, data []byte, out any
 		return decodeJSON(data, out)
 	case cls == xmlClass:
 		return decodeXML(data, ct, out)
+	case cls == sequentialClass && len(data) == 0:
+		return json.Unmarshal([]byte("[]"), out)
 	case cls == sequentialClass:
 		return notYet("decoding " + ct.full)
 	case len(data) == 0:

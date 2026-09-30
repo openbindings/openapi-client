@@ -69,8 +69,14 @@ func newConfig(o Options) *config {
 	if o.Server != "" && o.ServerID != "" {
 		cfg.refused["Options.ServerID"] = errors.New("cannot be set with Options.Server")
 	}
-	if o.Security != nil && o.SecurityKey != "" {
-		cfg.refused["Options.SecurityKey"] = errors.New("cannot be set with Options.Security")
+	for name := range o.Credentials {
+		cfg.refused["Options.Credentials["+strconv.Quote(name)+"]"] = notYet("credentials")
+	}
+	if o.Security != nil {
+		cfg.refused["Options.Security"] = notYet("Options.Security")
+	}
+	if o.SecurityKey != "" {
+		cfg.refused["Options.SecurityKey"] = notYet("Options.SecurityKey")
 	}
 	if o.MediaType != "" {
 		var ok bool
@@ -130,9 +136,8 @@ func (cfg *config) options() Options {
 // uses.
 func (d *document) checkNames(cfg *config, re *RequestError) {
 	server, serverID, mediaType := cfg.Server == "", cfg.ServerID == "", cfg.MediaType == "" || cfg.refused["Options.MediaType"] != nil
-	security := cfg.SecurityKey == "" && cfg.Security == nil
 	unused := maps.Clone(cfg.Variables)
-	if server && serverID && mediaType && security && len(unused) == 0 {
+	if server && serverID && mediaType && len(unused) == 0 {
 		return
 	}
 	for _, o := range d.ops {
@@ -147,8 +152,6 @@ func (d *document) checkNames(cfg *config, re *RequestError) {
 		if o.Body != nil {
 			mediaType = mediaType || match(o.body, o.Body.Media, cfg.mediaType) != nil
 		}
-		security = security || cfg.SecurityKey == "{}" && len(o.Security) == 0 ||
-			slices.ContainsFunc(o.Security, func(r SecurityRequirement) bool { return offered(r, cfg) })
 	}
 	if !server {
 		re.setting("Options.Server", fmt.Errorf("no server has the URL or name %q", cfg.Server))
@@ -159,19 +162,7 @@ func (d *document) checkNames(cfg *config, re *RequestError) {
 	if !mediaType {
 		re.setting("Options.MediaType", fmt.Errorf("no operation declares %s", cfg.MediaType))
 	}
-	if !security {
-		re.setting("Options.Security", errors.New("no operation offers the selected security alternative"))
-	}
 	for name := range unused {
 		re.setting("Options.Variables["+strconv.Quote(name)+"]", errors.New("no server URL uses this variable"))
 	}
-}
-
-// offered reports whether cfg's SecurityKey or Security selects r.
-func offered(r SecurityRequirement, cfg *config) bool {
-	if cfg.SecurityKey != "" {
-		return r.Key == cfg.SecurityKey
-	}
-	return cfg.Security != nil && len(r.Schemes) == len(slices.Compact(slices.Sorted(slices.Values(cfg.Security)))) &&
-		!slices.ContainsFunc(r.Schemes, func(s SecurityScheme) bool { return !slices.Contains(cfg.Security, s.Name) })
 }

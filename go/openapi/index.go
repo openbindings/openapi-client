@@ -309,15 +309,11 @@ func (d *document) resolve(ref string) (string, error) {
 		return "", fmt.Errorf("%w %q: %v", ErrUnresolved, ref, err)
 	}
 	if !strings.HasPrefix(ref, "#") {
-		if !u.IsAbs() && d.base.Opaque == "" {
-			u = d.base.ResolveReference(u)
-		}
-		frag := u.EscapedFragment()
-		u.Fragment, u.RawFragment = "", ""
-		if u.String() != d.uri {
+		doc := d.base.ResolveReference(u)
+		doc.Fragment, doc.RawFragment = "", ""
+		if doc.String() != d.base.String() {
 			return "", fmt.Errorf("%w %q: references to other documents are not followed yet", ErrUnresolved, ref)
 		}
-		u.RawFragment = frag
 	}
 	ptr, err := url.PathUnescape(u.EscapedFragment())
 	if err != nil || ptr != "" && ptr[0] != '/' {

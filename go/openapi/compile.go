@@ -126,7 +126,9 @@ func (o *operation) build() {
 	}
 	if sec != nil && sec.kind == '[' {
 		for i := range sec.kids {
-			op.Security = append(op.Security, securityRequirement(&sec.kids[i]))
+			if sec.kids[i].kind == '{' {
+				op.Security = append(op.Security, securityRequirement(&sec.kids[i]))
+			}
 		}
 	}
 
@@ -463,17 +465,19 @@ func (d *document) parseServers(list *node, ptr string) []*server {
 // newServer completes s from its URL template and declared variables.
 func (d *document) newServer(s *Server, vars *node) *server {
 	sv := &server{Server: s}
-	rest := s.URL
-	for {
+	for rest := s.URL; ; {
 		i := strings.IndexByte(rest, '{')
-		j := strings.IndexByte(rest[max(i, 0):], '}')
-		if i < 0 || j < 0 {
+		var name, after string
+		found := false
+		if i >= 0 {
+			name, after, found = strings.Cut(rest[i+1:], "}")
+		}
+		if !found {
 			sv.parts = append(sv.parts, rest)
 			break
 		}
-		name := rest[i+1 : i+j]
 		sv.parts = append(sv.parts, rest[:i], name)
-		rest = rest[i+j+1:]
+		rest = after
 		if slices.ContainsFunc(s.Variables, func(v Variable) bool { return v.Name == name }) {
 			continue
 		}

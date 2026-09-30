@@ -123,7 +123,7 @@ func (c *Client) newRequest(ctx context.Context, o *operation, in *Input, re *Re
 		re.fail(notYet("Input.ParamWriters"))
 	}
 	ep := c.endpoint(o, re)
-	security := c.security(o, in, re)
+	security := selectSecurity(o, in, re)
 	req, _ := http.NewRequestWithContext(ctx, o.Method, "", nil)
 	h := req.Header
 	for k, v := range c.cfg.Header {
@@ -134,17 +134,15 @@ func (c *Client) newRequest(ctx context.Context, o *operation, in *Input, re *Re
 	// The path, then the query.
 	var b strings.Builder
 	b.Grow(len(ep.path) + len(o.Path) + 16*len(o.params))
+	base := ep.path
+	if strings.HasSuffix(base, "/") && strings.HasPrefix(o.Path, "/") {
+		base = base[:len(base)-1]
+	}
+	b.WriteString(base)
 	used := 0
-	for i, part := range o.path {
+	for _, part := range o.path {
 		if part.param < 0 {
-			text := part.text
-			if i == 0 && strings.HasSuffix(ep.path, "/") && strings.HasPrefix(text, "/") {
-				text = text[1:]
-			}
-			if i == 0 {
-				b.WriteString(ep.path)
-			}
-			b.WriteString(text)
+			b.WriteString(part.text)
 			continue
 		}
 		p := &o.params[part.param]
@@ -453,6 +451,7 @@ func (d data) writeForm(b *strings.Builder, name string, explode bool) {
 func (c *Client) endpoint(o *operation, re *RequestError) endpoint {
 	cfg := c.cfg
 	var s *server
+	setting := "Options.Server"
 	switch {
 	case cfg.base != nil:
 		return *cfg.base
@@ -474,6 +473,7 @@ func (c *Client) endpoint(o *operation, re *RequestError) endpoint {
 			return endpoint{}
 		}
 	case cfg.ServerID != "":
+		setting = "Options.ServerID"
 		i := slices.IndexFunc(o.servers, func(s *server) bool { return s.ID == cfg.ServerID })
 		if i < 0 {
 			re.setting("Options.ServerID", errors.New("the operation has no server with this ID"))
@@ -490,7 +490,7 @@ func (c *Client) endpoint(o *operation, re *RequestError) endpoint {
 		return endpoint{}
 	}
 	if s.Err != nil {
-		re.setting("Options.BaseURL", s.Err)
+		re.setting(setting, s.Err)
 		return endpoint{}
 	}
 	if s.fixed != nil && !slices.ContainsFunc(s.Variables, func(v Variable) bool { _, ok := cfg.Variables[v.Name]; return ok }) {
@@ -542,7 +542,7 @@ func (d *document) endpoint(s string) (endpoint, error) {
 }
 
 // security selects the security alternative, returning its key.
-func (c *Client) security(o *operation, in *Input, re *RequestError) string {
+func selectSecurity(o *operation, in *Input, re *RequestError) string {
 	alts := o.Security
 	i := -1
 	switch {
@@ -556,17 +556,6 @@ func (c *Client) security(o *operation, in *Input, re *RequestError) string {
 		}
 	case len(alts) == 0:
 		return ""
-	case c.cfg.SecurityKey != "" || c.cfg.Security != nil:
-		var keys []string
-		for j, r := range alts {
-			if offered(r, c.cfg) && !slices.Contains(keys, r.Key) {
-				i, keys = j, append(keys, r.Key)
-			}
-		}
-		if len(keys) > 1 {
-			re.setting("Input.Security", errors.New("several alternatives have the schemes Options.Security names; select one"))
-			return ""
-		}
 	}
 	if i < 0 && !slices.ContainsFunc(alts, func(r SecurityRequirement) bool { return r.Key != alts[0].Key }) {
 		i = 0
@@ -720,16 +709,22 @@ func findReader(v reflect.Value) (string, bool) {
 				continue // a scalar
 			}
 			f := t.Field(i)
-			name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
-			if !f.IsExported() && !f.Anonymous || name == "-" && f.Tag.Get("json") == "-" {
+			tag := f.Tag.Get("json")
+			if tag == "-" || !f.IsExported() && !f.Anonymous {
 				continue
 			}
 			if at, ok := findReader(fv); ok {
-				if name == "" && !f.Anonymous {
-					name = f.Name
+				name, _, _ := strings.Cut(tag, ",")
+				ft := f.Type
+				if ft.Kind() == reflect.Pointer {
+					ft = ft.Elem()
 				}
-				if name == "" {
-					return at, true
+				switch {
+				case name != "":
+				case f.Anonymous && ft.Kind() == reflect.Struct:
+					return at, true // a promoted field
+				default:
+					name = f.Name
 				}
 				return "/" + escapeToken(name) + at, true
 			}
@@ -737,7 +732,11 @@ func findReader(v reflect.Value) (string, bool) {
 	case reflect.Map:
 		for it := v.MapRange(); it.Next(); {
 			if at, ok := findReader(it.Value()); ok {
-				return "/" + escapeToken(fmt.Sprint(it.Key().Interface())) + at, true
+				name := fmt.Sprint(it.Key().Interface())
+				if it.Key().Kind() == reflect.String {
+					name = it.Key().String()
+				}
+				return "/" + escapeToken(name) + at, true
 			}
 		}
 	case reflect.Slice, reflect.Array:
