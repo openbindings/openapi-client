@@ -424,7 +424,8 @@ type Part struct {
 // means a method and a Paths key, never an operationId.
 //
 // out must be nil, a non-nil *[]byte, an io.Writer, or a non-nil pointer;
-// anything else is refused before sending. For a 2xx, the body is read to the
+// anything else, a nil pointer of any type included, is refused before
+// sending. For a 2xx, the body is read to the
 // end and closed before Call returns, and out receives it:
 //
 //   - nil discards it, reading at most MaxBodyBytes before closing the

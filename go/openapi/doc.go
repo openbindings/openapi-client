@@ -297,7 +297,9 @@
 //     then Input.Header are applied over the generated fields: a field
 //     replaces the same field set before, and one with no values removes
 //     it (a User-Agent included, so net/http adds none). A Header holding
-//     two spellings of one field is refused. At either level, Content-Type, Content-Length and
+//     two spellings of one field is refused, and so is a Host field or a
+//     header parameter named Host, since net/http derives Host from the
+//     URL. At either level, Content-Type, Content-Length and
 //     Transfer-Encoding are refused (the MediaType settings choose the
 //     media type), and so is a field that a header parameter the call supplies,
 //     or the call's credential, sets; a declared header parameter the call
