@@ -493,3 +493,66 @@ func TestH10UnusableServerFromValues(t *testing.T) {
 		})
 	}
 }
+
+// T1-24 (refines T1-23; client.go, Options.Variables: "A variable whose
+// default spans "://", or that is the whole URL template, supplies a whole
+// URL and is not restricted. An empty default at the boundary between two
+// parts may take a value belonging to either"). Where a value is refused it
+// is keyed Options.Variables["<name>"] (at Load or at the call), and
+// nothing is sent, to the test server or to a host the value names.
+func TestT1_24WholeTemplateAndBoundaryVariables(t *testing.T) {
+	w, evil := newWire(t, nil), newWire(t, nil)
+	host, port, _ := strings.Cut(w.hostport(), ":")
+	sent := []struct {
+		name, url, variable, value, want string
+	}{
+		// The whole template: a whole URL.
+		{"whole template", "{endpoint}", "endpoint", w.URL + "/api", "/api/x"},
+		// A boundary default between the authority and the path takes an
+		// authority value...
+		{"port at the boundary", "http://" + host + "{port}", "port", ":" + port, "/x"},
+		{"no-op at the boundary", "http://" + host + ":" + port + "{port}", "port", "", "/x"},
+		// ...or a path value.
+		{"basePath at the boundary", "http://" + host + ":" + port + "{basePath}", "basePath", "/v2", "/v2/x"},
+	}
+	for _, tt := range sent {
+		t.Run("sent: "+tt.name, func(t *testing.T) {
+			doc := varDoc(tt.url, map[string]string{tt.variable: ""})
+			c := parseAt(t, doc, "", testDocURI, &openapi.Options{Variables: map[string]string{tt.variable: tt.value}})
+			before := w.count()
+			mustCall(t, c, "op", nil, nil)
+			if got := w.last(t).RequestURI; w.count() != before+1 || got != tt.want {
+				t.Errorf("request target %q, want %q", got, tt.want)
+			}
+		})
+	}
+	refused := []struct {
+		name, url, variable, value string
+	}{
+		// A path value may not add a query or form a dot segment, encoded or
+		// not.
+		{"basePath with a query", "http://" + host + ":" + port + "{basePath}", "basePath", "/v2?x"},
+		{"basePath with an encoded dot segment", "http://" + host + ":" + port + "{basePath}", "basePath", "/%2e%2e"},
+		// Neither an authority value nor a path value may hold "@" or "?".
+		{"userinfo at the boundary", "http://" + host + "{port}", "port", "@" + evil.hostport()},
+		{"query at the boundary", "http://" + host + "{port}", "port", "?x"},
+	}
+	for _, tt := range refused {
+		t.Run("refused: "+tt.name, func(t *testing.T) {
+			doc := varDoc(tt.url, map[string]string{tt.variable: ""})
+			key := fmt.Sprintf("Options.Variables[%q]", tt.variable)
+			before, evilBefore := w.count(), evil.count()
+			c, err := openapi.Parse(t.Context(), []byte(doc), testDocURI, &openapi.Options{Variables: map[string]string{tt.variable: tt.value}})
+			if err != nil {
+				wantKeys(t, "Settings", asRequestError(t, err).Settings, false, key)
+				return
+			}
+			resp, err := c.Call(t.Context(), "op", nil, nil)
+			if evil.count() != evilBefore {
+				t.Errorf("the request reached the host the value names")
+			}
+			re := refusedSince(t, w, before, resp, err)
+			wantKeys(t, "Settings", re.Settings, false, key)
+		})
+	}
+}
