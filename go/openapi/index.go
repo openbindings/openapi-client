@@ -55,12 +55,8 @@ type cell[T any] struct {
 	v    T
 }
 
-// get returns what compile makes of node i: once per document when the
-// node is shared by several places, and afresh when only one reaches it.
-func (m *memo[T]) get(i int32, shared bool, compile func() T) T {
-	if !shared {
-		return compile()
-	}
+// get returns what compile makes of node i, compiling it once.
+func (m *memo[T]) get(i int32, compile func() T) T {
 	m.mu.Lock()
 	c := m.cells[i]
 	if c == nil {

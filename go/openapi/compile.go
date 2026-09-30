@@ -145,7 +145,7 @@ func (e *entry) shape() *operation {
 		sl = d.parseServers(servers, ptr+"/servers")
 	case s.ok():
 		errs = append(errs, err)
-		sl = d.serverLists.get(s.i, true, func() *serverList { return d.parseServers(s, at) })
+		sl = d.serverLists.get(s.i, func() *serverList { return d.parseServers(s, at) })
 	default:
 		sl, _ = d.inherited()
 	}
@@ -262,7 +262,12 @@ func (d *document) param(v value, ptr string) *Param {
 	if err != nil {
 		return &Param{Source: d.source(ptr), Err: err}
 	}
-	c := *d.paramForms.get(t.i, t.i != v.i, func() *Param { return d.newParam(t, at) })
+	if t.i == v.i { // only this place reaches it
+		p := d.newParam(t, at)
+		p.Description = desc
+		return p
+	}
+	c := *d.paramForms.get(t.i, func() *Param { return d.newParam(t, at) })
 	c.Description = desc
 	return &c
 }
@@ -359,7 +364,12 @@ func (d *document) message(v value, ptr string) (*Message, value, *content) {
 	if err != nil {
 		return &Message{Source: d.source(ptr), Err: err}, value{}, &noContent
 	}
-	c := d.contents.get(t.i, t.i != v.i, func() *content { return d.content(t, at) })
+	var c *content
+	if t.i == v.i { // only this place reaches it
+		c = d.content(t, at)
+	} else {
+		c = d.contents.get(t.i, func() *content { return d.content(t, at) })
+	}
 	return &Message{Description: desc, Source: c.source, Media: c.media}, t, c
 }
 
