@@ -885,3 +885,135 @@ func TestContentParamInvalidUTF8(t *testing.T) {
 		}
 	}
 }
+
+// valReader is an io.Reader whose value-receiver MarshalJSON encodes it.
+type valReader struct{ S string }
+
+func (valReader) Read([]byte) (int, error)     { return 0, io.EOF }
+func (valReader) MarshalJSON() ([]byte, error) { return []byte(`"r"`), nil }
+
+// ptrReader is an io.Reader whose MarshalJSON has a pointer receiver, which
+// encoding/json calls only on an addressable value (or a pointer).
+type ptrReader struct{ S string }
+
+func (ptrReader) Read([]byte) (int, error)      { return 0, io.EOF }
+func (*ptrReader) MarshalJSON() ([]byte, error) { return []byte(`"r"`), nil }
+
+// f098cc3 (client.go, Input.Body: "A Part or io.Reader inside a JSON value is
+// refused ... unless its own MarshalJSON encodes it"; doc.go, Values: a
+// reader inside a parameter value the client encodes with encoding/json is
+// refused "unless its own MarshalJSON encodes it"): a reader encoding/json
+// encodes by its MarshalJSON is sent as json.Marshal writes it, in a JSON
+// body, a JSON content parameter and a style parameter; one json would
+// encode by reflection (a pointer-receiver MarshalJSON on a value that is
+// not addressable, or a plain reader) is refused. The body and content
+// parameter hold the reader inside the value, since a reader that is the
+// whole body or content value is sent or refused as a reader (client.go,
+// Input.Body; doc.go, Values).
+func TestSelfMarshalingReaders(t *testing.T) {
+	w := newWire(t, nil)
+	c := parseFor(t, w, doc31(depthDoc+`,
+		"/s":{"get":{"operationId":"style","parameters":[
+			{"name":"f","in":"query","schema":{}},
+			{"name":"d","in":"query","style":"deepObject","schema":{}},
+			{"name":"X-H","in":"header","schema":{}}]}}`), nil)
+	sent := []struct {
+		name string
+		v    func() any
+	}{
+		{"value receiver in a map", func() any { return map[string]any{"r": valReader{}} }},
+		{"value receiver in a slice", func() any { return []any{"a", valReader{S: "x"}} }},
+		{"value receiver in a struct field", func() any { return struct{ R io.Reader }{valReader{}} }},
+		{"pointer receiver, addressable slice element", func() any { return map[string]any{"r": []ptrReader{{}}} }},
+		{"pointer receiver, pointer", func() any { return map[string]any{"r": &ptrReader{}} }},
+	}
+	refused := []struct {
+		name string
+		v    func() any
+	}{
+		{"pointer receiver, not addressable", func() any { return map[string]any{"r": ptrReader{}} }},
+		{"pointer receiver in an interface field, not addressable", func() any { return struct{ R io.Reader }{ptrReader{}} }},
+		{"plain reader", func() any { return map[string]any{"r": strings.NewReader("x")} }},
+	}
+	for _, key := range []string{"content", "body"} {
+		for _, tt := range sent {
+			t.Run(key+"/sent/"+tt.name, func(t *testing.T) {
+				v := tt.v()
+				req, err := prepareIn(c, key, v)
+				if err != nil {
+					t.Fatalf("refused a reader its own MarshalJSON encodes: %v", err)
+				}
+				wantEncoded(t, key, req, v)
+			})
+		}
+		for _, tt := range refused {
+			t.Run(key+"/refused/"+tt.name, func(t *testing.T) {
+				req, err := prepareIn(c, key, tt.v())
+				if req != nil || err == nil {
+					t.Fatal("prepared a reader encoding/json encodes by reflection")
+				}
+				re := asRequestError(t, err)
+				if key == "content" {
+					wantKeys(t, "Inputs", re.Inputs, true, "p")
+					return
+				}
+				if len(re.Inputs) != 1 {
+					t.Errorf("Inputs keys %q, want one", sortedKeys(re.Inputs))
+				}
+				for k := range re.Inputs {
+					if k != "Input.Body" && !strings.HasPrefix(k, "Input.Body/") {
+						t.Errorf("Inputs key %q, want Input.Body or below it", k)
+					}
+				}
+			})
+		}
+	}
+
+	// Style parameters: the JSON the MarshalJSON writes is then serialized
+	// by the style.
+	for _, tt := range []struct {
+		name, param string
+		v           any
+		want        string // the request target, or the header's value
+	}{
+		{"value receiver", "f", valReader{}, "/s?f=r"},
+		{"value receiver items", "f", []valReader{{}, {S: "x"}}, "/s?f=r&f=r"},
+		{"pointer receiver, pointer", "f", &ptrReader{}, "/s?f=r"},
+		{"pointer receiver, addressable items", "f", []ptrReader{{}}, "/s?f=r"},
+		{"deepObject member", "d", map[string]any{"k": valReader{}}, "/s?d%5Bk%5D=r"},
+		{"header", "X-H", valReader{}, "r"},
+	} {
+		t.Run("style/sent/"+tt.name, func(t *testing.T) {
+			got, re := callOne(t, w, c, "style", tt.param, tt.v)
+			if re != nil {
+				t.Fatalf("refused: %v", re)
+			}
+			if tt.param == "X-H" {
+				if v := got.Header.Values("X-H"); len(v) != 1 || v[0] != tt.want {
+					t.Errorf("X-H = %q, want [%q]", v, tt.want)
+				}
+				return
+			}
+			if got.RequestURI != tt.want {
+				t.Errorf("request target %q, want %q", got.RequestURI, tt.want)
+			}
+		})
+	}
+	for _, tt := range []struct {
+		name, param string
+		v           any
+	}{
+		{"pointer receiver, not addressable", "f", ptrReader{}},
+		{"pointer receiver member, not addressable", "d", map[string]any{"k": ptrReader{}}},
+		{"plain reader", "f", strings.NewReader("x")},
+		{"plain reader member", "d", map[string]any{"k": strings.NewReader("x")}},
+	} {
+		t.Run("style/refused/"+tt.name, func(t *testing.T) {
+			_, re := callOne(t, w, c, "style", tt.param, tt.v)
+			if re == nil {
+				t.Fatal("sent a reader encoding/json encodes by reflection")
+			}
+			wantKeys(t, "Inputs", re.Inputs, true, tt.param)
+		})
+	}
+}
