@@ -2,6 +2,7 @@ package openapi_test
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -953,6 +954,17 @@ func TestF35WithRefusalsOnlyWhereUsed(t *testing.T) {
 		t.Errorf("a body with an unusable Codecs key was sent")
 	}
 	wantKeys(t, "Settings", re.Settings, false, "Options.Codecs")
+
+	// As ruled (ledger, "Regression-test questions, ruled", F35): a malformed
+	// Codecs key refuses "only calls that would use a codec (a structured
+	// body or a decoded out)". A decoded out is refused before sending; a
+	// *[]byte, which bypasses codecs, is not.
+	before = w.count()
+	resp, err = e.Call(t.Context(), "json", nil, new(Pet))
+	re = refusedSince(t, w, before, resp, err)
+	wantKeys(t, "Settings", re.Settings, false, "Options.Codecs")
+	var raw []byte
+	mustCall(t, e, "json", nil, &raw)
 }
 
 // F36 (#44): a declared path parameter the template does not name (OAS
@@ -973,32 +985,43 @@ func TestF36PathParameterNotInTemplate(t *testing.T) {
 	refusedSince(t, w, before, resp, err)
 }
 
-// F37 (#45): a field two header parameters set is refused at the later
-// parameter's key, not blamed on an Options.Header the caller never set;
-// and a required parameter that was given is not also reported missing.
+// F37 (#45), as ruled (ledger, "Regression-test questions, ruled": "header
+// parameter identity compares names case-insensitively, so a path-level
+// "X-Id" is overridden by an operation-level "x-id"; OAS 3.1.2 section 4.3:
+// names that map to HTTP concepts follow HTTP's case rules): Operation.Params
+// lists one header parameter, the operation's, and the call writes the field
+// once. A required parameter that was given is not also reported missing.
 func TestF37HeaderRefusalCauses(t *testing.T) {
 	w := newWire(t, nil)
-	doc := doc31(`"/a":{"parameters":[{"name":"X-Id","in":"header","schema":{}}],"get":{"operationId":"op","parameters":[{"name":"x-id","in":"header","schema":{}}]}},
+	doc := doc31(`"/a":{"parameters":[{"name":"X-Id","in":"header","schema":{}}],"get":{"operationId":"op","parameters":[{"name":"x-id","in":"header","description":"operation level","schema":{}}]}},
 		"/c":{"get":{"operationId":"content","parameters":[{"name":"X-V","in":"header","required":true,"content":{"application/json":{}}}]}}`)
 	c := parseFor(t, w, doc, nil)
-	var keys []string
-	for _, p := range mustOp(t, c, "op").Params {
-		keys = append(keys, p.Key)
-	}
-	if len(keys) == 2 { // two parameters (names are case-sensitive in the document)
-		resp, err := c.Call(t.Context(), "op", &openapi.Input{Params: map[string]any{keys[0]: "1", keys[1]: "2"}}, nil)
-		re := refusedBeforeSending(t, w, resp, err)
-		wantKeys(t, "Inputs", re.Inputs, false, keys[1])
-		if _, ok := re.Settings["Options.Header"]; ok {
-			t.Errorf("the collision is blamed on Options.Header, which is not set")
+	params := mustOp(t, c, "op").Params
+	if len(params) != 1 {
+		var names []string
+		for _, p := range params {
+			names = append(names, p.In+" "+p.Name)
 		}
-	} else {
-		t.Logf("parameter keys %q: one parameter, no collision to check", keys)
+		t.Fatalf("Params = %q, want the one operation-level header parameter", names)
 	}
-
+	if p := params[0]; p.Name != "x-id" || p.Key != "x-id" || p.In != "header" || p.Description != "operation level" ||
+		p.Source != w.URL+"/openapi.json#/paths/~1a/get/parameters/0" {
+		t.Errorf("Params[0] = %s %q (key %q, %q) at %q, want the operation's x-id", p.In, p.Name, p.Key, p.Description, p.Source)
+	}
+	mustCall(t, c, "op", &openapi.Input{Params: map[string]any{"x-id": "2"}}, nil)
+	if v := w.last(t).Header.Values("X-Id"); len(v) != 1 || v[0] != "2" {
+		t.Errorf("X-Id sent as %q, want once, as [\"2\"]", v)
+	}
+	// The overridden parameter's name is no key (client.go, Input.Params:
+	// values are "by Param.Key").
 	before := w.count()
-	resp, err := c.Call(t.Context(), "content", &openapi.Input{Params: map[string]any{"X-V": "a"}}, nil)
+	resp, err := c.Call(t.Context(), "op", &openapi.Input{Params: map[string]any{"X-Id": "1"}}, nil)
 	re := refusedSince(t, w, before, resp, err)
+	wantKeys(t, "Inputs", re.Inputs, true, "X-Id")
+
+	before = w.count()
+	resp, err = c.Call(t.Context(), "content", &openapi.Input{Params: map[string]any{"X-V": "a"}}, nil)
+	re = refusedSince(t, w, before, resp, err)
 	if !errors.Is(re, errors.ErrUnsupported) {
 		t.Errorf("error %v, want the not-implemented refusal", re)
 	}
@@ -1121,5 +1144,121 @@ func TestColumnsAfterBOM(t *testing.T) {
 	}
 	if bom.Error() != plain.Error() {
 		t.Errorf("with a BOM: %q, without: %q; want the same position", bom, plain)
+	}
+}
+
+// T1-15: out must not be "a nil pointer of any type" (client.go, Call:
+// "anything else, a nil pointer of any type included, is refused before
+// sending"). A nil *bytes.Buffer is an io.Writer, and still refused.
+func TestT1_15NilPointerOfAnyType(t *testing.T) {
+	w := newWire(t, jsonAnswer(200, `{"a":1}`))
+	c := parseFor(t, w, doc31(`"/x":{"post":{"operationId":"create"}}`), nil)
+	for name, out := range map[string]any{
+		"*bytes.Buffer":   (*bytes.Buffer)(nil),
+		"*map[string]any": (*map[string]any)(nil),
+		"*any":            (*any)(nil),
+		"*string":         (*string)(nil),
+	} {
+		noPanic(t, name, func() {
+			before := w.count()
+			resp, err := c.Call(t.Context(), "create", nil, out)
+			re := refusedSince(t, w, before, resp, err)
+			if re.Err == nil {
+				t.Errorf("%s: RequestError.Err = nil for an out that cannot receive a result", name)
+			}
+		})
+	}
+	// Response.Decode applies Call's target rules: an invalid out is a
+	// *DecodeError (client.go, Response.Decode).
+	noPanic(t, "Response.Decode", func() {
+		resp, err := mustPrepare(t, c, "create", nil).Send(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var de *openapi.DecodeError
+		if err := resp.Decode((*bytes.Buffer)(nil)); !errors.As(err, &de) {
+			t.Errorf("Response.Decode((*bytes.Buffer)(nil)) = %v, want a *DecodeError", err)
+		}
+	})
+}
+
+// T1-16: "a Host field or a header parameter named Host" is refused, "since
+// net/http derives Host from the URL" (doc.go, Fixed rules, Header fields):
+// Options.Header by Load (load.go, Load: "a Header field that is always
+// refused") at Settings["Options.Header"], Input.Header at a call at
+// Settings["Input.Header"], and a value for a header parameter named Host at
+// Inputs[its Param.Key] (errors.go, RequestError: the refusal key grammar).
+func TestT1_16HostRefused(t *testing.T) {
+	w := newWire(t, nil)
+	doc := doc31(`"/plain":{"get":{"operationId":"plain"}},
+		"/host":{"get":{"operationId":"host","parameters":[{"name":"Host","in":"header","schema":{}}]}},
+		"/lower":{"get":{"operationId":"lower","parameters":[{"name":"host","in":"header","schema":{}}]}}`)
+	for _, name := range []string{"Host", "host"} {
+		h := http.Header{name: {"evil.example.test"}}
+		t.Run("Options.Header "+name, func(t *testing.T) {
+			c, err := openapi.Parse(t.Context(), []byte(expand(doc, w.URL)), w.URL+"/openapi.json", &openapi.Options{Header: h})
+			if c != nil {
+				t.Errorf("Load returned a Client")
+			}
+			wantKeys(t, "Settings", asRequestError(t, err).Settings, false, "Options.Header")
+		})
+		t.Run("Input.Header "+name, func(t *testing.T) {
+			c := parseFor(t, w, doc, nil)
+			before := w.count()
+			resp, err := c.Call(t.Context(), "plain", &openapi.Input{Header: h}, nil)
+			re := refusedSince(t, w, before, resp, err)
+			wantKeys(t, "Settings", re.Settings, false, "Input.Header")
+		})
+		t.Run("With Options.Header "+name, func(t *testing.T) {
+			c := parseFor(t, w, doc, nil).With(func(o *openapi.Options) { o.Header = h })
+			before := w.count()
+			resp, err := c.Call(t.Context(), "plain", nil, nil)
+			re := refusedSince(t, w, before, resp, err)
+			wantKeys(t, "Settings", re.Settings, false, "Options.Header")
+		})
+	}
+	for _, key := range []string{"host", "lower"} {
+		t.Run("parameter "+key, func(t *testing.T) {
+			c := parseFor(t, w, doc, nil)
+			p := param(t, mustOp(t, c, key), 0)
+			before := w.count()
+			resp, err := c.Call(t.Context(), key, &openapi.Input{Params: map[string]any{p.Key: "evil.example.test"}}, nil)
+			re := refusedSince(t, w, before, resp, err)
+			wantKeys(t, "Inputs", re.Inputs, false, p.Key)
+		})
+	}
+	for _, r := range w.requests() {
+		if r.Host == "evil.example.test" {
+			t.Errorf("a request went out with Host %q", r.Host)
+		}
+	}
+}
+
+// T2-1, as ruled (ledger, "Regression-test questions, ruled": "the rule
+// applies to the resulting segment, however many values form it"): in
+// "/{a}{b}", a="." and b="." form "..", which is refused; so is a="" and
+// b="..". Values that form any other segment are sent.
+func TestT2_1DotSegmentFromTwoValues(t *testing.T) {
+	w := newWire(t, nil)
+	c := parseFor(t, w, doc31(`"/x/{a}{b}/y":{"get":{"operationId":"op","parameters":[
+		{"name":"a","in":"path","required":true,"schema":{}},
+		{"name":"b","in":"path","required":true,"schema":{}}]}}`), nil)
+	for _, v := range [][2]string{{".", "."}, {"", ".."}, {"..", ""}, {"", "."}} {
+		t.Run(fmt.Sprintf("refused %q+%q", v[0], v[1]), func(t *testing.T) {
+			before := w.count()
+			resp, err := c.Call(t.Context(), "op", &openapi.Input{Params: map[string]any{"a": v[0], "b": v[1]}}, nil)
+			re := refusedSince(t, w, before, resp, err)
+			wantAnyKey(t, "Inputs", re.Inputs, "a", "b")
+		})
+	}
+	for v, want := range map[[2]string]string{{".", "x"}: "/x/.x/y", {".", ".."}: "/x/.../y", {"a", "."}: "/x/a./y"} {
+		t.Run(fmt.Sprintf("sent %q+%q", v[0], v[1]), func(t *testing.T) {
+			before := w.count()
+			mustCall(t, c, "op", &openapi.Input{Params: map[string]any{"a": v[0], "b": v[1]}}, nil)
+			if got := w.last(t).RequestURI; w.count() != before+1 || got != want {
+				t.Errorf("sent as %q, want %q", got, want)
+			}
+		})
 	}
 }

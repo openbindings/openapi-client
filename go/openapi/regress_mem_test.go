@@ -1,7 +1,9 @@
 package openapi_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -340,5 +342,79 @@ func TestLoadHonorsContext(t *testing.T) {
 	defer dcancel()
 	if _, err := (&openapi.Loader{}).Parse(dctx, doc, largeDocURI, nil); !errors.Is(err, context.DeadlineExceeded) {
 		t.Errorf("Loader.Parse with an expired deadline = %v, want context.DeadlineExceeded", err)
+	}
+}
+
+// countValues counts the JSON values in valid JSON b: objects, arrays and
+// scalars, member names excluded.
+func countValues(t *testing.T, b []byte) int {
+	t.Helper()
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.UseNumber()
+	type frame struct{ obj, wantKey bool }
+	var stack []*frame
+	n := 0
+	for {
+		tok, err := dec.Token()
+		if errors.Is(err, io.EOF) {
+			return n
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if d, ok := tok.(json.Delim); ok {
+			if d == '}' || d == ']' {
+				stack = stack[:len(stack)-1]
+				if k := len(stack); k > 0 && stack[k-1].obj {
+					stack[k-1].wantKey = true
+				}
+				continue
+			}
+			n++
+			if k := len(stack); k > 0 && stack[k-1].obj {
+				stack[k-1].wantKey = false // the container is the member's value
+			}
+			stack = append(stack, &frame{obj: d == '{', wantKey: true})
+			continue
+		}
+		if k := len(stack); k > 0 && stack[k-1].obj && stack[k-1].wantKey {
+			stack[k-1].wantKey = false // a member name
+			continue
+		}
+		n++
+		if k := len(stack); k > 0 && stack[k-1].obj {
+			stack[k-1].wantKey = true
+		}
+	}
+}
+
+// F7, as ruled (ledger, "Regression-test questions, ruled": "any document
+// stays within document bytes plus 16 bytes per JSON value retained"): the
+// worst case, an array of zeros with one value per two bytes. (The 3x and
+// 6x budgets stay on the synthetic document, TestF7TreeMemoryBudget.)
+func TestF7WorstCaseRetainedBudget(t *testing.T) {
+	var buf strings.Builder
+	buf.WriteString(`{"openapi":"3.1.0","info":{"title":"t","version":"1"},"paths":{},"components":{"x":[0`)
+	for buf.Len() < 1<<20 {
+		buf.WriteString(",0")
+	}
+	buf.WriteString("]}}")
+	doc := []byte(buf.String())
+	values := countValues(t, doc)
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	c, err := openapi.Parse(context.Background(), doc, largeDocURI, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime.GC()
+	runtime.ReadMemStats(&after)
+	runtime.KeepAlive(c)
+	retained := int64(after.HeapAlloc) - int64(before.HeapAlloc)
+	budget := int64(len(doc)) + 16*int64(values)
+	t.Logf("document %d bytes, %d values: retained %d bytes, budget %d", len(doc), values, retained, budget)
+	if retained > budget {
+		t.Errorf("retained %d bytes, over the budget of %d (document bytes plus 16 per value)", retained, budget)
 	}
 }
