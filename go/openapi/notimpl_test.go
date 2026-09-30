@@ -13,7 +13,10 @@ import (
 // 2 replaced the parameter refusals (styles, cookies, content parameters,
 // allowReserved and ParamWriters) with styles_test.go, cookies_test.go,
 // contentparam_test.go, reserved_test.go and paramwriters_test.go; the
-// OpenAPI 3.2 querystring comes with its edition in stage 6.
+// OpenAPI 3.2 querystring comes with its edition in stage 6. Stage 3
+// replaced the refusals of credentials, Options.Security,
+// Options.SecurityKey and FollowAll with credentials_test.go,
+// security_test.go and redirects_test.go.
 
 // Stage brief, Loading: "Any other edition, YAML (first significant byte not
 // '{') ... is a refusal with a clear error (YAML is stage 5, other editions
@@ -30,16 +33,6 @@ func TestStage1RefusesOtherDocuments(t *testing.T) {
 		if err == nil || c != nil {
 			t.Errorf("%s: Parse = %v, %v; want a refusal in stage 1", name, c, err)
 		}
-	}
-}
-
-// Stage brief, Calls and responses: "FollowAll is stage 3: refuse at Load
-// with a not-implemented error."
-func TestStage1RefusesFollowAll(t *testing.T) {
-	c, err := openapi.Parse(t.Context(), []byte(expand(doc31(`"/a":{"get":{}}`), "https://api.example.test")), testDocURI,
-		&openapi.Options{Redirects: openapi.FollowAll})
-	if err == nil || c != nil {
-		t.Errorf("Parse with FollowAll = %v, %v; want a refusal in stage 1", c, err)
 	}
 }
 
