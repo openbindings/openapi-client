@@ -77,23 +77,25 @@
 // as its UTF-8 bytes, and a text type also a number or boolean, in its JSON
 // spelling.
 //
-// In a parameter not serialized by content, and in a form or multipart
-// field serialized by a style or a Swagger 2.0 collectionFormat, null, an
-// empty array and an object whose members are all undefined are undefined,
-// as RFC 6570 says, and "" is a value. An undefined member is skipped, an
-// undefined array item (null, [] or {}) is refused, since dropping it would
-// shift the items after it, an undefined optional parameter is omitted,
-// and an undefined required one is missing. A form or multipart property or
-// array item whose JSON data is null is omitted, whatever its
-// serialization. A parameter serialized by content is encoded as a body of
-// its media type is, so under application/json null, [] and {} are present
-// values, and a reader or Part inside its JSON value is refused at its key.
-// A JSON body or JSON part is exactly what its codec writes, null members,
-// [] and {} included. A value the client encodes that is nested deeper than
-// 1,000 levels is refused at its key; a caller's codec receives the value as
-// given. Schema defaults are never sent, and values
-// are never validated against schemas. How bytes, readers and iterators are
-// sent is on Input.Body.
+// In a parameter not serialized by content, and in a form or multipart field
+// serialized by a style or a Swagger 2.0 collectionFormat, null, an empty array
+// and an object whose members are all undefined are undefined, as RFC 6570
+// says, and "" is a value. An undefined member or array item is skipped, as RFC
+// 6570 section 3.2.1 expands only defined ones, an undefined optional parameter
+// is omitted, and an undefined required one is missing. A form or multipart
+// property or array item whose JSON data is null is omitted, whatever its
+// serialization. A parameter serialized by content is encoded as a body of its
+// media type is, so under application/json null, [] and {} are present values,
+// and a []byte is the encoded content; a reader, and a multipart or sequential
+// media type, cannot serialize a parameter and are refused at its key. A reader
+// or Part anywhere inside a parameter value the client encodes with
+// encoding/json is refused at the parameter's key, as for a body. A JSON body
+// or JSON part is exactly what its codec writes, null members, [] and {}
+// included. A value the client encodes that is nested deeper than 1,000 levels,
+// counted in the JSON encoding/json writes (a MarshalJSON's output included),
+// is refused at its key; a caller's codec receives the value as given. Schema
+// defaults are never sent, and values are never validated against schemas. How
+// bytes, readers and iterators are sent is on Input.Body.
 //
 // Where the client's own JSON codec creates the values, as when out is a
 // *any, a *map[string]any or a *[]any, and for Items[any] and
@@ -240,9 +242,10 @@
 //     form or multipart body's fields, follow the order encoding/json
 //     writes members in (a struct's fields in declaration order, a map's
 //     keys sorted), and items keep their order.
-//   - Percent-encoding: path, query and cookie values (content-serialized
-//     ones included, application/x-www-form-urlencoded too) and parameter
-//     and member names encode every byte outside RFC 3986's unreserved set
+//   - Percent-encoding: path and query values (content-serialized ones
+//     included, application/x-www-form-urlencoded too), form-style cookie
+//     values, and parameter and member names encode every byte outside RFC
+//     3986's unreserved set
 //     as %XX in uppercase hex. A path parameter value that would form a
 //     whole "." or ".." segment is refused, since RFC 3986 section 5.2.4
 //     removes such segments before the value could reach the server. So deepObject nests objects
@@ -255,8 +258,10 @@
 //     and existing %XX triples pass through, and the caller supplies any
 //     percent-encoding OpenAPI leaves to the application. Header values
 //     are written as given in every edition, never percent-encoded, as
-//     OpenAPI 3.1.2 corrects. OpenAPI 3.2 cookie style names and values,
-//     and an apiKey sent in a cookie, are written as given too; a cookie
+//     OpenAPI 3.1.2 corrects. OpenAPI 3.2 cookie style names and values, a
+//     content-serialized cookie value (OpenAPI 3.1.2 recommends text/plain
+//     content so the application assembles the cookie), and an apiKey sent
+//     in a cookie, are written as given too; a cookie
 //     value written as given that holds a ";" or a control character is
 //     refused.
 //   - Styles: RFC 6570's normative text governs where its informative
@@ -309,9 +314,13 @@
 //     then Input.Header are applied over the generated fields: a field
 //     replaces the same field set before, and one with no values removes
 //     it (a User-Agent included, so net/http adds none). A Header holding
-//     two spellings of one field is refused, and so is a Host field or a
-//     header parameter named Host, since net/http derives Host from the
-//     URL. At either level, Content-Type, Content-Length and
+//     two spellings of one field is refused, and so is a field or a header
+//     parameter named Host, Content-Length, Transfer-Encoding, Trailer,
+//     Connection, Keep-Alive, Proxy-Connection or Upgrade, since net/http
+//     derives or HTTP forbids them (RFC 9110 sections 6.6.2 and 8.6, RFC
+//     9113 section 8.2.2). A Header entry with no values is a conflict like
+//     any other when a header parameter the call supplies, or the Cookie
+//     field, sets that field. At either level, Content-Type, Content-Length and
 //     Transfer-Encoding are refused (the MediaType settings choose the
 //     media type), and so is a field that a header parameter the call supplies,
 //     or the call's credential, sets; a declared header parameter the call

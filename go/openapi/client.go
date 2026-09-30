@@ -267,6 +267,8 @@ type Input struct {
 	// A path parameter's {name} remains in both URL.Path and URL.RawPath
 	// until its writer replaces it in both, keeping RawPath an encoding of
 	// Path; an unresolved path token after all writers refuses preparation.
+	// Locate the token in RawPath: there other values are percent-encoded,
+	// so their text cannot match it, as it can in Path.
 	// A writer also bypasses that parameter's serialization Err, including
 	// for a required parameter, when its Key is known. It cannot bypass a
 	// defect in the operation or an unresolved parameter reference whose
