@@ -62,7 +62,10 @@ type Options struct {
 	// The enum limits other values: one outside it refuses the call, and an
 	// empty enum permits only the default. A name that appears in no server
 	// URL of the document is refused by Load, as a likely misspelling.
-	// Values are substituted as given.
+	// Values are substituted as given, except that one substituted into the
+	// scheme or authority may not hold "/", "?", "#", "@" or "\\", so a
+	// value cannot move the request to another host (RFC 3986 section
+	// 3.2).
 	Variables map[string]string
 
 	// Credentials holds a Credential for each security scheme, by the name
@@ -220,7 +223,10 @@ func (c *Client) With(f func(*Options)) *Client {
 }
 
 // An Input holds the values and settings for one call. The client never
-// modifies an Input. Call has stopped reading its body when it returns.
+// modifies an Input. Call has stopped reading its body when it returns,
+// provided a reader body returns from Read when the call's context ends
+// or its connection closes; the client cannot interrupt a Read that blocks
+// forever.
 // For Send or Stream, wait for Response.WaitRequest before reusing a body
 // reader or iterator; closing Response.Body stops an outstanding upload.
 // A body that can be read only once is consumed by its first call. A nil
@@ -417,9 +423,9 @@ type Part struct {
 // A key made of a method, one space and a string beginning with "/" always
 // means a method and a Paths key, never an operationId.
 //
-// out must be nil, a *[]byte, an io.Writer, or a non-nil pointer; anything
-// else is refused before sending. For a 2xx, the body is read to the end and
-// closed before Call returns, and out receives it:
+// out must be nil, a non-nil *[]byte, an io.Writer, or a non-nil pointer;
+// anything else is refused before sending. For a 2xx, the body is read to the
+// end and closed before Call returns, and out receives it:
 //
 //   - nil discards it, reading at most MaxBodyBytes before closing the
 //     connection.
@@ -438,10 +444,11 @@ type Part struct {
 //     with encoding/xml, which ignores json tags, and which reads UTF-8,
 //     US-ASCII and ISO-8859-1 documents, taking the encoding from a byte
 //     order mark, else the Content-Type's charset, else the document's own
-//     declaration; any text/* type (text/event-stream included) into a
-//     *string, its bytes as sent, the charset left in the Content-Type;
-//     and into a *any, text as a string and any other non-JSON type,
-//     multipart included, as a []byte. A missing, repeated or unparsable
+//     declaration. A *string and a *any take any text/* type as text,
+//     whatever its codec class (text/xml and text/event-stream included):
+//     a *string its bytes as sent, the charset left in the Content-Type,
+//     and a *any a string; a *any takes any other non-JSON type, multipart
+//     included, as a []byte. A missing, repeated or unparsable
 //     Content-Type is treated as application/octet-stream, which a *any
 //     receives as a []byte and a typed target cannot; no type is inferred
 //     solely from the document. A type these rules cannot decode into out
@@ -635,7 +642,8 @@ type Response struct {
 	// Declaration is the operation's response Message that governs
 	// StatusCode: the one whose Key is the exact code ("201"), else its
 	// range ("2XX"), else "default". It is nil when the operation declares
-	// nothing for the status, which is not in itself an error. A lowercase
+	// nothing for the status, or the status is outside 100 to 599, which is
+	// not in itself an error. A lowercase
 	// range such as "2xx" is not a range key: it is reported on its
 	// Message, and never governs. It is the same immutable descriptor
 	// Operation.Responses exposes.

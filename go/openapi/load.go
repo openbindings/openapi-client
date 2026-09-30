@@ -11,7 +11,11 @@ import (
 
 // Load reads the document at uri, and every document its references reach,
 // and returns a Client for it that uses opts. The uri is an http or https
-// URL, a file URL, or a file path. A nil opts means the defaults. The Client
+// URL, a file URL, or a file path. A uri with a fragment is refused, as is
+// one with userinfo, which RFC 9110 section 4.2.4 forbids a sender to
+// generate (supply credentials through HTTPClient or Loader.Fetch), and a
+// file URL naming a host other than localhost. ctx bounds the whole load,
+// reading and parsing included. A nil opts means the defaults. The Client
 // keeps a copy of opts, its maps included, so changing them afterwards has
 // no effect. Load uses the zero [Loader].
 //
@@ -38,15 +42,15 @@ func Load(ctx context.Context, uri string, opts *Options) (*Client, error) {
 	return l.Load(ctx, uri, opts)
 }
 
-// Parse returns a Client for a document the caller already holds, such as
-// one embedded with go:embed, using the zero [Loader], and fails as Load
-// does. The content is JSON or YAML text. The uri, if not empty, is the
-// absolute URI the document is meant to live at, which stands for the URI
-// it was retrieved from and is never fetched itself. With an empty
-// uri, the document may reference only itself, a call whose server URL is
-// relative needs Options.BaseURL, and Sources name the document by a
-// "urn:uuid:" URI derived from the content (a name-based UUID, RFC 9562
-// version 5), so Sources and $defs keys are the same on every run.
+// Parse returns a Client for a document the caller already holds, such as one
+// embedded with go:embed, using the zero [Loader], and fails as Load does. The
+// content is JSON or YAML text. The uri, if not empty, is the absolute URI,
+// without a fragment, the document is meant to live at, which stands for the
+// URI it was retrieved from and is never fetched itself. With an empty uri, the
+// document may reference only itself, a call whose server URL is relative needs
+// Options.BaseURL, and Sources name the document by a "urn:uuid:" URI derived
+// from the content (a name-based UUID, RFC 9562 version 5), so Sources and
+// $defs keys are the same on every run.
 func Parse(ctx context.Context, content []byte, uri string, opts *Options) (*Client, error) {
 	var l Loader
 	return l.Parse(ctx, content, uri, opts)
@@ -70,7 +74,8 @@ func Parse(ctx context.Context, content []byte, uri string, opts *Options) (*Cli
 // than 100 times its own node count, or that nests deeper than 1,000 levels
 // (the outermost value being level 1), is rejected too. A rejection names the
 // document's URI and the line and column of the problem, both counted from 1,
-// the column in bytes. Reference cycles are detected, never followed forever.
+// the column in bytes after any byte order mark. Reference cycles are
+// detected, never followed forever.
 //
 // The references followed are $ref in Reference Objects, Path Items and
 // Schema Objects, $dynamicRef, Discriminator mapping and defaultMapping

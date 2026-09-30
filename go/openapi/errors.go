@@ -64,15 +64,16 @@ type RequestError struct {
 	// credentials or caller-supplied secrets.
 	Settings map[string]error
 
-	// Inputs holds each input the operation cannot accept, and why: an
-	// unknown parameter, a missing required one, a value its style cannot
-	// serialize or a header cannot carry, a body the operation does not
-	// take, a reader or Part where the media type cannot carry one, a
-	// ParamWriters failure or conflict, or a Part that sets both Filename
-	// and NoFilename. The key is the Param.Key or, for the body, "Input.Body"
-	// followed by a JSON Pointer to the part of Body concerned:
-	// "Input.Body" alone for the body itself, "Input.Body/photo" for its
-	// property photo. The two never collide (see Input.Params).
+	// Inputs holds each input the operation cannot accept, and why: an unknown
+	// parameter, a missing required one, a value its style cannot serialize or
+	// a header cannot carry (a CR, LF or NUL, or leading or trailing
+	// whitespace, which HTTP would strip), a body the operation does not take,
+	// a reader or Part where the media type cannot carry one, a ParamWriters
+	// failure or conflict, or a Part that sets both Filename and NoFilename.
+	// The key is the Param.Key or, for the body, "Input.Body" followed by a
+	// JSON Pointer to the part of Body concerned: "Input.Body" alone for the
+	// body itself, "Input.Body/photo" for its property photo. The two never
+	// collide (see Input.Params).
 	Inputs map[string]error
 
 	// Err is the reason for any other refusal, or nil: ErrNoOperation, the
