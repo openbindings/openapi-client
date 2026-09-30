@@ -323,6 +323,9 @@ func (c *Client) writePath(b *strings.Builder, o *operation, in *Input, re *Requ
 			b.WriteByte('}')
 			continue
 		}
+		if _, refused := re.Inputs[p.Key]; refused {
+			continue // its serialization stopped at an earlier occurrence
+		}
 		given, wrote := false, false
 		if v := in.Params[p.Key]; v != nil {
 			given, wrote = c.writeParam(b, p.first, p, v, re)

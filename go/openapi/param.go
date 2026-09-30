@@ -35,10 +35,16 @@ var (
 	noStyle    style
 )
 
+// maxLength is the most bytes the request target, and each header field,
+// that the client builds may hold: it stops the serialization a value
+// amplifies, as a deepObject repeating a long name in each pair does.
+const maxLength = 1 << 20
+
 var (
 	errNested     = errors.New("the style cannot serialize a nested array or object")
 	errComposite  = errors.New("the style takes an array or object")
 	errDeepObject = errors.New("the deepObject style takes an object without arrays")
+	errTooLong    = errors.New("the value would take the request target or header field past 1 MiB")
 )
 
 // writeParam writes the value v given for p into b, after lead unless it
@@ -49,6 +55,9 @@ func (c *Client) writeParam(b *strings.Builder, lead string, p *param, v any, re
 	if p.ContentType == "" {
 		e := emitter{param: p, b: b, lead: lead}
 		given, err := e.write(c.doc, v)
+		if err == nil && e.n > 0 && b.Len() > maxLength { // an item escaped past it
+			err = errTooLong
+		}
 		if err != nil {
 			re.input(p.Key, err)
 			return false, false
@@ -66,6 +75,9 @@ func (c *Client) writeParam(b *strings.Builder, lead string, p *param, v any, re
 	if err == nil && p.In == "cookie" && strings.ContainsFunc(s, func(r rune) bool { return r == ';' || r < ' ' || r == 0x7f }) {
 		err = errors.New(`a cookie value written as given cannot hold a ";" or a control character`)
 	}
+	if err == nil && b.Len()+len(s) > maxLength {
+		err = errTooLong
+	}
 	if err != nil {
 		re.input(p.Key, err)
 		return false, false
@@ -79,6 +91,10 @@ func (c *Client) writeParam(b *strings.Builder, lead string, p *param, v any, re
 		b.WriteString(s) // as given
 	} else {
 		escapeTo(b, s, unreservedSet)
+	}
+	if b.Len() > maxLength {
+		re.input(p.Key, errTooLong)
+		return false, false
 	}
 	return true, true
 }
@@ -175,7 +191,7 @@ func (e *emitter) write(d *document, v any) (bool, error) {
 	case k == 'n':
 		return false, nil
 	case k == '{' && e.deep:
-		if err := e.object(r, nil); err != nil {
+		if err := e.object(r, nil, 0); err != nil {
 			return false, err
 		}
 		return e.end(0)
@@ -222,16 +238,18 @@ func (e *emitter) primitive(s string) (bool, error) {
 	return true, nil
 }
 
-// next writes what precedes an item or member: the value's start before
-// the first, unless the parameter cannot be serialized, else a separator. A
-// named value not exploded defers the "=" after its name while its first
-// item, empty says, is "".
-func (e *emitter) next(empty bool) error {
+// next writes what precedes an item or member of at least n bytes: the
+// value's start before the first, unless the parameter cannot be
+// serialized, else a separator. It refuses one that would take the builder
+// past maxLength. A named value not exploded defers the "=" after its name
+// while its first item, empty says, is "".
+func (e *emitter) next(n int, empty bool) error {
 	switch {
+	case e.n == 0 && e.Err != nil:
+		return e.Err
+	case e.b.Len()+n > maxLength:
+		return errTooLong
 	case e.n == 0:
-		if e.Err != nil {
-			return e.Err
-		}
 		e.b.WriteString(e.lead)
 		if e.named && !e.Explode {
 			e.b.WriteString(e.name)
@@ -254,7 +272,7 @@ func (e *emitter) next(empty bool) error {
 
 // item writes an array's item s.
 func (e *emitter) item(s string) error {
-	if err := e.next(s == ""); err != nil {
+	if err := e.next(len(s), s == ""); err != nil {
 		return err
 	}
 	if e.named && e.Explode {
@@ -271,7 +289,7 @@ func (e *emitter) item(s string) error {
 
 // member writes an object's member named k, whose value is s.
 func (e *emitter) member(k, s string) error {
-	if err := e.next(false); err != nil { // not exploded, it holds a delimiter
+	if err := e.next(len(k)+len(s), false); err != nil { // not exploded, it holds a delimiter
 		return err
 	}
 	escapeTo(e.b, k, e.set)
@@ -307,8 +325,9 @@ func (e *emitter) end(items int) (bool, error) {
 }
 
 // object writes the members of the object at the read position as
-// deepObject pairs, path holding the names of the objects around them.
-func (e *emitter) object(r *jsonReader, path []string) error {
+// deepObject pairs, path holding the names of the objects around them, n
+// bytes long.
+func (e *emitter) object(r *jsonReader, path []string, n int) error {
 	return r.each(func(name string) error {
 		switch r.s[r.i] {
 		case 'n':
@@ -321,9 +340,10 @@ func (e *emitter) object(r *jsonReader, path []string) error {
 			r.i += len("[]")
 			return nil
 		case '{':
-			return e.object(r, append(path, name))
+			return e.object(r, append(path, name), n+len(name))
 		}
-		if err := e.next(false); err != nil {
+		v := r.scalar()
+		if err := e.next(n+len(name)+len(v), false); err != nil {
 			return err
 		}
 		e.b.WriteString(e.name)
@@ -335,7 +355,7 @@ func (e *emitter) object(r *jsonReader, path []string) error {
 		e.b.WriteString("%5B")
 		escapeTo(e.b, name, e.set)
 		e.b.WriteString("%5D=")
-		escapeTo(e.b, r.scalar(), e.set)
+		escapeTo(e.b, v, e.set)
 		return nil
 	})
 }
