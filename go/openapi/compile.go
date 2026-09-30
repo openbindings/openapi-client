@@ -555,10 +555,11 @@ type urlVar struct {
 type urlPart uint8
 
 const (
-	inPath      urlPart = iota
-	inScheme            // the resulting scheme must be one
-	inAuthority         // no "/", "?", "#", "@" or "\"
-	wholeURL            // its default spans "://", or it is the template: any value
+	inPath          urlPart = iota
+	inScheme                // the resulting scheme must be one
+	inAuthority             // no "/", "?", "#", "@" or "\"
+	authorityOrPath         // an empty default where the authority meets the path: either
+	wholeURL                // its default spans "://", or it is the template: any value
 )
 
 // An endpoint is a usable server URL, its variables substituted.
@@ -633,7 +634,9 @@ func (d *document) newServer(s *Server, declared value) *server {
 			sv.vars[i].part = wholeURL // its default spans "://", or it is the whole template
 		case a <= colon:
 			sv.vars[i].part = inScheme
-		case authority >= 0 && a >= authority && (a < path || a == authority):
+		case authority >= 0 && a == b && a == path:
+			sv.vars[i].part = authorityOrPath
+		case authority >= 0 && a >= authority && a < path:
 			sv.vars[i].part = inAuthority
 		}
 	}
@@ -691,6 +694,12 @@ func urlParts(u string) (colon, authority, path int) {
 // check returns why value, substituted at at in u, whose parts urlParts
 // gives, changes more of u than the part p, or nil.
 func (p urlPart) check(u, value string, at, colon, path int) error {
+	if p == authorityOrPath {
+		if err := inPath.check(u, value, at, colon, path); err != nil && inAuthority.check(u, value, at, colon, path) != nil {
+			return err
+		}
+		return nil
+	}
 	switch {
 	case p == inScheme && (colon < 0 || at+len(value) > colon || !isScheme(u[:colon])):
 		return errors.New("the value must leave the scheme a URI scheme (RFC 3986 section 3.1)")
