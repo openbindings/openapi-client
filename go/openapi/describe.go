@@ -163,8 +163,8 @@ type Param struct {
 	// serialized by ContentType instead, and in Swagger 2.0.
 	Style string
 
-	// Explode is the effective explode, and ExplodeSet whether the document
-	// writes it.
+	// Explode is the effective explode (true for deepObject, which ignores
+	// the field), and ExplodeSet whether the document writes it.
 	Explode    bool
 	ExplodeSet bool
 

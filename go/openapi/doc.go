@@ -246,14 +246,20 @@
 //     delimiters are %20 and %7C. allowReserved applies to query
 //     parameters, and in OpenAPI 3.2 to path parameters and form-style
 //     cookie parameters too; elsewhere it is ignored. Where it applies, RFC
-//     6570 reserved expansion is used exactly: reserved characters and
-//     existing %XX triples pass through, and the caller supplies any
+//     6570 reserved expansion is used exactly, member names included
+//     (parameter names always follow the rule above): reserved characters
+//     and existing %XX triples pass through, and the caller supplies any
 //     percent-encoding OpenAPI leaves to the application. Header values
 //     are written as given in every edition, never percent-encoded, as
 //     OpenAPI 3.1.2 corrects. OpenAPI 3.2 cookie style names and values,
 //     and an apiKey sent in a cookie, are written as given too; a cookie
-//     value holding a ";" or a control character is refused.
-//   - Styles: deepObject ignores explode. Nesting in any style but
+//     value written as given that holds a ";" or a control character is
+//     refused.
+//   - Styles: RFC 6570's normative text governs where its informative
+//     Appendix A differs, so an exploded object member whose value is ""
+//     is written as its name alone except in form style. Whether a value
+//     is undefined (see Values) is settled first; the refusals here apply
+//     to defined values. deepObject ignores explode. Nesting in any style but
 //     deepObject is refused, and so are an array in a deepObject value, a
 //     primitive for spaceDelimited, pipeDelimited or deepObject, explode
 //     true with spaceDelimited or pipeDelimited, and, in OpenAPI 3.2, an
@@ -287,7 +293,9 @@
 //     declared order, then credentials. A Cookie field in Options.Header or
 //     Input.Header is refused when the call sends cookie parameters or a
 //     cookie credential, and a value for a header parameter named Cookie,
-//     whose effect OpenAPI leaves undefined, is refused at its key.
+//     whose effect OpenAPI leaves undefined, is refused at its key. A
+//     required cookie parameter is given in Params or by a writer; a
+//     Cookie field never supplies it.
 //   - Accept: none is synthesized. Set Options.Header or Input.Header to
 //     request a particular representation; Call requires one where a
 //     typed out could receive several (see Client.Call).
