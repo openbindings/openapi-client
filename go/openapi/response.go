@@ -106,6 +106,7 @@ func (r *Request) newExchange(ctx context.Context) (*exchange, *http.Request, er
 	}
 	x := &exchange{Context: ctx, cfg: pr.cfg, op: pr.op, security: pr.security}
 	req := r.HTTP.WithContext(x)
+	req.Header = req.Header.Clone() // the http.Client adds a Jar's cookies to it
 	body := req.Body
 	if body == nil || body == http.NoBody {
 		x.done = true

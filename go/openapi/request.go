@@ -126,9 +126,7 @@ func (c *Client) newRequest(ctx context.Context, o *operation, in *Input, re *Re
 	security := selectSecurity(o, in, re)
 	req, _ := http.NewRequestWithContext(ctx, o.Method, "", nil)
 	h := req.Header
-	for k, v := range c.cfg.Header {
-		h[k] = slices.Clone(v)
-	}
+	applyFields(h, c.cfg.Header, "Options.Header", re)
 	applyFields(h, in.Header, "Input.Header", re)
 
 	// The path, then the query.
