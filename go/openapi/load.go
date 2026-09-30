@@ -176,19 +176,15 @@ const (
 // Load reads a document as the package's Load function does, with l's
 // settings.
 func (l *Loader) Load(ctx context.Context, uri string, opts *Options) (*Client, error) {
-	var o Options
-	if opts != nil {
-		o = *opts
-	}
-	hc := o.HTTPClient
-	if hc == nil {
-		hc = http.DefaultClient
+	hc := http.DefaultClient
+	if opts != nil && opts.HTTPClient != nil {
+		hc = opts.HTTPClient
 	}
 	content, final, err := l.fetch(ctx, uri, hc)
 	if err != nil {
 		return nil, err
 	}
-	return newClient(content, final, o)
+	return newClient(ctx, content, final, opts)
 }
 
 // Parse returns a Client for content as the package's Parse function does,
@@ -197,11 +193,7 @@ func (l *Loader) Load(ctx context.Context, uri string, opts *Options) (*Client, 
 // AllowReference admits them; relative external references have no base
 // unless an OpenAPI 3.2 absolute $self supplies one.
 func (l *Loader) Parse(ctx context.Context, content []byte, uri string, opts *Options) (*Client, error) {
-	var o Options
-	if opts != nil {
-		o = *opts
-	}
-	return newClient(string(content), uri, o)
+	return newClient(ctx, string(content), uri, opts)
 }
 
 // Version reports the version the entry document declares: its swagger
@@ -257,27 +249,37 @@ func (c *Client) Document(uri string) []byte {
 	if base != "" && base != d.uri {
 		return nil
 	}
-	n := &d.root
+	v := d.root()
 	if hasFrag {
 		ptr, err := url.PathUnescape(frag)
 		if err != nil {
 			return nil
 		}
-		if n = pointerAt(n, ptr); n == nil {
+		if v = v.at(ptr); !v.ok() {
 			return nil
 		}
 	}
-	return []byte(d.src[n.start:n.end])
+	return []byte(v.raw())
 }
 
-// newClient returns a Client for content, retrieved from uri, with o.
-func newClient(content, uri string, o Options) (*Client, error) {
-	d, err := newDocument(content, uri)
+// newClient returns a Client for content, retrieved from uri, with opts.
+func newClient(ctx context.Context, content, uri string, opts *Options) (*Client, error) {
+	d, err := newDocument(ctx, content, uri)
 	if err != nil {
 		return nil, err
 	}
-	c := &Client{doc: d, cfg: newConfig(o)}
+	var o Options
+	if opts != nil {
+		o = *opts
+	}
+	c := &Client{doc: d, cfg: newConfig(o, nil)}
 	re := RequestError{Settings: maps.Clone(c.cfg.refused)}
+	if c.cfg.mediaTypeErr != nil {
+		re.setting("Options.MediaType", c.cfg.mediaTypeErr)
+	}
+	if c.cfg.codecsErr != nil {
+		re.setting("Options.Codecs", c.cfg.codecsErr)
+	}
 	d.checkNames(c.cfg, &re)
 	if err := re.refused(); err != nil {
 		return nil, err

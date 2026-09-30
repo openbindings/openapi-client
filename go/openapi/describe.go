@@ -23,9 +23,9 @@ func (c *Client) Operations() []*Operation {
 	if c.doc == nil {
 		return nil
 	}
-	ops := make([]*Operation, len(c.doc.ops))
-	for i, o := range c.doc.ops {
-		ops[i] = &o.compile().Operation
+	ops := make([]*Operation, len(c.doc.entries))
+	for i, e := range c.doc.entries {
+		ops[i] = &e.compile().Operation
 	}
 	return ops
 }
@@ -40,11 +40,11 @@ func (c *Client) Operations() []*Operation {
 // method-and-path key always reaches the fixed method, never the forbidden
 // additional operation of the same method (see Client.Operations).
 func (c *Client) Operation(key string) (*Operation, error) {
-	o, err := c.doc.lookup(key)
+	e, err := c.doc.lookup(key)
 	if err != nil {
 		return nil, err
 	}
-	return &o.compile().Operation, nil
+	return &e.compile().Operation, nil
 }
 
 // An Operation describes one operation, in the same terms for every
@@ -483,7 +483,7 @@ type Flow struct {
 // resource, and References returns an error.
 type Schema struct {
 	doc *document
-	n   *node // where the schema is used; handles are made at Schema Objects outside other schemas
+	v   value // where the schema is used; handles are made at Schema Objects outside other schemas
 	ptr string
 }
 
@@ -547,7 +547,7 @@ func (s *Schema) References() ([]SchemaReference, error) {
 // For a Swagger 2.0 parameter, it holds the parameter's schema fields (see
 // Param.Schema).
 func (s *Schema) Raw() json.RawMessage {
-	return json.RawMessage(s.doc.src[s.n.start:s.n.end])
+	return json.RawMessage(s.v.raw())
 }
 
 // Source is where the schema is written: the absolute URI of its document,
@@ -564,9 +564,9 @@ func (s *Schema) Source() string {
 // it (see Schema for other dialects).
 func (s *Schema) Base() string {
 	d := s.Dialect()
-	if id := s.n.get("$id"); id != nil && id.kind == '"' && (d == "https://json-schema.org/draft/2020-12/schema" ||
+	if id := s.v.get("$id"); id.kind() == '"' && (d == "https://json-schema.org/draft/2020-12/schema" ||
 		strings.HasPrefix(d, "https://spec.openapis.org/oas/3.1/dialect/") || strings.HasPrefix(d, "https://spec.openapis.org/oas/3.2/dialect/")) {
-		if u, err := s.doc.base.Parse(id.text); err == nil {
+		if u, err := s.doc.base.Parse(id.text()); err == nil {
 			return u.String()
 		}
 	}
@@ -581,7 +581,7 @@ func (s *Schema) Base() string {
 // is empty in Swagger 2.0 and OpenAPI 3.0, whose schemas are those
 // editions' own subset of JSON Schema (see Client.Version).
 func (s *Schema) Dialect() string {
-	if d := s.n.str("$schema"); d != "" {
+	if d := s.v.str("$schema"); d != "" {
 		return d
 	}
 	if s.doc.dialect != "" {
@@ -591,9 +591,9 @@ func (s *Schema) Dialect() string {
 }
 
 // schema returns a handle to the Schema Object n at ptr, or nil.
-func (d *document) schema(n *node, ptr string) *Schema {
-	if n == nil {
+func (d *document) schema(v value, ptr string) *Schema {
+	if !v.ok() {
 		return nil
 	}
-	return &Schema{doc: d, n: n, ptr: ptr}
+	return &Schema{doc: d, v: v, ptr: ptr}
 }

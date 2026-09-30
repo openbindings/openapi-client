@@ -1,10 +1,15 @@
 package openapi
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
+	"iter"
+	"math"
+	"slices"
 	"strconv"
 	"strings"
-	"unicode/utf16"
+	"sync"
 	"unicode/utf8"
 )
 
@@ -12,197 +17,421 @@ import (
 // level 1.
 const maxDepth = 1000
 
-// A node is one JSON value of a document, with its byte span in the source,
-// so that Document and Schema.Raw return values exactly as written.
-type node struct {
-	kind       byte   // '{', '[', '"', '0' (a number), 't', 'f' or 'n'
-	start, end int    // the value's bytes in the source
-	key        string // the member name of an object's member
-	text       string // a string's value, or a number as written
-	kids       []node // an object's members or an array's items, in order
+// A tree is a parsed JSON text: its source, and one node per value in
+// document order, each container followed by its members. Nodes hold only
+// offsets; names, strings and numbers are read from the source when used.
+type tree struct {
+	src   string
+	nodes []node
+
+	mu     sync.Mutex
+	sorted map[int32][]int32 // members of large objects by name, built on first lookup
 }
 
-// get returns the member of an object named key, or nil.
-func (n *node) get(key string) *node {
-	if n == nil || n.kind != '{' {
-		return nil
+// A node is one JSON value: its bytes in the source, and the index of the
+// node after its last descendant.
+type node struct {
+	start, end, next uint32
+}
+
+// A value is one value of a tree. The zero value is absent.
+type value struct {
+	t *tree
+	i int32
+}
+
+func (v value) ok() bool { return v.t != nil }
+
+// hasMembers reports whether v is an object or array that is not empty.
+func (v value) hasMembers() bool {
+	k := v.kind()
+	return (k == '{' || k == '[') && v.t.nodes[v.i].next > uint32(v.i)+1
+}
+
+// kind returns the value's first byte, '0' for a number, or 0 when absent.
+func (v value) kind() byte {
+	if v.t == nil {
+		return 0
 	}
-	for i := range n.kids {
-		if n.kids[i].key == key {
-			return &n.kids[i]
-		}
+	c := v.t.src[v.t.nodes[v.i].start]
+	if c == '-' || '0' <= c && c <= '9' {
+		return '0'
 	}
-	return nil
+	return c
+}
+
+// raw returns the value exactly as written.
+func (v value) raw() string {
+	n := v.t.nodes[v.i]
+	return v.t.src[n.start:n.end]
+}
+
+// text returns a string's value, or any other value as written.
+func (v value) text() string {
+	if v.kind() != '"' {
+		return v.raw()
+	}
+	return jsonString(v.raw())
 }
 
 // str returns the string member named key, or "".
-func (n *node) str(key string) string {
-	if m := n.get(key); m != nil && m.kind == '"' {
-		return m.text
+func (v value) str(key string) string {
+	if m := v.get(key); m.kind() == '"' {
+		return m.text()
 	}
 	return ""
 }
 
 // flag reports whether the member named key is true.
-func (n *node) flag(key string) bool {
-	m := n.get(key)
-	return m != nil && m.kind == 't'
-}
+func (v value) flag(key string) bool { return v.get(key).kind() == 't' }
 
-// strs returns the strings of array n, or nil.
-func (n *node) strs() []string {
-	if n == nil || n.kind != '[' {
+// strs returns the strings of an array, or nil.
+func (v value) strs() []string {
+	if v.kind() != '[' {
 		return nil
 	}
-	s := make([]string, 0, len(n.kids))
-	for _, k := range n.kids {
-		if k.kind == '"' {
-			s = append(s, k.text)
+	var s []string
+	for _, item := range v.members() {
+		if item.kind() == '"' {
+			s = append(s, item.text())
 		}
 	}
 	return s
 }
 
-// parseTree reads src, a JSON text (RFC 8259), as a document retrieved from
-// uri. Strings without escapes share src's memory.
-func parseTree(src, uri string) (node, error) {
-	p := scanner{src: src, uri: uri}
-	if !utf8.ValidString(src) {
-		i := 0
-		for {
-			if r, size := utf8.DecodeRuneInString(src[i:]); r != utf8.RuneError || size != 1 {
-				i += size
-				continue
+// members returns an object's members by name, or an array's items with
+// empty names, in order.
+func (v value) members() iter.Seq2[string, value] {
+	return func(yield func(string, value) bool) {
+		k := v.kind()
+		if k != '{' && k != '[' {
+			return
+		}
+		t := v.t
+		for c := v.i + 1; uint32(c) < t.nodes[v.i].next; c = int32(t.nodes[c].next) {
+			var name string
+			if k == '{' {
+				name = t.name(c)
 			}
+			if !yield(name, value{t, c}) {
+				return
+			}
+		}
+	}
+}
+
+// get returns the member of an object named key, or an absent value.
+func (v value) get(key string) value {
+	if v.kind() != '{' {
+		return value{}
+	}
+	t := v.t
+	if t.nodes[v.i].next-uint32(v.i) > 64 { // perhaps many members
+		if sorted := t.sortedMembers(v.i); sorted != nil {
+			j, found := slices.BinarySearchFunc(sorted, key, func(c int32, key string) int {
+				return strings.Compare(t.rawName(c), key)
+			})
+			if found {
+				return value{t, sorted[j]}
+			}
+			return value{}
+		}
+	}
+	for c := v.i + 1; uint32(c) < t.nodes[v.i].next; c = int32(t.nodes[c].next) {
+		if raw := t.rawName(c); raw == key || strings.IndexByte(raw, '\\') >= 0 && t.name(c) == key {
+			return value{t, c}
+		}
+	}
+	return value{}
+}
+
+// sortedMembers returns the members of object i sorted by name, when it has
+// many and none of their names is escaped, or nil.
+func (t *tree) sortedMembers(i int32) []int32 {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if s, ok := t.sorted[i]; ok {
+		return s
+	}
+	var s []int32
+	for c := i + 1; uint32(c) < t.nodes[i].next; c = int32(t.nodes[c].next) {
+		if strings.IndexByte(t.rawName(c), '\\') >= 0 {
+			s = nil
 			break
 		}
-		return node{}, p.errorAt(i, "invalid UTF-8")
+		s = append(s, c)
 	}
+	if len(s) > 16 {
+		slices.SortFunc(s, func(a, b int32) int { return strings.Compare(t.rawName(a), t.rawName(b)) })
+	} else {
+		s = nil
+	}
+	if t.sorted == nil {
+		t.sorted = map[int32][]int32{}
+	}
+	t.sorted[i] = s
+	return s
+}
+
+// rawName returns the name of member c as written, without its quotes: the
+// string before the colon that precedes the member's value.
+func (t *tree) rawName(c int32) string {
+	s, j := t.src, int(t.nodes[c].start)-1
+	for s[j] != ':' {
+		j--
+	}
+	for j--; s[j] != '"'; j-- {
+	}
+	end := j
+	for j--; ; j-- {
+		if s[j] == '"' {
+			k := j
+			for k > 0 && s[k-1] == '\\' {
+				k--
+			}
+			if (j-k)%2 == 0 { // not an escaped quote
+				return s[j+1 : end]
+			}
+		}
+	}
+}
+
+// name returns the name of member c.
+func (t *tree) name(c int32) string {
+	raw := t.rawName(c)
+	if strings.IndexByte(raw, '\\') < 0 {
+		return raw
+	}
+	return jsonString(`"` + raw + `"`)
+}
+
+// jsonString returns the value of s, a valid JSON string, decoded as
+// encoding/json decodes it.
+func jsonString(s string) string {
+	if strings.IndexByte(s, '\\') < 0 {
+		return s[1 : len(s)-1]
+	}
+	var v string
+	json.Unmarshal([]byte(s), &v)
+	return v
+}
+
+// at returns the value a JSON Pointer names under v, or an absent value.
+func (v value) at(ptr string) value {
+	for ptr != "" && v.ok() {
+		if ptr[0] != '/' {
+			return value{}
+		}
+		tok := ptr[1:]
+		if i := strings.IndexByte(tok, '/'); i >= 0 {
+			tok, ptr = tok[:i], tok[i:]
+		} else {
+			ptr = ""
+		}
+		tok, ok := unescapeToken(tok)
+		switch {
+		case !ok:
+			return value{}
+		case v.kind() == '{':
+			v = v.get(tok)
+		case v.kind() == '[':
+			n, err := strconv.Atoi(tok)
+			if err != nil || n < 0 || strconv.Itoa(n) != tok {
+				return value{}
+			}
+			w := value{}
+			for _, item := range v.members() {
+				if n == 0 {
+					w = item
+					break
+				}
+				n--
+			}
+			v = w
+		default:
+			return value{}
+		}
+	}
+	return v
+}
+
+// escapeToken escapes a JSON Pointer reference token (RFC 6901 section 4).
+func escapeToken(s string) string {
+	if strings.IndexAny(s, "~/") < 0 {
+		return s
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; c {
+		case '~':
+			b.WriteString("~0")
+		case '/':
+			b.WriteString("~1")
+		default:
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
+}
+
+// unescapeToken reads a reference token, reporting whether every "~" is
+// followed by "0" or "1".
+func unescapeToken(s string) (string, bool) {
+	if strings.IndexByte(s, '~') < 0 {
+		return s, true
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] != '~' {
+			b.WriteByte(s[i])
+			continue
+		}
+		if i+1 == len(s) || s[i+1] != '0' && s[i+1] != '1' {
+			return "", false
+		}
+		i++
+		b.WriteByte("~/"[s[i]-'0'])
+	}
+	return b.String(), true
+}
+
+// fragment percent-encodes a JSON Pointer as a URI fragment (RFC 6901
+// section 6): every byte but those RFC 3986 allows in a fragment.
+func fragment(ptr string) string {
+	var b strings.Builder
+	b.Grow(len(ptr) + 1)
+	b.WriteByte('#')
+	for i := 0; i < len(ptr); i++ {
+		if c := ptr[i]; unreserved(c) || strings.IndexByte("!$&'()*+,;=:@/?", c) >= 0 {
+			b.WriteByte(c)
+		} else {
+			writeEscaped(&b, c)
+		}
+	}
+	return b.String()
+}
+
+// parseTree reads src, a JSON text (RFC 8259), as the document at uri,
+// stopping when ctx is done.
+func parseTree(ctx context.Context, src, uri string) (*tree, error) {
+	p := scanner{ctx: ctx, src: src, uri: uri}
+	if len(src) >= math.MaxUint32 {
+		return nil, p.errorAt(0, "the document is 4 GiB or larger")
+	}
+	if !utf8.ValidString(src) {
+		i := 0
+		for r, n := utf8.DecodeRuneInString(src); r != utf8.RuneError || n != 1; r, n = utf8.DecodeRuneInString(src[i:]) {
+			i += n
+		}
+		return nil, p.errorAt(i, "invalid UTF-8")
+	}
+	p.nodes = make([]node, 0, len(src)/16+1)
 	p.space()
-	root, err := p.value(1)
-	if err != nil {
-		return node{}, err
+	if err := p.value(1); err != nil {
+		return nil, err
 	}
 	if p.space(); p.i < len(src) {
-		return node{}, p.errorAt(p.i, "data after the document")
+		return nil, p.errorAt(p.i, "data after the document")
 	}
-	return root, nil
+	if cap(p.nodes)-len(p.nodes) > len(p.nodes)/4 {
+		p.nodes = slices.Clip(slices.Clone(p.nodes))
+	}
+	return &tree{src: src, nodes: p.nodes}, nil
 }
 
-// A scanner reads a JSON text into a tree.
+// A scanner reads a JSON text into a tree's nodes.
 type scanner struct {
+	ctx      context.Context
 	src, uri string
-	i        int    // the read position
-	stack    []node // the members of the containers being read
-	arena    []node // storage for the members of containers read
+	i        int      // the read position
+	nodes    []node   // the nodes read
+	names    []string // the member names of the objects being read
 }
 
-func (p *scanner) value(depth int) (node, error) {
+func (p *scanner) value(depth int) error {
 	if depth > maxDepth {
-		return node{}, p.errorAt(p.i, "nesting deeper than 1,000 levels")
+		return p.errorAt(p.i, "nesting deeper than 1,000 levels")
 	}
-	n := node{start: p.i}
+	if len(p.nodes)&0xffff == 0xffff && p.ctx.Err() != nil {
+		return fmt.Errorf("openapi: %s: %w", p.uri, p.ctx.Err())
+	}
 	if p.i == len(p.src) {
-		return n, p.errorAt(p.i, "unexpected end of the document")
+		return p.errorAt(p.i, "unexpected end of the document")
 	}
+	at := len(p.nodes)
+	p.nodes = append(p.nodes, node{start: uint32(p.i)})
 	var err error
-	switch c := p.src[p.i]; {
+	switch c, rest := p.src[p.i], p.src[p.i:]; {
 	case c == '{' || c == '[':
-		return p.container(depth)
+		err = p.container(depth)
 	case c == '"':
-		n.kind = '"'
-		n.text, err = p.string()
+		err = p.string()
 	case c == '-' || '0' <= c && c <= '9':
-		n.kind = '0'
 		err = p.number()
-		n.text = p.src[n.start:p.i]
-	case strings.HasPrefix(p.src[p.i:], "true"), strings.HasPrefix(p.src[p.i:], "null"):
-		n.kind = c
+	case strings.HasPrefix(rest, "true"), strings.HasPrefix(rest, "null"):
 		p.i += 4
-	case strings.HasPrefix(p.src[p.i:], "false"):
-		n.kind = c
+	case strings.HasPrefix(rest, "false"):
 		p.i += 5
 	default:
-		return n, p.errorAt(p.i, fmt.Sprintf("invalid character %q", c))
+		err = p.errorAt(p.i, fmt.Sprintf("invalid character %q", c))
 	}
-	n.end = p.i
-	return n, err
+	p.nodes[at].end, p.nodes[at].next = uint32(p.i), uint32(len(p.nodes))
+	return err
 }
 
-func (p *scanner) container(depth int) (node, error) {
-	n := node{kind: p.src[p.i], start: p.i}
-	end := n.kind + 2 // '}' or ']'
+func (p *scanner) container(depth int) error {
+	end := p.src[p.i] + 2 // '}' or ']'
 	p.i++
-	base := len(p.stack)
-	var names map[string]bool // for an object too large to search
+	base := len(p.names)
+	defer func() { p.names = p.names[:base] }()
+	var many map[string]bool // the member names of an object too large to search
 	for first := true; ; first = false {
 		p.space()
 		if first && p.i < len(p.src) && p.src[p.i] == end {
 			break
 		}
-		var key string
-		if n.kind == '{' {
+		if end == '}' {
 			at := p.i
 			if p.i == len(p.src) || p.src[p.i] != '"' {
-				return n, p.errorAt(p.i, "expected a member name")
+				return p.errorAt(p.i, "expected a member name")
 			}
-			var err error
-			if key, err = p.string(); err != nil {
-				return n, err
+			if err := p.string(); err != nil {
+				return err
 			}
-			members := p.stack[base:]
-			if names == nil && len(members) > 16 {
-				names = make(map[string]bool, 2*len(members))
-				for _, m := range members {
-					names[m.key] = true
+			name := jsonString(p.src[at:p.i])
+			if many == nil && len(p.names)-base == 16 {
+				many = make(map[string]bool, 32)
+				for _, n := range p.names[base:] {
+					many[n] = true
 				}
 			}
-			if names[key] || names == nil && p.has(members, key) {
-				return n, p.errorAt(at, "duplicate key "+strconv.Quote(key))
+			if many[name] || many == nil && slices.Contains(p.names[base:], name) {
+				return p.errorAt(at, "duplicate key "+strconv.Quote(name))
 			}
-			if names != nil {
-				names[key] = true
+			if many != nil {
+				many[name] = true
+			} else {
+				p.names = append(p.names, name)
 			}
 			if p.space(); p.i == len(p.src) || p.src[p.i] != ':' {
-				return n, p.errorAt(p.i, "expected a colon")
+				return p.errorAt(p.i, "expected a colon")
 			}
 			p.i++
 			p.space()
 		}
-		kid, err := p.value(depth + 1)
-		if err != nil {
-			return n, err
+		if err := p.value(depth + 1); err != nil {
+			return err
 		}
-		kid.key = key
-		p.stack = append(p.stack, kid)
 		if p.space(); p.i < len(p.src) && p.src[p.i] == end {
 			break
 		}
 		if p.i == len(p.src) || p.src[p.i] != ',' {
-			return n, p.errorAt(p.i, fmt.Sprintf("expected a comma or %q", end))
+			return p.errorAt(p.i, fmt.Sprintf("expected a comma or %q", end))
 		}
 		p.i++
 	}
 	p.i++
-	n.end = p.i
-	if k := len(p.stack) - base; k > 0 {
-		if cap(p.arena)-len(p.arena) < k {
-			p.arena = make([]node, 0, max(k, 2*cap(p.arena), 64))
-		}
-		n.kids = append(p.arena[len(p.arena):len(p.arena):len(p.arena)+k], p.stack[base:]...)
-		p.arena = p.arena[:len(p.arena)+k]
-		p.stack = p.stack[:base]
-	}
-	return n, nil
-}
-
-func (p *scanner) has(members []node, key string) bool {
-	for i := range members {
-		if members[i].key == key {
-			return true
-		}
-	}
-	return false
+	return nil
 }
 
 func (p *scanner) space() {
@@ -211,72 +440,25 @@ func (p *scanner) space() {
 	}
 }
 
-// string reads the string at p.i and returns its value.
-func (p *scanner) string() (string, error) {
-	start := p.i + 1
-	for i := start; i < len(p.src); i++ {
+// string reads the string at p.i, checking its escapes.
+func (p *scanner) string() error {
+	for i := p.i + 1; i < len(p.src); i++ {
 		switch c := p.src[i]; {
 		case c == '"':
 			p.i = i + 1
-			return p.src[start:i], nil
-		case c == '\\':
-			return p.unescape(start)
+			return nil
 		case c < ' ':
-			return "", p.errorAt(i, "control character in a string")
-		}
-	}
-	return "", p.errorAt(len(p.src), "unexpected end of the document")
-}
-
-// unescape reads the string beginning at start, which holds an escape, as
-// encoding/json does: an unpaired surrogate is U+FFFD.
-func (p *scanner) unescape(start int) (string, error) {
-	var b strings.Builder
-	for i := start; i < len(p.src); {
-		c := p.src[i]
-		switch {
-		case c == '"':
-			p.i = i + 1
-			return b.String(), nil
-		case c < ' ':
-			return "", p.errorAt(i, "control character in a string")
+			return p.errorAt(i, "control character in a string")
 		case c != '\\':
-			b.WriteByte(c)
+		case i+1 < len(p.src) && strings.IndexByte(`"\/bfnrt`, p.src[i+1]) >= 0:
 			i++
-			continue
+		case i+5 < len(p.src) && p.src[i+1] == 'u' && hexDigit(p.src[i+2]) && hexDigit(p.src[i+3]) && hexDigit(p.src[i+4]) && hexDigit(p.src[i+5]):
+			i += 5
+		default:
+			return p.errorAt(i, "invalid escape in a string")
 		}
-		if i+1 == len(p.src) {
-			break
-		}
-		if e := strings.IndexByte(`"\/bfnrt`, p.src[i+1]); e >= 0 {
-			b.WriteByte("\"\\/\b\f\n\r\t"[e])
-			i += 2
-			continue
-		}
-		r, ok := hex4(p.src[i:])
-		if !ok {
-			return "", p.errorAt(i, "invalid escape in a string")
-		}
-		i += 6
-		if utf16.IsSurrogate(r) {
-			if r2, ok := hex4(p.src[i:]); ok && utf16.DecodeRune(r, r2) != utf8.RuneError {
-				r, i = utf16.DecodeRune(r, r2), i+6
-			} else {
-				r = utf8.RuneError
-			}
-		}
-		b.WriteRune(r)
 	}
-	return "", p.errorAt(len(p.src), "unexpected end of the document")
-}
-
-// hex4 reads the \uXXXX escape at the start of s.
-func hex4(s string) (rune, bool) {
-	if len(s) < 6 || s[0] != '\\' || s[1] != 'u' {
-		return 0, false
-	}
-	r, err := strconv.ParseUint(s[2:6], 16, 16)
-	return rune(r), err == nil
+	return p.errorAt(len(p.src), "unexpected end of the document")
 }
 
 // number reads the number at p.i.
@@ -321,69 +503,4 @@ func (p *scanner) errorAt(i int, msg string) error {
 	line := 1 + strings.Count(p.src[:i], "\n")
 	col := i - strings.LastIndexByte(p.src[:i], '\n')
 	return fmt.Errorf("openapi: %s:%d:%d: %s", p.uri, line, col, msg)
-}
-
-// pointerAt returns the node a JSON Pointer names under root, or nil.
-func pointerAt(root *node, ptr string) *node {
-	n := root
-	for ptr != "" {
-		if ptr[0] != '/' {
-			return nil
-		}
-		tok := ptr[1:]
-		if i := strings.IndexByte(tok, '/'); i >= 0 {
-			tok, ptr = tok[:i], tok[i:]
-		} else {
-			ptr = ""
-		}
-		tok = unescapeToken(tok)
-		switch n.kind {
-		case '{':
-			n = n.get(tok)
-		case '[':
-			i, err := strconv.Atoi(tok)
-			if err != nil || i < 0 || i >= len(n.kids) || strconv.Itoa(i) != tok {
-				return nil
-			}
-			n = &n.kids[i]
-		default:
-			return nil
-		}
-		if n == nil {
-			return nil
-		}
-	}
-	return n
-}
-
-var tokenEscaper = strings.NewReplacer("~", "~0", "/", "~1")
-var tokenUnescaper = strings.NewReplacer("~1", "/", "~0", "~")
-
-// escapeToken escapes a JSON Pointer reference token (RFC 6901 section 4).
-func escapeToken(s string) string { return tokenEscaper.Replace(s) }
-
-func unescapeToken(s string) string {
-	if strings.IndexByte(s, '~') < 0 {
-		return s
-	}
-	return tokenUnescaper.Replace(s)
-}
-
-// fragment percent-encodes a JSON Pointer as a URI fragment (RFC 6901
-// section 6): every byte but those RFC 3986 allows in a fragment.
-func fragment(ptr string) string {
-	var b strings.Builder
-	b.Grow(len(ptr) + 1)
-	b.WriteByte('#')
-	for i := 0; i < len(ptr); i++ {
-		c := ptr[i]
-		if unreserved(c) || strings.IndexByte("!$&'()*+,;=:@/?", c) >= 0 {
-			b.WriteByte(c)
-		} else {
-			b.WriteByte('%')
-			b.WriteByte(upperHex[c>>4])
-			b.WriteByte(upperHex[c&15])
-		}
-	}
-	return b.String()
 }

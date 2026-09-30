@@ -1,6 +1,7 @@
 package openapi
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"net/http"
@@ -215,11 +216,11 @@ func (c *Client) With(f func(*Options)) *Client {
 	}
 	cfg := c.cfg
 	if cfg == nil {
-		cfg = newConfig(Options{})
+		cfg = newConfig(Options{}, nil)
 	}
 	o := cfg.options()
 	f(&o)
-	return &Client{doc: c.doc, cfg: newConfig(o)}
+	return &Client{doc: c.doc, cfg: newConfig(o, cfg)}
 }
 
 // An Input holds the values and settings for one call. The client never
@@ -492,12 +493,10 @@ func (c *Client) Call(ctx context.Context, key string, in *Input, out any) (*Res
 		return nil, err
 	}
 	x := &exchange{Context: ctx, cfg: c.cfg, op: o}
-	var re RequestError
-	checkOut(out, &re)
+	re := RequestError{Err: o.Err}
+	c.cfg.checkOut(out, &re)
 	req, p, _, security := c.newRequest(x, o, in, &re)
-	if req != nil {
-		c.cfg.checkAccept(o, req.Header, out, &re)
-	}
+	c.cfg.checkAccept(o, req.Header, out, &re)
 	if err := re.refused(); err != nil {
 		return nil, err
 	}
@@ -526,18 +525,22 @@ func (c *Client) Prepare(key string, in *Input) (*Request, error) {
 		return nil, err
 	}
 	pr := &prepared{Context: context.Background(), cfg: c.cfg, op: o}
-	var re RequestError
+	re := RequestError{Err: o.Err}
 	req, p, media, security := c.newRequest(pr, o, in, &re)
 	if err := re.refused(); err != nil {
 		return nil, err
 	}
-	if p.size != 0 {
+	switch {
+	case p.data != nil:
+		req.Body = io.NopCloser(bytes.NewReader(p.data))
+		req.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(p.data)), nil }
+	case p.size != 0:
 		req.Body = &sentBody{p: p}
 		if p.once == nil {
 			req.GetBody = func() (io.ReadCloser, error) { return &sentBody{p: p}, nil }
 		}
 	}
-	pr.security = security
+	pr.security, pr.payload, pr.body = security, p, req.Body
 	return &Request{HTTP: req, Media: media, Security: security}, nil
 }
 
@@ -608,9 +611,9 @@ func (r *Request) Send(ctx context.Context) (*Response, error) {
 // *RequestError, nothing sent.
 func (r *Request) Call(ctx context.Context, out any) (*Response, error) {
 	var re RequestError
-	checkOut(out, &re)
 	if r.HTTP != nil {
 		if pr, ok := r.HTTP.Context().Value(preparedKey{}).(*prepared); ok {
+			pr.cfg.checkOut(out, &re)
 			pr.cfg.checkAccept(pr.op, r.HTTP.Header, out, &re)
 		}
 	}
@@ -688,9 +691,8 @@ type Response struct {
 // A failed or bounded response read may close Body early and abort an upload.
 // Stream followed by Decode, its target chosen for the response, is Call.
 func (r *Response) Decode(out any) error {
-	var re RequestError
-	if checkOut(out, &re); re.Err != nil {
-		return &DecodeError{Response: r, Err: re.Err}
+	if err := checkOut(out); err != nil {
+		return &DecodeError{Response: r, Err: err}
 	}
 	return exchangeOf(r.Response).decode(r, out)
 }
@@ -708,7 +710,10 @@ func (r *Response) Decode(out any) error {
 // Stream should read or close Body concurrently when the peer needs that
 // progress before it can read the rest of the request.
 func (r *Response) WaitRequest(ctx context.Context) error {
-	return exchangeOf(r.Response).waitUpload(ctx)
+	if x := exchangeOf(r.Response); x != nil {
+		return x.waitUpload(ctx)
+	}
+	return nil
 }
 
 // OperationFromContext returns the operation being sent when ctx is the

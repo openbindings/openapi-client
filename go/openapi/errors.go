@@ -149,15 +149,14 @@ func (e *StatusError) Error() string {
 // it returns Err instead of decoding an incomplete body, except into a *[]byte,
 // which receives the bytes read along with Err.
 func (e *StatusError) Decode(v any) error {
+	if err := checkOut(v); err != nil {
+		return &DecodeError{Response: e.Response, Err: err}
+	}
 	if e.Err != nil {
 		if p, ok := v.(*[]byte); ok {
 			*p = append((*p)[:0], e.Content...)
 		}
 		return e.Err
-	}
-	var re RequestError
-	if checkOut(v, &re); re.Err != nil {
-		return &DecodeError{Response: e.Response, Err: re.Err}
 	}
 	r := *e.Response
 	resp := *r.Response
@@ -166,7 +165,7 @@ func (e *StatusError) Decode(v any) error {
 	if x := exchangeOf(e.Response.Response); x != nil {
 		cfg = x.cfg
 	}
-	if head, err := cfg.read(r.Response, r.Declaration, v); err != nil {
+	if head, _, err := cfg.read(r.Response, r.Declaration, v); err != nil {
 		return decodeError(&r, head, err)
 	}
 	return nil

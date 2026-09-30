@@ -10,91 +10,114 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // A config is a Client's private copy of its Options, with what calls
 // derive from them.
 type config struct {
 	Options
-	client    *http.Client     // HTTPClient, following no redirects
-	base      *endpoint        // BaseURL, parsed
-	mediaType media            // MediaType, parsed
-	codecs    map[string]Codec // Codecs, by lowercase key
-	refused   map[string]error // settings no call can use, by Settings key
+	client       *http.Client     // HTTPClient, following no redirects
+	native       bool             // client's transport is net/http's own
+	base         *endpoint        // BaseURL, parsed
+	mediaType    parsedMedia      // MediaType, parsed
+	mediaTypeErr error            // why MediaType cannot be used, refusing calls that send a body
+	codecs       map[string]Codec // Codecs, by lowercase key
+	codecsErr    error            // why a Codecs key cannot be used, refusing calls that use a codec
+	refused      map[string]error // settings no call can use, by Settings key
+	endpoints    sync.Map         // *server to the endpoint it resolves to with Variables
 }
 
-// newConfig copies o and checks what it can without a document.
-func newConfig(o Options) *config {
-	cfg := &config{Options: o, refused: map[string]error{}}
-	cfg.Variables = maps.Clone(o.Variables)
-	cfg.Credentials = maps.Clone(o.Credentials)
-	cfg.Codecs = maps.Clone(o.Codecs)
-	cfg.Security = slices.Clone(o.Security)
-	cfg.Header = make(http.Header, len(o.Header))
-	for k, v := range o.Header {
-		k = textproto.CanonicalMIMEHeaderKey(k)
-		if reservedField(k) {
-			cfg.refused["Options.Header"] = fmt.Errorf("sets %s, which the client generates", k)
+// newConfig copies o, its maps and slices included, and checks what it can
+// without a document. It reuses parent's http.Client when o has the same
+// HTTPClient.
+func newConfig(o Options, parent *config) *config {
+	cfg := &config{Options: o}
+	refuse := func(key string, err error) {
+		if cfg.refused == nil {
+			cfg.refused = map[string]error{}
 		}
-		cfg.Header[k] = slices.Clone(v)
+		cfg.refused[key] = err
 	}
+	if err := checkHeader(o.Header); err != nil {
+		refuse("Options.Header", err)
+	}
+	cfg.Header = o.Header.Clone()
+	for k, v := range cfg.Header {
+		if ck := textproto.CanonicalMIMEHeaderKey(k); ck != k {
+			delete(cfg.Header, k)
+			cfg.Header[ck] = v
+		}
+	}
+	cfg.Variables = clone(o.Variables)
+	cfg.Credentials = clone(o.Credentials)
+	cfg.Codecs = clone(o.Codecs)
+	cfg.Security = slices.Clone(o.Security)
 
-	hc := o.HTTPClient
-	if hc == nil {
-		hc = http.DefaultClient
+	if parent != nil && parent.HTTPClient == o.HTTPClient {
+		cfg.client = parent.client
+	} else {
+		hc := o.HTTPClient
+		if hc == nil {
+			hc = http.DefaultClient
+		}
+		client := *hc
+		client.CheckRedirect = followNone
+		cfg.client = &client
 	}
-	client := *hc
-	client.CheckRedirect = followNone
-	cfg.client = &client
+	_, isTransport := cfg.client.Transport.(*http.Transport)
+	cfg.native = isTransport || cfg.client.Transport == nil
 
 	switch {
 	case o.Redirects == FollowAll:
-		cfg.refused["Options.Redirects"] = notYet("following redirects")
+		refuse("Options.Redirects", notYet("following redirects"))
 	case o.Redirects != FollowNone:
-		cfg.refused["Options.Redirects"] = fmt.Errorf("unknown value %d", o.Redirects)
+		refuse("Options.Redirects", fmt.Errorf("unknown value %d", o.Redirects))
 	}
 	if o.BaseURL != "" {
 		u, err := url.Parse(o.BaseURL)
 		switch {
 		case err != nil:
-			cfg.refused["Options.BaseURL"] = err
-		case u.Scheme == "" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "":
-			cfg.refused["Options.BaseURL"] = errors.New("needs a scheme and a host, and no userinfo, query or fragment")
+			refuse("Options.BaseURL", errors.New("not a URL"))
+		case u.Scheme == "" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || strings.Contains(o.BaseURL, "#"):
+			refuse("Options.BaseURL", errors.New("needs a scheme and a host, and no userinfo, query or fragment"))
 		case o.Server != "" || o.ServerID != "":
-			cfg.refused["Options.BaseURL"] = errors.New("cannot be set with Options.Server or Options.ServerID")
+			refuse("Options.BaseURL", errors.New("cannot be set with Options.Server or Options.ServerID"))
 		default:
-			cfg.base = &endpoint{u.Scheme, u.Host, u.EscapedPath()}
+			cfg.base = &endpoint{u.Scheme, u.Host, escapePath(u.EscapedPath())}
 		}
 	}
 	if o.Server != "" && o.ServerID != "" {
-		cfg.refused["Options.ServerID"] = errors.New("cannot be set with Options.Server")
+		refuse("Options.ServerID", errors.New("cannot be set with Options.Server"))
 	}
 	for name := range o.Credentials {
-		cfg.refused["Options.Credentials["+strconv.Quote(name)+"]"] = notYet("credentials")
+		refuse("Options.Credentials["+strconv.Quote(name)+"]", notYet("credentials"))
 	}
 	if o.Security != nil {
-		cfg.refused["Options.Security"] = notYet("Options.Security")
+		refuse("Options.Security", notYet("Options.Security"))
 	}
 	if o.SecurityKey != "" {
-		cfg.refused["Options.SecurityKey"] = notYet("Options.SecurityKey")
+		refuse("Options.SecurityKey", notYet("Options.SecurityKey"))
 	}
 	if o.MediaType != "" {
 		var ok bool
 		if cfg.mediaType, ok = parseMedia(o.MediaType); !ok || !cfg.mediaType.concrete() {
-			cfg.refused["Options.MediaType"] = fmt.Errorf("%q is not a concrete media type", o.MediaType)
+			cfg.mediaTypeErr = fmt.Errorf("%q is not a concrete media type", o.MediaType)
 		}
 	}
-	cfg.codecs = make(map[string]Codec, len(o.Codecs))
 	for k, c := range o.Codecs {
 		key := strings.ToLower(k)
 		m, ok := parseMedia(key)
 		suffix := strings.HasPrefix(key, "+") && isToken(key[1:])
 		switch {
-		case !suffix && (!ok || !m.concrete() || m.params != "" || strings.Contains(key, ";")):
-			cfg.refused["Options.Codecs"] = fmt.Errorf("key %q is neither a media type without parameters nor a +suffix", k)
-		case suffix && key == "+json-seq", !suffix && (m.class() == sequentialClass || m.typ == "multipart"):
-			cfg.refused["Options.Codecs"] = fmt.Errorf("key %q names a sequential or multipart type, whose framing is the client's", k)
+		case !suffix && (!ok || !m.concrete() || m.full != key):
+			cfg.codecsErr = fmt.Errorf("key %q is neither a media type without parameters nor a +suffix", k)
+		case key == "+json-seq" || !suffix && (m.class() == sequentialClass || m.typ == "multipart"):
+			cfg.codecsErr = fmt.Errorf("key %q names a sequential or multipart type, whose framing is the client's", k)
 		default:
+			if cfg.codecs == nil {
+				cfg.codecs = make(map[string]Codec, len(o.Codecs))
+			}
 			cfg.codecs[key] = c
 		}
 	}
@@ -103,10 +126,40 @@ func newConfig(o Options) *config {
 
 func followNone(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 
-// reservedField reports whether the canonical field name k is one Header
-// settings cannot set.
-func reservedField(k string) bool {
-	return k == "Content-Type" || k == "Content-Length" || k == "Transfer-Encoding"
+// checkHeader reports why fields cannot be sent: a name that is not a
+// token, a value HTTP cannot carry, a field the client generates or net/http
+// derives, or two spellings of one field.
+func checkHeader(fields http.Header) error {
+	for k, vs := range fields {
+		ck := textproto.CanonicalMIMEHeaderKey(k)
+		switch {
+		case !isToken(k):
+			return fmt.Errorf("field name %q is not a token", k)
+		case ck == "Content-Type" || ck == "Content-Length" || ck == "Transfer-Encoding":
+			return fmt.Errorf("sets %s, which the client generates", ck)
+		case ck == "Host":
+			return errors.New("sets Host, which net/http derives from the URL")
+		case slices.ContainsFunc(vs, func(v string) bool { return !validFieldValue(v) }):
+			return fmt.Errorf("field %s has a value HTTP cannot carry", ck)
+		}
+		for other := range fields {
+			if other != k && strings.EqualFold(other, k) {
+				return fmt.Errorf("holds two spellings of field %s", ck)
+			}
+		}
+	}
+	return nil
+}
+
+// validFieldValue reports whether s can be sent as a field value: no
+// control characters but tabs within it, and no whitespace around it.
+func validFieldValue(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if !fieldByte(s[i]) {
+			return false
+		}
+	}
+	return s == strings.Trim(s, " \t")
 }
 
 // options returns a copy of cfg's Options with maps of its own.
@@ -116,53 +169,25 @@ func (cfg *config) options() Options {
 	if o.Header == nil {
 		o.Header = http.Header{}
 	}
-	o.Variables = maps.Clone(cfg.Variables)
-	if o.Variables == nil {
-		o.Variables = map[string]string{}
-	}
-	o.Credentials = maps.Clone(cfg.Credentials)
-	if o.Credentials == nil {
-		o.Credentials = map[string]Credential{}
-	}
-	o.Codecs = maps.Clone(cfg.Codecs)
-	if o.Codecs == nil {
-		o.Codecs = map[string]Codec{}
-	}
+	o.Variables = own(cfg.Variables)
+	o.Credentials = own(cfg.Credentials)
+	o.Codecs = own(cfg.Codecs)
 	o.Security = slices.Clone(cfg.Security)
 	return o
 }
 
-// checkNames refuses, as Load does, the names in cfg that no part of d
-// uses.
-func (d *document) checkNames(cfg *config, re *RequestError) {
-	server, serverID, mediaType := cfg.Server == "", cfg.ServerID == "", cfg.MediaType == "" || cfg.refused["Options.MediaType"] != nil
-	unused := maps.Clone(cfg.Variables)
-	if server && serverID && mediaType && len(unused) == 0 {
-		return
+// own returns a copy of m that is never nil.
+func own[M ~map[K]V, K comparable, V any](m M) M {
+	if c := clone(m); c != nil {
+		return c
 	}
-	for _, o := range d.ops {
-		o.compile()
-		for _, s := range o.Servers {
-			server = server || s.URL == cfg.Server || s.Name == cfg.Server
-			serverID = serverID || s.ID == cfg.ServerID
-			for _, v := range s.Variables {
-				delete(unused, v.Name)
-			}
-		}
-		if o.Body != nil {
-			mediaType = mediaType || match(o.body, o.Body.Media, cfg.mediaType) != nil
-		}
+	return M{}
+}
+
+// clone returns a copy of m, or nil when m is empty.
+func clone[M ~map[K]V, K comparable, V any](m M) M {
+	if len(m) == 0 {
+		return nil
 	}
-	if !server {
-		re.setting("Options.Server", fmt.Errorf("no server has the URL or name %q", cfg.Server))
-	}
-	if !serverID {
-		re.setting("Options.ServerID", errors.New("no server has this ID"))
-	}
-	if !mediaType {
-		re.setting("Options.MediaType", fmt.Errorf("no operation declares %s", cfg.MediaType))
-	}
-	for name := range unused {
-		re.setting("Options.Variables["+strconv.Quote(name)+"]", errors.New("no server URL uses this variable"))
-	}
+	return maps.Clone(m)
 }
