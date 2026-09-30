@@ -64,8 +64,9 @@ func TestJSONBody(t *testing.T) {
 		{"RawMessage object", json.RawMessage(`{"a":1}`), `{"a":1}`},
 		{"string", "hi", `"hi"`},
 		{"named bytes as base64", namedBytes("hi"), `"aGk="`},
-		// encoding/json escapes <, > and & by default.
-		{"HTML escaping", map[string]string{"a": "<&>"}, `{"a":"<&>"}`},
+		// json.Marshal escapes <, > and & (stage 1 ledger Q6: "as
+		// encoding/json writes" means json.Marshal).
+		{"HTML escaping", map[string]string{"a": "<&>"}, `{"a":"\u003c\u0026\u003e"}`},
 		{"array with null", []any{1, "x", nil}, `[1,"x",null]`},
 		{"zero", 0, `0`},
 		{"false", false, `false`},

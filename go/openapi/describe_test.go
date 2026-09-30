@@ -609,13 +609,13 @@ func TestSecurityDescriptor(t *testing.T) {
 		"/a":{"get":{"operationId":"a"}},
 		"/b":{"get":{"operationId":"b","security":[]}},
 		"/c":{"get":{"operationId":"c","security":[{"oauth":["write","read"],"api_key":[]},{}]}},
-		"/d":{"get":{"operationId":"d","security":[{"z\"q\\\t\u0001<&>\u007f é":["é","a","B","a","l\b\f\n\r","x\u001f"]}]}},
+		"/d":{"get":{"operationId":"d","security":[{"z\"q\\\t\u0001<&>\u007f\u2028\u00e9":["\u00e9","a","B","a","l\b\f\n\r","x\u001f"]}]}},
 		"/e":{"get":{"operationId":"e","security":[{"b":[],"C":["s"]}]}}
 	},
 	"components":{"securitySchemes":{
 		"api_key":{"type":"apiKey","in":"header","name":"X-API-Key"},
 		"oauth":{"type":"oauth2","flows":{"clientCredentials":{"tokenUrl":"https://auth.example.test/token","scopes":{"read":"","write":""}}}},
-		"z\"q\\\t\u0001<&>\u007f é":{"type":"apiKey","in":"query","name":"z"},
+		"z\"q\\\t\u0001<&>\u007f\u2028\u00e9":{"type":"apiKey","in":"query","name":"z"},
 		"b":{"type":"apiKey","in":"query","name":"b"},
 		"C":{"type":"apiKey","in":"query","name":"c"}
 	}}}`
@@ -639,7 +639,7 @@ func TestSecurityDescriptor(t *testing.T) {
 		// U+2028 and é as themselves; scopes sorted by bytes (B < a < l < x <
 		// é) with the repeated "a" removed; \b \f \n \r short escapes and
 		// U+001F as \u001f with lowercase hex.
-		{"d", []string{`{"z\"q\\\t\u0001<&>` + "\u007f é" + `":["B","a","l\b\f\n\r","x\u001f","é"]}`}},
+		{"d", []string{`{"z\"q\\\t\u0001<&>` + "\u007f\u2028\u00e9" + `":["B","a","l\b\f\n\r","x\u001f","é"]}`}},
 		// "C" (0x43) sorts before "b" (0x62).
 		{"e", []string{`{"C":["s"],"b":[]}`}},
 	}

@@ -342,7 +342,7 @@ func TestLoadRejectsDuplicateKeys(t *testing.T) {
   "paths": {},
   "x-ext": {
     "a": 1,
-    "a": 2
+    "\u0061": 2
   }
 }`, 7},
 	}

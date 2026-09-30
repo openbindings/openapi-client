@@ -97,8 +97,8 @@ func jsonShape(b []byte) (dup bool, depth int) {
 func FuzzDocumentTree(f *testing.F) {
 	for _, seed := range []string{
 		`{}`, `[]`, `null`, `true`, `0`, `-0`, `1.50`, `1e400`, `-1.5E-7`, `9007199254740993`,
-		`""`, `"é😀\n\"\\\/"`, `"é"`, `{"b":1,"a":2,"c":{"z":[1,{"y":null}]}}`,
-		`[1,"two",true,null,{"three":3.0}]`, `{"a":1,"a":2}`, `{"a":1,"a":2}`,
+		`""`, `"\u00e9\ud83d\ude00\n\"\\\/"`, `"é"`, `{"b":1,"a":2,"c":{"z":[1,{"y":null}]}}`,
+		`[1,"two",true,null,{"three":3.0}]`, `{"a":1,"a":2}`, `{"a":1,"\u0061":2}`,
 		strings.Repeat("[", 50) + strings.Repeat("]", 50), `{"x-":{"$ref":"#/nowhere"}}`,
 		"\xEF\xBB\xBF{}", `{"a":}`, "openapi: 3.1.0", fuzzPrefix + `1}`, `{"openapi":"3.1.0"`,
 		" \t\n{ \"k\" : [ ] }\n",

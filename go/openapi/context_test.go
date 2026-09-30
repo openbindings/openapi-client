@@ -94,13 +94,42 @@ func TestContextCancelledBeforeHeaders(t *testing.T) {
 	wantCtxErr(t, err, context.Canceled, errCause)
 }
 
+// afterHeaders is an http.RoundTripper that calls then once the response
+// headers have arrived, before the client receives them, so that what then
+// does (cancel the call, or wait for its deadline) happens mid-body and
+// never races the headers.
+type afterHeaders struct {
+	next http.RoundTripper
+	then func(*http.Request)
+}
+
+func (a afterHeaders) RoundTrip(r *http.Request) (*http.Response, error) {
+	resp, err := a.next.RoundTrip(r)
+	if err == nil {
+		a.then(r)
+	}
+	return resp, err
+}
+
+// newCutMidBody returns a Client for respDoc whose server writes status, a
+// Content-Type and the partial body, then blocks until the request's
+// context ends; then runs once the client's transport has the headers.
+func newCutMidBody(t *testing.T, status int, ct, partial string, then func(*http.Request)) *openapi.Client {
+	t.Helper()
+	w := newWire(t, nil) // closed after the stalled handler is released
+	h, _ := stall(t, status, ct, partial)
+	w.setAnswer(h)
+	tr := &http.Transport{}
+	t.Cleanup(tr.CloseIdleConnections)
+	return parseFor(t, w, respDoc, &openapi.Options{HTTPClient: &http.Client{Transport: afterHeaders{tr, then}}})
+}
+
 // Cancelled after a 2xx's headers, mid-body: a *DecodeError that matches the
 // context's error (errors.go, DecodeError: "reading it failed, as when the
 // context ended (Err then matches the context's error)").
 func TestContextCancelledMidBody(t *testing.T) {
-	c, arrived := newStalled(t, 200, "application/json", `{"name":"Re`)
 	ctx, cancel := context.WithCancelCause(t.Context())
-	go func() { <-arrived; cancel(errCause) }()
+	c := newCutMidBody(t, 200, "application/json", `{"name":"Re`, func(*http.Request) { cancel(errCause) })
 	resp, err := c.Call(ctx, "getPet", nil, new(Pet))
 	var de *openapi.DecodeError
 	if !errors.As(err, &de) {
@@ -120,9 +149,8 @@ func TestContextCancelledMidBody(t *testing.T) {
 // when reading its body failed"; Err "matches the context's error when a
 // deadline cut it").
 func TestContextCancelledMidErrorBody(t *testing.T) {
-	c, arrived := newStalled(t, 404, "application/problem+json", `{"title":"No`)
 	ctx, cancel := context.WithCancelCause(t.Context())
-	go func() { <-arrived; cancel(errCause) }()
+	c := newCutMidBody(t, 404, "application/problem+json", `{"title":"No`, func(*http.Request) { cancel(errCause) })
 	resp, err := c.Call(ctx, "getPet", nil, new(Pet))
 	var se *openapi.StatusError
 	if !errors.As(err, &se) {
@@ -137,7 +165,9 @@ func TestContextCancelledMidErrorBody(t *testing.T) {
 	}
 }
 
-// A deadline with a cause, before and after the headers.
+// A deadline with a cause, before and after the headers. After them, the
+// transport holds the headers until the deadline has passed, so the
+// deadline always cuts the body.
 func TestContextDeadline(t *testing.T) {
 	c, _ := newStalled(t, 0, "", "")
 	ctx, cancel := context.WithTimeoutCause(t.Context(), 100*time.Millisecond, errCause)
@@ -145,13 +175,16 @@ func TestContextDeadline(t *testing.T) {
 	_, err := c.Call(ctx, "getPet", nil, new(Pet))
 	wantCtxErr(t, err, context.DeadlineExceeded, errCause)
 
-	c, _ = newStalled(t, 200, "application/json", `[1,`)
+	c = newCutMidBody(t, 200, "application/json", `[1,`, func(r *http.Request) { <-r.Context().Done() })
 	ctx, cancel = context.WithTimeoutCause(t.Context(), 100*time.Millisecond, errCause)
 	defer cancel()
-	_, err = c.Call(ctx, "getPet", nil, new(any))
+	resp, err := c.Call(ctx, "getPet", nil, new(any))
 	var de *openapi.DecodeError
 	if !errors.As(err, &de) {
 		t.Errorf("error %v, want a *DecodeError", err)
+	}
+	if resp == nil || resp.StatusCode != 200 {
+		t.Errorf("Response = %v, want the 200", resp)
 	}
 	wantCtxErr(t, err, context.DeadlineExceeded, errCause)
 }

@@ -2,6 +2,7 @@ package openapi_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -32,10 +33,12 @@ type shout string
 
 func (s shout) MarshalJSON() ([]byte, error) { return json.Marshal(strings.ToUpper(string(s))) }
 
-// upperKey is a map key type with a MarshalText method.
-type upperKey string
+// coord is a non-string map key type with a MarshalText method, which
+// encoding/json uses for its keys. (For a key of string kind,
+// encoding/json uses the string itself and never calls MarshalText.)
+type coord struct{ X, Y int }
 
-func (k upperKey) MarshalText() ([]byte, error) { return []byte(strings.ToUpper(string(k))), nil }
+func (k coord) MarshalText() ([]byte, error) { return []byte(fmt.Sprintf("%dx%d", k.X, k.Y)), nil }
 
 var (
 	colors    = []string{"blue", "black", "brown"}
@@ -121,7 +124,7 @@ func TestPathParamSimple(t *testing.T) {
 		{"time", fixedTime, "/items/2024-01-02T03%3A04%3A05Z"},
 		{"MarshalJSON", shout("hi"), "/items/HI"},
 		{"struct tags", tagged{A: "1", B: "2"}, "/items/alpha,1"},
-		{"TextMarshaler key", map[upperKey]string{"ab": "x"}, "/items/AB,x"},
+		{"TextMarshaler key", map[coord]string{{1, 2}: "x"}, "/items/1x2,x"},
 		{"bytes as base64", []byte("hi"), "/items/aGk%3D"},
 		{"pointer", strPtr("p-7"), "/items/p-7"},
 	})
