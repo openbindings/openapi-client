@@ -24,10 +24,19 @@ import (
 // refuse each call they affect".
 func TestMissingEmptyOrZeroCredential(t *testing.T) {
 	for name, edit := range map[string]func(*openapi.Options){
-		"missing":     func(o *openapi.Options) { delete(o.Credentials, "key_h"); delete(o.Credentials, "key_q") },
-		"empty":       func(o *openapi.Options) { o.Credentials["key_h"] = openapi.Secret(""); o.Credentials["key_q"] = openapi.Secret("") },
-		"zero":        func(o *openapi.Options) { o.Credentials["key_h"] = openapi.Credential{}; o.Credentials["key_q"] = openapi.Credential{} },
-		"empty Basic": func(o *openapi.Options) { delete(o.Credentials, "key_q"); o.Credentials["key_h"] = openapi.Basic("", "") },
+		"missing": func(o *openapi.Options) { delete(o.Credentials, "key_h"); delete(o.Credentials, "key_q") },
+		"empty": func(o *openapi.Options) {
+			o.Credentials["key_h"] = openapi.Secret("")
+			o.Credentials["key_q"] = openapi.Secret("")
+		},
+		"zero": func(o *openapi.Options) {
+			o.Credentials["key_h"] = openapi.Credential{}
+			o.Credentials["key_q"] = openapi.Credential{}
+		},
+		"empty Basic": func(o *openapi.Options) {
+			delete(o.Credentials, "key_q")
+			o.Credentials["key_h"] = openapi.Basic("", "")
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			w := newWire(t, nil)

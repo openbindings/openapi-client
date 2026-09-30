@@ -68,7 +68,7 @@ func TestCredentialSuppliesItsDestination(t *testing.T) {
 	writer := func(*http.Request) error { return nil }
 	for _, tt := range []struct {
 		key, alt, param string
-		in          openapi.Input
+		in              openapi.Input
 	}{
 		{"queryDest", `{"key_q":[]}`, "api_key", openapi.Input{Params: map[string]any{"api_key": "caller"}}},
 		{"headerDest", `{"key_h":[]}`, "x-api-key", openapi.Input{Params: map[string]any{"x-api-key": "caller"}}},
