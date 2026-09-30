@@ -397,8 +397,12 @@ func countValues(t *testing.T, b []byte) int {
 // The budget has a fixed allowance of 64 KiB (ledger, "TestF7 string cases
 // ruled wrong": Go's allocator rounds a large allocation up to whole 8 KiB
 // pages, so the copy of a document of few values alone exceeds bytes plus
-// 16 per value), as TestG1RejectedDocumentAllocation has. (The 3x and 6x
-// budgets stay on the synthetic document, TestF7TreeMemoryBudget.)
+// 16 per value), as TestG1RejectedDocumentAllocation has. H4 (ledger,
+// "Verification pass") amends the budget: retained memory may add the
+// decoded bytes of escaped strings, plus up to 64 bytes per such string; the
+// cases with escaped member names (including an object that is indexed for
+// a $ref, and escaped Paths keys) check it. (The 3x and 6x budgets stay on
+// the synthetic document, TestF7TreeMemoryBudget.)
 func TestF7WorstCaseRetainedBudget(t *testing.T) {
 	const size = 1 << 20
 	const head = `{"openapi":"3.1.0","info":{"title":"t","version":"1"},"paths":{},"components":{"x":`
@@ -417,6 +421,11 @@ func TestF7WorstCaseRetainedBudget(t *testing.T) {
 		"string of braces":       []byte(head + `"` + strings.Repeat("{", size) + `"}}`),
 		"string of brackets":     []byte(head + `"` + strings.Repeat("[", size) + `"}}`),
 		"array of empty objects": fill("[", "{}", ",", "]"),
+		"escaped member names":   escapedMembers(`{"openapi":"3.1.0","info":{"title":"t","version":"1"},"paths":{},"components":{"x":{`, `"\u0061%x":0`, `"end":0}}}`, size),
+		"indexed object with escaped names": escapedMembers(
+			`{"openapi":"3.1.0","info":{"title":"t","version":"1"},"paths":{"/a":{"$ref":"#/components/pathItems/p"}},"components":{"pathItems":{`,
+			`"\u0061%x":0`, `"p":{"get":{}}}}}`, size),
+		"escaped Paths keys": escapedMembers(`{"openapi":"3.1.0","info":{"title":"t","version":"1"},"paths":{`, `"\/%x":0`, `"/end":{"get":{}}}}`, size),
 	}
 	for name, doc := range docs {
 		t.Run(name, func(t *testing.T) {
@@ -432,10 +441,12 @@ func TestF7WorstCaseRetainedBudget(t *testing.T) {
 			runtime.ReadMemStats(&after)
 			runtime.KeepAlive(c)
 			retained := int64(after.HeapAlloc) - int64(before.HeapAlloc)
-			budget := int64(len(doc)) + 16*int64(values) + 64<<10
-			t.Logf("document %d bytes, %d values: retained %d bytes, budget %d", len(doc), values, retained, budget)
+			escaped, decoded := escapedStrings(t, doc)
+			budget := int64(len(doc)) + 16*int64(values) + 64<<10 + decoded + 64*int64(escaped)
+			t.Logf("document %d bytes, %d values, %d escaped strings (%d bytes decoded): retained %d bytes, budget %d",
+				len(doc), values, escaped, decoded, retained, budget)
 			if retained > budget {
-				t.Errorf("retained %d bytes, over the budget of %d (document bytes plus 16 per value, plus 64 KiB)", retained, budget)
+				t.Errorf("retained %d bytes, over the budget of %d (document bytes, 16 per value, 64 KiB, and the decoded bytes of escaped strings plus 64 per string)", retained, budget)
 			}
 		})
 	}
@@ -457,4 +468,45 @@ func TestG1RejectedDocumentAllocation(t *testing.T) {
 	if n > budget {
 		t.Errorf("allocated %d MiB rejecting a %d MiB document; budget %d MiB", n>>20, len(doc)>>20, budget>>20)
 	}
+}
+
+// escapedMembers returns head, then members written by format with
+// successive integers, separated by commas, until the document reaches
+// size, then tail (which begins with the last member).
+func escapedMembers(head, format, tail string, size int) []byte {
+	var b strings.Builder
+	b.WriteString(head)
+	for i := 0; b.Len() < size; i++ {
+		fmt.Fprintf(&b, format+",", i)
+	}
+	b.WriteString(tail)
+	return []byte(b.String())
+}
+
+// escapedStrings counts the JSON strings (member names and values) of doc
+// written with a backslash escape, and the bytes they decode to.
+func escapedStrings(t *testing.T, doc []byte) (count int, decoded int64) {
+	t.Helper()
+	for i := 0; i < len(doc); i++ {
+		if doc[i] != '"' {
+			continue
+		}
+		j, esc := i+1, false
+		for ; j < len(doc) && doc[j] != '"'; j++ {
+			if doc[j] == '\\' {
+				esc = true
+				j++
+			}
+		}
+		if esc {
+			var s string
+			if err := json.Unmarshal(doc[i:j+1], &s); err != nil {
+				t.Fatalf("string at %d: %v", i, err)
+			}
+			count++
+			decoded += int64(len(s))
+		}
+		i = j
+	}
+	return count, decoded
 }
