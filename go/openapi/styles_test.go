@@ -940,3 +940,37 @@ func TestNestingRefusedEveryStyle(t *testing.T) {
 	re := refusedSince(t, w, before, resp, err)
 	wantKeys(t, "Inputs", re.Inputs, true, "p", "q", "X-H", "zz")
 }
+
+// doc.go, Fixed rules, Percent-encoding: "A path parameter value that would
+// form a whole "." or ".." segment is refused, since RFC 3986 section 5.2.4
+// removes such segments before the value could reach the server"; stage 1
+// ledger, T2-1: "the rule applies to the resulting segment, however many
+// values form it". A label expansion that is a whole segment forms "." from
+// "" and ".." from "." (RFC 6570 section 3.2.5: X{.empty} is "X.").
+func TestLabelDotSegments(t *testing.T) {
+	w := newWire(t, nil)
+	c := parseFor(t, w, doc31(`"/l/{p}/z":{"get":{"operationId":"l","parameters":[{"name":"p","in":"path","required":true,"style":"label","schema":{}}]}},
+		"/e/{p}/z":{"get":{"operationId":"e","parameters":[{"name":"p","in":"path","required":true,"style":"label","explode":true,"schema":{}}]}}`), nil)
+	for _, tt := range []struct {
+		key string
+		v   any
+	}{{"l", ""}, {"l", "."}, {"l", []string{""}}, {"e", []string{"", ""}}, {"e", []string{"."}}} {
+		_, re := callOne(t, w, c, tt.key, "p", tt.v)
+		if re == nil {
+			t.Errorf("%s %#v: sent, want a refusal", tt.key, tt.v)
+			continue
+		}
+		wantKeys(t, fmt.Sprintf("%s %#v Inputs", tt.key, tt.v), re.Inputs, true, "p")
+	}
+	for _, tt := range []struct {
+		key  string
+		v    any
+		want string
+	}{{"l", "a", "/l/.a/z"}, {"l", "..", "/l/.../z"}, {"e", []string{"", "", ""}, "/l/.../z"}, {"e", []string{"a", ""}, "/e/.a./z"}} {
+		got, re := callOne(t, w, c, tt.key, "p", tt.v)
+		want := strings.Replace(tt.want, "/l/", "/"+tt.key+"/", 1)
+		if re != nil || got.RequestURI != want {
+			t.Errorf("%s %#v: %q, %v; want %q", tt.key, tt.v, got.RequestURI, re, want)
+		}
+	}
+}
