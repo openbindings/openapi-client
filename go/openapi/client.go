@@ -445,9 +445,10 @@ type Part struct {
 //     JSON null.
 //   - An io.Writer receives the raw bytes as they arrive, unbounded, without
 //     holding them in memory.
-//   - Any other pointer receives the body decoded straight from the
-//     connection by the caller's codec for its media type (see
-//     Options.Codecs), or else by its codec class (see Values in the
+//   - Any other pointer receives the body, read in full within
+//     MaxBodyBytes and decoded once, with no intermediate value, by the
+//     caller's codec for its media type (see Options.Codecs), or else by
+//     its codec class (see Values in the
 //     package documentation): JSON types (and a sequential type, as a
 //     JSON array of its items) with encoding/json, anything but whitespace
 //     after the value being a failure, as for json.Unmarshal; XML types
