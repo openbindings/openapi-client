@@ -19,7 +19,8 @@ type operation struct {
 
 type plan struct {
 	params     []param
-	pathParams []int // the path parameters, indexes into params
+	keys       map[string]int // each known parameter's index in params, by its Key
+	pathParams []int          // the path parameters, indexes into params
 	path       []pathPart
 	servers    []*server
 	body       []parsedMedia // the request body's Media, parsed
@@ -35,6 +36,7 @@ type param struct {
 	field    string      // a header parameter's canonical field name
 	name     string      // the name, percent-encoded
 	media    parsedMedia // ContentType, parsed
+	class    class       // media's class
 }
 
 // A pathPart is literal text of the path template, percent-encoded, or one
@@ -192,14 +194,12 @@ func (o *operation) addParams(list value, src string, ids map[paramID]int, errs 
 	}
 	i := 0
 	for _, v := range list.members() {
-		p := o.doc.param(v, src+"/"+strconv.Itoa(i))
+		pp := o.doc.param(v, src+"/"+strconv.Itoa(i))
 		i++
+		p := pp.Param
 		if p.In == "header" && (strings.EqualFold(p.Name, "Accept") || strings.EqualFold(p.Name, "Content-Type") || strings.EqualFold(p.Name, "Authorization")) {
 			continue
 		}
-		pp := param{Param: p, style: styles[p.Style], required: p.Required || p.In == "path", name: escape(p.Name, unreservedSet)}
-		pp.media, _ = parseMedia(p.ContentType)
-		pp.set = unreservedSet
 		id := paramID{p.In, p.Name}
 		switch p.In {
 		case "":
@@ -207,15 +207,7 @@ func (o *operation) addParams(list value, src string, ids map[paramID]int, errs 
 			o.params = append(o.params, pp)
 			continue
 		case "header":
-			pp.field = textproto.CanonicalMIMEHeaderKey(p.Name)
-			pp.set = nil
-			id.name = strings.ToLower(p.Name)
-		case "cookie":
-			pp.sep = "; "
-		case "query":
-			if p.AllowReserved {
-				pp.set = reservedSet
-			}
+			id.name = pp.field // canonical, so compared without regard to case
 		}
 		if j, ok := ids[id]; ok {
 			o.params[j] = pp
@@ -234,6 +226,7 @@ func (o *operation) assignKeys() {
 	for _, p := range o.params {
 		names[p.Name]++
 	}
+	o.keys = make(map[string]int, len(o.params))
 	for i, pp := range o.params {
 		p := pp.Param
 		o.Params = append(o.Params, p)
@@ -249,29 +242,33 @@ func (o *operation) assignKeys() {
 			dotted && slices.Contains([]string{"path", "query", "header", "cookie", "querystring"}, loc) {
 			p.Key = p.In + "." + p.Name
 		}
+		o.keys[p.Key] = i
 	}
 }
 
-// param describes the Parameter Object v, whose Source is src, following
-// references. A target that references reach is compiled once, and copied
-// for each.
-func (d *document) param(v value, src string) *Param {
+// param describes and compiles the Parameter Object v, whose Source is src,
+// following references. A target that references reach is compiled once,
+// its descriptor copied for each.
+func (d *document) param(v value, src string) param {
 	t, at, desc, err := d.follow(v, src)
 	if err != nil {
-		return &Param{Source: src, Err: err}
+		return param{Param: &Param{Source: src, Err: err}}
 	}
+	var pp param
 	if t.i == v.i { // only this place reaches it
-		p := d.newParam(t, at)
-		p.Description = desc
-		return p
+		pp = d.newParam(t, at)
+	} else {
+		pp = d.paramForms.get(t.i, func() param { return d.newParam(t, at) })
+		c := *pp.Param
+		pp.Param = &c
 	}
-	c := *d.paramForms.get(t.i, func() *Param { return d.newParam(t, at) })
-	c.Description = desc
-	return &c
+	pp.Description = desc
+	return pp
 }
 
-// newParam compiles the Parameter Object t, whose Source is at.
-func (d *document) newParam(t value, at string) *Param {
+// newParam describes and compiles the Parameter Object t, whose Source is
+// at.
+func (d *document) newParam(t value, at string) param {
 	p := &Param{Source: at}
 	var explode, schema, content value
 	entries, media := 0, true
@@ -299,6 +296,7 @@ func (d *document) newParam(t value, at string) *Param {
 			content = m
 		}
 	}
+	p.ExplodeSet = explode.ok()
 	if content.ok() {
 		for typ, m := range content.members() {
 			if entries++; entries == 1 {
@@ -318,7 +316,6 @@ func (d *document) newParam(t value, at string) *Param {
 		if schema.ok() {
 			p.Schema = d.schema(schema, at, "/schema")
 		}
-		p.ExplodeSet = explode.ok()
 		p.Explode = explode.kind() == 't' || !explode.ok() && p.Style == "form" || p.Style == "deepObject"
 		p.AllowReserved = p.AllowReserved && p.In == "query"
 	}
@@ -335,12 +332,25 @@ func (d *document) newParam(t value, at string) *Param {
 		p.Err = fmt.Errorf("OpenAPI does not define the %s style with explode true", p.Style)
 	case p.In == "header" && !isToken(p.Name):
 		p.Err = fmt.Errorf("header parameter name %q is not a field name", p.Name)
-	case p.In == "header" && strings.EqualFold(p.Name, "Host"):
-		p.Err = errors.New("a header parameter cannot set Host, which net/http derives from the URL")
+	case p.In == "header" && slices.ContainsFunc(derivedFields, func(f string) bool { return strings.EqualFold(f, p.Name) }):
+		p.Err = fmt.Errorf("a header parameter cannot set %s, which net/http derives or HTTP forbids", label(p.Name))
 	case p.In == "header" && strings.EqualFold(p.Name, "Cookie"):
 		p.Err = errors.New("OpenAPI leaves the effect of a header parameter named Cookie undefined")
 	}
-	return p
+	pp := param{Param: p, style: styles[p.Style], required: p.Required || p.In == "path", name: escape(p.Name, unreservedSet)}
+	pp.media, _ = parseMedia(p.ContentType)
+	pp.class, pp.set = pp.media.class(), unreservedSet
+	switch p.In {
+	case "header":
+		pp.field, pp.set = textproto.CanonicalMIMEHeaderKey(p.Name), nil
+	case "cookie":
+		pp.sep = "; "
+	case "query":
+		if p.AllowReserved {
+			pp.set = reservedSet
+		}
+	}
+	return pp
 }
 
 // styleAllowed reports whether OpenAPI allows style for a parameter in in.

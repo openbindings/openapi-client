@@ -39,7 +39,7 @@ type document struct {
 	refs   map[int32]resolution // Reference Objects followed, by node
 
 	// What nodes shared by several places compile to, by node.
-	paramForms  memo[*Param]
+	paramForms  memo[param]
 	contents    memo[*content]
 	serverLists memo[*serverList]
 }

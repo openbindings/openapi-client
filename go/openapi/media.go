@@ -287,9 +287,18 @@ func escapeTo(b *strings.Builder, s string, set *charset) {
 	b.WriteString(s[start:])
 }
 
-// escape returns s percent-encoded with set.
+// escape returns s percent-encoded with set: s itself when set keeps every
+// byte.
 func escape(s string, set *charset) string {
+	i := 0
+	for i < len(s) && set[s[i]] == 1 {
+		i++
+	}
+	if i == len(s) {
+		return s
+	}
 	var b strings.Builder
-	escapeTo(&b, s, set)
+	b.WriteString(s[:i])
+	escapeTo(&b, s[i:], set)
 	return b.String()
 }

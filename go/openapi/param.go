@@ -1,10 +1,9 @@
 package openapi
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -29,122 +28,91 @@ var styles = map[string]style{
 	"form":           {sep: "&", delim: ",", ifemp: "=", named: true},
 	"spaceDelimited": {delim: "%20", ifemp: "=", named: true, composite: true},
 	"pipeDelimited":  {delim: "%7C", ifemp: "=", named: true, composite: true},
-	"deepObject":     {composite: true, deep: true},
+	"deepObject":     {sep: "&", composite: true, deep: true},
 }
 
 var (
-	errItem       = errors.New("an array item must be a string, number or boolean")
 	errNested     = errors.New("the style cannot serialize a nested array or object")
 	errComposite  = errors.New("the style takes an array or object")
 	errDeepObject = errors.New("the deepObject style takes an object without arrays")
-	errDepth      = errors.New("the value nests deeper than 1,000 levels")
-	errReader     = errors.New("a JSON value cannot hold an io.Reader or a Part")
 )
 
-// writeParam writes the value v given for p into b, after lead unless v
-// is undefined, and reports whether it wrote a value, recording in re why
-// it cannot. In a path, lead is the style's first.
-func (c *Client) writeParam(b *strings.Builder, lead string, p *param, v any, re *RequestError) bool {
+// writeParam writes the value v given for p into b, after lead unless it
+// writes nothing, recording in re why it cannot. It reports whether v was
+// given, a defined value, and whether it wrote anything. In a path, lead is
+// the style's first.
+func (c *Client) writeParam(b *strings.Builder, lead string, p *param, v any, re *RequestError) (given, written bool) {
 	if p.ContentType == "" {
-		e := emitter{param: p, b: b, lead: lead}
-		defined, err := e.write(v)
+		e := emitter{param: p, doc: c.doc, b: b, lead: lead}
+		given, err := e.write(v)
 		if err != nil {
 			re.input(p.Key, err)
+			return false, false
 		}
-		return defined && err == nil
+		return given, e.n > 0
 	}
-	if c.cfg.codecsErr != nil {
+	if _, raw := v.([]byte); !raw && c.cfg.codecsErr != nil {
 		re.setting("Options.Codecs", c.cfg.codecsErr)
 	}
 	var s string
 	err := p.Err
 	if err == nil {
-		s, err = c.encode(p.media, v)
+		s, err = c.encode(p, v)
+	}
+	if err == nil && p.In == "cookie" && strings.ContainsFunc(s, func(r rune) bool { return r == ';' || r < ' ' || r == 0x7f }) {
+		err = errors.New(`a cookie value written as given cannot hold a ";" or a control character`)
 	}
 	if err != nil {
 		re.input(p.Key, err)
-		return false
+		return false, false
 	}
 	b.WriteString(lead)
-	switch p.In {
-	case "header":
-		b.WriteString(s)
-		return true
-	case "query", "cookie":
+	if p.In == "query" || p.In == "cookie" {
 		b.WriteString(p.name)
 		b.WriteByte('=')
 	}
-	escapeTo(b, s, unreservedSet)
-	return true
+	if p.In == "header" || p.In == "cookie" {
+		b.WriteString(s) // as given
+	} else {
+		escapeTo(b, s, unreservedSet)
+	}
+	return true, true
 }
 
-// encode returns v encoded as a body of media type m is.
-func (c *Client) encode(m parsedMedia, v any) (string, error) {
-	if codec, _ := c.cfg.codec(m); codec != nil {
-		var b strings.Builder
-		err := codec.Encode(&b, v)
-		return b.String(), err
+// encode returns v encoded as a body of p's media type is, a []byte being
+// the encoded content, or why it cannot be.
+func (c *Client) encode(p *param, v any) (string, error) {
+	m := p.media
+	if p.class == sequentialClass || strings.EqualFold(m.typ, "multipart") {
+		return "", fmt.Errorf("%s cannot serialize a parameter", m.full)
 	}
-	k := m.class()
-	if k == jsonClass {
-		b, _, err := c.doc.encodeJSON(v)
+	switch v := v.(type) {
+	case []byte:
+		return string(v), nil
+	case io.Reader:
+		return "", errors.New("a reader cannot serialize a parameter")
+	}
+	if b, _, ok, err := c.encodeValue(m, p.class, v); ok {
 		return string(b), err
 	}
-	if s, ok := v.(string); ok {
-		return jsonText(s), nil
+	if strings.EqualFold(m.full, "application/x-www-form-urlencoded") {
+		return "", notYet("encoding application/x-www-form-urlencoded content")
 	}
-	b, err := marshal(v)
+	if s, ok := v.(string); ok {
+		return s, nil // its bytes, as given
+	}
+	s, err := marshal(v)
 	switch {
 	case err != nil:
 		return "", err
-	case b[0] == '"':
-		return jsonString(string(b)), nil
-	case k == textClass && b[0] != '{' && b[0] != '[' && b[0] != 'n':
-		return string(b), nil
-	case k == textClass:
+	case s[0] == '"':
+		return jsonString(s), nil
+	case p.class == textClass && s[0] != '{' && s[0] != '[' && s[0] != 'n':
+		return s, nil
+	case p.class == textClass:
 		return "", fmt.Errorf("%s takes a string, number or boolean", m.full)
 	}
 	return "", fmt.Errorf("%s takes a string", m.full)
-}
-
-// marshal returns v as encoding/json writes it, refusing a value that nests
-// deeper than 1,000 levels.
-func marshal(v any) ([]byte, error) {
-	b, err := json.Marshal(v)
-	switch {
-	case err != nil:
-		return nil, &encodingError{err}
-	case tooDeep(b):
-		return nil, errDepth
-	}
-	return b, nil
-}
-
-// tooDeep reports whether the JSON text b, as encoding/json writes it, nests
-// deeper than 1,000 levels, the outermost value being level 1: whether an
-// array or object at level 1,000 has a member.
-func tooDeep(b []byte) bool {
-	if bytes.Count(b, []byte("["))+bytes.Count(b, []byte("{")) < maxDepth {
-		return false
-	}
-	depth := 0 // the arrays and objects open
-	for i := 0; i < len(b); i++ {
-		switch b[i] {
-		case '"':
-			for i++; b[i] != '"'; i++ {
-				if b[i] == '\\' {
-					i++
-				}
-			}
-		case '[', '{':
-			if depth++; depth == maxDepth && b[i+1] != ']' && b[i+1] != '}' {
-				return true
-			}
-		case ']', '}':
-			depth--
-		}
-	}
-	return false
 }
 
 // jsonText returns s as JSON data holds it: each byte of invalid UTF-8
@@ -164,6 +132,7 @@ func jsonText(s string) string {
 // once the value proves defined.
 type emitter struct {
 	*param
+	doc  *document
 	b    *strings.Builder
 	lead string
 	n    int  // the items or members written
@@ -188,54 +157,49 @@ func (e *emitter) write(v any) (bool, error) {
 				return false, err
 			}
 		}
-		return e.end(), nil
+		return e.end(len(v))
 	}
-	b, err := marshal(v)
+	s, err := marshal(v)
+	if err == nil {
+		_, err = checkJSON(e.doc, v, s)
+	}
 	if err != nil {
 		return false, err
 	}
-	r := &jsonReader{s: string(b)}
-	switch r.s[0] {
-	case 'n':
+	r := &jsonReader{s: s}
+	switch k := s[0]; {
+	case k == 'n':
 		return false, nil
-	case '[':
-		if r.s[1] != ']' && e.deep {
-			return false, errDeepObject
+	case k == '{' && e.deep:
+		if err := e.object(r, nil); err != nil {
+			return false, err
 		}
-		err = r.each(func(string) error {
-			if k := r.s[r.i]; k == '[' || k == '{' || k == 'n' {
-				return errItem
-			}
-			return e.item(r.scalar())
-		})
-	case '{':
-		if e.deep {
-			err = e.object(r, nil)
-			break
-		}
+		return e.end(0)
+	case k == '[' && e.deep && s[1] != ']':
+		return false, errDeepObject
+	case k == '[' || k == '{':
+		items := 0 // a list's, which is defined if it has any (RFC 6570 section 2.3)
 		err = r.each(func(name string) error {
-			if k := r.s[r.i]; k == '[' || k == '{' || k == 'n' {
+			if k == '[' {
+				items++
+			}
+			if c := r.s[r.i]; c == '[' || c == '{' || c == 'n' {
 				if r.skip() {
 					return errNested
 				}
-				return nil // an undefined member is skipped
+				return nil // an undefined item or member is skipped (RFC 6570 section 3.2.1)
+			}
+			if k == '[' {
+				return e.item(r.scalar())
 			}
 			return e.member(name, r.scalar())
 		})
-	default:
-		return e.primitive(r.scalar())
+		if err != nil {
+			return false, err
+		}
+		return e.end(items)
 	}
-	return e.end(), err
-}
-
-// start writes lead, before the value's first item, unless the parameter
-// cannot be serialized.
-func (e *emitter) start() error {
-	if e.Err != nil {
-		return e.Err
-	}
-	e.b.WriteString(e.lead)
-	return nil
+	return e.primitive(r.scalar())
 }
 
 func (e *emitter) primitive(s string) (bool, error) {
@@ -245,30 +209,23 @@ func (e *emitter) primitive(s string) (bool, error) {
 	case e.composite:
 		return false, errComposite
 	}
-	if err := e.start(); err != nil {
+	if err := e.item(s); err != nil {
 		return false, err
 	}
-	if e.named {
-		e.b.WriteString(e.name)
-		if s == "" {
-			e.b.WriteString(e.ifemp)
-			return true, nil
-		}
-		e.b.WriteByte('=')
-	}
-	escapeTo(e.b, s, e.set)
-	return true, nil
+	return e.end(0)
 }
 
 // next writes what precedes an item or member: the value's start before
-// the first, else a separator. A named value not exploded defers the "="
-// after its name while its first item, empty says, is "".
+// the first, unless the parameter cannot be serialized, else a separator. A
+// named value not exploded defers the "=" after its name while its first
+// item, empty says, is "".
 func (e *emitter) next(empty bool) error {
 	switch {
 	case e.n == 0:
-		if err := e.start(); err != nil {
-			return err
+		if e.Err != nil {
+			return e.Err
 		}
+		e.b.WriteString(e.lead)
 		if e.named && !e.Explode {
 			e.b.WriteString(e.name)
 			if e.held = empty; !empty {
@@ -324,12 +281,22 @@ func (e *emitter) member(k, s string) error {
 	return nil
 }
 
-// end completes the value, reporting whether it was defined.
-func (e *emitter) end() bool {
+// end completes the value, reporting whether it is defined. A list of items
+// members is, though none of them be (RFC 6570 section 2.3); then, not
+// exploded, it is written as "" is, and exploded, nothing is written.
+func (e *emitter) end(items int) (bool, error) {
+	var err error
+	switch {
+	case e.n > 0 || items == 0:
+	case !e.Explode:
+		err = e.item("")
+	case e.Err != nil:
+		err = e.Err
+	}
 	if e.held {
 		e.b.WriteString(e.ifemp)
 	}
-	return e.n > 0
+	return e.n > 0 || items > 0, err
 }
 
 // object writes the members of the object at the read position as
@@ -349,14 +316,9 @@ func (e *emitter) object(r *jsonReader, path []string) error {
 		case '{':
 			return e.object(r, append(path, name))
 		}
-		if e.n == 0 {
-			if err := e.start(); err != nil {
-				return err
-			}
-		} else {
-			e.b.WriteByte('&')
+		if err := e.next(false); err != nil {
+			return err
 		}
-		e.n++
 		e.b.WriteString(e.name)
 		for _, k := range path {
 			e.b.WriteString("%5B")
@@ -428,9 +390,6 @@ func (r *jsonReader) skip() (defined bool) {
 			defined = r.skip() || defined
 			return nil
 		})
-	case '"':
-		r.i = closingQuote(r.s, r.i) + 1
-		defined = true
 	default:
 		r.scalar()
 		defined = true
@@ -481,14 +440,17 @@ func (o *operation) runWriters(req *http.Request, writers map[string]func(*http.
 		}
 	}
 	u := req.URL
+	encodes := u.RawPath == "" || pathOf(u.RawPath) == u.Path
 	for _, i := range o.pathParams {
 		p := &o.params[i]
 		if writers[p.Key] == nil {
 			continue
 		}
-		// Path may hold the token as part of a value, if RawPath encodes it.
-		if token := "{" + p.Name + "}"; strings.Contains(u.RawPath, token) || strings.Contains(u.Path, token) && pathOf(u.RawPath) != u.Path {
-			re.input(p.Key, errors.New("the writer left the parameter's {name} token in URL.Path or URL.RawPath"))
+		// The token is found in RawPath, where other values are
+		// percent-encoded, or else in Path.
+		token := "{" + p.Name + "}"
+		if !encodes || strings.Contains(u.RawPath, token) || u.RawPath == "" && strings.Contains(u.Path, token) {
+			re.input(p.Key, errors.New("the writer left its {name} token, or a RawPath that is not an encoding of Path"))
 		}
 	}
 }
