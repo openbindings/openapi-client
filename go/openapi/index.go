@@ -140,9 +140,12 @@ func (l *Loader) fetch(ctx context.Context, uri string, hc *http.Client) (string
 	)
 	shown := uri
 	u, err := url.Parse(uri)
-	if err != nil || len(u.Scheme) <= 1 { // not a URL: a file path, perhaps with a drive letter
+	switch {
+	case err != nil && hasScheme(uri): // shown neither, as its userinfo cannot be found
+		return "", "", errors.New("openapi: load: the URI cannot be parsed (RFC 3986)")
+	case err != nil || len(u.Scheme) <= 1: // not a URL: a file path, perhaps with a drive letter
 		u, err = &url.URL{}, nil
-	} else {
+	default:
 		shown = u.Redacted()
 		err = checkURI(u, uri)
 	}
@@ -162,19 +165,19 @@ func (l *Loader) fetch(ctx context.Context, uri string, hc *http.Client) (string
 					final = resp.Request.URL.String()
 				}
 				if resp.StatusCode/100 != 2 {
-					err = errors.New(resp.Status)
+					err = errors.New(status(resp.StatusCode))
 				}
 			}
 		}
 	case u.Scheme == "file" && u.Host != "" && u.Host != "localhost":
 		err = errors.New("a file URL cannot name a host other than localhost (RFC 8089)")
 	case u.Scheme == "file":
-		r, size, err = open(filepath.FromSlash(u.Path))
+		r, size, err = open(ctx, filepath.FromSlash(u.Path))
 	case u.Scheme == "":
 		var abs string
 		if abs, err = filepath.Abs(uri); err == nil {
 			final = (&url.URL{Scheme: "file", Path: filepath.ToSlash(abs)}).String()
-			r, size, err = open(abs)
+			r, size, err = open(ctx, abs)
 		}
 	default:
 		err = fmt.Errorf("unsupported URI scheme %q", u.Scheme)
@@ -187,28 +190,70 @@ func (l *Loader) fetch(ctx context.Context, uri string, hc *http.Client) (string
 		bound := limit(l.MaxBytes, 64<<20)
 		b.Grow(int(min(max(size, 0), bound, 1<<20)))
 		var n int64
-		if n, err = io.Copy(&b, io.LimitReader(r, bound+1)); n > bound {
+		if n, err = io.Copy(&b, io.LimitReader(ctxReader{ctx, r}, bound+1)); n > bound {
 			err = &http.MaxBytesError{Limit: bound}
 		}
 		if err == nil {
 			return b.String(), final, nil
 		}
 	}
-	return "", "", fmt.Errorf("openapi: load %s: %w", shown, err)
+	return "", "", fmt.Errorf("openapi: load %s: %w", shown, withContext(ctx, err))
 }
 
-// open opens the file at path, returning its size.
-func open(path string) (*os.File, int64, error) {
-	f, err := os.Open(path)
+// hasScheme reports whether s begins with a URI scheme (RFC 3986 section
+// 3.1) longer than a drive letter.
+func hasScheme(s string) bool {
+	i := strings.IndexByte(s, ':')
+	for j := range max(i, 0) {
+		if c := s[j] | 0x20; !('a' <= c && c <= 'z' || j > 0 && strings.IndexByte("0123456789+-.", s[j]) >= 0) {
+			return false
+		}
+	}
+	return i > 1
+}
+
+// A ctxReader reads r until ctx is done.
+type ctxReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (c ctxReader) Read(p []byte) (int, error) {
+	if err := c.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return c.r.Read(p)
+}
+
+// open opens the file at path, returning its size, or -1 when it is not a
+// regular file. Opening or reading such a file, a FIFO or a device, may
+// block: a goroutine does both, writing to a pipe that the end of ctx
+// closes, and closing the file.
+func open(ctx context.Context, path string) (io.ReadCloser, int64, error) {
+	fi, err := os.Stat(path)
 	if err != nil {
 		return nil, 0, err
 	}
-	fi, err := f.Stat()
-	if err != nil {
-		f.Close()
-		return nil, 0, err
+	if fi.Mode().IsRegular() {
+		f, err := os.Open(path)
+		if err != nil {
+			return nil, 0, err
+		}
+		return f, fi.Size(), nil
 	}
-	return f, fi.Size(), nil
+	pr, pw := io.Pipe()
+	stop := context.AfterFunc(ctx, func() { pr.Close() })
+	go func() {
+		defer stop()
+		f, err := os.Open(path)
+		if err == nil {
+			defer f.Close()
+			defer context.AfterFunc(ctx, func() { f.Close() })()
+			_, err = io.Copy(pw, f)
+		}
+		pw.CloseWithError(err)
+	}()
+	return pr, -1, nil
 }
 
 // newDocument parses content, retrieved from uri, and indexes its
@@ -221,7 +266,10 @@ func newDocument(ctx context.Context, content, uri string) (*document, error) {
 		uri = contentURN(content)
 	}
 	base, err := url.Parse(uri)
-	if err == nil && !base.IsAbs() {
+	switch {
+	case err != nil: // not shown, as its userinfo cannot be found
+		err = errors.New("the document URI cannot be parsed (RFC 3986)")
+	case !base.IsAbs():
 		err = errors.New("the document URI is not absolute")
 	}
 	if err == nil {
