@@ -3,7 +3,6 @@ package openapi
 import (
 	"bytes"
 	"context"
-	"encoding"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,7 +15,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 )
 
 // noInput is the empty Input a nil *Input stands for.
@@ -148,9 +146,6 @@ func (c *Client) newRequest(ctx context.Context, o *operation, in *Input, re *Re
 	for k, err := range cfg.refused {
 		re.setting(k, err)
 	}
-	if len(in.ParamWriters) > 0 {
-		re.fail(notYet("Input.ParamWriters"))
-	}
 	if err := checkHeader(in.Header); err != nil {
 		re.setting("Input.Header", err)
 	}
@@ -162,60 +157,97 @@ func (c *Client) newRequest(ctx context.Context, o *operation, in *Input, re *Re
 	applyFields(h, in.Header)
 
 	// The path, in template order, then each parameter in declared order.
-	var b strings.Builder
-	b.Grow(len(ep.path) + len(o.Path) + 16*len(o.params))
+	var b, cookies strings.Builder
+	b.Grow(len(ep.path) + len(o.Path) + 32*len(in.Params))
 	if strings.HasSuffix(ep.path, "/") && strings.HasPrefix(o.Path, "/") {
 		b.WriteString(ep.path[:len(ep.path)-1])
 	} else {
 		b.WriteString(ep.path)
 	}
-	o.writePath(&b, in.Params, re)
-	query, given := b.Len(), 0
+	c.writePath(&b, o, in, re)
+	query, given, written, sendsCookies := b.Len(), 0, 0, false
 	for i := range o.params {
 		p := &o.params[i]
+		if p.In == "" {
+			continue // unknown
+		}
 		v, ok := in.Params[p.Key]
-		if ok && p.In != "" {
+		w, hasWriter := in.ParamWriters[p.Key]
+		if ok {
 			given++
 		}
-		if p.In == "" || p.In == "path" && p.Err == nil {
-			continue // unknown, or serialized in the path
+		if hasWriter {
+			written++
+			switch {
+			case ok:
+				re.input(p.Key, errors.New("the parameter is given in both Params and ParamWriters"))
+			case w == nil:
+				re.input(p.Key, errors.New("the parameter's writer is nil"))
+			}
 		}
-		d, ok := p.data(v, ok, re)
+		if p.In == "path" && p.Err == nil {
+			continue // serialized in the path
+		}
+		var hb strings.Builder                  // a header parameter's value
+		supplied, wrote := hasWriter, hasWriter // a writer supplies it
 		switch {
-		case !ok:
-		case d.kind == undefined:
-			if p.required && (p.In != "header" || len(h[p.field]) == 0) {
-				re.input(p.Key, errMissing)
-			}
+		case hasWriter || v == nil:
 		case p.In == "query":
+			lead := "&"
 			if b.Len() == query {
-				b.WriteByte('?')
-			} else {
-				b.WriteByte('&')
+				lead = "?"
 			}
-			d.write(&b, p.name, true, p.Explode, true)
-		case len(h[p.field]) > 0:
-			setter := "Options.Header"
-			for k, vs := range in.Header {
-				if len(vs) > 0 && textproto.CanonicalMIMEHeaderKey(k) == p.field {
-					setter = "Input.Header"
-				}
+			supplied, wrote = c.writeParam(&b, lead, p, v, re)
+		case p.In == "cookie":
+			lead := "; "
+			if cookies.Len() == 0 {
+				lead = ""
 			}
-			re.setting(setter, fmt.Errorf("sets %s, which the parameter %q supplies", p.field, p.Key))
-		default:
-			var sb strings.Builder
-			d.write(&sb, "", false, p.Explode, false)
-			if s := sb.String(); validFieldValue(s) {
-				h[p.field] = []string{s}
-			} else {
+			supplied, wrote = c.writeParam(&cookies, lead, p, v, re)
+		case p.In == "header":
+			supplied, wrote = c.writeParam(&hb, "", p, v, re)
+		default: // a path parameter with Err (see writePath): refused
+			c.writeParam(&b, "", p, v, re)
+		}
+		switch {
+		case !supplied && p.required && (p.In != "header" || len(h[p.field]) == 0):
+			re.input(p.Key, errMissing)
+		case !wrote:
+		case p.In == "cookie":
+			sendsCookies = true
+		case p.In == "header":
+			switch s := setter(in.Header, cfg.Header, p.field); {
+			case s != "":
+				re.setting(s, fmt.Errorf("sets %s, which the parameter %q supplies", p.field, p.Key))
+			case hasWriter:
+			case validFieldValue(hb.String()):
+				h[p.field] = []string{hb.String()}
+			default:
 				re.input(p.Key, errors.New("a header field cannot carry the value"))
 			}
 		}
 	}
-	if given < len(in.Params) {
+	if sendsCookies {
+		if s := setter(in.Header, cfg.Header, "Cookie"); s != "" {
+			re.setting(s, errors.New("sets Cookie, which the call's cookie parameters set"))
+		} else if cookies.Len() > 0 {
+			h["Cookie"] = []string{cookies.String()}
+		}
+	}
+	if given < len(in.Params) || written < len(in.ParamWriters) { // an unknown key
+		keys := make(map[string]bool, len(o.params))
+		for _, p := range o.params {
+			keys[p.Key] = p.In != ""
+		}
+		unknown := errors.New("the operation declares no such parameter")
 		for k := range in.Params {
-			if !slices.ContainsFunc(o.params, func(p param) bool { return p.Key == k && p.In != "" }) {
-				re.input(k, errors.New("the operation declares no such parameter"))
+			if !keys[k] {
+				re.input(k, unknown)
+			}
+		}
+		for k := range in.ParamWriters {
+			if !keys[k] {
+				re.input(k, unknown)
 			}
 		}
 	}
@@ -227,21 +259,42 @@ func (c *Client) newRequest(ctx context.Context, o *operation, in *Input, re *Re
 	s := b.String()
 	u := req.URL
 	u.Scheme, u.Host, req.Host = ep.scheme, ep.host, ep.host
-	u.Path = s[:query]
+	u.RawPath, u.Path = s[:query], s[:query] // as written: net/http would otherwise escape sub-delimiters
 	if query < len(s) {
 		u.RawQuery = s[query+1:]
 	}
-	u.RawPath = u.Path // as written: net/http would otherwise escape sub-delimiters
 	if strings.IndexByte(u.Path, '%') >= 0 {
-		u.Path, _ = url.PathUnescape(u.Path)
+		u.Path = pathOf(u.Path)
 	}
 	req.ContentLength = p.size
+	if written > 0 {
+		setBody(req, p)
+		o.runWriters(req, in.ParamWriters, re)
+		if len(re.Inputs) > 0 {
+			return req, payload{}, nil, ""
+		}
+	}
 	return req, p, media, security
 }
 
-// writePath writes the path template's parts with the values of params,
-// refusing a value that forms a "." or ".." segment.
-func (o *operation) writePath(b *strings.Builder, params map[string]any, re *RequestError) {
+// setter names the Header setting with an entry for field, whether or not
+// it has values: Input.Header before Options.Header, or "" for neither.
+func setter(in, opts http.Header, field string) string {
+	for k := range in {
+		if textproto.CanonicalMIMEHeaderKey(k) == field {
+			return "Input.Header"
+		}
+	}
+	if _, ok := opts[field]; ok {
+		return "Options.Header"
+	}
+	return ""
+}
+
+// writePath writes the path template's parts, with the values of its
+// parameters or their writers' {name} tokens, refusing a value that forms a
+// "." or ".." segment.
+func (c *Client) writePath(b *strings.Builder, o *operation, in *Input, re *RequestError) {
 	segment, valued := b.Len(), -1 // where the segment begins, and a parameter in it
 	endSegment := func() {
 		if s := b.String()[segment:]; valued >= 0 && (s == "." || s == "..") {
@@ -264,37 +317,27 @@ func (o *operation) writePath(b *strings.Builder, params map[string]any, re *Req
 			continue
 		}
 		p := &o.params[part.param]
-		v, given := params[p.Key]
-		if d, ok := p.data(v, given, re); ok && d.kind == undefined {
-			re.input(p.Key, errMissing)
-		} else if ok {
-			d.write(b, "", false, p.Explode, true)
+		if _, ok := in.ParamWriters[p.Key]; ok {
+			b.WriteByte('{')
+			b.WriteString(p.Name)
+			b.WriteByte('}')
+			continue
+		}
+		if _, refused := re.Inputs[p.Key]; refused {
+			continue // its serialization stopped at an earlier occurrence
+		}
+		given, wrote := false, false
+		if v := in.Params[p.Key]; v != nil {
+			given, wrote = c.writeParam(b, p.first, p, v, re)
+		}
+		if wrote {
 			valued = part.param
+		}
+		if !given {
+			re.input(p.Key, errMissing) // unless refused already
 		}
 	}
 	endSegment()
-}
-
-// data returns the JSON data of the value v given for p, undefined when
-// none is given, or false after recording why it cannot be serialized.
-func (p *param) data(v any, given bool, re *RequestError) (data, bool) {
-	if !given {
-		return data{}, true
-	}
-	d, err := jsonData(v)
-	switch {
-	case err != nil:
-		re.input(p.Key, err)
-	case d.kind == undefined:
-		return d, true
-	case p.Err != nil:
-		re.input(p.Key, p.Err)
-	case p.unsupported != nil:
-		re.fail(fmt.Errorf("parameter %q: %w", p.Key, p.unsupported))
-	default:
-		return d, true
-	}
-	return data{}, false
 }
 
 // applyFields applies header fields over h, as the Header settings are: a
@@ -311,145 +354,6 @@ func applyFields(h, fields http.Header) {
 		default:
 			delete(h, k)
 		}
-	}
-}
-
-// A dataKind is the shape of a parameter value's JSON data for RFC 6570.
-type dataKind int
-
-const (
-	undefined dataKind = iota
-	primitive
-	array
-	object
-)
-
-// data is a parameter value as JSON data, ready for a style: a primitive's
-// text, an array's items, or an object's defined members' names and
-// values, alternating.
-type data struct {
-	kind  dataKind
-	text  string
-	items []string
-}
-
-// jsonData converts v to JSON data as encoding/json would. RFC 6570 reads
-// null, an empty array and an object with no defined member as undefined.
-func jsonData(v any) (data, error) {
-	switch v := v.(type) {
-	case nil:
-		return data{}, nil
-	case string:
-		if utf8.ValidString(v) {
-			return data{kind: primitive, text: v}, nil
-		}
-	case int:
-		return data{kind: primitive, text: strconv.Itoa(v)}, nil
-	case bool:
-		return data{kind: primitive, text: strconv.FormatBool(v)}, nil
-	case []string:
-		if len(v) == 0 {
-			return data{}, nil
-		}
-		if !slices.ContainsFunc(v, func(s string) bool { return !utf8.ValidString(s) }) {
-			return data{kind: array, items: v}, nil
-		}
-	}
-	b, err := json.Marshal(v)
-	if err != nil {
-		return data{}, &encodingError{err}
-	}
-	t, err := parseTree(context.Background(), string(b), "")
-	if err != nil {
-		return data{}, &encodingError{err}
-	}
-	root := value{t, 0}
-	var d data
-	switch root.kind() {
-	case 'n': // undefined
-	case '[':
-		d.kind = array
-		for _, item := range root.members() {
-			switch item.kind() {
-			case 'n':
-				return data{}, errors.New("an array item is null")
-			case '[', '{':
-				return data{}, errors.New("the style cannot serialize nested values")
-			}
-			d.items = append(d.items, item.text())
-		}
-	case '{':
-		d.kind = object
-		for name, m := range root.members() {
-			switch {
-			case isUndefined(m):
-			case m.kind() == '[' || m.kind() == '{':
-				return data{}, errors.New("the style cannot serialize nested values")
-			default:
-				d.items = append(d.items, name, m.text())
-			}
-		}
-	default:
-		d = data{kind: primitive, text: root.text()}
-	}
-	if d.kind != primitive && len(d.items) == 0 {
-		d.kind = undefined
-	}
-	return d, nil
-}
-
-func isUndefined(v value) bool {
-	switch v.kind() {
-	case 'n':
-		return true
-	case '[':
-		return !v.hasMembers()
-	case '{':
-		for _, m := range v.members() {
-			if !isUndefined(m) {
-				return false
-			}
-		}
-		return true
-	}
-	return false
-}
-
-// write writes d in RFC 6570 simple style, or in form style as query pairs
-// named name, already percent-encoded; escaped percent-encodes d's names
-// and values.
-func (d data) write(b *strings.Builder, name string, form, explode, escaped bool) {
-	put := func(s string) {
-		if escaped {
-			escapeTo(b, s)
-		} else {
-			b.WriteString(s)
-		}
-	}
-	pairs := form && explode && d.kind != primitive // each item or member a pair of its own
-	if form && !pairs {
-		b.WriteString(name)
-		b.WriteByte('=')
-	}
-	if d.kind == primitive {
-		put(d.text)
-		return
-	}
-	for i, s := range d.items {
-		switch {
-		case i == 0:
-		case d.kind == object && i%2 == 1 && explode:
-			b.WriteByte('=')
-		case pairs:
-			b.WriteByte('&')
-		default:
-			b.WriteByte(',')
-		}
-		if pairs && d.kind == array {
-			b.WriteString(name)
-			b.WriteByte('=')
-		}
-		put(s)
 	}
 }
 
@@ -613,7 +517,7 @@ func (d *document) resolveServerURL(s string) (endpoint, error) {
 	if u.Host == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || strings.Contains(s, "#") {
 		return endpoint{}, errors.New("it has no host, or has userinfo, a query or a fragment")
 	}
-	return endpoint{u.Scheme, u.Host, escapePath(u.EscapedPath())}, nil
+	return endpoint{u.Scheme, u.Host, escape(u.EscapedPath(), pathSet)}, nil
 }
 
 // httpBase reports whether relative server URLs resolve against the
@@ -687,27 +591,36 @@ func (c *Client) body(o *operation, in *Input, h http.Header, re *RequestError) 
 		return payload{}, nil
 	}
 	h["Content-Type"] = []string{typ}
-	var b []byte
-	var err error
-	if codec, _ := c.cfg.codec(m); codec != nil {
-		var buf bytes.Buffer
-		err = codec.Encode(&buf, in.Body)
-		b = buf.Bytes()
-	} else if m.class() == jsonClass {
-		if b, err = json.Marshal(in.Body); err != nil {
-			err = &encodingError{err}
-		} else if at, ok := c.doc.findReader(in.Body); ok {
-			re.input("Input.Body"+at, errors.New("a JSON value cannot hold an io.Reader or a Part"))
-			return payload{}, nil
-		}
-	} else {
+	b, at, ok, err := c.encodeValue(m, m.class(), in.Body)
+	switch {
+	case !ok:
 		re.fail(notYet("encoding a " + m.full + " body"))
 		return payload{}, nil
-	}
-	if err != nil {
-		re.input("Input.Body", err)
+	case err != nil:
+		re.input("Input.Body"+at, err)
+		return payload{}, nil
 	}
 	return payload{data: b, size: int64(len(b))}, md
+}
+
+// encodeValue encodes v by the caller's codec for m, or, for a JSON type, as
+// encoding/json writes it, refusing an io.Reader or Part that json reaches,
+// at the JSON Pointer it returns, and nesting deeper than 1,000 levels. ok is
+// false for any other type.
+func (c *Client) encodeValue(m parsedMedia, k class, v any) (b []byte, at string, ok bool, err error) {
+	if codec, _ := c.cfg.codec(m); codec != nil {
+		var buf bytes.Buffer
+		err = codec.Encode(&buf, v)
+		return buf.Bytes(), "", true, err
+	}
+	if k != jsonClass {
+		return nil, "", false, nil
+	}
+	if b, err = json.Marshal(v); err != nil { // first, as it refuses a cycle, which the walk would follow
+		return nil, "", true, &encodingError{err}
+	}
+	at, err = checkJSON(c.doc, v, b)
+	return b, at, true, err
 }
 
 // mediaType selects the request body's media type: as sent, parsed, and
@@ -743,6 +656,17 @@ func (c *Client) mediaType(o *operation, in *Input, re *RequestError) (string, p
 	return typ, m, md
 }
 
+// setBody gives req the body p, read again from the start by GetBody when p
+// can be.
+func setBody(req *http.Request, p payload) {
+	if p.size != 0 {
+		req.Body = &sentBody{p: p}
+		if p.once == nil {
+			req.GetBody = func() (io.ReadCloser, error) { return &sentBody{p: p}, nil }
+		}
+	}
+}
+
 // readerPayload returns the content of a reader given as the body,
 // replayable from where it stands when it is one of the types Input.Body
 // lists.
@@ -762,213 +686,4 @@ func readerPayload(r io.Reader) payload {
 		}
 	}
 	return payload{once: r, size: -1}
-}
-
-// A walk says where a type's values can hold an io.Reader or a Part that
-// encoding/json would reach.
-type walk struct {
-	reader bool        // the type is one
-	holds  bool        // a value of the type can hold one
-	fields []jsonField // for a struct, the fields that can
-}
-
-// A jsonField is a struct field encoding/json writes.
-type jsonField struct {
-	name  string
-	index []int
-}
-
-var (
-	readerType        = reflect.TypeFor[io.Reader]()
-	partType          = reflect.TypeFor[Part]()
-	marshalerType     = reflect.TypeFor[json.Marshaler]()
-	textMarshalerType = reflect.TypeFor[encoding.TextMarshaler]()
-)
-
-// walkOf returns the walk for t, from the document's cache. open holds the
-// types being examined; a value of one of them, reached again through a
-// recursive type, is assumed to hold a reader.
-func (d *document) walkOf(t reflect.Type, open map[reflect.Type]bool) *walk {
-	if w, ok := d.walks.Load(t); ok {
-		return w.(*walk)
-	}
-	if open[t] {
-		return &walk{holds: true}
-	}
-	if open == nil {
-		open = map[reflect.Type]bool{}
-	}
-	open[t] = true
-	defer delete(open, t)
-	w := &walk{}
-	switch k := t.Kind(); {
-	case t == partType || t.Implements(readerType):
-		w.reader, w.holds = true, true
-	case t.Implements(marshalerType) || t.Implements(textMarshalerType):
-	case k == reflect.Interface:
-		w.holds = true
-	case k == reflect.Pointer || k == reflect.Map || k == reflect.Array || k == reflect.Slice && t.Elem().Kind() != reflect.Uint8:
-		w.holds = d.walkOf(t.Elem(), open).holds
-	case k == reflect.Struct:
-		for _, f := range jsonFields(t) {
-			if d.walkOf(t.FieldByIndex(f.index).Type, open).holds {
-				w.fields = append(w.fields, f)
-			}
-		}
-		w.holds = len(w.fields) > 0
-	}
-	d.walks.Store(t, w)
-	return w
-}
-
-// findReader returns the JSON Pointer, from x, of an io.Reader or Part that
-// encoding/json would reach in x, walking the values encoding/json itself
-// creates without reflection.
-func (d *document) findReader(x any) (string, bool) {
-	switch x := x.(type) {
-	case nil, string, bool, float64, json.Number:
-		return "", false
-	case map[string]any:
-		for k, v := range x {
-			if at, ok := d.findReader(v); ok {
-				return "/" + escapeToken(k) + at, true
-			}
-		}
-		return "", false
-	case []any:
-		for i, v := range x {
-			if at, ok := d.findReader(v); ok {
-				return "/" + strconv.Itoa(i) + at, true
-			}
-		}
-		return "", false
-	}
-	return d.findValue(reflect.ValueOf(x))
-}
-
-// findValue is findReader for a value of any type.
-func (d *document) findValue(v reflect.Value) (string, bool) {
-	switch v.Kind() {
-	case reflect.Interface, reflect.Pointer, reflect.Map, reflect.Slice:
-		if v.IsNil() {
-			return "", false
-		}
-	case reflect.Struct, reflect.Array:
-	default:
-		return "", false
-	}
-	w := d.walkOf(v.Type(), nil)
-	switch {
-	case w.reader:
-		return "", true
-	case !w.holds:
-		return "", false
-	}
-	child := func(name string, v reflect.Value) (string, bool) {
-		at, ok := d.findValue(v)
-		return "/" + escapeToken(name) + at, ok
-	}
-	switch v.Kind() {
-	case reflect.Interface:
-		if v.CanInterface() {
-			return d.findReader(v.Interface())
-		}
-		return d.findValue(v.Elem())
-	case reflect.Pointer:
-		return d.findValue(v.Elem())
-	case reflect.Struct:
-		for _, f := range w.fields {
-			if fv, err := v.FieldByIndexErr(f.index); err == nil {
-				if at, ok := child(f.name, fv); ok {
-					return at, true
-				}
-			}
-		}
-	case reflect.Map:
-		for it := v.MapRange(); it.Next(); {
-			if at, ok := child(mapKey(it.Key()), it.Value()); ok {
-				return at, true
-			}
-		}
-	default:
-		for i := range v.Len() {
-			if at, ok := child(strconv.Itoa(i), v.Index(i)); ok {
-				return at, true
-			}
-		}
-	}
-	return "", false
-}
-
-// mapKey returns the name encoding/json writes for a map key.
-func mapKey(k reflect.Value) string {
-	switch {
-	case k.Kind() == reflect.String:
-		return k.String()
-	case k.Kind() == reflect.Pointer && k.IsNil():
-		return "" // as encoding/json names a nil TextMarshaler, the only nil key it writes
-	}
-	if tm, ok := k.Interface().(encoding.TextMarshaler); ok {
-		b, _ := tm.MarshalText()
-		return string(b)
-	}
-	return fmt.Sprint(k.Interface())
-}
-
-// jsonFields returns the fields of struct type t that encoding/json writes:
-// exported fields and those promoted from embedded structs, by their JSON
-// names, a shallower field or else the one tagged dominating others of its
-// name.
-func jsonFields(t reflect.Type) []jsonField {
-	type candidate struct {
-		jsonField
-		tagged bool
-	}
-	var all []candidate
-	var visit func(t reflect.Type, index []int, seen []reflect.Type)
-	visit = func(t reflect.Type, index []int, seen []reflect.Type) {
-		if slices.Contains(seen, t) {
-			return
-		}
-		seen = append(seen, t)
-		for i := range t.NumField() {
-			f := t.Field(i)
-			tag := f.Tag.Get("json")
-			name, _, _ := strings.Cut(tag, ",")
-			ft := f.Type
-			if ft.Name() == "" && ft.Kind() == reflect.Pointer {
-				ft = ft.Elem()
-			}
-			switch {
-			case tag == "-":
-			case f.Anonymous && name == "" && ft.Kind() == reflect.Struct:
-				visit(ft, append(slices.Clip(index), i), seen)
-			case !f.IsExported():
-			default:
-				tagged := name != "" // a tag with only options does not name the field
-				if !tagged {
-					name = f.Name
-				}
-				all = append(all, candidate{jsonField{name, append(slices.Clip(index), i)}, tagged})
-			}
-		}
-	}
-	visit(t, nil, nil)
-	var fields []jsonField
-	for _, c := range all {
-		dominant, rivals := c, 0
-		for _, o := range all {
-			switch {
-			case o.name != c.name:
-			case len(o.index) < len(dominant.index) || len(o.index) == len(dominant.index) && o.tagged && !dominant.tagged:
-				dominant, rivals = o, 0
-			case len(o.index) == len(dominant.index) && o.tagged == dominant.tagged:
-				rivals++
-			}
-		}
-		if rivals == 1 && slices.Equal(dominant.index, c.index) {
-			fields = append(fields, c.jsonField)
-		}
-	}
-	return fields
 }

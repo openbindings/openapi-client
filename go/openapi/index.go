@@ -39,7 +39,7 @@ type document struct {
 	refs   map[int32]resolution // Reference Objects followed, by node
 
 	// What nodes shared by several places compile to, by node.
-	paramForms  memo[*Param]
+	paramForms  memo[param]
 	contents    memo[*content]
 	serverLists memo[*serverList]
 }
@@ -391,21 +391,26 @@ func contentURN(content string) string {
 
 // source returns the URI naming the node at ptr: the document's, with ptr
 // percent-encoded as a fragment as RFC 6901 section 6 says, every byte but
-// those RFC 3986 allows in a fragment.
+// those RFC 3986 allows in a fragment. So a child's is its parent's followed
+// by its token (see token).
 func (d *document) source(ptr string) string {
-	var b strings.Builder
-	b.Grow(len(d.uri) + len(ptr) + 1)
-	b.WriteString(d.uri)
-	b.WriteByte('#')
-	for i := 0; i < len(ptr); i++ {
-		if c := ptr[i]; unreserved(c) || strings.IndexByte("!$&'()*+,;=:@/?", c) >= 0 {
-			b.WriteByte(c)
-		} else {
-			writeEscaped(&b, c)
+	n := len(d.uri) + 1 + len(ptr)
+	for i := range len(ptr) {
+		if fragmentSet[ptr[i]] == 0 {
+			n += 2
 		}
 	}
+	var b strings.Builder
+	b.Grow(n)
+	b.WriteString(d.uri)
+	b.WriteByte('#')
+	escapeTo(&b, ptr, fragmentSet)
 	return b.String()
 }
+
+// token returns name as the reference token that follows its parent's
+// Source and a "/".
+func token(name string) string { return escape(escapeToken(name), fragmentSet) }
 
 func (d *document) index(ctx context.Context) error {
 	d.byID, d.byRoute, d.broken = map[string]*entry{}, map[route]*entry{}, map[string]*entry{}
@@ -562,24 +567,26 @@ func (d *document) chain(v value, ptr string, targets *map[int32]link) (*level, 
 	return head, rest.add(head), nil
 }
 
-// A resolution is where a Reference Object leads: the target, its pointer
-// and the description of the nearest level that gives one, or why it cannot
-// be followed. It is not done while the chain through it is being followed.
+// A resolution is where a Reference Object leads: the target, its Source
+// and the description of the nearest level that gives one, or why it
+// cannot be followed. It is not done while the chain through it is being
+// followed.
 type resolution struct {
 	v         value
-	ptr, desc string
+	src, desc string
 	err       error
 	done      bool
 }
 
-// follow resolves the Reference Objects from v, at ptr, returning the
-// target, its pointer, and the description of the nearest level that gives
-// one: in OpenAPI 3.1 a Reference Object's description replaces its
-// target's. Each Reference Object is followed once per document.
-func (d *document) follow(v value, ptr string) (value, string, string, error) {
+// follow resolves the Reference Objects from v, whose Source is src,
+// returning the target, its Source, and the description of the nearest
+// level that gives one: in OpenAPI 3.1 a Reference Object's description
+// replaces its target's. Each Reference Object is followed once per
+// document.
+func (d *document) follow(v value, src string) (value, string, string, error) {
 	ref, desc, described := reference(v)
 	if !ref.ok() {
-		return v, ptr, desc, nil
+		return v, src, desc, nil
 	}
 	d.refsMu.Lock()
 	defer d.refsMu.Unlock()
@@ -598,7 +605,7 @@ func (d *document) follow(v value, ptr string) (value, string, string, error) {
 			break
 		}
 		if !ref.ok() {
-			r = resolution{v: v, ptr: at, desc: desc}
+			r = resolution{v: v, src: d.source(at), desc: desc}
 			break
 		}
 		if d.refs == nil {
@@ -622,7 +629,7 @@ func (d *document) follow(v value, ptr string) (value, string, string, error) {
 		}
 		d.refs[walked[k].i] = r
 	}
-	return r.v, r.ptr, r.desc, r.err
+	return r.v, r.src, r.desc, r.err
 }
 
 // reference returns v's $ref, if it is a string, and its description, if
@@ -684,23 +691,21 @@ func (d *document) checkNames(ctx context.Context, cfg *config, re *RequestError
 	server, serverID := cfg.Server == "", cfg.ServerID == ""
 	media := cfg.MediaType == "" || cfg.mediaTypeErr != nil
 	unused := maps.Clone(cfg.Variables)
-	check := func(list value, ptr func() string) {
-		i := 0
+	check := func(list value) {
 		for _, s := range list.members() {
 			u := s.str("url")
 			server = server || u == cfg.Server
-			serverID = serverID || d.source(ptr()+"/servers/"+strconv.Itoa(i)) == cfg.ServerID
+			serverID = serverID || idOf(s) == cfg.ServerID
 			if len(unused) > 0 {
 				_, names, _ := splitTemplate(u)
 				for _, name := range names {
 					delete(unused, name)
 				}
 			}
-			i++
 		}
 	}
 	if s := d.root().get("servers"); s.hasMembers() {
-		check(s, func() string { return "" })
+		check(s)
 	} else {
 		server, serverID = server || cfg.Server == "/", serverID || cfg.ServerID == "default"
 	}
@@ -723,12 +728,12 @@ func (d *document) checkNames(ctx context.Context, cfg *config, re *RequestError
 			continue
 		}
 		for l := e.levels; l != nil && first(l.v); l = l.next { // a level checked has its rest checked
-			check(l.v.get("servers"), func() string { return l.ptr })
+			check(l.v.get("servers"))
 		}
 		if !first(e.node) {
 			continue
 		}
-		check(e.node.get("servers"), e.ptr)
+		check(e.node.get("servers"))
 		if rb := e.node.get("requestBody"); !media && rb.ok() && methods[e.m].upper != "TRACE" {
 			body, _, _, err := d.follow(rb, "")
 			if err != nil || !first(body) {

@@ -267,6 +267,8 @@ type Input struct {
 	// A path parameter's {name} remains in both URL.Path and URL.RawPath
 	// until its writer replaces it in both, keeping RawPath an encoding of
 	// Path; an unresolved path token after all writers refuses preparation.
+	// Locate the token in RawPath: there other values are percent-encoded,
+	// so their text cannot match it, as it can in Path.
 	// A writer also bypasses that parameter's serialization Err, including
 	// for a required parameter, when its Key is known. It cannot bypass a
 	// defect in the operation or an unresolved parameter reference whose
@@ -347,14 +349,15 @@ type Input struct {
 	// prepared; and every value the client encodes. Any other reader, such
 	// as a pipe or os.Stdin, and an iterator, is read once.
 	//
-	// A Part or io.Reader inside a JSON value is refused with an Inputs
-	// entry at its place in Body. A []byte nested in a JSON value is encoded
-	// by encoding/json as a base64 string; in a form or multipart value it
-	// remains raw part bytes. A nil Body where the request body is required
-	// is refused at Inputs["Input.Body"], and a missing required Swagger 2.0
-	// formData field in a structured form body at "Input.Body" followed by
-	// its pointer, as the parameter it is. A pre-encoded body bypasses those
-	// field checks. The client never closes a reader it is given.
+	// A Part or io.Reader inside a JSON value is refused with an Inputs entry
+	// at its place in Body, unless its own MarshalJSON or MarshalText encodes
+	// it. A []byte nested in a JSON value is encoded by encoding/json as a
+	// base64 string; in a form or multipart value it remains raw part bytes. A
+	// nil Body where the request body is required is refused at
+	// Inputs["Input.Body"], and a missing required Swagger 2.0 formData field
+	// in a structured form body at "Input.Body" followed by its pointer, as the
+	// parameter it is. A pre-encoded body bypasses those field checks. The
+	// client never closes a reader it is given.
 	Body any
 
 	// MediaType is the body's media type: a concrete type matching one the
@@ -445,9 +448,10 @@ type Part struct {
 //     JSON null.
 //   - An io.Writer receives the raw bytes as they arrive, unbounded, without
 //     holding them in memory.
-//   - Any other pointer receives the body decoded straight from the
-//     connection by the caller's codec for its media type (see
-//     Options.Codecs), or else by its codec class (see Values in the
+//   - Any other pointer receives the body, read in full within
+//     MaxBodyBytes and decoded once, with no intermediate value, by the
+//     caller's codec for its media type (see Options.Codecs), or else by
+//     its codec class (see Values in the
 //     package documentation): JSON types (and a sequential type, as a
 //     JSON array of its items) with encoding/json, anything but whitespace
 //     after the value being a failure, as for json.Unmarshal; XML types
@@ -538,12 +542,7 @@ func (c *Client) Prepare(key string, in *Input) (*Request, error) {
 	if err := re.refused(); err != nil {
 		return nil, err
 	}
-	if p.size != 0 {
-		req.Body = &sentBody{p: p}
-		if p.once == nil {
-			req.GetBody = func() (io.ReadCloser, error) { return &sentBody{p: p}, nil }
-		}
-	}
+	setBody(req, p)
 	pr.security, pr.payload, pr.body = security, p, req.Body
 	return &Request{HTTP: req, Media: media, Security: security}, nil
 }

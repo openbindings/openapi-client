@@ -80,7 +80,7 @@ func newConfig(o Options, parent *config) *config {
 		case o.Server != "" || o.ServerID != "":
 			refuse("Options.BaseURL", errors.New("cannot be set with Options.Server or Options.ServerID"))
 		default:
-			cfg.base = &endpoint{u.Scheme, u.Host, escapePath(u.EscapedPath())}
+			cfg.base = &endpoint{u.Scheme, u.Host, escape(u.EscapedPath(), pathSet)}
 		}
 	}
 	if o.Server != "" && o.ServerID != "" {
@@ -122,6 +122,10 @@ func newConfig(o Options, parent *config) *config {
 
 func followNone(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 
+// derivedFields are the header fields net/http derives or HTTP forbids a
+// client to set (RFC 9110 sections 6.6.2 and 8.6, RFC 9113 section 8.2.2).
+var derivedFields = []string{"Host", "Content-Length", "Transfer-Encoding", "Trailer", "Connection", "Keep-Alive", "Proxy-Connection", "Upgrade"}
+
 // checkHeader reports why fields cannot be sent: a name that is not a
 // token, a value HTTP cannot carry, a field the client generates or net/http
 // derives, or two spellings of one field.
@@ -131,10 +135,10 @@ func checkHeader(fields http.Header) error {
 		switch {
 		case !isToken(k):
 			return fmt.Errorf("field name %q is not a token", k)
-		case ck == "Content-Type" || ck == "Content-Length" || ck == "Transfer-Encoding":
-			return fmt.Errorf("sets %s, which the client generates", ck)
-		case ck == "Host":
-			return errors.New("sets Host, which net/http derives from the URL")
+		case ck == "Content-Type":
+			return errors.New("sets Content-Type, which the MediaType settings choose")
+		case slices.Contains(derivedFields, ck):
+			return fmt.Errorf("sets %s, which net/http derives or HTTP forbids", ck)
 		case slices.ContainsFunc(vs, func(v string) bool { return !validFieldValue(v) }):
 			return fmt.Errorf("field %s has a value HTTP cannot carry", ck)
 		}

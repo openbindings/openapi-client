@@ -76,7 +76,10 @@ func sharedOperation(n, m int, kind string) []byte {
 // growing together; the first Call too.
 func TestH1SharedOperationObject(t *testing.T) {
 	for _, kind := range []string{"servers", "params", "media"} {
-		wantLinear(t, kind+": Operations()", 125, func(n int) func() {
+		// Compiling the shared Operation Object once per Paths entry made
+		// N times M compiled parts: checked on allocations (stage 2 ledger,
+		// test maintenance), which quadrupled 16 times before the fix.
+		wantLinearAllocs(t, kind+": Operations()", 125, func(n int) func() {
 			return timedOperations(t, sharedOperation(n, n, kind))
 		})
 		t.Run(kind+": retained after Operations()", func(t *testing.T) {
@@ -95,17 +98,9 @@ func TestH1SharedOperationObject(t *testing.T) {
 			}
 		})
 		wantLinear(t, kind+": first Call", 125, func(n int) func() {
-			doc := sharedOperation(n, n, kind)
-			clients := make([]*openapi.Client, 3)
-			for i := range clients {
-				c, err := openapi.Parse(context.Background(), doc, testDocURI, &openapi.Options{
-					HTTPClient: &http.Client{Transport: cannedRT{}}, BaseURL: "https://api.example.test",
-				})
-				if err != nil {
-					t.Fatal(err)
-				}
-				clients[i] = c
-			}
+			clients := freshClients(t, sharedOperation(n, n, kind), func() *openapi.Options {
+				return &openapi.Options{HTTPClient: &http.Client{Transport: cannedRT{}}, BaseURL: "https://api.example.test"}
+			}, scaleRuns)
 			i := 0
 			return func() {
 				c := clients[i%len(clients)]

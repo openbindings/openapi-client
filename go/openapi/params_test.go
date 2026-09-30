@@ -256,9 +256,10 @@ func TestPathTemplateSubstitution(t *testing.T) {
 
 // errors.go, RequestError.Inputs: "a missing required one, a value its style
 // cannot serialize or a header cannot carry", keyed by Param.Key. doc.go,
-// Values: "a null array item is refused ... an undefined required one is
-// missing"; doc.go, Fixed rules, Styles: "Nesting in any style but
-// deepObject is refused". client.go, Input.Params: "A key the operation
+// Values: "an undefined required one is missing" (a null array item, once
+// refused, is skipped since the stage 2 review round, T2; see
+// TestUndefinedSettledFirst); doc.go, Fixed rules, Styles: "Nesting in any
+// style but deepObject is refused". client.go, Input.Params: "A key the operation
 // does not declare, or a missing required parameter, refuses the call".
 func TestParamRefusals(t *testing.T) {
 	w := newWire(t, nil)
@@ -289,7 +290,6 @@ func TestParamRefusals(t *testing.T) {
 		params map[string]any
 		keys   []string
 	}{
-		{"null array item", with(map[string]any{"color": []any{"a", nil}}), []string{"color"}},
 		{"nested array", with(map[string]any{"color": [][]string{{"a"}}}), []string{"color"}},
 		{"nested object", with(map[string]any{"color": map[string]any{"a": map[string]string{"b": "c"}}}), []string{"color"}},
 		{"array member", with(map[string]any{"color": map[string]any{"a": []string{"x"}}}), []string{"color"}},
@@ -309,7 +309,7 @@ func TestParamRefusals(t *testing.T) {
 		{"undeclared", with(map[string]any{"colour": "x"}), []string{"colour"}},
 		{"nil Input", nil, []string{"id", "need"}},
 		// Prepare "returns a *RequestError listing every problem at once".
-		{"several", map[string]any{"colour": 1, "color": []any{nil}}, []string{"colour", "color", "id", "need"}},
+		{"several", map[string]any{"colour": 1, "color": []any{[]int{1}}}, []string{"colour", "color", "id", "need"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -343,7 +343,7 @@ func TestRequestErrorOmitsValues(t *testing.T) {
 	c := parseFor(t, w, doc, nil)
 	_, err := c.Call(t.Context(), "r", &openapi.Input{Params: map[string]any{
 		"X-Token": "SECRET-TOKEN-1\r\nX-Evil: 1",
-		"color":   []any{"SECRET-ITEM-2", nil},
+		"color":   []any{"SECRET-ITEM-2", []string{"nested"}},
 		"colour":  "SECRET-VALUE-3",
 	}}, nil)
 	re := asRequestError(t, err)

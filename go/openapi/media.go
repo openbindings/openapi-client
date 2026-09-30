@@ -244,33 +244,54 @@ func writeEscaped(b *strings.Builder, c byte) {
 	b.WriteByte(upperHex[c&15])
 }
 
-// escape percent-encodes every byte of s outside the unreserved set.
-func escape(s string) string {
-	var b strings.Builder
-	escapeTo(&b, s)
-	return b.String()
-}
+// A charset says how percent-encoding treats each byte: 0 encodes it, 1
+// keeps it, and 2, for "%", keeps it where it begins a %XX triple.
+type charset [256]uint8
 
-func escapeTo(b *strings.Builder, s string) {
-	for i := 0; i < len(s); i++ {
-		if c := s[i]; unreserved(c) {
-			b.WriteByte(c)
-		} else {
-			writeEscaped(b, c)
+func newCharset(kept string, triples bool) *charset {
+	var s charset
+	for c := range 256 {
+		if unreserved(byte(c)) || strings.IndexByte(kept, byte(c)) >= 0 {
+			s[c] = 1
 		}
 	}
+	if triples {
+		s['%'] = 2
+	}
+	return &s
 }
 
-// escapePath percent-encodes the bytes of path text outside RFC 3986's
-// pchar and "/", keeping %XX triples, so the text is a valid escaped path.
-func escapePath(s string) string {
-	keep := func(i int) bool {
-		c := s[i]
-		return unreserved(c) || strings.IndexByte("!$&'()*+,;=:@/", c) >= 0 ||
-			c == '%' && i+2 < len(s) && hexDigit(s[i+1]) && hexDigit(s[i+2])
+var (
+	unreservedSet = newCharset("", false)
+	reservedSet   = newCharset(":/?#[]@!$&'()*+,;=", true) // RFC 6570 reserved expansion
+	pathSet       = newCharset("!$&'()*+,;=:@/", true)     // path text: pchar and "/"
+	fragmentSet   = newCharset("!$&'()*+,;=:@/?", false)   // RFC 3986 section 3.5
+)
+
+// escapeTo writes s to b, percent-encoding each byte set does not keep as
+// %XX in uppercase hex; a nil set keeps every byte.
+func escapeTo(b *strings.Builder, s string, set *charset) {
+	if set == nil {
+		b.WriteString(s)
+		return
 	}
+	start := 0
+	for i := 0; i < len(s); i++ {
+		if k := set[s[i]]; k == 1 || k == 2 && i+2 < len(s) && hexDigit(s[i+1]) && hexDigit(s[i+2]) {
+			continue
+		}
+		b.WriteString(s[start:i])
+		writeEscaped(b, s[i])
+		start = i + 1
+	}
+	b.WriteString(s[start:])
+}
+
+// escape returns s percent-encoded with set: s itself when set keeps every
+// byte.
+func escape(s string, set *charset) string {
 	i := 0
-	for i < len(s) && keep(i) {
+	for i < len(s) && set[s[i]] == 1 {
 		i++
 	}
 	if i == len(s) {
@@ -278,12 +299,6 @@ func escapePath(s string) string {
 	}
 	var b strings.Builder
 	b.WriteString(s[:i])
-	for ; i < len(s); i++ {
-		if keep(i) {
-			b.WriteByte(s[i])
-		} else {
-			writeEscaped(&b, s[i])
-		}
-	}
+	escapeTo(&b, s[i:], set)
 	return b.String()
 }

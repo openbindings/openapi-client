@@ -197,8 +197,8 @@ type DecodeError struct {
 }
 
 // Error returns the operation, the status, the media type and the reason,
-// never the body, though a decoder's message in the reason may quote a
-// short token of it.
+// never the body. A decoder's own error, whose message can quote the body,
+// is not in the text; errors.As finds it through Unwrap.
 func (e *DecodeError) Error() string {
 	msg := "openapi: " + describeResponse(e.Response)
 	if e.Response != nil && e.Response.Response != nil {

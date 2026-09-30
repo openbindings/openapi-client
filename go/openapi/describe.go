@@ -163,8 +163,8 @@ type Param struct {
 	// serialized by ContentType instead, and in Swagger 2.0.
 	Style string
 
-	// Explode is the effective explode, and ExplodeSet whether the document
-	// writes it.
+	// Explode is the effective explode (true for deepObject, which ignores
+	// the field), and ExplodeSet whether the document writes it.
 	Explode    bool
 	ExplodeSet bool
 
@@ -482,9 +482,9 @@ type Flow struct {
 // dialect, identifiers are not interpreted, Base is the base outside the
 // resource, and References returns an error.
 type Schema struct {
-	doc *document
-	v   value // where the schema is used; handles are made at Schema Objects outside other schemas
-	ptr string
+	doc      *document
+	v        value  // where the schema is used; handles are made at Schema Objects outside other schemas
+	src, sub string // its Source: that of the object it belongs to, and the rest
 }
 
 // Schema returns the Schema Object identified by an absolute URI in the
@@ -555,7 +555,7 @@ func (s *Schema) Raw() json.RawMessage {
 // with Client.Document, under a nearer $id too. For a schema made from a
 // Swagger 2.0 parameter, it points to the parameter.
 func (s *Schema) Source() string {
-	return s.doc.source(s.ptr)
+	return s.src + s.sub
 }
 
 // Base is the base URI that the references in Raw resolve against: that of
@@ -590,10 +590,11 @@ func (s *Schema) Dialect() string {
 	return "https://spec.openapis.org/oas/3.1/dialect/base"
 }
 
-// schema returns a handle to the Schema Object n at ptr, or nil.
-func (d *document) schema(v value, ptr string) *Schema {
+// schema returns a handle to the Schema Object v, whose Source is src
+// followed by sub, or nil.
+func (d *document) schema(v value, src, sub string) *Schema {
 	if !v.ok() {
 		return nil
 	}
-	return &Schema{doc: d, v: v, ptr: ptr}
+	return &Schema{doc: d, v: v, src: src, sub: sub}
 }

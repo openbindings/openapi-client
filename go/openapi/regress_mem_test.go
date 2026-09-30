@@ -210,21 +210,10 @@ func TestF7TreeMemoryBudget(t *testing.T) {
 	}
 }
 
-// fastest returns the shortest of three runs of f.
-func fastest(f func()) time.Duration {
-	best := time.Duration(1<<63 - 1)
-	for range 3 {
-		start := time.Now()
-		f()
-		best = min(best, time.Since(start))
-	}
-	return best
-}
-
 // F8 (#8, A): reference resolution is linear, at Load and at first use
 // (ledger). Four times the references must cost well under the sixteen
-// times a quadratic resolution costs; the bound is 10 to leave room for
-// noise.
+// times a quadratic resolution costs, by the shared harness
+// (regress2_scale_test.go).
 func TestF8ReferenceResolutionScales(t *testing.T) {
 	if testing.Short() {
 		t.Skip("timing test")
@@ -294,18 +283,13 @@ func TestF8ReferenceResolutionScales(t *testing.T) {
 		run   func(int) func()
 		small int
 	}{
-		{"Path Item chain at Load", func(n int) func() { return load(pathItemChain(n)) }, 4000},
-		{"many Path Item targets at Load", func(n int) func() { return load(manyTargets(n)) }, 4000},
+		// Sizes where the quadratic resolution took 18x or more before the
+		// fix (checked against 80d0bf0).
+		{"Path Item chain at Load", func(n int) func() { return load(pathItemChain(n)) }, 16000},
+		{"many Path Item targets at Load", func(n int) func() { return load(manyTargets(n)) }, 16000},
 		{"parameter chain at first use", func(n int) func() { return firstUse(paramChain(n)) }, 2000},
 	} {
-		t.Run(tt.name, func(t *testing.T) {
-			small, large := fastest(tt.run(tt.small)), fastest(tt.run(4*tt.small))
-			ratio := float64(large) / float64(max(small, time.Microsecond))
-			t.Logf("%d: %v, %d: %v (%.1fx)", tt.small, small, 4*tt.small, large, ratio)
-			if ratio > 10 {
-				t.Errorf("four times the references took %.1f times as long; want linear", ratio)
-			}
-		})
+		wantLinear(t, tt.name, tt.small, tt.run)
 	}
 
 	// A long chain that ends in a cycle is still detected.
