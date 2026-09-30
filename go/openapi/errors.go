@@ -9,7 +9,8 @@ import "errors"
 var ErrNoOperation = errors.New("openapi: no such operation")
 
 // ErrUnresolved is wrapped by the Err of a part whose defect is a reference
-// that cannot be resolved, as distinct from a malformed declaration. The Err
+// that cannot be resolved, a reference cycle included, as distinct from a
+// malformed declaration. The Err
 // names the reference, and wraps the retrieval error too when fetching its
 // document failed, or an error naming the refused URI when admission
 // refused it, so a caller can tell a fixable fetch or admission (see
@@ -39,6 +40,13 @@ type RequestError struct {
 	//   - for a part's media type, "Input.Body" followed by the part's JSON
 	//     Pointer: "Input.Body/file".
 	//
+	// A setting the document cannot use, or one that conflicts with
+	// another, is keyed by its field, at Load or at a call. Several usable
+	// servers with none selected are keyed "Options.Server", BaseURL set
+	// with Server or ServerID "Options.BaseURL", Server set with ServerID
+	// "Options.ServerID", an undetermined or unusable request media type
+	// "Input.MediaType", and a header field that a supplied header
+	// parameter or the credential sets by the Header that set it.
 	// Several security alternatives with none selected are keyed
 	// "Options.Security", the error naming Options.SecurityKey and
 	// Input.Security too. An empty secret from a credential source is keyed
@@ -59,8 +67,7 @@ type RequestError struct {
 	Inputs map[string]error
 
 	// Err is the reason for any other refusal, or nil: ErrNoOperation, the
-	// operation's own Err, a credential source's error (naming the scheme), an
-	// Options setting the document cannot use or a field set to a media range,
+	// operation's own Err, a credential source's error (naming the scheme),
 	// a bearer or Basic credential that would go over plain http or ws, a
 	// selected alternative two of whose schemes set the same field, an out that
 	// cannot receive a result, a prepared request whose URL was changed to

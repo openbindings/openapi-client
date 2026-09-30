@@ -52,21 +52,21 @@ func Parse(ctx context.Context, content []byte, uri string, opts *Options) (*Cli
 // settings apply only while a document is read; a Client keeps none of
 // them.
 //
-// A document is UTF-8, or UTF-16 or UTF-32 with a byte order mark or, for
-// YAML, as YAML 1.2.2 section 5.2 deduces it; a UTF-8 byte order mark is
-// ignored. A document whose first significant byte is '{' is read as JSON
-// and, if it is not JSON, as YAML; anything else is read as YAML 1.2 under
-// its Core schema, so yes and no stay strings, << is an ordinary key, and
-// a scalar key such as an unquoted 200 is read as the string it spells.
-// Numbers keep the exact value written. A duplicate key, a key that is not
-// a scalar, or a second document in the stream rejects the document, and
+// A document is UTF-8, or UTF-16 or UTF-32 with a byte order mark or, for YAML,
+// as YAML 1.2.2 section 5.2 deduces it; a UTF-8 byte order mark is ignored, and
+// invalid UTF-8 rejects the document. A document whose first significant byte
+// is '{' is read as JSON and, if it is not JSON, as YAML; anything else is read
+// as YAML 1.2 under its Core schema, so yes and no stay strings, << is an
+// ordinary key, and a scalar key such as an unquoted 200 is read as the string
+// it spells. Numbers keep the exact value written. A duplicate key, a key that
+// is not a scalar, or a second document in the stream rejects the document, and
 // so, in every edition, does a value JSON cannot hold (.inf, .nan, or a tag
 // outside the Core schema, such as !!timestamp), since Document and Raw are
-// JSON. A document whose aliases would add more than 1,000,000 nodes, or
-// more than 100 times its own node count, or that nests deeper than 1,000
-// levels, is rejected too. A rejection names the document's URI and the
-// line and column of the problem. Reference cycles are detected, never
-// followed forever.
+// JSON. A document whose aliases would add more than 1,000,000 nodes, or more
+// than 100 times its own node count, or that nests deeper than 1,000 levels
+// (the outermost value being level 1), is rejected too. A rejection names the
+// document's URI and the line and column of the problem, both counted from 1,
+// the column in bytes. Reference cycles are detected, never followed forever.
 //
 // The references followed are $ref in Reference Objects, Path Items and
 // Schema Objects, $dynamicRef, Discriminator mapping and defaultMapping
