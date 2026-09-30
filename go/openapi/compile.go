@@ -27,13 +27,14 @@ type plan struct {
 	success    [][]parsedMedia // each 2xx response's concrete media types
 }
 
-// A param is a parameter with its serialization rules.
+// A param is a parameter with its serialization compiled.
 type param struct {
 	*Param
-	required    bool
-	field       string // a header parameter's canonical field name
-	name        string // a query parameter's percent-encoded name
-	unsupported error  // why stage 1 cannot serialize it, or nil
+	style
+	required bool
+	field    string      // a header parameter's canonical field name
+	name     string      // the name, percent-encoded
+	media    parsedMedia // ContentType, parsed
 }
 
 // A pathPart is literal text of the path template, percent-encoded, or one
@@ -196,7 +197,9 @@ func (o *operation) addParams(list value, src string, ids map[paramID]int, errs 
 		if p.In == "header" && (strings.EqualFold(p.Name, "Accept") || strings.EqualFold(p.Name, "Content-Type") || strings.EqualFold(p.Name, "Authorization")) {
 			continue
 		}
-		pp := param{Param: p, required: p.Required || p.In == "path"}
+		pp := param{Param: p, style: styles[p.Style], required: p.Required || p.In == "path", name: escape(p.Name, unreservedSet)}
+		pp.media, _ = parseMedia(p.ContentType)
+		pp.set = unreservedSet
 		id := paramID{p.In, p.Name}
 		switch p.In {
 		case "":
@@ -205,20 +208,14 @@ func (o *operation) addParams(list value, src string, ids map[paramID]int, errs 
 			continue
 		case "header":
 			pp.field = textproto.CanonicalMIMEHeaderKey(p.Name)
+			pp.set = nil
 			id.name = strings.ToLower(p.Name)
+		case "cookie":
+			pp.sep = "; "
 		case "query":
-			pp.name = escape(p.Name, unreservedSet)
-		}
-		switch {
-		case p.Err != nil:
-		case p.ContentType != "":
-			pp.unsupported = notYet("content parameters")
-		case p.In == "cookie":
-			pp.unsupported = notYet("cookie parameters")
-		case p.AllowReserved:
-			pp.unsupported = notYet("allowReserved")
-		case p.Style != "simple" && p.Style != "form":
-			pp.unsupported = notYet("the " + p.Style + " style")
+			if p.AllowReserved {
+				pp.set = reservedSet
+			}
 		}
 		if j, ok := ids[id]; ok {
 			o.params[j] = pp
@@ -276,7 +273,8 @@ func (d *document) param(v value, src string) *Param {
 // newParam compiles the Parameter Object t, whose Source is at.
 func (d *document) newParam(t value, at string) *Param {
 	p := &Param{Source: at}
-	var explode, content value
+	var explode, schema, content value
+	entries, media := 0, true
 	for name, m := range t.members() { // one pass: a member's name is read from the source
 		switch name {
 		case "name":
@@ -296,38 +294,51 @@ func (d *document) newParam(t value, at string) *Param {
 		case "explode":
 			explode = m
 		case "schema":
-			p.Schema = d.schema(m, at, "/schema")
+			schema = m
 		case "content":
 			content = m
 		}
 	}
-	p.AllowReserved = p.AllowReserved && p.In == "query"
-	if content.kind() == '{' && content.hasMembers() {
+	if content.ok() {
 		for typ, m := range content.members() {
-			p.ContentType = typ
-			p.Schema = d.schema(m.get("schema"), at, "/content/"+token(typ)+"/schema")
-			break
+			if entries++; entries == 1 {
+				p.ContentType = typ
+				p.Schema = d.schema(m.get("schema"), at, "/content/"+token(typ)+"/schema")
+			}
 		}
+		_, media = parseMedia(p.ContentType)
+		p.Style, p.AllowReserved = "", false
 	} else {
-		switch {
-		case p.Style != "":
-		case p.In == "query" || p.In == "cookie":
-			p.Style = "form"
-		default:
+		if p.Style == "" {
 			p.Style = "simple"
+			if p.In == "query" || p.In == "cookie" {
+				p.Style = "form"
+			}
+		}
+		if schema.ok() {
+			p.Schema = d.schema(schema, at, "/schema")
 		}
 		p.ExplodeSet = explode.ok()
-		p.Explode = explode.kind() == 't' || !explode.ok() && p.Style == "form"
+		p.Explode = explode.kind() == 't' || !explode.ok() && p.Style == "form" || p.Style == "deepObject"
+		p.AllowReserved = p.AllowReserved && p.In == "query"
 	}
 	switch {
 	case !slices.Contains([]string{"path", "query", "header", "cookie"}, p.In):
 		p.Err = fmt.Errorf("parameter location %q is not path, query, header or cookie", p.In)
-	case p.ContentType == "" && !styleAllowed(p.In, p.Style):
+	case content.ok() && (content.kind() != '{' || entries != 1 || schema.ok()):
+		p.Err = errors.New("a parameter needs a content map of exactly one entry, and then no schema")
+	case !media:
+		p.Err = fmt.Errorf("invalid media type %q", p.ContentType)
+	case !content.ok() && !styleAllowed(p.In, p.Style):
 		p.Err = fmt.Errorf("style %q is not allowed for a %s parameter", p.Style, p.In)
+	case p.Explode && (p.Style == "spaceDelimited" || p.Style == "pipeDelimited"):
+		p.Err = fmt.Errorf("OpenAPI does not define the %s style with explode true", p.Style)
 	case p.In == "header" && !isToken(p.Name):
 		p.Err = fmt.Errorf("header parameter name %q is not a field name", p.Name)
 	case p.In == "header" && strings.EqualFold(p.Name, "Host"):
 		p.Err = errors.New("a header parameter cannot set Host, which net/http derives from the URL")
+	case p.In == "header" && strings.EqualFold(p.Name, "Cookie"):
+		p.Err = errors.New("OpenAPI leaves the effect of a header parameter named Cookie undefined")
 	}
 	return p
 }

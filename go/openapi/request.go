@@ -16,7 +16,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 )
 
 // noInput is the empty Input a nil *Input stands for.
@@ -148,9 +147,6 @@ func (c *Client) newRequest(ctx context.Context, o *operation, in *Input, re *Re
 	for k, err := range cfg.refused {
 		re.setting(k, err)
 	}
-	if len(in.ParamWriters) > 0 {
-		re.fail(notYet("Input.ParamWriters"))
-	}
 	if err := checkHeader(in.Header); err != nil {
 		re.setting("Input.Header", err)
 	}
@@ -162,60 +158,89 @@ func (c *Client) newRequest(ctx context.Context, o *operation, in *Input, re *Re
 	applyFields(h, in.Header)
 
 	// The path, in template order, then each parameter in declared order.
-	var b strings.Builder
+	var b, cookies strings.Builder
 	b.Grow(len(ep.path) + len(o.Path) + 16*len(o.params))
 	if strings.HasSuffix(ep.path, "/") && strings.HasPrefix(o.Path, "/") {
 		b.WriteString(ep.path[:len(ep.path)-1])
 	} else {
 		b.WriteString(ep.path)
 	}
-	o.writePath(&b, in.Params, re)
-	query, given := b.Len(), 0
+	cfg.writePath(&b, o, in, re)
+	query, given, written, sendsCookies := b.Len(), 0, 0, false
 	for i := range o.params {
 		p := &o.params[i]
+		if p.In == "" {
+			continue // unknown
+		}
 		v, ok := in.Params[p.Key]
-		if ok && p.In != "" {
+		w := in.ParamWriters[p.Key]
+		if ok {
 			given++
 		}
-		if p.In == "" || p.In == "path" && p.Err == nil {
-			continue // unknown, or serialized in the path
+		if w != nil {
+			if written++; ok {
+				re.input(p.Key, errors.New("the parameter is given in both Params and ParamWriters"))
+			}
 		}
-		d, ok := p.data(v, ok, re)
+		if p.In == "path" && p.Err == nil {
+			continue // serialized in the path
+		}
+		preset := p.In == "header" && len(h[p.field]) > 0 // by a Header setting
+		defined := w != nil                               // a writer supplies it
 		switch {
-		case !ok:
-		case d.kind == undefined:
-			if p.required && (p.In != "header" || len(h[p.field]) == 0) {
-				re.input(p.Key, errMissing)
-			}
+		case defined || v == nil:
 		case p.In == "query":
+			lead := "&"
 			if b.Len() == query {
-				b.WriteByte('?')
-			} else {
-				b.WriteByte('&')
+				lead = "?"
 			}
-			d.write(&b, p.name, true, p.Explode, true)
-		case len(h[p.field]) > 0:
-			setter := "Options.Header"
-			for k, vs := range in.Header {
-				if len(vs) > 0 && textproto.CanonicalMIMEHeaderKey(k) == p.field {
-					setter = "Input.Header"
-				}
+			defined = cfg.writeParam(&b, lead, p, v, re)
+		case p.In == "cookie":
+			lead := "; "
+			if cookies.Len() == 0 {
+				lead = ""
 			}
-			re.setting(setter, fmt.Errorf("sets %s, which the parameter %q supplies", p.field, p.Key))
-		default:
+			defined = cfg.writeParam(&cookies, lead, p, v, re)
+		case p.In == "header":
 			var sb strings.Builder
-			d.write(&sb, "", false, p.Explode, false)
-			if s := sb.String(); validFieldValue(s) {
-				h[p.field] = []string{s}
-			} else {
+			switch defined = cfg.writeParam(&sb, "", p, v, re); {
+			case !defined || preset:
+			case validFieldValue(sb.String()):
+				h[p.field] = []string{sb.String()}
+			default:
 				re.input(p.Key, errors.New("a header field cannot carry the value"))
 			}
+		default: // a path parameter the template does not name: refused
+			cfg.writeParam(&b, "", p, v, re)
+		}
+		switch {
+		case defined && preset:
+			re.setting(setter(in.Header, p.field), fmt.Errorf("sets %s, which the parameter %q supplies", p.field, p.Key))
+		case defined:
+			sendsCookies = sendsCookies || p.In == "cookie"
+		case p.required && !preset:
+			re.input(p.Key, errMissing)
+		}
+	}
+	if sendsCookies && len(h["Cookie"]) > 0 {
+		re.setting(setter(in.Header, "Cookie"), errors.New("sets Cookie, which the call's cookie parameters set"))
+	} else if cookies.Len() > 0 {
+		h["Cookie"] = []string{cookies.String()}
+	}
+	unknown := func(k string) {
+		if !slices.ContainsFunc(o.params, func(p param) bool { return p.Key == k && p.In != "" }) {
+			re.input(k, errors.New("the operation declares no such parameter"))
 		}
 	}
 	if given < len(in.Params) {
 		for k := range in.Params {
-			if !slices.ContainsFunc(o.params, func(p param) bool { return p.Key == k && p.In != "" }) {
-				re.input(k, errors.New("the operation declares no such parameter"))
+			unknown(k)
+		}
+	}
+	if written < len(in.ParamWriters) {
+		for k, w := range in.ParamWriters {
+			if w != nil {
+				unknown(k)
 			}
 		}
 	}
@@ -227,21 +252,39 @@ func (c *Client) newRequest(ctx context.Context, o *operation, in *Input, re *Re
 	s := b.String()
 	u := req.URL
 	u.Scheme, u.Host, req.Host = ep.scheme, ep.host, ep.host
-	u.Path = s[:query]
+	u.RawPath, u.Path = s[:query], s[:query] // as written: net/http would otherwise escape sub-delimiters
 	if query < len(s) {
 		u.RawQuery = s[query+1:]
 	}
-	u.RawPath = u.Path // as written: net/http would otherwise escape sub-delimiters
 	if strings.IndexByte(u.Path, '%') >= 0 {
-		u.Path, _ = url.PathUnescape(u.Path)
+		u.Path = pathOf(u.Path)
 	}
 	req.ContentLength = p.size
+	if written > 0 {
+		setBody(req, p)
+		o.runWriters(req, in.ParamWriters, re)
+		if len(re.Inputs) > 0 {
+			return req, payload{}, nil, ""
+		}
+	}
 	return req, p, media, security
 }
 
-// writePath writes the path template's parts with the values of params,
-// refusing a value that forms a "." or ".." segment.
-func (o *operation) writePath(b *strings.Builder, params map[string]any, re *RequestError) {
+// setter names the Header setting that set field: Input.Header when it
+// has the field, else Options.Header.
+func setter(fields http.Header, field string) string {
+	for k, vs := range fields {
+		if len(vs) > 0 && textproto.CanonicalMIMEHeaderKey(k) == field {
+			return "Input.Header"
+		}
+	}
+	return "Options.Header"
+}
+
+// writePath writes the path template's parts, with the values of its
+// parameters or their writers' {name} tokens, refusing a value that forms a
+// "." or ".." segment.
+func (cfg *config) writePath(b *strings.Builder, o *operation, in *Input, re *RequestError) {
 	segment, valued := b.Len(), -1 // where the segment begins, and a parameter in it
 	endSegment := func() {
 		if s := b.String()[segment:]; valued >= 0 && (s == "." || s == "..") {
@@ -264,37 +307,18 @@ func (o *operation) writePath(b *strings.Builder, params map[string]any, re *Req
 			continue
 		}
 		p := &o.params[part.param]
-		v, given := params[p.Key]
-		if d, ok := p.data(v, given, re); ok && d.kind == undefined {
-			re.input(p.Key, errMissing)
-		} else if ok {
-			d.write(b, "", false, p.Explode, true)
+		switch v := in.Params[p.Key]; {
+		case in.ParamWriters[p.Key] != nil:
+			b.WriteByte('{')
+			b.WriteString(p.Name)
+			b.WriteByte('}')
+		case v != nil && cfg.writeParam(b, "", p, v, re):
 			valued = part.param
+		default:
+			re.input(p.Key, errMissing) // unless refused already
 		}
 	}
 	endSegment()
-}
-
-// data returns the JSON data of the value v given for p, undefined when
-// none is given, or false after recording why it cannot be serialized.
-func (p *param) data(v any, given bool, re *RequestError) (data, bool) {
-	if !given {
-		return data{}, true
-	}
-	d, err := jsonData(v)
-	switch {
-	case err != nil:
-		re.input(p.Key, err)
-	case d.kind == undefined:
-		return d, true
-	case p.Err != nil:
-		re.input(p.Key, p.Err)
-	case p.unsupported != nil:
-		re.fail(fmt.Errorf("parameter %q: %w", p.Key, p.unsupported))
-	default:
-		return d, true
-	}
-	return data{}, false
 }
 
 // applyFields applies header fields over h, as the Header settings are: a
@@ -311,145 +335,6 @@ func applyFields(h, fields http.Header) {
 		default:
 			delete(h, k)
 		}
-	}
-}
-
-// A dataKind is the shape of a parameter value's JSON data for RFC 6570.
-type dataKind int
-
-const (
-	undefined dataKind = iota
-	primitive
-	array
-	object
-)
-
-// data is a parameter value as JSON data, ready for a style: a primitive's
-// text, an array's items, or an object's defined members' names and
-// values, alternating.
-type data struct {
-	kind  dataKind
-	text  string
-	items []string
-}
-
-// jsonData converts v to JSON data as encoding/json would. RFC 6570 reads
-// null, an empty array and an object with no defined member as undefined.
-func jsonData(v any) (data, error) {
-	switch v := v.(type) {
-	case nil:
-		return data{}, nil
-	case string:
-		if utf8.ValidString(v) {
-			return data{kind: primitive, text: v}, nil
-		}
-	case int:
-		return data{kind: primitive, text: strconv.Itoa(v)}, nil
-	case bool:
-		return data{kind: primitive, text: strconv.FormatBool(v)}, nil
-	case []string:
-		if len(v) == 0 {
-			return data{}, nil
-		}
-		if !slices.ContainsFunc(v, func(s string) bool { return !utf8.ValidString(s) }) {
-			return data{kind: array, items: v}, nil
-		}
-	}
-	b, err := json.Marshal(v)
-	if err != nil {
-		return data{}, &encodingError{err}
-	}
-	t, err := parseTree(context.Background(), string(b), "")
-	if err != nil {
-		return data{}, &encodingError{err}
-	}
-	root := value{t, 0}
-	var d data
-	switch root.kind() {
-	case 'n': // undefined
-	case '[':
-		d.kind = array
-		for _, item := range root.members() {
-			switch item.kind() {
-			case 'n':
-				return data{}, errors.New("an array item is null")
-			case '[', '{':
-				return data{}, errors.New("the style cannot serialize nested values")
-			}
-			d.items = append(d.items, item.text())
-		}
-	case '{':
-		d.kind = object
-		for name, m := range root.members() {
-			switch {
-			case isUndefined(m):
-			case m.kind() == '[' || m.kind() == '{':
-				return data{}, errors.New("the style cannot serialize nested values")
-			default:
-				d.items = append(d.items, name, m.text())
-			}
-		}
-	default:
-		d = data{kind: primitive, text: root.text()}
-	}
-	if d.kind != primitive && len(d.items) == 0 {
-		d.kind = undefined
-	}
-	return d, nil
-}
-
-func isUndefined(v value) bool {
-	switch v.kind() {
-	case 'n':
-		return true
-	case '[':
-		return !v.hasMembers()
-	case '{':
-		for _, m := range v.members() {
-			if !isUndefined(m) {
-				return false
-			}
-		}
-		return true
-	}
-	return false
-}
-
-// write writes d in RFC 6570 simple style, or in form style as query pairs
-// named name, already percent-encoded; escaped percent-encodes d's names
-// and values.
-func (d data) write(b *strings.Builder, name string, form, explode, escaped bool) {
-	put := func(s string) {
-		if escaped {
-			escapeTo(b, s, unreservedSet)
-		} else {
-			b.WriteString(s)
-		}
-	}
-	pairs := form && explode && d.kind != primitive // each item or member a pair of its own
-	if form && !pairs {
-		b.WriteString(name)
-		b.WriteByte('=')
-	}
-	if d.kind == primitive {
-		put(d.text)
-		return
-	}
-	for i, s := range d.items {
-		switch {
-		case i == 0:
-		case d.kind == object && i%2 == 1 && explode:
-			b.WriteByte('=')
-		case pairs:
-			b.WriteByte('&')
-		default:
-			b.WriteByte(',')
-		}
-		if pairs && d.kind == array {
-			b.WriteString(name)
-			b.WriteByte('=')
-		}
-		put(s)
 	}
 }
 
@@ -694,8 +579,7 @@ func (c *Client) body(o *operation, in *Input, h http.Header, re *RequestError) 
 		err = codec.Encode(&buf, in.Body)
 		b = buf.Bytes()
 	} else if m.class() == jsonClass {
-		if b, err = json.Marshal(in.Body); err != nil {
-			err = &encodingError{err}
+		if b, err = marshal(in.Body); err != nil {
 		} else if at, ok := c.doc.findReader(in.Body); ok {
 			re.input("Input.Body"+at, errors.New("a JSON value cannot hold an io.Reader or a Part"))
 			return payload{}, nil
@@ -741,6 +625,17 @@ func (c *Client) mediaType(o *operation, in *Input, re *RequestError) (string, p
 		}
 	}
 	return typ, m, md
+}
+
+// setBody gives req the body p, read again from the start by GetBody when p
+// can be.
+func setBody(req *http.Request, p payload) {
+	if p.size != 0 {
+		req.Body = &sentBody{p: p}
+		if p.once == nil {
+			req.GetBody = func() (io.ReadCloser, error) { return &sentBody{p: p}, nil }
+		}
+	}
 }
 
 // readerPayload returns the content of a reader given as the body,
