@@ -159,7 +159,7 @@ func (c *Client) newRequest(ctx context.Context, o *operation, in *Input, re *Re
 
 	// The path, in template order, then each parameter in declared order.
 	var b, cookies strings.Builder
-	b.Grow(len(ep.path) + len(o.Path) + 16*len(o.params))
+	b.Grow(len(ep.path) + len(o.Path) + 32*len(in.Params))
 	if strings.HasSuffix(ep.path, "/") && strings.HasPrefix(o.Path, "/") {
 		b.WriteString(ep.path[:len(ep.path)-1])
 	} else {
@@ -173,7 +173,10 @@ func (c *Client) newRequest(ctx context.Context, o *operation, in *Input, re *Re
 			continue // unknown
 		}
 		v, ok := in.Params[p.Key]
-		w := in.ParamWriters[p.Key]
+		var w func(*http.Request) error
+		if len(in.ParamWriters) > 0 {
+			w = in.ParamWriters[p.Key]
+		}
 		if ok {
 			given++
 		}
@@ -308,11 +311,11 @@ func (cfg *config) writePath(b *strings.Builder, o *operation, in *Input, re *Re
 		}
 		p := &o.params[part.param]
 		switch v := in.Params[p.Key]; {
-		case in.ParamWriters[p.Key] != nil:
+		case len(in.ParamWriters) > 0 && in.ParamWriters[p.Key] != nil:
 			b.WriteByte('{')
 			b.WriteString(p.Name)
 			b.WriteByte('}')
-		case v != nil && cfg.writeParam(b, "", p, v, re):
+		case v != nil && cfg.writeParam(b, p.first, p, v, re):
 			valued = part.param
 		default:
 			re.input(p.Key, errMissing) // unless refused already
@@ -579,10 +582,13 @@ func (c *Client) body(o *operation, in *Input, h http.Header, re *RequestError) 
 		err = codec.Encode(&buf, in.Body)
 		b = buf.Bytes()
 	} else if m.class() == jsonClass {
-		if b, err = marshal(in.Body); err != nil {
-		} else if at, ok := c.doc.findReader(in.Body); ok {
+		if b, err = json.Marshal(in.Body); err != nil {
+			err = &encodingError{err}
+		} else if at, found, levels := c.doc.findReader(in.Body, 1); found {
 			re.input("Input.Body"+at, errors.New("a JSON value cannot hold an io.Reader or a Part"))
 			return payload{}, nil
+		} else if levels > maxDepth || levels == 0 && tooDeep(b) {
+			err = errDepth
 		}
 	} else {
 		re.fail(notYet("encoding a " + m.full + " body"))
@@ -660,11 +666,12 @@ func readerPayload(r io.Reader) payload {
 }
 
 // A walk says where a type's values can hold an io.Reader or a Part that
-// encoding/json would reach.
+// encoding/json would reach, and how deeply their JSON nests.
 type walk struct {
 	reader bool        // the type is one
 	holds  bool        // a value of the type can hold one
 	fields []jsonField // for a struct, the fields that can
+	levels int         // the most levels a value's JSON takes, or 0 when a MarshalJSON method may decide
 }
 
 // A jsonField is a struct field encoding/json writes.
@@ -695,50 +702,85 @@ func (d *document) walkOf(t reflect.Type, open map[reflect.Type]bool) *walk {
 	}
 	open[t] = true
 	defer delete(open, t)
-	w := &walk{}
+	w := &walk{levels: 1}
 	switch k := t.Kind(); {
 	case t == partType || t.Implements(readerType):
 		w.reader, w.holds = true, true
 	case t.Implements(marshalerType) || t.Implements(textMarshalerType):
 	case k == reflect.Interface:
 		w.holds = true
-	case k == reflect.Pointer || k == reflect.Map || k == reflect.Array || k == reflect.Slice && t.Elem().Kind() != reflect.Uint8:
-		w.holds = d.walkOf(t.Elem(), open).holds
+	case k == reflect.Pointer:
+		e := d.walkOf(t.Elem(), open)
+		w.holds, w.levels = e.holds, e.levels
+	case k == reflect.Map || k == reflect.Array || k == reflect.Slice && t.Elem().Kind() != reflect.Uint8:
+		e := d.walkOf(t.Elem(), open)
+		w.holds, w.levels = e.holds, nest(e.levels)
 	case k == reflect.Struct:
 		for _, f := range jsonFields(t) {
-			if d.walkOf(t.FieldByIndex(f.index).Type, open).holds {
+			e := d.walkOf(t.FieldByIndex(f.index).Type, open)
+			if e.holds {
 				w.fields = append(w.fields, f)
 			}
+			w.levels = deepest(w.levels, nest(e.levels))
 		}
 		w.holds = len(w.fields) > 0
+	}
+	if t.Implements(marshalerType) || reflect.PointerTo(t).Implements(marshalerType) {
+		w.levels = 0 // its MarshalJSON may decide
 	}
 	d.walks.Store(t, w)
 	return w
 }
 
+// deepest returns the greater of two level counts, or 0, unknown, when
+// either is.
+func deepest(a, b int) int {
+	if a == 0 || b == 0 {
+		return 0
+	}
+	return max(a, b)
+}
+
+// nest returns the levels of a container whose items take l.
+func nest(l int) int {
+	if l == 0 {
+		return 0
+	}
+	return l + 1
+}
+
 // findReader returns the JSON Pointer, from x, of an io.Reader or Part that
 // encoding/json would reach in x, walking the values encoding/json itself
-// creates without reflection.
-func (d *document) findReader(x any) (string, bool) {
+// creates without reflection; and the levels its JSON takes when x is at
+// level, or 0 when only the JSON can tell.
+func (d *document) findReader(x any, level int) (string, bool, int) {
+	levels := level
 	switch x := x.(type) {
 	case nil, string, bool, float64, json.Number:
-		return "", false
 	case map[string]any:
 		for k, v := range x {
-			if at, ok := d.findReader(v); ok {
-				return "/" + escapeToken(k) + at, true
+			at, found, l := d.findReader(v, level+1)
+			if found {
+				return "/" + escapeToken(k) + at, true, 0
 			}
+			levels = deepest(levels, l)
 		}
-		return "", false
 	case []any:
 		for i, v := range x {
-			if at, ok := d.findReader(v); ok {
-				return "/" + strconv.Itoa(i) + at, true
+			at, found, l := d.findReader(v, level+1)
+			if found {
+				return "/" + strconv.Itoa(i) + at, true, 0
 			}
+			levels = deepest(levels, l)
 		}
-		return "", false
+	default:
+		if w := d.walkOf(reflect.TypeOf(x), nil); !w.holds && w.levels > 0 {
+			return "", false, level - 1 + w.levels
+		}
+		at, found := d.findValue(reflect.ValueOf(x))
+		return at, found, 0
 	}
-	return d.findValue(reflect.ValueOf(x))
+	return "", false, levels
 }
 
 // findValue is findReader for a value of any type.
@@ -766,7 +808,8 @@ func (d *document) findValue(v reflect.Value) (string, bool) {
 	switch v.Kind() {
 	case reflect.Interface:
 		if v.CanInterface() {
-			return d.findReader(v.Interface())
+			at, found, _ := d.findReader(v.Interface(), 0)
+			return at, found
 		}
 		return d.findValue(v.Elem())
 	case reflect.Pointer:

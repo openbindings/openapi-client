@@ -269,8 +269,12 @@ var (
 )
 
 // escapeTo writes s to b, percent-encoding each byte set does not keep as
-// %XX in uppercase hex.
+// %XX in uppercase hex; a nil set keeps every byte.
 func escapeTo(b *strings.Builder, s string, set *charset) {
+	if set == nil {
+		b.WriteString(s)
+		return
+	}
 	start := 0
 	for i := 0; i < len(s); i++ {
 		if k := set[s[i]]; k == 1 || k == 2 && i+2 < len(s) && hexDigit(s[i+1]) && hexDigit(s[i+2]) {

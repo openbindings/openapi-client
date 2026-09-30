@@ -1,6 +1,7 @@
 package openapi
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -41,7 +42,7 @@ var (
 
 // writeParam writes the value v given for p into b, after lead unless v
 // is undefined, and reports whether it wrote a value, recording in re why
-// it cannot.
+// it cannot. In a path, lead is the style's first.
 func (cfg *config) writeParam(b *strings.Builder, lead string, p *param, v any, re *RequestError) bool {
 	if p.ContentType == "" {
 		e := emitter{param: p, b: b, lead: lead}
@@ -107,33 +108,40 @@ func (cfg *config) encode(m parsedMedia, v any) (string, error) {
 // deeper than 1,000 levels.
 func marshal(v any) ([]byte, error) {
 	b, err := json.Marshal(v)
-	if err != nil {
+	switch {
+	case err != nil:
 		return nil, &encodingError{err}
+	case tooDeep(b):
+		return nil, errDepth
+	}
+	return b, nil
+}
+
+// tooDeep reports whether the JSON text b, as encoding/json writes it, nests
+// deeper than 1,000 levels, the outermost value being level 1: whether an
+// array or object at level 1,000 has a member.
+func tooDeep(b []byte) bool {
+	if bytes.Count(b, []byte("["))+bytes.Count(b, []byte("{")) < maxDepth {
+		return false
 	}
 	depth := 0 // the arrays and objects open
 	for i := 0; i < len(b); i++ {
 		switch b[i] {
-		case ']', '}':
-			depth--
-		case ',', ':':
-		case '[', '{':
-			if depth++; depth > maxDepth {
-				return nil, errDepth
-			}
-		default: // a scalar, or a member name, one level below its container
-			if depth == maxDepth {
-				return nil, errDepth
-			}
-			if b[i] == '"' {
-				for i++; b[i] != '"'; i++ {
-					if b[i] == '\\' {
-						i++
-					}
+		case '"':
+			for i++; b[i] != '"'; i++ {
+				if b[i] == '\\' {
+					i++
 				}
 			}
+		case '[', '{':
+			if depth++; depth == maxDepth && b[i+1] != ']' && b[i+1] != '}' {
+				return true
+			}
+		case ']', '}':
+			depth--
 		}
 	}
-	return b, nil
+	return false
 }
 
 // jsonText returns s as JSON data holds it: each byte of invalid UTF-8
@@ -143,7 +151,7 @@ func jsonText(s string) string {
 		return s
 	}
 	var b strings.Builder
-	for _, r := range s {
+	for _, r := range s { // each invalid byte is a utf8.RuneError
 		b.WriteRune(r)
 	}
 	return b.String()
@@ -217,23 +225,14 @@ func (e *emitter) write(v any) (bool, error) {
 	return e.end(), err
 }
 
-// start writes what precedes the value's first item, unless the parameter
+// start writes lead, before the value's first item, unless the parameter
 // cannot be serialized.
 func (e *emitter) start() error {
 	if e.Err != nil {
 		return e.Err
 	}
 	e.b.WriteString(e.lead)
-	e.b.WriteString(e.first)
 	return nil
-}
-
-func (e *emitter) escape(s string) {
-	if e.set == nil {
-		e.b.WriteString(s)
-	} else {
-		escapeTo(e.b, s, e.set)
-	}
 }
 
 func (e *emitter) primitive(s string) (bool, error) {
@@ -254,12 +253,13 @@ func (e *emitter) primitive(s string) (bool, error) {
 		}
 		e.b.WriteByte('=')
 	}
-	e.escape(s)
+	escapeTo(e.b, s, e.set)
 	return true, nil
 }
 
-// item writes an array's item s.
-func (e *emitter) item(s string) error {
+// next writes what precedes an item or member, whose first text is empty
+// if empty: the value's start before the first, else a separator.
+func (e *emitter) next(empty bool) error {
 	switch {
 	case e.n == 0:
 		if err := e.start(); err != nil {
@@ -267,7 +267,7 @@ func (e *emitter) item(s string) error {
 		}
 		if e.named && !e.Explode {
 			e.b.WriteString(e.name)
-			if e.held = s == ""; !e.held {
+			if e.held = empty; !empty {
 				e.b.WriteByte('=')
 			}
 		}
@@ -281,6 +281,14 @@ func (e *emitter) item(s string) error {
 		e.b.WriteString(e.delim)
 	}
 	e.n++
+	return nil
+}
+
+// item writes an array's item s.
+func (e *emitter) item(s string) error {
+	if err := e.next(s == ""); err != nil {
+		return err
+	}
 	if e.named && e.Explode {
 		e.b.WriteString(e.name)
 		if s == "" {
@@ -289,28 +297,16 @@ func (e *emitter) item(s string) error {
 		}
 		e.b.WriteByte('=')
 	}
-	e.escape(s)
+	escapeTo(e.b, s, e.set)
 	return nil
 }
 
 // member writes an object's member named k, whose value is s.
 func (e *emitter) member(k, s string) error {
-	switch {
-	case e.n == 0:
-		if err := e.start(); err != nil {
-			return err
-		}
-		if e.named && !e.Explode {
-			e.b.WriteString(e.name)
-			e.b.WriteByte('=')
-		}
-	case e.Explode:
-		e.b.WriteString(e.sep)
-	default:
-		e.b.WriteString(e.delim)
+	if err := e.next(false); err != nil { // not exploded, it holds a delimiter
+		return err
 	}
-	e.n++
-	e.escape(k)
+	escapeTo(e.b, k, e.set)
 	switch {
 	case !e.Explode:
 		e.b.WriteString(e.delim)
@@ -320,7 +316,7 @@ func (e *emitter) member(k, s string) error {
 	default:
 		e.b.WriteByte('=')
 	}
-	e.escape(s)
+	escapeTo(e.b, s, e.set)
 	return nil
 }
 
@@ -360,13 +356,13 @@ func (e *emitter) object(r *jsonReader, path []string) error {
 		e.b.WriteString(e.name)
 		for _, k := range path {
 			e.b.WriteString("%5B")
-			e.escape(k)
+			escapeTo(e.b, k, e.set)
 			e.b.WriteString("%5D")
 		}
 		e.b.WriteString("%5B")
-		e.escape(name)
+		escapeTo(e.b, name, e.set)
 		e.b.WriteString("%5D=")
-		e.escape(r.scalar())
+		escapeTo(e.b, r.scalar(), e.set)
 		return nil
 	})
 }
