@@ -94,11 +94,10 @@
 // or JSON part is exactly what its codec writes, null members, [] and {}
 // included. A value the client encodes that is nested deeper than 1,000 levels,
 // counted in the JSON encoding/json writes (a MarshalJSON's output included),
-// is refused at its key; a caller's codec receives the value as given. The
-// request target and each header field the client builds are limited to 1
-// MiB, far beyond the 8,000 octets RFC 9110 section 4.1 asks servers to
-// accept; a parameter that would pass the limit is refused at its key, and its
-// serialization stops there. Schema
+// is refused at its key; a caller's codec receives the value as given. A
+// parameter that would take the request target or a header field past 1 MiB,
+// far beyond the 8,000 octets RFC 9110 section 4.1 asks servers to accept,
+// is refused at its key, and its serialization stops there. Schema
 // defaults are never sent, and values are never validated against schemas. How
 // bytes, readers and iterators are sent is on Input.Body.
 //
