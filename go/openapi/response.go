@@ -377,7 +377,7 @@ func (cfg *config) decodeData(h http.Header, decl *Message, data []byte, out any
 		if len(data) == 0 {
 			return nil
 		}
-		return codec.Decode(bytes.NewReader(data), out)
+		return decoded(codec.Decode(bytes.NewReader(data), out))
 	}
 	text := strings.EqualFold(ct.typ, "text")
 	switch p := out.(type) {
@@ -420,12 +420,12 @@ func decodeJSON(data []byte, out any) error {
 	switch out.(type) {
 	case *any, *map[string]any, *[]any:
 	default:
-		return json.Unmarshal(data, out)
+		return decoded(json.Unmarshal(data, out))
 	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.UseNumber()
 	if err := dec.Decode(out); err != nil {
-		return err
+		return decoded(err)
 	}
 	if len(bytes.TrimLeft(data[dec.InputOffset():], " \t\r\n")) > 0 {
 		return errors.New("invalid data after the JSON value")
@@ -466,7 +466,22 @@ func decodeXML(data []byte, ct parsedMedia, out any) error {
 		}
 		return r, nil
 	}
-	return dec.Decode(out)
+	return decoded(dec.Decode(out))
+}
+
+// A decoderError is a decoder's own error, whose message can quote the
+// body, and so is not in the text.
+type decoderError struct{ err error }
+
+func (e *decoderError) Error() string { return "the body does not decode into the value" }
+func (e *decoderError) Unwrap() error { return e.err }
+
+// decoded returns err, a decoder's, as a *decoderError.
+func decoded(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &decoderError{err}
 }
 
 func fromLatin1(b []byte) []byte {
