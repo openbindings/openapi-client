@@ -325,16 +325,15 @@ func parseTree(ctx context.Context, src, uri string) (*tree, error) {
 		}
 		return nil, p.errorAt(i, "invalid UTF-8")
 	}
-	p.nodes = make([]node, 0, len(src)/16+1)
+	// Each value but the outermost follows a "{", "[" or "," in its
+	// container, so these bound the number of nodes.
+	p.nodes = make([]node, 0, 1+strings.Count(src, "{")+strings.Count(src, "[")+strings.Count(src, ","))
 	p.space()
 	if err := p.value(1); err != nil {
 		return nil, err
 	}
 	if p.space(); p.i < len(src) {
 		return nil, p.errorAt(p.i, "data after the document")
-	}
-	if cap(p.nodes)-len(p.nodes) > len(p.nodes)/4 {
-		p.nodes = slices.Clip(slices.Clone(p.nodes))
 	}
 	return &tree{src: src, nodes: p.nodes}, nil
 }
