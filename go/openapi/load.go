@@ -1,8 +1,13 @@
 package openapi
 
 import (
+	"bytes"
 	"context"
 	"io"
+	"maps"
+	"net/http"
+	"net/url"
+	"strings"
 )
 
 // Load reads the document at uri, and every document its references reach,
@@ -167,7 +172,19 @@ const (
 // Load reads a document as the package's Load function does, with l's
 // settings.
 func (l *Loader) Load(ctx context.Context, uri string, opts *Options) (*Client, error) {
-	panic("unimplemented")
+	var o Options
+	if opts != nil {
+		o = *opts
+	}
+	hc := o.HTTPClient
+	if hc == nil {
+		hc = http.DefaultClient
+	}
+	content, final, err := l.fetch(ctx, uri, hc)
+	if err != nil {
+		return nil, err
+	}
+	return newClient(content, final, o)
 }
 
 // Parse returns a Client for content as the package's Parse function does,
@@ -176,14 +193,21 @@ func (l *Loader) Load(ctx context.Context, uri string, opts *Options) (*Client, 
 // AllowReference admits them; relative external references have no base
 // unless an OpenAPI 3.2 absolute $self supplies one.
 func (l *Loader) Parse(ctx context.Context, content []byte, uri string, opts *Options) (*Client, error) {
-	panic("unimplemented")
+	var o Options
+	if opts != nil {
+		o = *opts
+	}
+	return newClient(content, uri, o)
 }
 
 // Version reports the version the entry document declares: its swagger
 // value ("2.0") or its openapi value (such as "3.1.0"). It decides the
 // dialect of the document's schemas as written (see [Schema.Dialect]).
 func (c *Client) Version() string {
-	panic("unimplemented")
+	if c.doc == nil {
+		return ""
+	}
+	return c.doc.version
 }
 
 // DocumentURIs lists every document the Client loaded, including the entry
@@ -194,7 +218,10 @@ func (c *Client) Version() string {
 // obtain a copy of one document's contents. This includes loaded documents
 // whose declarations are not exposed by Operations.
 func (c *Client) DocumentURIs() []string {
-	panic("unimplemented")
+	if c.doc == nil {
+		return nil
+	}
+	return []string{c.doc.uri}
 }
 
 // Document returns a copy of the document loaded from uri, as JSON (a YAML
@@ -218,5 +245,38 @@ func (c *Client) DocumentURIs() []string {
 // an extension, or which of a Path Item's fields were written beside its
 // $ref, without the client growing a field for each such fact.
 func (c *Client) Document(uri string) []byte {
-	panic("unimplemented")
+	d := c.doc
+	if d == nil {
+		return nil
+	}
+	base, frag, hasFrag := strings.Cut(uri, "#")
+	if base != "" && base != d.uri {
+		return nil
+	}
+	n := &d.root
+	if hasFrag {
+		ptr, err := url.PathUnescape(frag)
+		if err != nil {
+			return nil
+		}
+		if n = pointerAt(n, ptr); n == nil {
+			return nil
+		}
+	}
+	return bytes.Clone(d.src[n.start:n.end])
+}
+
+// newClient returns a Client for content, retrieved from uri, with o.
+func newClient(content []byte, uri string, o Options) (*Client, error) {
+	d, err := newDocument(content, uri)
+	if err != nil {
+		return nil, err
+	}
+	c := &Client{doc: d, cfg: newConfig(o)}
+	re := RequestError{Settings: maps.Clone(c.cfg.refused)}
+	d.checkNames(c.cfg, &re)
+	if err := re.refused(); err != nil {
+		return nil, err
+	}
+	return c, nil
 }

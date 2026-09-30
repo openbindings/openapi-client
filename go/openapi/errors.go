@@ -1,6 +1,15 @@
 package openapi
 
-import "errors"
+import (
+	"bytes"
+	"errors"
+	"fmt"
+	"io"
+	"maps"
+	"net/http"
+	"slices"
+	"strings"
+)
 
 // ErrNoOperation is wrapped by the error for a key that names no single
 // operation: none has it, or several share it as their operationId. Both
@@ -80,12 +89,32 @@ type RequestError struct {
 // credential or an input's value. The text of an error a credential source
 // returned is included as it is.
 func (e *RequestError) Error() string {
-	panic("unimplemented")
+	var parts []string
+	if e.Err != nil {
+		parts = append(parts, strings.TrimPrefix(e.Err.Error(), "openapi: "))
+	}
+	for _, k := range slices.Sorted(maps.Keys(e.Settings)) {
+		parts = append(parts, k+": "+e.Settings[k].Error())
+	}
+	for _, k := range slices.Sorted(maps.Keys(e.Inputs)) {
+		parts = append(parts, k+": "+e.Inputs[k].Error())
+	}
+	return "openapi: " + strings.Join(parts, "; ")
 }
 
 // Unwrap returns Err and the errors of Settings and Inputs, in key order.
 func (e *RequestError) Unwrap() []error {
-	panic("unimplemented")
+	errs := make([]error, 0, 1+len(e.Settings)+len(e.Inputs))
+	if e.Err != nil {
+		errs = append(errs, e.Err)
+	}
+	for _, k := range slices.Sorted(maps.Keys(e.Settings)) {
+		errs = append(errs, e.Settings[k])
+	}
+	for _, k := range slices.Sorted(maps.Keys(e.Inputs)) {
+		errs = append(errs, e.Inputs[k])
+	}
+	return errs
 }
 
 // A StatusError is a response whose final status is not 2xx, including a
@@ -111,7 +140,7 @@ type StatusError struct {
 // Error returns the operation and the status, such as
 // "openapi: getPet: 404 Not Found", never the body or the URL.
 func (e *StatusError) Error() string {
-	panic("unimplemented")
+	return "openapi: " + describeResponse(e.Response)
 }
 
 // Decode decodes Content into v by the response's media type, as
@@ -119,7 +148,27 @@ func (e *StatusError) Error() string {
 // it returns Err instead of decoding an incomplete body, except into a *[]byte,
 // which receives the bytes read along with Err.
 func (e *StatusError) Decode(v any) error {
-	panic("unimplemented")
+	if e.Err != nil {
+		if p, ok := v.(*[]byte); ok {
+			*p = append((*p)[:0], e.Content...)
+		}
+		return e.Err
+	}
+	var re RequestError
+	if checkOut(v, &re); re.Err != nil {
+		return &DecodeError{Response: e.Response, Err: re.Err}
+	}
+	r := *e.Response
+	resp := *r.Response
+	resp.Body, resp.ContentLength, r.Response = io.NopCloser(bytes.NewReader(e.Content)), int64(len(e.Content)), &resp
+	cfg := &config{}
+	if x := exchangeOf(e.Response.Response); x != nil {
+		cfg = x.cfg
+	}
+	if head, err := cfg.read(r.Response, r.Declaration, v); err != nil {
+		return decodeError(&r, head, err)
+	}
+	return nil
 }
 
 // Unwrap returns e.Err.
@@ -149,10 +198,31 @@ type DecodeError struct {
 // Error returns the operation, the status, the media type and the reason,
 // never the body.
 func (e *DecodeError) Error() string {
-	panic("unimplemented")
+	msg := "openapi: " + describeResponse(e.Response)
+	if e.Response != nil && e.Response.Response != nil {
+		if ct := e.Header.Get("Content-Type"); ct != "" {
+			msg += ": " + ct
+		}
+	}
+	if e.Err != nil {
+		msg += ": " + e.Err.Error()
+	}
+	return msg
 }
 
 // Unwrap returns e.Err.
 func (e *DecodeError) Unwrap() error {
 	return e.Err
+}
+
+// describeResponse names the operation r answers, and its status.
+func describeResponse(r *Response) string {
+	if r == nil || r.Response == nil {
+		return "no response"
+	}
+	s := strings.TrimSpace(fmt.Sprintf("%d %s", r.StatusCode, http.StatusText(r.StatusCode)))
+	if x := exchangeOf(r.Response); x != nil {
+		s = x.op.Key + ": " + s
+	}
+	return s
 }

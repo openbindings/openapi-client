@@ -11,11 +11,9 @@ import (
 // operations: it describes nothing and refuses every call with a
 // *RequestError wrapping ErrNoOperation.
 type Client struct {
-	doc  *document // shared by derived Clients
-	opts Options
+	doc *document // shared by derived Clients
+	cfg *config
 }
-
-type document struct{}
 
 // Options says where calls go, as whom, and how. Its zero value supplies only
 // documented transport defaults. When the document leaves a consequential
@@ -209,7 +207,16 @@ const (
 // and any other Options the document cannot use refuse each call they
 // affect.
 func (c *Client) With(f func(*Options)) *Client {
-	panic("unimplemented")
+	if f == nil {
+		return c
+	}
+	cfg := c.cfg
+	if cfg == nil {
+		cfg = newConfig(Options{})
+	}
+	o := cfg.options()
+	f(&o)
+	return &Client{doc: c.doc, cfg: newConfig(o)}
 }
 
 // An Input holds the values and settings for one call. The client never
@@ -472,7 +479,27 @@ type Part struct {
 // 2xx success policy; [Request.Send] leaves status interpretation to the
 // caller.
 func (c *Client) Call(ctx context.Context, key string, in *Input, out any) (*Response, error) {
-	panic("unimplemented")
+	o, err := c.operation(key)
+	if err != nil {
+		return nil, err
+	}
+	x := &exchange{Context: ctx, cfg: c.cfg, op: o}
+	var re RequestError
+	checkOut(out, &re)
+	req, p, _, security := c.newRequest(x, o, in, &re)
+	if req != nil {
+		c.cfg.checkAccept(o, req.Header, out, &re)
+	}
+	if err := re.refused(); err != nil {
+		return nil, err
+	}
+	x.security = security
+	x.attach(req, p)
+	resp, err := x.send(req)
+	if err != nil {
+		return nil, err
+	}
+	return resp, x.finish(resp, out)
 }
 
 // Prepare builds the request for the operation named key with in, applying
@@ -486,7 +513,24 @@ func (c *Client) Call(ctx context.Context, key string, in *Input, out any) (*Res
 // preparation succeeds. A missing operation, or an operation with Err set,
 // still prevents preparation.
 func (c *Client) Prepare(key string, in *Input) (*Request, error) {
-	panic("unimplemented")
+	o, err := c.operation(key)
+	if err != nil {
+		return nil, err
+	}
+	pr := &prepared{Context: context.Background(), cfg: c.cfg, op: o}
+	var re RequestError
+	req, p, media, security := c.newRequest(pr, o, in, &re)
+	if err := re.refused(); err != nil {
+		return nil, err
+	}
+	if p.size != 0 {
+		req.Body = &sentBody{p: p}
+		if p.once == nil {
+			req.GetBody = func() (io.ReadCloser, error) { return &sentBody{p: p}, nil }
+		}
+	}
+	pr.security = security
+	return &Request{HTTP: req, Media: media, Security: security}, nil
 }
 
 // A Request is a call prepared by [Client.Prepare] and not yet sent. A
@@ -542,7 +586,11 @@ type Request struct {
 // HTTPClient.Transport can return a Body implementing io.ReadWriteCloser
 // for tunnel use; the client leaves that body unchanged.
 func (r *Request) Send(ctx context.Context) (*Response, error) {
-	panic("unimplemented")
+	x, req, err := r.newExchange(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return x.send(req)
 }
 
 // Call sends r with ctx, adding credentials, and returns as [Client.Call]
@@ -551,7 +599,25 @@ func (r *Request) Send(ctx context.Context) (*Response, error) {
 // it may be sent once, and sending it again is refused with a
 // *RequestError, nothing sent.
 func (r *Request) Call(ctx context.Context, out any) (*Response, error) {
-	panic("unimplemented")
+	var re RequestError
+	checkOut(out, &re)
+	if r.HTTP != nil {
+		if pr, ok := r.HTTP.Context().Value(preparedKey{}).(*prepared); ok {
+			pr.cfg.checkAccept(pr.op, r.HTTP.Header, out, &re)
+		}
+	}
+	if err := re.refused(); err != nil {
+		return nil, err
+	}
+	x, req, err := r.newExchange(ctx)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := x.send(req)
+	if err != nil {
+		return nil, err
+	}
+	return resp, x.finish(resp, out)
 }
 
 // A Response is a response the server sent to a call: the *http.Response,
@@ -612,7 +678,11 @@ type Response struct {
 // A failed or bounded response read may close Body early and abort an upload.
 // Stream followed by Decode, its target chosen for the response, is Call.
 func (r *Response) Decode(out any) error {
-	panic("unimplemented")
+	var re RequestError
+	if checkOut(out, &re); re.Err != nil {
+		return &DecodeError{Response: r, Err: re.Err}
+	}
+	return exchangeOf(r.Response).decode(r, out)
 }
 
 // WaitRequest waits until the HTTP transport has consumed the complete
@@ -628,7 +698,7 @@ func (r *Response) Decode(out any) error {
 // Stream should read or close Body concurrently when the peer needs that
 // progress before it can read the rest of the request.
 func (r *Response) WaitRequest(ctx context.Context) error {
-	panic("unimplemented")
+	return exchangeOf(r.Response).waitUpload(ctx)
 }
 
 // OperationFromContext returns the operation being sent when ctx is the
@@ -637,5 +707,8 @@ func (r *Response) WaitRequest(ctx context.Context) error {
 // traces and metrics by Operation.Key, or decide whether a retry is safe.
 // It does no work beyond the lookup.
 func OperationFromContext(ctx context.Context) *Operation {
-	panic("unimplemented")
+	if o, ok := ctx.Value(operationKey{}).(*operation); ok {
+		return &o.Operation
+	}
+	return nil
 }
