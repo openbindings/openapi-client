@@ -64,9 +64,10 @@ type Options struct {
 	// empty enum permits only the default. A name that appears in no server
 	// URL of the document is refused by Load, as a likely misspelling.
 	// Values are substituted as given, except that one substituted into the
-	// scheme or authority may not hold "/", "?", "#", "@" or "\\", so a
-	// value cannot move the request to another host (RFC 3986 section
-	// 3.2).
+	// authority (after a literal "://", before the path) may not hold "/",
+	// "?", "#", "@" or "\\", so a value cannot move the request to another
+	// host (RFC 3986 section 3.2). A variable that also supplies the scheme
+	// supplies a whole URL and is not restricted.
 	Variables map[string]string
 
 	// Credentials holds a Credential for each security scheme, by the name
