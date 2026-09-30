@@ -755,11 +755,13 @@ func TestParamWritersTokenInRawPath(t *testing.T) {
 	wantKeys(t, "Inputs", asRequestError(t, err).Inputs, true, "q%41")
 }
 
-// Stage 2 ledger, review round, regression-test questions: "[null] is a
-// defined list (RFC 6570 2.3: only a list with zero members is undefined);
-// unexploded it expands like "" ("p=" form, ";p" matrix, "." label, ""
-// simple), exploded it writes nothing for its members". So a required one is
-// not missing. The same holds for any list whose items are all undefined.
+// Stage 2 ledger, review round, regression-test questions and last entry:
+// "[null] is a defined list (RFC 6570 2.3: only a list with zero members is
+// undefined)". Unexploded it expands like "" in every style ("p=" form and
+// the delimited styles, ";p" matrix, "." label, "" simple); exploded nothing
+// is written, prefix included (no "." or ";", no form pair, no header
+// field); and the parameter counts as given, never missing. The same holds
+// for any list whose items are all undefined.
 func TestAllUndefinedList(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, doc31(`
@@ -769,7 +771,12 @@ func TestAllUndefinedList(t *testing.T) {
 		"/l{p}":{"get":{"operationId":"label","parameters":[{"name":"p","in":"path","required":true,"style":"label","schema":{}}]}},
 		"/s/{p}":{"get":{"operationId":"simple","parameters":[{"name":"p","in":"path","required":true,"schema":{}}]}},
 		"/se/{p}":{"get":{"operationId":"simpleExplode","parameters":[{"name":"p","in":"path","required":true,"explode":true,"schema":{}}]}},
+		"/me{p}":{"get":{"operationId":"matrixExplode","parameters":[{"name":"p","in":"path","required":true,"style":"matrix","explode":true,"schema":{}}]}},
+		"/le{p}":{"get":{"operationId":"labelExplode","parameters":[{"name":"p","in":"path","required":true,"style":"label","explode":true,"schema":{}}]}},
+		"/sd":{"get":{"operationId":"space","parameters":[{"name":"p","in":"query","required":true,"style":"spaceDelimited","explode":false,"schema":{}}]}},
+		"/pd":{"get":{"operationId":"pipe","parameters":[{"name":"p","in":"query","required":true,"style":"pipeDelimited","explode":false,"schema":{}}]}},
 		"/h":{"get":{"operationId":"header","parameters":[{"name":"X-P","in":"header","required":true,"schema":{}}]}},
+		"/he":{"get":{"operationId":"headerExplode","parameters":[{"name":"X-P","in":"header","required":true,"explode":true,"schema":{}}]}},
 		"/c":{"get":{"operationId":"cookie","parameters":[{"name":"p","in":"cookie","explode":false,"required":true,"schema":{}}]}},
 		"/ce":{"get":{"operationId":"cookieExplode","parameters":[{"name":"p","in":"cookie","schema":{}}]}}`), nil)
 	for _, v := range []any{[]any{nil}, []any{nil, []int{}, map[string]any{}}, []*string{nil}} {
@@ -783,7 +790,12 @@ func TestAllUndefinedList(t *testing.T) {
 			{"label", "p", "/l."},
 			{"simple", "p", "/s/"},
 			{"simpleExplode", "p", "/se/"},
+			{"matrixExplode", "p", "/me"},
+			{"labelExplode", "p", "/le"},
+			{"space", "p", "/sd?p="},
+			{"pipe", "p", "/pd?p="},
 			{"header", "X-P", ""},
+			{"headerExplode", "X-P", "-"},
 			{"cookie", "p", "p="},
 			{"cookieExplode", "p", "-"},
 		} {
@@ -794,7 +806,7 @@ func TestAllUndefinedList(t *testing.T) {
 				}
 				var sent []string
 				switch {
-				case tt.key == "header":
+				case strings.HasPrefix(tt.key, "header"):
 					sent = got.Header.Values("X-P")
 				case strings.HasPrefix(tt.key, "cookie"):
 					sent = got.Header.Values("Cookie")

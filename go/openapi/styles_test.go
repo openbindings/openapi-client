@@ -114,8 +114,6 @@ func (c styleCfg) expect(t testing.TB, v any) (string, fate) {
 		}
 		uv, err := uvalOf(n)
 		switch {
-		case uv.allUndef:
-			return "", unsettled // a list of only undefined items: not ruled for these styles
 		case err != nil:
 			return "", refused
 		case !uv.defined():
@@ -133,11 +131,11 @@ func (c styleCfg) expect(t testing.TB, v any) (string, fate) {
 		return "", refused
 	case !uv.defined():
 		return absent()
-	case uv.allUndef && c.explode && (c.style == "label" || c.style == "matrix" || c.in == "header"):
-		// Exploded, a list of only undefined items writes nothing for its
-		// members; whether label's "." or matrix's ";" is still written, and
-		// whether a header field is sent empty, is not ruled.
-		return "", unsettled
+	case uv.allUndef && c.explode && c.in == "header":
+		// Exploded, a list of only undefined items writes nothing, and the
+		// header field is left out (stage 2 ledger, review round, last
+		// entry).
+		return "", omitted
 	}
 	spec := uspec{name: pctName(c.field()), explode: c.explode, value: uv}
 	switch c.in {

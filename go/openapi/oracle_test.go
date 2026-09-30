@@ -157,8 +157,9 @@ func uexpandOp(o uop, specs ...uspec) string {
 			continue // section 3.2.1: an undefined variable "is ignored"
 		}
 		if v.allUndef && sp.explode {
-			// Exploded, a list with no defined member writes nothing (stage
-			// 2 ledger, review round, regression-test questions).
+			// Exploded, a list with no defined member writes nothing, the
+			// operator's prefix included (stage 2 ledger, review round, last
+			// entry: RFC 6570 does not settle it).
 			continue
 		}
 		if first {
@@ -605,8 +606,9 @@ func jUndefined(n jnode) bool {
 // which the RFC 6570 styles refuse, is an error. A list whose items are all
 // undefined, such as [null], is defined with no defined member (ledger,
 // review round: "RFC 6570 2.3: only a list with zero members is
-// undefined"): without explode it expands as "" does, and exploded it
-// writes nothing for its members.
+// undefined"): without explode it expands as "" does in every style,
+// spaceDelimited and pipeDelimited included, and exploded it writes nothing,
+// prefix included (ledger, review round, last entry).
 func uvalOf(n jnode) (uval, error) {
 	if jUndefined(n) {
 		return uval{}, nil
