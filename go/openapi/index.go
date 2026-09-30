@@ -151,6 +151,8 @@ func (l *Loader) fetch(ctx context.Context, uri string, hc *http.Client) (string
 	shown := uri
 	u, err := url.Parse(uri)
 	switch {
+	case strings.TrimSpace(uri) != uri: // not shown: it may be a URI with userinfo
+		return "", "", errors.New("openapi: load: the URI has leading or trailing whitespace")
 	case err != nil && hasScheme(uri): // shown neither, as its userinfo cannot be found
 		return "", "", errors.New("openapi: load: the URI cannot be parsed (RFC 3986)")
 	case err != nil || len(u.Scheme) <= 1: // not a URL: a file path, perhaps with a drive letter
@@ -243,7 +245,7 @@ func (c ctxReader) Read(p []byte) (int, error) {
 // open opens the file at path, returning its size, or -1 when it is not a
 // regular file. Opening or reading such a file, a FIFO or a device, may
 // block: a goroutine does both, writing to a pipe that the end of ctx
-// closes, and closing the file.
+// closes with the context's error, and closing the file.
 func open(ctx context.Context, path string) (io.ReadCloser, int64, error) {
 	fi, err := os.Stat(path)
 	if err != nil {
@@ -257,7 +259,7 @@ func open(ctx context.Context, path string) (io.ReadCloser, int64, error) {
 		return f, fi.Size(), nil
 	}
 	pr, pw := io.Pipe()
-	stop := context.AfterFunc(ctx, func() { pr.Close() })
+	stop := context.AfterFunc(ctx, func() { pw.CloseWithError(ctx.Err()) })
 	go func() {
 		defer stop()
 		f, err := os.Open(path)
@@ -442,7 +444,7 @@ func (d *document) lookup(key string) (*entry, error) {
 	var keys []string
 	for _, e := range d.entries {
 		if e.id == key {
-			keys = append(keys, methods[e.m].upper+" "+e.path)
+			keys = append(keys, label(methods[e.m].upper+" "+e.path))
 		}
 	}
 	return nil, fmt.Errorf("%w: %q is the operationId of %s", ErrNoOperation, key, strings.Join(keys, ", "))
