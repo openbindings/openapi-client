@@ -106,12 +106,14 @@ const largeValueDoc = `{"openapi":"3.1.0","info":{"title":"t","version":"1"},"se
 }}`
 
 // Serializing a value costs time linear in its encoded size: arrays and
-// objects of up to 100,000 items, and a deepObject nested 4,000 levels deep
-// (one leaf, so its encoded form is linear in its depth). The sizes are
-// where a quadratic serializer, one that copies what it has written for
-// each item or level, would take about 16x: at 25,000 items such copying
-// moves gigabytes against a linear cost of about a millisecond, and at 1,000
-// levels megabytes against about a tenth of one.
+// objects of up to 100,000 items, and a deepObject nested 250 to 1,000
+// levels (one leaf, so its encoded form is linear in its depth), within the
+// 1,000-level bound on values (stage 2 ledger, Q9). At 25,000 items a
+// quadratic serializer, one that copies what it has written for each item,
+// moves gigabytes against a linear cost of about a millisecond, so it takes
+// about 16x. At 1,000 levels such copying is megabytes, which time alone
+// may not separate from the linear cost, so the depth case is checked on the
+// bytes allocated too.
 func TestLargeParamValuesScale(t *testing.T) {
 	c, err := openapi.Parse(context.Background(), []byte(largeValueDoc), testDocURI, nil)
 	if err != nil {
@@ -162,11 +164,16 @@ func TestLargeParamValuesScale(t *testing.T) {
 			return prepare(tt.key, tt.param, tt.value(n))
 		})
 	}
-	wantLinear(t, "deepObject depth", 1000, func(n int) func() {
+	// levels returns a deepObject value n levels deep, counting the leaf:
+	// n-1 objects around a string, so it is within the bound whether or not
+	// the leaf counts as a level.
+	levels := func(n int) any {
 		var v any = "leaf"
-		for range n {
+		for range n - 1 {
 			v = map[string]any{"a": v}
 		}
-		return prepare("deep", "v", v)
-	})
+		return v
+	}
+	wantLinear(t, "deepObject depth", 250, func(n int) func() { return prepare("deep", "v", levels(n)) })
+	wantLinearBytes(t, "deepObject depth, bytes", 250, func(n int) func() { return prepare("deep", "v", levels(n)) })
 }

@@ -564,9 +564,8 @@ func readJNode(dec *json.Decoder) (jnode, error) {
 }
 
 var (
-	errOracleNesting = errors.New("oracle: nested value")
-	errOracleNull    = errors.New("oracle: null array item")
-	errOracleOnlyUnd = errors.New("oracle: a list whose items are all undefined collections")
+	errOracleNesting   = errors.New("oracle: nested value")
+	errOracleUndefItem = errors.New("oracle: undefined array item")
 )
 
 // jUndefined reports JSON data that is undefined (doc.go, Values: "null, an
@@ -590,15 +589,14 @@ func jUndefined(n jnode) bool {
 }
 
 // uvalOf is JSON data as an RFC 6570 value (doc.go, Values: "An undefined
-// member is skipped, a null array item is refused"; a number or boolean in
+// member is skipped, an undefined array item (null, [] or {}) is refused,
+// since dropping it would shift the items after it"; a number or boolean in
 // its JSON spelling). Undefinedness is settled first (stage 2 ledger, Q5;
 // doc.go, Fixed rules, Styles: "Whether a value is undefined ... is settled
-// first; the refusals here apply to defined values"): an undefined value,
-// and an undefined collection nested as a member or item, which is skipped,
-// are never nesting. Nesting of a defined collection, which the RFC 6570
-// styles refuse, and a null array item are errors. A list whose items are
-// all undefined collections is not settled by the ruling and is reported as
-// errOracleOnlyUnd (not asserted).
+// first; the refusals here apply to defined values"): an undefined value is
+// never nesting, and an undefined member is skipped. An undefined array item
+// (ledger, Q5 follow-up) and nesting of a defined collection, which the RFC
+// 6570 styles refuse, are errors.
 func uvalOf(n jnode) (uval, error) {
 	if jUndefined(n) {
 		return uval{}, nil
@@ -610,17 +608,12 @@ func uvalOf(n jnode) (uval, error) {
 		v := uval{kind: ulist, list: []string{}}
 		for _, it := range n.items {
 			switch {
-			case it.kind == 'z':
-				return uval{}, errOracleNull
 			case jUndefined(it):
-				continue
+				return uval{}, errOracleUndefItem
 			case it.kind == 'a' || it.kind == 'o':
 				return uval{}, errOracleNesting
 			}
 			v.list = append(v.list, it.text)
-		}
-		if len(v.list) == 0 {
-			return uval{}, errOracleOnlyUnd
 		}
 		return v, nil
 	default:

@@ -114,8 +114,6 @@ func (c styleCfg) expect(t testing.TB, v any) (string, fate) {
 		}
 		uv, err := uvalOf(n)
 		switch {
-		case errors.Is(err, errOracleOnlyUnd):
-			return "", unsettled
 		case err != nil:
 			return "", refused
 		case !uv.defined():
@@ -129,8 +127,6 @@ func (c styleCfg) expect(t testing.TB, v any) (string, fate) {
 	}
 	uv, err := uvalOf(n)
 	switch {
-	case errors.Is(err, errOracleOnlyUnd):
-		return "", unsettled
 	case err != nil:
 		return "", refused
 	case !uv.defined():
@@ -344,7 +340,10 @@ var styleCorpus = []struct {
 	// skipped, not refused as nesting.
 	{"nested undefined collections skipped", map[string]any{"a": []int{}, "b": map[string]any{}, "c": "x", "d": map[string]any{"e": nil}}},
 	{"undefined: only nested undefined members", map[string]any{"a": []int{}, "b": map[string]any{"c": []string{}}}},
-	{"undefined array items skipped", []any{"a", []int{}, map[string]any{}, "b"}},
+	// Stage 2 ledger, Q5 follow-up: an undefined array item is refused.
+	{"undefined array items refused", []any{"a", []int{}, map[string]any{}, "b"}},
+	{"only an empty array item", []any{[]int{}}},
+	{"all-undefined object item", []any{"a", map[string]any{"b": nil}}},
 	{"reserved member names", map[string]string{"a/b": "c", "d[e]": "f?g"}},
 }
 
@@ -997,8 +996,11 @@ func TestEmptyValueRulings(t *testing.T) {
 // undefined (see Values) is settled first; the refusals here apply to
 // defined values"): an empty array under deepObject, a typed nil under
 // spaceDelimited, pipeDelimited and deepObject, and an empty array or object
-// nested in an RFC 6570-style value are undefined: omitted when optional,
-// missing when required, skipped as members. None is refused.
+// nested as a member are undefined: omitted when optional, missing when
+// required, skipped as members; none is refused as nesting or as a
+// primitive. The Q5 follow-up: an undefined array item (null, [] or {}) is
+// refused at the key (doc.go, Values: "since dropping it would shift the
+// items after it").
 func TestUndefinedSettledFirst(t *testing.T) {
 	w := newWire(t, nil)
 	doc := doc31(`
@@ -1029,12 +1031,9 @@ func TestUndefinedSettledFirst(t *testing.T) {
 		{"space", "p", (*[]string)(nil), "/sd"},
 		{"space", "p", nested, "/sd?p=c%20x"},
 		{"pipe", "p", (*[]string)(nil), "/pd"},
-		{"pipe", "p", []any{"a", []int{}, "b"}, "/pd?p=a%7Cb"},
 		{"form", "p", nested, "/f?c=x"},
 		{"form", "p", onlyNested, "/f"},
-		{"form", "p", []any{"a", []int{}, map[string]any{}, "b"}, "/f?p=a&p=b"},
 		{"formNo", "p", nested, "/fn?p=c,x"},
-		{"simple", "p", []any{"a", map[string]any{}}, "/s/a"},
 		{"header", "X-P", nested, "c=x"},
 		{"header", "X-P", onlyNested, ""},
 		{"cookie", "p", nested, "c=x"},
@@ -1081,5 +1080,28 @@ func TestUndefinedSettledFirst(t *testing.T) {
 			continue
 		}
 		wantKeys(t, fmt.Sprintf("%s %#v Inputs", tt.key, tt.v), re.Inputs, true, "p")
+	}
+	// Undefined array items: refused at the key, optional or not.
+	for _, tt := range []struct {
+		key, param string
+		v          any
+	}{
+		{"form", "p", []any{"a", []int{}, map[string]any{}, "b"}},
+		{"form", "p", [][]int{{}}},
+		{"formNo", "p", []any{map[string]any{}}},
+		{"formNo", "p", []any{"a", map[string]any{"b": nil}}},
+		{"pipe", "p", []any{"a", []int{}, "b"}},
+		{"space", "p", []any{nil, "a"}},
+		{"simple", "p", []any{"a", map[string]any{}}},
+		{"simple", "p", [][]string{{}}},
+		{"header", "X-P", []any{[]int{}}},
+		{"cookie", "p", []any{"a", map[string]any{}}},
+	} {
+		_, re := callOne(t, w, c, tt.key, tt.param, tt.v)
+		if re == nil {
+			t.Errorf("%s %#v: sent, want a refusal", tt.key, tt.v)
+			continue
+		}
+		wantKeys(t, fmt.Sprintf("%s %#v Inputs", tt.key, tt.v), re.Inputs, true, tt.param)
 	}
 }

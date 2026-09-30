@@ -17,9 +17,9 @@ import (
 // times a quadratic cost takes. Hardened against CI noise (stage 2 ledger,
 // "Test maintenance": "prefer allocation or work counts; for time, best of 5
 // and a 12x bound"): a cost whose quadratic shows in the heap allocation
-// count is checked on that count, which noise does not move; any other is
-// timed, the best of 5 runs of each size, interleaved so both see the same
-// machine load, against a 12x bound.
+// count, or in the bytes allocated, is checked on that, which noise does not
+// move; any other is timed, the best of 5 runs of each size, interleaved so
+// both see the same machine load, against a 12x bound.
 
 // scaleRuns is how many times the harness runs the work of each size.
 const scaleRuns = 5
@@ -31,11 +31,20 @@ const (
 	scaleAllocBound = 8
 )
 
-// scaleCost is one run's wall time and heap allocation count
-// (runtime.MemStats.Mallocs).
+// scaleMeasure is what the harness checks.
+type scaleMeasure int
+
+const (
+	byTime   scaleMeasure = iota
+	byAllocs              // runtime.MemStats.Mallocs
+	byBytes               // runtime.MemStats.TotalAlloc
+)
+
+// scaleCost is one run's wall time, heap allocation count and bytes
+// allocated.
 type scaleCost struct {
-	d       time.Duration
-	mallocs uint64
+	d              time.Duration
+	mallocs, bytes uint64
 }
 
 func measureRun(f func()) scaleCost {
@@ -46,13 +55,13 @@ func measureRun(f func()) scaleCost {
 	f()
 	d := time.Since(start)
 	runtime.ReadMemStats(&after)
-	return scaleCost{d, after.Mallocs - before.Mallocs}
+	return scaleCost{d, after.Mallocs - before.Mallocs, after.TotalAlloc - before.TotalAlloc}
 }
 
 // bestCosts runs a and b scaleRuns times each, interleaved, and returns the
-// least time and the least allocation count each took.
+// least of each measure each took.
 func bestCosts(a, b func()) (ca, cb scaleCost) {
-	ca = scaleCost{1<<63 - 1, 1<<64 - 1}
+	ca = scaleCost{1<<63 - 1, 1<<64 - 1, 1<<64 - 1}
 	cb = ca
 	for range scaleRuns {
 		for _, x := range []struct {
@@ -62,6 +71,7 @@ func bestCosts(a, b func()) (ca, cb scaleCost) {
 			c := measureRun(x.f)
 			x.best.d = min(x.best.d, c.d)
 			x.best.mallocs = min(x.best.mallocs, c.mallocs)
+			x.best.bytes = min(x.best.bytes, c.bytes)
 		}
 	}
 	return ca, cb
@@ -73,31 +83,42 @@ func bestCosts(a, b func()) (ca, cb scaleCost) {
 // fresh each time (a first use) prepares scaleRuns fresh inputs.
 func wantLinear(t *testing.T, name string, small int, run func(n int) func()) {
 	t.Helper()
-	scaleCheck(t, name, small, run, false)
+	scaleCheck(t, name, small, run, byTime)
 }
 
 // wantLinearAllocs is wantLinear checked on the heap allocation count, for a
 // cost whose quadratic shows in allocations, against an 8x bound.
 func wantLinearAllocs(t *testing.T, name string, small int, run func(n int) func()) {
 	t.Helper()
-	scaleCheck(t, name, small, run, true)
+	scaleCheck(t, name, small, run, byAllocs)
 }
 
-func scaleCheck(t *testing.T, name string, small int, run func(n int) func(), allocs bool) {
+// wantLinearBytes is wantLinear checked on the bytes allocated, for a cost
+// whose quadratic would show in copying (as in building a string by
+// repeated concatenation), against an 8x bound.
+func wantLinearBytes(t *testing.T, name string, small int, run func(n int) func()) {
+	t.Helper()
+	scaleCheck(t, name, small, run, byBytes)
+}
+
+func scaleCheck(t *testing.T, name string, small int, run func(n int) func(), m scaleMeasure) {
 	t.Helper()
 	t.Run(name, func(t *testing.T) {
-		if testing.Short() && !allocs {
+		if testing.Short() && m == byTime {
 			t.Skip("timing test")
 		}
 		ca, cb := bestCosts(run(small), run(4*small))
 		timeRatio := float64(cb.d) / float64(max(ca.d, 100*time.Microsecond))
 		allocRatio := float64(cb.mallocs) / float64(max(ca.mallocs, 1))
-		t.Logf("%d: %v, %d allocations; %d: %v, %d allocations (time %.1fx, allocations %.1fx)",
-			small, ca.d, ca.mallocs, 4*small, cb.d, cb.mallocs, timeRatio, allocRatio)
+		byteRatio := float64(cb.bytes) / float64(max(ca.bytes, 1))
+		t.Logf("%d: %v, %d allocations, %d bytes; %d: %v, %d allocations, %d bytes (time %.1fx, allocations %.1fx, bytes %.1fx)",
+			small, ca.d, ca.mallocs, ca.bytes, 4*small, cb.d, cb.mallocs, cb.bytes, timeRatio, allocRatio, byteRatio)
 		switch {
-		case allocs && allocRatio > scaleAllocBound:
+		case m == byAllocs && allocRatio > scaleAllocBound:
 			t.Errorf("four times the input made %.1f times the allocations; want linear", allocRatio)
-		case !allocs && timeRatio > scaleTimeBound:
+		case m == byBytes && byteRatio > scaleAllocBound:
+			t.Errorf("four times the input allocated %.1f times the bytes; want linear", byteRatio)
+		case m == byTime && timeRatio > scaleTimeBound:
 			t.Errorf("four times the input took %.1f times as long; want linear", timeRatio)
 		}
 	})
