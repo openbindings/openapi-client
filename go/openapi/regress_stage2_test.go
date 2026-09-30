@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"net/url"
 	"reflect"
+	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1044,4 +1046,109 @@ func TestSelfMarshalingReaders(t *testing.T) {
 			wantKeys(t, "Inputs", re.Inputs, true, tt.param)
 		})
 	}
+}
+
+// limit is the bound on the request target and on each header field the
+// client builds.
+const limit = 1 << 20
+
+// allocatedBy returns the bytes allocated while f runs.
+func allocatedBy(f func()) uint64 {
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	f()
+	runtime.ReadMemStats(&after)
+	return after.TotalAlloc - before.TotalAlloc
+}
+
+// be14c3d (doc.go, Values: "The request target and each header field the
+// client builds are limited to 1 MiB ...; a parameter that would pass the
+// limit is refused at its key, and its serialization stops there"; stage 2
+// ledger, review round, reversing the #12 rejection): a value or an
+// amplified serialization past 1 MiB is refused at the parameter's key,
+// with nothing sent, and without building the oversized output (allocation
+// during Prepare stays under 16 MiB where the full output would be 20 MiB
+// or more); a request under the limit, with a margin of 1 KiB, is sent.
+func TestRequestSizeLimit(t *testing.T) {
+	w := newWire(t, nil)
+	var rep strings.Builder
+	rep.WriteString("/r")
+	for range 20000 {
+		rep.WriteString("/{id}")
+	}
+	c := parseFor(t, w, doc31(`
+		"/q":{"get":{"operationId":"query","parameters":[
+			{"name":"p","in":"query","schema":{}},
+			{"name":"p2","in":"query","schema":{}}]}},
+		"/d":{"get":{"operationId":"deep","parameters":[{"name":"d","in":"query","style":"deepObject","schema":{}}]}},
+		"`+rep.String()+`":{"get":{"operationId":"repeat","parameters":[{"name":"id","in":"path","required":true,"schema":{}}]}},
+		"/h":{"get":{"operationId":"header","parameters":[{"name":"X-Big","in":"header","schema":{}}]}},
+		"/c":{"get":{"operationId":"cookie","parameters":[
+			{"name":"a","in":"cookie","schema":{}},
+			{"name":"b","in":"cookie","schema":{}}]}}`), nil)
+	refused := func(t *testing.T, key string, params map[string]any, want string) {
+		t.Helper()
+		var req *openapi.Request
+		var err error
+		n := allocatedBy(func() { req, err = c.Prepare(key, &openapi.Input{Params: params}) })
+		if req != nil || err == nil {
+			t.Fatalf("prepared a request past the 1 MiB bound")
+		}
+		wantKeys(t, "Inputs", asRequestError(t, err).Inputs, true, want)
+		if n > 16<<20 {
+			t.Errorf("Prepare allocated %d MiB before refusing; want under 16 MiB", n>>20)
+		}
+		before := w.count()
+		resp, err := c.Call(t.Context(), key, &openapi.Input{Params: params}, nil)
+		wantKeys(t, "Call Inputs", refusedSince(t, w, before, resp, err).Inputs, true, want)
+	}
+
+	t.Run("query value over the bound", func(t *testing.T) {
+		refused(t, "query", map[string]any{"p": strings.Repeat("a", limit+1)}, "p")
+	})
+	t.Run("the query parameter that passes the bound", func(t *testing.T) {
+		half := strings.Repeat("a", limit/2+1024)
+		refused(t, "query", map[string]any{"p": half, "p2": half}, "p2")
+	})
+	t.Run("deepObject amplification", func(t *testing.T) {
+		// A 512 KiB member name over 1,000 leaves: a value of about 520 KiB
+		// whose deepObject output would be about 500 MiB.
+		leaves := map[string]any{}
+		for i := range 1000 {
+			leaves["k"+strconv.Itoa(i)] = "v"
+		}
+		v := map[string]any{strings.Repeat("n", 512<<10): leaves}
+		if b, _ := json.Marshal(v); len(b) >= limit {
+			t.Fatalf("test value is %d bytes, want under 1 MiB", len(b))
+		}
+		refused(t, "deep", map[string]any{"d": v}, "d")
+	})
+	t.Run("repeated template variable", func(t *testing.T) {
+		// 20,000 occurrences of a 1 KiB value: about 20 MiB of path.
+		refused(t, "repeat", map[string]any{"id": strings.Repeat("x", 1024)}, "id")
+	})
+	t.Run("header value over the bound", func(t *testing.T) {
+		refused(t, "header", map[string]any{"X-Big": strings.Repeat("a", limit+1)}, "X-Big")
+	})
+	t.Run("the cookie parameter that passes the bound", func(t *testing.T) {
+		half := strings.Repeat("a", limit/2+1024)
+		refused(t, "cookie", map[string]any{"a": half, "b": half}, "b")
+	})
+
+	t.Run("under the bound", func(t *testing.T) {
+		value := strings.Repeat("a", limit-1024)
+		mustCall(t, c, "query", &openapi.Input{Params: map[string]any{"p": value}}, nil)
+		if got := w.last(t).RequestURI; got != "/q?p="+value {
+			t.Errorf("request target of %d bytes, want %d", len(got), len("/q?p=")+len(value))
+		}
+		mustCall(t, c, "header", &openapi.Input{Params: map[string]any{"X-Big": value}}, nil)
+		if got := w.last(t).Header.Values("X-Big"); len(got) != 1 || got[0] != value {
+			t.Errorf("X-Big not sent whole")
+		}
+		mustCall(t, c, "repeat", &openapi.Input{Params: map[string]any{"id": "x"}}, nil)
+		if got := w.last(t).RequestURI; got != "/r"+strings.Repeat("/x", 20000) {
+			t.Errorf("repeated template: request target of %d bytes", len(got))
+		}
+	})
 }
