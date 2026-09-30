@@ -754,3 +754,122 @@ func TestParamWritersTokenInRawPath(t *testing.T) {
 	})
 	wantKeys(t, "Inputs", asRequestError(t, err).Inputs, true, "q%41")
 }
+
+// Stage 2 ledger, review round, regression-test questions: "[null] is a
+// defined list (RFC 6570 2.3: only a list with zero members is undefined);
+// unexploded it expands like "" ("p=" form, ";p" matrix, "." label, ""
+// simple), exploded it writes nothing for its members". So a required one is
+// not missing. The same holds for any list whose items are all undefined.
+func TestAllUndefinedList(t *testing.T) {
+	w := newWire(t, nil)
+	c := parseFor(t, w, doc31(`
+		"/f":{"get":{"operationId":"formNo","parameters":[{"name":"p","in":"query","explode":false,"schema":{}}]}},
+		"/fe":{"get":{"operationId":"form","parameters":[{"name":"p","in":"query","required":true,"schema":{}}]}},
+		"/m{p}":{"get":{"operationId":"matrix","parameters":[{"name":"p","in":"path","required":true,"style":"matrix","schema":{}}]}},
+		"/l{p}":{"get":{"operationId":"label","parameters":[{"name":"p","in":"path","required":true,"style":"label","schema":{}}]}},
+		"/s/{p}":{"get":{"operationId":"simple","parameters":[{"name":"p","in":"path","required":true,"schema":{}}]}},
+		"/se/{p}":{"get":{"operationId":"simpleExplode","parameters":[{"name":"p","in":"path","required":true,"explode":true,"schema":{}}]}},
+		"/h":{"get":{"operationId":"header","parameters":[{"name":"X-P","in":"header","required":true,"schema":{}}]}},
+		"/c":{"get":{"operationId":"cookie","parameters":[{"name":"p","in":"cookie","explode":false,"required":true,"schema":{}}]}},
+		"/ce":{"get":{"operationId":"cookieExplode","parameters":[{"name":"p","in":"cookie","schema":{}}]}}`), nil)
+	for _, v := range []any{[]any{nil}, []any{nil, []int{}, map[string]any{}}, []*string{nil}} {
+		for _, tt := range []struct {
+			key, param string
+			want       string // the request target, or the field's value; "-" for no field
+		}{
+			{"formNo", "p", "/f?p="},
+			{"form", "p", "/fe"},
+			{"matrix", "p", "/m;p"},
+			{"label", "p", "/l."},
+			{"simple", "p", "/s/"},
+			{"simpleExplode", "p", "/se/"},
+			{"header", "X-P", ""},
+			{"cookie", "p", "p="},
+			{"cookieExplode", "p", "-"},
+		} {
+			t.Run(fmt.Sprintf("%s %#v", tt.key, v), func(t *testing.T) {
+				got, re := callOne(t, w, c, tt.key, tt.param, v)
+				if re != nil {
+					t.Fatalf("refused: %v; want %q", re, tt.want)
+				}
+				var sent []string
+				switch {
+				case tt.key == "header":
+					sent = got.Header.Values("X-P")
+				case strings.HasPrefix(tt.key, "cookie"):
+					sent = got.Header.Values("Cookie")
+				default:
+					sent = []string{got.RequestURI}
+				}
+				switch {
+				case tt.want == "-" && sent != nil:
+					t.Errorf("sent %q, want no field", sent)
+				case tt.want != "-" && (len(sent) != 1 || sent[0] != tt.want):
+					t.Errorf("sent %q, want [%q]", sent, tt.want)
+				}
+			})
+		}
+	}
+}
+
+// Stage 2 ledger, review round, regression-test questions: "An invalid-UTF-8
+// string under a non-JSON content type is sent as its bytes as given; under
+// JSON, encoding/json's U+FFFD replacement stands (P4)". The bytes are then
+// percent-encoded by location, or written as given in a header or cookie.
+func TestContentParamInvalidUTF8(t *testing.T) {
+	w := newWire(t, nil)
+	c := parseFor(t, w, doc31(contentDoc), nil)
+	for _, tt := range []struct {
+		key, param, v string
+		want          string // the request target, or the field's value
+	}{
+		{"text", "p", "a\xffb", "/t?p=a%FFb"},
+		{"textPath", "p", "\xfe\xff", "/tp/%FE%FF"},
+		{"octets", "p", "\xc3", "/o?p=%C3"},
+		{"custom", "p", "x\x80", "/x?p=x%80"},
+		{"textHeader", "X-T", "a\xffb", "a\xffb"},
+		{"octetsHeader", "X-O", "\xff", "\xff"},
+		{"textCookie", "p", "a\xffb", "p=a\xffb"},
+	} {
+		got, re := callOne(t, w, c, tt.key, tt.param, tt.v)
+		if re != nil {
+			t.Errorf("%s %q: refused: %v", tt.key, tt.v, re)
+			continue
+		}
+		var sent string
+		switch {
+		case tt.param[0] == 'X':
+			sent = strings.Join(got.Header.Values(tt.param), "|")
+		case strings.HasSuffix(tt.key, "ookie"):
+			sent = strings.Join(got.Header.Values("Cookie"), "|")
+		default:
+			sent = got.RequestURI
+		}
+		if sent != tt.want {
+			t.Errorf("%s %q: sent %q, want %q", tt.key, tt.v, sent, tt.want)
+		}
+	}
+	// JSON: as encoding/json writes the string, U+FFFD replacing each
+	// invalid byte.
+	for _, key := range []string{"q", "vnd", "h"} {
+		param := map[string]string{"h": "X-P"}[key]
+		if param == "" {
+			param = "p"
+		}
+		want, _ := json.Marshal("a\xffb")
+		got, re := callOne(t, w, c, key, param, "a\xffb")
+		if re != nil {
+			t.Errorf("%s: refused: %v", key, re)
+			continue
+		}
+		if key == "h" {
+			if v := got.Header.Values("X-P"); len(v) != 1 || v[0] != string(want) {
+				t.Errorf("h: X-P = %q, want [%s]", v, want)
+			}
+			continue
+		}
+		if !strings.HasSuffix(got.RequestURI, "?p="+pctName(string(want))) {
+			t.Errorf("%s: request target %q, want p=%s", key, got.RequestURI, pctName(string(want)))
+		}
+	}
+}

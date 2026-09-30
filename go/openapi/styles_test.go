@@ -114,8 +114,8 @@ func (c styleCfg) expect(t testing.TB, v any) (string, fate) {
 		}
 		uv, err := uvalOf(n)
 		switch {
-		case errors.Is(err, errOracleOnlyUnd):
-			return "", unsettled
+		case uv.allUndef:
+			return "", unsettled // a list of only undefined items: not ruled for these styles
 		case err != nil:
 			return "", refused
 		case !uv.defined():
@@ -129,12 +129,15 @@ func (c styleCfg) expect(t testing.TB, v any) (string, fate) {
 	}
 	uv, err := uvalOf(n)
 	switch {
-	case errors.Is(err, errOracleOnlyUnd):
-		return "", unsettled
 	case err != nil:
 		return "", refused
 	case !uv.defined():
 		return absent()
+	case uv.allUndef && c.explode && (c.style == "label" || c.style == "matrix" || c.in == "header"):
+		// Exploded, a list of only undefined items writes nothing for its
+		// members; whether label's "." or matrix's ";" is still written, and
+		// whether a header field is sent empty, is not ruled.
+		return "", unsettled
 	}
 	spec := uspec{name: pctName(c.field()), explode: c.explode, value: uv}
 	switch c.in {
@@ -156,7 +159,11 @@ func (c styleCfg) expect(t testing.TB, v any) (string, fate) {
 		// a semicolon followed by a space character rather than &".
 		// A ";" or control character in a value is percent-encoded, as any
 		// other byte outside the unreserved set (stage 2 ledger, Q4).
-		return strings.ReplaceAll(strings.TrimPrefix(uexpand("?", spec), "?"), "&", "; "), sent
+		want := strings.ReplaceAll(strings.TrimPrefix(uexpand("?", spec), "?"), "&", "; ")
+		if want == "" {
+			return "", omitted // no pair: no Cookie field
+		}
+		return want, sent
 	}
 }
 

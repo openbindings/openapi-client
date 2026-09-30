@@ -43,8 +43,12 @@ const (
 type uval struct {
 	kind  ukind
 	s     string   // ustring
-	list  []string // ulist: the list's members
+	list  []string // ulist: the list's defined members
 	pairs []upair  // uassoc: the associative array's pairs, in order
+	// allUndef marks a list whose members are all undefined, such as
+	// [null]: defined, since it has members (section 2.3), with no defined
+	// member to expand.
+	allUndef bool
 }
 
 // upair is one (name, value) pair; a pair whose value is undefined is
@@ -70,7 +74,7 @@ func (v uval) defined() bool {
 	case ustring:
 		return true
 	case ulist:
-		return len(v.list) > 0
+		return len(v.list) > 0 || v.allUndef
 	case uassoc:
 		for _, p := range v.pairs {
 			if !p.undef {
@@ -151,6 +155,11 @@ func uexpandOp(o uop, specs ...uspec) string {
 		v := sp.value
 		if !v.defined() {
 			continue // section 3.2.1: an undefined variable "is ignored"
+		}
+		if v.allUndef && sp.explode {
+			// Exploded, a list with no defined member writes nothing (stage
+			// 2 ledger, review round, regression-test questions).
+			continue
 		}
 		if first {
 			b.WriteString(o.first)
@@ -563,10 +572,7 @@ func readJNode(dec *json.Decoder) (jnode, error) {
 	return jnode{}, io.ErrUnexpectedEOF
 }
 
-var (
-	errOracleNesting = errors.New("oracle: nested value")
-	errOracleOnlyUnd = errors.New("oracle: a list whose items are all undefined")
-)
+var errOracleNesting = errors.New("oracle: nested value")
 
 // jUndefined reports JSON data that is undefined (doc.go, Values: "null, an
 // empty array and an object whose members are all undefined are undefined,
@@ -597,8 +603,10 @@ func jUndefined(n jnode) bool {
 // member or array item (null, [] or {}) is skipped (ledger, review round,
 // T2, which reverses the Q5 follow-up). Nesting of a defined collection,
 // which the RFC 6570 styles refuse, is an error. A list whose items are all
-// undefined, such as [null], is defined with no defined member; its
-// expansion is not asserted (errOracleOnlyUnd).
+// undefined, such as [null], is defined with no defined member (ledger,
+// review round: "RFC 6570 2.3: only a list with zero members is
+// undefined"): without explode it expands as "" does, and exploded it
+// writes nothing for its members.
 func uvalOf(n jnode) (uval, error) {
 	if jUndefined(n) {
 		return uval{}, nil
@@ -617,9 +625,7 @@ func uvalOf(n jnode) (uval, error) {
 			}
 			v.list = append(v.list, it.text)
 		}
-		if len(v.list) == 0 {
-			return uval{}, errOracleOnlyUnd
-		}
+		v.allUndef = len(v.list) == 0
 		return v, nil
 	default:
 		v := uval{kind: uassoc}
