@@ -27,8 +27,9 @@ const many = 16
 // What lookups derive is kept, each fact once: the index of a container
 // with many members, and the value of an escaped string.
 type tree struct {
-	src   string
-	nodes []node
+	src     string
+	nodes   []node
+	escapes []uint32 // the offsets of the strings written with an escape, in order
 
 	mu      sync.Mutex
 	indexes map[int32][]int32 // by container: an object's members sorted by name, an array's items
@@ -82,7 +83,10 @@ func (t *tree) end(i int32) int {
 	s, j := t.src, int(t.nodes[i].start)
 	switch c := s[j]; c {
 	case '"':
-		return closingQuote(s, j) + 1
+		if t.escaped(uint32(j)) {
+			return closingQuote(s, j) + 1
+		}
+		return j + 1 + strings.IndexByte(s[j+1:], '"') + 1
 	case '{', '[':
 		if t.nodes[i].next > uint32(i)+1 {
 			last := i + 1
@@ -118,12 +122,19 @@ func closingQuote(s string, q int) int {
 	}
 }
 
+// escaped reports whether the string whose opening quote is at q is
+// written with an escape.
+func (t *tree) escaped(q uint32) bool {
+	_, found := slices.BinarySearch(t.escapes, q)
+	return found
+}
+
 // str returns the value of the string whose opening quote is at q, decoding
 // an escaped one once.
 func (t *tree) str(q uint32) string {
-	s := t.src[q+1 : closingQuote(t.src, int(q))]
-	if strings.IndexByte(s, '\\') < 0 {
-		return s
+	if !t.escaped(q) {
+		s := t.src[q+1:]
+		return s[:strings.IndexByte(s, '"')]
 	}
 	t.decodedMu.Lock()
 	defer t.decodedMu.Unlock()
@@ -132,10 +143,24 @@ func (t *tree) str(q uint32) string {
 		if t.decoded == nil {
 			t.decoded = map[uint32]string{}
 		}
-		d = jsonString(t.src[q : int(q)+len(s)+2])
+		d = jsonString(t.src[q : closingQuote(t.src, int(q))+1])
 		t.decoded[q] = d
 	}
 	return d
+}
+
+// compareName compares the name of member c with key, reading an unescaped
+// name no further than key needs.
+func (t *tree) compareName(c int32, key string) int {
+	q := t.nodes[c].name
+	if t.escaped(q) {
+		return strings.Compare(t.str(q), key)
+	}
+	name := t.src[q+1 : min(len(t.src), int(q)+2+len(key))]
+	if i := strings.IndexByte(name, '"'); i >= 0 {
+		name = name[:i]
+	}
+	return strings.Compare(name, key)
 }
 
 // jsonString returns the value of s, a valid JSON string, decoded as
@@ -219,14 +244,12 @@ func (v value) get(key string) value {
 	for c := v.i + 1; uint32(c) < t.nodes[v.i].next; c = int32(t.nodes[c].next) {
 		if n++; n > many {
 			sorted := t.index(v.i)
-			if j, found := slices.BinarySearchFunc(sorted, key, func(c int32, key string) int {
-				return strings.Compare(t.name(c), key)
-			}); found {
+			if j, found := slices.BinarySearchFunc(sorted, key, t.compareName); found {
 				return value{t, sorted[j]}
 			}
 			return value{}
 		}
-		if t.name(c) == key {
+		if t.compareName(c, key) == 0 {
 			return value{t, c}
 		}
 	}
@@ -361,7 +384,7 @@ func parseTree(ctx context.Context, src, uri string) (*tree, error) {
 	if cap(p.nodes)-len(p.nodes) > len(p.nodes)/8 {
 		p.nodes = slices.Clone(p.nodes)
 	}
-	return &tree{src: src, nodes: p.nodes}, nil
+	return &tree{src: src, nodes: p.nodes, escapes: p.escapes}, nil
 }
 
 // A scanner reads a JSON text into a tree's nodes.
@@ -370,6 +393,7 @@ type scanner struct {
 	src, uri string
 	i        int      // the read position
 	nodes    []node   // the nodes read
+	escapes  []uint32 // the offsets of the strings read with an escape
 	names    []string // the member names of the objects being read
 }
 
@@ -469,14 +493,19 @@ func (p *scanner) space() {
 
 // string reads the string at p.i, checking its escapes.
 func (p *scanner) string() error {
+	escaped := false
 	for i := p.i + 1; i < len(p.src); i++ {
 		switch c := p.src[i]; {
 		case c == '"':
+			if escaped {
+				p.escapes = append(p.escapes, uint32(p.i))
+			}
 			p.i = i + 1
 			return nil
 		case c < ' ':
 			return p.errorAt(i, "control character in a string")
 		case c != '\\':
+			continue
 		case i+1 < len(p.src) && strings.IndexByte(`"\/bfnrt`, p.src[i+1]) >= 0:
 			i++
 		case i+5 < len(p.src) && p.src[i+1] == 'u' && hexDigit(p.src[i+2]) && hexDigit(p.src[i+3]) && hexDigit(p.src[i+4]) && hexDigit(p.src[i+5]):
@@ -484,6 +513,7 @@ func (p *scanner) string() error {
 		default:
 			return p.errorAt(i, "invalid escape in a string")
 		}
+		escaped = true
 	}
 	return p.errorAt(len(p.src), "unexpected end of the document")
 }
