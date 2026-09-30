@@ -63,10 +63,12 @@ type Options struct {
 	// The enum limits other values: one outside it refuses the call, and an
 	// empty enum permits only the default. A name that appears in no server
 	// URL of the document is refused by Load, as a likely misspelling.
-	// Values are substituted as given, except that one substituted into the
-	// authority (after a literal "://", before the path) may not hold "/",
-	// "?", "#", "@" or "\\", so a value cannot move the request to another
-	// host (RFC 3986 section 3.2). A variable that also supplies the scheme
+	// Values are substituted as given, except that a value whose first
+	// character falls in the authority of the substituted URL (after "//",
+	// before the path) may not hold "/", "?", "#", "@" or "\\", so a value
+	// cannot move the request to another host (RFC 3986 section 3.2), and a
+	// value that forms a whole "." or ".." segment of the path is refused,
+	// as for path parameters. A variable that also supplies the scheme
 	// supplies a whole URL and is not restricted.
 	Variables map[string]string
 
@@ -700,12 +702,16 @@ func (r *Response) Decode(out any) error {
 
 // WaitRequest waits until the HTTP transport has consumed the complete
 // request body or stopped consuming it. It returns nil for a bodyless
-// request or when the body reached EOF, or the encoding, iterator, read,
+// request or when the body was consumed completely (read to EOF, or, for a
+// body of known length, read to that length), or the encoding, iterator, read,
 // premature-close or cancellation error that stopped it. A write error
 // reported by RoundTrip is returned by Send; a general RoundTripper does
 // not expose when bytes are written to the network. A nil result here
 // therefore proves body consumption, not delivery or server acceptance.
-// The wait is safe to repeat and to call concurrently.
+// The wait is safe to repeat and to call concurrently. It relies on the
+// transport closing the request body, as http.RoundTripper requires; with
+// a transport that neither reads nor closes it, the wait, and Call's,
+// ends only with the context.
 // A cancellation of ctx ends only this wait; cancel the call's original
 // context or close Body to stop an outstanding upload. A caller of Send or
 // Stream should read or close Body concurrently when the peer needs that
