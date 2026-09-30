@@ -178,29 +178,12 @@ func TestManySchemesScale(t *testing.T) {
 	if _, err := c.Call(t.Context(), "a", nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	if reqs := rt.requests(); len(reqs) != 1 || !sameQueryPairs(reqs[0].URL.RawQuery, "q0=qv&q1=qv&q2=qv") ||
+	// Query credentials in the order the alternative lists their schemes
+	// (stage 3 ledger, Q3).
+	if reqs := rt.requests(); len(reqs) != 1 || reqs[0].URL.RawQuery != "q0=qv&q1=qv&q2=qv" ||
 		reqs[0].Header.Get("X-H2") != "hv" || reqs[0].Header.Get("Authorization") != "Bearer tok" {
 		t.Errorf("the call did not place every credential: %+v", reqs)
 	}
-}
-
-// sameQueryPairs reports whether a and b hold the same pairs, in any order
-// (the order among several query credentials is not fixed by the contract).
-func sameQueryPairs(a, b string) bool {
-	pa, pb := strings.Split(a, "&"), strings.Split(b, "&")
-	if len(pa) != len(pb) {
-		return false
-	}
-	seen := map[string]int{}
-	for _, p := range pa {
-		seen[p]++
-	}
-	for _, p := range pb {
-		if seen[p]--; seen[p] < 0 {
-			return false
-		}
-	}
-	return true
 }
 
 // Many operations sharing root security, and as many listing their own:

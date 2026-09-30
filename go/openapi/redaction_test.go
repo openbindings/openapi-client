@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -75,6 +76,49 @@ func TestRedactCallerTransportError(t *testing.T) {
 	}
 	if rt.count() == 0 {
 		t.Errorf("the transport carried nothing; the test proves nothing")
+	}
+}
+
+// quotingError is a caller transport's error that quotes the request URL.
+type quotingError struct{ url string }
+
+func (e *quotingError) Error() string { return "caller transport refused " + e.url }
+
+// doc.go, Outcomes: "Errors made by the caller's own code, such as its
+// transport or a credential source, are passed on as they are, even when
+// their text quotes a URL", while "credentials the client added to a URL are
+// redacted" in any *url.Error (stage 3 ledger, Q13): the caller's error is
+// the same value, its text unchanged, and the *url.Error's URL field holds
+// no credential.
+func TestCallerErrorQuotingURLPassedOn(t *testing.T) {
+	var made []*quotingError
+	rt := &memRT{answer: func(r *http.Request) (*http.Response, error) {
+		e := &quotingError{url: r.URL.String()}
+		made = append(made, e)
+		return nil, e
+	}}
+	c := parseAt(t, credDoc, "https://api.example.test", "https://api.example.test/openapi.json",
+		&openapi.Options{HTTPClient: &http.Client{Transport: rt}, Credentials: credSet()})
+	_, err := c.Call(t.Context(), "keyQuery", nil, nil)
+	if len(made) != 1 {
+		t.Fatalf("the transport ran %d times, want 1", len(made))
+	}
+	var got *quotingError
+	if !errors.As(err, &got) || got != made[0] {
+		t.Fatalf("error %v does not carry the transport's own error", err)
+	}
+	want := "caller transport refused https://api.example.test/q?api_key=" + qSecret
+	if got.Error() != want {
+		t.Errorf("the transport's error reads %q, want it unchanged: %q", got.Error(), want)
+	}
+	var ue *url.Error
+	if !errors.As(err, &ue) {
+		t.Fatalf("error %v (%T) is not a *url.Error", err, err)
+	}
+	for _, form := range secretForms(qSecret) {
+		if strings.Contains(ue.URL, form) {
+			t.Errorf("the *url.Error's URL %q holds the query credential", ue.URL)
+		}
 	}
 }
 

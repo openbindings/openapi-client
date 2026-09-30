@@ -419,14 +419,84 @@ func TestRedirectStrippingIsSticky(t *testing.T) {
 }
 
 // client.go, Redirects: "The HTTPClient's CheckRedirect is still consulted
-// on every hop the client follows, after the client applies the rules
-// below, and can restore a field the caller deliberately wants to forward
-// ... CheckRedirect may restore a field intentionally, such as Range or
-// Accept". An error from CheckRedirect, and http.ErrUseLastResponse, mean
-// what net/http documents for http.Client.CheckRedirect: the first ends the
-// call with a *url.Error wrapping it, the second returns the 3xx, which the
-// client reports as a *StatusError ("A 3xx not followed is the outcome").
+// on every hop the client follows, after the client applies the rules below
+// and before it places credentials on the hop, and can restore a field the
+// caller deliberately wants to forward ... CheckRedirect may restore a field
+// intentionally, such as Range or Accept". Stage 3 ledger, Q11:
+// "CheckRedirect sees each hop after stripping and before credentials are
+// placed (the unsigned view Prepare gives); ErrUseLastResponse and errors
+// follow net/http's meanings": an error ends the call with a *url.Error
+// wrapping it, and ErrUseLastResponse returns the 3xx, which the client
+// reports as a *StatusError ("A 3xx not followed is the outcome").
 func TestRedirectCheckRedirect(t *testing.T) {
+	t.Run("sees a same-origin hop before credentials are placed", func(t *testing.T) {
+		a := newWire(t, routes(map[string]http.HandlerFunc{"/r": redirect(307, "/next?x=1")}))
+		var (
+			mu     sync.Mutex
+			header http.Header
+			target string
+		)
+		src := fixedSource(bToken)
+		o := redirOptions(src)
+		o.HTTPClient = &http.Client{CheckRedirect: func(r *http.Request, via []*http.Request) error {
+			mu.Lock()
+			header, target = r.Header.Clone(), r.URL.String()
+			mu.Unlock()
+			// A field of a credential's name, set here, is replaced when the
+			// credential is placed (doc.go, Credentials: "A header credential
+			// replaces a field of the same name").
+			r.Header.Set("X-API-Key", "from-check-redirect")
+			return nil
+		}}
+		c := parseFor(t, a, redirDoc, o)
+		mustCall(t, c, "getR", redirInput("GET"), nil)
+		mu.Lock()
+		defer mu.Unlock()
+		if header == nil {
+			t.Fatalf("CheckRedirect was not consulted")
+		}
+		// The unsigned view: no credential, but the header parameter, the
+		// caller fields and the cookie parameter, as Prepare gives them.
+		wantNoFields(t, header, "X-API-Key", "Authorization")
+		wantField(t, header, "Cookie", "c=cv")
+		wantField(t, header, "X-Trace", "tr")
+		wantField(t, header, "X-Opt", "o")
+		wantField(t, header, "X-In", "i")
+		for _, s := range redirSecrets {
+			if strings.Contains(target, s) {
+				t.Errorf("CheckRedirect saw the URL %q, holding a credential", target)
+			}
+		}
+		reqs := a.requests()
+		if len(reqs) != 2 {
+			t.Fatalf("server received %d requests, want 2", len(reqs))
+		}
+		wantPlaced(t, reqs[1], "/next?x=1&")
+		wantField(t, reqs[1].Header, "Cookie", "c=cv; sid="+cSecret)
+		if n := src.calls(); n != 2 {
+			t.Errorf("the bearer source was called %d times, want 2", n)
+		}
+	})
+	t.Run("an error on a same-origin hop places nothing", func(t *testing.T) {
+		a := newWire(t, routes(map[string]http.HandlerFunc{"/r": redirect(307, "/next")}))
+		errStop := errors.New("caller stopped the redirect")
+		src := fixedSource(bToken)
+		o := redirOptions(src)
+		o.HTTPClient = &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return errStop }}
+		c := parseFor(t, a, redirDoc, o)
+		_, err := c.Call(t.Context(), "getR", redirInput("GET"), nil)
+		var ue *url.Error
+		if !errors.Is(err, errStop) || !errors.As(err, &ue) {
+			t.Errorf("Call error %v, want a *url.Error wrapping CheckRedirect's error", err)
+		}
+		if n := a.count(); n != 1 {
+			t.Errorf("server received %d requests, want 1", n)
+		}
+		if n := src.calls(); n != 1 {
+			t.Errorf("the bearer source was called %d times, want 1: credentials are placed after CheckRedirect returns", n)
+		}
+		noSecrets(t, err, redirSecrets...)
+	})
 	t.Run("restores a field on another origin", func(t *testing.T) {
 		b := newWire(t, nil)
 		a := newWire(t, routes(map[string]http.HandlerFunc{"/r": redirect(302, b.URL+"/b")}))
@@ -720,10 +790,10 @@ func TestFromTransportSeesEveryHop(t *testing.T) {
 }
 
 // credential.go, SecretFunc: "On a redirect hop the first request has
-// already been sent, so the call ends with the *url.Error the http.Client
-// returns, wrapping f's error." An empty secret on a hop cannot be placed
-// either ("A call is refused, never sent without the authorization the
-// caller selected"), so the hop is not sent.
+// already been sent, so an error or an empty secret ends the call with the
+// *url.Error the http.Client returns, wrapping f's error" (stage 3 ledger,
+// Q12: "an empty secret from a SecretFunc on a hop ends the call as an
+// error does (*url.Error, no hop sent)").
 func TestSecretFuncFailsOnHop(t *testing.T) {
 	errHop := errors.New("token refresh failed")
 	for name, answer := range map[string]func(int64) (string, error){

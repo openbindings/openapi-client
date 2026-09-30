@@ -469,11 +469,11 @@ func TestSecretFuncTransportRetry(t *testing.T) {
 }
 
 // doc.go, Credentials: "A header credential replaces a field of the same
-// name, and a cookie or query credential a pair of the same name, including
-// one edited into Request.HTTP." Field names compare without regard to case
-// (RFC 9110 section 5.1). Where the replaced pair sat among the others is
-// not asserted: only that one pair of the name remains, holding the
-// credential, and the other pairs keep their order.
+// name. Query and cookie credentials go last, in the order the alternative
+// lists their schemes, and one that replaces a pair of the same name,
+// including one edited into Request.HTTP, removes it and goes last" (stage 3
+// ledger, Q3/Q4). Field names compare without regard to case (RFC 9110
+// section 5.1).
 func TestCredentialReplacesEditedFields(t *testing.T) {
 	w := newWire(t, nil)
 	c := credClient(t, w, nil)
@@ -500,39 +500,63 @@ func TestCredentialReplacesEditedFields(t *testing.T) {
 		req := mustPrepare(t, c, "keyQuery", &openapi.Input{Params: map[string]any{"p1": "a", "p2": "b"}})
 		req.HTTP.URL.RawQuery = "p1=a&api_key=caller&p2=b"
 		sendAndClose(t, req)
-		r := w.last(t)
-		var others, keys []string
-		for _, pair := range strings.Split(r.RawQuery, "&") {
-			if name, value, _ := strings.Cut(pair, "="); name == "api_key" {
-				keys = append(keys, value)
-			} else {
-				others = append(others, pair)
-			}
-		}
-		if strings.Join(keys, ",") != qSecret || strings.Join(others, "&") != "p1=a&p2=b" {
-			t.Errorf("query %q, want p1=a and p2=b in order and one api_key pair holding the credential", r.RawQuery)
-		}
+		wantURI(t, w.last(t), "/q?p1=a&p2=b&api_key="+qSecret)
+	})
+	t.Run("query, the pair first", func(t *testing.T) {
+		req := mustPrepare(t, c, "keyQuery", nil)
+		req.HTTP.URL.RawQuery = "api_key=caller&p1=a"
+		sendAndClose(t, req)
+		wantURI(t, w.last(t), "/q?p1=a&api_key="+qSecret)
 	})
 	t.Run("cookie", func(t *testing.T) {
 		req := mustPrepare(t, c, "keyCookie", nil)
 		req.HTTP.Header.Set("Cookie", "a=1; sid=caller; b=2")
 		sendAndClose(t, req)
-		got := w.last(t).Header.Values("Cookie")
-		if len(got) != 1 {
-			t.Fatalf("Cookie = %q, want one field", got)
-		}
-		var others, sids []string
-		for _, pair := range strings.Split(got[0], "; ") {
-			if name, value, _ := strings.Cut(pair, "="); name == "sid" {
-				sids = append(sids, value)
-			} else {
-				others = append(others, pair)
-			}
-		}
-		if strings.Join(sids, ",") != cSecret || strings.Join(others, "; ") != "a=1; b=2" {
-			t.Errorf("Cookie %q, want a=1 and b=2 in order and one sid pair holding the credential", got[0])
-		}
+		wantField(t, w.last(t).Header, "Cookie", "a=1; b=2; sid="+cSecret)
 	})
+	t.Run("cookie, the pair first", func(t *testing.T) {
+		req := mustPrepare(t, c, "keyCookie", &openapi.Input{Params: map[string]any{"c1": "v"}})
+		req.HTTP.Header.Set("Cookie", "sid=caller; c1=v")
+		sendAndClose(t, req)
+		wantField(t, w.last(t).Header, "Cookie", "c1=v; sid="+cSecret)
+	})
+}
+
+// doc.go, Credentials: "Query and cookie credentials go last, in the order
+// the alternative lists their schemes" (stage 3 ledger, Q3), whatever the
+// order of the scheme names, their declarations, or the parameters. Order:
+// "the path item's parameters, then the operation's, in declared order ...
+// query credentials last"; Cookies: "parameters in declared order, then
+// credentials".
+func TestSeveralQueryAndCookieCredentialsOrder(t *testing.T) {
+	w := newWire(t, nil)
+	doc := doc31(`
+		"/m":{"get":{"operationId":"many","parameters":[
+			{"name":"p","in":"query"},{"name":"c","in":"cookie"}],
+			"security":[{"q_b":[],"c_b":[],"h":[],"q_a":[],"c_a":[],"q_c":[]}]}},
+		"/n":{"get":{"operationId":"reversed","security":[{"q_c":[],"c_a":[],"q_a":[],"c_b":[],"q_b":[]}]}}`,
+		`"components":{"securitySchemes":{
+			"q_a":{"type":"apiKey","in":"query","name":"alpha"},
+			"c_a":{"type":"apiKey","in":"cookie","name":"ca"},
+			"h":{"type":"apiKey","in":"header","name":"X-H"},
+			"q_c":{"type":"apiKey","in":"query","name":"gamma"},
+			"c_b":{"type":"apiKey","in":"cookie","name":"cb"},
+			"q_b":{"type":"apiKey","in":"query","name":"beta"}
+		}}`)
+	c := parseFor(t, w, doc, &openapi.Options{Credentials: map[string]openapi.Credential{
+		"q_a": openapi.Secret("A"), "q_b": openapi.Secret("B"), "q_c": openapi.Secret("C"),
+		"c_a": openapi.Secret("CA"), "c_b": openapi.Secret("CB"), "h": openapi.Secret("H"),
+	}})
+	mustCall(t, c, "many", &openapi.Input{Params: map[string]any{"p": "1", "c": "2"}}, nil)
+	r := w.last(t)
+	wantURI(t, r, "/m?p=1&beta=B&alpha=A&gamma=C")
+	wantField(t, r.Header, "Cookie", "c=2; cb=CB; ca=CA")
+	wantField(t, r.Header, "X-H", "H")
+
+	mustCall(t, c, "reversed", nil, nil)
+	r = w.last(t)
+	wantURI(t, r, "/n?gamma=C&alpha=A&beta=B")
+	wantField(t, r.Header, "Cookie", "ca=CA; cb=CB")
 }
 
 // client.go, Request.HTTP: "If the URL is changed to another origin and the
@@ -637,10 +661,12 @@ func ptr[T any](v T) *T { return &v }
 
 // client.go, Options.Credentials: "A mutualTLS scheme needs no entry."
 // doc.go, Credentials: a call is refused when "for a mutualTLS scheme, which
-// needs none, [it] has any credential but FromTransport"; the key is the
-// setting that fixes it (errors.go, RequestError.Settings). A mutualTLS
-// scheme alongside another in one alternative needs only the other's
-// credential.
+// needs none, [it] has any credential but FromTransport", and "Load refuses
+// ... any credential but FromTransport for a name all of whose schemes are
+// mutualTLS"; the key is Options.Credentials["name"] (stage 3 ledger, Q8).
+// A derived Client skips only Load's name checks, so there each call is
+// refused (client.go, With). A mutualTLS scheme alongside another in one
+// alternative needs only the other's credential.
 func TestMutualTLSCredentials(t *testing.T) {
 	w := newWire(t, nil)
 	doc := doc31(`
@@ -665,6 +691,10 @@ func TestMutualTLSCredentials(t *testing.T) {
 		"Basic":      openapi.Basic("m-user", "m-secret-0Xc"),
 	} {
 		t.Run(name, func(t *testing.T) {
+			err := parseErr(t, doc, w.URL, &openapi.Options{Credentials: map[string]openapi.Credential{"mtls": cred}})
+			wantKeys(t, "Settings", asRequestError(t, err).Settings, true, credKey("mtls"))
+			noSecrets(t, err, "m-secret-0Xc")
+
 			d := c.With(func(o *openapi.Options) { o.Credentials["mtls"] = cred })
 			for _, key := range []string{"mtls", "both"} {
 				before := w.count()

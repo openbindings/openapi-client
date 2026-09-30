@@ -64,7 +64,11 @@ func TestMissingEmptyOrZeroCredential(t *testing.T) {
 // Credentials: "Load refuses a Credentials name the document never uses, as
 // a likely misspelling, an empty static credential (Secret(""), Basic("",
 // "") or the zero Credential), and a Basic credential for a name none of
-// whose schemes is http basic." errors.go, RequestError.Settings: keyed
+// whose schemes is http basic, and any credential but FromTransport for a
+// name all of whose schemes are mutualTLS" (stage 3 ledger, Q8); "A
+// credential value a header field cannot carry (a CR, LF or NUL, or leading
+// or trailing whitespace) is refused at Options.Credentials["name"]: by Load
+// for a static credential" (Q7). errors.go, RequestError.Settings: keyed
 // Options.Credentials[<name>], the name quoted as strconv.Quote does.
 func TestLoadRefusesCredentials(t *testing.T) {
 	base := "https://api.example.test"
@@ -84,6 +88,16 @@ func TestLoadRefusesCredentials(t *testing.T) {
 		{"Basic for an apiKey", map[string]openapi.Credential{"key_h": openapi.Basic("u", "basic-pw-5Tg")}, credKey("key_h")},
 		{"Basic for oauth2", map[string]openapi.Credential{"oauth": openapi.Basic("u", "basic-pw-5Tg")}, credKey("oauth")},
 		{"Basic for mutualTLS", map[string]openapi.Credential{"mtls": openapi.Basic("u", "basic-pw-5Tg")}, credKey("mtls")},
+		{"Secret for mutualTLS", map[string]openapi.Credential{"mtls": openapi.Secret("unused-4Rf")}, credKey("mtls")},
+		{"SecretFunc for mutualTLS", map[string]openapi.Credential{"mtls": fixedSource("unused-4Rf").credential()}, credKey("mtls")},
+		{"CR in a header key", map[string]openapi.Credential{"key_h": openapi.Secret("unused-4Rf\rX")}, credKey("key_h")},
+		{"LF in a header key", map[string]openapi.Credential{"key_h": openapi.Secret("unused-4Rf\nX-Evil: 1")}, credKey("key_h")},
+		{"NUL in a header key", map[string]openapi.Credential{"key_h": openapi.Secret("unused\x00-4Rf")}, credKey("key_h")},
+		{"leading space in a header key", map[string]openapi.Credential{"key_h": openapi.Secret(" unused-4Rf")}, credKey("key_h")},
+		{"trailing tab in a header key", map[string]openapi.Credential{"key_h": openapi.Secret("unused-4Rf\t")}, credKey("key_h")},
+		{"CR LF in a bearer token", map[string]openapi.Credential{"bearer": openapi.Secret("unused-4Rf\r\nX-Evil: 1")}, credKey("bearer")},
+		{"NUL in an oauth2 token", map[string]openapi.Credential{"oauth": openapi.Secret("unused\x00-4Rf")}, credKey("oauth")},
+		{"trailing space in a bearer token", map[string]openapi.Credential{"bearer": openapi.Secret("unused-4Rf ")}, credKey("bearer")},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -162,7 +176,8 @@ func TestCookieCredentialRefused(t *testing.T) {
 }
 
 // doc.go, Credentials: "An alternative two of whose schemes set the same
-// field cannot be used, and is refused naming both." errors.go,
+// header field, query name or cookie name cannot be used, and is refused
+// naming both" (stage 3 ledger, Q5). errors.go,
 // RequestError.Err: "a selected alternative two of whose schemes set the
 // same field". Field names compare without regard to case (RFC 9110 section
 // 5.1). "A FromTransport scheme places nothing, so it takes part in no
@@ -174,30 +189,37 @@ func TestAlternativeSettingOneFieldTwice(t *testing.T) {
 		"/c1":{"get":{"operationId":"bearerOAuth","security":[{"bearer":[],"oauth":[]}]}},
 		"/c2":{"get":{"operationId":"basicBearer","security":[{"basic":[],"bearer":[]}]}},
 		"/c3":{"get":{"operationId":"authzKeyBearer","security":[{"key_authz":[],"bearer":[]}]}},
-		"/c4":{"get":{"operationId":"twoHeaderKeys","security":[{"key_h":[],"key_h2":[]}]}},
+		"/c4":{"get":{"operationId":"twoHeaderKeys","security":[{"key_h":[],"hk_other":[]}]}},
 		"/c5":{"get":{"operationId":"unselected","security":[{"bearer":[],"oauth":[]},{"key_h":[]}]}},
-		"/c6":{"get":{"operationId":"queryAndCookie","security":[{"key_q":[],"key_qc":[]}]}}`,
+		"/c6":{"get":{"operationId":"queryAndCookie","security":[{"key_q":[],"key_qc":[]}]}},
+		"/c7":{"get":{"operationId":"twoQueryKeys","security":[{"key_q":[],"qk_other":[]}]}},
+		"/c8":{"get":{"operationId":"twoCookieKeys","security":[{"key_qc":[],"ck_other":[]}]}}`,
 		`"components":{"securitySchemes":{
 			"bearer":{"type":"http","scheme":"bearer"},
 			"oauth":{"type":"oauth2","flows":{"clientCredentials":{"tokenUrl":"https://auth.example.test/token","scopes":{}}}},
 			"basic":{"type":"http","scheme":"basic"},
 			"key_authz":{"type":"apiKey","in":"header","name":"authorization"},
 			"key_h":{"type":"apiKey","in":"header","name":"X-API-Key"},
-			"key_h2":{"type":"apiKey","in":"header","name":"x-api-key"},
+			"hk_other":{"type":"apiKey","in":"header","name":"x-api-key"},
 			"key_q":{"type":"apiKey","in":"query","name":"k"},
-			"key_qc":{"type":"apiKey","in":"cookie","name":"k"}
+			"key_qc":{"type":"apiKey","in":"cookie","name":"k"},
+			"qk_other":{"type":"apiKey","in":"query","name":"k"},
+			"ck_other":{"type":"apiKey","in":"cookie","name":"k"}
 		}}`)
 	creds := map[string]openapi.Credential{
 		"bearer": openapi.Secret(bToken), "oauth": openapi.Secret(oToken), "basic": openapi.Basic(basicUser, basicPass),
-		"key_authz": openapi.Secret("authz-6Uj"), "key_h": openapi.Secret(hSecret), "key_h2": openapi.Secret("h2-7Ik"),
+		"key_authz": openapi.Secret("authz-6Uj"), "key_h": openapi.Secret(hSecret), "hk_other": openapi.Secret("h2-7Ik"),
 		"key_q": openapi.Secret(qSecret), "key_qc": openapi.Secret(cSecret),
+		"qk_other": openapi.Secret("q2-8Ol"), "ck_other": openapi.Secret("qc2-9Pz"),
 	}
 	c := parseFor(t, w, doc, &openapi.Options{Credentials: creds})
 	for key, names := range map[string][2]string{
 		"bearerOAuth":    {"bearer", "oauth"},
 		"basicBearer":    {"basic", "bearer"},
 		"authzKeyBearer": {"key_authz", "bearer"},
-		"twoHeaderKeys":  {"key_h", "key_h2"},
+		"twoHeaderKeys":  {"key_h", "hk_other"},
+		"twoQueryKeys":   {"key_q", "qk_other"},
+		"twoCookieKeys":  {"key_qc", "ck_other"},
 	} {
 		t.Run(key, func(t *testing.T) {
 			resp, err := c.Call(t.Context(), key, nil, nil)
@@ -208,7 +230,7 @@ func TestAlternativeSettingOneFieldTwice(t *testing.T) {
 			if !errorContains(err, names[0], names[1]) {
 				t.Errorf("error %q does not name both %s and %s", err, names[0], names[1])
 			}
-			noSecrets(t, err, bToken, oToken, basicPass, basicField, "authz-6Uj", hSecret, "h2-7Ik")
+			noSecrets(t, err, bToken, oToken, basicPass, basicField, "authz-6Uj", hSecret, "h2-7Ik", qSecret, cSecret, "q2-8Ol", "qc2-9Pz")
 		})
 	}
 
@@ -237,9 +259,13 @@ func TestAlternativeSettingOneFieldTwice(t *testing.T) {
 // governs, are not restricted by this rule." errors.go, RequestError.Err:
 // "a bearer or Basic credential that would go over plain http or ws".
 // Loopback addresses are 127.0.0.0/8 and ::1 (RFC 6890, RFC 4291 section
-// 2.5.3); a host compares without regard to case (RFC 3986 section 3.2.2).
-// The transport here dials nothing, so a name the client resolved would
-// show up only as a refusal.
+// 2.5.3), "an IPv4-mapped one included", and localhost and names under
+// .localhost count "with or without a trailing dot" (stage 3 ledger, Q15);
+// "127.1" is not a loopback literal (RFC 3986 section 3.2.2's IPv4address
+// has four parts), so it is a name, matched without resolving. A host
+// compares without regard to case (RFC 3986 section 3.2.2). The transport
+// here dials nothing, so a name the client resolved would show up only as a
+// refusal.
 func TestPlainHTTPRule(t *testing.T) {
 	doc := bare31(credPaths, credSchemes)
 	restricted := []string{"bearer", "bearerUpper", "basic", "basicMixedCase", "oauth", "oidc"}
@@ -258,6 +284,12 @@ func TestPlainHTTPRule(t *testing.T) {
 		"http://127.255.255.254",
 		"http://[::1]",
 		"http://[::1]:8080",
+		"http://[::ffff:127.0.0.1]",
+		"http://[::ffff:127.8.9.10]:8080",
+		"http://[::ffff:7f00:1]",
+		"http://localhost.",
+		"http://localhost.:8080",
+		"http://api.localhost.",
 		"ws://localhost",
 		"ws://127.0.0.1:8080",
 	}
@@ -275,6 +307,11 @@ func TestPlainHTTPRule(t *testing.T) {
 		"http://192.168.1.1",
 		"http://[::2]",
 		"http://[fe80::1]",
+		"http://[::ffff:10.0.0.1]",
+		"http://127.1",
+		"http://127.1:8080",
+		"http://127.0.1",
+		"http://localhost..",
 		"ws://api.example.test",
 		"ws://10.0.0.1",
 		"ftp://api.example.test",
@@ -366,7 +403,10 @@ func TestPlainHTTPRule(t *testing.T) {
 // The plain-http rule names bearer tokens and Basic credentials; an http
 // scheme other than those (here DPoP), like an API key, is not listed among
 // the refusals (doc.go, Credentials: "A call is refused ... when ..."), so it
-// is sent over plain http. See the stage 3 test author's questions.
+// is sent over plain http. Stage 3 ledger, Q6: "only Bearer and Basic are
+// restricted over plain http (RFC 6750, RFC 7617); other http schemes
+// (Digest, DPoP) are governed by their own RFCs, which the client does not
+// model."
 func TestPlainHTTPOtherHTTPScheme(t *testing.T) {
 	hc, rt := memClient()
 	c, err := openapi.Parse(t.Context(), []byte(bare31(credPaths, credSchemes)), testDocURI,
@@ -382,4 +422,51 @@ func TestPlainHTTPOtherHTTPScheme(t *testing.T) {
 	} else {
 		wantAuthorization(t, reqs[0].Header, "DPoP", dProof)
 	}
+}
+
+// doc.go, Credentials: "A credential value a header field cannot carry (a
+// CR, LF or NUL, or leading or trailing whitespace) is refused at
+// Options.Credentials["name"]: by Load for a static credential, by the call
+// for a source's" (stage 3 ledger, Q7). The call is refused before anything
+// is sent. A static one given through With, which skips only Load's name
+// checks, refuses each call it affects (client.go, With).
+func TestHeaderUnsafeCredentialRefused(t *testing.T) {
+	values := map[string]string{
+		"CR":                  "hu-3Kl\rX",
+		"LF":                  "hu-3Kl\nX-Evil: 1",
+		"CR LF":               "hu-3Kl\r\nX-Evil: 1",
+		"NUL":                 "hu\x00-3Kl",
+		"leading space":       " hu-3Kl",
+		"leading tab":         "\thu-3Kl",
+		"trailing space":      "hu-3Kl ",
+		"trailing tab":        "hu-3Kl\t",
+		"trailing line break": "hu-3Kl\n",
+	}
+	for name, v := range values {
+		for _, tt := range []struct{ key, scheme string }{{"keyHeader", "key_h"}, {"bearer", "bearer"}, {"oidc", "oidc"}} {
+			if tt.scheme != "key_h" && strings.HasPrefix(name, "leading") {
+				continue // a bearer token's leading whitespace is not at the start of the field
+			}
+			t.Run(name+" "+tt.scheme, func(t *testing.T) {
+				w := newWire(t, nil)
+				src := fixedSource(v)
+				c := credClient(t, w, func(o *openapi.Options) { o.Credentials[tt.scheme] = src.credential() })
+				resp, err := c.Call(t.Context(), tt.key, nil, nil)
+				re := refusedBeforeSending(t, w, resp, err)
+				wantKeys(t, "Settings", re.Settings, true, credKey(tt.scheme))
+				noSecrets(t, err, "hu-3Kl")
+
+				d := credClient(t, w, nil).With(func(o *openapi.Options) { o.Credentials[tt.scheme] = openapi.Secret(v) })
+				resp, err = d.Call(t.Context(), tt.key, nil, nil)
+				re = refusedBeforeSending(t, w, resp, err)
+				wantKeys(t, "Settings", re.Settings, true, credKey(tt.scheme))
+				noSecrets(t, err, "hu-3Kl")
+			})
+		}
+	}
+	// Whitespace inside a header key is carried as given.
+	w := newWire(t, nil)
+	c := credClient(t, w, func(o *openapi.Options) { o.Credentials["key_h"] = openapi.Secret("a b\tc") })
+	mustCall(t, c, "keyHeader", nil, nil)
+	wantField(t, w.last(t).Header, "X-API-Key", "a b\tc")
 }

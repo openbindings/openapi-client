@@ -134,8 +134,7 @@ func selCreds() map[string]openapi.Credential {
 }
 
 // selCase is one call and the alternative it must apply, or, with want
-// empty and refused set, the Settings key its refusal must carry (any of
-// several when the contract allows more than one).
+// empty and refused set, the Settings key its refusal must carry.
 type selCase struct {
 	key     string
 	in      *openapi.Input
@@ -158,7 +157,10 @@ func runSel(t *testing.T, w *wire, c *openapi.Client, cases []selCase) {
 				before := w.count()
 				resp, err := c.Call(t.Context(), tt.key, tt.in, nil)
 				re := refusedSince(t, w, before, resp, err)
-				wantAnyKey(t, "Settings", re.Settings, tt.refused...)
+				wantKeys(t, "Settings", re.Settings, true, tt.refused...)
+				if tt.refused[0] == "Options.Security" && !errorContains(err, "Options.SecurityKey", "Input.Security") {
+					t.Errorf("error %q does not name Options.SecurityKey and Input.Security", err)
+				}
 				return
 			}
 			req := mustPrepare(t, c, tt.key, tt.in)
@@ -245,8 +247,12 @@ func TestSecurityPreference(t *testing.T) {
 		// {"key_h","oauth"} is not exactly {"oauth"}.
 		{key: "pair", refused: []string{"Options.Security"}},
 		// Two alternatives with these schemes: Input.Security distinguishes
-		// them. Which key the refusal carries is not fixed by the contract.
-		{key: "scopes", refused: []string{"Input.Security", "Options.Security"}},
+		// them. errors.go, RequestError.Settings: "Several security
+		// alternatives with none selected, or an Options.Security matching
+		// several that differ only in scopes, are keyed "Options.Security",
+		// the error naming Options.SecurityKey and Input.Security too"
+		// (stage 3 ledger, Q1).
+		{key: "scopes", refused: []string{"Options.Security"}},
 		{key: "scopes", in: &openapi.Input{Security: `{"oauth":["write"]}`}, want: `{"oauth":["write"]}`},
 		// Input.Security overrides the preference.
 		{key: "choice", in: &openapi.Input{Security: `{"key_h":[]}`}, want: `{"key_h":[]}`},
@@ -293,7 +299,8 @@ func TestSecurityKeyPreference(t *testing.T) {
 // credential-free operation is refused by Load." load.go, Load: "a Security
 // or SecurityKey that matches no alternative". errors.go,
 // RequestError.Settings: "A setting the document cannot use, or one that
-// conflicts with another, is keyed by its field".
+// conflicts with another, is keyed by its field ... SecurityKey set with
+// Security is keyed "Options.SecurityKey"" (stage 3 ledger, Q2).
 func TestSecurityLoadRefusals(t *testing.T) {
 	base := "https://api.example.test"
 	for _, tt := range []struct {
@@ -307,13 +314,13 @@ func TestSecurityLoadRefusals(t *testing.T) {
 		{"SecurityKey with other scopes", openapi.Options{SecurityKey: `{"oauth":["admin"]}`}, []string{"Options.SecurityKey"}},
 		{"SecurityKey not canonical", openapi.Options{SecurityKey: `{"oauth": ["read"]}`}, []string{"Options.SecurityKey"}},
 		{"Security and SecurityKey", openapi.Options{Security: []string{"oauth"}, SecurityKey: `{"oauth":["read"]}`},
-			[]string{"Options.Security", "Options.SecurityKey"}},
+			[]string{"Options.SecurityKey"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			opts := tt.opts
 			err := parseErr(t, selDoc, base, &opts)
 			re := asRequestError(t, err)
-			wantAnyKey(t, "Settings", re.Settings, tt.keys...)
+			wantKeys(t, "Settings", re.Settings, true, tt.keys...)
 		})
 	}
 

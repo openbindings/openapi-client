@@ -135,8 +135,11 @@ func TestFromTransportLeavesDestination(t *testing.T) {
 	wantField(t, w.last(t).Header, "Cookie", "sid=mine")
 }
 
-// doc.go, Header fields: "At either level, ... [refused is] a field that a
-// header parameter the call supplies, or the call's credential, sets";
+// doc.go, Header fields: "A Header entry with no values is a conflict like
+// any other when a header parameter the call supplies, the call's
+// credential, or the Cookie field, sets that field" (stage 3 ledger, Q9);
+// "At either level, ... [refused is] a field that a header parameter the
+// call supplies, or the call's credential, sets";
 // Cookies: "A Cookie field in Options.Header or Input.Header is refused when
 // the call sends cookie parameters or a cookie credential". errors.go,
 // RequestError.Settings: "a header field that a supplied header parameter
@@ -156,6 +159,11 @@ func TestHeaderSettingConflictsWithCredential(t *testing.T) {
 		{"headerDest", `{"key_h":[]}`, http.Header{"x-api-key": {"mine"}}},
 		{"cookieKey", "", http.Header{"Cookie": {"a=1"}}},
 		{"cookieDest", `{"key_c":[]}`, http.Header{"Cookie": {"a=1"}}},
+		// Entries with no values, which would remove the field.
+		{"bearer", `{"bearer":[]}`, http.Header{"Authorization": nil}},
+		{"bearer", `{"bearer":[]}`, http.Header{"authorization": {}}},
+		{"headerDest", `{"key_h":[]}`, http.Header{"X-Api-Key": nil}},
+		{"cookieKey", "", http.Header{"Cookie": nil}},
 	}
 	for _, tt := range tests {
 		for _, level := range []string{"Options.Header", "Input.Header"} {
@@ -177,6 +185,8 @@ func TestHeaderSettingConflictsWithCredential(t *testing.T) {
 	// The anonymous alternative applies no credential.
 	mustCall(t, c, "bearer", &openapi.Input{Security: "{}", Header: http.Header{"Authorization": {"Bearer mine"}}}, nil)
 	wantField(t, w.last(t).Header, "Authorization", "Bearer mine")
+	mustCall(t, c, "bearer", &openapi.Input{Security: "{}", Header: http.Header{"Authorization": nil}}, nil)
+	wantField(t, w.last(t).Header, "Authorization")
 	d := c.With(func(o *openapi.Options) { o.Header = http.Header{"X-Api-Key": {"mine"}} })
 	mustCall(t, d, "headerDest", &openapi.Input{Security: "{}"}, nil)
 	wantField(t, w.last(t).Header, "X-API-Key", "mine")
