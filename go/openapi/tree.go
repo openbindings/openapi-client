@@ -17,21 +17,32 @@ import (
 // level 1.
 const maxDepth = 1000
 
+// many is how many members a container may have before its lookups use an
+// index rather than a walk.
+const many = 16
+
 // A tree is a parsed JSON text: its source, and one node per value in
 // document order, each container followed by its members. Nodes hold only
 // offsets; names, strings and numbers are read from the source when used.
+// What lookups derive is kept, each fact once: the index of a container
+// with many members, and the value of an escaped string.
 type tree struct {
 	src   string
 	nodes []node
 
-	mu     sync.Mutex
-	sorted map[int32][]int32 // members of large objects by name, built on first lookup
+	mu      sync.Mutex
+	indexes map[int32][]int32 // by container: an object's members sorted by name, an array's items
+
+	decodedMu sync.Mutex
+	decoded   map[uint32]string // escaped strings, decoded, by the offset of their opening quote
 }
 
-// A node is one JSON value: its bytes in the source, and the index of the
-// node after its last descendant.
+// A node is one JSON value: the offset of its first byte, the index of the
+// node after its last descendant, and for an object member the offset of
+// its name's opening quote. The end of a value is found from these when a
+// caller needs the value as written.
 type node struct {
-	start, end, next uint32
+	start, next, name uint32
 }
 
 // A value is one value of a tree. The zero value is absent.
@@ -62,8 +73,80 @@ func (v value) kind() byte {
 
 // raw returns the value exactly as written.
 func (v value) raw() string {
-	n := v.t.nodes[v.i]
-	return v.t.src[n.start:n.end]
+	return v.t.src[v.t.nodes[v.i].start:v.t.end(v.i)]
+}
+
+// end returns the offset just past value i. A container ends at the bracket
+// after its last member, whitespace alone lying between.
+func (t *tree) end(i int32) int {
+	s, j := t.src, int(t.nodes[i].start)
+	switch c := s[j]; c {
+	case '"':
+		return closingQuote(s, j) + 1
+	case '{', '[':
+		if t.nodes[i].next > uint32(i)+1 {
+			last := i + 1
+			for t.nodes[last].next < t.nodes[i].next {
+				last = int32(t.nodes[last].next)
+			}
+			j = t.end(last) - 1
+		}
+		return j + 1 + strings.IndexByte(s[j+1:], c+2) + 1 // '}' or ']'
+	case 't', 'n':
+		return j + 4
+	case 'f':
+		return j + 5
+	}
+	for j++; j < len(s) && strings.IndexByte("0123456789+-.eE", s[j]) >= 0; j++ {
+	}
+	return j
+}
+
+// closingQuote returns the offset of the quote that closes the string whose
+// opening quote is at q in s: the next quote not escaped by an odd run of
+// backslashes.
+func closingQuote(s string, q int) int {
+	for {
+		q += 1 + strings.IndexByte(s[q+1:], '"')
+		k := q
+		for s[k-1] == '\\' {
+			k--
+		}
+		if (q-k)%2 == 0 {
+			return q
+		}
+	}
+}
+
+// str returns the value of the string whose opening quote is at q, decoding
+// an escaped one once.
+func (t *tree) str(q uint32) string {
+	s := t.src[q+1 : closingQuote(t.src, int(q))]
+	if strings.IndexByte(s, '\\') < 0 {
+		return s
+	}
+	t.decodedMu.Lock()
+	defer t.decodedMu.Unlock()
+	d, ok := t.decoded[q]
+	if !ok {
+		if t.decoded == nil {
+			t.decoded = map[uint32]string{}
+		}
+		d = jsonString(t.src[q : int(q)+len(s)+2])
+		t.decoded[q] = d
+	}
+	return d
+}
+
+// jsonString returns the value of s, a valid JSON string, decoded as
+// encoding/json decodes it.
+func jsonString(s string) string {
+	if strings.IndexByte(s, '\\') < 0 {
+		return s[1 : len(s)-1]
+	}
+	var v string
+	json.Unmarshal([]byte(s), &v)
+	return v
 }
 
 // text returns a string's value, or any other value as written.
@@ -71,7 +154,7 @@ func (v value) text() string {
 	if v.kind() != '"' {
 		return v.raw()
 	}
-	return jsonString(v.raw())
+	return v.t.str(v.t.nodes[v.i].start)
 }
 
 // str returns the string member named key, or "".
@@ -102,6 +185,9 @@ func (v value) strs() []string {
 	return s
 }
 
+// name returns the name of member c.
+func (t *tree) name(c int32) string { return t.str(t.nodes[c].name) }
+
 // members returns an object's members by name, or an array's items with
 // empty names, in order.
 func (v value) members() iter.Seq2[string, value] {
@@ -123,101 +209,78 @@ func (v value) members() iter.Seq2[string, value] {
 	}
 }
 
-// get returns the member of an object named key, or an absent value.
+// get returns the member of an object named key, compared as decoded, or an
+// absent value.
 func (v value) get(key string) value {
 	if v.kind() != '{' {
 		return value{}
 	}
 	t, n := v.t, 0
 	for c := v.i + 1; uint32(c) < t.nodes[v.i].next; c = int32(t.nodes[c].next) {
-		if n++; n > 16 { // many members: search them sorted, if they can be
-			if sorted := t.sortedMembers(v.i); sorted != nil {
-				j, found := slices.BinarySearchFunc(sorted, key, func(c int32, key string) int {
-					return strings.Compare(t.rawName(c), key)
-				})
-				if found {
-					return value{t, sorted[j]}
-				}
-				return value{}
+		if n++; n > many {
+			sorted := t.index(v.i)
+			if j, found := slices.BinarySearchFunc(sorted, key, func(c int32, key string) int {
+				return strings.Compare(t.name(c), key)
+			}); found {
+				return value{t, sorted[j]}
 			}
-			n = -1 << 31
+			return value{}
 		}
-		if raw := t.rawName(c); raw == key || strings.IndexByte(raw, '\\') >= 0 && t.name(c) == key {
+		if t.name(c) == key {
 			return value{t, c}
 		}
 	}
 	return value{}
 }
 
-// sortedMembers returns the members of object i sorted by name, when it has
-// many and none of their names is escaped, or nil.
-func (t *tree) sortedMembers(i int32) []int32 {
+// item returns the nth item of an array, or an absent value.
+func (v value) item(n int) value {
+	t, k := v.t, 0
+	for c := v.i + 1; uint32(c) < t.nodes[v.i].next; c = int32(t.nodes[c].next) {
+		if k == n {
+			return value{t, c}
+		}
+		if k++; k > many {
+			if items := t.index(v.i); n < len(items) {
+				return value{t, items[n]}
+			}
+			return value{}
+		}
+	}
+	return value{}
+}
+
+// index returns the members of container i, an object's sorted by name and
+// an array's in order, building the index once.
+func (t *tree) index(i int32) []int32 {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if s, ok := t.sorted[i]; ok {
+	if s, ok := t.indexes[i]; ok {
 		return s
 	}
 	var s []int32
 	for c := i + 1; uint32(c) < t.nodes[i].next; c = int32(t.nodes[c].next) {
-		if strings.IndexByte(t.rawName(c), '\\') >= 0 {
-			s = nil
-			break
-		}
 		s = append(s, c)
 	}
-	if len(s) > 16 {
-		slices.SortFunc(s, func(a, b int32) int { return strings.Compare(t.rawName(a), t.rawName(b)) })
-	} else {
-		s = nil
-	}
-	if t.sorted == nil {
-		t.sorted = map[int32][]int32{}
-	}
-	t.sorted[i] = s
-	return s
-}
-
-// rawName returns the name of member c as written, without its quotes: the
-// string before the colon that precedes the member's value.
-func (t *tree) rawName(c int32) string {
-	s, j := t.src, int(t.nodes[c].start)-1
-	for s[j] != ':' {
-		j--
-	}
-	for j--; s[j] != '"'; j-- {
-	}
-	end := j
-	for j--; ; j-- {
-		if s[j] == '"' {
-			k := j
-			for k > 0 && s[k-1] == '\\' {
-				k--
-			}
-			if (j-k)%2 == 0 { // not an escaped quote
-				return s[j+1 : end]
-			}
+	if t.src[t.nodes[i].start] == '{' {
+		type member struct {
+			name string
+			c    int32
+		}
+		m := make([]member, len(s))
+		for j, c := range s {
+			m[j] = member{t.name(c), c}
+		}
+		slices.SortFunc(m, func(a, b member) int { return strings.Compare(a.name, b.name) })
+		for j := range m {
+			s[j] = m[j].c
 		}
 	}
-}
-
-// name returns the name of member c.
-func (t *tree) name(c int32) string {
-	raw := t.rawName(c)
-	if strings.IndexByte(raw, '\\') < 0 {
-		return raw
+	if t.indexes == nil {
+		t.indexes = map[int32][]int32{}
 	}
-	return jsonString(`"` + raw + `"`)
-}
-
-// jsonString returns the value of s, a valid JSON string, decoded as
-// encoding/json decodes it.
-func jsonString(s string) string {
-	if strings.IndexByte(s, '\\') < 0 {
-		return s[1 : len(s)-1]
-	}
-	var v string
-	json.Unmarshal([]byte(s), &v)
-	return v
+	t.indexes[i] = s
+	return s
 }
 
 // at returns the value a JSON Pointer names under v, or an absent value.
@@ -243,15 +306,7 @@ func (v value) at(ptr string) value {
 			if err != nil || n < 0 || strconv.Itoa(n) != tok {
 				return value{}
 			}
-			w := value{}
-			for _, item := range v.members() {
-				if n == 0 {
-					w = item
-					break
-				}
-				n--
-			}
-			v = w
+			v = v.item(n)
 		default:
 			return value{}
 		}
@@ -259,24 +314,13 @@ func (v value) at(ptr string) value {
 	return v
 }
 
+var (
+	tokenEscaper   = strings.NewReplacer("~", "~0", "/", "~1")
+	tokenUnescaper = strings.NewReplacer("~1", "/", "~0", "~")
+)
+
 // escapeToken escapes a JSON Pointer reference token (RFC 6901 section 4).
-func escapeToken(s string) string {
-	if strings.IndexAny(s, "~/") < 0 {
-		return s
-	}
-	var b strings.Builder
-	for i := 0; i < len(s); i++ {
-		switch c := s[i]; c {
-		case '~':
-			b.WriteString("~0")
-		case '/':
-			b.WriteString("~1")
-		default:
-			b.WriteByte(c)
-		}
-	}
-	return b.String()
-}
+func escapeToken(s string) string { return tokenEscaper.Replace(s) }
 
 // unescapeToken reads a reference token, reporting whether every "~" is
 // followed by "0" or "1".
@@ -284,26 +328,14 @@ func unescapeToken(s string) (string, bool) {
 	if strings.IndexByte(s, '~') < 0 {
 		return s, true
 	}
-	var b strings.Builder
-	for i := 0; i < len(s); i++ {
-		if s[i] != '~' {
-			b.WriteByte(s[i])
-			continue
-		}
-		if i+1 == len(s) || s[i+1] != '0' && s[i+1] != '1' {
-			return "", false
-		}
-		i++
-		b.WriteByte("~/"[s[i]-'0'])
-	}
-	return b.String(), true
+	return tokenUnescaper.Replace(s), strings.Count(s, "~") == strings.Count(s, "~0")+strings.Count(s, "~1")
 }
 
 // parseTree reads src, a JSON text (RFC 8259), as the document at uri,
 // stopping when ctx is done.
 func parseTree(ctx context.Context, src, uri string) (*tree, error) {
 	p := scanner{ctx: ctx, src: src, uri: uri}
-	if len(src) >= math.MaxUint32 {
+	if uint64(len(src)) >= math.MaxUint32 {
 		return nil, p.errorAt(0, "the document is 4 GiB or larger")
 	}
 	if !utf8.ValidString(src) {
@@ -314,14 +346,20 @@ func parseTree(ctx context.Context, src, uri string) (*tree, error) {
 		return nil, p.errorAt(i, "invalid UTF-8")
 	}
 	// Each value but the outermost follows a "{", "[" or "," in its
-	// container, so these bound the number of nodes.
-	p.nodes = make([]node, 0, 1+strings.Count(src, "{")+strings.Count(src, "[")+strings.Count(src, ","))
+	// container, and takes two bytes with its separator, so both bound the
+	// number of nodes. The first counts those bytes inside strings too; what
+	// it reserved beyond an eighth of the nodes is given back.
+	n := 1 + strings.Count(src, "{") + strings.Count(src, "[") + strings.Count(src, ",")
+	p.nodes = make([]node, 0, min(n, len(src)/2+1))
 	p.space()
-	if err := p.value(1); err != nil {
+	if err := p.value(1, 0); err != nil {
 		return nil, err
 	}
 	if p.space(); p.i < len(src) {
 		return nil, p.errorAt(p.i, "data after the document")
+	}
+	if cap(p.nodes)-len(p.nodes) > len(p.nodes)/8 {
+		p.nodes = slices.Clone(p.nodes)
 	}
 	return &tree{src: src, nodes: p.nodes}, nil
 }
@@ -335,7 +373,8 @@ type scanner struct {
 	names    []string // the member names of the objects being read
 }
 
-func (p *scanner) value(depth int) error {
+// value reads the value at p.i, the member named at offset name, if not 0.
+func (p *scanner) value(depth int, name uint32) error {
 	if depth > maxDepth {
 		return p.errorAt(p.i, "nesting deeper than 1,000 levels")
 	}
@@ -346,7 +385,7 @@ func (p *scanner) value(depth int) error {
 		return p.errorAt(p.i, "unexpected end of the document")
 	}
 	at := len(p.nodes)
-	p.nodes = append(p.nodes, node{start: uint32(p.i)})
+	p.nodes = append(p.nodes, node{start: uint32(p.i), name: name})
 	var err error
 	switch c, rest := p.src[p.i], p.src[p.i:]; {
 	case c == '{' || c == '[':
@@ -362,7 +401,7 @@ func (p *scanner) value(depth int) error {
 	default:
 		err = p.errorAt(p.i, fmt.Sprintf("invalid character %q", c))
 	}
-	p.nodes[at].end, p.nodes[at].next = uint32(p.i), uint32(len(p.nodes))
+	p.nodes[at].next = uint32(len(p.nodes))
 	return err
 }
 
@@ -371,14 +410,15 @@ func (p *scanner) container(depth int) error {
 	p.i++
 	base := len(p.names)
 	defer func() { p.names = p.names[:base] }()
-	var many map[string]bool // the member names of an object too large to search
+	var seen map[string]bool // the member names of an object with many
 	for first := true; ; first = false {
 		p.space()
 		if first && p.i < len(p.src) && p.src[p.i] == end {
 			break
 		}
+		at := 0 // the member's name, in an object
 		if end == '}' {
-			at := p.i
+			at = p.i
 			if p.i == len(p.src) || p.src[p.i] != '"' {
 				return p.errorAt(p.i, "expected a member name")
 			}
@@ -386,17 +426,17 @@ func (p *scanner) container(depth int) error {
 				return err
 			}
 			name := jsonString(p.src[at:p.i])
-			if many == nil && len(p.names)-base == 16 {
-				many = make(map[string]bool, 32)
+			if seen == nil && len(p.names)-base == many {
+				seen = make(map[string]bool, 2*many)
 				for _, n := range p.names[base:] {
-					many[n] = true
+					seen[n] = true
 				}
 			}
-			if many[name] || many == nil && slices.Contains(p.names[base:], name) {
+			if seen[name] || seen == nil && slices.Contains(p.names[base:], name) {
 				return p.errorAt(at, "duplicate key "+strconv.Quote(name))
 			}
-			if many != nil {
-				many[name] = true
+			if seen != nil {
+				seen[name] = true
 			} else {
 				p.names = append(p.names, name)
 			}
@@ -406,7 +446,7 @@ func (p *scanner) container(depth int) error {
 			p.i++
 			p.space()
 		}
-		if err := p.value(depth + 1); err != nil {
+		if err := p.value(depth+1, uint32(at)); err != nil {
 			return err
 		}
 		if p.space(); p.i < len(p.src) && p.src[p.i] == end {
