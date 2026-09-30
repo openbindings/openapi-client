@@ -899,8 +899,21 @@ type ptrReader struct{ S string }
 func (ptrReader) Read([]byte) (int, error)      { return 0, io.EOF }
 func (*ptrReader) MarshalJSON() ([]byte, error) { return []byte(`"r"`), nil }
 
-// f098cc3 (client.go, Input.Body: "A Part or io.Reader inside a JSON value is
-// refused ... unless its own MarshalJSON encodes it"; doc.go, Values: a
+// textReader is an io.Reader whose value-receiver MarshalText encodes it.
+type textReader struct{ S string }
+
+func (textReader) Read([]byte) (int, error)     { return 0, io.EOF }
+func (textReader) MarshalText() ([]byte, error) { return []byte("t"), nil }
+
+// ptrTextReader is an io.Reader whose MarshalText has a pointer receiver.
+type ptrTextReader struct{ S string }
+
+func (ptrTextReader) Read([]byte) (int, error)      { return 0, io.EOF }
+func (*ptrTextReader) MarshalText() ([]byte, error) { return []byte("t"), nil }
+
+// f098cc3 and 6c6229a (client.go, Input.Body: "A Part or io.Reader inside a
+// JSON value is refused ... unless its own MarshalJSON or MarshalText encodes
+// it"; doc.go, Values: a
 // reader inside a parameter value the client encodes with encoding/json is
 // refused "unless its own MarshalJSON encodes it"): a reader encoding/json
 // encodes by its MarshalJSON is sent as json.Marshal writes it, in a JSON
@@ -926,6 +939,11 @@ func TestSelfMarshalingReaders(t *testing.T) {
 		{"value receiver in a struct field", func() any { return struct{ R io.Reader }{valReader{}} }},
 		{"pointer receiver, addressable slice element", func() any { return map[string]any{"r": []ptrReader{{}}} }},
 		{"pointer receiver, pointer", func() any { return map[string]any{"r": &ptrReader{}} }},
+		{"MarshalText, value receiver in a map", func() any { return map[string]any{"r": textReader{}} }},
+		{"MarshalText, value receiver in a slice", func() any { return []any{"a", textReader{S: "x"}} }},
+		{"MarshalText, value receiver in a struct field", func() any { return struct{ R io.Reader }{textReader{}} }},
+		{"MarshalText, pointer receiver, addressable slice element", func() any { return map[string]any{"r": []ptrTextReader{{}}} }},
+		{"MarshalText, pointer receiver, pointer", func() any { return map[string]any{"r": &ptrTextReader{}} }},
 	}
 	refused := []struct {
 		name string
@@ -933,6 +951,8 @@ func TestSelfMarshalingReaders(t *testing.T) {
 	}{
 		{"pointer receiver, not addressable", func() any { return map[string]any{"r": ptrReader{}} }},
 		{"pointer receiver in an interface field, not addressable", func() any { return struct{ R io.Reader }{ptrReader{}} }},
+		{"MarshalText, pointer receiver, not addressable", func() any { return map[string]any{"r": ptrTextReader{}} }},
+		{"MarshalText, pointer receiver in an interface field", func() any { return struct{ R io.Reader }{ptrTextReader{}} }},
 		{"plain reader", func() any { return map[string]any{"r": strings.NewReader("x")} }},
 	}
 	for _, key := range []string{"content", "body"} {
@@ -982,6 +1002,12 @@ func TestSelfMarshalingReaders(t *testing.T) {
 		{"pointer receiver, addressable items", "f", []ptrReader{{}}, "/s?f=r"},
 		{"deepObject member", "d", map[string]any{"k": valReader{}}, "/s?d%5Bk%5D=r"},
 		{"header", "X-H", valReader{}, "r"},
+		{"MarshalText, value receiver", "f", textReader{}, "/s?f=t"},
+		{"MarshalText, value receiver items", "f", []textReader{{}, {S: "x"}}, "/s?f=t&f=t"},
+		{"MarshalText, pointer receiver, pointer", "f", &ptrTextReader{}, "/s?f=t"},
+		{"MarshalText, pointer receiver, addressable items", "f", []ptrTextReader{{}}, "/s?f=t"},
+		{"MarshalText, deepObject member", "d", map[string]any{"k": textReader{}}, "/s?d%5Bk%5D=t"},
+		{"MarshalText, header", "X-H", textReader{}, "t"},
 	} {
 		t.Run("style/sent/"+tt.name, func(t *testing.T) {
 			got, re := callOne(t, w, c, "style", tt.param, tt.v)
@@ -1005,6 +1031,8 @@ func TestSelfMarshalingReaders(t *testing.T) {
 	}{
 		{"pointer receiver, not addressable", "f", ptrReader{}},
 		{"pointer receiver member, not addressable", "d", map[string]any{"k": ptrReader{}}},
+		{"MarshalText, pointer receiver, not addressable", "f", ptrTextReader{}},
+		{"MarshalText, pointer receiver member, not addressable", "d", map[string]any{"k": ptrTextReader{}}},
 		{"plain reader", "f", strings.NewReader("x")},
 		{"plain reader member", "d", map[string]any{"k": strings.NewReader("x")}},
 	} {
