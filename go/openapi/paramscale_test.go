@@ -107,15 +107,18 @@ const largeValueDoc = `{"openapi":"3.1.0","info":{"title":"t","version":"1"},"se
 	"/j":{"get":{"operationId":"json","parameters":[{"name":"v","in":"query","content":{"application/json":{}}}]}}
 }}`
 
-// Serializing a value costs time linear in its encoded size: arrays and
-// objects of up to 100,000 items, and a deepObject nested 250 to 1,000
-// levels (one leaf, so its encoded form is linear in its depth), within the
-// 1,000-level bound on values (stage 2 ledger, Q9). At 25,000 items a
-// quadratic serializer, one that copies what it has written for each item,
-// moves gigabytes against a linear cost of about a millisecond, so it takes
-// about 16x. At 1,000 levels such copying is megabytes, which time alone
-// may not separate from the linear cost, so the depth case is checked on the
-// bytes allocated too.
+// Serializing a value costs time and allocated bytes linear in its encoded
+// size: arrays and objects of 5,000 to 20,000 items, whose output stays
+// under the 1 MiB bound on the request target and header fields (doc.go,
+// Values; at 20,000 items the largest, the deepObject query, is about 500
+// KiB), and a deepObject nested 250 to 1,000 levels (one leaf, so its
+// encoded form is linear in its depth), within the 1,000-level bound on
+// values (stage 2 ledger, Q9). A quadratic serializer, one that copies what
+// it has written for each item, would copy about 190 MB at 5,000 items and
+// 3 GB at 20,000 against a linear cost well under a millisecond, so it takes
+// about 16x in time and in bytes allocated. At 1,000 levels such copying is
+// megabytes, which time alone may not separate from the linear cost, which
+// the bytes check does.
 func TestLargeParamValuesScale(t *testing.T) {
 	c, err := openapi.Parse(context.Background(), []byte(largeValueDoc), testDocURI, nil)
 	if err != nil {
@@ -162,9 +165,9 @@ func TestLargeParamValuesScale(t *testing.T) {
 		{"deep", "v", func(n int) any { return members(n) }},
 		{"json", "v", func(n int) any { return items(n) }},
 	} {
-		wantLinear(t, fmt.Sprintf("%s %T", tt.key, tt.value(0)), 25000, func(n int) func() {
-			return prepare(tt.key, tt.param, tt.value(n))
-		})
+		name := fmt.Sprintf("%s %T", tt.key, tt.value(0))
+		wantLinear(t, name, 5000, func(n int) func() { return prepare(tt.key, tt.param, tt.value(n)) })
+		wantLinearBytes(t, name+", bytes", 5000, func(n int) func() { return prepare(tt.key, tt.param, tt.value(n)) })
 	}
 	// levels returns a deepObject value n levels deep: n-1 objects around a
 	// string leaf, which counts as a level (stage 2 ledger, Q9).
