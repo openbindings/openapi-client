@@ -531,8 +531,8 @@ func (c *Client) resolve(s *server, setting string, re *RequestError) (endpoint,
 		at          int
 	}
 	var values []span // the values given, and where each begins
-	u := s.substitute(func(j, at int) string {
-		v := s.Variables[j]
+	u := s.substitute(func(i, at int) string {
+		v := s.Variables[s.vars[i]]
 		value, given := cfg.Variables[v.Name]
 		switch {
 		case !given && v.DefaultSet:
@@ -541,6 +541,8 @@ func (c *Client) resolve(s *server, setting string, re *RequestError) (endpoint,
 			refuse(v.Name, errors.New("the server variable has no default; give it a value"))
 		case value != v.Default && v.Enum != nil && !slices.Contains(v.Enum, value):
 			refuse(v.Name, fmt.Errorf("the value is not one of the variable's enum %q", v.Enum))
+		case strings.HasPrefix(s.text[i+1], "://") && !isScheme(value):
+			refuse(v.Name, errors.New(`the value must be a URI scheme, as "://" follows it (RFC 3986 section 3.1)`))
 		case value != "":
 			values = append(values, span{v.Name, value, at})
 		}

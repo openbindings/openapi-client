@@ -210,16 +210,21 @@ func (l *Loader) fetch(ctx context.Context, uri string, hc *http.Client) (string
 	return "", "", fmt.Errorf("openapi: load %s: %w", shown, withContext(ctx, err))
 }
 
-// hasScheme reports whether s begins with a URI scheme (RFC 3986 section
-// 3.1) longer than a drive letter.
+// hasScheme reports whether s begins with a URI scheme longer than a drive
+// letter.
 func hasScheme(s string) bool {
 	i := strings.IndexByte(s, ':')
-	for j := range max(i, 0) {
+	return i > 1 && isScheme(s[:i])
+}
+
+// isScheme reports whether s is a URI scheme (RFC 3986 section 3.1).
+func isScheme(s string) bool {
+	for j := range len(s) {
 		if c := s[j] | 0x20; !('a' <= c && c <= 'z' || j > 0 && strings.IndexByte("0123456789+-.", s[j]) >= 0) {
 			return false
 		}
 	}
-	return i > 1
+	return s != ""
 }
 
 // A ctxReader reads r until ctx is done.

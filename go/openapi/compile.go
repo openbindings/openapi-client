@@ -533,22 +533,21 @@ func (d *document) newServer(s *Server, declared value) *server {
 		s.Err = fmt.Errorf("server URL %q cannot be used whatever its variables' values", s.URL)
 	}
 	if s.Err == nil && !slices.ContainsFunc(s.Variables, func(v Variable) bool { return !v.DefaultSet }) {
-		if ep, err := d.resolveServerURL(sv.substitute(func(j, _ int) string { return s.Variables[j].Default })); err == nil {
+		if ep, err := d.resolveServerURL(sv.substitute(func(i, _ int) string { return s.Variables[sv.vars[i]].Default })); err == nil {
 			sv.fixed = &ep
 		}
 	}
 	return sv
 }
 
-// substitute returns the server URL with each variable replaced by
-// value(j, at), j being its index into Server.Variables and at where its
-// value begins.
-func (s *server) substitute(value func(j, at int) string) string {
+// substitute returns the server URL with the ith variable of its template
+// replaced by value(i, at), at being where the value begins.
+func (s *server) substitute(value func(i, at int) string) string {
 	var b strings.Builder
 	for i, t := range s.text {
 		b.WriteString(t)
 		if i < len(s.vars) {
-			b.WriteString(value(s.vars[i], b.Len()))
+			b.WriteString(value(i, b.Len()))
 		}
 	}
 	return b.String()
