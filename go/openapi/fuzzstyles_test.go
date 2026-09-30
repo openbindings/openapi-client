@@ -17,7 +17,9 @@ import (
 // is compared with what styleCfg.expect derives: the RFC 6570 oracle for
 // matrix, label, simple and form (a header's simple with percent-encoding
 // removed, a cookie's form with pairs joined by "; "), and the OAS 3.1.2
-// table and text for spaceDelimited, pipeDelimited and deepObject. On top of
+// table and text for spaceDelimited, pipeDelimited and deepObject, with the
+// stage 2 ledger's rulings Q1 to Q4 built in (empty exploded members, [""]
+// under matrix, reserved member names, encoded cookie values). On top of
 // expect: a path value forming a whole "." or ".." segment is refused
 // (doc.go, Fixed rules, Percent-encoding); a header value holding a CR, LF or
 // NUL, or leading or trailing whitespace, is refused (errors.go,
@@ -49,9 +51,6 @@ func FuzzStyleSerialization(f *testing.F) {
 		}
 		for _, cfg := range cfgs {
 			for _, v := range values {
-				if cfg.reserved && !reservedNamesSafe(t, v) {
-					continue
-				}
 				want, o := cfg.expect(t, v)
 				if o == sent && cfg.in == "path" && cfg.style == "simple" {
 					if seg := strings.TrimPrefix(want, "/"+cfg.id+"/"); seg == "." || seg == ".." {
@@ -91,13 +90,6 @@ func checkPrepared(t *testing.T, cfg styleCfg, v any, req *openapi.Request, err 
 			t.Fatalf("%s %#v: Inputs keys %q, want exactly [%q]", cfg.id, v, sortedKeys(re.Inputs), cfg.field())
 		}
 		return
-	case sentOrRefused:
-		if re != nil {
-			if len(re.Inputs) != 1 || re.Inputs[cfg.field()] == nil {
-				t.Fatalf("%s %#v: Inputs keys %q, want exactly [%q]", cfg.id, v, sortedKeys(re.Inputs), cfg.field())
-			}
-			return
-		}
 	}
 	if re != nil {
 		t.Fatalf("%s %#v: refused: %v; want %q", cfg.id, v, re, want)

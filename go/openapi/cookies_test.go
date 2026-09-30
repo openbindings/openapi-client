@@ -124,32 +124,80 @@ func TestCookieFieldConflicts(t *testing.T) {
 	mustCall(t, c, "cookieHeader", nil, nil)
 }
 
-// doc.go, Fixed rules, Percent-encoding: cookie values are percent-encoded,
-// and "a cookie value holding a ";" or a control character is refused". For
-// an OpenAPI 3.1 form-style cookie the contract does not say which applies
-// (contract question), so either is accepted; never is a raw ";" or control
-// character written into the field.
-func TestCookieSeparatorsNeverRaw(t *testing.T) {
+// Stage 2 ledger, Q4 (doc.go, Fixed rules, Percent-encoding: cookie values
+// "encode every byte outside RFC 3986's unreserved set"; only "a cookie value
+// written as given that holds a ";" or a control character is refused"): an
+// OpenAPI 3.1 form-style cookie value holding a ";" or a control character
+// is percent-encoded, not refused.
+func TestCookieValuesEncoded(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, doc31(cookieDoc), nil)
 	for _, tt := range []struct {
-		v       any
-		encoded string
+		key  string
+		v    any
+		want string
 	}{
-		{"x;y", "a=x%3By"},
-		{"x; b=2", "a=x%3B%20b%3D2"},
-		{"x\ty", "a=x%09y"},
-		{"x\x01y", "a=x%01y"},
-		{"x\x7fy", "a=x%7Fy"},
-		{[]string{"p;q", "r"}, "a=p%3Bq; a=r"},
+		{"a", "x;y", "a=x%3By"},
+		{"a", "x; b=2", "a=x%3B%20b%3D2"},
+		{"a", "x\ty", "a=x%09y"},
+		{"a", "x\x01y", "a=x%01y"},
+		{"a", "x\x7fy", "a=x%7Fy"},
+		{"a", "x\r\ny", "a=x%0D%0Ay"},
+		{"a", []string{"p;q", "r"}, "a=p%3Bq; a=r"},
+		{"b", []string{"p;q", "r\n"}, "b=p%3Bq,r%0A"},
+		{"d", map[string]string{"k;1": "v;2"}, "k%3B1=v%3B2"},
 	} {
-		got, re := callOne(t, w, c, "c", "a", tt.v)
+		got, re := callOne(t, w, c, "c", tt.key, tt.v)
 		if re != nil {
-			wantKeys(t, "Inputs", re.Inputs, true, "a")
+			t.Errorf("%q: refused: %v; want %q", tt.v, re, tt.want)
 			continue
 		}
-		if v := cookieOf(got); !slices.Equal(v, []string{tt.encoded}) {
-			t.Errorf("%q: Cookie = %q, want [%q] or a refusal at Inputs[\"a\"]", tt.v, v, tt.encoded)
+		if v := cookieOf(got); !slices.Equal(v, []string{tt.want}) {
+			t.Errorf("%q: Cookie = %q, want [%q]", tt.v, v, tt.want)
 		}
 	}
+}
+
+// Stage 2 ledger, Q8 (doc.go, Fixed rules, Cookies: "A required cookie
+// parameter is given in Params or by a writer; a Cookie field never supplies
+// it"): with a Cookie field in Input.Header or Options.Header and no value,
+// a required cookie parameter is missing, at Inputs[key]; the Cookie field
+// itself is not refused, since no cookie parameter is sent. A writer
+// supplies it; then the field is refused, as for any call that sends cookie
+// parameters.
+func TestCookieFieldNeverSuppliesRequired(t *testing.T) {
+	w := newWire(t, nil)
+	doc := doc31(`"/r":{"get":{"operationId":"r","parameters":[{"name":"k","in":"cookie","required":true,"schema":{}}]}}`)
+	c := parseFor(t, w, doc, nil)
+	field := http.Header{"Cookie": {"k=1"}}
+	for name, tt := range map[string]struct {
+		c  *openapi.Client
+		in *openapi.Input
+	}{
+		"Input.Header":   {c, &openapi.Input{Header: field}},
+		"Options.Header": {c.With(func(o *openapi.Options) { o.Header.Set("Cookie", "k=1") }), nil},
+	} {
+		before := w.count()
+		resp, err := tt.c.Call(t.Context(), "r", tt.in, nil)
+		re := refusedSince(t, w, before, resp, err)
+		wantKeys(t, name+" Inputs", re.Inputs, true, "k")
+		if _, ok := re.Settings[name]; ok {
+			t.Errorf("%s: the Cookie field is refused, but no cookie parameter is sent", name)
+		}
+	}
+	writer := map[string]func(*http.Request) error{"k": func(r *http.Request) error {
+		r.AddCookie(&http.Cookie{Name: "k", Value: "2"})
+		return nil
+	}}
+	mustCall(t, c, "r", &openapi.Input{ParamWriters: writer}, nil)
+	if got := cookieOf(w.last(t)); !slices.Equal(got, []string{"k=2"}) {
+		t.Errorf("Cookie = %q, want [k=2] from the writer", got)
+	}
+	mustCall(t, c, "r", &openapi.Input{Params: map[string]any{"k": "3"}}, nil)
+	if got := cookieOf(w.last(t)); !slices.Equal(got, []string{"k=3"}) {
+		t.Errorf("Cookie = %q, want [k=3]", got)
+	}
+	before := w.count()
+	resp, err := c.Call(t.Context(), "r", &openapi.Input{Params: map[string]any{"k": "3"}, Header: field}, nil)
+	wantKeys(t, "Settings", refusedSince(t, w, before, resp, err).Settings, false, "Input.Header")
 }

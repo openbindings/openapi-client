@@ -61,31 +61,28 @@ func styledParams(n int) []byte {
 
 // Compiling an operation's parameters is linear in their number: at first
 // use (Operations), and at a first Prepare that gives every path parameter.
+// The sizes are where a quadratic dominates: stage 1's path template
+// compile, quadratic in the number of path parameters, took 16x as long
+// for 960 to 3,840 parameters (160 to 640 of them in the path).
 func TestStyledParamsCompileScale(t *testing.T) {
-	wantLinear(t, "Operations()", 240, func(n int) func() { return timedOperations(t, styledParams(n)) })
-	wantLinear(t, "first Prepare", 240, func(n int) func() {
+	wantLinear(t, "Operations()", 960, func(n int) func() { return timedOperations(t, styledParams(n)) })
+	wantLinear(t, "first Prepare", 960, func(n int) func() {
 		doc := styledParams(n)
 		in := &openapi.Input{Params: map[string]any{}}
 		for i := 0; i < n; i += 12 {
 			in.Params["p"+strconv.Itoa(i)] = "a"
 			in.Params["p"+strconv.Itoa(i+1)] = "b"
 		}
-		clients := make([]*openapi.Client, 4)
-		for i := range clients {
-			c, err := openapi.Parse(context.Background(), doc, testDocURI, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			clients[i] = c
-		}
-		// The fourth client checks, untimed, that the call prepares.
-		if _, err := clients[3].Prepare("op", in); err != nil {
+		// One more client than the harness's runs checks, untimed, that the
+		// call prepares.
+		clients := freshClients(t, doc, nil, scaleRuns+1)
+		if _, err := clients[scaleRuns].Prepare("op", in); err != nil {
 			t.Errorf("%.200v", err)
 			return func() {}
 		}
 		i := 0
 		return func() {
-			c := clients[i%3]
+			c := clients[i%scaleRuns]
 			i++
 			c.Prepare("op", in)
 		}
@@ -109,8 +106,12 @@ const largeValueDoc = `{"openapi":"3.1.0","info":{"title":"t","version":"1"},"se
 }}`
 
 // Serializing a value costs time linear in its encoded size: arrays and
-// objects of up to 100,000 items, and a deepObject nested 800 levels deep
-// (one leaf, so its encoded form is linear in its depth).
+// objects of up to 100,000 items, and a deepObject nested 4,000 levels deep
+// (one leaf, so its encoded form is linear in its depth). The sizes are
+// where a quadratic serializer, one that copies what it has written for
+// each item or level, would take about 16x: at 25,000 items such copying
+// moves gigabytes against a linear cost of about a millisecond, and at 1,000
+// levels megabytes against about a tenth of one.
 func TestLargeParamValuesScale(t *testing.T) {
 	c, err := openapi.Parse(context.Background(), []byte(largeValueDoc), testDocURI, nil)
 	if err != nil {
@@ -161,7 +162,7 @@ func TestLargeParamValuesScale(t *testing.T) {
 			return prepare(tt.key, tt.param, tt.value(n))
 		})
 	}
-	wantLinear(t, "deepObject depth", 200, func(n int) func() {
+	wantLinear(t, "deepObject depth", 1000, func(n int) func() {
 		var v any = "leaf"
 		for range n {
 			v = map[string]any{"a": v}

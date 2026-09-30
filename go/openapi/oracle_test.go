@@ -20,14 +20,14 @@ import (
 // implemented. TestOracleRFC6570Examples checks the expander against the
 // RFC's own examples.
 //
-// Where the normative section 3.2.1 and the non-normative Appendix A read
-// differently, section 3.2.1 is followed: an exploded associative array's
-// member names are encoded "in the same way as simple string values" (the
-// package documentation says the same of member names), and an exploded
-// pair whose value is the empty string is written as its name alone except
-// for the "?" and "&" operators. Appendix A writes "name=" for that pair
-// under an operator that is not named ("", "+", ".", "/", "#"); tests do not
-// assert that case (see explodeEmptyUnsettled).
+// Where the normative section 3.2.1 and the informative Appendix A read
+// differently, section 3.2.1 is followed, as the loop owner ruled (stage 2
+// ledger, Q1; doc.go, Fixed rules, Styles: "RFC 6570's normative text
+// governs where its informative Appendix A differs"): an exploded
+// associative array's member names are encoded "in the same way as simple
+// string values", and an exploded pair whose value is the empty string is
+// written as its name alone except for the "?" and "&" operators, where
+// Appendix A would write "name=" under an operator that is not named.
 
 // ukind is the kind of an RFC 6570 value (section 2.3).
 type ukind int
@@ -172,11 +172,10 @@ func uexpandOp(o uop, specs ...uspec) string {
 			b.WriteString(enc(v.s))
 		case !sp.explode:
 			// A composite without explode: "a comma-separated concatenation"
-			// of the members, or of each defined pair as "name,value".
-			if o.named {
-				b.WriteString(lit(sp.name))
-				b.WriteString("=")
-			}
+			// of the members, or of each defined pair as "name,value". A named
+			// operator appends "=" only "if the variable's value is not
+			// empty" (section 3.2.7), so a list whose expansion is empty, as
+			// [""] is, takes ifemp (stage 2 ledger, Q2: ";p").
 			var parts []string
 			if v.kind == ulist {
 				for _, m := range v.list {
@@ -189,7 +188,16 @@ func uexpandOp(o uop, specs ...uspec) string {
 					}
 				}
 			}
-			b.WriteString(strings.Join(parts, ","))
+			joined := strings.Join(parts, ",")
+			if o.named {
+				b.WriteString(lit(sp.name))
+				if joined == "" {
+					b.WriteString(o.ifemp)
+					continue
+				}
+				b.WriteString("=")
+			}
+			b.WriteString(joined)
 		case o.named:
 			// Exploded, named: a list's members each paired with the
 			// variable's name, a pair's name and value; ifemp for an empty
@@ -558,38 +566,70 @@ func readJNode(dec *json.Decoder) (jnode, error) {
 var (
 	errOracleNesting = errors.New("oracle: nested value")
 	errOracleNull    = errors.New("oracle: null array item")
+	errOracleOnlyUnd = errors.New("oracle: a list whose items are all undefined collections")
 )
 
-// uvalOf is JSON data as an RFC 6570 value (doc.go, Values: "null, an empty
-// array and an object whose members are all undefined are undefined, as RFC
-// 6570 says ... An undefined member is skipped, a null array item is
-// refused"; a number or boolean in its JSON spelling). Nesting, which the
-// RFC 6570 styles refuse, and a null array item are errors.
-func uvalOf(n jnode) (uval, error) {
+// jUndefined reports JSON data that is undefined (doc.go, Values: "null, an
+// empty array and an object whose members are all undefined are undefined,
+// as RFC 6570 says"), at any depth.
+func jUndefined(n jnode) bool {
 	switch n.kind {
 	case 'z':
+		return true
+	case 'a':
+		return len(n.items) == 0
+	case 'o':
+		for _, it := range n.items {
+			if !jUndefined(it) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+// uvalOf is JSON data as an RFC 6570 value (doc.go, Values: "An undefined
+// member is skipped, a null array item is refused"; a number or boolean in
+// its JSON spelling). Undefinedness is settled first (stage 2 ledger, Q5;
+// doc.go, Fixed rules, Styles: "Whether a value is undefined ... is settled
+// first; the refusals here apply to defined values"): an undefined value,
+// and an undefined collection nested as a member or item, which is skipped,
+// are never nesting. Nesting of a defined collection, which the RFC 6570
+// styles refuse, and a null array item are errors. A list whose items are
+// all undefined collections is not settled by the ruling and is reported as
+// errOracleOnlyUnd (not asserted).
+func uvalOf(n jnode) (uval, error) {
+	if jUndefined(n) {
 		return uval{}, nil
+	}
+	switch n.kind {
 	case 's', 'p':
 		return ustr(n.text), nil
 	case 'a':
 		v := uval{kind: ulist, list: []string{}}
 		for _, it := range n.items {
-			switch it.kind {
-			case 'z':
+			switch {
+			case it.kind == 'z':
 				return uval{}, errOracleNull
-			case 'a', 'o':
+			case jUndefined(it):
+				continue
+			case it.kind == 'a' || it.kind == 'o':
 				return uval{}, errOracleNesting
 			}
 			v.list = append(v.list, it.text)
+		}
+		if len(v.list) == 0 {
+			return uval{}, errOracleOnlyUnd
 		}
 		return v, nil
 	default:
 		v := uval{kind: uassoc}
 		for i, it := range n.items {
-			switch it.kind {
-			case 'z':
+			switch {
+			case jUndefined(it):
 				v.pairs = append(v.pairs, upair{name: n.names[i], undef: true})
-			case 'a', 'o':
+			case it.kind == 'a' || it.kind == 'o':
 				return uval{}, errOracleNesting
 			default:
 				v.pairs = append(v.pairs, upairOf(n.names[i], it.text))
@@ -605,37 +645,13 @@ func oracleValue(t testing.TB, v any) (uval, error) {
 	return uvalOf(jsonData(t, v))
 }
 
-// explodeEmptyUnsettled reports an exploded associative array with a pair
-// whose value is the empty string under an operator that is not named
-// (simple and label): RFC 6570 section 3.2.1 writes the name alone, and the
-// non-normative Appendix A writes "name=" (contract question; not
-// asserted).
-func explodeEmptyUnsettled(op string, explode bool, v uval) bool {
-	if !explode || v.kind != uassoc || uops[op].named {
-		return false
-	}
-	for _, p := range v.pairs {
-		if !p.undef && p.value == "" {
-			return true
-		}
-	}
-	return false
-}
-
-// matrixUnsettled reports a value for which RFC 6570 does not settle the
-// matrix expansion without explode: a list whose only member is the empty
-// string, where section 3.2.7 appends "=" only "if the variable's value is
-// not empty" (contract question; not asserted).
-func matrixUnsettled(v uval) bool {
-	return v.kind == ulist && len(v.list) == 1 && v.list[0] == ""
-}
-
 // delimited builds a spaceDelimited or pipeDelimited query pair from the OAS
 // 3.1.2 style table (section 4.8.12.6: "color=blue%20black%20brown",
 // "color=R%20100%20G%20200%20B%20150", and %7C for pipeDelimited) and
 // Appendix C.3 (values by regular or reserved expansion, based on
-// allowReserved), with delim the encoded delimiter. It returns "" for an
-// undefined value.
+// allowReserved, member names included: stage 2 ledger, Q3), with delim the
+// encoded delimiter; the parameter name always follows the name rule. It
+// returns "" for an undefined value.
 func delimited(name string, v uval, delim string, allow uallow) string {
 	var parts []string
 	switch v.kind {
@@ -646,7 +662,7 @@ func delimited(name string, v uval, delim string, allow uallow) string {
 	case uassoc:
 		for _, p := range v.pairs {
 			if !p.undef {
-				parts = append(parts, pctName(p.name), uencode(p.value, allow))
+				parts = append(parts, uencode(p.name, allow), uencode(p.value, allow))
 			}
 		}
 	}
@@ -659,17 +675,18 @@ func delimited(name string, v uval, delim string, allow uallow) string {
 // deepObject builds a deepObject query from JSON data (OAS 3.1.2 section
 // 4.8.12.6: "color%5BR%5D=100&color%5BG%5D=200&color%5BB%5D=150"; doc.go,
 // Fixed rules, Percent-encoding: "deepObject nests objects as
-// a%5Bb%5D%5Bc%5D=v"), skipping undefined members. It returns "" for an
-// undefined value.
+// a%5Bb%5D%5Bc%5D=v"), skipping undefined members; member names and values
+// take reserved expansion under allowReserved (stage 2 ledger, Q3). It
+// returns "" for an undefined value.
 func deepObject(name string, n jnode, allow uallow) string {
 	var pairs []string
 	var walk func(prefix string, n jnode)
 	walk = func(prefix string, n jnode) {
 		for i, it := range n.items {
-			key := prefix + "%5B" + pctName(n.names[i]) + "%5D"
-			switch it.kind {
-			case 'z':
-			case 'o':
+			key := prefix + "%5B" + uencode(n.names[i], allow) + "%5D"
+			switch {
+			case jUndefined(it):
+			case it.kind == 'o':
 				walk(key, it)
 			default:
 				pairs = append(pairs, key+"="+uencode(it.text, allow))

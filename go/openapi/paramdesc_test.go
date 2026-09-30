@@ -15,10 +15,9 @@ import (
 // "the effective allowReserved: false where the edition ignores it";
 // ContentType for a content parameter; Err "why built-in serialization
 // cannot use the value" (doc.go, Fixed rules, Styles: set "where the
-// document alone decides it"). deepObject's Explode is not asserted: doc.go
-// says "deepObject ignores explode", and whether the effective explode of a
-// deepObject is the declared or default value, or true, is not settled
-// (contract question).
+// document alone decides it"). Explode is true for deepObject, whatever the
+// document writes (stage 2 ledger, Q6; describe.go, Param.Explode: "true for
+// deepObject, which ignores the field").
 func TestParamDescriptorsStage2(t *testing.T) {
 	doc := bare31(`"/d/{s}/{m}/{me}/{l}/{lf}/{pc}":{"get":{"operationId":"d","parameters":[
 		{"name":"s","in":"path","required":true,"schema":{}},
@@ -70,9 +69,9 @@ func TestParamDescriptorsStage2(t *testing.T) {
 		"sdt": {style: "spaceDelimited", explode: true, explodeSet: true, err: true},
 		"pd":  {style: "pipeDelimited"},
 		"pdt": {style: "pipeDelimited", explode: true, explodeSet: true, err: true},
-		"do":  {style: "deepObject", skipExplode: true},
-		"dof": {style: "deepObject", explodeSet: true, skipExplode: true},
-		"dot": {style: "deepObject", explodeSet: true, allowReserved: true, skipExplode: true},
+		"do":  {style: "deepObject", explode: true},
+		"dof": {style: "deepObject", explode: true, explodeSet: true},
+		"dot": {style: "deepObject", explode: true, explodeSet: true, allowReserved: true},
 		"qc":  {contentType: "application/json", skipExplode: true},
 		"X-S": {style: "simple"},
 		"X-E": {style: "simple", explode: true, explodeSet: true},

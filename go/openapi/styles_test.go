@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"testing"
 
@@ -21,11 +20,10 @@ import (
 type fate int
 
 const (
-	sent          fate = iota // sent, as want says
-	omitted                   // an undefined optional value: nothing written
-	refused                   // refused at the parameter's key
-	unsettled                 // the contract does not settle it: not asserted
-	sentOrRefused             // either refused at the key or sent as want says
+	sent      fate = iota // sent, as want says
+	omitted               // an undefined optional value: nothing written
+	refused               // refused at the parameter's key
+	unsettled             // the contract does not settle it: not asserted
 )
 
 // styleCfg is one parameter declaration: a location, style, explode and
@@ -98,6 +96,11 @@ func (c styleCfg) expect(t testing.TB, v any) (string, fate) {
 	if c.reserved && c.in == "query" {
 		allow = allowUR
 	}
+	// Undefinedness is settled first; style refusals apply to defined values
+	// (stage 2 ledger, Q5; doc.go, Fixed rules, Styles).
+	if jUndefined(n) {
+		return absent()
+	}
 	switch c.style {
 	case "deepObject":
 		want, o := deepExpect(c.field(), n, allow)
@@ -106,17 +109,16 @@ func (c styleCfg) expect(t testing.TB, v any) (string, fate) {
 		}
 		return "/" + c.id + "?" + want, o
 	case "spaceDelimited", "pipeDelimited":
-		switch n.kind {
-		case 'z':
-			return "", unsettled // null for a style that takes no primitive (contract question)
-		case 's', 'p':
+		if n.kind == 's' || n.kind == 'p' {
 			return "", refused // doc.go, Fixed rules, Styles: "a primitive for spaceDelimited, pipeDelimited ... is refused"
 		}
 		uv, err := uvalOf(n)
-		if err != nil {
+		switch {
+		case errors.Is(err, errOracleOnlyUnd):
+			return "", unsettled
+		case err != nil:
 			return "", refused
-		}
-		if !uv.defined() {
+		case !uv.defined():
 			return absent()
 		}
 		delim := "%20"
@@ -126,17 +128,13 @@ func (c styleCfg) expect(t testing.TB, v any) (string, fate) {
 		return "/" + c.id + "?" + delimited(c.field(), uv, delim, allow), sent
 	}
 	uv, err := uvalOf(n)
-	if err != nil {
+	switch {
+	case errors.Is(err, errOracleOnlyUnd):
+		return "", unsettled
+	case err != nil:
 		return "", refused
-	}
-	if !uv.defined() {
+	case !uv.defined():
 		return absent()
-	}
-	if c.style == "matrix" && !c.explode && matrixUnsettled(uv) {
-		return "", unsettled
-	}
-	if (c.style == "simple" || c.style == "label") && explodeEmptyUnsettled(map[string]string{"simple": "", "label": "."}[c.style], c.explode, uv) {
-		return "", unsettled
 	}
 	spec := uspec{name: pctName(c.field()), explode: c.explode, value: uv}
 	switch c.in {
@@ -156,70 +154,38 @@ func (c styleCfg) expect(t testing.TB, v any) (string, fate) {
 		// "; "", the pairs form style writes; OAS 3.1.2 Appendix D.1: the
 		// form "?" prefix is stripped, and pairs in cookies "are delimited by
 		// a semicolon followed by a space character rather than &".
-		want := strings.ReplaceAll(strings.TrimPrefix(uexpand("?", spec), "?"), "&", "; ")
-		if cookieUnsettled(n) {
-			return want, sentOrRefused
-		}
-		return want, sent
+		// A ";" or control character in a value is percent-encoded, as any
+		// other byte outside the unreserved set (stage 2 ledger, Q4).
+		return strings.ReplaceAll(strings.TrimPrefix(uexpand("?", spec), "?"), "&", "; "), sent
 	}
 }
 
-// cookieUnsettled reports JSON data holding a ";" or a control character,
-// which a cookie value either carries percent-encoded (doc.go, Fixed rules,
-// Percent-encoding: cookie values "encode every byte outside RFC 3986's
-// unreserved set") or refuses ("a cookie value holding a ";" or a control
-// character is refused"); the contract does not say which applies to an
-// OpenAPI 3.1 form-style cookie value (contract question).
-func cookieUnsettled(n jnode) bool {
-	if strings.ContainsFunc(n.text, func(r rune) bool { return r == ';' || r < 0x20 || r == 0x7f }) {
-		return true
-	}
-	for _, name := range n.names {
-		if strings.ContainsFunc(name, func(r rune) bool { return r == ';' || r < 0x20 || r == 0x7f }) {
-			return true
-		}
-	}
-	return slices.ContainsFunc(n.items, cookieUnsettled)
-}
-
-// deepExpect derives a deepObject query from JSON data n: doc.go, Fixed
-// rules, Styles: "Nesting in any style but deepObject is refused, and so are
-// an array in a deepObject value, a primitive for ... deepObject"; Values:
-// an object whose members are all undefined is undefined, and "An undefined
-// member is skipped". An empty array, which is both undefined and an array,
-// is not settled by the contract (contract question), nor is null.
+// deepExpect derives a deepObject query from defined JSON data n: doc.go,
+// Fixed rules, Styles: "Nesting in any style but deepObject is refused, and
+// so are an array in a deepObject value, a primitive for ... deepObject";
+// Values: "An undefined member is skipped". Undefinedness is settled first
+// (stage 2 ledger, Q5), so an undefined member, an empty array included, is
+// skipped at any depth.
 func deepExpect(name string, n jnode, allow uallow) (string, fate) {
-	switch n.kind {
-	case 'z':
-		return "", unsettled
-	case 's', 'p':
-		return "", refused
-	case 'a':
-		if len(n.items) == 0 {
-			return "", unsettled
-		}
+	if n.kind != 'o' {
 		return "", refused
 	}
 	var check func(n jnode) fate
 	check = func(n jnode) fate {
 		o := omitted
 		for _, it := range n.items {
-			switch it.kind {
-			case 'a':
-				if len(it.items) == 0 {
-					return unsettled
-				}
+			switch {
+			case jUndefined(it):
+			case it.kind == 'a':
 				return refused
-			case 'o':
+			case it.kind == 'o':
 				switch check(it) {
 				case refused:
 					return refused
-				case unsettled:
-					return unsettled
 				case sent:
 					o = sent
 				}
-			case 's', 'p':
+			default:
 				o = sent
 			}
 		}
@@ -266,11 +232,6 @@ func checkOutcome(t *testing.T, c styleCfg, got rec, re *openapi.RequestError, w
 		}
 		wantKeys(t, "Inputs", re.Inputs, true, c.field())
 		return
-	case sentOrRefused:
-		if re != nil {
-			wantKeys(t, "Inputs", re.Inputs, true, c.field())
-			return
-		}
 	}
 	if re != nil {
 		t.Errorf("refused: %v; want %q", re, want)
@@ -379,6 +340,12 @@ var styleCorpus = []struct {
 	{"array member", map[string]any{"a": []int{1}}},
 	{"object member", map[string]any{"a": map[string]int{"b": 1}, "c": "d"}},
 	{"deep object member", map[string]any{"a": map[string]any{"b": map[string]any{"c": "v", "d": nil}}}},
+	// Stage 2 ledger, Q5: undefined collections nested in a value are
+	// skipped, not refused as nesting.
+	{"nested undefined collections skipped", map[string]any{"a": []int{}, "b": map[string]any{}, "c": "x", "d": map[string]any{"e": nil}}},
+	{"undefined: only nested undefined members", map[string]any{"a": []int{}, "b": map[string]any{"c": []string{}}}},
+	{"undefined array items skipped", []any{"a", []int{}, map[string]any{}, "b"}},
+	{"reserved member names", map[string]string{"a/b": "c", "d[e]": "f?g"}},
 }
 
 // Every configuration with every corpus value. Matrix, label, simple and
@@ -387,9 +354,12 @@ var styleCorpus = []struct {
 // 4.8.12.3: matrix is RFC 6570 section 3.2.7, label 3.2.5, simple 3.2.2,
 // form 3.2.8), spaceDelimited, pipeDelimited and deepObject against the OAS
 // 3.1.2 table and text. allowReserved applies to the query styles: RFC 6570
-// reserved expansion (doc.go, Fixed rules, Percent-encoding). Where a member
-// name holds a character outside the unreserved set, allowReserved is not
-// checked (contract question: member names under reserved expansion).
+// reserved expansion (doc.go, Fixed rules, Percent-encoding), member names
+// included (stage 2 ledger, Q3). An exploded member whose value is "" is
+// written as its name alone except in form style (ledger, Q1), matrix
+// without explode writes [""] as ";p" (ledger, Q2), a cookie value's ";" is
+// percent-encoded (ledger, Q4), and undefined values, nested ones included,
+// are settled before any style refusal (ledger, Q5).
 func TestStylesAgainstOracle(t *testing.T) {
 	cfgs := styleConfigs()
 	w := newWire(t, nil)
@@ -398,9 +368,6 @@ func TestStylesAgainstOracle(t *testing.T) {
 		t.Run(cfg.id, func(t *testing.T) {
 			for _, tt := range styleCorpus {
 				t.Run(tt.name, func(t *testing.T) {
-					if cfg.reserved && !reservedNamesSafe(t, tt.v) {
-						t.Skip("member names outside the unreserved set under allowReserved")
-					}
 					want, o := cfg.expect(t, tt.v)
 					got, re := callOne(t, w, c, cfg.id, cfg.field(), tt.v)
 					checkOutcome(t, cfg, got, re, want, o)
@@ -408,25 +375,6 @@ func TestStylesAgainstOracle(t *testing.T) {
 			}
 		})
 	}
-}
-
-// reservedNamesSafe reports that every member name of v's JSON data holds
-// only unreserved characters, so both readings of member names under
-// reserved expansion agree.
-func reservedNamesSafe(t testing.TB, v any) bool {
-	if v == nil {
-		return true
-	}
-	var ok func(n jnode) bool
-	ok = func(n jnode) bool {
-		for _, name := range n.names {
-			if pctName(name) != name {
-				return false
-			}
-		}
-		return !slices.ContainsFunc(n.items, func(it jnode) bool { return !ok(it) })
-	}
-	return ok(jsonData(t, v))
 }
 
 // OAS 3.1.2 section 4.8.12.6, Style Examples, reproduced for the parameter
@@ -972,5 +920,166 @@ func TestLabelDotSegments(t *testing.T) {
 		if re != nil || got.RequestURI != want {
 			t.Errorf("%s %#v: %q, %v; want %q", tt.key, tt.v, got.RequestURI, re, want)
 		}
+	}
+}
+
+// Stage 2 ledger, Q1 (doc.go, Fixed rules, Styles: "an exploded object
+// member whose value is "" is written as its name alone except in form
+// style"; RFC 6570 section 3.2.1) and Q2 (matrix without explode writes
+// [""] as ";p": section 3.2.7 appends "=" only "if the variable's value is
+// not empty").
+func TestEmptyValueRulings(t *testing.T) {
+	w := newWire(t, nil)
+	doc := doc31(`
+		"/s/{p}":{"get":{"operationId":"simple","parameters":[{"name":"p","in":"path","required":true,"explode":true,"schema":{}}]}},
+		"/l/x{p}":{"get":{"operationId":"label","parameters":[{"name":"p","in":"path","required":true,"style":"label","explode":true,"schema":{}}]}},
+		"/m/x{p}":{"get":{"operationId":"matrix","parameters":[{"name":"p","in":"path","required":true,"style":"matrix","explode":true,"schema":{}}]}},
+		"/f":{"get":{"operationId":"form","parameters":[{"name":"p","in":"query","schema":{}}]}},
+		"/h":{"get":{"operationId":"header","parameters":[{"name":"X-P","in":"header","explode":true,"schema":{}}]}},
+		"/c":{"get":{"operationId":"cookie","parameters":[{"name":"p","in":"cookie","schema":{}}]}},
+		"/s2/{p}":{"get":{"operationId":"simple2","parameters":[{"name":"p","in":"path","required":true,"schema":{}}]}},
+		"/l2/x{p}":{"get":{"operationId":"label2","parameters":[{"name":"p","in":"path","required":true,"style":"label","schema":{}}]}},
+		"/m2/x{p}":{"get":{"operationId":"matrix2","parameters":[{"name":"p","in":"path","required":true,"style":"matrix","schema":{}}]}},
+		"/f2":{"get":{"operationId":"form2","parameters":[{"name":"p","in":"query","explode":false,"schema":{}}]}}`)
+	c := parseFor(t, w, doc, nil)
+	member := map[string]string{"a": "", "b": "x"}
+	tests := []struct {
+		key, param string
+		v          any
+		want       string // the request target, or the header or Cookie value
+	}{
+		// Q1: exploded, the member "a" with "" is "a" except in form style.
+		{"simple", "p", member, "/s/a,b=x"},
+		{"label", "p", member, "/l/x.a.b=x"},
+		{"matrix", "p", member, "/m/x;a;b=x"},
+		{"header", "X-P", member, "a,b=x"},
+		{"form", "p", member, "/f?a=&b=x"},
+		{"cookie", "p", member, "a=; b=x"},
+		// Without explode, pairs are "name,value" whatever the value.
+		{"simple2", "p", member, "/s2/a,,b,x"},
+		{"matrix2", "p", member, "/m2/x;p=a,,b,x"},
+		{"form2", "p", member, "/f2?p=a,,b,x"},
+		// Q2: [""] under matrix without explode is ";p"; with explode each
+		// empty item is the name alone (ifemp ""); form writes "p=".
+		{"matrix2", "p", []string{""}, "/m2/x;p"},
+		{"matrix", "p", []string{""}, "/m/x;p"},
+		{"matrix", "p", []string{"", "a"}, "/m/x;p;p=a"},
+		{"label2", "p", []string{""}, "/l2/x."},
+		{"simple2", "p", []string{""}, "/s2/"},
+		{"form2", "p", []string{""}, "/f2?p="},
+		{"form", "p", []string{""}, "/f?p="},
+	}
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("%s %v", tt.key, tt.v), func(t *testing.T) {
+			got, re := callOne(t, w, c, tt.key, tt.param, tt.v)
+			if re != nil {
+				t.Fatalf("refused: %v", re)
+			}
+			switch tt.key {
+			case "header":
+				if v := got.Header.Values("X-P"); len(v) != 1 || v[0] != tt.want {
+					t.Errorf("X-P = %q, want [%q]", v, tt.want)
+				}
+			case "cookie":
+				if v := got.Header.Values("Cookie"); len(v) != 1 || v[0] != tt.want {
+					t.Errorf("Cookie = %q, want [%q]", v, tt.want)
+				}
+			default:
+				if got.RequestURI != tt.want {
+					t.Errorf("request target %q, want %q", got.RequestURI, tt.want)
+				}
+			}
+		})
+	}
+}
+
+// Stage 2 ledger, Q5 (doc.go, Fixed rules, Styles: "Whether a value is
+// undefined (see Values) is settled first; the refusals here apply to
+// defined values"): an empty array under deepObject, a typed nil under
+// spaceDelimited, pipeDelimited and deepObject, and an empty array or object
+// nested in an RFC 6570-style value are undefined: omitted when optional,
+// missing when required, skipped as members. None is refused.
+func TestUndefinedSettledFirst(t *testing.T) {
+	w := newWire(t, nil)
+	doc := doc31(`
+		"/d":{"get":{"operationId":"deep","parameters":[{"name":"p","in":"query","style":"deepObject","schema":{}}]}},
+		"/dr":{"get":{"operationId":"deepReq","parameters":[{"name":"p","in":"query","required":true,"style":"deepObject","schema":{}}]}},
+		"/sd":{"get":{"operationId":"space","parameters":[{"name":"p","in":"query","style":"spaceDelimited","explode":false,"schema":{}}]}},
+		"/sdr":{"get":{"operationId":"spaceReq","parameters":[{"name":"p","in":"query","required":true,"style":"spaceDelimited","explode":false,"schema":{}}]}},
+		"/pd":{"get":{"operationId":"pipe","parameters":[{"name":"p","in":"query","style":"pipeDelimited","explode":false,"schema":{}}]}},
+		"/pdr":{"get":{"operationId":"pipeReq","parameters":[{"name":"p","in":"query","required":true,"style":"pipeDelimited","explode":false,"schema":{}}]}},
+		"/f":{"get":{"operationId":"form","parameters":[{"name":"p","in":"query","schema":{}}]}},
+		"/fn":{"get":{"operationId":"formNo","parameters":[{"name":"p","in":"query","explode":false,"schema":{}}]}},
+		"/s/{p}":{"get":{"operationId":"simple","parameters":[{"name":"p","in":"path","required":true,"schema":{}}]}},
+		"/h":{"get":{"operationId":"header","parameters":[{"name":"X-P","in":"header","explode":true,"schema":{}}]}},
+		"/c":{"get":{"operationId":"cookie","parameters":[{"name":"p","in":"cookie","schema":{}}]}}`)
+	c := parseFor(t, w, doc, nil)
+	nested := map[string]any{"a": []int{}, "b": map[string]any{}, "c": "x", "d": map[string]any{"e": []string{}}}
+	onlyNested := map[string]any{"a": []int{}, "b": map[string]any{"c": map[string]any{}}}
+	sentTests := []struct {
+		key, param string
+		v          any
+		want       string // the request target, or the header or Cookie value; "" for none
+	}{
+		{"deep", "p", []int{}, "/d"},
+		{"deep", "p", (*int)(nil), "/d"},
+		{"deep", "p", map[string]any(nil), "/d"},
+		{"deep", "p", onlyNested, "/d"},
+		{"deep", "p", nested, "/d?p%5Bc%5D=x"},
+		{"space", "p", (*[]string)(nil), "/sd"},
+		{"space", "p", nested, "/sd?p=c%20x"},
+		{"pipe", "p", (*[]string)(nil), "/pd"},
+		{"pipe", "p", []any{"a", []int{}, "b"}, "/pd?p=a%7Cb"},
+		{"form", "p", nested, "/f?c=x"},
+		{"form", "p", onlyNested, "/f"},
+		{"form", "p", []any{"a", []int{}, map[string]any{}, "b"}, "/f?p=a&p=b"},
+		{"formNo", "p", nested, "/fn?p=c,x"},
+		{"simple", "p", []any{"a", map[string]any{}}, "/s/a"},
+		{"header", "X-P", nested, "c=x"},
+		{"header", "X-P", onlyNested, ""},
+		{"cookie", "p", nested, "c=x"},
+		{"cookie", "p", onlyNested, ""},
+	}
+	for _, tt := range sentTests {
+		t.Run(fmt.Sprintf("%s %#v", tt.key, tt.v), func(t *testing.T) {
+			got, re := callOne(t, w, c, tt.key, tt.param, tt.v)
+			if re != nil {
+				t.Fatalf("refused: %v", re)
+			}
+			switch tt.key {
+			case "header", "cookie":
+				name := map[string]string{"header": "X-P", "cookie": "Cookie"}[tt.key]
+				v := got.Header.Values(name)
+				if tt.want == "" {
+					if v != nil {
+						t.Errorf("%s = %q, want none", name, v)
+					}
+					return
+				}
+				if len(v) != 1 || v[0] != tt.want {
+					t.Errorf("%s = %q, want [%q]", name, v, tt.want)
+				}
+			default:
+				if got.RequestURI != tt.want {
+					t.Errorf("request target %q, want %q", got.RequestURI, tt.want)
+				}
+			}
+		})
+	}
+	// Required: missing at the key.
+	for _, tt := range []struct {
+		key string
+		v   any
+	}{
+		{"deepReq", []int{}}, {"deepReq", (*int)(nil)}, {"deepReq", onlyNested},
+		{"spaceReq", (*int)(nil)}, {"spaceReq", onlyNested}, {"pipeReq", (*[]int)(nil)},
+		{"simple", onlyNested}, {"simple", map[string]any{"a": map[string]any{}}},
+	} {
+		_, re := callOne(t, w, c, tt.key, "p", tt.v)
+		if re == nil {
+			t.Errorf("%s %#v: sent, want the required parameter missing", tt.key, tt.v)
+			continue
+		}
+		wantKeys(t, fmt.Sprintf("%s %#v Inputs", tt.key, tt.v), re.Inputs, true, "p")
 	}
 }

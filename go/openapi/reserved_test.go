@@ -18,8 +18,10 @@ import (
 // ("Applications are still responsible for percent-encoding reserved
 // characters that are not allowed in the query string ([, ], #)") and
 // Appendix C.3 (non-RFC 6570 styles take "regular or reserved expansion
-// (based on allowReserved)"). Member names under reserved expansion are not
-// asserted (contract question); the members here have unreserved names.
+// (based on allowReserved)"). Reserved expansion covers member names too,
+// while parameter names always follow the name rule (stage 2 ledger, Q3;
+// doc.go: "RFC 6570 reserved expansion is used exactly, member names
+// included (parameter names always follow the rule above)").
 func TestAllowReservedQuery(t *testing.T) {
 	w := newWire(t, nil)
 	doc := doc31(`
@@ -53,10 +55,21 @@ func TestAllowReservedQuery(t *testing.T) {
 		{"spaceDelimited keeps its delimiter", "s", "p", []string{"a b", "c"}, "/s?p=a%20b%20c"},
 		{"pipeDelimited", "pd", "p", []string{"a/b", "c|d"}, "/pd?p=a/b%7Cc%7Cd"},
 		{"deepObject", "d", "p", map[string]string{"k": "a/b?c"}, "/d?p%5Bk%5D=a/b?c"},
+		// Member names take reserved expansion (ledger, Q3), in every style
+		// and whether or not the object is exploded; a character outside
+		// the reserved and unreserved sets is still encoded.
+		{"member names exploded", "f", "p", map[string]string{"a/b": "c", "d[e]": "f"}, "/f?a/b=c&d[e]=f"},
+		{"member names", "n", "p", map[string]string{"k/1": "v"}, "/n?p=k/1,v"},
+		{"member name with a space", "f", "p", map[string]string{"k 1:": "v"}, "/f?k%201:=v"},
+		{"member name triple", "f", "p", map[string]string{"k%2F": "v"}, "/f?k%2F=v"},
+		{"spaceDelimited member names", "s", "p", map[string]string{"k/1": "v?"}, "/s?p=k/1%20v?"},
+		{"pipeDelimited member names", "pd", "p", map[string]string{"k=1": "v"}, "/pd?p=k=1%7Cv"},
+		{"deepObject member names", "d", "p", map[string]any{"a/b": map[string]string{"c:d": "e"}}, "/d?p%5Ba/b%5D%5Bc:d%5D=e"},
 		// A parameter name is literal template text, not a value: the name
-		// rule applies (doc.go: "parameter and member names encode every
-		// byte outside RFC 3986's unreserved set"; OAS 3.1.2 Appendix C.3).
+		// rule applies (doc.go: "parameter names always follow the rule
+		// above"; OAS 3.1.2 Appendix C.3).
 		{"name encoded", "name", "a/b c", "x/y", "/name?a%2Fb%20c=x/y"},
+		{"name encoded, object", "name", "a/b c", map[string]string{"k": "v"}, "/name?k=v"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -12,37 +12,114 @@ import (
 )
 
 // Scaling tests for the focused second review's complexity fixes G3, G4, G6
-// and G7 (ledger, "Focused second review"), in the style of
-// TestF8ReferenceResolutionScales: four times the input must cost well under
-// the sixteen times a quadratic cost takes; the bound is 10, the best of
-// three runs, to leave room for noise.
+// and G7 (ledger, "Focused second review"), and the shared harness every
+// scaling test uses: four times the input must cost well under the sixteen
+// times a quadratic cost takes. Hardened against CI noise (stage 2 ledger,
+// "Test maintenance": "prefer allocation or work counts; for time, best of 5
+// and a 12x bound"): a cost whose quadratic shows in the heap allocation
+// count is checked on that count, which noise does not move; any other is
+// timed, the best of 5 runs of each size, interleaved so both see the same
+// machine load, against a 12x bound.
 
-// wantLinear times run(small), the best of three, and run(4*small), where
-// run builds its input and returns the work to time, and fails when the
-// larger took more than 10 times as long in each of up to three tries.
+// scaleRuns is how many times the harness runs the work of each size.
+const scaleRuns = 5
+
+// Bounds for four times the input: a linear cost takes about 4 times as
+// much, a quadratic one 16 times.
+const (
+	scaleTimeBound  = 12
+	scaleAllocBound = 8
+)
+
+// scaleCost is one run's wall time and heap allocation count
+// (runtime.MemStats.Mallocs).
+type scaleCost struct {
+	d       time.Duration
+	mallocs uint64
+}
+
+func measureRun(f func()) scaleCost {
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	start := time.Now()
+	f()
+	d := time.Since(start)
+	runtime.ReadMemStats(&after)
+	return scaleCost{d, after.Mallocs - before.Mallocs}
+}
+
+// bestCosts runs a and b scaleRuns times each, interleaved, and returns the
+// least time and the least allocation count each took.
+func bestCosts(a, b func()) (ca, cb scaleCost) {
+	ca = scaleCost{1<<63 - 1, 1<<64 - 1}
+	cb = ca
+	for range scaleRuns {
+		for _, x := range []struct {
+			f    func()
+			best *scaleCost
+		}{{a, &ca}, {b, &cb}} {
+			c := measureRun(x.f)
+			x.best.d = min(x.best.d, c.d)
+			x.best.mallocs = min(x.best.mallocs, c.mallocs)
+		}
+	}
+	return ca, cb
+}
+
+// wantLinear checks, by time, that run(4*small) costs at most 12 times
+// run(small), where run builds its input and returns the work to measure;
+// the work is run scaleRuns times for each size, so work that must start
+// fresh each time (a first use) prepares scaleRuns fresh inputs.
 func wantLinear(t *testing.T, name string, small int, run func(n int) func()) {
 	t.Helper()
+	scaleCheck(t, name, small, run, false)
+}
+
+// wantLinearAllocs is wantLinear checked on the heap allocation count, for a
+// cost whose quadratic shows in allocations, against an 8x bound.
+func wantLinearAllocs(t *testing.T, name string, small int, run func(n int) func()) {
+	t.Helper()
+	scaleCheck(t, name, small, run, true)
+}
+
+func scaleCheck(t *testing.T, name string, small int, run func(n int) func(), allocs bool) {
+	t.Helper()
 	t.Run(name, func(t *testing.T) {
-		if testing.Short() {
+		if testing.Short() && !allocs {
 			t.Skip("timing test")
 		}
-		a := max(fastest(run(small)), 100*time.Microsecond)
-		large := run(4 * small)
-		best := time.Duration(1<<63 - 1)
-		for range 3 {
-			start := time.Now()
-			large()
-			best = min(best, time.Since(start))
-			if best <= 10*a {
-				break
-			}
-		}
-		ratio := float64(best) / float64(a)
-		t.Logf("%d: %v, %d: %v (%.1fx)", small, a, 4*small, best, ratio)
-		if ratio > 10 {
-			t.Errorf("four times the input took %.1f times as long; want linear", ratio)
+		ca, cb := bestCosts(run(small), run(4*small))
+		timeRatio := float64(cb.d) / float64(max(ca.d, 100*time.Microsecond))
+		allocRatio := float64(cb.mallocs) / float64(max(ca.mallocs, 1))
+		t.Logf("%d: %v, %d allocations; %d: %v, %d allocations (time %.1fx, allocations %.1fx)",
+			small, ca.d, ca.mallocs, 4*small, cb.d, cb.mallocs, timeRatio, allocRatio)
+		switch {
+		case allocs && allocRatio > scaleAllocBound:
+			t.Errorf("four times the input made %.1f times the allocations; want linear", allocRatio)
+		case !allocs && timeRatio > scaleTimeBound:
+			t.Errorf("four times the input took %.1f times as long; want linear", timeRatio)
 		}
 	})
+}
+
+// freshClients parses doc n times, for work that must meet a Client whose
+// operations are not yet compiled.
+func freshClients(t *testing.T, doc []byte, opts func() *openapi.Options, n int) []*openapi.Client {
+	t.Helper()
+	cs := make([]*openapi.Client, n)
+	for i := range cs {
+		var o *openapi.Options
+		if opts != nil {
+			o = opts()
+		}
+		c, err := openapi.Parse(context.Background(), doc, testDocURI, o)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cs[i] = c
+	}
+	return cs
 }
 
 // parseDoc returns work that parses doc and checks it has operations.
@@ -64,21 +141,10 @@ func parseDoc(t *testing.T, doc []byte, opts *openapi.Options) func() {
 }
 
 // timedOperations returns work that lists the operations of a freshly
-// parsed doc, a new Client for each of fastest's runs; only Operations()
-// is timed.
+// parsed doc, a new Client for each of the harness's runs; only
+// Operations() is measured.
 func timedOperations(t *testing.T, doc []byte) func() {
-	c, err := openapi.Parse(context.Background(), doc, testDocURI, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	docs := []*openapi.Client{c}
-	for range 2 {
-		c, err := openapi.Parse(context.Background(), doc, testDocURI, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		docs = append(docs, c)
-	}
+	docs := freshClients(t, doc, nil, scaleRuns)
 	i := 0
 	return func() {
 		ops := docs[i%len(docs)].Operations()
@@ -119,11 +185,14 @@ func refsInto(n int, escape string) []byte {
 // G3 (#3): the member index covers objects with escaped names, and an array
 // index is found by position (ledger: "member index covers escaped names
 // (decoded once, sorted by decoded name); array index lookup by position,
-// not a walk"). Reference resolution stays linear.
+// not a walk"). Reference resolution stays linear. Every escaped name was
+// decoded again at each lookup, so that case is checked on allocations; the
+// others were quadratic in time only, and their sizes are where the
+// quadratic took 16x (checked against the code before the fix, aa84ce6).
 func TestG3LookupScales(t *testing.T) {
-	wantLinear(t, "one escaped member name", 1000, func(n int) func() { return parseDoc(t, refsInto(n, "one"), nil) })
-	wantLinear(t, "every member name escaped", 250, func(n int) func() { return parseDoc(t, refsInto(n, "all"), nil) })
-	wantLinear(t, "array index pointers", 1500, func(n int) func() {
+	wantLinear(t, "one escaped member name", 4000, func(n int) func() { return parseDoc(t, refsInto(n, "one"), nil) })
+	wantLinearAllocs(t, "every member name escaped", 250, func(n int) func() { return parseDoc(t, refsInto(n, "all"), nil) })
+	wantLinear(t, "array index pointers", 6000, func(n int) func() {
 		var b strings.Builder
 		b.WriteString(`{"openapi":"3.1.0","info":{"title":"t","version":"1"},"paths":{`)
 		for i := range n {
@@ -139,7 +208,7 @@ func TestG3LookupScales(t *testing.T) {
 		b.WriteString(`]}`)
 		return parseDoc(t, []byte(b.String()), nil)
 	})
-	wantLinear(t, "parameter references at first use, one escaped name", 1000, func(n int) func() {
+	wantLinear(t, "parameter references at first use, one escaped name", 4000, func(n int) func() {
 		var b strings.Builder
 		b.WriteString(`{"openapi":"3.1.0","info":{"title":"t","version":"1"},"servers":[{"url":"https://h.example.test"}],"paths":{"/x":{"get":{"operationId":"op","parameters":[`)
 		for i := range n {

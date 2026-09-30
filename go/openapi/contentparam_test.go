@@ -337,3 +337,29 @@ func TestContentParamDescriptors(t *testing.T) {
 		mustCall(t, c, key, nil, nil) // unused, the optional defect does not fail the call
 	}
 }
+
+// Stage 2 ledger, Q7 (client.go, With: "any other Options the document
+// cannot use refuse each call they affect"; stage 1 ledger, F35: a
+// With-derived malformed Codecs key refuses "only calls that would use a
+// codec"): a JSON content parameter uses a codec, so a call that gives one
+// is refused at Settings["Options.Codecs"]; a call that leaves it out is
+// sent.
+func TestContentParamMalformedCodecKey(t *testing.T) {
+	w := newWire(t, nil)
+	c := parseFor(t, w, doc31(contentDoc), nil)
+	e := c.With(func(o *openapi.Options) { o.Codecs["application/json; x=1"] = recordingCodec{tag: "X"} })
+	for _, key := range []string{"q", "h", "path", "cookie", "vnd"} {
+		param := map[string]string{"h": "X-P"}[key]
+		if param == "" {
+			param = "p"
+		}
+		before := w.count()
+		resp, err := e.Call(t.Context(), key, &openapi.Input{Params: map[string]any{param: map[string]int{"a": 1}}}, nil)
+		re := refusedSince(t, w, before, resp, err)
+		wantKeys(t, key+" Settings", re.Settings, false, "Options.Codecs")
+	}
+	mustCall(t, e, "q", nil, nil)
+	if got := w.last(t).RequestURI; got != "/q" {
+		t.Errorf("request target %q, want /q", got)
+	}
+}
