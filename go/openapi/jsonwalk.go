@@ -135,10 +135,9 @@ func (d *document) walkOf(t reflect.Type, open map[reflect.Type]bool) *walk {
 		levels: 1,
 	}
 	switch k := t.Kind(); {
-	case w.json: // json writes it by its MarshalJSON, never looking inside
+	case w.json || w.text: // json writes it by a method, never looking inside
 	case k != reflect.Interface && (t == partType || t.Implements(readerType)):
-		w.reader, w.holds = true, true // unless an addressable value's pointer has a MarshalJSON
-	case w.text: // likewise by its MarshalText
+		w.reader, w.holds = true, true // unless an addressable value's pointer has a method
 	case k == reflect.Interface: // the value it holds tells
 		w.holds, w.levels = true, 0
 	case k == reflect.Pointer:
@@ -228,10 +227,10 @@ func (d *document) findValue(v reflect.Value, level int) (string, bool, int) {
 	switch {
 	case w.json || w.ptrJSON && addr:
 		return "", false, 0
-	case w.reader:
-		return "", true, 0
 	case w.text || w.ptrText && addr:
 		return "", false, level
+	case w.reader:
+		return "", true, 0
 	case !w.holds && w.levels > 0:
 		return "", false, level - 1 + w.levels
 	case !w.holds:
