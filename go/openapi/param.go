@@ -43,8 +43,8 @@ var (
 // the style's first.
 func (c *Client) writeParam(b *strings.Builder, lead string, p *param, v any, re *RequestError) (given, written bool) {
 	if p.ContentType == "" {
-		e := emitter{param: p, doc: c.doc, b: b, lead: lead}
-		given, err := e.write(v)
+		e := emitter{param: p, b: b, lead: lead}
+		given, err := e.write(c.doc, v)
 		if err != nil {
 			re.input(p.Key, err)
 			return false, false
@@ -132,15 +132,15 @@ func jsonText(s string) string {
 // once the value proves defined.
 type emitter struct {
 	*param
-	doc  *document
 	b    *strings.Builder
 	lead string
 	n    int  // the items or members written
 	held bool // the first item of a named value not exploded was "", and whether "=" follows it depends on a second
 }
 
-// write writes v, reporting whether it is defined.
-func (e *emitter) write(v any) (bool, error) {
+// write writes v, reporting whether it is defined. A value it gives
+// encoding/json is checked as d checks JSON it encodes.
+func (e *emitter) write(d *document, v any) (bool, error) {
 	switch v := v.(type) {
 	case string:
 		return e.primitive(jsonText(v))
@@ -161,7 +161,7 @@ func (e *emitter) write(v any) (bool, error) {
 	}
 	s, err := marshal(v)
 	if err == nil {
-		_, err = checkJSON(e.doc, v, s)
+		_, err = checkJSON(d, v, s)
 	}
 	if err != nil {
 		return false, err
