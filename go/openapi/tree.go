@@ -35,7 +35,7 @@ type tree struct {
 	indexes map[int32][]int32 // by container: an object's members sorted by name, an array's items
 
 	decodedMu sync.Mutex
-	decoded   map[uint32]string // escaped strings, decoded, by the offset of their opening quote
+	decoded   []string // the value of each string of escapes, once read
 }
 
 // A node is one JSON value: the offset of its first byte, the index of the
@@ -132,21 +132,20 @@ func (t *tree) escaped(q uint32) bool {
 // str returns the value of the string whose opening quote is at q, decoding
 // an escaped one once.
 func (t *tree) str(q uint32) string {
-	if !t.escaped(q) {
+	i, escaped := slices.BinarySearch(t.escapes, q)
+	if !escaped {
 		s := t.src[q+1:]
 		return s[:strings.IndexByte(s, '"')]
 	}
 	t.decodedMu.Lock()
 	defer t.decodedMu.Unlock()
-	d, ok := t.decoded[q]
-	if !ok {
-		if t.decoded == nil {
-			t.decoded = map[uint32]string{}
-		}
-		d = jsonString(t.src[q : closingQuote(t.src, int(q))+1])
-		t.decoded[q] = d
+	if t.decoded == nil {
+		t.decoded = make([]string, len(t.escapes))
 	}
-	return d
+	if t.decoded[i] == "" { // an escape decodes to at least one byte
+		t.decoded[i] = jsonString(t.src[q : closingQuote(t.src, int(q))+1])
+	}
+	return t.decoded[i]
 }
 
 // compareName compares the name of member c with key, reading an unescaped
