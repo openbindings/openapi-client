@@ -321,7 +321,6 @@ func TestLoadRefusesOptions(t *testing.T) {
 		"MediaType":                 {MediaType: "application/json"},
 		"BaseURL":                   {BaseURL: "https://api.example.test/v9/"},
 	} {
-
 		if _, err := openapi.Parse(t.Context(), []byte(doc), testDocURI, &opts); err != nil {
 			t.Errorf("%s: %v", name, err)
 		}
