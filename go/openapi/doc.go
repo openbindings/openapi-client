@@ -80,14 +80,16 @@
 // In a parameter not serialized by content, and in a form or multipart
 // field serialized by a style or a Swagger 2.0 collectionFormat, null, an
 // empty array and an object whose members are all undefined are undefined,
-// as RFC 6570 says, and "" is a value. An undefined member is skipped, a
-// null array item is refused, an undefined optional parameter is omitted,
+// as RFC 6570 says, and "" is a value. An undefined member is skipped, an
+// undefined array item (null, [] or {}) is refused, since dropping it would
+// shift the items after it, an undefined optional parameter is omitted,
 // and an undefined required one is missing. A form or multipart property or
 // array item whose JSON data is null is omitted, whatever its
 // serialization. A parameter serialized by content is encoded as a body of
 // its media type is, so under application/json null, [] and {} are present
 // values. A JSON body or JSON part is exactly what its codec writes, null
-// members, [] and {} included. Schema defaults are never sent, and values
+// members, [] and {} included. A value nested deeper than 1,000 levels is
+// refused at its key. Schema defaults are never sent, and values
 // are never validated against schemas. How bytes, readers and iterators are
 // sent is on Input.Body.
 //
