@@ -527,12 +527,12 @@ func (c *Client) resolve(s *server, setting string, re *RequestError) (endpoint,
 		}
 	}
 	type span struct {
-		name, value string
-		at          int
+		i, at int // the variable's place in the template, and where its value begins
+		value string
 	}
-	var values []span // the values given, and where each begins
+	var values []span // the values given
 	u := s.substitute(func(i, at int) string {
-		v := s.Variables[s.vars[i]]
+		v := s.Variables[s.vars[i].index]
 		value, given := cfg.Variables[v.Name]
 		switch {
 		case !given && v.DefaultSet:
@@ -541,22 +541,15 @@ func (c *Client) resolve(s *server, setting string, re *RequestError) (endpoint,
 			refuse(v.Name, errors.New("the server variable has no default; give it a value"))
 		case value != v.Default && v.Enum != nil && !slices.Contains(v.Enum, value):
 			refuse(v.Name, fmt.Errorf("the value is not one of the variable's enum %q", v.Enum))
-		case strings.HasPrefix(s.text[i+1], "://") && !isScheme(value):
-			refuse(v.Name, errors.New(`the value must be a URI scheme, as "://" follows it (RFC 3986 section 3.1)`))
-		case value != "":
-			values = append(values, span{v.Name, value, at})
+		default:
+			values = append(values, span{i, at, value})
 		}
 		return value
 	})
-	path, authority := urlParts(u)
+	colon, _, path := urlParts(u)
 	for _, v := range values {
-		switch {
-		case authority >= 0 && authority <= v.at && v.at < path:
-			if strings.ContainsAny(v.value, `/?#@\`) {
-				refuse(v.name, errors.New(`a value in the authority cannot hold "/", "?", "#", "@" or "\"`))
-			}
-		case v.at >= path && dotSegment(u, max(path, strings.LastIndexByte(u[:v.at], '/')+1), v.at+len(v.value)):
-			refuse(v.name, errDotSegment)
+		if err := s.vars[v.i].part.check(u, v.value, v.at, colon, path); err != nil {
+			refuse(s.Variables[s.vars[v.i].index].Name, err)
 		}
 	}
 	if !ok {
@@ -564,8 +557,12 @@ func (c *Client) resolve(s *server, setting string, re *RequestError) (endpoint,
 	}
 	ep, err := c.doc.resolveServerURL(u)
 	if err != nil {
-		if re != nil {
-			re.setting(setting, fmt.Errorf("server URL %q cannot be used with the variables' values: %w", s.URL, err))
+		err = fmt.Errorf("server URL %q cannot be used with the variables' values: %w", s.URL, err)
+		if len(values) == 0 && re != nil {
+			re.setting(setting, err)
+		}
+		for _, v := range values { // the values given make it unusable
+			refuse(s.Variables[s.vars[v.i].index].Name, err)
 		}
 		return endpoint{}, false
 	}
@@ -573,15 +570,19 @@ func (c *Client) resolve(s *server, setting string, re *RequestError) (endpoint,
 	return ep, true
 }
 
+// dotUnescaper decodes percent-encoded dots, equivalent to "." (RFC 3986
+// section 6.2.2.2).
+var dotUnescaper = strings.NewReplacer("%2e", ".", "%2E", ".")
+
 // dotSegment reports whether one of the path segments of u from start,
-// where one begins, to end is "." or "..".
+// where one begins, to end is "." or "..", percent-encoded or not.
 func dotSegment(u string, start, end int) bool {
 	for start < end {
 		n := strings.IndexAny(u[start:], "/?#")
 		if n < 0 {
 			n = len(u) - start
 		}
-		if s := u[start : start+n]; s == "." || s == ".." {
+		if s := dotUnescaper.Replace(u[start : start+n]); s == "." || s == ".." {
 			return true
 		}
 		if start += n; start == len(u) || u[start] != '/' {

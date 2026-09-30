@@ -465,9 +465,27 @@ func canonicalString(b *strings.Builder, s string) {
 type server struct {
 	*Server
 	text  []string  // the literal text around the variables
-	vars  []int     // each variable, an index into Server.Variables
+	vars  []urlVar  // each variable of the template, in order
 	fixed *endpoint // the URL with every variable at its default, if usable
 }
+
+// A urlVar is a variable of a server URL template: its index into
+// Server.Variables, and the part of the URL its default falls in, with
+// every default substituted (T1-23).
+type urlVar struct {
+	index int
+	part  urlPart
+}
+
+// A urlPart is the part of a URL a variable's values may change.
+type urlPart uint8
+
+const (
+	inPath      urlPart = iota
+	inScheme            // the resulting scheme must be one
+	inAuthority         // no "/", "?", "#", "@" or "\"
+	wholeURL            // its default spans "://", or it is the template: any value
+)
 
 // An endpoint is a usable server URL, its variables substituted.
 type endpoint struct {
@@ -518,12 +536,26 @@ func (d *document) newServer(s *Server, declared value) *server {
 			}
 			s.Variables = append(s.Variables, v)
 		}
-		sv.vars = append(sv.vars, j)
+		sv.vars = append(sv.vars, urlVar{index: j})
+	}
+	at := make([]int, len(sv.vars)) // where each default falls
+	defaults := sv.substitute(func(i, pos int) string { at[i] = pos; return s.Variables[sv.vars[i].index].Default })
+	colon, authority, path := urlParts(defaults)
+	for i := range sv.vars {
+		a, b := at[i], at[i]+len(s.Variables[sv.vars[i].index].Default)
+		switch {
+		case authority >= 0 && a <= colon && b >= colon+3, len(sv.text) == 2 && sv.text[0]+sv.text[1] == "":
+			sv.vars[i].part = wholeURL // its default spans "://", or it is the whole template
+		case a <= colon:
+			sv.vars[i].part = inScheme
+		case authority >= 0 && a >= authority && (a < path || a == authority):
+			sv.vars[i].part = inAuthority
+		}
 	}
 	// Only a defect no value can repair makes the server unusable for good:
 	// a query or fragment in its text, or userinfo in its authority.
 	literal := sv.substitute(func(int, int) string { return "x" })
-	path, authority := urlParts(literal)
+	_, authority, path = urlParts(literal)
 	if len(sv.vars) == 0 {
 		if _, err := d.resolveServerURL(literal); err != nil {
 			s.Err = fmt.Errorf("server URL %q cannot be used: %w", s.URL, err)
@@ -533,7 +565,7 @@ func (d *document) newServer(s *Server, declared value) *server {
 		s.Err = fmt.Errorf("server URL %q cannot be used whatever its variables' values", s.URL)
 	}
 	if s.Err == nil && !slices.ContainsFunc(s.Variables, func(v Variable) bool { return !v.DefaultSet }) {
-		if ep, err := d.resolveServerURL(sv.substitute(func(i, _ int) string { return s.Variables[sv.vars[i]].Default })); err == nil {
+		if ep, err := d.resolveServerURL(defaults); err == nil {
 			sv.fixed = &ep
 		}
 	}
@@ -553,21 +585,41 @@ func (s *server) substitute(value func(i, at int) string) string {
 	return b.String()
 }
 
-// urlParts returns where the path of the URL reference u begins, and where
-// its authority does (RFC 3986 sections 3.2 and 4.2): after "//", following
-// a scheme or leading, or -1 when it has none.
-func urlParts(u string) (path, authority int) {
+// urlParts returns where the scheme of the URL reference u ends, at its
+// colon, where its authority begins, after "//", each -1 when u has none,
+// and where its path begins (RFC 3986 sections 3 and 4.2).
+func urlParts(u string) (colon, authority, path int) {
+	colon, authority = -1, -1
 	if i := strings.IndexAny(u, ":/?#"); i > 0 && u[i] == ':' {
-		path = i + 1
+		colon, path = i, i+1
 	}
 	if !strings.HasPrefix(u[path:], "//") {
-		return path, -1
+		return colon, authority, path
 	}
-	authority = path + 2
+	authority, path = path+2, len(u)
 	if i := strings.IndexAny(u[authority:], "/?#"); i >= 0 {
-		return authority + i, authority
+		path = authority + i
 	}
-	return len(u), authority
+	return colon, authority, path
+}
+
+// check returns why value, substituted at at in u, whose parts urlParts
+// gives, changes more of u than the part p, or nil.
+func (p urlPart) check(u, value string, at, colon, path int) error {
+	switch {
+	case p == inScheme && (colon < 0 || at+len(value) > colon || !isScheme(u[:colon])):
+		return errors.New("the value must leave the scheme a URI scheme (RFC 3986 section 3.1)")
+	case p == inAuthority && strings.ContainsAny(value, `/?#@\`):
+		return errors.New(`a value in the authority cannot hold "/", "?", "#", "@" or "\"`)
+	case p != inPath:
+	case at < path:
+		return errors.New("a value in the path cannot change the scheme or authority")
+	case strings.ContainsAny(value, "?#"):
+		return errors.New("a value in the path cannot add a query or fragment")
+	case dotSegment(u, max(path, strings.LastIndexByte(u[:at], '/')+1), at+len(value)):
+		return errDotSegment
+	}
+	return nil
 }
 
 // splitTemplate splits a URL template into its literal text and the names
