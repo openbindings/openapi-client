@@ -150,13 +150,14 @@ func (e *entry) field(f int) (value, string, error) {
 		name = "servers"
 	}
 	l := e.sum.at[f]
-	switch {
-	case l == nil:
+	if l == nil {
 		return value{}, "", nil
-	case e.sum.dup&(1<<f) != 0:
-		return l.v.get(name), l.ptr + "/" + name, fmt.Errorf("the Path Item and its $ref target both define %s", name)
 	}
-	return l.v.get(name), l.ptr + "/" + name, nil
+	var err error
+	if e.sum.dup&(1<<f) != 0 {
+		err = fmt.Errorf("the Path Item and its $ref target both define %s", name)
+	}
+	return l.v.get(name), l.ptr + "/" + name, err
 }
 
 // A paramID identifies a parameter by location and name, a header's name

@@ -506,6 +506,9 @@ type resolution struct {
 // one: in OpenAPI 3.1 a Reference Object's description replaces its
 // target's. Each Reference Object is followed once per document.
 func (d *document) follow(v value, ptr string) (value, string, string, error) {
+	if !v.ok() {
+		return v, ptr, "", nil
+	}
 	d.refsMu.Lock()
 	defer d.refsMu.Unlock()
 	type step struct {

@@ -356,10 +356,9 @@ func jsonData(v any) (data, error) {
 		return data{}, &encodingError{err}
 	}
 	root := value{t, 0}
-	d := data{kind: primitive, text: root.text()}
+	var d data
 	switch root.kind() {
-	case 'n':
-		d.kind = undefined
+	case 'n': // undefined
 	case '[':
 		d.kind = array
 		for _, item := range root.members() {
@@ -382,6 +381,8 @@ func jsonData(v any) (data, error) {
 				d.items = append(d.items, name, m.text())
 			}
 		}
+	default:
+		d = data{kind: primitive, text: root.text()}
 	}
 	if d.kind != primitive && len(d.items) == 0 {
 		d.kind = undefined
