@@ -66,10 +66,11 @@ type Options struct {
 	// Values are substituted as given, except that a value whose first
 	// character falls in the authority of the substituted URL (after "//",
 	// before the path) may not hold "/", "?", "#", "@" or "\\", so a value
-	// cannot move the request to another host (RFC 3986 section 3.2), and a
-	// value that forms a whole "." or ".." segment of the path is refused,
-	// as for path parameters. A variable that also supplies the scheme
-	// supplies a whole URL and is not restricted.
+	// cannot move the request to another host (RFC 3986 section 3.2); a
+	// value followed by a literal "://" must be a URI scheme (section 3.1);
+	// and a value that forms a whole "." or ".." segment of the path is
+	// refused, as for path parameters. A variable that starts the URL and is
+	// not followed by "://" supplies a whole URL and is not restricted.
 	Variables map[string]string
 
 	// Credentials holds a Credential for each security scheme, by the name
