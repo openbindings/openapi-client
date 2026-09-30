@@ -83,42 +83,63 @@ type upload struct {
 	first   sentBody                      // the first generation
 
 	mu       sync.Mutex
-	gen      int   // the generation that counts
-	ended    bool  // it has ended
-	result   error // how it ended
-	returned bool  // the round trip has returned
-	done     bool  // the result is published
+	gen      generation // the generation that counts
+	prev     generation // the one before it, which counts again if gen is never sent
+	gens     int32      // the generations started
+	returned bool       // the round trip has returned
+	done     bool       // the result is published
 	err      error
 	wait     chan struct{}
 }
 
+// A generation is one reading of a request body.
+type generation struct {
+	n      int32
+	ended  bool  // it has ended
+	result error // how it ended
+}
+
 var errClosedEarly = errors.New("openapi: the request body was closed before it was sent completely")
 
-// end records how generation gen ended, the first time.
-func (u *upload) end(gen int, err error) {
+// end records how generation n ended, the first time.
+func (u *upload) end(n int32, err error) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	if gen == u.gen && !u.ended {
-		u.ended, u.result = true, err
+	switch {
+	case n == u.gen.n && !u.gen.ended:
+		u.gen.ended, u.gen.result = true, err
 		u.publish()
+	case n == u.prev.n && !u.prev.ended:
+		u.prev.ended, u.prev.result = true, err
 	}
 }
 
 // newGeneration starts the reading of a replay.
-func (u *upload) newGeneration() int {
+func (u *upload) newGeneration() int32 {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	u.gen++
-	u.ended, u.result = false, nil
-	return u.gen
+	u.gens++
+	u.prev, u.gen = u.gen, generation{n: u.gens}
+	return u.gens
+}
+
+// unsent drops generation n, a replay that is never sent: the one before it
+// counts again.
+func (u *upload) unsent(n int32) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if n == u.gen.n {
+		u.gen = u.prev
+		u.publish()
+	}
 }
 
 // publish publishes the result once no replay can follow; u.mu is held.
 func (u *upload) publish() {
-	if u.done || !u.returned || !u.ended {
+	if u.done || !u.returned || !u.gen.ended {
 		return
 	}
-	u.done, u.err = true, u.result
+	u.done, u.err = true, u.gen.result
 	if u.wait != nil {
 		close(u.wait)
 	}
@@ -148,7 +169,7 @@ func (u *upload) waitUpload(ctx context.Context) error {
 func (x *exchange) attach(req *http.Request, p payload) {
 	x.payload = p
 	if p.size == 0 {
-		x.ended = true
+		x.gen.ended = true
 		return
 	}
 	x.first = sentBody{x: x, p: p}
@@ -191,7 +212,7 @@ func (r *Request) newExchange(ctx context.Context) (*exchange, *http.Request, er
 	}
 	switch {
 	case body == nil || body == http.NoBody:
-		x.ended = true
+		x.gen.ended = true
 	case body == pr.body:
 		x.attach(req, pr.payload)
 	default: // a body the caller set, of the length it declares, if any
@@ -571,7 +592,7 @@ type payload struct {
 // would.
 type sentBody struct {
 	x   *exchange // tracks the upload, or nil
-	gen int
+	gen int32
 	p   payload
 	pos int64
 	rc  io.ReadCloser // read instead of p when set, p.size being its declared length or -1

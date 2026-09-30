@@ -120,7 +120,18 @@ func newConfig(o Options, parent *config) *config {
 	return cfg
 }
 
-func followNone(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+// followNone is the CheckRedirect of the http.Client the client sends with,
+// which follows no redirect. For a 307 or 308, the http.Client has already
+// taken the body again, with GetBody, for the hop req, which is never sent.
+func followNone(req *http.Request, _ []*http.Request) error {
+	if b, ok := req.Body.(*sentBody); ok && b.x != nil {
+		b.x.unsent(b.gen)
+		if b.rc != nil {
+			b.rc.Close()
+		}
+	}
+	return http.ErrUseLastResponse
+}
 
 // derivedFields are the header fields net/http derives or HTTP forbids a
 // client to set (RFC 9110 sections 6.6.2 and 8.6, RFC 9113 section 8.2.2).
