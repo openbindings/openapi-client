@@ -1,0 +1,734 @@
+package openapi
+
+import (
+	"errors"
+	"fmt"
+	"net/textproto"
+	"slices"
+	"strconv"
+	"strings"
+)
+
+// An operation is a compiled operation: its descriptor, and the plan its
+// calls follow, so that calls do no document work.
+type operation struct {
+	Operation
+	doc *document
+	plan
+}
+
+type plan struct {
+	params     []param
+	pathParams []int // the path parameters, indexes into params
+	path       []pathPart
+	servers    []*server
+	body       []parsedMedia // the request body's Media, parsed
+	responses  []responsePlan
+	success    [][]parsedMedia // each 2xx response's concrete media types
+}
+
+// A param is a parameter with its serialization rules.
+type param struct {
+	*Param
+	required    bool
+	field       string // a header parameter's canonical field name
+	name        string // a query parameter's percent-encoded name
+	unsupported error  // why stage 1 cannot serialize it, or nil
+}
+
+// A pathPart is literal text of the path template, percent-encoded, or one
+// of its parameters.
+type pathPart struct {
+	text  string
+	param int // an index into plan.params, or -1 for text
+}
+
+// A responsePlan is a declared response with its parsed media types.
+type responsePlan struct {
+	*Message
+	status   int // an exact status code, or 0
+	class    int // the class of a range such as "4XX", or 0
+	fallback bool
+	media    []parsedMedia
+}
+
+// build compiles the entry: what its Operation Object compiles to on any
+// path, shared by the entries of its group, then what its own path decides.
+func (e *entry) build() *operation {
+	d := e.doc
+	if e.m < 0 {
+		o := &operation{doc: d}
+		o.Path, o.Source, o.Err = e.path, d.source(e.levels.ptr), e.err
+		return o
+	}
+	var o *operation
+	if g := e.group; g != nil {
+		g.once.Do(func() { g.op = e.shape() })
+		c := *g.op
+		o = &c
+	} else {
+		o = e.shape()
+	}
+	o.Key, o.Path = e.id, e.path
+	if e.id == "" || d.byID[e.id] != e {
+		o.Key = o.Method + " " + o.Path
+	}
+	if err := o.parsePath(); err != nil {
+		o.Err = errors.Join(o.Err, err)
+	}
+	return o
+}
+
+// shape compiles what the entry's Operation Object compiles to on every
+// path its Path Item chain reaches it from: all but the Key and what the
+// path template decides.
+func (e *entry) shape() *operation {
+	d, n, ptr := e.doc, e.node, e.ptr()
+	o := &operation{doc: d}
+	op := &o.Operation
+	op.ID, op.Method, op.Source = e.id, methods[e.m].upper, d.source(ptr)
+	var params, body, responses, servers, security value
+	for name, m := range n.members() { // one pass: a member's name is read from the source
+		switch name {
+		case "summary":
+			op.Summary = m.string()
+		case "description":
+			op.Description = m.string()
+		case "tags":
+			op.Tags = m.strs()
+		case "deprecated":
+			op.Deprecated = m.kind() == 't'
+		case "parameters":
+			params = m
+		case "requestBody":
+			body = m
+		case "responses":
+			responses = m
+		case "servers":
+			servers = m
+		case "security":
+			security = m
+		}
+	}
+	errs := []error{e.err}
+
+	ids := map[paramID]int{}
+	list, at, err := e.field(parametersField)
+	errs = append(errs, err)
+	errs = o.addParams(list, at, ids, errs)
+	errs = o.addParams(params, ptr+"/parameters", ids, errs)
+	o.assignKeys()
+
+	if body.ok() && op.Method != "TRACE" {
+		var target value
+		var c *content
+		op.Body, target, c = d.message(body, ptr+"/requestBody")
+		if !target.ok() {
+			errs = append(errs, op.Body.Err)
+		}
+		op.Body.Required = target.flag("required")
+		o.body = c.parsed
+	}
+	if responses.kind() == '{' {
+		for key, r := range responses.members() {
+			if !strings.HasPrefix(key, "x-") {
+				m, _, c := d.message(r, ptr+"/responses/"+escapeToken(key))
+				m.Key = key
+				o.addResponse(m, c)
+			}
+		}
+	}
+
+	var sl *serverList
+	switch s, at, err := e.field(serversField); {
+	case servers.hasMembers():
+		sl = d.parseServers(servers, ptr+"/servers")
+	case s.ok():
+		errs = append(errs, err)
+		sl = d.serverLists.get(s.i, func() *serverList { return d.parseServers(s, at) })
+	default:
+		sl, _ = d.inherited()
+	}
+	o.servers, op.Servers = sl.servers, sl.desc
+
+	if security.ok() {
+		op.Security = securityRequirements(security)
+	} else {
+		_, op.Security = d.inherited()
+	}
+	op.Err = errors.Join(errs...)
+	return o
+}
+
+// field returns the Path Item field f, parametersField or serversField,
+// from the level of the chain that has it, with its pointer, and an error
+// when several do.
+func (e *entry) field(f int) (value, string, error) {
+	name := "parameters"
+	if f == serversField {
+		name = "servers"
+	}
+	l := e.sum.at[f]
+	if l == nil {
+		return value{}, "", nil
+	}
+	var err error
+	if e.sum.dup&(1<<f) != 0 {
+		err = fmt.Errorf("the Path Item and its $ref target both define %s", name)
+	}
+	return l.v.get(name), l.ptr + "/" + name, err
+}
+
+// A paramID identifies a parameter by location and name, a header's name
+// compared without regard to case.
+type paramID struct{ in, name string }
+
+// addParams adds the parameters of list, each taking the place of an
+// earlier one it identifies.
+func (o *operation) addParams(list value, ptr string, ids map[paramID]int, errs []error) []error {
+	if list.kind() != '[' {
+		return errs
+	}
+	i := 0
+	for _, v := range list.members() {
+		p := o.doc.param(v, ptr+"/"+strconv.Itoa(i))
+		i++
+		if p.In == "header" && (strings.EqualFold(p.Name, "Accept") || strings.EqualFold(p.Name, "Content-Type") || strings.EqualFold(p.Name, "Authorization")) {
+			continue
+		}
+		pp := param{Param: p, required: p.Required || p.In == "path"}
+		id := paramID{p.In, p.Name}
+		switch p.In {
+		case "":
+			errs = append(errs, p.Err) // its identity cannot be known
+			o.params = append(o.params, pp)
+			continue
+		case "header":
+			pp.field = textproto.CanonicalMIMEHeaderKey(p.Name)
+			id.name = strings.ToLower(p.Name)
+		case "query":
+			pp.name = escape(p.Name)
+		}
+		switch {
+		case p.Err != nil:
+		case p.ContentType != "":
+			pp.unsupported = notYet("content parameters")
+		case p.In == "cookie":
+			pp.unsupported = notYet("cookie parameters")
+		case p.AllowReserved:
+			pp.unsupported = notYet("allowReserved")
+		case p.Style != "simple" && p.Style != "form":
+			pp.unsupported = notYet("the " + p.Style + " style")
+		}
+		if j, ok := ids[id]; ok {
+			o.params[j] = pp
+		} else {
+			ids[id] = len(o.params)
+			o.params = append(o.params, pp)
+		}
+	}
+	return errs
+}
+
+// assignKeys sets each parameter's Key and lists the parameters in
+// Operation.Params.
+func (o *operation) assignKeys() {
+	names := make(map[string]int, len(o.params))
+	for _, p := range o.params {
+		names[p.Name]++
+	}
+	for i, pp := range o.params {
+		p := pp.Param
+		o.Params = append(o.Params, p)
+		if p.In == "path" {
+			o.pathParams = append(o.pathParams, i)
+		}
+		if p.In == "" {
+			continue
+		}
+		loc, _, dotted := strings.Cut(p.Name, ".")
+		p.Key = p.Name
+		if names[p.Name] > 1 || p.Name == "" || strings.HasPrefix(p.Name, "/") || strings.HasPrefix(p.Name, "Input.Body") ||
+			dotted && slices.Contains([]string{"path", "query", "header", "cookie", "querystring"}, loc) {
+			p.Key = p.In + "." + p.Name
+		}
+	}
+}
+
+// param describes the Parameter Object v at ptr, following references. A
+// target that references reach is compiled once, and copied for each.
+func (d *document) param(v value, ptr string) *Param {
+	t, at, desc, err := d.follow(v, ptr)
+	if err != nil {
+		return &Param{Source: d.source(ptr), Err: err}
+	}
+	if t.i == v.i { // only this place reaches it
+		p := d.newParam(t, at)
+		p.Description = desc
+		return p
+	}
+	c := *d.paramForms.get(t.i, func() *Param { return d.newParam(t, at) })
+	c.Description = desc
+	return &c
+}
+
+// newParam compiles the Parameter Object t at at.
+func (d *document) newParam(t value, at string) *Param {
+	p := &Param{Source: d.source(at)}
+	var explode, content value
+	for name, m := range t.members() { // one pass: a member's name is read from the source
+		switch name {
+		case "name":
+			p.Name = m.string()
+		case "in":
+			p.In = m.string()
+		case "required":
+			p.Required = m.kind() == 't'
+		case "deprecated":
+			p.Deprecated = m.kind() == 't'
+		case "allowEmptyValue":
+			p.AllowEmptyValue = m.kind() == 't'
+		case "allowReserved":
+			p.AllowReserved = m.kind() == 't'
+		case "style":
+			p.Style = m.string()
+		case "explode":
+			explode = m
+		case "schema":
+			p.Schema = d.schema(m, at+"/schema")
+		case "content":
+			content = m
+		}
+	}
+	p.AllowReserved = p.AllowReserved && p.In == "query"
+	if content.kind() == '{' && content.hasMembers() {
+		for typ, m := range content.members() {
+			p.ContentType = typ
+			p.Schema = d.schema(m.get("schema"), at+"/content/"+escapeToken(typ)+"/schema")
+			break
+		}
+	} else {
+		switch {
+		case p.Style != "":
+		case p.In == "query" || p.In == "cookie":
+			p.Style = "form"
+		default:
+			p.Style = "simple"
+		}
+		p.ExplodeSet = explode.ok()
+		p.Explode = explode.kind() == 't' || !explode.ok() && p.Style == "form"
+	}
+	switch {
+	case !slices.Contains([]string{"path", "query", "header", "cookie"}, p.In):
+		p.Err = fmt.Errorf("parameter location %q is not path, query, header or cookie", p.In)
+	case p.ContentType == "" && !styleAllowed(p.In, p.Style):
+		p.Err = fmt.Errorf("style %q is not allowed for a %s parameter", p.Style, p.In)
+	case p.In == "header" && !isToken(p.Name):
+		p.Err = fmt.Errorf("header parameter name %q is not a field name", p.Name)
+	case p.In == "header" && strings.EqualFold(p.Name, "Host"):
+		p.Err = errors.New("a header parameter cannot set Host, which net/http derives from the URL")
+	}
+	return p
+}
+
+// styleAllowed reports whether OpenAPI allows style for a parameter in in.
+func styleAllowed(in, style string) bool {
+	switch in {
+	case "path":
+		return style == "matrix" || style == "label" || style == "simple"
+	case "query":
+		return style == "form" || style == "spaceDelimited" || style == "pipeDelimited" || style == "deepObject"
+	case "header":
+		return style == "simple"
+	}
+	return style == "form"
+}
+
+// A content is the content map of a Request Body or Response Object,
+// compiled once for every reference to it.
+type content struct {
+	source  string // the object's Source
+	media   []*Media
+	parsed  []parsedMedia // media, parsed
+	success []parsedMedia // the concrete media types among them, for a 2xx response
+}
+
+// noContent is the content of an object a reference cannot reach.
+var noContent content
+
+// message describes the Request Body or Response Object v at ptr,
+// following references, with its content. The target is absent when a
+// reference cannot be resolved; the Message then reports it in Err.
+func (d *document) message(v value, ptr string) (*Message, value, *content) {
+	t, at, desc, err := d.follow(v, ptr)
+	if err != nil {
+		return &Message{Source: d.source(ptr), Err: err}, value{}, &noContent
+	}
+	var c *content
+	if t.i == v.i { // only this place reaches it
+		c = d.content(t, at)
+	} else {
+		c = d.contents.get(t.i, func() *content { return d.content(t, at) })
+	}
+	return &Message{Description: desc, Source: c.source, Media: c.media}, t, c
+}
+
+// content compiles the content map of the object t at at.
+func (d *document) content(t value, at string) *content {
+	c := &content{source: d.source(at)}
+	if m := t.get("content"); m.kind() == '{' {
+		for typ, mv := range m.members() {
+			mat := at + "/content/" + escapeToken(typ)
+			md := &Media{Type: typ, Source: d.source(mat), Schema: d.schema(mv.get("schema"), mat+"/schema")}
+			pm, ok := parseMedia(typ)
+			switch {
+			case !ok:
+				md.Err = fmt.Errorf("invalid media type %q", typ)
+			case pm.concrete():
+				c.success = append(c.success, pm)
+				fallthrough
+			default:
+				md.Sequential = pm.class() == sequentialClass || strings.EqualFold(pm.typ, "multipart")
+			}
+			c.media, c.parsed = append(c.media, md), append(c.parsed, pm)
+		}
+	}
+	return c
+}
+
+func (o *operation) addResponse(m *Message, c *content) {
+	r := responsePlan{Message: m, media: c.parsed}
+	key := m.Key
+	digit := func(i int) bool { return '0' <= key[i] && key[i] <= '9' }
+	switch {
+	case key == "default":
+		r.fallback = true
+	case len(key) == 3 && '1' <= key[0] && key[0] <= '5' && key[1:] == "XX":
+		r.class = int(key[0] - '0')
+	case len(key) == 3 && '1' <= key[0] && key[0] <= '5' && digit(1) && digit(2):
+		r.status, _ = strconv.Atoi(key)
+	case m.Err == nil:
+		m.Err = fmt.Errorf("response key %q is not a status code, a range such as 4XX, or default", key)
+	}
+	o.Responses = append(o.Responses, m)
+	o.responses = append(o.responses, r)
+	if (r.status/100 == 2 || r.class == 2) && len(c.success) > 0 {
+		o.success = append(o.success, c.success)
+	}
+}
+
+// declaration returns the response that governs status, or nil.
+func (pl *plan) declaration(status int) *responsePlan {
+	if status < 100 || status > 599 {
+		return nil
+	}
+	var class, fallback *responsePlan
+	for i := range pl.responses {
+		switch r := &pl.responses[i]; {
+		case r.status == status:
+			return r
+		case r.class == status/100 && class == nil:
+			class = r
+		case r.fallback && fallback == nil:
+			fallback = r
+		}
+	}
+	if class != nil {
+		return class
+	}
+	return fallback
+}
+
+// parsePath splits the path template into its text, percent-encoded, and
+// its parameters. A path parameter the template does not name cannot be
+// serialized: it is copied with Err set, as other paths may share it.
+func (o *operation) parsePath() error {
+	text, names, ok := splitTemplate(o.Path)
+	if !ok {
+		return fmt.Errorf("path template %q has an unclosed {", o.Path)
+	}
+	byName := make(map[string]int, len(o.pathParams))
+	for j, i := range o.pathParams {
+		byName[o.params[i].Name] = j
+	}
+	named := make([]bool, len(o.pathParams))
+	for i, name := range names {
+		j, ok := byName[name]
+		if !ok {
+			return fmt.Errorf("path template %q names %q, which no path parameter declares", o.Path, name)
+		}
+		o.path = append(o.path, pathPart{escapePath(text[i]), -1}, pathPart{param: o.pathParams[j]})
+		named[j] = true
+	}
+	o.path = append(o.path, pathPart{escapePath(text[len(names)]), -1})
+	copied := false
+	for j, i := range o.pathParams {
+		if p := o.params[i].Param; !named[j] && p.Err == nil {
+			if !copied {
+				o.params, o.Params, copied = slices.Clone(o.params), slices.Clone(o.Params), true
+			}
+			c := *p
+			c.Err = fmt.Errorf("path parameter %q is not named in the path template", p.Name)
+			o.params[i].Param, o.Params[i] = &c, &c
+		}
+	}
+	return nil
+}
+
+// securityRequirements describes the Security Requirement Objects of list.
+func securityRequirements(list value) []SecurityRequirement {
+	var reqs []SecurityRequirement
+	for _, r := range list.members() {
+		if list.kind() == '[' && r.kind() == '{' {
+			reqs = append(reqs, securityRequirement(r))
+		}
+	}
+	return reqs
+}
+
+// securityRequirement describes the Security Requirement Object v.
+func securityRequirement(v value) SecurityRequirement {
+	var r SecurityRequirement
+	for name, scopes := range v.members() {
+		r.Schemes = append(r.Schemes, SecurityScheme{Name: name, Scopes: scopes.strs()})
+	}
+	var b strings.Builder
+	b.WriteByte('{')
+	for i, s := range slices.SortedFunc(slices.Values(r.Schemes), func(a, b SecurityScheme) int { return strings.Compare(a.Name, b.Name) }) {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		canonicalString(&b, s.Name)
+		b.WriteString(":[")
+		for j, scope := range slices.Compact(slices.Sorted(slices.Values(s.Scopes))) {
+			if j > 0 {
+				b.WriteByte(',')
+			}
+			canonicalString(&b, scope)
+		}
+		b.WriteByte(']')
+	}
+	b.WriteByte('}')
+	r.Key = b.String()
+	return r
+}
+
+// canonicalString writes s as a JSON string escaped as RFC 8785 escapes
+// strings.
+func canonicalString(b *strings.Builder, s string) {
+	b.WriteByte('"')
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch e := strings.IndexByte("\"\\\b\t\n\f\r", c); {
+		case e >= 0:
+			b.WriteByte('\\')
+			b.WriteByte(`"\btnfr`[e])
+		case c < ' ':
+			b.WriteString(`\u00`)
+			b.WriteByte(lowerHex[c>>4])
+			b.WriteByte(lowerHex[c&15])
+		default:
+			b.WriteByte(c)
+		}
+	}
+	b.WriteByte('"')
+}
+
+// A server is a server an operation may be sent to, with its URL template:
+// literal text and variables alternating.
+type server struct {
+	*Server
+	text  []string  // the literal text around the variables
+	vars  []urlVar  // each variable of the template, in order
+	fixed *endpoint // the URL with every variable at its default, if usable
+}
+
+// A urlVar is a variable of a server URL template: its index into
+// Server.Variables, and the part of the URL its default falls in, with
+// every default substituted (T1-23).
+type urlVar struct {
+	index int
+	part  urlPart
+}
+
+// A urlPart is the part of a URL a variable's values may change.
+type urlPart uint8
+
+const (
+	inPath          urlPart = iota
+	inScheme                // the resulting scheme must be one
+	inAuthority             // no "/", "?", "#", "@" or "\"
+	authorityOrPath         // an empty default where the authority meets the path: either
+	wholeURL                // its default spans "://", or it is the template: any value
+)
+
+// An endpoint is a usable server URL, its variables substituted.
+type endpoint struct {
+	scheme, host, path string // path percent-encoded
+}
+
+// A serverList is a Servers list compiled: its servers, and their
+// descriptions.
+type serverList struct {
+	servers []*server
+	desc    []*Server
+}
+
+// inherited returns what an operation inherits from the root, compiled
+// once: its servers, or the default one, and its security requirements.
+func (d *document) inherited() (*serverList, []SecurityRequirement) {
+	d.rootOnce.Do(func() {
+		if s := d.root().get("servers"); s.hasMembers() {
+			d.servers = d.parseServers(s, "/servers")
+		} else {
+			sv := d.newServer(&Server{ID: "default", URL: "/"}, value{})
+			d.servers = &serverList{[]*server{sv}, []*Server{sv.Server}}
+		}
+		d.security = securityRequirements(d.root().get("security"))
+	})
+	return d.servers, d.security
+}
+
+func (d *document) parseServers(list value, ptr string) *serverList {
+	sl := &serverList{}
+	for _, v := range list.members() {
+		at := d.source(ptr + "/" + strconv.Itoa(len(sl.servers)))
+		s := &Server{ID: at, URL: v.str("url"), Description: v.str("description"), Source: at}
+		sl.servers, sl.desc = append(sl.servers, d.newServer(s, v.get("variables"))), append(sl.desc, s)
+	}
+	return sl
+}
+
+// newServer completes s from its URL template and declared variables.
+func (d *document) newServer(s *Server, declared value) *server {
+	text, names, _ := splitTemplate(s.URL)
+	sv := &server{Server: s, text: text}
+	var index map[string]int
+	for _, name := range names {
+		j, seen := index[name]
+		if !seen {
+			if index == nil {
+				index = map[string]int{}
+			}
+			j = len(s.Variables)
+			index[name] = j
+			v := Variable{Name: name}
+			if n := declared.get(name); n.ok() {
+				v.Declared, v.Description = true, n.str("description")
+				v.Default, v.DefaultSet = n.str("default"), n.get("default").ok()
+				if e := n.get("enum"); e.kind() == '[' {
+					v.Enum = append([]string{}, e.strs()...)
+				}
+			}
+			s.Variables = append(s.Variables, v)
+		}
+		sv.vars = append(sv.vars, urlVar{index: j})
+	}
+	at := make([]int, len(sv.vars)) // where each default falls
+	defaults := sv.substitute(func(i, pos int) string { at[i] = pos; return s.Variables[sv.vars[i].index].Default })
+	colon, authority, path := urlParts(defaults)
+	for i := range sv.vars {
+		a, b := at[i], at[i]+len(s.Variables[sv.vars[i].index].Default)
+		switch {
+		case authority >= 0 && a <= colon && b >= colon+3, len(sv.text) == 2 && sv.text[0]+sv.text[1] == "":
+			sv.vars[i].part = wholeURL // its default spans "://", or it is the whole template
+		case a <= colon:
+			sv.vars[i].part = inScheme
+		case authority >= 0 && a == b && a == path:
+			sv.vars[i].part = authorityOrPath
+		case authority >= 0 && a >= authority && a < path:
+			sv.vars[i].part = inAuthority
+		}
+	}
+	// Only a defect no value can repair makes the server unusable for good:
+	// a query or fragment in its text, or userinfo in its authority.
+	literal := sv.substitute(func(int, int) string { return "x" })
+	_, authority, path = urlParts(literal)
+	if len(sv.vars) == 0 {
+		if _, err := d.resolveServerURL(literal); err != nil {
+			s.Err = fmt.Errorf("server URL %q cannot be used: %w", s.URL, err)
+		}
+	} else if strings.ContainsAny(literal, "?#") || authority >= 0 && strings.Contains(literal[authority:path], "@") ||
+		strings.HasPrefix(sv.text[0], "/") && !d.httpBase() {
+		s.Err = fmt.Errorf("server URL %q cannot be used whatever its variables' values", s.URL)
+	}
+	if s.Err == nil && !slices.ContainsFunc(s.Variables, func(v Variable) bool { return !v.DefaultSet }) {
+		if ep, err := d.resolveServerURL(defaults); err == nil {
+			sv.fixed = &ep
+		}
+	}
+	return sv
+}
+
+// substitute returns the server URL with the ith variable of its template
+// replaced by value(i, at), at being where the value begins.
+func (s *server) substitute(value func(i, at int) string) string {
+	var b strings.Builder
+	for i, t := range s.text {
+		b.WriteString(t)
+		if i < len(s.vars) {
+			b.WriteString(value(i, b.Len()))
+		}
+	}
+	return b.String()
+}
+
+// urlParts returns where the scheme of the URL reference u ends, at its
+// colon, where its authority begins, after "//", each -1 when u has none,
+// and where its path begins (RFC 3986 sections 3 and 4.2).
+func urlParts(u string) (colon, authority, path int) {
+	colon, authority = -1, -1
+	if i := strings.IndexAny(u, ":/?#"); i > 0 && u[i] == ':' {
+		colon, path = i, i+1
+	}
+	if !strings.HasPrefix(u[path:], "//") {
+		return colon, authority, path
+	}
+	authority, path = path+2, len(u)
+	if i := strings.IndexAny(u[authority:], "/?#"); i >= 0 {
+		path = authority + i
+	}
+	return colon, authority, path
+}
+
+// check returns why value, substituted at at in u, whose parts urlParts
+// gives, changes more of u than the part p, or nil.
+func (p urlPart) check(u, value string, at, colon, path int) error {
+	if p == authorityOrPath {
+		if err := inPath.check(u, value, at, colon, path); err != nil && inAuthority.check(u, value, at, colon, path) != nil {
+			return err
+		}
+		return nil
+	}
+	switch {
+	case p == inScheme && (colon < 0 || at+len(value) > colon || !isScheme(u[:colon])):
+		return errors.New("the value must leave the scheme a URI scheme (RFC 3986 section 3.1)")
+	case p == inAuthority && strings.ContainsAny(value, `/?#@\`):
+		return errors.New(`a value in the authority cannot hold "/", "?", "#", "@" or "\"`)
+	case p != inPath:
+	case at < path:
+		return errors.New("a value in the path cannot change the scheme or authority")
+	case strings.ContainsAny(value, "?#"):
+		return errors.New("a value in the path cannot add a query or fragment")
+	case dotSegment(u, max(path, strings.LastIndexByte(u[:at], '/')+1), at+len(value)):
+		return errDotSegment
+	}
+	return nil
+}
+
+// splitTemplate splits a URL template into its literal text and the names
+// of its {variables}, one more text than names. It reports false when a
+// "{" is not closed, the rest then being text.
+func splitTemplate(s string) (text, names []string, ok bool) {
+	for {
+		i := strings.IndexByte(s, '{')
+		if i < 0 {
+			return append(text, s), names, true
+		}
+		name, after, found := strings.Cut(s[i+1:], "}")
+		if !found {
+			return append(text, s), names, false
+		}
+		text, names, s = append(text, s[:i]), append(names, name), after
+	}
+}

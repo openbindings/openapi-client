@@ -3,11 +3,19 @@ package openapi
 import (
 	"context"
 	"io"
+	"maps"
+	"net/http"
+	"net/url"
+	"strings"
 )
 
 // Load reads the document at uri, and every document its references reach,
 // and returns a Client for it that uses opts. The uri is an http or https
-// URL, a file URL, or a file path. A nil opts means the defaults. The Client
+// URL, a file URL, or a file path. A uri with a fragment is refused, as is
+// one with userinfo, which RFC 9110 section 4.2.4 forbids a sender to
+// generate (supply credentials through HTTPClient or Loader.Fetch), and a
+// file URL naming a host other than localhost. ctx bounds the whole load,
+// reading and parsing included. A nil opts means the defaults. The Client
 // keeps a copy of opts, its maps included, so changing them afterwards has
 // no effect. Load uses the zero [Loader].
 //
@@ -34,15 +42,15 @@ func Load(ctx context.Context, uri string, opts *Options) (*Client, error) {
 	return l.Load(ctx, uri, opts)
 }
 
-// Parse returns a Client for a document the caller already holds, such as
-// one embedded with go:embed, using the zero [Loader], and fails as Load
-// does. The content is JSON or YAML text. The uri, if not empty, is the
-// absolute URI the document is meant to live at, which stands for the URI
-// it was retrieved from and is never fetched itself. With an empty
-// uri, the document may reference only itself, a call whose server URL is
-// relative needs Options.BaseURL, and Sources name the document by a
-// "urn:uuid:" URI derived from the content (a name-based UUID, RFC 9562
-// version 5), so Sources and $defs keys are the same on every run.
+// Parse returns a Client for a document the caller already holds, such as one
+// embedded with go:embed, using the zero [Loader], and fails as Load does. The
+// content is JSON or YAML text. The uri, if not empty, is the absolute URI,
+// without a fragment, the document is meant to live at, which stands for the
+// URI it was retrieved from and is never fetched itself. With an empty uri, the
+// document may reference only itself, a call whose server URL is relative needs
+// Options.BaseURL, and Sources name the document by a "urn:uuid:" URI derived
+// from the content (a name-based UUID, RFC 9562 version 5), so Sources and
+// $defs keys are the same on every run.
 func Parse(ctx context.Context, content []byte, uri string, opts *Options) (*Client, error) {
 	var l Loader
 	return l.Parse(ctx, content, uri, opts)
@@ -52,21 +60,22 @@ func Parse(ctx context.Context, content []byte, uri string, opts *Options) (*Cli
 // settings apply only while a document is read; a Client keeps none of
 // them.
 //
-// A document is UTF-8, or UTF-16 or UTF-32 with a byte order mark or, for
-// YAML, as YAML 1.2.2 section 5.2 deduces it; a UTF-8 byte order mark is
-// ignored. A document whose first significant byte is '{' is read as JSON
-// and, if it is not JSON, as YAML; anything else is read as YAML 1.2 under
-// its Core schema, so yes and no stay strings, << is an ordinary key, and
-// a scalar key such as an unquoted 200 is read as the string it spells.
-// Numbers keep the exact value written. A duplicate key, a key that is not
-// a scalar, or a second document in the stream rejects the document, and
+// A document is UTF-8, or UTF-16 or UTF-32 with a byte order mark or, for YAML,
+// as YAML 1.2.2 section 5.2 deduces it; a UTF-8 byte order mark is ignored, and
+// invalid UTF-8 rejects the document. A document whose first significant byte
+// is '{' is read as JSON and, if it is not JSON, as YAML; anything else is read
+// as YAML 1.2 under its Core schema, so yes and no stay strings, << is an
+// ordinary key, and a scalar key such as an unquoted 200 is read as the string
+// it spells. Numbers keep the exact value written. A duplicate key, a key that
+// is not a scalar, or a second document in the stream rejects the document, and
 // so, in every edition, does a value JSON cannot hold (.inf, .nan, or a tag
 // outside the Core schema, such as !!timestamp), since Document and Raw are
-// JSON. A document whose aliases would add more than 1,000,000 nodes, or
-// more than 100 times its own node count, or that nests deeper than 1,000
-// levels, is rejected too. A rejection names the document's URI and the
-// line and column of the problem. Reference cycles are detected, never
-// followed forever.
+// JSON. A document whose aliases would add more than 1,000,000 nodes, or more
+// than 100 times its own node count, or that nests deeper than 1,000 levels
+// (the outermost value being level 1), is rejected too. A rejection names the
+// document's URI and the line and column of the problem, both counted from 1,
+// the column in bytes after any byte order mark. Reference cycles are
+// detected, never followed forever.
 //
 // The references followed are $ref in Reference Objects, Path Items and
 // Schema Objects, $dynamicRef, Discriminator mapping and defaultMapping
@@ -167,7 +176,15 @@ const (
 // Load reads a document as the package's Load function does, with l's
 // settings.
 func (l *Loader) Load(ctx context.Context, uri string, opts *Options) (*Client, error) {
-	panic("unimplemented")
+	hc := http.DefaultClient
+	if opts != nil && opts.HTTPClient != nil {
+		hc = opts.HTTPClient
+	}
+	content, final, err := l.fetch(ctx, uri, hc)
+	if err != nil {
+		return nil, err
+	}
+	return newClient(ctx, content, final, opts)
 }
 
 // Parse returns a Client for content as the package's Parse function does,
@@ -176,14 +193,17 @@ func (l *Loader) Load(ctx context.Context, uri string, opts *Options) (*Client, 
 // AllowReference admits them; relative external references have no base
 // unless an OpenAPI 3.2 absolute $self supplies one.
 func (l *Loader) Parse(ctx context.Context, content []byte, uri string, opts *Options) (*Client, error) {
-	panic("unimplemented")
+	return newClient(ctx, string(content), uri, opts)
 }
 
 // Version reports the version the entry document declares: its swagger
 // value ("2.0") or its openapi value (such as "3.1.0"). It decides the
 // dialect of the document's schemas as written (see [Schema.Dialect]).
 func (c *Client) Version() string {
-	panic("unimplemented")
+	if c.doc == nil {
+		return ""
+	}
+	return c.doc.version
 }
 
 // DocumentURIs lists every document the Client loaded, including the entry
@@ -194,7 +214,10 @@ func (c *Client) Version() string {
 // obtain a copy of one document's contents. This includes loaded documents
 // whose declarations are not exposed by Operations.
 func (c *Client) DocumentURIs() []string {
-	panic("unimplemented")
+	if c.doc == nil {
+		return nil
+	}
+	return []string{c.doc.uri}
 }
 
 // Document returns a copy of the document loaded from uri, as JSON (a YAML
@@ -218,5 +241,50 @@ func (c *Client) DocumentURIs() []string {
 // an extension, or which of a Path Item's fields were written beside its
 // $ref, without the client growing a field for each such fact.
 func (c *Client) Document(uri string) []byte {
-	panic("unimplemented")
+	d := c.doc
+	if d == nil {
+		return nil
+	}
+	base, frag, hasFrag := strings.Cut(uri, "#")
+	if base != "" && base != d.uri {
+		return nil
+	}
+	v := d.root()
+	if hasFrag {
+		ptr, err := url.PathUnescape(frag)
+		if err != nil {
+			return nil
+		}
+		if v = v.at(ptr); !v.ok() {
+			return nil
+		}
+	}
+	return []byte(v.raw())
+}
+
+// newClient returns a Client for content, retrieved from uri, with opts.
+func newClient(ctx context.Context, content, uri string, opts *Options) (*Client, error) {
+	d, err := newDocument(ctx, content, uri)
+	if err != nil {
+		return nil, err
+	}
+	var o Options
+	if opts != nil {
+		o = *opts
+	}
+	c := &Client{doc: d, cfg: newConfig(o, nil)}
+	re := RequestError{Settings: maps.Clone(c.cfg.refused)}
+	if c.cfg.mediaTypeErr != nil {
+		re.setting("Options.MediaType", c.cfg.mediaTypeErr)
+	}
+	if c.cfg.codecsErr != nil {
+		re.setting("Options.Codecs", c.cfg.codecsErr)
+	}
+	if err := d.checkNames(ctx, c.cfg, &re); err != nil {
+		return nil, err
+	}
+	if err := re.refused(); err != nil {
+		return nil, err
+	}
+	return c, nil
 }

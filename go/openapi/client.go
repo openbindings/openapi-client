@@ -11,11 +11,9 @@ import (
 // operations: it describes nothing and refuses every call with a
 // *RequestError wrapping ErrNoOperation.
 type Client struct {
-	doc  *document // shared by derived Clients
-	opts Options
+	doc *document // shared by derived Clients
+	cfg *config
 }
-
-type document struct{}
 
 // Options says where calls go, as whom, and how. Its zero value supplies only
 // documented transport defaults. When the document leaves a consequential
@@ -64,7 +62,19 @@ type Options struct {
 	// The enum limits other values: one outside it refuses the call, and an
 	// empty enum permits only the default. A name that appears in no server
 	// URL of the document is refused by Load, as a likely misspelling.
-	// Values are substituted as given.
+	// Values are substituted as given, within the part of the URL their
+	// variable occupies. Each variable is placed by where its default falls
+	// in the URL with every default substituted. A variable whose default
+	// spans "://", or that is the whole URL template, supplies a whole URL
+	// and is not restricted. An empty default at the boundary between two
+	// parts may take a value belonging to either. Otherwise a value may
+	// change only its own part: in the scheme, the resulting
+	// scheme must be one (RFC 3986 section 3.1); in the authority, a value
+	// may not hold "/", "?", "#", "@" or "\\", though it may change the
+	// host (a document restricts that with an enum); in the path, a value
+	// may not change the scheme or authority, add a query or fragment, or
+	// form a whole "." or ".." segment, percent-encoded or not (sections
+	// 3.2, 5.2.4 and 6.2.2.2).
 	Variables map[string]string
 
 	// Credentials holds a Credential for each security scheme, by the name
@@ -209,11 +219,23 @@ const (
 // and any other Options the document cannot use refuse each call they
 // affect.
 func (c *Client) With(f func(*Options)) *Client {
-	panic("unimplemented")
+	if f == nil {
+		return c
+	}
+	cfg := c.cfg
+	if cfg == nil {
+		cfg = newConfig(Options{}, nil)
+	}
+	o := cfg.options()
+	f(&o)
+	return &Client{doc: c.doc, cfg: newConfig(o, cfg)}
 }
 
 // An Input holds the values and settings for one call. The client never
-// modifies an Input. Call has stopped reading its body when it returns.
+// modifies an Input. Call has stopped reading its body when it returns,
+// provided a reader body returns from Read when the call's context ends
+// or its connection closes; the client cannot interrupt a Read that blocks
+// forever.
 // For Send or Stream, wait for Response.WaitRequest before reusing a body
 // reader or iterator; closing Response.Body stops an outstanding upload.
 // A body that can be read only once is consumed by its first call. A nil
@@ -410,9 +432,10 @@ type Part struct {
 // A key made of a method, one space and a string beginning with "/" always
 // means a method and a Paths key, never an operationId.
 //
-// out must be nil, a *[]byte, an io.Writer, or a non-nil pointer; anything
-// else is refused before sending. For a 2xx, the body is read to the end and
-// closed before Call returns, and out receives it:
+// out must be nil, a non-nil *[]byte, an io.Writer, or a non-nil pointer;
+// anything else, a nil pointer of any type included, is refused before
+// sending. For a 2xx, the body is read to the
+// end and closed before Call returns, and out receives it:
 //
 //   - nil discards it, reading at most MaxBodyBytes before closing the
 //     connection.
@@ -431,10 +454,11 @@ type Part struct {
 //     with encoding/xml, which ignores json tags, and which reads UTF-8,
 //     US-ASCII and ISO-8859-1 documents, taking the encoding from a byte
 //     order mark, else the Content-Type's charset, else the document's own
-//     declaration; any text/* type (text/event-stream included) into a
-//     *string, its bytes as sent, the charset left in the Content-Type;
-//     and into a *any, text as a string and any other non-JSON type,
-//     multipart included, as a []byte. A missing, repeated or unparsable
+//     declaration. A *string and a *any take any text/* type as text,
+//     whatever its codec class (text/xml and text/event-stream included):
+//     a *string its bytes as sent, the charset left in the Content-Type,
+//     and a *any a string; a *any takes any other non-JSON type, multipart
+//     included, as a []byte. A missing, repeated or unparsable
 //     Content-Type is treated as application/octet-stream, which a *any
 //     receives as a []byte and a typed target cannot; no type is inferred
 //     solely from the document. A type these rules cannot decode into out
@@ -472,7 +496,25 @@ type Part struct {
 // 2xx success policy; [Request.Send] leaves status interpretation to the
 // caller.
 func (c *Client) Call(ctx context.Context, key string, in *Input, out any) (*Response, error) {
-	panic("unimplemented")
+	o, err := c.operation(key)
+	if err != nil {
+		return nil, err
+	}
+	x := &exchange{Context: ctx, cfg: c.cfg, op: o}
+	re := RequestError{Err: o.Err}
+	c.cfg.checkOut(out, &re)
+	req, p, _, security := c.newRequest(x, o, in, &re)
+	c.cfg.checkAccept(o, req.Header, out, &re)
+	if err := re.refused(); err != nil {
+		return nil, err
+	}
+	x.security = security
+	x.attach(req, p)
+	resp, err := x.send(req)
+	if err != nil {
+		return nil, err
+	}
+	return resp, x.finish(resp, out)
 }
 
 // Prepare builds the request for the operation named key with in, applying
@@ -486,7 +528,24 @@ func (c *Client) Call(ctx context.Context, key string, in *Input, out any) (*Res
 // preparation succeeds. A missing operation, or an operation with Err set,
 // still prevents preparation.
 func (c *Client) Prepare(key string, in *Input) (*Request, error) {
-	panic("unimplemented")
+	o, err := c.operation(key)
+	if err != nil {
+		return nil, err
+	}
+	pr := &prepared{Context: context.Background(), cfg: c.cfg, op: o}
+	re := RequestError{Err: o.Err}
+	req, p, media, security := c.newRequest(pr, o, in, &re)
+	if err := re.refused(); err != nil {
+		return nil, err
+	}
+	if p.size != 0 {
+		req.Body = &sentBody{p: p}
+		if p.once == nil {
+			req.GetBody = func() (io.ReadCloser, error) { return &sentBody{p: p}, nil }
+		}
+	}
+	pr.security, pr.payload, pr.body = security, p, req.Body
+	return &Request{HTTP: req, Media: media, Security: security}, nil
 }
 
 // A Request is a call prepared by [Client.Prepare] and not yet sent. A
@@ -542,7 +601,11 @@ type Request struct {
 // HTTPClient.Transport can return a Body implementing io.ReadWriteCloser
 // for tunnel use; the client leaves that body unchanged.
 func (r *Request) Send(ctx context.Context) (*Response, error) {
-	panic("unimplemented")
+	x, req, err := r.newExchange(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return x.send(req)
 }
 
 // Call sends r with ctx, adding credentials, and returns as [Client.Call]
@@ -551,7 +614,25 @@ func (r *Request) Send(ctx context.Context) (*Response, error) {
 // it may be sent once, and sending it again is refused with a
 // *RequestError, nothing sent.
 func (r *Request) Call(ctx context.Context, out any) (*Response, error) {
-	panic("unimplemented")
+	var re RequestError
+	if r.HTTP != nil {
+		if pr, ok := r.HTTP.Context().Value(preparedKey{}).(*prepared); ok {
+			pr.cfg.checkOut(out, &re)
+			pr.cfg.checkAccept(pr.op, r.HTTP.Header, out, &re)
+		}
+	}
+	if err := re.refused(); err != nil {
+		return nil, err
+	}
+	x, req, err := r.newExchange(ctx)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := x.send(req)
+	if err != nil {
+		return nil, err
+	}
+	return resp, x.finish(resp, out)
 }
 
 // A Response is a response the server sent to a call: the *http.Response,
@@ -569,7 +650,8 @@ type Response struct {
 	// Declaration is the operation's response Message that governs
 	// StatusCode: the one whose Key is the exact code ("201"), else its
 	// range ("2XX"), else "default". It is nil when the operation declares
-	// nothing for the status, which is not in itself an error. A lowercase
+	// nothing for the status, or the status is outside 100 to 599, which is
+	// not in itself an error. A lowercase
 	// range such as "2xx" is not a range key: it is reported on its
 	// Message, and never governs. It is the same immutable descriptor
 	// Operation.Responses exposes.
@@ -603,7 +685,8 @@ type Response struct {
 // duplex peer to make progress. A caller that needs the response while an
 // upload remains open uses Body directly or Stream instead. Decode applies
 // no success-status policy and never returns a StatusError. A failure to
-// read or decode is a *DecodeError holding r, even for a non-2xx status.
+// read or decode is a *DecodeError holding a copy of r, even for a non-2xx
+// status.
 // An invalid out is a *DecodeError without consuming or closing Body, so
 // the caller may retry with a valid target or read the raw bytes.
 // Call it before reading Body directly or through Items or Events; the
@@ -612,23 +695,33 @@ type Response struct {
 // A failed or bounded response read may close Body early and abort an upload.
 // Stream followed by Decode, its target chosen for the response, is Call.
 func (r *Response) Decode(out any) error {
-	panic("unimplemented")
+	if err := checkOut(out); err != nil {
+		return &DecodeError{Response: r, Err: err}
+	}
+	return exchangeOf(r.Response).decode(r, out)
 }
 
 // WaitRequest waits until the HTTP transport has consumed the complete
 // request body or stopped consuming it. It returns nil for a bodyless
-// request or when the body reached EOF, or the encoding, iterator, read,
+// request or when the body was consumed completely (read to EOF, or, for a
+// body of known length, read to that length), or the encoding, iterator, read,
 // premature-close or cancellation error that stopped it. A write error
 // reported by RoundTrip is returned by Send; a general RoundTripper does
 // not expose when bytes are written to the network. A nil result here
 // therefore proves body consumption, not delivery or server acceptance.
-// The wait is safe to repeat and to call concurrently.
+// The wait is safe to repeat and to call concurrently. It relies on the
+// transport closing the request body, as http.RoundTripper requires; with
+// a transport that neither reads nor closes it, the wait, and Call's,
+// ends only with the context.
 // A cancellation of ctx ends only this wait; cancel the call's original
 // context or close Body to stop an outstanding upload. A caller of Send or
 // Stream should read or close Body concurrently when the peer needs that
 // progress before it can read the rest of the request.
 func (r *Response) WaitRequest(ctx context.Context) error {
-	panic("unimplemented")
+	if x := exchangeOf(r.Response); x != nil {
+		return x.waitUpload(ctx)
+	}
+	return nil
 }
 
 // OperationFromContext returns the operation being sent when ctx is the
@@ -637,5 +730,8 @@ func (r *Response) WaitRequest(ctx context.Context) error {
 // traces and metrics by Operation.Key, or decide whether a retry is safe.
 // It does no work beyond the lookup.
 func OperationFromContext(ctx context.Context) *Operation {
-	panic("unimplemented")
+	if o, ok := ctx.Value(operationKey{}).(*operation); ok {
+		return &o.Operation
+	}
+	return nil
 }

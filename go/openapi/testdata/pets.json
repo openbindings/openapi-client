@@ -1,0 +1,76 @@
+{
+  "openapi": "3.1.0",
+  "info": {"title": "Pets", "version": "1.0.0"},
+  "servers": [{"url": "/v1", "description": "relative to the document"}],
+  "paths": {
+    "/pets": {
+      "get": {
+        "operationId": "listPets",
+        "summary": "List pets",
+        "tags": ["pets"],
+        "parameters": [
+          {"name": "limit", "in": "query", "schema": {"type": "integer"}},
+          {"name": "cursor", "in": "query", "schema": {"type": "string"}}
+        ],
+        "responses": {
+          "200": {"description": "A page of pets", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/PetPage"}}}},
+          "default": {"$ref": "#/components/responses/Problem"}
+        }
+      },
+      "post": {
+        "operationId": "createPet",
+        "requestBody": {"$ref": "#/components/requestBodies/Pet"},
+        "responses": {
+          "201": {"description": "Created", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Pet"}}}},
+          "422": {"$ref": "#/components/responses/Problem"}
+        }
+      }
+    },
+    "/pets/{petId}": {
+      "parameters": [{"$ref": "#/components/parameters/petId"}],
+      "get": {
+        "operationId": "getPet",
+        "parameters": [{"name": "revision", "in": "query", "schema": {"type": "integer"}}],
+        "responses": {
+          "200": {"description": "The pet", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Pet"}}}},
+          "404": {"$ref": "#/components/responses/Problem"}
+        }
+      },
+      "put": {
+        "operationId": "updatePet",
+        "requestBody": {"$ref": "#/components/requestBodies/Pet"},
+        "responses": {
+          "200": {"description": "Updated", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Pet"}}}},
+          "404": {"$ref": "#/components/responses/Problem"},
+          "422": {"$ref": "#/components/responses/Problem"}
+        }
+      }
+    },
+    "/orders": {
+      "post": {
+        "operationId": "createOrder",
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object"}}}},
+        "responses": {
+          "201": {"description": "Created", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Order"}}}}
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Pet": {"type": "object", "required": ["name"], "properties": {"id": {"type": "string"}, "name": {"type": "string"}, "tag": {"type": "string"}}},
+      "PetPage": {"type": "object", "properties": {"pets": {"type": "array", "items": {"$ref": "#/components/schemas/Pet"}}, "next_cursor": {"type": "string"}}},
+      "Order": {"type": "object", "properties": {"id": {"type": "string"}}},
+      "Problem": {"type": "object", "properties": {"title": {"type": "string"}, "detail": {"type": "string"}}}
+    },
+    "parameters": {
+      "petId": {"name": "petId", "in": "path", "required": true, "schema": {"type": "string"}}
+    },
+    "requestBodies": {
+      "Pet": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Pet"}}}}
+    },
+    "responses": {
+      "Problem": {"description": "A problem", "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/Problem"}}}}
+    }
+  }
+}

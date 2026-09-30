@@ -142,8 +142,8 @@
 //   - One usable server selects itself. Several require Options.Server,
 //     Options.ServerID or Options.BaseURL, and none requires BaseURL.
 //     ServerID identifies one even when URL or name collides. Server
-//     variables use their declared defaults; a variable without one
-//     requires Options.Variables.
+//     variables use their declared defaults; a server with a variable that
+//     has none is not usable until Options.Variables gives it a value.
 //   - One security alternative selects itself. Several require
 //     Options.Security, Options.SecurityKey or Input.Security, including an
 //     anonymous alternative. SecurityKey names an exact alternative.
@@ -239,7 +239,9 @@
 //   - Percent-encoding: path, query and cookie values (content-serialized
 //     ones included, application/x-www-form-urlencoded too) and parameter
 //     and member names encode every byte outside RFC 3986's unreserved set
-//     as %XX in uppercase hex. So deepObject nests objects
+//     as %XX in uppercase hex. A path parameter value that would form a
+//     whole "." or ".." segment is refused, since RFC 3986 section 5.2.4
+//     removes such segments before the value could reach the server. So deepObject nests objects
 //     as a%5Bb%5D%5Bc%5D=v, and the spaceDelimited and pipeDelimited
 //     delimiters are %20 and %7C. allowReserved applies to query
 //     parameters, and in OpenAPI 3.2 to path parameters and form-style
@@ -294,7 +296,10 @@
 //     credentials, and no User-Agent beyond net/http's. Options.Header and
 //     then Input.Header are applied over the generated fields: a field
 //     replaces the same field set before, and one with no values removes
-//     it. At either level, Content-Type, Content-Length and
+//     it (a User-Agent included, so net/http adds none). A Header holding
+//     two spellings of one field is refused, and so is a Host field or a
+//     header parameter named Host, since net/http derives Host from the
+//     URL. At either level, Content-Type, Content-Length and
 //     Transfer-Encoding are refused (the MediaType settings choose the
 //     media type), and so is a field that a header parameter the call supplies,
 //     or the call's credential, sets; a declared header parameter the call
