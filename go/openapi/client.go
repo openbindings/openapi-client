@@ -182,7 +182,8 @@ type Codec interface {
 // a hop that must resend a body that cannot be sent again (see Input.Body)
 // is not followed. A 3xx not followed is the outcome, a *StatusError. The
 // HTTPClient's CheckRedirect is still consulted on every hop the client
-// follows, after the client applies the rules below, and can restore a
+// follows, after the client applies the rules below and before it places
+// credentials on the hop, and can restore a
 // field the caller deliberately wants to forward; with a nil
 // CheckRedirect, net/http's limit of 10 hops applies.
 //

@@ -58,9 +58,11 @@ type RequestError struct {
 	// "Options.ServerID", an undetermined or unusable request media type
 	// "Input.MediaType", and a header field that a supplied header
 	// parameter or the credential sets by the Header that set it.
-	// Several security alternatives with none selected are keyed
+	// Several security alternatives with none selected, or an
+	// Options.Security matching several that differ only in scopes, are keyed
 	// "Options.Security", the error naming Options.SecurityKey and
-	// Input.Security too. An empty secret from a credential source is keyed
+	// Input.Security too; SecurityKey set with Security is keyed
+	// "Options.SecurityKey". An empty secret from a credential source is keyed
 	// as a missing credential is. A caller may inspect the operation
 	// description for offered values. The values are errors, never
 	// credentials or caller-supplied secrets.

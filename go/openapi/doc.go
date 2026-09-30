@@ -138,7 +138,8 @@
 // No credential appears in the text of an error the client creates, nor in
 // any *url.Error in the chain of one it returns: credentials the client
 // added to a URL are redacted there. Errors made by the caller's own code,
-// such as its transport or a credential source, are passed on as they are.
+// such as its transport or a credential source, are passed on as they are,
+// even when their text quotes a URL.
 //
 // # Configuration when the document is incomplete
 //
@@ -323,8 +324,8 @@
 //     Connection, Keep-Alive, Proxy-Connection or Upgrade, since net/http
 //     derives or HTTP forbids them (RFC 9110 sections 6.6.2 and 8.6, RFC
 //     9113 section 8.2.2). A Header entry with no values is a conflict like
-//     any other when a header parameter the call supplies, or the Cookie
-//     field, sets that field. At either level, Content-Type, Content-Length and
+//     any other when a header parameter the call supplies, the call's
+//     credential, or the Cookie field, sets that field. At either level, Content-Type, Content-Length and
 //     Transfer-Encoding are refused (the MediaType settings choose the
 //     media type), and so is a field that a header parameter the call supplies,
 //     or the call's credential, sets; a declared header parameter the call
@@ -355,13 +356,18 @@
 // needs when the request is sent, never when it is prepared, and adds
 // credentials only to requests with the origin of the server the call
 // resolved to, as [Redirects] says. A header credential replaces a field of
-// the same name, and a cookie or query credential a pair of the same name,
-// including one edited into Request.HTTP.
+// the same name. Query and cookie credentials go last, in the order the
+// alternative lists their schemes, and one that replaces a pair of the same
+// name, including one edited into Request.HTTP, removes it and goes last. A
+// credential value a header field cannot carry (a CR, LF or NUL, or leading
+// or trailing whitespace) is refused at Options.Credentials["name"]: by Load
+// for a static credential, by the call for a source's.
 //
 // Bearer tokens (http bearer, oauth2, openIdConnect) and Basic credentials
-// are sent only over https, wss, or to a loopback host (a loopback address, or
-// localhost or a name under .localhost, as RFC 6761 reserves them, matched
-// without resolving), as RFC 6750 requires and RFC 7617 advises; a call
+// are sent only over https, wss, or to a loopback host (a loopback address,
+// an IPv4-mapped one included, or localhost or a name under .localhost, with
+// or without a trailing dot, as RFC 6761 reserves them, matched without
+// resolving), as RFC 6750 requires and RFC 7617 advises; a call
 // that would send one over plain http or ws elsewhere is refused. The
 // caller's transport is responsible for actually securing wss. A URL scheme
 // other than http, https, ws or wss requires FromTransport for these
@@ -369,13 +375,13 @@
 // rule. A caller whose network secures plain http or ws another way places
 // the credential through its own transport, with [FromTransport].
 //
-// A credential and a parameter never share a destination. A declared
-// parameter at the header field, query name or cookie name the applied
-// credential sets is supplied by the credential: a required one counts as
-// given, and a call that also supplies it is refused at the parameter's
-// key. An alternative two of whose schemes set the same field cannot be
-// used, and is refused naming both. A FromTransport scheme places nothing,
-// so it takes part in no destination rule.
+// A credential and a parameter never share a destination. A declared parameter
+// at the header field, query name or cookie name the applied credential sets is
+// supplied by the credential: a required one counts as given, and a call that
+// also supplies it is refused at the parameter's key. An alternative two of
+// whose schemes set the same header field, query name or cookie name cannot be
+// used, and is refused naming both. A FromTransport scheme places nothing, so
+// it takes part in no destination rule.
 //
 // A call is refused, never sent without the authorization the caller
 // selected, when a scheme in its selected alternative has no credential,
@@ -383,8 +389,9 @@
 // none, has any credential but FromTransport. Unselected alternatives have
 // no effect on the call. Load refuses a Credentials name the document never
 // uses, as a likely misspelling, an empty static credential (Secret(""),
-// Basic("", "") or the zero Credential), and a [Basic] credential for a
-// name none of whose schemes is http basic. FromTransport also satisfies a
+// Basic("", "") or the zero Credential), a [Basic] credential for a name
+// none of whose schemes is http basic, and any credential but FromTransport
+// for a name all of whose schemes are mutualTLS. FromTransport also satisfies a
 // scheme a
 // requirement names but the document never declares, or declares
 // defectively.

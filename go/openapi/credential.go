@@ -49,8 +49,9 @@ func Secret(secret string) Credential {
 // refresh it once rather than on every call at expiry, as
 // oauth2.ReuseTokenSource does. An error from f, or an empty secret, on the
 // first request refuses the call with a *RequestError: nothing is sent. On a
-// redirect hop the first request has already been sent, so the call ends
-// with the *url.Error the http.Client returns, wrapping f's error. An error
+// redirect hop the first request has already been sent, so an error or an
+// empty secret ends the call with the *url.Error the http.Client returns,
+// wrapping f's error. An error
 // from f is passed on as it is.
 //
 // For a golang.org/x/oauth2 TokenSource ts:
