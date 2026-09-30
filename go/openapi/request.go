@@ -226,7 +226,9 @@ func (c *Client) newRequest(ctx context.Context, o *operation, in *Input, re *Re
 		u.RawQuery = s[query+1:]
 	}
 	u.RawPath = u.Path // as written: net/http would otherwise escape sub-delimiters
-	u.Path, _ = url.PathUnescape(u.RawPath)
+	if strings.IndexByte(u.Path, '%') >= 0 {
+		u.Path, _ = url.PathUnescape(u.Path)
+	}
 	req.ContentLength = p.size
 	return req, p, media, security
 }
