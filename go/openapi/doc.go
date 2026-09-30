@@ -87,9 +87,11 @@
 // array item whose JSON data is null is omitted, whatever its
 // serialization. A parameter serialized by content is encoded as a body of
 // its media type is, so under application/json null, [] and {} are present
-// values. A JSON body or JSON part is exactly what its codec writes, null
-// members, [] and {} included. A value nested deeper than 1,000 levels is
-// refused at its key. Schema defaults are never sent, and values
+// values, and a reader or Part inside its JSON value is refused at its key.
+// A JSON body or JSON part is exactly what its codec writes, null members,
+// [] and {} included. A value the client encodes that is nested deeper than
+// 1,000 levels is refused at its key; a caller's codec receives the value as
+// given. Schema defaults are never sent, and values
 // are never validated against schemas. How bytes, readers and iterators are
 // sent is on Input.Body.
 //
