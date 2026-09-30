@@ -164,9 +164,8 @@ func TestLargeParamValuesScale(t *testing.T) {
 			return prepare(tt.key, tt.param, tt.value(n))
 		})
 	}
-	// levels returns a deepObject value n levels deep, counting the leaf:
-	// n-1 objects around a string, so it is within the bound whether or not
-	// the leaf counts as a level.
+	// levels returns a deepObject value n levels deep: n-1 objects around a
+	// string leaf, which counts as a level (stage 2 ledger, Q9).
 	levels := func(n int) any {
 		var v any = "leaf"
 		for range n - 1 {

@@ -14,11 +14,12 @@ import (
 // levels deep is serialized, and one 1,001 levels deep is refused at its key
 // (a parameter's Param.Key, or "Input.Body").
 //
-// Nested empty arrays have no scalar, so n of them are n levels by any
-// count. A deepObject value needs a scalar leaf, and whether the leaf is a
-// level of its own is not stated: 999 objects around a leaf are at most
-// 1,000 levels and 1,001 objects more than 1,000 by either count; 1,000
-// objects around a leaf is not asserted.
+// Levels are counted as the Loader counts them for documents (ledger, Q9,
+// leaf ruling): the outermost value is level 1, and each value is one level
+// deeper than its container, a scalar leaf included. So n nested empty
+// arrays are n levels, and n objects around a leaf are n+1: 999 objects
+// around a leaf (1,000 levels) are sent, and 1,000 (1,001 levels) are
+// refused at "p".
 func TestValueNestingLimit(t *testing.T) {
 	c := parseAt(t, doc31(`
 		"/d":{"get":{"operationId":"deep","parameters":[{"name":"p","in":"query","style":"deepObject","schema":{}}]}},
@@ -55,7 +56,7 @@ func TestValueNestingLimit(t *testing.T) {
 		if want := "/d?p" + strings.Repeat("%5Ba%5D", 999) + "=leaf"; req.HTTP.URL.RequestURI() != want {
 			t.Errorf("999 objects: request target %.80q..., want %.80q...", req.HTTP.URL.RequestURI(), want)
 		}
-		refusedAt(t, "deep", &openapi.Input{Params: map[string]any{"p": objects(1001)}}, "p")
+		refusedAt(t, "deep", &openapi.Input{Params: map[string]any{"p": objects(1000)}}, "p")
 	})
 	t.Run("JSON content parameter", func(t *testing.T) {
 		req := mustPrepare(t, c, "content", &openapi.Input{Params: map[string]any{"p": arrays(1000)}})
