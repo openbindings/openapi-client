@@ -83,7 +83,6 @@ type upload struct {
 	getBody func() (io.ReadCloser, error) // or the source of a body the caller set
 	first   sentBody                      // the first generation, when the body reports its reading
 	mem     bytes.Reader                  // the first generation, when net/http reads it in memory
-	trace   httptrace.ClientTrace         // reports the write of an in-memory body
 
 	mu       sync.Mutex
 	gen      int           // the generation that counts
@@ -165,8 +164,7 @@ func (x *exchange) attach(req *http.Request, p payload) {
 		x.mem.Reset(x.payload.data)
 		x.memory = &x.mem
 		req.Body, req.GetBody = io.NopCloser(&x.mem), x.replayMemory
-		x.trace.WroteRequest = x.wroteRequest
-		x.Context = httptrace.WithClientTrace(x.Context, &x.trace)
+		x.Context = httptrace.WithClientTrace(x.Context, &httptrace.ClientTrace{WroteRequest: x.wroteRequest})
 	default:
 		x.first = sentBody{x: x, p: p}
 		req.Body = &x.first
@@ -305,9 +303,15 @@ func (r *Response) keep(content []byte, cut bool) *Response {
 // finite duplex peer may read the rest of the request only then, and after
 // closing when the read stopped short, since closing ends the upload.
 func (x *exchange) decode(r *Response, out any) error {
-	cfg, ctx, u := &config{}, context.Context(context.Background()), &upload{done: true}
+	var (
+		cfg *config
+		ctx context.Context
+		u   *upload
+	)
 	if x != nil {
 		cfg, ctx, u = x.cfg, x, &x.upload
+	} else {
+		cfg, ctx, u = &config{}, context.Background(), &upload{done: true}
 	}
 	head, eof, err := cfg.read(r.Response, r.Declaration, out)
 	var upload error
@@ -527,7 +531,11 @@ func readAll(dst []byte, r io.Reader, size, bound int64) ([]byte, error) {
 		if len(dst) == cap(dst) {
 			dst = slices.Grow(dst, int(min(max(512, int64(len(dst)-start)), left)))
 		}
-		n, err := r.Read(dst[len(dst):min(cap(dst), len(dst)+int(min(left, 1<<62)))])
+		room := dst[len(dst):cap(dst)]
+		if int64(len(room)) > left {
+			room = room[:left]
+		}
+		n, err := r.Read(room)
 		dst = dst[:len(dst)+n]
 		if int64(len(dst)-start) > bound {
 			return dst[:start+int(bound)], &http.MaxBytesError{Limit: bound}

@@ -75,9 +75,12 @@ func (v value) text() string {
 }
 
 // str returns the string member named key, or "".
-func (v value) str(key string) string {
-	if m := v.get(key); m.kind() == '"' {
-		return m.text()
+func (v value) str(key string) string { return v.get(key).string() }
+
+// string returns a string's value, or "" for any other value.
+func (v value) string() string {
+	if v.kind() == '"' {
+		return v.text()
 	}
 	return ""
 }
@@ -125,19 +128,20 @@ func (v value) get(key string) value {
 	if v.kind() != '{' {
 		return value{}
 	}
-	t := v.t
-	if t.nodes[v.i].next-uint32(v.i) > 64 { // perhaps many members
-		if sorted := t.sortedMembers(v.i); sorted != nil {
-			j, found := slices.BinarySearchFunc(sorted, key, func(c int32, key string) int {
-				return strings.Compare(t.rawName(c), key)
-			})
-			if found {
-				return value{t, sorted[j]}
-			}
-			return value{}
-		}
-	}
+	t, n := v.t, 0
 	for c := v.i + 1; uint32(c) < t.nodes[v.i].next; c = int32(t.nodes[c].next) {
+		if n++; n > 16 { // many members: search them sorted, if they can be
+			if sorted := t.sortedMembers(v.i); sorted != nil {
+				j, found := slices.BinarySearchFunc(sorted, key, func(c int32, key string) int {
+					return strings.Compare(t.rawName(c), key)
+				})
+				if found {
+					return value{t, sorted[j]}
+				}
+				return value{}
+			}
+			n = -1 << 31
+		}
 		if raw := t.rawName(c); raw == key || strings.IndexByte(raw, '\\') >= 0 && t.name(c) == key {
 			return value{t, c}
 		}
@@ -293,22 +297,6 @@ func unescapeToken(s string) (string, bool) {
 		b.WriteByte("~/"[s[i]-'0'])
 	}
 	return b.String(), true
-}
-
-// fragment percent-encodes a JSON Pointer as a URI fragment (RFC 6901
-// section 6): every byte but those RFC 3986 allows in a fragment.
-func fragment(ptr string) string {
-	var b strings.Builder
-	b.Grow(len(ptr) + 1)
-	b.WriteByte('#')
-	for i := 0; i < len(ptr); i++ {
-		if c := ptr[i]; unreserved(c) || strings.IndexByte("!$&'()*+,;=:@/?", c) >= 0 {
-			b.WriteByte(c)
-		} else {
-			writeEscaped(&b, c)
-		}
-	}
-	return b.String()
 }
 
 // parseTree reads src, a JSON text (RFC 8259), as the document at uri,

@@ -543,7 +543,7 @@ func (c *Client) resolve(s *server, setting string, re *RequestError) (endpoint,
 	if !ok {
 		return endpoint{}, false
 	}
-	ep, err := c.doc.endpoint(u)
+	ep, err := c.doc.resolveServerURL(u)
 	if err != nil {
 		if re != nil {
 			re.setting(setting, fmt.Errorf("server URL %q cannot be used with the variables' values: %w", s.URL, err))
@@ -554,8 +554,8 @@ func (c *Client) resolve(s *server, setting string, re *RequestError) (endpoint,
 	return ep, true
 }
 
-// endpoint resolves the server URL s by the URL rule.
-func (d *document) endpoint(s string) (endpoint, error) {
+// resolveServerURL resolves the server URL s by the URL rule.
+func (d *document) resolveServerURL(s string) (endpoint, error) {
 	u, err := url.Parse(s)
 	switch {
 	case err != nil:
@@ -651,7 +651,7 @@ func (c *Client) body(o *operation, in *Input, h http.Header, re *RequestError) 
 	} else if m.class() == jsonClass {
 		if b, err = json.Marshal(in.Body); err != nil {
 			err = &encodingError{err}
-		} else if at, ok := c.doc.findReader(reflect.ValueOf(in.Body)); ok {
+		} else if at, ok := c.doc.findReader(in.Body); ok {
 			re.input("Input.Body"+at, errors.New("a JSON value cannot hold an io.Reader or a Part"))
 			return payload{}, nil
 		}
@@ -776,9 +776,33 @@ func (d *document) walkOf(t reflect.Type, open map[reflect.Type]bool) *walk {
 	return w
 }
 
-// findReader returns the JSON Pointer, from v, of an io.Reader or Part that
-// encoding/json would reach in v.
-func (d *document) findReader(v reflect.Value) (string, bool) {
+// findReader returns the JSON Pointer, from x, of an io.Reader or Part that
+// encoding/json would reach in x, walking the values encoding/json itself
+// creates without reflection.
+func (d *document) findReader(x any) (string, bool) {
+	switch x := x.(type) {
+	case nil, string, bool, float64, json.Number:
+		return "", false
+	case map[string]any:
+		for k, v := range x {
+			if at, ok := d.findReader(v); ok {
+				return "/" + escapeToken(k) + at, true
+			}
+		}
+		return "", false
+	case []any:
+		for i, v := range x {
+			if at, ok := d.findReader(v); ok {
+				return "/" + strconv.Itoa(i) + at, true
+			}
+		}
+		return "", false
+	}
+	return d.findValue(reflect.ValueOf(x))
+}
+
+// findValue is findReader for a value of any type.
+func (d *document) findValue(v reflect.Value) (string, bool) {
 	switch v.Kind() {
 	case reflect.Interface, reflect.Pointer, reflect.Map, reflect.Slice:
 		if v.IsNil() {
@@ -796,12 +820,17 @@ func (d *document) findReader(v reflect.Value) (string, bool) {
 		return "", false
 	}
 	child := func(name string, v reflect.Value) (string, bool) {
-		at, ok := d.findReader(v)
+		at, ok := d.findValue(v)
 		return "/" + escapeToken(name) + at, ok
 	}
 	switch v.Kind() {
-	case reflect.Interface, reflect.Pointer:
-		return d.findReader(v.Elem())
+	case reflect.Interface:
+		if v.CanInterface() {
+			return d.findReader(v.Interface())
+		}
+		return d.findValue(v.Elem())
+	case reflect.Pointer:
+		return d.findValue(v.Elem())
 	case reflect.Struct:
 		for _, f := range w.fields {
 			if fv, err := v.FieldByIndexErr(f.index); err == nil {

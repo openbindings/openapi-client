@@ -238,8 +238,23 @@ func contentURN(content string) string {
 	return fmt.Sprintf("urn:uuid:%x-%x-%x-%x-%x", u[0:4], u[4:6], u[6:8], u[8:10], u[10:16])
 }
 
-// source returns the URI naming the node at ptr.
-func (d *document) source(ptr string) string { return d.uri + fragment(ptr) }
+// source returns the URI naming the node at ptr: the document's, with ptr
+// percent-encoded as a fragment as RFC 6901 section 6 says, every byte but
+// those RFC 3986 allows in a fragment.
+func (d *document) source(ptr string) string {
+	var b strings.Builder
+	b.Grow(len(d.uri) + len(ptr) + 1)
+	b.WriteString(d.uri)
+	b.WriteByte('#')
+	for i := 0; i < len(ptr); i++ {
+		if c := ptr[i]; unreserved(c) || strings.IndexByte("!$&'()*+,;=:@/?", c) >= 0 {
+			b.WriteByte(c)
+		} else {
+			writeEscaped(&b, c)
+		}
+	}
+	return b.String()
+}
 
 func (d *document) index(ctx context.Context) error {
 	d.byID, d.byRoute, d.broken = map[string]*entry{}, map[route]*entry{}, map[string]*entry{}
@@ -358,17 +373,24 @@ func (d *document) follow(v value, ptr string) (value, string, string, error) {
 	desc, described := "", false
 	var loop cycle
 	for {
-		if s := v.get("description"); !described && s.kind() == '"' {
-			desc, described = s.text(), true
+		var ref value
+		for name, m := range v.members() {
+			switch {
+			case name == "$ref":
+				ref = m
+			case name == "description" && !described && m.kind() == '"':
+				desc, described = m.text(), true
+			}
 		}
-		next, at, err := d.deref(v)
+		if ref.kind() != '"' {
+			return v, ptr, desc, nil
+		}
+		next, at, err := d.target(ref.text())
 		switch {
 		case err != nil:
 			return value{}, "", "", err
-		case !next.ok():
-			return v, ptr, desc, nil
 		case loop.seen(next):
-			return value{}, "", "", fmt.Errorf("%w %q: a reference cycle", ErrUnresolved, v.str("$ref"))
+			return value{}, "", "", fmt.Errorf("%w %q: a reference cycle", ErrUnresolved, ref.text())
 		}
 		v, ptr = next, at
 	}
@@ -377,18 +399,21 @@ func (d *document) follow(v value, ptr string) (value, string, string, error) {
 // deref returns the target of v's $ref, and its pointer, or an absent value
 // when v is not a reference.
 func (d *document) deref(v value) (value, string, error) {
-	ref := v.get("$ref")
-	if ref.kind() != '"' {
-		return value{}, "", nil
+	if ref := v.get("$ref"); ref.kind() == '"' {
+		return d.target(ref.text())
 	}
-	s := ref.text()
-	ptr, err := d.resolve(s)
+	return value{}, "", nil
+}
+
+// target returns the node a local reference names, and its pointer.
+func (d *document) target(ref string) (value, string, error) {
+	ptr, err := d.resolve(ref)
 	if err != nil {
 		return value{}, "", err
 	}
 	target := d.root().at(ptr)
 	if !target.ok() {
-		return value{}, "", fmt.Errorf("%w %q: no such node", ErrUnresolved, s)
+		return value{}, "", fmt.Errorf("%w %q: no such node", ErrUnresolved, ref)
 	}
 	return target, ptr, nil
 }

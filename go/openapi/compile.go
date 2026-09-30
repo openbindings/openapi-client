@@ -64,28 +64,49 @@ func (e *entry) build() *operation {
 	if e.id == "" || d.byID[e.id] != e {
 		op.Key = op.Method + " " + op.Path
 	}
-	op.Summary, op.Description = n.str("summary"), n.str("description")
-	op.Tags, op.Deprecated = n.get("tags").strs(), n.flag("deprecated")
+	var params, body, responses, servers, security value
+	for name, m := range n.members() { // one pass: a member's name is read from the source
+		switch name {
+		case "summary":
+			op.Summary = m.string()
+		case "description":
+			op.Description = m.string()
+		case "tags":
+			op.Tags = m.strs()
+		case "deprecated":
+			op.Deprecated = m.kind() == 't'
+		case "parameters":
+			params = m
+		case "requestBody":
+			body = m
+		case "responses":
+			responses = m
+		case "servers":
+			servers = m
+		case "security":
+			security = m
+		}
+	}
 	errs := []error{e.err}
 
 	ids := map[paramID]int{}
 	list, at, err := e.itemField("parameters", value.ok)
 	errs = append(errs, err)
 	errs = o.addParams(list, at, ids, errs)
-	errs = o.addParams(n.get("parameters"), ptr+"/parameters", ids, errs)
+	errs = o.addParams(params, ptr+"/parameters", ids, errs)
 	o.assignKeys()
 
-	if rb := n.get("requestBody"); rb.ok() && op.Method != "TRACE" {
+	if body.ok() && op.Method != "TRACE" {
 		var target value
-		op.Body, target = d.message(rb, ptr+"/requestBody")
+		op.Body, target = d.message(body, ptr+"/requestBody")
 		if !target.ok() {
 			errs = append(errs, op.Body.Err)
 		}
 		op.Body.Required = target.flag("required")
 		o.body = parseMedias(op.Body.Media)
 	}
-	if rs := n.get("responses"); rs.kind() == '{' {
-		for key, r := range rs.members() {
+	if responses.kind() == '{' {
+		for key, r := range responses.members() {
 			if !strings.HasPrefix(key, "x-") {
 				m, _ := d.message(r, ptr+"/responses/"+escapeToken(key))
 				m.Key = key
@@ -94,8 +115,8 @@ func (e *entry) build() *operation {
 		}
 	}
 
-	if s := n.get("servers"); s.hasMembers() {
-		o.servers = d.parseServers(s, ptr+"/servers")
+	if servers.hasMembers() {
+		o.servers = d.parseServers(servers, ptr+"/servers")
 	} else if s, at, err := e.itemField("servers", value.hasMembers); s.ok() {
 		errs = append(errs, err)
 		o.servers = d.parseServers(s, at)
@@ -106,12 +127,11 @@ func (e *entry) build() *operation {
 		op.Servers = append(op.Servers, s.Server)
 	}
 
-	sec := n.get("security")
-	if !sec.ok() {
-		sec = d.root().get("security")
+	if !security.ok() {
+		security = d.root().get("security")
 	}
-	for _, r := range sec.members() {
-		if sec.kind() == '[' && r.kind() == '{' {
+	for _, r := range security.members() {
+		if security.kind() == '[' && r.kind() == '{' {
 			op.Security = append(op.Security, securityRequirement(r))
 		}
 	}
@@ -214,25 +234,40 @@ func (d *document) param(v value, ptr string) *Param {
 	if err != nil {
 		return &Param{Source: d.source(ptr), Err: err}
 	}
-	p := &Param{
-		Name:            t.str("name"),
-		In:              t.str("in"),
-		Description:     desc,
-		Required:        t.flag("required"),
-		Deprecated:      t.flag("deprecated"),
-		AllowEmptyValue: t.flag("allowEmptyValue"),
-		AllowReserved:   t.str("in") == "query" && t.flag("allowReserved"),
-		Source:          d.source(at),
-		Schema:          d.schema(t.get("schema"), at+"/schema"),
+	p := &Param{Description: desc, Source: d.source(at)}
+	var explode, content value
+	for name, m := range t.members() { // one pass: a member's name is read from the source
+		switch name {
+		case "name":
+			p.Name = m.string()
+		case "in":
+			p.In = m.string()
+		case "required":
+			p.Required = m.kind() == 't'
+		case "deprecated":
+			p.Deprecated = m.kind() == 't'
+		case "allowEmptyValue":
+			p.AllowEmptyValue = m.kind() == 't'
+		case "allowReserved":
+			p.AllowReserved = m.kind() == 't'
+		case "style":
+			p.Style = m.string()
+		case "explode":
+			explode = m
+		case "schema":
+			p.Schema = d.schema(m, at+"/schema")
+		case "content":
+			content = m
+		}
 	}
-	if c := t.get("content"); c.kind() == '{' && c.hasMembers() {
-		for typ, m := range c.members() {
+	p.AllowReserved = p.AllowReserved && p.In == "query"
+	if content.kind() == '{' && content.hasMembers() {
+		for typ, m := range content.members() {
 			p.ContentType = typ
 			p.Schema = d.schema(m.get("schema"), at+"/content/"+escapeToken(typ)+"/schema")
 			break
 		}
 	} else {
-		p.Style = t.str("style")
 		switch {
 		case p.Style != "":
 		case p.In == "query" || p.In == "cookie":
@@ -240,9 +275,8 @@ func (d *document) param(v value, ptr string) *Param {
 		default:
 			p.Style = "simple"
 		}
-		e := t.get("explode")
-		p.ExplodeSet = e.ok()
-		p.Explode = e.kind() == 't' || !e.ok() && p.Style == "form"
+		p.ExplodeSet = explode.ok()
+		p.Explode = explode.kind() == 't' || !explode.ok() && p.Style == "form"
 	}
 	switch {
 	case !slices.Contains([]string{"path", "query", "header", "cookie"}, p.In):
@@ -471,8 +505,18 @@ func (d *document) parseServers(list value, ptr string) []*server {
 func (d *document) newServer(s *Server, declared value) *server {
 	sv := &server{Server: s}
 	var index map[string]int
-	rest, prefix := s.URL, ""
-	for {
+	// Where the text so far ends: in the scheme, with or without a "/" seen,
+	// in the authority, or in the path.
+	authority, path, slash := false, false, false
+	advance := func(text string) {
+		if i := strings.Index(text, "://"); !authority && !path && i >= 0 {
+			authority, text = true, text[i+3:]
+		}
+		slash = slash || strings.Contains(text, "/")
+		path = path || authority && slash
+		authority = authority && !path
+	}
+	for rest := s.URL; ; {
 		i := strings.IndexByte(rest, '{')
 		var name, after string
 		found := false
@@ -483,8 +527,8 @@ func (d *document) newServer(s *Server, declared value) *server {
 			sv.text = append(sv.text, rest)
 			break
 		}
-		prefix += rest[:i]
 		sv.text = append(sv.text, rest[:i])
+		advance(rest[:i])
 		rest = after
 		if index == nil {
 			index = map[string]int{}
@@ -503,26 +547,23 @@ func (d *document) newServer(s *Server, declared value) *server {
 			}
 			s.Variables = append(s.Variables, v)
 		}
-		scheme, afterScheme, hasScheme := strings.Cut(prefix, "://")
-		sv.vars = append(sv.vars, urlVar{j, hasScheme && !strings.Contains(afterScheme, "/") ||
-			!hasScheme && !strings.ContainsAny(scheme, "/") && strings.HasPrefix(rest, ":")})
-		prefix += "x"
+		sv.vars = append(sv.vars, urlVar{j, authority || !path && !slash && strings.HasPrefix(rest, ":")})
 	}
 	// Only a defect no value can repair makes the server unusable for good:
 	// a query or fragment in its text, or userinfo in its authority.
 	literal := sv.substitute(func(urlVar) string { return "x" })
 	_, rest, absolute := strings.Cut(literal, "://")
-	authority, _, _ := strings.Cut(rest, "/")
+	host, _, _ := strings.Cut(rest, "/")
 	if len(sv.vars) == 0 {
-		if _, err := d.endpoint(literal); err != nil {
+		if _, err := d.resolveServerURL(literal); err != nil {
 			s.Err = fmt.Errorf("server URL %q cannot be used: %w", s.URL, err)
 		}
-	} else if strings.ContainsAny(literal, "?#") || absolute && strings.Contains(authority, "@") ||
+	} else if strings.ContainsAny(literal, "?#") || absolute && strings.Contains(host, "@") ||
 		strings.HasPrefix(sv.text[0], "/") && !d.httpBase() {
 		s.Err = fmt.Errorf("server URL %q cannot be used whatever its variables' values", s.URL)
 	}
 	if s.Err == nil && !slices.ContainsFunc(s.Variables, func(v Variable) bool { return !v.DefaultSet }) {
-		if ep, err := d.endpoint(sv.substitute(func(v urlVar) string { return s.Variables[v.index].Default })); err == nil {
+		if ep, err := d.resolveServerURL(sv.substitute(func(v urlVar) string { return s.Variables[v.index].Default })); err == nil {
 			sv.fixed = &ep
 		}
 	}
