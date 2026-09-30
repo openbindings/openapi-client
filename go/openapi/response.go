@@ -235,22 +235,21 @@ func (r *Request) newExchange(ctx context.Context) (*exchange, *http.Request, er
 	return x, req, nil
 }
 
-// send sends req with the call's credentials and describes the response,
-// whose Request is req, without them.
+// send sends req with the call's credentials, following redirects as
+// Options.Redirects says, and describes the response.
 func (x *exchange) send(req *http.Request) (*Response, error) {
 	signed, err := x.sign(req)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := x.cfg.client.Do(signed)
+	resp, err := x.follow(req, signed)
 	x.mu.Lock()
 	x.returned = true
 	x.publish()
 	x.mu.Unlock()
 	if err != nil {
-		return nil, withContext(x, redact(err, req.URL))
+		return nil, withContext(x, err)
 	}
-	resp.Request = req
 	r := &x.resp
 	r.Response, r.Security = resp, x.key()
 	if d := x.op.declaration(resp.StatusCode); d != nil {

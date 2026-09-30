@@ -16,15 +16,16 @@ import (
 // derive from them.
 type config struct {
 	Options
-	client        *http.Client     // HTTPClient, following no redirects
-	base          *endpoint        // BaseURL, parsed
-	securityNames map[string]bool  // Security, as a set
-	mediaType     parsedMedia      // MediaType, parsed
-	mediaTypeErr  error            // why MediaType cannot be used, refusing calls that send a body
-	codecs        map[string]Codec // Codecs, by lowercase key
-	codecsErr     error            // why a Codecs key cannot be used, refusing calls that use a codec
-	refused       map[string]error // settings no call can use, by Settings key
-	endpoints     sync.Map         // *server to the endpoint it resolves to with Variables
+	client        *http.Client                               // HTTPClient, following no redirects
+	checkRedirect func(*http.Request, []*http.Request) error // HTTPClient's CheckRedirect, or net/http's default
+	base          *endpoint                                  // BaseURL, parsed
+	securityNames map[string]bool                            // Security, as a set
+	mediaType     parsedMedia                                // MediaType, parsed
+	mediaTypeErr  error                                      // why MediaType cannot be used, refusing calls that send a body
+	codecs        map[string]Codec                           // Codecs, by lowercase key
+	codecsErr     error                                      // why a Codecs key cannot be used, refusing calls that use a codec
+	refused       map[string]error                           // settings no call can use, by Settings key
+	endpoints     sync.Map                                   // *server to the endpoint it resolves to with Variables
 }
 
 // newConfig copies o, its maps and slices included, and checks what it can
@@ -49,20 +50,20 @@ func newConfig(o Options, parent *config) *config {
 	cfg.Security = slices.Clone(o.Security)
 
 	if parent != nil && parent.HTTPClient == o.HTTPClient {
-		cfg.client = parent.client
+		cfg.client, cfg.checkRedirect = parent.client, parent.checkRedirect
 	} else {
 		hc := o.HTTPClient
 		if hc == nil {
 			hc = http.DefaultClient
 		}
 		client := *hc
-		client.CheckRedirect = followNone
-		cfg.client = &client
+		client.CheckRedirect = followNone // the client follows redirects itself
+		cfg.client, cfg.checkRedirect = &client, hc.CheckRedirect
+		if cfg.checkRedirect == nil {
+			cfg.checkRedirect = tenRedirects
+		}
 	}
-	switch {
-	case o.Redirects == FollowAll:
-		refuse("Options.Redirects", notYet("following redirects"))
-	case o.Redirects != FollowNone:
+	if o.Redirects != FollowNone && o.Redirects != FollowAll {
 		refuse("Options.Redirects", fmt.Errorf("unknown value %d", o.Redirects))
 	}
 	if o.BaseURL != "" {
@@ -113,19 +114,6 @@ func newConfig(o Options, parent *config) *config {
 		}
 	}
 	return cfg
-}
-
-// followNone is the CheckRedirect of the http.Client the client sends with,
-// which follows no redirect. For a 307 or 308, the http.Client has already
-// taken the body again, with GetBody, for the hop req, which is never sent.
-func followNone(req *http.Request, _ []*http.Request) error {
-	if b, ok := req.Body.(*sentBody); ok && b.x != nil {
-		b.x.unsent(b.gen)
-		if b.rc != nil {
-			b.rc.Close()
-		}
-	}
-	return http.ErrUseLastResponse
 }
 
 // derivedFields are the header fields net/http derives or HTTP forbids a
