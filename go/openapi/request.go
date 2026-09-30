@@ -195,7 +195,7 @@ func (c *Client) newRequest(ctx context.Context, o *operation, in *Input, re *Re
 					setter = "Input.Header"
 				}
 			}
-			re.setting(setter, fmt.Errorf("sets %s, which the parameter %s supplies", p.field, p.Key))
+			re.setting(setter, fmt.Errorf("sets %s, which the parameter %q supplies", p.field, p.Key))
 		default:
 			var sb strings.Builder
 			d.write(&sb, "", false, p.Explode, false)
@@ -282,7 +282,7 @@ func (p *param) data(v any, given bool, re *RequestError) (data, bool) {
 	case p.Err != nil:
 		re.input(p.Key, p.Err)
 	case p.unsupported != nil:
-		re.fail(fmt.Errorf("parameter %s: %w", p.Key, p.unsupported))
+		re.fail(fmt.Errorf("parameter %q: %w", p.Key, p.unsupported))
 	default:
 		return d, true
 	}
@@ -890,8 +890,11 @@ func (d *document) findValue(v reflect.Value) (string, bool) {
 
 // mapKey returns the name encoding/json writes for a map key.
 func mapKey(k reflect.Value) string {
-	if k.Kind() == reflect.String {
+	switch {
+	case k.Kind() == reflect.String:
 		return k.String()
+	case k.Kind() == reflect.Pointer && k.IsNil():
+		return "" // as encoding/json names a nil TextMarshaler, the only nil key it writes
 	}
 	if tm, ok := k.Interface().(encoding.TextMarshaler); ok {
 		b, _ := tm.MarshalText()
@@ -930,10 +933,11 @@ func jsonFields(t reflect.Type) []jsonField {
 				visit(ft, append(slices.Clip(index), i), seen)
 			case !f.IsExported():
 			default:
-				if name == "" {
+				tagged := name != "" // a tag with only options does not name the field
+				if !tagged {
 					name = f.Name
 				}
-				all = append(all, candidate{jsonField{name, append(slices.Clip(index), i)}, name != f.Name || tag != ""})
+				all = append(all, candidate{jsonField{name, append(slices.Clip(index), i)}, tagged})
 			}
 		}
 	}

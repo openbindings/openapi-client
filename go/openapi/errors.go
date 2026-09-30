@@ -8,7 +8,9 @@ import (
 	"maps"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // ErrNoOperation is wrapped by the error for a key that names no single
@@ -95,10 +97,10 @@ func (e *RequestError) Error() string {
 		parts = append(parts, strings.TrimPrefix(e.Err.Error(), "openapi: "))
 	}
 	for _, k := range slices.Sorted(maps.Keys(e.Settings)) {
-		parts = append(parts, k+": "+e.Settings[k].Error())
+		parts = append(parts, label(k)+": "+e.Settings[k].Error())
 	}
 	for _, k := range slices.Sorted(maps.Keys(e.Inputs)) {
-		parts = append(parts, k+": "+e.Inputs[k].Error())
+		parts = append(parts, label(k)+": "+e.Inputs[k].Error())
 	}
 	return "openapi: " + strings.Join(parts, "; ")
 }
@@ -220,9 +222,24 @@ func describeResponse(r *Response) string {
 	if r == nil || r.Response == nil {
 		return "no response"
 	}
-	s := strings.TrimSpace(fmt.Sprintf("%d %s", r.StatusCode, http.StatusText(r.StatusCode)))
+	s := status(r.StatusCode)
 	if x := exchangeOf(r.Response); x != nil {
-		s = x.op.Key + ": " + s
+		s = label(x.op.Key) + ": " + s
 	}
 	return s
+}
+
+// status names a status code, never with a peer's reason phrase.
+func status(code int) string {
+	return strings.TrimSpace(fmt.Sprintf("%d %s", code, http.StatusText(code)))
+}
+
+// label returns s, from a document, a caller or a peer, for the text of an
+// error: quoted unless every character is printable, so it cannot forge a
+// line of a log or reach a terminal as control codes.
+func label(s string) string {
+	if utf8.ValidString(s) && !strings.ContainsFunc(s, func(r rune) bool { return !strconv.IsPrint(r) }) {
+		return s
+	}
+	return strconv.Quote(s)
 }
