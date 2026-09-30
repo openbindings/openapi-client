@@ -669,7 +669,8 @@ type Response struct {
 // duplex peer to make progress. A caller that needs the response while an
 // upload remains open uses Body directly or Stream instead. Decode applies
 // no success-status policy and never returns a StatusError. A failure to
-// read or decode is a *DecodeError holding r, even for a non-2xx status.
+// read or decode is a *DecodeError holding a copy of r, even for a non-2xx
+// status.
 // An invalid out is a *DecodeError without consuming or closing Body, so
 // the caller may retry with a valid target or read the raw bytes.
 // Call it before reading Body directly or through Items or Events; the

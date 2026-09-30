@@ -117,13 +117,13 @@ func (e *RequestError) Unwrap() []error {
 	return errs
 }
 
-// A StatusError is a response whose final status is not 2xx, including a
-// 3xx that was not followed. It stands whenever such a status arrived, even
-// when reading its body failed. Its body, for a status that has one (see
-// Client.Call), has been read, up to Options.MaxErrorBytes, and the
-// connection released. The promoted Body
-// reads Content again, and when Content is incomplete the promoted
-// ContentLength is len(Content), so reading Body, se.Write(w) and
+// A StatusError is a response whose final status is not 2xx, including a 3xx
+// that was not followed. It stands whenever such a status arrived, even when
+// reading its body failed. Its body, for a status that has one (see
+// Client.Call), has been read, up to Options.MaxErrorBytes, and the connection
+// released. It holds a copy of the call's Response, so its promoted Body and
+// the Response's Body each read Content again, and when Content is incomplete
+// the promoted ContentLength is len(Content), so reading Body, se.Write(w) and
 // httputil.DumpResponse work as in net/http.
 type StatusError struct {
 	*Response
@@ -177,14 +177,13 @@ func (e *StatusError) Unwrap() error {
 }
 
 // A DecodeError is a response whose body could not be used by Call or
-// Response.Decode: it was empty where Call's empty-body rule requires
-// content (Err is io.EOF), it was longer
-// than Options.MaxBodyBytes (an *http.MaxBytesError), it did not decode
-// into the value given, or reading it failed, as when the context ended
-// (Err then matches the context's error). The server has handled the call.
-// The promoted Body reads Content again, and ContentLength is
-// len(Content), as for a StatusError; the promoted Decode therefore reads
-// only Content.
+// Response.Decode: it was empty where Call's empty-body rule requires content
+// (Err is io.EOF), it was longer than Options.MaxBodyBytes (an
+// *http.MaxBytesError), it did not decode into the value given, or reading it
+// failed, as when the context ended (Err then matches the context's error). The
+// server has handled the call. It holds a copy of the Response, whose promoted
+// Body reads Content again, and ContentLength is len(Content), as for a
+// StatusError; the promoted Decode therefore reads only Content.
 type DecodeError struct {
 	*Response
 
