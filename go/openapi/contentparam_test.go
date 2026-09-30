@@ -21,10 +21,11 @@ import (
 // encodes; a JSON type is written as encoding/json writes the value; and
 // any other type takes only a string, as its UTF-8 bytes, and a text type
 // also a number or boolean, in its JSON spelling"; "Only a nil interface is
-// absent". doc.go, Fixed rules, Percent-encoding: "path, query and cookie
-// values (content-serialized ones included ...) ... encode every byte
-// outside RFC 3986's unreserved set as %XX in uppercase hex"; "Header values
-// are written as given". OAS 3.1.2 section 4.8.12.4: a value serialized
+// absent". doc.go, Fixed rules, Percent-encoding: "path and query values
+// (content-serialized ones included ...) ... encode every byte outside RFC
+// 3986's unreserved set as %XX in uppercase hex"; "Header values are written
+// as given", and so is "a content-serialized cookie value" (stage 2 ledger,
+// review round, T2 and K2). OAS 3.1.2 section 4.8.12.4: a value serialized
 // "with a Media Type Object for a media type that does not already
 // incorporate URI percent-encoding" is percent-encoded by the Parameter
 // Object. "as encoding/json writes" is json.Marshal, HTML escaping included
@@ -108,8 +109,8 @@ func TestContentParamJSON(t *testing.T) {
 				t.Errorf("header: %q, %v; want [%s]", v, re, tt.json)
 			}
 			got, re = callOne(t, w, c, "cookie", "p", tt.v)
-			if v := got.Header.Values("Cookie"); re != nil || len(v) != 1 || v[0] != "p="+uri(tt.json) {
-				t.Errorf("cookie: %q, %v; want [p=%s]", v, re, uri(tt.json))
+			if v := got.Header.Values("Cookie"); re != nil || len(v) != 1 || v[0] != "p="+tt.json {
+				t.Errorf("cookie: %q, %v; want [p=%s], as given", v, re, tt.json)
 			}
 		})
 	}
@@ -187,9 +188,9 @@ func TestContentParamTextAndOther(t *testing.T) {
 			}
 		})
 	}
-	got, re := callOne(t, w, c, "textCookie", "p", "a b")
-	if v := got.Header.Values("Cookie"); re != nil || len(v) != 1 || v[0] != "p=a%20b" {
-		t.Errorf("text cookie: %q, %v; want [p=a%%20b]", v, re)
+	got, re := callOne(t, w, c, "textCookie", "p", "a b/c")
+	if v := got.Header.Values("Cookie"); re != nil || len(v) != 1 || v[0] != "p=a b/c" {
+		t.Errorf("text cookie: %q, %v; want [p=a b/c], as given (review round, K2)", v, re)
 	}
 	for _, tt := range []struct {
 		key, param string

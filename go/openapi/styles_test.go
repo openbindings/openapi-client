@@ -114,6 +114,8 @@ func (c styleCfg) expect(t testing.TB, v any) (string, fate) {
 		}
 		uv, err := uvalOf(n)
 		switch {
+		case errors.Is(err, errOracleOnlyUnd):
+			return "", unsettled
 		case err != nil:
 			return "", refused
 		case !uv.defined():
@@ -127,6 +129,8 @@ func (c styleCfg) expect(t testing.TB, v any) (string, fate) {
 	}
 	uv, err := uvalOf(n)
 	switch {
+	case errors.Is(err, errOracleOnlyUnd):
+		return "", unsettled
 	case err != nil:
 		return "", refused
 	case !uv.defined():
@@ -330,7 +334,7 @@ var styleCorpus = []struct {
 	{"undefined: empty array", []int{}},
 	{"undefined: empty object", map[string]any{}},
 	{"undefined: all members undefined", map[string]any{"a": nil}},
-	{"null item", []any{"a", nil}},
+	{"null item skipped", []any{"a", nil}},
 	{"nested array", [][]string{{"a"}}},
 	{"object item", []any{map[string]int{"a": 1}}},
 	{"array member", map[string]any{"a": []int{1}}},
@@ -340,10 +344,12 @@ var styleCorpus = []struct {
 	// skipped, not refused as nesting.
 	{"nested undefined collections skipped", map[string]any{"a": []int{}, "b": map[string]any{}, "c": "x", "d": map[string]any{"e": nil}}},
 	{"undefined: only nested undefined members", map[string]any{"a": []int{}, "b": map[string]any{"c": []string{}}}},
-	// Stage 2 ledger, Q5 follow-up: an undefined array item is refused.
-	{"undefined array items refused", []any{"a", []int{}, map[string]any{}, "b"}},
-	{"only an empty array item", []any{[]int{}}},
-	{"all-undefined object item", []any{"a", map[string]any{"b": nil}}},
+	// Stage 2 ledger, review round, T2: undefined array items are skipped;
+	// nested defined collections stay refused.
+	{"undefined array items skipped", []any{"a", nil, []int{}, map[string]any{}, "b"}},
+	{"all-undefined object item skipped", []any{"a", map[string]any{"b": nil}}},
+	{"only undefined items", []any{nil, []int{}}},
+	{"defined collection item", []any{"a", []any{"b", nil}}},
 	{"reserved member names", map[string]string{"a/b": "c", "d[e]": "f?g"}},
 }
 
@@ -802,7 +808,7 @@ func TestDelimitedStyles(t *testing.T) {
 // array in a deepObject value, a primitive for spaceDelimited, pipeDelimited
 // or deepObject, explode true with spaceDelimited or pipeDelimited ... Each
 // is refused at the parameter's key, with Param.Err set where the document
-// alone decides it"; doc.go, Values: "a null array item is refused". A
+// alone decides it". A
 // Param.Err fails a call only when the call uses the parameter (describe.go,
 // Operation.Err: "A defect in an optional part ... fails a call only when
 // the call uses it"), and a required one refuses every call (describe.go,
@@ -832,7 +838,7 @@ func TestStyleRefusals(t *testing.T) {
 	}{
 		{"se", []string{"a", "b"}}, {"se", map[string]string{"a": "b"}}, {"pe", []string{"a", "b"}},
 		{"s", "x"}, {"s", 5}, {"s", false}, {"p", "x"}, {"p", json.Number("1")},
-		{"s", [][]string{{"a"}}}, {"s", map[string]any{"a": map[string]int{"b": 1}}}, {"p", []any{"a", nil}},
+		{"s", [][]string{{"a"}}}, {"s", map[string]any{"a": map[string]int{"b": 1}}}, {"p", []any{"a", []string{"b"}}},
 	} {
 		_, re := callOne(t, w, c, tt.key, "f", tt.v)
 		if re == nil {
@@ -850,10 +856,10 @@ func TestStyleRefusals(t *testing.T) {
 }
 
 // Refusals the RFC 6570 styles share, for each location (doc.go, Fixed
-// rules, Styles: "Nesting in any style but deepObject is refused"; Values:
-// "a null array item is refused"), keyed by Param.Key, and reported
-// together (client.go, Prepare: "a *RequestError listing every problem at
-// once").
+// rules, Styles: "Nesting in any style but deepObject is refused": a defined
+// collection as an item or member, the undefined ones being skipped, stage 2
+// ledger, review round, T2), keyed by Param.Key, and reported together
+// (client.go, Prepare: "a *RequestError listing every problem at once").
 func TestNestingRefusedEveryStyle(t *testing.T) {
 	var cfgs []styleCfg
 	for _, c := range styleConfigs() {
@@ -865,8 +871,8 @@ func TestNestingRefusedEveryStyle(t *testing.T) {
 	c := parseFor(t, w, styleDoc(cfgs), nil)
 	for _, cfg := range cfgs {
 		for _, v := range []any{
-			[]any{"a", nil}, []any{nil}, [][]int{{1}}, []any{"a", []string{"b"}}, []any{map[string]string{"a": "b"}},
-			map[string]any{"a": []int{1}}, map[string]any{"a": map[string]string{"b": "c"}},
+			[]any{nil, []int{1}}, [][]int{{1}}, []any{"a", []string{"b"}}, []any{map[string]string{"a": "b"}},
+			map[string]any{"a": []int{1}}, map[string]any{"a": map[string]string{"b": "c"}}, map[string]any{"a": []any{nil, 1}},
 		} {
 			_, re := callOne(t, w, c, cfg.id, cfg.field(), v)
 			if re == nil {
@@ -883,7 +889,7 @@ func TestNestingRefusedEveryStyle(t *testing.T) {
 		{"name":"X-H","in":"header","schema":{}}]}}`)
 	c2 := parseFor(t, w, doc, nil)
 	before := w.count()
-	resp, err := c2.Call(t.Context(), "two", &openapi.Input{Params: map[string]any{"p": [][]int{{1}}, "q": "x", "X-H": []any{nil}, "zz": 1}}, nil)
+	resp, err := c2.Call(t.Context(), "two", &openapi.Input{Params: map[string]any{"p": [][]int{{1}}, "q": "x", "X-H": []any{map[string]int{"a": 1}}, "zz": 1}}, nil)
 	re := refusedSince(t, w, before, resp, err)
 	wantKeys(t, "Inputs", re.Inputs, true, "p", "q", "X-H", "zz")
 }
@@ -998,9 +1004,11 @@ func TestEmptyValueRulings(t *testing.T) {
 // spaceDelimited, pipeDelimited and deepObject, and an empty array or object
 // nested as a member are undefined: omitted when optional, missing when
 // required, skipped as members; none is refused as nesting or as a
-// primitive. The Q5 follow-up: an undefined array item (null, [] or {}) is
-// refused at the key (doc.go, Values: "since dropping it would shift the
-// items after it").
+// primitive. An undefined array item (null, [] or {}) is skipped too (stage
+// 2 ledger, review round, T2, reversing the Q5 follow-up; doc.go, Values:
+// "An undefined member or array item is skipped, as RFC 6570 section 3.2.1
+// expands only defined ones"), in every style; a defined collection as an
+// item is still refused as nesting.
 func TestUndefinedSettledFirst(t *testing.T) {
 	w := newWire(t, nil)
 	doc := doc31(`
@@ -1081,21 +1089,52 @@ func TestUndefinedSettledFirst(t *testing.T) {
 		}
 		wantKeys(t, fmt.Sprintf("%s %#v Inputs", tt.key, tt.v), re.Inputs, true, "p")
 	}
-	// Undefined array items: refused at the key, optional or not.
+	// Undefined array items: skipped, the defined members written as the
+	// style writes them (T2).
+	items := []any{"a", nil, []int{}, map[string]any{}, "b"}
+	for _, tt := range []struct {
+		key, param string
+		v          any
+		want       string
+	}{
+		{"form", "p", items, "/f?p=a&p=b"},
+		{"formNo", "p", items, "/fn?p=a,b"},
+		{"formNo", "p", []any{"a", map[string]any{"b": nil}}, "/fn?p=a"},
+		{"pipe", "p", items, "/pd?p=a%7Cb"},
+		{"space", "p", []any{nil, "a"}, "/sd?p=a"},
+		{"simple", "p", items, "/s/a,b"},
+		{"header", "X-P", items, "a,b"},
+		{"cookie", "p", items, "p=a; p=b"},
+	} {
+		got, re := callOne(t, w, c, tt.key, tt.param, tt.v)
+		if re != nil {
+			t.Errorf("%s %#v: refused: %v; want %q", tt.key, tt.v, re, tt.want)
+			continue
+		}
+		switch tt.key {
+		case "header":
+			if v := got.Header.Values("X-P"); len(v) != 1 || v[0] != tt.want {
+				t.Errorf("X-P = %q, want [%q]", v, tt.want)
+			}
+		case "cookie":
+			if v := got.Header.Values("Cookie"); len(v) != 1 || v[0] != tt.want {
+				t.Errorf("Cookie = %q, want [%q]", v, tt.want)
+			}
+		default:
+			if got.RequestURI != tt.want {
+				t.Errorf("%s: request target %q, want %q", tt.key, got.RequestURI, tt.want)
+			}
+		}
+	}
+	// A defined collection as an item is still nesting, refused at the key.
 	for _, tt := range []struct {
 		key, param string
 		v          any
 	}{
-		{"form", "p", []any{"a", []int{}, map[string]any{}, "b"}},
-		{"form", "p", [][]int{{}}},
-		{"formNo", "p", []any{map[string]any{}}},
-		{"formNo", "p", []any{"a", map[string]any{"b": nil}}},
-		{"pipe", "p", []any{"a", []int{}, "b"}},
-		{"space", "p", []any{nil, "a"}},
-		{"simple", "p", []any{"a", map[string]any{}}},
-		{"simple", "p", [][]string{{}}},
-		{"header", "X-P", []any{[]int{}}},
-		{"cookie", "p", []any{"a", map[string]any{}}},
+		{"form", "p", []any{"a", nil, []string{"b"}}},
+		{"formNo", "p", []any{map[string]any{"k": "v"}, nil}},
+		{"simple", "p", []any{[]any{nil, "b"}}},
+		{"header", "X-P", []any{"a", map[string]any{"b": 1}}},
 	} {
 		_, re := callOne(t, w, c, tt.key, tt.param, tt.v)
 		if re == nil {

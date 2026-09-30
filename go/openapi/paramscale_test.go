@@ -2,7 +2,9 @@ package openapi_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 	"testing"
@@ -175,4 +177,103 @@ func TestLargeParamValuesScale(t *testing.T) {
 	}
 	wantLinear(t, "deepObject depth", 250, func(n int) func() { return prepare("deep", "v", levels(n)) })
 	wantLinearBytes(t, "deepObject depth, bytes", 250, func(n int) func() { return prepare("deep", "v", levels(n)) })
+}
+
+// sharedLongName is a document whose one component Parameter Object, named
+// by n KiB, sits in location in and is referenced by 16*n operations.
+func sharedLongName(n int, in string) []byte {
+	var b strings.Builder
+	b.WriteString(`{"openapi":"3.1.0","info":{"title":"t","version":"1"},"servers":[{"url":"https://api.example.test"}],"paths":{`)
+	for i := range 16 * n {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		fmt.Fprintf(&b, `"/p%d":{"get":{"parameters":[{"$ref":"#/components/parameters/P"}]}}`, i)
+	}
+	fmt.Fprintf(&b, `},"components":{"parameters":{"P":{"name":"%s","in":"%s","schema":{}}}}}`, strings.Repeat("a", n<<10), in)
+	return []byte(b.String())
+}
+
+// K3 (#2; dev loop, P1: "every compiled or decoded form is computed at most
+// once per document node"): one Parameter Object with a long name,
+// referenced by many operations, costs Operations() time, allocated bytes
+// and retained memory linear in the document, the name and the references
+// growing together, in every location a shared name can take (a path
+// parameter's name is written in each Paths key, so its document is already
+// the product). Before the fix, 64 KiB by 1,000 references retained about
+// 67 MB (query, cookie) and 133 MB (header), 16x its quarter.
+func TestK3SharedLongNameScales(t *testing.T) {
+	for _, in := range []string{"query", "header", "cookie"} {
+		wantLinear(t, in+": Operations()", 16, func(n int) func() { return timedOperations(t, sharedLongName(n, in)) })
+		wantLinearBytes(t, in+": Operations() bytes", 16, func(n int) func() { return timedOperations(t, sharedLongName(n, in)) })
+		t.Run(in+": retained after Operations()", func(t *testing.T) {
+			keep := func(n int) int64 {
+				c, err := openapi.Parse(context.Background(), sharedLongName(n, in), testDocURI, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return retainedBy(func() any { return c.Operations() })
+			}
+			small, large := keep(16), keep(64)
+			ratio := float64(large) / float64(max(small, 64<<10))
+			t.Logf("16 KiB x 256: %d bytes, 64 KiB x 1,024: %d bytes (%.1fx)", small, large, ratio)
+			if ratio > 8 {
+				t.Errorf("four times the input retained %.1f times the memory; want linear", ratio)
+			}
+		})
+	}
+}
+
+// manyParams is a document whose one operation declares n query
+// parameters.
+func manyParams(n int) []byte {
+	var b strings.Builder
+	b.WriteString(`{"openapi":"3.1.0","info":{"title":"t","version":"1"},"servers":[{"url":"https://api.example.test"}],"paths":{"/x":{"get":{"operationId":"op","parameters":[`)
+	for i := range n {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		fmt.Fprintf(&b, `{"name":"q%d","in":"query","schema":{}}`, i)
+	}
+	b.WriteString(`]}}}}`)
+	return []byte(b.String())
+}
+
+// K11 (A4; client.go, Input.Params and Input.ParamWriters: "A key the
+// operation does not declare ... refuses the call"): with n declared
+// parameters, all n keys given and one unknown key, the refusal costs time
+// linear in n, in Params and in ParamWriters. Before the fix each key was
+// checked again by a scan of the declarations, n(n+1)/2 comparisons.
+func TestK11UnknownKeyScales(t *testing.T) {
+	refused := func(c *openapi.Client, in *openapi.Input) func() {
+		return func() {
+			_, err := c.Prepare("op", in)
+			var re *openapi.RequestError
+			if !errors.As(err, &re) || re.Inputs["unknown"] == nil {
+				t.Errorf("Prepare = %.200v, want the unknown key refused", err)
+			}
+		}
+	}
+	client := func(n int) *openapi.Client {
+		c, err := openapi.Parse(context.Background(), manyParams(n), testDocURI, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.Operation("op") // compile, untimed
+		return c
+	}
+	wantLinear(t, "Params", 4000, func(n int) func() {
+		in := &openapi.Input{Params: map[string]any{"unknown": "x"}}
+		for i := range n {
+			in.Params["q"+strconv.Itoa(i)] = "v"
+		}
+		return refused(client(n), in)
+	})
+	wantLinear(t, "ParamWriters", 4000, func(n int) func() {
+		in := &openapi.Input{ParamWriters: map[string]func(*http.Request) error{"unknown": func(*http.Request) error { return nil }}}
+		for i := range n {
+			in.ParamWriters["q"+strconv.Itoa(i)] = func(*http.Request) error { return nil }
+		}
+		return refused(client(n), in)
+	})
 }

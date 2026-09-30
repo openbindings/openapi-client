@@ -1,0 +1,756 @@
+package openapi_test
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"math"
+	"net/http"
+	"net/url"
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/openbindings/openapi-client/go/openapi"
+)
+
+// Regression tests for the stage 2 review round (stage 2 ledger, "Review
+// round"; review/panel.json "#N", review/gpt-answer.md "A#"): class ruling
+// P4, the API refreshes of f6dfd90, and fixes K1 to K13.
+
+// depthDoc has a JSON content query parameter p and a JSON body.
+const depthDoc = `
+	"/q":{"get":{"operationId":"content","parameters":[{"name":"p","in":"query","content":{"application/json":{}}}]}},
+	"/b":{"post":{"operationId":"body","requestBody":{"content":{"application/json":{}}}}}`
+
+// nestAny returns n []any around leaf.
+func nestAny(n int, leaf any) any {
+	v := leaf
+	for range n {
+		v = []any{v}
+	}
+	return v
+}
+
+// nestMap returns n map[string]any around leaf.
+func nestMap(n int, leaf any) any {
+	v := leaf
+	for range n {
+		v = map[string]any{"a": v}
+	}
+	return v
+}
+
+// brackets returns n arrays around inner, as JSON text.
+func brackets(n int, inner string) string {
+	return strings.Repeat("[", n) + inner + strings.Repeat("]", n)
+}
+
+// deepByte998 and deepByte999 are byte-kinded types whose MarshalJSON writes
+// 998 or 999 arrays around 0: encoding/json writes a slice of them as an
+// array of those values, not as base64, since the element's pointer
+// implements json.Marshaler.
+type (
+	deepByte998 uint8
+	deepByte999 uint8
+)
+
+func (deepByte998) MarshalJSON() ([]byte, error) { return []byte(brackets(998, "0")), nil }
+func (deepByte999) MarshalJSON() ([]byte, error) { return []byte(brackets(999, "0")), nil }
+
+// ptrDeepByte is deepByte999 with a pointer receiver, which encoding/json
+// calls on an addressable slice element.
+type ptrDeepByte uint8
+
+func (*ptrDeepByte) MarshalJSON() ([]byte, error) { return []byte(brackets(999, "0")), nil }
+
+// textByte is a byte-kinded TextMarshaler: a []textByte is an array of
+// strings.
+type textByte uint8
+
+func (textByte) MarshalText() ([]byte, error) { return []byte("t"), nil }
+
+// prepareIn prepares key with v as the parameter p (key "content") or the
+// body (key "body").
+func prepareIn(c *openapi.Client, key string, v any) (*openapi.Request, error) {
+	if key == "body" {
+		return c.Prepare("body", &openapi.Input{Body: v})
+	}
+	return c.Prepare("content", &openapi.Input{Params: map[string]any{"p": v}})
+}
+
+// wantEncoded checks that req carries v as encoding/json writes it: as the
+// body, or as the percent-encoded value of p.
+func wantEncoded(t *testing.T, key string, req *openapi.Request, v any) {
+	t.Helper()
+	want, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	if key == "body" {
+		got, _ := io.ReadAll(req.HTTP.Body)
+		if !bytes.Equal(trimNL(got), want) {
+			t.Errorf("body %.80q..., want %.80q...", got, want)
+		}
+		return
+	}
+	if got, want := req.HTTP.URL.RawQuery, "p="+pctName(string(want)); got != want {
+		t.Errorf("query %.80q..., want %.80q...", got, want)
+	}
+}
+
+// P4 and K1 (#4, A1): depth is counted in the JSON encoding/json writes, a
+// MarshalJSON's output included (doc.go, Values: "A value the client encodes
+// that is nested deeper than 1,000 levels, counted in the JSON encoding/json
+// writes (a MarshalJSON's output included), is refused at its key"; ledger,
+// Q9: a scalar leaf is a level, the outermost value level 1). A static
+// per-type depth may not refuse a value whose JSON is within the bound, nor
+// accept one whose JSON is not.
+func TestK1DepthCountedInEncodedJSON(t *testing.T) {
+	c := parseAt(t, doc31(depthDoc), "https://api.example.test", testDocURI, nil)
+	deepType := reflect.TypeFor[int]()
+	for range 1001 {
+		deepType = reflect.SliceOf(deepType)
+	}
+	within := []struct {
+		name string
+		v    any
+	}{
+		// A1: 1,000 levels ending in an empty typed map.
+		{"999 objects around an empty typed map", nestMap(999, map[string]int{})},
+		{"999 arrays around an empty typed slice", nestAny(999, []int{})},
+		{"999 arrays around a nil typed slice", nestAny(999, []int(nil))},
+		{"999 arrays around a nil struct pointer", nestAny(999, (*readerHolder)(nil))},
+		{"999 arrays around empty raw JSON", nestAny(999, json.RawMessage("[]"))},
+		// #4: a shallow value of a type 1,001 slices deep is null or [].
+		{"nil value of a deep type", reflect.Zero(deepType).Interface()},
+		{"empty value of a deep type", reflect.MakeSlice(deepType, 0, 0).Interface()},
+		// []deepByte998{0}: 1 + 998 arrays + 0 = 1,000 levels.
+		{"byte-kinded Marshaler, 1,000 levels", []deepByte998{0}},
+		{"byte-kinded TextMarshaler, 1,000 levels", nestAny(998, []textByte{1})},
+	}
+	beyond := []struct {
+		name string
+		v    any
+	}{
+		// A1: []B{0}, B's MarshalJSON writing 999 arrays around 0: 1,001.
+		{"byte-kinded Marshaler, 1,001 levels", []deepByte999{0}},
+		{"byte-kinded Marshaler in a map", map[string]any{"k": []deepByte998{0}}},
+		{"pointer-receiver byte Marshaler in a struct field", struct{ F []ptrDeepByte }{[]ptrDeepByte{0}}},
+		{"byte-kinded TextMarshaler, 1,001 levels", nestAny(999, []textByte{1})},
+		{"999 objects around a non-empty typed map", nestMap(999, map[string]int{"a": 1})},
+		{"raw JSON, 1,001 levels", json.RawMessage(brackets(1000, "0"))},
+	}
+	for _, key := range []string{"content", "body"} {
+		for _, tt := range within {
+			t.Run(key+"/"+tt.name, func(t *testing.T) {
+				req, err := prepareIn(c, key, tt.v)
+				if err != nil {
+					t.Fatalf("refused a value whose JSON nests at most 1,000 levels: %.200v", err)
+				}
+				wantEncoded(t, key, req, tt.v)
+			})
+		}
+		for _, tt := range beyond {
+			t.Run(key+"/"+tt.name, func(t *testing.T) {
+				req, err := prepareIn(c, key, tt.v)
+				if req != nil || err == nil {
+					t.Fatalf("prepared a value whose JSON nests 1,001 levels or more")
+				}
+				want := "p"
+				if key == "body" {
+					want = "Input.Body"
+				}
+				wantKeys(t, "Inputs", asRequestError(t, err).Inputs, true, want)
+			})
+		}
+	}
+}
+
+// hiddenPtr hides a reader behind a pointer-receiver MarshalJSON, which
+// encoding/json calls only on an addressable value.
+type hiddenPtr struct{ R io.Reader }
+
+func (*hiddenPtr) MarshalJSON() ([]byte, error) { return []byte(`"ok"`), nil }
+
+// hiddenVal hides a reader behind a value-receiver MarshalJSON.
+type hiddenVal struct{ R io.Reader }
+
+func (hiddenVal) MarshalJSON() ([]byte, error) { return []byte(`"ok"`), nil }
+
+// hiddenText hides a reader behind a value-receiver MarshalText.
+type hiddenText struct{ R io.Reader }
+
+func (hiddenText) MarshalText() ([]byte, error) { return []byte("text"), nil }
+
+// hiddenPtrText hides a reader behind a pointer-receiver MarshalText.
+type hiddenPtrText struct{ R io.Reader }
+
+func (*hiddenPtrText) MarshalText() ([]byte, error) { return []byte("text"), nil }
+
+// unexported holds a reader where encoding/json does not look.
+type unexported struct {
+	r io.Reader
+	A int
+	S io.Reader `json:"-"`
+}
+
+// P4 and K1 (A2, #9): the reader walk mirrors encoding/json (doc.go, Values:
+// "A reader or Part anywhere inside a parameter value the client encodes
+// with encoding/json is refused at the parameter's key, as for a body";
+// ledger, P4: "value and pointer-receiver Marshaler and TextMarshaler on
+// addressable values ... and stops where json would stop"). A reader json
+// never reaches is no refusal, and the value is sent as json writes it; a
+// reader json encodes is refused.
+func TestK1ReaderWalkFollowsEncodingJSON(t *testing.T) {
+	c := parseAt(t, doc31(depthDoc), "https://api.example.test", testDocURI, nil)
+	r := func() io.Reader { return strings.NewReader("x") }
+	sent := []struct {
+		name string
+		v    any
+	}{
+		// A2: json calls the pointer method on an addressable slice element.
+		{"pointer-receiver MarshalJSON, slice element", []hiddenPtr{{R: r()}}},
+		{"pointer-receiver MarshalJSON, pointer", &hiddenPtr{R: r()}},
+		{"pointer-receiver MarshalJSON, struct field", struct{ H []hiddenPtr }{[]hiddenPtr{{R: r()}}}},
+		{"value-receiver MarshalJSON", hiddenVal{R: r()}},
+		{"value-receiver MarshalJSON in a map", map[string]hiddenVal{"k": {R: r()}}},
+		{"value-receiver MarshalText", hiddenText{R: r()}},
+		{"value-receiver MarshalText in a slice", []hiddenText{{R: r()}}},
+		{"pointer-receiver MarshalText, slice element", []hiddenPtrText{{R: r()}}},
+		{"unexported and ignored fields", unexported{r: r(), A: 1, S: r()}},
+		{"TextMarshaler map keys", map[coord]string{{1, 2}: "v"}},
+		{"byte slice field", struct{ B []byte }{[]byte("hi")}},
+	}
+	refused := []struct {
+		name string
+		v    any
+	}{
+		// Not addressable: json encodes the fields, reader included.
+		{"pointer-receiver MarshalJSON, not addressable", hiddenPtr{R: r()}},
+		{"pointer-receiver MarshalJSON, map value", map[string]hiddenPtr{"k": {R: r()}}},
+		{"pointer-receiver MarshalText, not addressable", hiddenPtrText{R: r()}},
+		{"TextMarshaler map key, reader value", map[coord]io.Reader{{1, 2}: r()}},
+		{"reader in an exported field", readerHolder{Name: "n", R: r()}},
+		{"Part in a slice", []any{openapi.Part{Content: "x"}}},
+	}
+	for _, key := range []string{"content", "body"} {
+		for _, tt := range sent {
+			t.Run(key+"/"+tt.name, func(t *testing.T) {
+				req, err := prepareIn(c, key, tt.v)
+				if err != nil {
+					t.Fatalf("refused a value whose reader encoding/json never reaches: %v", err)
+				}
+				wantEncoded(t, key, req, tt.v)
+			})
+		}
+		for _, tt := range refused {
+			t.Run(key+"/"+tt.name, func(t *testing.T) {
+				req, err := prepareIn(c, key, tt.v)
+				if req != nil || err == nil {
+					t.Fatalf("prepared a value holding a reader or Part encoding/json encodes")
+				}
+				want := "p"
+				if key == "body" {
+					want = "Input.Body/"
+				}
+				re := asRequestError(t, err)
+				if key == "body" {
+					// A body refusal names the reader's place in Body
+					// (client.go, Input.Body), under "Input.Body".
+					if len(re.Inputs) != 1 {
+						t.Errorf("Inputs keys %q, want one", sortedKeys(re.Inputs))
+					}
+					for k := range re.Inputs {
+						if k != "Input.Body" && !strings.HasPrefix(k, want) {
+							t.Errorf("Inputs key %q, want Input.Body or below it", k)
+						}
+					}
+					return
+				}
+				wantKeys(t, "Inputs", re.Inputs, true, want)
+			})
+		}
+	}
+}
+
+// K1 (#9): a reader or Part inside a style parameter's value is refused at
+// the key, with nothing sent (doc.go, Values: "A reader or Part anywhere
+// inside a parameter value the client encodes with encoding/json is refused
+// at the parameter's key"), never written as {} or as its Go fields. A
+// reader json never reaches is no refusal.
+func TestK1ReadersInStyleValues(t *testing.T) {
+	w := newWire(t, nil)
+	c := parseFor(t, w, doc31(`
+		"/s/{s}":{"get":{"operationId":"op","parameters":[
+			{"name":"s","in":"path","required":true,"schema":{}},
+			{"name":"f","in":"query","schema":{}},
+			{"name":"d","in":"query","style":"deepObject","schema":{}},
+			{"name":"X-H","in":"header","schema":{}},
+			{"name":"c","in":"cookie","schema":{}}]}}`), nil)
+	r := func() io.Reader { return strings.NewReader("secret-bytes") }
+	values := []struct {
+		name string
+		v    func() any
+	}{
+		{"reader", func() any { return r() }},
+		{"reader in a map", func() any { return map[string]any{"a": "1", "b": r()} }},
+		{"reader in a nested map", func() any { return map[string]any{"a": map[string]any{"b": r()}} }},
+		{"reader item", func() any { return []any{"a", r()} }},
+		{"reader field", func() any { return readerHolder{Name: "n", R: r()} }},
+		{"Part", func() any { return openapi.Part{Content: "x", Filename: "a.txt"} }},
+		{"Part pointer in a map", func() any { return map[string]any{"p": &openapi.Part{Content: "x"}} }},
+	}
+	for _, tt := range values {
+		for _, key := range []string{"s", "f", "d", "X-H", "c"} {
+			t.Run(tt.name+"/"+key, func(t *testing.T) {
+				params := map[string]any{"s": "x", key: tt.v()}
+				before := w.count()
+				resp, err := c.Call(t.Context(), "op", &openapi.Input{Params: params}, nil)
+				re := refusedSince(t, w, before, resp, err)
+				wantKeys(t, "Inputs", re.Inputs, true, key)
+			})
+		}
+	}
+	mustCall(t, c, "op", &openapi.Input{Params: map[string]any{"s": hiddenVal{R: r()}, "f": hiddenVal{R: r()}}}, nil)
+	if got := w.last(t).RequestURI; got != "/s/ok?f=ok" {
+		t.Errorf("request target %q, want /s/ok?f=ok: a value-receiver MarshalJSON hides its reader", got)
+	}
+}
+
+// K2 (#1; doc.go, Fixed rules, Percent-encoding: "a content-serialized
+// cookie value (OpenAPI 3.1.2 recommends text/plain content so the
+// application assembles the cookie) ... [is] written as given too; a cookie
+// value written as given that holds a ";" or a control character is
+// refused"; OAS 3.1.2 section 4.8.12.2.3 and Appendix D).
+func TestK2ContentCookieAsGiven(t *testing.T) {
+	w := newWire(t, nil)
+	c := parseFor(t, w, doc31(`"/c":{"get":{"operationId":"op","parameters":[
+		{"name":"session","in":"cookie","content":{"text/plain":{}}},
+		{"name":"prefs","in":"cookie","content":{"application/json":{}}},
+		{"name":"form","in":"cookie","schema":{}}]}}`), nil)
+	for _, tt := range []struct {
+		params map[string]any
+		want   string
+	}{
+		{map[string]any{"session": "abc/def+g=="}, "session=abc/def+g=="},
+		{map[string]any{"prefs": map[string]int{"a": 1}}, `prefs={"a":1}`},
+		{map[string]any{"session": "a b,c\"d\\e%41"}, `session=a b,c"d\e%41`},
+		{map[string]any{"session": "s", "prefs": []string{"x/y"}, "form": "x/y"}, `session=s; prefs=["x/y"]; form=x%2Fy`},
+	} {
+		mustCall(t, c, "op", &openapi.Input{Params: tt.params}, nil)
+		if got := w.last(t).Header.Values("Cookie"); len(got) != 1 || got[0] != tt.want {
+			t.Errorf("Cookie = %q, want [%q]", got, tt.want)
+		}
+	}
+	for _, tt := range []struct {
+		key string
+		v   any
+	}{
+		{"session", "a;b"}, {"session", "a\x01b"}, {"session", "a\tb"}, {"session", "a\r\nb"}, {"session", "a\x7fb"},
+		{"session", []byte("a;b")}, {"prefs", map[string]string{"a": ";"}},
+	} {
+		before := w.count()
+		resp, err := c.Call(t.Context(), "op", &openapi.Input{Params: map[string]any{tt.key: tt.v}}, nil)
+		re := refusedSince(t, w, before, resp, err)
+		wantKeys(t, fmt.Sprintf("%q Inputs", tt.v), re.Inputs, true, tt.key)
+	}
+}
+
+// framingFields are the fields net/http derives or HTTP forbids a client to
+// set (doc.go, Fixed rules, Header fields; RFC 9110 sections 6.6.2 and 8.6,
+// RFC 9113 section 8.2.2).
+var framingFields = []string{"Content-Length", "Transfer-Encoding", "Trailer", "Connection", "Keep-Alive", "Proxy-Connection", "Upgrade"}
+
+// K4 (#3; doc.go, Fixed rules, Header fields: "a field or a header parameter
+// named Host, Content-Length, Transfer-Encoding, Trailer, Connection,
+// Keep-Alive, Proxy-Connection or Upgrade" is refused): as a header
+// parameter, Param.Err is set, a value is refused at its key, a required one
+// refuses the call, and a writer still bypasses it (client.go,
+// Input.ParamWriters: "A writer also bypasses that parameter's
+// serialization Err"); as an Options.Header field, Load refuses it (keyed
+// Options.Header), and so does each call when it comes from With; as an
+// Input.Header field, the call is refused at Input.Header. Field names are
+// compared without regard to case.
+func TestK4FramingHeaders(t *testing.T) {
+	w := newWire(t, nil)
+	for _, name := range framingFields {
+		t.Run(name, func(t *testing.T) {
+			doc := doc31(fmt.Sprintf(`"/o":{"get":{"operationId":"opt","parameters":[{"name":%q,"in":"header","schema":{}}]}},
+				"/r":{"get":{"operationId":"req","parameters":[{"name":%q,"in":"header","required":true,"schema":{}}]}},
+				"/p":{"get":{"operationId":"plain"}}`, name, name))
+			c := parseFor(t, w, doc, nil)
+			for _, key := range []string{"opt", "req"} {
+				if p := param(t, mustOp(t, c, key), 0); p.Err == nil {
+					t.Errorf("%s: Param.Err = nil", key)
+				}
+			}
+			before := w.count()
+			resp, err := c.Call(t.Context(), "opt", &openapi.Input{Params: map[string]any{name: "7"}}, nil)
+			wantKeys(t, "value Inputs", refusedSince(t, w, before, resp, err).Inputs, true, name)
+			resp, err = c.Call(t.Context(), "req", nil, nil)
+			wantKeys(t, "required Inputs", refusedSince(t, w, before, resp, err).Inputs, true, name)
+			if _, err := c.Prepare("req", &openapi.Input{ParamWriters: map[string]func(*http.Request) error{
+				name: func(*http.Request) error { return nil },
+			}}); err != nil {
+				t.Errorf("a writer does not bypass the parameter's Err: %v", err)
+			}
+
+			for _, spelling := range []string{name, strings.ToLower(name)} {
+				h := http.Header{spelling: {"x"}}
+				_, err := openapi.Parse(t.Context(), []byte(expand(doc, w.URL)), w.URL+"/openapi.json", &openapi.Options{Header: h})
+				wantKeys(t, spelling+" Load Settings", asRequestError(t, err).Settings, false, "Options.Header")
+				resp, err := c.Call(t.Context(), "plain", &openapi.Input{Header: h}, nil)
+				wantKeys(t, spelling+" Settings", refusedSince(t, w, before, resp, err).Settings, false, "Input.Header")
+				d := c.With(func(o *openapi.Options) { o.Header[spelling] = []string{"x"} })
+				resp, err = d.Call(t.Context(), "plain", nil, nil)
+				wantKeys(t, spelling+" With Settings", refusedSince(t, w, before, resp, err).Settings, false, "Options.Header")
+			}
+		})
+	}
+}
+
+// K5 (#5, #8; doc.go, Values: "a []byte is the encoded content; a reader,
+// and a multipart or sequential media type, cannot serialize a parameter
+// and are refused at its key"; stage 2 ledger, review round: form-urlencoded
+// content "stays not-implemented until stage 4 encodes forms"). The bytes
+// are then percent-encoded by location, or written as given in a header or
+// cookie.
+func TestK5ContentBytesReadersAndMedia(t *testing.T) {
+	w := newWire(t, nil)
+	c := parseFor(t, w, doc31(contentDoc+`,
+		"/mp":{"get":{"operationId":"multipart","parameters":[{"name":"p","in":"query","content":{"multipart/form-data":{}}}]}},
+		"/mm":{"get":{"operationId":"mixed","parameters":[{"name":"p","in":"query","content":{"multipart/mixed":{}}}]}},
+		"/jl":{"get":{"operationId":"jsonl","parameters":[{"name":"p","in":"query","content":{"application/jsonl":{}}}]}},
+		"/js":{"get":{"operationId":"jsonseq","parameters":[{"name":"p","in":"query","content":{"application/json-seq":{}}}]}},
+		"/es":{"get":{"operationId":"events","parameters":[{"name":"X-E","in":"header","content":{"text/event-stream":{}}}]}},
+		"/fu":{"get":{"operationId":"form","parameters":[{"name":"p","in":"query","content":{"application/x-www-form-urlencoded":{}}}]}}`), nil)
+	for _, tt := range []struct {
+		key, param string
+		v          []byte
+		want       string // the request target, or the field's value
+	}{
+		{"q", "p", []byte(`{"a":1}`), "/q?p=%7B%22a%22%3A1%7D"},
+		{"q", "p", []byte("not JSON at all"), "/q?p=not%20JSON%20at%20all"},
+		{"path", "p", []byte(`"x/y"`), "/p/%22x%2Fy%22"},
+		{"text", "p", []byte("hi there"), "/t?p=hi%20there"},
+		{"textPath", "p", []byte("a/b"), "/tp/a%2Fb"},
+		{"octets", "p", []byte("raw\x00"), "/o?p=raw%00"},
+		{"custom", "p", []byte("pre-encoded"), "/x?p=pre-encoded"},
+		{"h", "X-P", []byte(`{"a":1}`), `{"a":1}`},
+		{"octetsHeader", "X-O", []byte("a b"), "a b"},
+		{"cookie", "p", []byte(`{"a":1}`), `p={"a":1}`},
+		{"textCookie", "p", []byte("abc/def+g=="), "p=abc/def+g=="},
+	} {
+		got, re := callOne(t, w, c, tt.key, tt.param, tt.v)
+		if re != nil {
+			t.Errorf("%s %q: refused: %v", tt.key, tt.v, re)
+			continue
+		}
+		var v string
+		switch {
+		case tt.param[0] == 'X':
+			v = strings.Join(got.Header.Values(tt.param), "|")
+		case strings.HasSuffix(tt.key, "ookie"):
+			v = strings.Join(got.Header.Values("Cookie"), "|")
+		default:
+			v = got.RequestURI
+		}
+		if v != tt.want {
+			t.Errorf("%s %q: sent %q, want %q", tt.key, tt.v, v, tt.want)
+		}
+	}
+	for _, tt := range []struct {
+		key, param string
+		v          any
+	}{
+		{"text", "p", strings.NewReader("x")},
+		{"octets", "p", bytes.NewReader([]byte("x"))},
+		{"octetsHeader", "X-O", newOnce("x")},
+		{"q", "p", strings.NewReader("{}")},
+		{"multipart", "p", map[string]string{"a": "b"}},
+		{"multipart", "p", []byte("--b\r\n\r\n--b--")},
+		{"mixed", "p", "x"},
+		{"jsonl", "p", []any{1, 2}},
+		{"jsonseq", "p", "x"},
+		{"events", "X-E", "data: x"},
+	} {
+		_, re := callOne(t, w, c, tt.key, tt.param, tt.v)
+		if re == nil {
+			t.Errorf("%s %T: sent, want a refusal", tt.key, tt.v)
+			continue
+		}
+		wantKeys(t, fmt.Sprintf("%s %T Inputs", tt.key, tt.v), re.Inputs, true, tt.param)
+	}
+	_, re := callOne(t, w, c, "form", "p", map[string]string{"a": "1 2", "b": "x"})
+	if re == nil {
+		t.Fatal("form-urlencoded content sent; want not implemented until stage 4")
+	}
+	wantKeys(t, "form Inputs", re.Inputs, true, "p")
+	if !errors.Is(re, errors.ErrUnsupported) {
+		t.Errorf("form-urlencoded content refusal %v does not wrap errors.ErrUnsupported", re)
+	}
+}
+
+// K7 (#7; doc.go, Fixed rules, Header fields: "A Header entry with no values
+// is a conflict like any other when a header parameter the call supplies, or
+// the Cookie field, sets that field"), keyed by the Header that set it. A
+// removal entry for a field the call does not set is no conflict.
+func TestK7RemovalEntriesConflict(t *testing.T) {
+	w := newWire(t, nil)
+	doc := doc31(`"/o":{"get":{"operationId":"op","parameters":[
+		{"name":"X-A","in":"header","schema":{}},
+		{"name":"c","in":"cookie","schema":{}}]}}`)
+	c := parseFor(t, w, doc, nil)
+	for _, tt := range []struct {
+		name    string
+		client  *openapi.Client
+		header  http.Header
+		params  map[string]any
+		setting string
+	}{
+		{"Input.Header nil for a header parameter", c, http.Header{"X-A": nil}, map[string]any{"X-A": "v"}, "Input.Header"},
+		{"Input.Header empty for a header parameter", c, http.Header{"X-A": {}}, map[string]any{"X-A": "v"}, "Input.Header"},
+		{"Input.Header nil Cookie for a cookie parameter", c, http.Header{"Cookie": nil}, map[string]any{"c": "v"}, "Input.Header"},
+		{"Options.Header empty for a header parameter", c.With(func(o *openapi.Options) { o.Header["X-A"] = []string{} }), nil, map[string]any{"X-A": "v"}, "Options.Header"},
+		{"Options.Header nil Cookie for a cookie parameter", c.With(func(o *openapi.Options) { o.Header["Cookie"] = nil }), nil, map[string]any{"c": "v"}, "Options.Header"},
+		{"Load Options.Header empty", parseFor(t, w, doc, &openapi.Options{Header: http.Header{"X-A": {}}}), nil, map[string]any{"X-A": "v"}, "Options.Header"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			before := w.count()
+			resp, err := tt.client.Call(t.Context(), "op", &openapi.Input{Params: tt.params, Header: tt.header}, nil)
+			wantKeys(t, "Settings", refusedSince(t, w, before, resp, err).Settings, false, tt.setting)
+		})
+	}
+	mustCall(t, c, "op", &openapi.Input{Header: http.Header{"X-A": nil, "Cookie": nil}}, nil)
+	got := w.last(t)
+	if v, ok := got.Header["X-A"]; ok {
+		t.Errorf("X-A = %q, want none", v)
+	}
+	if v, ok := got.Header["Cookie"]; ok {
+		t.Errorf("Cookie = %q, want none", v)
+	}
+}
+
+// K8 (#11; describe.go, Param.ExplodeSet: "whether the document writes it"):
+// true for a content parameter whose document writes explode.
+func TestK8ContentExplodeSet(t *testing.T) {
+	doc := bare31(`"/q":{"get":{"operationId":"q","parameters":[
+		{"name":"t","in":"query","explode":true,"content":{"application/json":{}}},
+		{"name":"f","in":"query","explode":false,"content":{"application/json":{}}},
+		{"name":"u","in":"query","content":{"application/json":{}}}]}}`)
+	op := mustOp(t, parseAt(t, doc, "", testDocURI, nil), "q")
+	for _, p := range op.Params {
+		if want := p.Name != "u"; p.ExplodeSet != want {
+			t.Errorf("%s: ExplodeSet = %t, want %t", p.Name, p.ExplodeSet, want)
+		}
+		if p.ContentType != "application/json" {
+			t.Errorf("%s: ContentType %q", p.Name, p.ContentType)
+		}
+	}
+}
+
+// K9 (#13, A3; client.go, Input.ParamWriters: "an unknown key, and the same
+// key in Params and ParamWriters, are refused"): a nil entry is still an
+// entry, at Inputs[key].
+func TestK9NilWriterEntries(t *testing.T) {
+	w := newWire(t, nil)
+	c := parseFor(t, w, doc31(`"/q":{"get":{"operationId":"op","parameters":[{"name":"q","in":"query","schema":{}}]}}`), nil)
+	for _, tt := range []struct {
+		name string
+		in   *openapi.Input
+		keys []string
+	}{
+		{"unknown key", &openapi.Input{ParamWriters: map[string]func(*http.Request) error{"nope": nil}}, []string{"nope"}},
+		{"key in Params too", &openapi.Input{Params: map[string]any{"q": "v"}, ParamWriters: map[string]func(*http.Request) error{"q": nil}}, []string{"q"}},
+		{"both", &openapi.Input{Params: map[string]any{"q": "v"}, ParamWriters: map[string]func(*http.Request) error{"q": nil, "typo": nil}}, []string{"q", "typo"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			req, err := c.Prepare("op", tt.in)
+			if req != nil {
+				t.Errorf("Prepare returned a Request")
+			}
+			wantKeys(t, "Inputs", asRequestError(t, err).Inputs, true, tt.keys...)
+			resp, err := c.Call(t.Context(), "op", tt.in, nil)
+			refusedBeforeSending(t, w, resp, err)
+		})
+	}
+}
+
+// #18: the depth scan on encoded JSON (P4: "otherwise scan the encoded
+// bytes"), where no static bound decides, as for raw JSON and a time.Time
+// field: brackets inside strings, escaped quotes, and many sibling arrays
+// are not nesting; 1,000 levels ending in an empty array is within the
+// bound; a member at level 1,001 is not.
+func TestDepthScanOfEncodedJSON(t *testing.T) {
+	c := parseAt(t, doc31(depthDoc), "https://api.example.test", testDocURI, nil)
+	type stamped struct {
+		T time.Time       `json:"t"`
+		R json.RawMessage `json:"r"`
+	}
+	quoteRun := `"\"` + strings.Repeat("[", 1200) + `\"\\` + strings.Repeat("{", 300) + `"`
+	siblings := "[" + strings.TrimSuffix(strings.Repeat("[[]],", 800), ",") + "]"
+	within := []struct {
+		name string
+		v    any
+	}{
+		{"brackets in a string", json.RawMessage("[" + quoteRun + "]")},
+		{"brackets in a key", json.RawMessage(`{` + quoteRun + `:` + brackets(990, "") + `}`)},
+		{"sibling arrays", json.RawMessage(siblings)},
+		{"1,000 levels ending in []", json.RawMessage(brackets(1000, ""))},
+		{"1,000 levels ending in {}", json.RawMessage(brackets(999, "{}"))},
+		{"time.Time beside 999 levels", stamped{fixedTime, json.RawMessage(brackets(999, ""))}},
+		{"raw JSON in a map, 1,000 levels", map[string]json.RawMessage{"k": json.RawMessage(brackets(999, ""))}},
+		{"raw JSON in a slice after deep siblings", []json.RawMessage{json.RawMessage(brackets(998, "")), json.RawMessage(brackets(999, ""))}},
+	}
+	beyond := []struct {
+		name string
+		v    any
+	}{
+		{"1,000 arrays around 0", json.RawMessage(brackets(1000, "0"))},
+		{"999 arrays around {\"a\":1}", json.RawMessage(brackets(999, `{"a":1}`))},
+		{"time.Time beside 1,000 levels", stamped{fixedTime, json.RawMessage(brackets(1000, ""))}},
+		{"raw JSON in a map, 1,001 levels", map[string]json.RawMessage{"k": json.RawMessage(brackets(1000, ""))}},
+		{"deep after a string of brackets", json.RawMessage("[" + quoteRun + "," + brackets(1000, "") + "]")},
+	}
+	for _, key := range []string{"content", "body"} {
+		for _, tt := range within {
+			t.Run(key+"/"+tt.name, func(t *testing.T) {
+				req, err := prepareIn(c, key, tt.v)
+				if err != nil {
+					t.Fatalf("refused JSON nested at most 1,000 levels: %.200v", err)
+				}
+				wantEncoded(t, key, req, tt.v)
+			})
+		}
+		for _, tt := range beyond {
+			t.Run(key+"/"+tt.name, func(t *testing.T) {
+				req, err := prepareIn(c, key, tt.v)
+				if req != nil || err == nil {
+					t.Fatal("prepared JSON nested more than 1,000 levels")
+				}
+				want := "p"
+				if key == "body" {
+					want = "Input.Body"
+				}
+				wantKeys(t, "Inputs", asRequestError(t, err).Inputs, true, want)
+			})
+		}
+	}
+}
+
+// label is a named string type.
+type label string
+
+// #18, encode's branches for a text or other media type (doc.go, Values: a
+// value is converted "to JSON data as encoding/json would", then "any other
+// type takes only a string, as its UTF-8 bytes, and a text type also a
+// number or boolean"): a named string type and a TextMarshaler are strings,
+// their JSON escapes undone; a value encoding/json cannot write is refused
+// at the key.
+func TestContentParamTextEncodeBranches(t *testing.T) {
+	w := newWire(t, nil)
+	c := parseFor(t, w, doc31(contentDoc), nil)
+	for _, tt := range []struct {
+		key  string
+		v    any
+		want string
+	}{
+		{"text", label(`a "b" <c>`), "/t?p=a%20%22b%22%20%3Cc%3E"},
+		{"text", fixedTime, "/t?p=2024-01-02T03%3A04%3A05Z"},
+		{"text", coord{1, 2}, "/t?p=1x2"},
+		{"octets", label("x y"), "/o?p=x%20y"},
+	} {
+		got, re := callOne(t, w, c, tt.key, "p", tt.v)
+		if re != nil || got.RequestURI != tt.want {
+			t.Errorf("%s %#v: %q, %v; want %q", tt.key, tt.v, got.RequestURI, re, tt.want)
+		}
+	}
+	for _, tt := range []struct {
+		key string
+		v   any
+	}{
+		{"text", math.Inf(1)}, {"text", map[string]any{"f": func() {}}}, {"octets", math.NaN()}, {"octets", true},
+	} {
+		_, re := callOne(t, w, c, tt.key, "p", tt.v)
+		if re == nil {
+			t.Errorf("%s %#v: sent, want a refusal", tt.key, tt.v)
+			continue
+		}
+		wantKeys(t, "Inputs", re.Inputs, true, "p")
+	}
+}
+
+// #10 and #18 (client.go, Input.ParamWriters: "Locate the token in RawPath:
+// there other values are percent-encoded, so their text cannot match it, as
+// it can in Path"; "an unresolved path token after all writers refuses
+// preparation", at the writer's key, stage 2 ledger, confirmed readings): a
+// writer that finds its token in RawPath, and keeps RawPath an encoding of
+// Path, is sent whichever side of it another value holding the token's text
+// lies; a value holding the token's text is no unresolved token; and an
+// unresolved token whose name holds a percent sign refuses only its own
+// parameter.
+func TestParamWritersTokenInRawPath(t *testing.T) {
+	w := newWire(t, nil)
+	c := parseFor(t, w, doc31(`
+		"/a/{id}/{v}":{"get":{"operationId":"tokenFirst","parameters":[
+			{"name":"id","in":"path","required":true,"schema":{}},
+			{"name":"v","in":"path","required":true,"schema":{}}]}},
+		"/b/{v}/{id}":{"get":{"operationId":"valueFirst","parameters":[
+			{"name":"v","in":"path","required":true,"schema":{}},
+			{"name":"id","in":"path","required":true,"schema":{}}]}},
+		"/c/{id}/{v}/{q%41}":{"get":{"operationId":"pctName","parameters":[
+			{"name":"id","in":"path","required":true,"schema":{}},
+			{"name":"v","in":"path","required":true,"schema":{}},
+			{"name":"q%41","in":"path","required":true,"schema":{}}]}}`), nil)
+	// fromRaw replaces the token in RawPath and derives Path by decoding
+	// each segment, leaving a segment that is another writer's token as it
+	// is.
+	fromRaw := func(token, raw string) func(*http.Request) error {
+		return func(r *http.Request) error {
+			r.URL.RawPath = strings.Replace(r.URL.RawPath, token, raw, 1)
+			segs := strings.Split(r.URL.RawPath, "/")
+			for i, seg := range segs {
+				if strings.HasPrefix(seg, "{") {
+					continue
+				}
+				d, err := url.PathUnescape(seg)
+				if err != nil {
+					return err
+				}
+				segs[i] = d
+			}
+			r.URL.Path = strings.Join(segs, "/")
+			return nil
+		}
+	}
+	for _, tt := range []struct{ key, want string }{
+		{"tokenFirst", "/a/7%2F8/%7Bid%7D"},
+		{"valueFirst", "/b/%7Bid%7D/7%2F8"},
+	} {
+		req := mustPrepare(t, c, tt.key, &openapi.Input{
+			Params:       map[string]any{"v": "{id}"},
+			ParamWriters: map[string]func(*http.Request) error{"id": fromRaw("{id}", "7%2F8")},
+		})
+		if got := req.HTTP.URL.EscapedPath(); got != tt.want {
+			t.Errorf("%s: prepared path %q, want %q", tt.key, got, tt.want)
+		}
+		sendAndClose(t, req)
+		if got := w.last(t).RequestURI; got != tt.want {
+			t.Errorf("%s: request target %q, want %q", tt.key, got, tt.want)
+		}
+	}
+	// q%41's writer leaves its token: that parameter alone is refused; id,
+	// resolved beside a value spelling "{id}", is not.
+	_, err := c.Prepare("pctName", &openapi.Input{
+		Params: map[string]any{"v": "{id}"},
+		ParamWriters: map[string]func(*http.Request) error{
+			"id":   fromRaw("{id}", "7"),
+			"q%41": func(*http.Request) error { return nil },
+		},
+	})
+	wantKeys(t, "Inputs", asRequestError(t, err).Inputs, true, "q%41")
+}
