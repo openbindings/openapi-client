@@ -158,7 +158,8 @@ func asJSON(s string) string {
 }
 
 const fuzzParamDoc = `{"openapi":"3.1.0","info":{"title":"f","version":"1"},"servers":[{"url":"https://api.example.test"}],
-	"paths":{"/items/{id}":{"get":{"operationId":"items","parameters":[
+	"paths":{"/café/{id}/ü":{"get":{"operationId":"intl","parameters":[{"name":"id","in":"path","required":true,"schema":{"type":"string"}}]}},
+	"/items/{id}":{"get":{"operationId":"items","parameters":[
 		{"name":"id","in":"path","required":true,"schema":{"type":"string"}},
 		{"name":"q","in":"query","schema":{"type":"string"}},
 		{"name":"arr","in":"query","schema":{"type":"array"}},
@@ -169,7 +170,10 @@ const fuzzParamDoc = `{"openapi":"3.1.0","info":{"title":"f","version":"1"},"ser
 // FuzzPathQuerySerialization: the path (simple) and query (form, explode
 // true and false) serializations of any strings use only unreserved
 // characters and %XX triples outside the style's own delimiters, and parse
-// back with net/url to the values given.
+// back with net/url to the values given. A template with non-ASCII literal
+// text keeps the value's encoding (stage 1 review, F3). A value forming a
+// whole "." or ".." segment is refused (T2-1; doc.go, Fixed rules,
+// Percent-encoding).
 func FuzzPathQuerySerialization(f *testing.F) {
 	c, err := openapi.Parse(context.Background(), []byte(fuzzParamDoc), fuzzURI, nil)
 	if err != nil {
@@ -182,13 +186,58 @@ func FuzzPathQuerySerialization(f *testing.F) {
 		{"..", "~", "\x00", "\xff", "[]", "#?"},
 		{"{id}", "q=1", "a,b", "", "q", "arr"},
 		{"%2F", "%20", "+", " ", "=", "&"},
+		{".", "é", "ü", "日本", "ß", "\u2028"},
+		{"...", ".", "..", "a.b", ".x", "x."},
 	} {
 		f.Add(s[0], s[1], s[2], s[3], s[4], s[5])
 	}
 	f.Fuzz(func(t *testing.T, id, q, a, b, name, value string) {
-		req, err := c.Prepare("items", &openapi.Input{Params: map[string]any{
+		in := &openapi.Input{Params: map[string]any{
 			"id": id, "q": q, "arr": []string{a, b}, "arr2": []string{a, b}, "obj": map[string]string{name: value},
-		}})
+		}}
+		if v := asJSON(id); v == "." || v == ".." {
+			for _, key := range []string{"items", "intl"} {
+				in := in
+				if key == "intl" {
+					in = &openapi.Input{Params: map[string]any{"id": id}}
+				}
+				_, err := c.Prepare(key, in)
+				var re *openapi.RequestError
+				if !errors.As(err, &re) || re.Inputs["id"] == nil || len(re.Inputs) != 1 {
+					t.Fatalf("%s: Prepare with the dot segment %q = %v, want a refusal at Inputs[\"id\"]", key, v, err)
+				}
+			}
+			return
+		}
+
+		// The non-ASCII template: its literal text encoded once, the value
+		// encoded as in any other path.
+		ireq, err := c.Prepare("intl", &openapi.Input{Params: map[string]any{"id": id}})
+		if err != nil {
+			t.Fatalf("Prepare(intl): %v", err)
+		}
+		if ireq == nil || ireq.HTTP == nil || ireq.HTTP.URL == nil {
+			t.Fatal("Prepare(intl) returned no request")
+		}
+		iep := ireq.HTTP.URL.EscapedPath()
+		mid, ok := strings.CutPrefix(iep, "/caf%C3%A9/")
+		if ok {
+			mid, ok = strings.CutSuffix(mid, "/%C3%BC")
+		}
+		if !ok {
+			t.Fatalf("escaped path %q, want /caf%%C3%%A9/<value>/%%C3%%BC", iep)
+		}
+		if !uriSafe.MatchString(mid) {
+			t.Fatalf("path value %q holds a character outside the unreserved set or a lowercase triple", mid)
+		}
+		if got, err := url.PathUnescape(mid); err != nil || got != asJSON(id) {
+			t.Errorf("path value %q unescapes to %q, %v; want %q", mid, got, err, asJSON(id))
+		}
+		if want := "/café/" + asJSON(id) + "/ü"; ireq.HTTP.URL.Path != want {
+			t.Errorf("URL.Path %q, want %q", ireq.HTTP.URL.Path, want)
+		}
+
+		req, err := c.Prepare("items", in)
 		if err != nil {
 			t.Fatalf("Prepare: %v", err)
 		}

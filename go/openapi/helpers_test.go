@@ -289,6 +289,21 @@ func refusedBeforeSending(t testing.TB, w *wire, resp *openapi.Response, err err
 	return re
 }
 
+// refusedSince is refusedBeforeSending for a server that several cases
+// share: the server must have received nothing since it had before
+// requests.
+func refusedSince(t testing.TB, w *wire, before int, resp *openapi.Response, err error) *openapi.RequestError {
+	t.Helper()
+	re := asRequestError(t, err)
+	if resp != nil {
+		t.Errorf("a refused call returned a Response")
+	}
+	if n := w.count() - before; n != 0 {
+		t.Errorf("server received %d requests for a refused call", n)
+	}
+	return re
+}
+
 // mustOp returns the operation named key.
 func mustOp(t testing.TB, c *openapi.Client, key string) *openapi.Operation {
 	t.Helper()
