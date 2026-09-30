@@ -90,7 +90,7 @@
 // media type, cannot serialize a parameter and are refused at its key. A reader
 // or Part anywhere inside a parameter value the client encodes with
 // encoding/json is refused at the parameter's key, as for a body, unless its
-// own MarshalJSON encodes it. A JSON body
+// own MarshalJSON or MarshalText encodes it. A JSON body
 // or JSON part is exactly what its codec writes, null members, [] and {}
 // included. A value the client encodes that is nested deeper than 1,000 levels,
 // counted in the JSON encoding/json writes (a MarshalJSON's output included),

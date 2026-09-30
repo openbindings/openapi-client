@@ -350,14 +350,14 @@ type Input struct {
 	// as a pipe or os.Stdin, and an iterator, is read once.
 	//
 	// A Part or io.Reader inside a JSON value is refused with an Inputs entry
-	// at its place in Body, unless its own MarshalJSON encodes it. A []byte
-	// nested in a JSON value is encoded by encoding/json as a base64 string; in
-	// a form or multipart value it remains raw part bytes. A nil Body where the
-	// request body is required is refused at Inputs["Input.Body"], and a
-	// missing required Swagger 2.0 formData field in a structured form body at
-	// "Input.Body" followed by its pointer, as the parameter it is. A
-	// pre-encoded body bypasses those field checks. The client never closes a
-	// reader it is given.
+	// at its place in Body, unless its own MarshalJSON or MarshalText encodes
+	// it. A []byte nested in a JSON value is encoded by encoding/json as a
+	// base64 string; in a form or multipart value it remains raw part bytes. A
+	// nil Body where the request body is required is refused at
+	// Inputs["Input.Body"], and a missing required Swagger 2.0 formData field
+	// in a structured form body at "Input.Body" followed by its pointer, as the
+	// parameter it is. A pre-encoded body bypasses those field checks. The
+	// client never closes a reader it is given.
 	Body any
 
 	// MediaType is the body's media type: a concrete type matching one the
