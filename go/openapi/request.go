@@ -137,8 +137,8 @@ func (cfg *config) checkAccept(o *operation, h http.Header, out any, re *Request
 // newRequest builds the request for o with in, carried by ctx, recording
 // every problem in re. It returns the request, whose header is complete
 // even when refused, its body's content, the Media governing the body and
-// the key of the security alternative.
-func (c *Client) newRequest(ctx context.Context, o *operation, in *Input, re *RequestError) (*http.Request, payload, *Media, string) {
+// the security alternative the call applies.
+func (c *Client) newRequest(ctx context.Context, o *operation, in *Input, re *RequestError) (*http.Request, payload, *Media, selection) {
 	if in == nil {
 		in = &noInput
 	}
@@ -150,7 +150,11 @@ func (c *Client) newRequest(ctx context.Context, o *operation, in *Input, re *Re
 		re.setting("Input.Header", err)
 	}
 	ep := c.selectServer(o, re)
-	security := selectSecurity(o, in, re)
+	var sec selection
+	var supplied []bool // the parameters the credentials supply
+	if sec.alt = c.selectSecurity(o, in, re); sec.alt != nil {
+		sec.places, supplied = c.checkCredentials(o, sec.alt, in, ep, re)
+	}
 	req, _ := http.NewRequestWithContext(ctx, o.Method, "", nil)
 	h := req.Header
 	applyFields(h, cfg.Header)
@@ -184,6 +188,12 @@ func (c *Client) newRequest(ctx context.Context, o *operation, in *Input, re *Re
 			case w == nil:
 				re.input(p.Key, errors.New("the parameter's writer is nil"))
 			}
+		}
+		if supplied != nil && supplied[i] {
+			if v != nil || hasWriter {
+				re.input(p.Key, errors.New("the call's credential supplies the parameter"))
+			}
+			continue
 		}
 		if p.In == "path" && p.Err == nil {
 			continue // serialized in the path
@@ -253,7 +263,7 @@ func (c *Client) newRequest(ctx context.Context, o *operation, in *Input, re *Re
 	}
 	p, media := c.body(o, in, h, re)
 	if re.Err != nil || len(re.Settings) > 0 || len(re.Inputs) > 0 {
-		return req, payload{}, nil, ""
+		return req, payload{}, nil, selection{}
 	}
 
 	s := b.String()
@@ -271,10 +281,10 @@ func (c *Client) newRequest(ctx context.Context, o *operation, in *Input, re *Re
 		setBody(req, p)
 		o.runWriters(req, in.ParamWriters, re)
 		if len(re.Inputs) > 0 {
-			return req, payload{}, nil, ""
+			return req, payload{}, nil, selection{}
 		}
 	}
-	return req, p, media, security
+	return req, p, media, sec
 }
 
 // setter names the Header setting with an entry for field, whether or not
@@ -523,33 +533,6 @@ func (d *document) resolveServerURL(s string) (endpoint, error) {
 // httpBase reports whether relative server URLs resolve against the
 // document's URI.
 func (d *document) httpBase() bool { return d.base.Scheme == "http" || d.base.Scheme == "https" }
-
-// selectSecurity selects the security alternative, returning its key.
-func selectSecurity(o *operation, in *Input, re *RequestError) string {
-	alts := o.Security
-	i := -1
-	switch {
-	case in.Security != "":
-		if len(alts) == 0 && in.Security == "{}" {
-			return ""
-		}
-		if i = slices.IndexFunc(alts, func(r SecurityRequirement) bool { return r.Key == in.Security }); i < 0 {
-			re.setting("Input.Security", errors.New("the operation does not offer this security alternative"))
-			return ""
-		}
-	case len(alts) == 0:
-		return ""
-	case !slices.ContainsFunc(alts, func(r SecurityRequirement) bool { return r.Key != alts[0].Key }):
-		i = 0
-	default:
-		re.setting("Options.Security", fmt.Errorf("the operation offers %d security alternatives; select one with Options.Security, Options.SecurityKey or Input.Security", len(alts)))
-		return ""
-	}
-	if len(alts[i].Schemes) > 0 {
-		re.fail(notYet("sending credentials"))
-	}
-	return alts[i].Key
-}
 
 // body encodes the request body, setting its Content-Type in h, and
 // returns its content and the Media governing it.

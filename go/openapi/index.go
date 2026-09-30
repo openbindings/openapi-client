@@ -31,9 +31,8 @@ type document struct {
 	broken  map[string]*entry // Paths entries that cannot be read, by path
 
 	rootOnce sync.Once
-	servers  *serverList           // the root servers, or the default one
-	security []SecurityRequirement // the root security requirements
-	walks    sync.Map              // reflect.Type to *walk, for finding readers in bodies
+	inherits inheritance // what operations inherit from the root
+	walks    sync.Map    // reflect.Type to *walk, for finding readers in bodies
 
 	refsMu sync.Mutex
 	refs   map[int32]resolution // Reference Objects followed, by node
@@ -42,6 +41,8 @@ type document struct {
 	paramForms  memo[param]
 	contents    memo[*content]
 	serverLists memo[*serverList]
+	schemeNames memo[*scheme] // by the securitySchemes member a name selects
+	schemeForms memo[*scheme] // by the Security Scheme Object a reference reaches
 }
 
 // A memo keeps what each node of a document compiles to.
@@ -684,9 +685,10 @@ func (d *document) resolve(ref string) (string, error) {
 	return ptr, nil
 }
 
-// checkNames refuses, as Load does, the names in cfg that no server or
-// request body of the document uses, without compiling operations, stopping
-// when ctx is done.
+// checkNames refuses, as Load does, the names in cfg that no server,
+// request body or security requirement of the document uses, and
+// credentials their schemes cannot use, without compiling operations,
+// stopping when ctx is done.
 func (d *document) checkNames(ctx context.Context, cfg *config, re *RequestError) error {
 	server, serverID := cfg.Server == "", cfg.ServerID == ""
 	media := cfg.MediaType == "" || cfg.mediaTypeErr != nil
@@ -709,7 +711,9 @@ func (d *document) checkNames(ctx context.Context, cfg *config, re *RequestError
 	} else {
 		server, serverID = server || cfg.Server == "/", serverID || cfg.ServerID == "default"
 	}
-	seen := map[int32]bool{} // the nodes checked: Path Items, operations and request bodies
+	sec := securityCheck{d: d, re: re, creds: maps.Clone(cfg.Credentials), names: cfg.securityNames, key: cfg.SecurityKey}
+	free := sec.list(d.root().get("security")) // an operation that inherits it takes no credentials
+	seen := map[int32]bool{}                   // the nodes checked: Path Items, operations and request bodies
 	first := func(v value) bool {
 		if seen[v.i] {
 			return false
@@ -718,8 +722,8 @@ func (d *document) checkNames(ctx context.Context, cfg *config, re *RequestError
 		return true
 	}
 	for _, e := range d.entries {
-		if server && serverID && media && len(unused) == 0 {
-			return nil
+		if server && serverID && media && len(unused) == 0 && sec.done() {
+			break
 		}
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("openapi: %w", err)
@@ -734,6 +738,9 @@ func (d *document) checkNames(ctx context.Context, cfg *config, re *RequestError
 			continue
 		}
 		check(e.node.get("servers"))
+		if s := e.node.get("security"); (s.ok() && sec.list(s) || !s.ok() && free) && sec.key == "{}" {
+			sec.key = "" // a credential-free operation offers it
+		}
 		if rb := e.node.get("requestBody"); !media && rb.ok() && methods[e.m].upper != "TRACE" {
 			body, _, _, err := d.follow(rb, "")
 			if err != nil || !first(body) {
@@ -758,5 +765,6 @@ func (d *document) checkNames(ctx context.Context, cfg *config, re *RequestError
 	for name := range unused {
 		re.setting("Options.Variables["+strconv.Quote(name)+"]", errors.New("no server URL uses this variable"))
 	}
+	sec.refuse()
 	return nil
 }

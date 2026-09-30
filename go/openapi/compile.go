@@ -19,9 +19,11 @@ type operation struct {
 
 type plan struct {
 	params     []param
-	pathParams []int // the path parameters, indexes into params
+	dests      map[paramID]int // the parameters by location and name, for credentials to find
+	pathParams []int           // the path parameters, indexes into params
 	path       []pathPart
 	servers    []*server
+	security   []alternative // Operation.Security, compiled
 	body       []parsedMedia // the request body's Media, parsed
 	responses  []responsePlan
 	success    [][]parsedMedia // each 2xx response's concrete media types
@@ -149,14 +151,25 @@ func (e *entry) shape() *operation {
 		errs = append(errs, err)
 		sl = d.serverLists.get(s.i, func() *serverList { return d.parseServers(s, at) })
 	default:
-		sl, _ = d.inherited()
+		sl = d.inherited().servers
 	}
 	o.servers, op.Servers = sl.servers, sl.desc
 
 	if security.ok() {
-		op.Security = securityRequirements(security)
+		op.Security, o.security = d.securityList(security)
 	} else {
-		_, op.Security = d.inherited()
+		root := d.inherited()
+		op.Security, o.security = root.security, root.alternatives
+	}
+	if len(o.security) > 0 {
+		o.dests = make(map[paramID]int, len(o.params))
+		for i, p := range o.params {
+			id := paramID{p.In, p.Name}
+			if p.In == "header" {
+				id.name = p.field
+			}
+			o.dests[id] = i
+		}
 	}
 	op.Err = errors.Join(errs...)
 	return o
@@ -500,44 +513,6 @@ func (o *operation) parsePath() error {
 	return nil
 }
 
-// securityRequirements describes the Security Requirement Objects of list.
-func securityRequirements(list value) []SecurityRequirement {
-	var reqs []SecurityRequirement
-	for _, r := range list.members() {
-		if list.kind() == '[' && r.kind() == '{' {
-			reqs = append(reqs, securityRequirement(r))
-		}
-	}
-	return reqs
-}
-
-// securityRequirement describes the Security Requirement Object v.
-func securityRequirement(v value) SecurityRequirement {
-	var r SecurityRequirement
-	for name, scopes := range v.members() {
-		r.Schemes = append(r.Schemes, SecurityScheme{Name: name, Scopes: scopes.strs()})
-	}
-	var b strings.Builder
-	b.WriteByte('{')
-	for i, s := range slices.SortedFunc(slices.Values(r.Schemes), func(a, b SecurityScheme) int { return strings.Compare(a.Name, b.Name) }) {
-		if i > 0 {
-			b.WriteByte(',')
-		}
-		canonicalString(&b, s.Name)
-		b.WriteString(":[")
-		for j, scope := range slices.Compact(slices.Sorted(slices.Values(s.Scopes))) {
-			if j > 0 {
-				b.WriteByte(',')
-			}
-			canonicalString(&b, scope)
-		}
-		b.WriteByte(']')
-	}
-	b.WriteByte('}')
-	r.Key = b.String()
-	return r
-}
-
 // canonicalString writes s as a JSON string escaped as RFC 8785 escapes
 // strings.
 func canonicalString(b *strings.Builder, s string) {
@@ -599,19 +574,28 @@ type serverList struct {
 	desc    []*Server
 }
 
+// What an operation inherits from the root: its servers, or the default
+// one, and its security requirements.
+type inheritance struct {
+	servers      *serverList
+	security     []SecurityRequirement
+	alternatives []alternative
+}
+
 // inherited returns what an operation inherits from the root, compiled
-// once: its servers, or the default one, and its security requirements.
-func (d *document) inherited() (*serverList, []SecurityRequirement) {
+// once.
+func (d *document) inherited() *inheritance {
 	d.rootOnce.Do(func() {
+		r := &d.inherits
 		if s := d.root().get("servers"); s.hasMembers() {
-			d.servers = d.parseServers(s, d.source("/servers"))
+			r.servers = d.parseServers(s, d.source("/servers"))
 		} else {
 			sv := d.newServer(&Server{ID: "default", URL: "/"}, value{})
-			d.servers = &serverList{[]*server{sv}, []*Server{sv.Server}}
+			r.servers = &serverList{[]*server{sv}, []*Server{sv.Server}}
 		}
-		d.security = securityRequirements(d.root().get("security"))
+		r.security, r.alternatives = d.securityList(d.root().get("security"))
 	})
-	return d.servers, d.security
+	return &d.inherits
 }
 
 // parseServers compiles the Server Objects of list, whose Source is src.

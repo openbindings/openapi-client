@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 	"sync"
@@ -25,12 +26,13 @@ type (
 // A prepared is the context of a request Prepare built.
 type prepared struct {
 	context.Context
-	cfg      *config
-	op       *operation
-	security string
-	payload  payload
-	body     io.ReadCloser // the body Prepare set in the request
-	taken    atomic.Bool   // a send has read a body that can be read once
+	cfg *config
+	op  *operation
+	selection
+	origin  *url.URL // the scheme and host of the server, when the call places credentials
+	payload payload
+	body    io.ReadCloser // the body Prepare set in the request
+	taken   atomic.Bool   // a send has read a body that can be read once
 }
 
 func (p *prepared) Value(key any) any {
@@ -47,10 +49,10 @@ func (p *prepared) Value(key any) any {
 // the response, and the upload of the request body.
 type exchange struct {
 	context.Context
-	cfg      *config
-	op       *operation
-	security string
-	resp     Response
+	cfg *config
+	op  *operation
+	selection
+	resp Response
 	upload
 }
 
@@ -202,9 +204,13 @@ func (r *Request) newExchange(ctx context.Context) (*exchange, *http.Request, er
 	if pr == nil {
 		return nil, nil, &RequestError{Err: fmt.Errorf("%w: the Request was not made by Prepare", ErrNoOperation)}
 	}
-	x := &exchange{Context: ctx, cfg: pr.cfg, op: pr.op, security: pr.security}
+	x := &exchange{Context: ctx, cfg: pr.cfg, op: pr.op, selection: pr.selection}
 	req := r.HTTP.WithContext(x)
-	req.Header = req.Header.Clone() // the http.Client adds a jar's cookies to it
+	if x.places && (req.URL == nil || !sameOrigin(req.URL, pr.origin)) {
+		return nil, nil, &RequestError{Err: errors.New("the request's URL was changed to another origin, where its credentials cannot go; set Options.BaseURL instead")}
+	}
+	req.Header = req.Header.Clone() // a copy, its names canonical, so a credential replaces any spelling of its field
+	canonicalize(req.Header)
 	body := req.Body
 	readOnce := body != nil && body != http.NoBody && req.GetBody == nil
 	if readOnce && pr.taken.Swap(true) {
@@ -229,21 +235,24 @@ func (r *Request) newExchange(ctx context.Context) (*exchange, *http.Request, er
 	return x, req, nil
 }
 
-// send sends req and describes the response.
+// send sends req with the call's credentials and describes the response,
+// whose Request is req, without them.
 func (x *exchange) send(req *http.Request) (*Response, error) {
-	resp, err := x.cfg.client.Do(req)
+	signed, err := x.sign(req)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := x.cfg.client.Do(signed)
 	x.mu.Lock()
 	x.returned = true
 	x.publish()
 	x.mu.Unlock()
 	if err != nil {
-		return nil, withContext(x, err)
+		return nil, withContext(x, redact(err, req.URL))
 	}
-	if resp.Request == nil {
-		resp.Request = req
-	}
+	resp.Request = req
 	r := &x.resp
-	r.Response, r.Security = resp, x.security
+	r.Response, r.Security = resp, x.key()
 	if d := x.op.declaration(resp.StatusCode); d != nil {
 		r.Declaration = d.Message
 		if ct, ok := contentType(resp.Header["Content-Type"]); ok {

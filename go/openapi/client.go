@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"net/url"
 )
 
 // A Client calls the operations of one loaded document. It is safe for
@@ -508,12 +509,12 @@ func (c *Client) Call(ctx context.Context, key string, in *Input, out any) (*Res
 	x := &exchange{Context: ctx, cfg: c.cfg, op: o}
 	re := RequestError{Err: o.Err}
 	c.cfg.checkOut(out, &re)
-	req, p, _, security := c.newRequest(x, o, in, &re)
+	req, p, _, sec := c.newRequest(x, o, in, &re)
 	c.cfg.checkAccept(o, req.Header, out, &re)
 	if err := re.refused(); err != nil {
 		return nil, err
 	}
-	x.security = security
+	x.selection = sec
 	x.attach(req, p)
 	resp, err := x.send(req)
 	if err != nil {
@@ -539,13 +540,16 @@ func (c *Client) Prepare(key string, in *Input) (*Request, error) {
 	}
 	pr := &prepared{Context: context.Background(), cfg: c.cfg, op: o}
 	re := RequestError{Err: o.Err}
-	req, p, media, security := c.newRequest(pr, o, in, &re)
+	req, p, media, sec := c.newRequest(pr, o, in, &re)
 	if err := re.refused(); err != nil {
 		return nil, err
 	}
 	setBody(req, p)
-	pr.security, pr.payload, pr.body = security, p, req.Body
-	return &Request{HTTP: req, Media: media, Security: security}, nil
+	pr.selection, pr.payload, pr.body = sec, p, req.Body
+	if sec.places {
+		pr.origin = &url.URL{Scheme: req.URL.Scheme, Host: req.URL.Host}
+	}
+	return &Request{HTTP: req, Media: media, Security: sec.key()}, nil
 }
 
 // A Request is a call prepared by [Client.Prepare] and not yet sent. A
