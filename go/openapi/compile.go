@@ -19,8 +19,7 @@ type operation struct {
 
 type plan struct {
 	params     []param
-	keys       map[string]int // each known parameter's index in params, by its Key
-	pathParams []int          // the path parameters, indexes into params
+	pathParams []int // the path parameters, indexes into params
 	path       []pathPart
 	servers    []*server
 	body       []parsedMedia // the request body's Media, parsed
@@ -31,12 +30,12 @@ type plan struct {
 // A param is a parameter with its serialization compiled.
 type param struct {
 	*Param
-	style
+	*style
+	set      *charset // how its values are percent-encoded, or nil to write them as given
 	required bool
-	field    string      // a header parameter's canonical field name
-	name     string      // the name, percent-encoded
-	media    parsedMedia // ContentType, parsed
-	class    class       // media's class
+	field    string       // a header parameter's canonical field name
+	name     string       // the name, percent-encoded
+	media    *parsedMedia // a content parameter's ContentType, parsed
 }
 
 // A pathPart is literal text of the path template, percent-encoded, or one
@@ -226,7 +225,6 @@ func (o *operation) assignKeys() {
 	for _, p := range o.params {
 		names[p.Name]++
 	}
-	o.keys = make(map[string]int, len(o.params))
 	for i, pp := range o.params {
 		p := pp.Param
 		o.Params = append(o.Params, p)
@@ -242,7 +240,6 @@ func (o *operation) assignKeys() {
 			dotted && slices.Contains([]string{"path", "query", "header", "cookie", "querystring"}, loc) {
 			p.Key = p.In + "." + p.Name
 		}
-		o.keys[p.Key] = i
 	}
 }
 
@@ -337,14 +334,20 @@ func (d *document) newParam(t value, at string) param {
 	case p.In == "header" && strings.EqualFold(p.Name, "Cookie"):
 		p.Err = errors.New("OpenAPI leaves the effect of a header parameter named Cookie undefined")
 	}
-	pp := param{Param: p, style: styles[p.Style], required: p.Required || p.In == "path", name: escape(p.Name, unreservedSet)}
-	pp.media, _ = parseMedia(p.ContentType)
-	pp.class, pp.set = pp.media.class(), unreservedSet
+	pp := param{Param: p, style: styles[p.Style], set: unreservedSet, required: p.Required || p.In == "path", name: escape(p.Name, unreservedSet)}
+	switch {
+	case p.In == "cookie" && p.Style == "form":
+		pp.style = &cookieForm
+	case pp.style == nil:
+		pp.style = &noStyle // serialized by content, or with p.Err set
+	}
+	if content.ok() {
+		m, _ := parseMedia(p.ContentType)
+		pp.media = &m
+	}
 	switch p.In {
 	case "header":
 		pp.field, pp.set = textproto.CanonicalMIMEHeaderKey(p.Name), nil
-	case "cookie":
-		pp.sep = "; "
 	case "query":
 		if p.AllowReserved {
 			pp.set = reservedSet

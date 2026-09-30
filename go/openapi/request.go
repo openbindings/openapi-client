@@ -234,19 +234,21 @@ func (c *Client) newRequest(ctx context.Context, o *operation, in *Input, re *Re
 			h["Cookie"] = []string{cookies.String()}
 		}
 	}
-	unknown := func(k string) {
-		if _, ok := o.keys[k]; !ok {
-			re.input(k, errors.New("the operation declares no such parameter"))
+	if given < len(in.Params) || written < len(in.ParamWriters) { // an unknown key
+		keys := make(map[string]bool, len(o.params))
+		for _, p := range o.params {
+			keys[p.Key] = p.In != ""
 		}
-	}
-	if given < len(in.Params) {
+		unknown := errors.New("the operation declares no such parameter")
 		for k := range in.Params {
-			unknown(k)
+			if !keys[k] {
+				re.input(k, unknown)
+			}
 		}
-	}
-	if written < len(in.ParamWriters) {
 		for k := range in.ParamWriters {
-			unknown(k)
+			if !keys[k] {
+				re.input(k, unknown)
+			}
 		}
 	}
 	p, media := c.body(o, in, h, re)

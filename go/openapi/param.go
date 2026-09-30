@@ -16,12 +16,11 @@ type style struct {
 	first, sep, ifemp string
 	delim             string // between the items of a value not exploded
 	named             bool
-	composite         bool     // it takes only an array or object
-	deep              bool     // deepObject: it takes only an object, which may nest
-	set               *charset // nil where values are written as given
+	composite         bool // it takes only an array or object
+	deep              bool // deepObject: it takes only an object, which may nest
 }
 
-var styles = map[string]style{
+var styles = map[string]*style{
 	"simple":         {sep: ",", delim: ","},
 	"label":          {first: ".", sep: ".", delim: ","},
 	"matrix":         {first: ";", sep: ";", delim: ",", named: true},
@@ -30,6 +29,11 @@ var styles = map[string]style{
 	"pipeDelimited":  {delim: "%7C", ifemp: "=", named: true, composite: true},
 	"deepObject":     {sep: "&", composite: true, deep: true},
 }
+
+var (
+	cookieForm = style{sep: "; ", delim: ",", ifemp: "=", named: true} // form style in a cookie, pairs joined by "; "
+	noStyle    style
+)
 
 var (
 	errNested     = errors.New("the style cannot serialize a nested array or object")
@@ -82,8 +86,8 @@ func (c *Client) writeParam(b *strings.Builder, lead string, p *param, v any, re
 // encode returns v encoded as a body of p's media type is, a []byte being
 // the encoded content, or why it cannot be.
 func (c *Client) encode(p *param, v any) (string, error) {
-	m := p.media
-	if p.class == sequentialClass || strings.EqualFold(m.typ, "multipart") {
+	m, k := *p.media, p.media.class()
+	if k == sequentialClass || strings.EqualFold(m.typ, "multipart") {
 		return "", fmt.Errorf("%s cannot serialize a parameter", m.full)
 	}
 	switch v := v.(type) {
@@ -92,7 +96,7 @@ func (c *Client) encode(p *param, v any) (string, error) {
 	case io.Reader:
 		return "", errors.New("a reader cannot serialize a parameter")
 	}
-	if b, _, ok, err := c.encodeValue(m, p.class, v); ok {
+	if b, _, ok, err := c.encodeValue(m, k, v); ok {
 		return string(b), err
 	}
 	if strings.EqualFold(m.full, "application/x-www-form-urlencoded") {
@@ -107,9 +111,9 @@ func (c *Client) encode(p *param, v any) (string, error) {
 		return "", err
 	case s[0] == '"':
 		return jsonString(s), nil
-	case p.class == textClass && s[0] != '{' && s[0] != '[' && s[0] != 'n':
+	case k == textClass && s[0] != '{' && s[0] != '[' && s[0] != 'n':
 		return s, nil
-	case p.class == textClass:
+	case k == textClass:
 		return "", fmt.Errorf("%s takes a string, number or boolean", m.full)
 	}
 	return "", fmt.Errorf("%s takes a string", m.full)
@@ -212,7 +216,10 @@ func (e *emitter) primitive(s string) (bool, error) {
 	if err := e.item(s); err != nil {
 		return false, err
 	}
-	return e.end(0)
+	if e.held { // a named value, not exploded, is "" (see end)
+		e.b.WriteString(e.ifemp)
+	}
+	return true, nil
 }
 
 // next writes what precedes an item or member: the value's start before
