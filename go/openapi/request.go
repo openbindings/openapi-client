@@ -110,7 +110,8 @@ func decodes(out any) bool {
 // checkAccept refuses a typed out when the operation's 2xx responses offer
 // media types of several codec classes and the request asks for none.
 func (cfg *config) checkAccept(o *operation, h http.Header, out any, re *RequestError) {
-	if _, dynamic := out.(*any); dynamic || !decodes(out) || len(o.success) < 2 || len(h["Accept"]) > 0 {
+	few := len(o.success) == 0 || len(o.success) == 1 && len(o.success[0]) < 2
+	if _, dynamic := out.(*any); dynamic || !decodes(out) || few || len(h["Accept"]) > 0 {
 		return
 	}
 	classOf := func(m parsedMedia) string {
@@ -119,11 +120,16 @@ func (cfg *config) checkAccept(o *operation, h http.Header, out any, re *Request
 		}
 		return strconv.Itoa(int(m.class()))
 	}
-	first := classOf(o.success[0])
-	if slices.ContainsFunc(o.success[1:], func(m parsedMedia) bool { return classOf(m) != first }) {
-		types := make([]string, len(o.success))
-		for i, m := range o.success {
-			types[i] = m.full
+	first, mixed := classOf(o.success[0][0]), false
+	for _, list := range o.success {
+		mixed = mixed || slices.ContainsFunc(list, func(m parsedMedia) bool { return classOf(m) != first })
+	}
+	if mixed {
+		var types []string
+		for _, list := range o.success {
+			for _, m := range list {
+				types = append(types, m.full)
+			}
 		}
 		re.setting("Options.Header", fmt.Errorf("2xx responses offer %s; set an Accept field to decode into %T",
 			strings.Join(types, ", "), out))

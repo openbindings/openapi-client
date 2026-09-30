@@ -22,14 +22,6 @@ func parseMedia(s string) (parsedMedia, bool) {
 	return m, ok && isToken(typ) && isToken(sub) && (typ != "*" || sub == "*") && m.eachParam(nil)
 }
 
-func parseMedias(ms []*Media) []parsedMedia {
-	parsed := make([]parsedMedia, len(ms))
-	for i, m := range ms {
-		parsed[i], _ = parseMedia(m.Type)
-	}
-	return parsed
-}
-
 func (m parsedMedia) concrete() bool { return m.typ != "*" && m.sub != "*" }
 
 // eachParam calls f, if not nil, with each parameter's name and value,

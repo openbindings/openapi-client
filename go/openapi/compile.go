@@ -18,12 +18,13 @@ type operation struct {
 }
 
 type plan struct {
-	params    []param
-	path      []pathPart
-	servers   []*server
-	body      []parsedMedia // the request body's Media, parsed
-	responses []responsePlan
-	success   []parsedMedia // the concrete media types of 2xx responses
+	params     []param
+	pathParams []int // the path parameters, indexes into params
+	path       []pathPart
+	servers    []*server
+	body       []parsedMedia // the request body's Media, parsed
+	responses  []responsePlan
+	success    [][]parsedMedia // each 2xx response's concrete media types
 }
 
 // A param is a parameter with its serialization rules.
@@ -51,19 +52,41 @@ type responsePlan struct {
 	media    []parsedMedia
 }
 
+// build compiles the entry: what its Operation Object compiles to on any
+// path, shared by the entries of its group, then what its own path decides.
 func (e *entry) build() *operation {
 	d := e.doc
-	o := &operation{doc: d}
-	op := &o.Operation
 	if e.m < 0 {
-		op.Path, op.Source, op.Err = e.path, d.source(e.levels.ptr), e.err
+		o := &operation{doc: d}
+		o.Path, o.Source, o.Err = e.path, d.source(e.levels.ptr), e.err
 		return o
 	}
-	ptr, n := e.ptr(), e.node
-	op.Key, op.ID, op.Method, op.Path, op.Source = e.id, e.id, methods[e.m].upper, e.path, d.source(ptr)
-	if e.id == "" || d.byID[e.id] != e {
-		op.Key = op.Method + " " + op.Path
+	var o *operation
+	if g := e.group; g != nil {
+		g.once.Do(func() { g.op = e.shape() })
+		c := *g.op
+		o = &c
+	} else {
+		o = e.shape()
 	}
+	o.Key, o.Path = e.id, e.path
+	if e.id == "" || d.byID[e.id] != e {
+		o.Key = o.Method + " " + o.Path
+	}
+	if err := o.parsePath(); err != nil {
+		o.Err = errors.Join(o.Err, err)
+	}
+	return o
+}
+
+// shape compiles what the entry's Operation Object compiles to on every
+// path its Path Item chain reaches it from: all but the Key and what the
+// path template decides.
+func (e *entry) shape() *operation {
+	d, n, ptr := e.doc, e.node, e.ptr()
+	o := &operation{doc: d}
+	op := &o.Operation
+	op.ID, op.Method, op.Source = e.id, methods[e.m].upper, d.source(ptr)
 	var params, body, responses, servers, security value
 	for name, m := range n.members() { // one pass: a member's name is read from the source
 		switch name {
@@ -98,45 +121,41 @@ func (e *entry) build() *operation {
 
 	if body.ok() && op.Method != "TRACE" {
 		var target value
-		op.Body, target = d.message(body, ptr+"/requestBody")
+		var c *content
+		op.Body, target, c = d.message(body, ptr+"/requestBody")
 		if !target.ok() {
 			errs = append(errs, op.Body.Err)
 		}
 		op.Body.Required = target.flag("required")
-		o.body = parseMedias(op.Body.Media)
+		o.body = c.parsed
 	}
 	if responses.kind() == '{' {
 		for key, r := range responses.members() {
 			if !strings.HasPrefix(key, "x-") {
-				m, _ := d.message(r, ptr+"/responses/"+escapeToken(key))
+				m, _, c := d.message(r, ptr+"/responses/"+escapeToken(key))
 				m.Key = key
-				o.addResponse(m)
+				o.addResponse(m, c)
 			}
 		}
 	}
 
-	if servers.hasMembers() {
-		o.servers = d.parseServers(servers, ptr+"/servers")
-	} else if s, at, err := e.field(serversField); s.ok() {
+	var sl *serverList
+	switch s, at, err := e.field(serversField); {
+	case servers.hasMembers():
+		sl = d.parseServers(servers, ptr+"/servers")
+	case s.ok():
 		errs = append(errs, err)
-		o.servers = d.parseServers(s, at)
+		sl = d.serverLists.get(s.i, true, func() *serverList { return d.parseServers(s, at) })
+	default:
+		sl, _ = d.inherited()
+	}
+	o.servers, op.Servers = sl.servers, sl.desc
+
+	if security.ok() {
+		op.Security = securityRequirements(security)
 	} else {
-		o.servers = d.rootServers()
+		_, op.Security = d.inherited()
 	}
-	for _, s := range o.servers {
-		op.Servers = append(op.Servers, s.Server)
-	}
-
-	if !security.ok() {
-		security = d.root().get("security")
-	}
-	for _, r := range security.members() {
-		if security.kind() == '[' && r.kind() == '{' {
-			op.Security = append(op.Security, securityRequirement(r))
-		}
-	}
-
-	errs = append(errs, o.parsePath())
 	op.Err = errors.Join(errs...)
 	return o
 }
@@ -218,9 +237,12 @@ func (o *operation) assignKeys() {
 	for _, p := range o.params {
 		names[p.Name]++
 	}
-	for _, pp := range o.params {
+	for i, pp := range o.params {
 		p := pp.Param
 		o.Params = append(o.Params, p)
+		if p.In == "path" {
+			o.pathParams = append(o.pathParams, i)
+		}
 		if p.In == "" {
 			continue
 		}
@@ -233,13 +255,21 @@ func (o *operation) assignKeys() {
 	}
 }
 
-// param describes the Parameter Object v at ptr, following references.
+// param describes the Parameter Object v at ptr, following references. A
+// target that references reach is compiled once, and copied for each.
 func (d *document) param(v value, ptr string) *Param {
 	t, at, desc, err := d.follow(v, ptr)
 	if err != nil {
 		return &Param{Source: d.source(ptr), Err: err}
 	}
-	p := &Param{Description: desc, Source: d.source(at)}
+	c := *d.paramForms.get(t.i, t.i != v.i, func() *Param { return d.newParam(t, at) })
+	c.Description = desc
+	return &c
+}
+
+// newParam compiles the Parameter Object t at at.
+func (d *document) newParam(t value, at string) *Param {
+	p := &Param{Source: d.source(at)}
 	var explode, content value
 	for name, m := range t.members() { // one pass: a member's name is read from the source
 		switch name {
@@ -309,32 +339,55 @@ func styleAllowed(in, style string) bool {
 	return style == "form"
 }
 
-// message describes the Request Body or Response Object v at ptr,
-// following references. The target is absent when a reference cannot be
-// resolved; the Message then reports it in Err.
-func (d *document) message(v value, ptr string) (*Message, value) {
-	t, at, desc, err := d.follow(v, ptr)
-	if err != nil {
-		return &Message{Source: d.source(ptr), Err: err}, value{}
-	}
-	m := &Message{Description: desc, Source: d.source(at)}
-	if c := t.get("content"); c.kind() == '{' {
-		for typ, mv := range c.members() {
-			mat := at + "/content/" + escapeToken(typ)
-			md := &Media{Type: typ, Source: d.source(mat), Schema: d.schema(mv.get("schema"), mat+"/schema")}
-			if pm, ok := parseMedia(typ); !ok {
-				md.Err = fmt.Errorf("invalid media type %q", typ)
-			} else {
-				md.Sequential = pm.class() == sequentialClass || strings.EqualFold(pm.typ, "multipart")
-			}
-			m.Media = append(m.Media, md)
-		}
-	}
-	return m, t
+// A content is the content map of a Request Body or Response Object,
+// compiled once for every reference to it.
+type content struct {
+	source  string // the object's Source
+	media   []*Media
+	parsed  []parsedMedia // media, parsed
+	success []parsedMedia // the concrete media types among them, for a 2xx response
 }
 
-func (o *operation) addResponse(m *Message) {
-	r := responsePlan{Message: m, media: parseMedias(m.Media)}
+// noContent is the content of an object a reference cannot reach.
+var noContent content
+
+// message describes the Request Body or Response Object v at ptr,
+// following references, with its content. The target is absent when a
+// reference cannot be resolved; the Message then reports it in Err.
+func (d *document) message(v value, ptr string) (*Message, value, *content) {
+	t, at, desc, err := d.follow(v, ptr)
+	if err != nil {
+		return &Message{Source: d.source(ptr), Err: err}, value{}, &noContent
+	}
+	c := d.contents.get(t.i, t.i != v.i, func() *content { return d.content(t, at) })
+	return &Message{Description: desc, Source: c.source, Media: c.media}, t, c
+}
+
+// content compiles the content map of the object t at at.
+func (d *document) content(t value, at string) *content {
+	c := &content{source: d.source(at)}
+	if m := t.get("content"); m.kind() == '{' {
+		for typ, mv := range m.members() {
+			mat := at + "/content/" + escapeToken(typ)
+			md := &Media{Type: typ, Source: d.source(mat), Schema: d.schema(mv.get("schema"), mat+"/schema")}
+			pm, ok := parseMedia(typ)
+			switch {
+			case !ok:
+				md.Err = fmt.Errorf("invalid media type %q", typ)
+			case pm.concrete():
+				c.success = append(c.success, pm)
+				fallthrough
+			default:
+				md.Sequential = pm.class() == sequentialClass || strings.EqualFold(pm.typ, "multipart")
+			}
+			c.media, c.parsed = append(c.media, md), append(c.parsed, pm)
+		}
+	}
+	return c
+}
+
+func (o *operation) addResponse(m *Message, c *content) {
+	r := responsePlan{Message: m, media: c.parsed}
 	key := m.Key
 	digit := func(i int) bool { return '0' <= key[i] && key[i] <= '9' }
 	switch {
@@ -349,12 +402,8 @@ func (o *operation) addResponse(m *Message) {
 	}
 	o.Responses = append(o.Responses, m)
 	o.responses = append(o.responses, r)
-	if r.status/100 == 2 || r.class == 2 {
-		for i, mt := range r.media {
-			if m.Media[i].Err == nil && mt.concrete() {
-				o.success = append(o.success, mt)
-			}
-		}
+	if (r.status/100 == 2 || r.class == 2) && len(c.success) > 0 {
+		o.success = append(o.success, c.success)
 	}
 }
 
@@ -382,34 +431,49 @@ func (pl *plan) declaration(status int) *responsePlan {
 
 // parsePath splits the path template into its text, percent-encoded, and
 // its parameters. A path parameter the template does not name cannot be
-// serialized.
+// serialized: it is copied with Err set, as other paths may share it.
 func (o *operation) parsePath() error {
-	byName := map[string]int{}
-	for i, p := range o.params {
-		if p.In == "path" {
-			byName[p.Name] = i
-		}
-	}
 	text, names, ok := splitTemplate(o.Path)
 	if !ok {
 		return fmt.Errorf("path template %q has an unclosed {", o.Path)
 	}
-	named := make([]bool, len(o.params))
+	byName := make(map[string]int, len(o.pathParams))
+	for j, i := range o.pathParams {
+		byName[o.params[i].Name] = j
+	}
+	named := make([]bool, len(o.pathParams))
 	for i, name := range names {
 		j, ok := byName[name]
 		if !ok {
 			return fmt.Errorf("path template %q names %q, which no path parameter declares", o.Path, name)
 		}
-		o.path = append(o.path, pathPart{escapePath(text[i]), -1}, pathPart{param: j})
+		o.path = append(o.path, pathPart{escapePath(text[i]), -1}, pathPart{param: o.pathParams[j]})
 		named[j] = true
 	}
 	o.path = append(o.path, pathPart{escapePath(text[len(names)]), -1})
-	for i, p := range o.params {
-		if p.In == "path" && !named[i] && p.Err == nil {
-			p.Err = fmt.Errorf("path parameter %q is not named in the path template", p.Name)
+	copied := false
+	for j, i := range o.pathParams {
+		if p := o.params[i].Param; !named[j] && p.Err == nil {
+			if !copied {
+				o.params, o.Params, copied = slices.Clone(o.params), slices.Clone(o.Params), true
+			}
+			c := *p
+			c.Err = fmt.Errorf("path parameter %q is not named in the path template", p.Name)
+			o.params[i].Param, o.Params[i] = &c, &c
 		}
 	}
 	return nil
+}
+
+// securityRequirements describes the Security Requirement Objects of list.
+func securityRequirements(list value) []SecurityRequirement {
+	var reqs []SecurityRequirement
+	for _, r := range list.members() {
+		if list.kind() == '[' && r.kind() == '{' {
+			reqs = append(reqs, securityRequirement(r))
+		}
+	}
+	return reqs
 }
 
 // securityRequirement describes the Security Requirement Object v.
@@ -492,25 +556,36 @@ type endpoint struct {
 	scheme, host, path string // path percent-encoded
 }
 
-func (d *document) rootServers() []*server {
-	d.serversOnce.Do(func() {
+// A serverList is a Servers list compiled: its servers, and their
+// descriptions.
+type serverList struct {
+	servers []*server
+	desc    []*Server
+}
+
+// inherited returns what an operation inherits from the root, compiled
+// once: its servers, or the default one, and its security requirements.
+func (d *document) inherited() (*serverList, []SecurityRequirement) {
+	d.rootOnce.Do(func() {
 		if s := d.root().get("servers"); s.hasMembers() {
 			d.servers = d.parseServers(s, "/servers")
 		} else {
-			d.servers = []*server{d.newServer(&Server{ID: "default", URL: "/"}, value{})}
+			sv := d.newServer(&Server{ID: "default", URL: "/"}, value{})
+			d.servers = &serverList{[]*server{sv}, []*Server{sv.Server}}
 		}
+		d.security = securityRequirements(d.root().get("security"))
 	})
-	return d.servers
+	return d.servers, d.security
 }
 
-func (d *document) parseServers(list value, ptr string) []*server {
-	var servers []*server
+func (d *document) parseServers(list value, ptr string) *serverList {
+	sl := &serverList{}
 	for _, v := range list.members() {
-		at := d.source(ptr + "/" + strconv.Itoa(len(servers)))
+		at := d.source(ptr + "/" + strconv.Itoa(len(sl.servers)))
 		s := &Server{ID: at, URL: v.str("url"), Description: v.str("description"), Source: at}
-		servers = append(servers, d.newServer(s, v.get("variables")))
+		sl.servers, sl.desc = append(sl.servers, d.newServer(s, v.get("variables"))), append(sl.desc, s)
 	}
-	return servers
+	return sl
 }
 
 // newServer completes s from its URL template and declared variables.

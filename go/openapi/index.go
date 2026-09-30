@@ -30,12 +30,49 @@ type document struct {
 	byRoute map[route]*entry
 	broken  map[string]*entry // Paths entries that cannot be read, by path
 
-	serversOnce sync.Once
-	servers     []*server // the root servers, or the default one
-	walks       sync.Map  // reflect.Type to *walk, for finding readers in bodies
+	rootOnce sync.Once
+	servers  *serverList           // the root servers, or the default one
+	security []SecurityRequirement // the root security requirements
+	walks    sync.Map              // reflect.Type to *walk, for finding readers in bodies
 
 	refsMu sync.Mutex
 	refs   map[int32]resolution // Reference Objects followed, by node
+
+	// What nodes shared by several places compile to, by node.
+	paramForms  memo[*Param]
+	contents    memo[*content]
+	serverLists memo[*serverList]
+}
+
+// A memo keeps what each node of a document compiles to.
+type memo[T any] struct {
+	mu    sync.Mutex
+	cells map[int32]*cell[T]
+}
+
+type cell[T any] struct {
+	once sync.Once
+	v    T
+}
+
+// get returns what compile makes of node i: once per document when the
+// node is shared by several places, and afresh when only one reaches it.
+func (m *memo[T]) get(i int32, shared bool, compile func() T) T {
+	if !shared {
+		return compile()
+	}
+	m.mu.Lock()
+	c := m.cells[i]
+	if c == nil {
+		if m.cells == nil {
+			m.cells = map[int32]*cell[T]{}
+		}
+		c = new(cell[T])
+		m.cells[i] = c
+	}
+	m.mu.Unlock()
+	c.once.Do(func() { c.v = compile() })
+	return c.v
 }
 
 type route struct{ method, path string }
@@ -58,8 +95,17 @@ type entry struct {
 	levels *level   // the Path Item chain
 	sum    *summary // what its levels define, shared with every chain that defines the same
 	err    error    // why the entry cannot be read, or its method is defined twice
+	group  *group   // the entries sharing its Operation Object and inherited fields, or nil
 	once   sync.Once
 	op     *operation
+}
+
+// A group is the entries of several Paths entries that reach one Operation
+// Object through one Path Item chain, and what it compiles to for all of
+// them.
+type group struct {
+	once sync.Once
+	op   *operation
 }
 
 // A level is one Path Item of a chain: the Paths entry, then each $ref
@@ -368,6 +414,11 @@ func (d *document) source(ptr string) string {
 func (d *document) index(ctx context.Context) error {
 	d.byID, d.byRoute, d.broken = map[string]*entry{}, map[route]*entry{}, map[string]*entry{}
 	var targets map[int32]link
+	type groupKey struct {
+		sum *summary
+		m   int
+	}
+	var groups map[groupKey]*group
 	for path, item := range d.root().get("paths").members() {
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("openapi: %w", err)
@@ -387,8 +438,19 @@ func (d *document) index(ctx context.Context) error {
 			continue
 		}
 		for m := range methods {
-			if sum != nil && sum.at[m] != nil {
-				d.addOperation(path, m, levels, sum)
+			if sum == nil || sum.at[m] == nil {
+				continue
+			}
+			e := d.addOperation(path, m, levels, sum)
+			if levels.next != nil { // a $ref: other Paths entries may reach the same
+				k := groupKey{sum, m}
+				if groups[k] == nil {
+					if groups == nil {
+						groups = map[groupKey]*group{}
+					}
+					groups[k] = new(group)
+				}
+				e.group = groups[k]
 			}
 		}
 	}
@@ -397,7 +459,7 @@ func (d *document) index(ctx context.Context) error {
 
 // addOperation indexes the operation for method m of a Path Item chain,
 // which sum summarizes.
-func (d *document) addOperation(path string, m int, levels *level, sum *summary) {
+func (d *document) addOperation(path string, m int, levels *level, sum *summary) *entry {
 	n := sum.at[m].v.get(methods[m].name)
 	e := &entry{doc: d, path: path, id: n.str("operationId"), m: m, node: n, levels: levels, sum: sum}
 	if sum.dup&(1<<m) != 0 {
@@ -412,6 +474,7 @@ func (d *document) addOperation(path string, m int, levels *level, sum *summary)
 			d.byID[e.id] = e
 		}
 	}
+	return e
 }
 
 func isMethodAndPath(key string) bool {
@@ -645,7 +708,14 @@ func (d *document) checkNames(ctx context.Context, cfg *config, re *RequestError
 	} else {
 		server, serverID = server || cfg.Server == "/", serverID || cfg.ServerID == "default"
 	}
-	seen := map[*level]bool{} // the levels checked, and so the rest of each chain
+	seen := map[int32]bool{} // the nodes checked: Path Items, operations and request bodies
+	first := func(v value) bool {
+		if seen[v.i] {
+			return false
+		}
+		seen[v.i] = true
+		return true
+	}
 	for _, e := range d.entries {
 		if server && serverID && media && len(unused) == 0 {
 			return nil
@@ -656,17 +726,22 @@ func (d *document) checkNames(ctx context.Context, cfg *config, re *RequestError
 		if e.m < 0 {
 			continue
 		}
-		for l := e.levels; l != nil && !seen[l]; l = l.next {
-			seen[l] = true
+		for l := e.levels; l != nil && first(l.v); l = l.next { // a level checked has its rest checked
 			check(l.v.get("servers"), func() string { return l.ptr })
+		}
+		if !first(e.node) {
+			continue
 		}
 		check(e.node.get("servers"), e.ptr)
 		if rb := e.node.get("requestBody"); !media && rb.ok() && methods[e.m].upper != "TRACE" {
 			body, _, _, err := d.follow(rb, "")
+			if err != nil || !first(body) {
+				continue
+			}
 			for typ := range body.get("content").members() {
 				m, ok := parseMedia(typ)
 				_, covers := m.covers(cfg.mediaType)
-				media = media || err == nil && ok && covers
+				media = media || ok && covers
 			}
 		}
 	}
