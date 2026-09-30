@@ -280,7 +280,9 @@ func newClient(ctx context.Context, content, uri string, opts *Options) (*Client
 	if c.cfg.codecsErr != nil {
 		re.setting("Options.Codecs", c.cfg.codecsErr)
 	}
-	d.checkNames(c.cfg, &re)
+	if err := d.checkNames(ctx, c.cfg, &re); err != nil {
+		return nil, err
+	}
 	if err := re.refused(); err != nil {
 		return nil, err
 	}

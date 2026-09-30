@@ -33,6 +33,9 @@ type document struct {
 	serversOnce sync.Once
 	servers     []*server // the root servers, or the default one
 	walks       sync.Map  // reflect.Type to *walk, for finding readers in bodies
+
+	refsMu sync.Mutex
+	refs   map[int32]resolution // Reference Objects followed, by node
 }
 
 type route struct{ method, path string }
@@ -50,20 +53,61 @@ type entry struct {
 	doc    *document
 	path   string
 	id     string
-	m      int     // the method, an index into methods; -1 for a Paths entry that cannot be read
-	node   value   // the Operation Object
-	levels []level // the Path Item chain
-	at     int     // the level that defines the operation
-	err    error   // why the entry cannot be read, or its method is defined twice
+	m      int      // the method, an index into methods; -1 for a Paths entry that cannot be read
+	node   value    // the Operation Object
+	levels *level   // the Path Item chain
+	sum    *summary // what its levels define
+	err    error    // why the entry cannot be read, or its method is defined twice
 	once   sync.Once
 	op     *operation
 }
 
 // A level is one Path Item of a chain: the Paths entry, then each $ref
-// target in turn.
+// target in turn. A target's level, and the rest of the chain from it, are
+// shared by every chain through it.
 type level struct {
-	v   value
-	ptr string
+	v    value
+	ptr  string
+	next *level
+}
+
+// A summary says which level of a Path Item chain defines each field the
+// client reads, each method's and then parameters and servers: the nearest
+// that does, a bit in dup saying a farther one does too.
+type summary struct {
+	at  [serversField + 1]*level
+	dup uint16
+}
+
+// The Path Item fields a summary covers after the methods.
+const (
+	parametersField = len(methods) + iota
+	serversField
+)
+
+// add returns the summary of the chain from l, whose rest s summarizes.
+func (s summary) add(l *level) summary {
+	for name, v := range l.v.members() {
+		f, present := -1, v.kind() == '{'
+		for m := range methods {
+			if methods[m].name == name {
+				f = m
+			}
+		}
+		switch name {
+		case "parameters":
+			f, present = parametersField, true
+		case "servers":
+			f, present = serversField, v.hasMembers()
+		}
+		if f >= 0 && present {
+			if s.at[f] != nil {
+				s.dup |= 1 << f
+			}
+			s.at[f] = l
+		}
+	}
+	return s
 }
 
 // compile completes the entry's descriptor and plan once.
@@ -73,7 +117,7 @@ func (e *entry) compile() *operation {
 }
 
 // ptr returns the Operation Object's JSON Pointer.
-func (e *entry) ptr() string { return e.levels[e.at].ptr + "/" + methods[e.m].name }
+func (e *entry) ptr() string { return e.sum.at[e.m].ptr + "/" + methods[e.m].name }
 
 // checkURI refuses a document URI with userinfo or a fragment.
 func checkURI(u *url.URL, raw string) error {
@@ -258,6 +302,7 @@ func (d *document) source(ptr string) string {
 
 func (d *document) index(ctx context.Context) error {
 	d.byID, d.byRoute, d.broken = map[string]*entry{}, map[route]*entry{}, map[string]*entry{}
+	var targets map[int32]link
 	for path, item := range d.root().get("paths").members() {
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("openapi: %w", err)
@@ -266,39 +311,37 @@ func (d *document) index(ctx context.Context) error {
 			continue
 		}
 		ptr := "/paths/" + escapeToken(path)
-		levels, err := d.chain(item, ptr)
+		levels, sum, err := d.chain(item, ptr, &targets)
 		if err == nil && !strings.HasPrefix(path, "/") {
 			err = fmt.Errorf("Paths key %q does not begin with /", path)
 		}
 		if err != nil {
-			e := &entry{doc: d, path: path, m: -1, levels: []level{{item, ptr}}, err: err}
+			e := &entry{doc: d, path: path, m: -1, levels: &level{v: item, ptr: ptr}, err: err}
 			d.entries = append(d.entries, e)
 			d.broken[path] = e
 			continue
 		}
+		var shared *summary // by the chain's operations
 		for m := range methods {
-			d.addOperation(path, m, levels)
+			if sum.at[m] != nil {
+				if shared == nil {
+					shared = new(summary)
+					*shared = sum
+				}
+				d.addOperation(path, m, levels, shared)
+			}
 		}
 	}
 	return nil
 }
 
-// addOperation indexes the operation for method m of a Path Item chain, if
-// one of its levels defines it.
-func (d *document) addOperation(path string, m int, levels []level) {
-	var e *entry
-	for i, l := range levels {
-		n := l.v.get(methods[m].name)
-		switch {
-		case n.kind() != '{':
-		case e != nil:
-			e.err = fmt.Errorf("the Path Item and its $ref target both define %s", methods[m].name)
-		default:
-			e = &entry{doc: d, path: path, id: n.str("operationId"), m: m, node: n, levels: levels, at: i}
-		}
-	}
-	if e == nil {
-		return
+// addOperation indexes the operation for method m of a Path Item chain,
+// which sum summarizes.
+func (d *document) addOperation(path string, m int, levels *level, sum *summary) {
+	n := sum.at[m].v.get(methods[m].name)
+	e := &entry{doc: d, path: path, id: n.str("operationId"), m: m, node: n, levels: levels, sum: sum}
+	if sum.dup&(1<<m) != 0 {
+		e.err = fmt.Errorf("the Path Item and its $ref target both define %s", methods[m].name)
 	}
 	d.entries = append(d.entries, e)
 	d.byRoute[route{methods[m].upper, path}] = e
@@ -347,62 +390,125 @@ func (d *document) lookup(key string) (*entry, error) {
 	return nil, fmt.Errorf("%w: %q is the operationId of %s", ErrNoOperation, key, strings.Join(keys, ", "))
 }
 
-// chain follows the Path Item $refs from v, at ptr, returning every level,
-// nearest first.
-func (d *document) chain(v value, ptr string) ([]level, error) {
-	levels := []level{{v, ptr}}
-	var loop cycle
-	for {
-		next, at, err := d.deref(v)
-		if err != nil || !next.ok() {
-			return levels, err
+// A link is the Path Item chain from a $ref target: the target's level,
+// sharing the rest, and its summary, or why it cannot be followed. It is
+// not done while the chain through it is being followed.
+type link struct {
+	l    *level
+	sum  summary
+	err  error
+	done bool
+}
+
+// chain follows the Path Item $refs from v, at ptr, returning its level,
+// followed by each target's, and its summary. The chain from each target is
+// followed once, and kept in *targets.
+func (d *document) chain(v value, ptr string, targets *map[int32]link) (*level, summary, error) {
+	head := &level{v: v, ptr: ptr}
+	var walked []*level // the targets reached, not yet kept
+	var rest summary    // the chain after the last level walked
+	var err error
+	for l := head; ; {
+		ref := l.v.get("$ref")
+		if ref.kind() != '"' {
+			break
 		}
-		if loop.seen(next) {
-			return nil, fmt.Errorf("%w %q: a reference cycle", ErrUnresolved, v.str("$ref"))
+		next, at, e := d.target(ref.text())
+		if err = e; err != nil {
+			break
 		}
-		levels = append(levels, level{next, at})
-		v = next
+		if k, ok := (*targets)[next.i]; ok {
+			if l.next, rest, err = k.l, k.sum, k.err; !k.done {
+				err = fmt.Errorf("%w %q: a reference cycle", ErrUnresolved, ref.text())
+			}
+			break
+		}
+		if *targets == nil {
+			*targets = map[int32]link{}
+		}
+		(*targets)[next.i] = link{}
+		l.next = &level{v: next, ptr: at}
+		l = l.next
+		walked = append(walked, l)
 	}
+	for i := len(walked) - 1; i >= 0; i-- {
+		if err == nil {
+			rest = rest.add(walked[i])
+		}
+		(*targets)[walked[i].v.i] = link{walked[i], rest, err, true}
+	}
+	if err != nil {
+		return nil, summary{}, err
+	}
+	return head, rest.add(head), nil
+}
+
+// A resolution is where a Reference Object leads: the target, its pointer
+// and the description of the nearest level that gives one, or why it cannot
+// be followed. It is not done while the chain through it is being followed.
+type resolution struct {
+	v         value
+	ptr, desc string
+	err       error
+	done      bool
 }
 
 // follow resolves the Reference Objects from v, at ptr, returning the
 // target, its pointer, and the description of the nearest level that gives
 // one: in OpenAPI 3.1 a Reference Object's description replaces its
-// target's.
+// target's. Each Reference Object is followed once per document.
 func (d *document) follow(v value, ptr string) (value, string, string, error) {
-	desc, described := "", false
-	var loop cycle
-	for {
+	d.refsMu.Lock()
+	defer d.refsMu.Unlock()
+	type step struct {
+		i         int32
+		desc      string
+		described bool
+	}
+	var walked []step // the Reference Objects followed, not yet kept
+	var r resolution
+	for last := ""; ; {
+		if k, ok := d.refs[v.i]; ok {
+			if r = k; !k.done {
+				r = resolution{err: fmt.Errorf("%w %q: a reference cycle", ErrUnresolved, last)}
+			}
+			break
+		}
 		var ref value
+		s := step{i: v.i}
 		for name, m := range v.members() {
 			switch {
 			case name == "$ref":
 				ref = m
-			case name == "description" && !described && m.kind() == '"':
-				desc, described = m.text(), true
+			case name == "description" && m.kind() == '"':
+				s.desc, s.described = m.text(), true
 			}
 		}
 		if ref.kind() != '"' {
-			return v, ptr, desc, nil
+			r = resolution{v: v, ptr: ptr, desc: s.desc}
+			break
 		}
-		next, at, err := d.target(ref.text())
-		switch {
-		case err != nil:
-			return value{}, "", "", err
-		case loop.seen(next):
-			return value{}, "", "", fmt.Errorf("%w %q: a reference cycle", ErrUnresolved, ref.text())
+		if d.refs == nil {
+			d.refs = map[int32]resolution{}
+		}
+		d.refs[v.i] = resolution{}
+		walked = append(walked, s)
+		last = ref.text()
+		next, at, err := d.target(last)
+		if err != nil {
+			r = resolution{err: err}
+			break
 		}
 		v, ptr = next, at
 	}
-}
-
-// deref returns the target of v's $ref, and its pointer, or an absent value
-// when v is not a reference.
-func (d *document) deref(v value) (value, string, error) {
-	if ref := v.get("$ref"); ref.kind() == '"' {
-		return d.target(ref.text())
+	r.done = true
+	for k := len(walked) - 1; k >= 0; k-- {
+		if s := walked[k]; s.described && r.err == nil {
+			r.desc = s.desc
+		}
+		d.refs[walked[k].i] = r
 	}
-	return value{}, "", nil
+	return r.v, r.ptr, r.desc, r.err
 }
 
 // target returns the node a local reference names, and its pointer.
@@ -416,23 +522,6 @@ func (d *document) target(ref string) (value, string, error) {
 		return value{}, "", fmt.Errorf("%w %q: no such node", ErrUnresolved, ref)
 	}
 	return target, ptr, nil
-}
-
-// A cycle detects a reference cycle by Brent's method, in constant space.
-type cycle struct {
-	mark      int32
-	steps, at int
-}
-
-// seen reports whether v closes a cycle of the values it has been given.
-func (c *cycle) seen(v value) bool {
-	if c.steps > 0 && v.i == c.mark {
-		return true
-	}
-	if c.steps++; c.steps > c.at {
-		c.mark, c.at = v.i, 2*c.at+1
-	}
-	return false
 }
 
 // resolve returns the JSON Pointer a local reference names.
@@ -461,8 +550,9 @@ func (d *document) resolve(ref string) (string, error) {
 }
 
 // checkNames refuses, as Load does, the names in cfg that no server or
-// request body of the document uses, without compiling operations.
-func (d *document) checkNames(cfg *config, re *RequestError) {
+// request body of the document uses, without compiling operations, stopping
+// when ctx is done.
+func (d *document) checkNames(ctx context.Context, cfg *config, re *RequestError) error {
 	server, serverID := cfg.Server == "", cfg.ServerID == ""
 	media := cfg.MediaType == "" || cfg.mediaTypeErr != nil
 	unused := maps.Clone(cfg.Variables)
@@ -485,19 +575,20 @@ func (d *document) checkNames(cfg *config, re *RequestError) {
 	} else {
 		server, serverID = server || cfg.Server == "/", serverID || cfg.ServerID == "default"
 	}
-	var prev *level
+	seen := map[*level]bool{} // the levels checked, and so the rest of each chain
 	for _, e := range d.entries {
 		if server && serverID && media && len(unused) == 0 {
-			return
+			return nil
+		}
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("openapi: %w", err)
 		}
 		if e.m < 0 {
 			continue
 		}
-		if &e.levels[0] != prev { // the first operation of its path
-			prev = &e.levels[0]
-			for _, l := range e.levels {
-				check(l.v.get("servers"), func() string { return l.ptr })
-			}
+		for l := e.levels; l != nil && !seen[l]; l = l.next {
+			seen[l] = true
+			check(l.v.get("servers"), func() string { return l.ptr })
 		}
 		check(e.node.get("servers"), e.ptr)
 		if rb := e.node.get("requestBody"); !media && rb.ok() && methods[e.m].upper != "TRACE" {
@@ -521,4 +612,5 @@ func (d *document) checkNames(cfg *config, re *RequestError) {
 	for name := range unused {
 		re.setting("Options.Variables["+strconv.Quote(name)+"]", errors.New("no server URL uses this variable"))
 	}
+	return nil
 }

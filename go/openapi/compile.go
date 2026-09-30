@@ -56,7 +56,7 @@ func (e *entry) build() *operation {
 	o := &operation{doc: d}
 	op := &o.Operation
 	if e.m < 0 {
-		op.Path, op.Source, op.Err = e.path, d.source(e.levels[0].ptr), e.err
+		op.Path, op.Source, op.Err = e.path, d.source(e.levels.ptr), e.err
 		return o
 	}
 	ptr, n := e.ptr(), e.node
@@ -90,7 +90,7 @@ func (e *entry) build() *operation {
 	errs := []error{e.err}
 
 	ids := map[paramID]int{}
-	list, at, err := e.itemField("parameters", value.ok)
+	list, at, err := e.field(parametersField)
 	errs = append(errs, err)
 	errs = o.addParams(list, at, ids, errs)
 	errs = o.addParams(params, ptr+"/parameters", ids, errs)
@@ -117,7 +117,7 @@ func (e *entry) build() *operation {
 
 	if servers.hasMembers() {
 		o.servers = d.parseServers(servers, ptr+"/servers")
-	} else if s, at, err := e.itemField("servers", value.hasMembers); s.ok() {
+	} else if s, at, err := e.field(serversField); s.ok() {
 		errs = append(errs, err)
 		o.servers = d.parseServers(s, at)
 	} else {
@@ -141,18 +141,22 @@ func (e *entry) build() *operation {
 	return o
 }
 
-// itemField returns the Path Item field name, from whichever level of the
-// chain has it present, with its pointer, and an error when several do.
-func (e *entry) itemField(name string, present func(value) bool) (field value, ptr string, err error) {
-	for _, l := range e.levels {
-		if m := l.v.get(name); present(m) {
-			if field.ok() {
-				return field, ptr, fmt.Errorf("the Path Item and its $ref target both define %s", name)
-			}
-			field, ptr = m, l.ptr+"/"+name
-		}
+// field returns the Path Item field f, parametersField or serversField,
+// from the level of the chain that has it, with its pointer, and an error
+// when several do.
+func (e *entry) field(f int) (value, string, error) {
+	name := "parameters"
+	if f == serversField {
+		name = "servers"
 	}
-	return field, ptr, nil
+	l := e.sum.at[f]
+	switch {
+	case l == nil:
+		return value{}, "", nil
+	case e.sum.dup&(1<<f) != 0:
+		return l.v.get(name), l.ptr + "/" + name, fmt.Errorf("the Path Item and its $ref target both define %s", name)
+	}
+	return l.v.get(name), l.ptr + "/" + name, nil
 }
 
 // A paramID identifies a parameter by location and name, a header's name
