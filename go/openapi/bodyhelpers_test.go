@@ -336,41 +336,6 @@ func jsonSeq(items ...string) string {
 	return b.String()
 }
 
-// sseLines splits a text/event-stream body into its events, each the list
-// of its lines without their LF. client.go, Input.Body: each field is
-// written "as a "field: value" line ending in LF", then the event ends in
-// "a blank line" (stage 4 ledger, Q2: "always one space", "each ending in
-// LF, and the event in a blank line"; HTML standard, section 9.2.5: "event =
-// *( comment / field ) end-of-line"). Every line must end in LF, and no CR
-// may appear; an event of no lines is a blank line alone (ledger, Q2: "an
-// item that sets none is a blank line").
-func sseLines(t testing.TB, body string) [][]string {
-	t.Helper()
-	if strings.ContainsRune(body, '\r') {
-		t.Errorf("event stream %q holds a CR", body)
-	}
-	if body != "" && !strings.HasSuffix(body, "\n") {
-		t.Errorf("event stream %q does not end in LF", body)
-	}
-	var events [][]string
-	cur := []string{}
-	for _, line := range strings.Split(strings.TrimSuffix(body, "\n"), "\n") {
-		if body == "" {
-			break
-		}
-		if line == "" {
-			events = append(events, cur)
-			cur = []string{}
-			continue
-		}
-		cur = append(cur, line)
-	}
-	if len(cur) != 0 {
-		t.Errorf("event stream %q: the last event has no blank line", body)
-	}
-	return events
-}
-
 // bodyServer is an httptest server that reads each request body as it
 // arrives, records the bytes, and closes the channels seen returns once its
 // bytes hold a marker. In answerFirst mode it answers 200 with a complete

@@ -8,7 +8,6 @@ import (
 	"iter"
 	"math"
 	"slices"
-	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -182,37 +181,42 @@ func TestSequentialPreEncodedItems(t *testing.T) {
 
 // A reader item that holds the framing's separator ends the body as an
 // upload error when the separator is found (stage 4 ledger, Q16: "a
-// reader's ends the body when found"): the server never receives a
-// complete body, and Call's error is not a *RequestError.
+// reader's ends the body when found"; QQ3: "any io.Reader content
+// (replayable or not) is checked as it streams and fails as an upload
+// error"): the server never receives a complete body, and Call's error is
+// not a *RequestError. Every kind of reader, replayable or not.
 func TestSequentialReaderItemHoldingSeparator(t *testing.T) {
 	for _, tt := range []struct {
 		key  string
 		item string
 	}{
 		{"jsonl", "{}\n{}"},
+		{"ndjson", "1\n"},
 		{"seq", "\x1e1"},
+		{"geoseq", "[1,\x1e2]"},
 	} {
-		t.Run(tt.key, func(t *testing.T) {
-			srv := newBodyServer(t, false, "")
-			c := parseAt(t, seqDoc(), srv.URL, srv.URL+"/openapi.json", nil)
-			ctx, _ := gateCtx(t)
-			r := awaitCall(t, callAsync(ctx, c, tt.key, &openapi.Input{Body: []io.Reader{newOnce(tt.item)}}), "Call")
-			if r.err == nil || isRequestError(r.err) {
-				t.Fatalf("Call = %v, want an upload error, not a *RequestError", r.err)
-			}
-			if _, err := srv.finished(t); err == nil {
-				t.Errorf("the server read a complete body")
-			}
-		})
+		for _, r := range readerKinds(t, tt.item) {
+			t.Run(tt.key+" "+r.name, func(t *testing.T) {
+				srv := newBodyServer(t, false, "")
+				c := parseAt(t, seqDoc(), srv.URL, srv.URL+"/openapi.json", nil)
+				ctx, _ := gateCtx(t)
+				res := awaitCall(t, callAsync(ctx, c, tt.key, &openapi.Input{Body: []io.Reader{strings.NewReader("{}"), r.reader}}), "Call")
+				if res.err == nil || isRequestError(res.err) {
+					t.Fatalf("Call = %v, want an upload error, not a *RequestError", res.err)
+				}
+				if _, err := srv.finished(t); err == nil {
+					t.Errorf("the server read a complete body")
+				}
+			})
+		}
 	}
 }
 
 // An sseCase is a body and the event stream it must be: each event's lines.
 type sseCase struct {
-	name    string
-	body    any
-	events  [][]string
-	ordered bool // the items are objects, whose fields follow member order
+	name   string
+	body   any
+	events [][]string
 }
 
 // Server-sent events, byte for byte: each field a "field: value" line with
@@ -225,12 +229,12 @@ type sseCase struct {
 // "" written as "data: " (Q2); an item that sets no field a blank line
 // alone (Q2). An object's fields follow its members' order as encoding/json
 // orders them (doc.go, Fixed rules, Order; ledger, readings confirmed); an
-// Event's lines are compared as a set, data lines in order. An Event writes
-// only the fields it sets: Data when not nil, Event when not "", ID when
-// IDSet, Retry when RetrySet, in whole milliseconds (stream.go, Event:
-// "Retry is the retry field, in whole milliseconds"), in base ten digits
-// (HTML standard, section 9.2.6: "If the field value consists of only ASCII
-// digits").
+// Event's follow its field order, the data lines, then event, id and retry
+// (ledger, QQ4). An Event writes only the fields it sets: Data when not nil,
+// Event when not "", ID when IDSet, Retry when RetrySet, in whole
+// milliseconds (stream.go, Event: "Retry is the retry field, in whole
+// milliseconds"), in base ten digits (HTML standard, section 9.2.6: "If the
+// field value consists of only ASCII digits").
 func TestEventStreamBodies(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, seqDoc(), nil)
@@ -280,15 +284,18 @@ func TestEventStreamBodies(t *testing.T) {
 		Event string `json:"event,omitempty"`
 		Data  string `json:"data"`
 	}
+	// An Event in its field order whatever order the literal names them in.
+	events = append(events, openapi.Event{RetrySet: true, Retry: time.Second, IDSet: true, ID: "9", Event: "late", Data: []byte("first\nsecond")})
+	eventEvents = append(eventEvents, []string{"data: first", "data: second", "event: late", "id: 9", "retry: 1000"})
 	for _, tt := range []sseCase{
-		{"slice of maps", maps, mapEvents, true},
-		{"iter.Seq2 of maps", seq2Of(maps...), mapEvents, true},
-		{"slice of Events", events, eventEvents, false},
-		{"iter.Seq of Events", seqOf(events...), eventEvents, false},
-		{"iter.Seq[any] of Events", seqOf[any](events[0], events[1]), eventEvents[:2], false},
-		{"slice of any, mixed", []any{maps[0], events[1]}, [][]string{mapEvents[0], eventEvents[1]}, false},
-		{"struct items in field order", []sseItem{{Data: "d"}, {Data: "e", Event: "n"}}, [][]string{{"data: d"}, {"event: n", "data: e"}}, true},
-		{"empty", []openapi.Event{}, nil, true},
+		{"slice of maps", maps, mapEvents},
+		{"iter.Seq2 of maps", seq2Of(maps...), mapEvents},
+		{"slice of Events", events, eventEvents},
+		{"iter.Seq of Events", seqOf(events...), eventEvents},
+		{"iter.Seq[any] of Events", seqOf[any](events[0], events[1]), eventEvents[:2]},
+		{"slice of any, mixed", []any{maps[0], events[1]}, [][]string{mapEvents[0], eventEvents[1]}},
+		{"struct items in field order", []sseItem{{Data: "d"}, {Data: "e", Event: "n"}}, [][]string{{"data: d"}, {"event: n", "data: e"}}},
+		{"empty", []openapi.Event{}, nil},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			mustCall(t, c, "sse", &openapi.Input{Body: tt.body}, nil)
@@ -296,39 +303,25 @@ func TestEventStreamBodies(t *testing.T) {
 			if ct := got.Header.Values("Content-Type"); !slices.Equal(ct, []string{"text/event-stream"}) {
 				t.Errorf("Content-Type = %q", ct)
 			}
-			if tt.ordered {
-				var want strings.Builder
-				for _, ev := range tt.events {
-					for _, line := range ev {
-						want.WriteString(line + "\n")
-					}
-					want.WriteString("\n")
-				}
-				if string(got.Body) != want.String() {
-					t.Errorf("body %q, want %q", got.Body, want.String())
-				}
-				return
-			}
-			evs := sseLines(t, string(got.Body))
-			if len(evs) != len(tt.events) {
-				t.Fatalf("%d events in %q, want %d", len(evs), got.Body, len(tt.events))
-			}
-			for i := range evs {
-				if g, want := sortedLines(evs[i]), sortedLines(tt.events[i]); !slices.Equal(g, want) {
-					t.Errorf("event %d: lines %q, want %q (body %q)", i, g, want, got.Body)
-				}
+			if want := eventStream(tt.events); string(got.Body) != want {
+				t.Errorf("body %q, want %q", got.Body, want)
 			}
 		})
 	}
 }
 
-// sortedLines orders an event's lines by field name, keeping the data
-// lines' own order.
-func sortedLines(lines []string) []string {
-	lines = slices.Clone(lines)
-	name := func(l string) string { n, _, _ := strings.Cut(l, ":"); return n }
-	sort.SliceStable(lines, func(i, j int) bool { return name(lines[i]) < name(lines[j]) })
-	return lines
+// eventStream is the event stream of events, each the lines it writes: each
+// line then LF, each event then a blank line (client.go, Input.Body; stage 4
+// ledger, Q2).
+func eventStream(events [][]string) string {
+	var b strings.Builder
+	for _, ev := range events {
+		for _, line := range ev {
+			b.WriteString(line + "\n")
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
 }
 
 // unencodable is a channel, which encoding/json cannot encode.

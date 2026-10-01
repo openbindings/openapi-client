@@ -1,8 +1,13 @@
 package openapi_test
 
 import (
+	"bytes"
+	"fmt"
+	"io"
 	"mime"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -631,10 +636,14 @@ func TestMultipartInvalidUTF8(t *testing.T) {
 
 // With a boundary the caller gives, a part whose content holds its
 // delimiter, CRLF "--" boundary (RFC 2046 section 5.1.1: "The boundary
-// delimiter MUST NOT appear inside any of the encapsulated parts"), is
-// refused at its key before sending (client.go, Input.MediaType; stage 4
-// ledger, Q13); one streamed from a reader read once ends the body as an
-// upload error. The boundary's text alone, not as a delimiter, is sent.
+// delimiter MUST NOT appear inside any of the encapsulated parts"), or
+// begins with "--" boundary, which follows the header block's CRLF (stage 4
+// ledger, QQ2), cannot be encoded (client.go, Input.MediaType; ledger, Q13).
+// Content held as a value, a string or a []byte is refused at its key
+// before sending; content from any io.Reader, replayable or not, is checked
+// as it streams, and holding it ends the body as an upload error (ledger,
+// QQ3: "only content held as values, strings or []byte is checked before
+// sending"). The boundary's text elsewhere is sent.
 func TestMultipartGivenBoundaryInContent(t *testing.T) {
 	const mt = "multipart/form-data; boundary=b0und4ry"
 	w := newWire(t, nil)
@@ -645,7 +654,9 @@ func TestMultipartGivenBoundaryInContent(t *testing.T) {
 		at   string
 	}{
 		{"bytes", map[string]any{"blob": []byte("x\r\n--b0und4ry\r\ny")}, "Input.Body/blob"},
+		{"bytes beginning with it", map[string]any{"blob": []byte("--b0und4ry\r\ny")}, "Input.Body/blob"},
 		{"text", map[string]any{"title": "a\r\n--b0und4ry--"}, "Input.Body/title"},
+		{"text beginning with it", map[string]any{"title": "--b0und4ry"}, "Input.Body/title"},
 		{"an item", map[string]any{"tags": []string{"ok", "z\r\n--b0und4ry"}}, "Input.Body/tags/1"},
 		{"a Part", map[string]any{"doc": openapi.Part{Content: []byte("\r\n--b0und4ry"), Filename: "f.pdf"}}, "Input.Body/doc"},
 	} {
@@ -656,18 +667,54 @@ func TestMultipartGivenBoundaryInContent(t *testing.T) {
 			wantKeys(t, "Inputs", re.Inputs, true, tt.at)
 		})
 	}
-	mustCall(t, c, "mp", &openapi.Input{Body: map[string]any{"title": "the b0und4ry word, --b0und4ry"}, MediaType: mt}, nil)
+	mustCall(t, c, "mp", &openapi.Input{Body: map[string]any{"title": "the b0und4ry word, --b0und4ry", "blob": []byte("x--b0und4ry\n")}, MediaType: mt}, nil)
 	_, _, parts := readMultipart(t, mt, w.last(t).Body)
-	checkParts(t, parts, []wantPart{{disposition: formData("title"), ctype: "text/plain", content: "the b0und4ry word, --b0und4ry"}})
+	checkParts(t, parts, []wantPart{
+		{disposition: formData("blob", "blob"), ctype: "application/octet-stream", content: "x--b0und4ry\n"},
+		{disposition: formData("title"), ctype: "text/plain", content: "the b0und4ry word, --b0und4ry"},
+	})
 
-	srv := newBodyServer(t, false, "")
-	sc := parseAt(t, mpDoc(), srv.URL, srv.URL+"/openapi.json", nil)
-	ctx, _ := gateCtx(t)
-	r := awaitCall(t, callAsync(ctx, sc, "mp", &openapi.Input{Body: map[string]any{"blob": newOnce("x\r\n--b0und4ry\r\ny")}, MediaType: mt}), "Call")
-	if r.err == nil || isRequestError(r.err) {
-		t.Fatalf("Call = %v, want an upload error, not a *RequestError", r.err)
+	for _, content := range []string{"x\r\n--b0und4ry\r\ny", "--b0und4ry\r\ny"} {
+		for _, r := range readerKinds(t, content) {
+			t.Run(fmt.Sprintf("%s %q", r.name, content), func(t *testing.T) {
+				srv := newBodyServer(t, false, "")
+				sc := parseAt(t, mpDoc(), srv.URL, srv.URL+"/openapi.json", nil)
+				ctx, _ := gateCtx(t)
+				res := awaitCall(t, callAsync(ctx, sc, "mp", &openapi.Input{Body: map[string]any{"blob": r.reader}, MediaType: mt}), "Call")
+				if res.err == nil || isRequestError(res.err) {
+					t.Fatalf("Call = %v, want an upload error, not a *RequestError", res.err)
+				}
+				if _, err := srv.finished(t); err == nil {
+					t.Errorf("the server read a complete body")
+				}
+			})
+		}
 	}
-	if _, err := srv.finished(t); err == nil {
-		t.Errorf("the server read a complete body")
+}
+
+// readerKind is a reader of some content, of one of the kinds Input.Body
+// names.
+type readerKind struct {
+	name   string
+	reader io.Reader
+}
+
+// readerKinds returns content as every kind of reader: replayable (a
+// *strings.Reader, a *bytes.Reader, a regular file) and read once.
+func readerKinds(t *testing.T, content string) []readerKind {
+	path := filepath.Join(t.TempDir(), "content")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { f.Close() })
+	return []readerKind{
+		{"strings.Reader", strings.NewReader(content)},
+		{"bytes.Reader", bytes.NewReader([]byte(content))},
+		{"regular file", f},
+		{"read once", newOnce(content)},
 	}
 }

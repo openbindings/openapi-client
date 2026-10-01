@@ -16,10 +16,11 @@ import (
 // the client's encoding with a reference built from net/url and the RFC
 // 6570 oracle in the suite; a multipart round trip target through
 // mime/multipart"). Both prepare the body and read it from GetBody, so they
-// send nothing. A content-encoded field's string that is not valid UTF-8 is
-// sent as given (stage 4 ledger, Q9), and the targets give such strings to
-// those fields only: names, and values that go through JSON or RFC 6570,
-// are kept valid.
+// send nothing. A string that is not valid UTF-8 is sent as given in a field
+// serialized by a content type that is not JSON (stage 4 ledger, Q9), and as
+// JSON data holds it, each invalid byte U+FFFD, in a JSON field or one
+// written by a style (ledger, QQ1), which is what json.Marshal and the
+// oracle's jsonData give. Property names stay valid.
 
 const fuzzFormDoc = `{"openapi":"3.1.0","info":{"title":"f","version":"1"},"servers":[{"url":"https://api.example.test"}],"paths":{
 	"/f":{"post":{"operationId":"f","requestBody":{"content":{"application/x-www-form-urlencoded":{
@@ -46,10 +47,9 @@ var fuzzStyled = map[string]struct {
 	"sp": {"pipeDelimited", false, true},
 }
 
-// FuzzFormBody: for arbitrary strings, a form body of a text/plain field
-// (whose string may be any bytes), a JSON field, an array field, a field
-// under every RFC 6570 configuration and a field with an arbitrary name is
-// prepared, and its bytes are compared with what formEnc (net/url, adjusted
+// FuzzFormBody: for arbitrary strings, a form body of a text/plain field, a
+// JSON field, an array field, a field under every RFC 6570 configuration
+// and a field with an arbitrary name is prepared, and its bytes are compared with what formEnc (net/url, adjusted
 // to the WHATWG set and checked against it) and styledField (the RFC 6570
 // oracle) derive, the fields in sorted key order (doc.go, Fixed rules, Order
 // and Form bodies).
@@ -64,16 +64,15 @@ func FuzzFormBody(f *testing.F) {
 		{"a b+c", "d&e=f", "g~h", "i*j", "k/l", "m%n"},
 		{"é", "日本", "ü", "ß", "\u2028", "\U0001F600"},
 		{"\x00", "\r\n", " x", "x ", "\t", "\x7f"},
+		{"a\xffb", "\xfe", "k\xff", "\xc3", "k\xfe", "n"},
 		{"~-._", "!*'()", "$@:", "|^`", "\"<>\\", "{}[]#?"},
 		{"%41", "%zz", "%", "%2f", "[x]", "#?"},
 	} {
 		f.Add(s[0], s[1], s[2], s[3], s[4], s[5], s[0]+"\xff"+s[1])
 	}
 	f.Fuzz(func(t *testing.T, a, b, k1, v1, k2, n, x string) {
-		for _, s := range []string{a, b, k1, v1, k2, n} {
-			if !utf8.ValidString(s) {
-				t.Skip()
-			}
+		if !utf8.ValidString(n) || k1 != k2 && asJSON(k1) == asJSON(k2) {
+			t.Skip() // a name kept valid; two members that JSON data would merge
 		}
 		body := map[string]any{
 			"c":  x,

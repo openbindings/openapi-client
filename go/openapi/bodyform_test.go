@@ -492,9 +492,12 @@ func TestFormBodyArrayValues(t *testing.T) {
 	}
 }
 
-// A field string that is not valid UTF-8 is sent as given, each byte %XX
-// (stage 4 ledger, Q9: "invalid UTF-8 in field strings is sent as given
-// (form: each byte %XX), as stage 2 and whole text bodies").
+// A field string that is not valid UTF-8 is sent as given, each byte %XX,
+// when its field is serialized by a content type that is not JSON, the
+// text/plain default included (stage 4 ledger, Q9: "invalid UTF-8 in field
+// strings is sent as given (form: each byte %XX), as stage 2 and whole text
+// bodies"; QQ1). A field written by a style is not: see
+// TestStyledFieldInvalidUTF8.
 func TestFormBodyInvalidUTF8(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, doc31(formDoc), nil)
@@ -502,4 +505,45 @@ func TestFormBodyInvalidUTF8(t *testing.T) {
 	if got, want := string(w.last(t).Body), "a=%C3&raw=%FE&s=a%FFb"; got != want {
 		t.Errorf("body %q, want %q", got, want)
 	}
+}
+
+// A field written by a style follows stage 2's styled parameters: its value
+// becomes JSON data as encoding/json makes it (doc.go, Values: "The client
+// first converts a value to JSON data as encoding/json would"), so each
+// invalid UTF-8 byte is U+FFFD, then percent-encoded in a form body (stage 4
+// ledger, QQ1: "s=a%EF%BF%BDb for a bare string, a struct member and a map
+// member"), and sent as its UTF-8 bytes in a multipart part, which is never
+// percent-encoded.
+func TestStyledFieldInvalidUTF8(t *testing.T) {
+	w := newWire(t, nil)
+	c := parseFor(t, w, formStyleDoc(), nil)
+	type member struct {
+		S string `json:"s"`
+	}
+	for _, tt := range []struct {
+		key  string
+		v    any
+		want string
+	}{
+		{"formExplode", "a\xffb", "p=a%EF%BF%BDb"},
+		{"formExplode", member{"a\xffb"}, "s=a%EF%BF%BDb"},
+		{"formExplode", map[string]string{"s": "a\xffb"}, "s=a%EF%BF%BDb"},
+		{"formFlat", []string{"\xfe", "x"}, "p=%EF%BF%BD,x"},
+		{"deep", map[string]string{"k\xff": "v"}, "p%5Bk%EF%BF%BD%5D=v"},
+	} {
+		mustCall(t, c, tt.key, &openapi.Input{Body: map[string]any{"p": tt.v}}, nil)
+		if got := w.last(t); string(got.Body) != tt.want {
+			t.Errorf("%s %#v: body %q, want %q", tt.key, tt.v, got.Body, tt.want)
+		}
+	}
+
+	mc := parseFor(t, w, mpDoc(), nil)
+	_, parts := sendMultipart(t, w, mc, "styled", "multipart/form-data", map[string]any{
+		"f2": "a\xffb",
+		"ex": map[string]string{"m": "\xfe"},
+	})
+	checkParts(t, parts, []wantPart{
+		{disposition: formData("m"), ctype: "text/plain", content: "\uFFFD"},
+		{disposition: formData("f2"), ctype: "text/plain", content: "a\uFFFDb"},
+	})
 }
