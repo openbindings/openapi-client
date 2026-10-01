@@ -45,12 +45,12 @@ func marshal(v any) (string, error) {
 	return strings.TrimSuffix(b.String(), "\n"), nil
 }
 
-// encodeJSON returns v as encode, encoding/json, writes it, or why it
-// cannot be sent: an io.Reader or Part that json reaches, at the JSON Pointer
-// it returns, or nesting deeper than 1,000 levels, refused before encoding
-// when the walk proves it, and counted in the JSON unless the walk bounds
-// it. A value the walk finds a cycle in, which it cannot tell from one that
-// only nests deeply, is left for json to refuse.
+// encodeJSON returns v as encode, which uses encoding/json, writes it, or
+// why v cannot be sent: an io.Reader or Part that json reaches, at the JSON
+// Pointer it returns, or nesting deeper than 1,000 levels. Nesting the walk
+// proves is refused before anything is encoded; otherwise it is counted in
+// the JSON, unless the walk bounds it. A value whose walk may have found a
+// cycle is left for json, which refuses a cycle, to encode.
 func encodeJSON[T string | []byte](d *document, v any, encode func(any) (T, error)) (T, string, error) {
 	var b T
 	at, found, levels, _ := d.findReader(v, 1)
@@ -201,11 +201,11 @@ func nest(l int) int {
 	return l + 1
 }
 
-// What a walk tells of the levels of a value's JSON beyond a count.
+// What a walk tells of the levels of a value's JSON, besides a bound.
 const (
 	unknown = 0  // only its JSON tells, as with a MarshalJSON
-	deeper  = -1 // it nests deeper than maxDepth: a value json writes is past it
-	cyclic  = -2 // and the value past it is one around it, which can be a cycle
+	deeper  = -1 // it nests deeper than maxDepth: the walk reached a value json writes past it
+	cyclic  = -2 // and that value is one around it, so that the value may be a cycle
 )
 
 // findReader walks x, at level, as encoding/json writes it, returning the
