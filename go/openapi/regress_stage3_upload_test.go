@@ -308,3 +308,91 @@ func TestWaitRequestCoversEarlierHops(t *testing.T) {
 	await(t, returned, "WaitRequest after the Read returned")
 	g.state = 0
 }
+
+// cutShort reads n bytes of r's body, or all of it when n is negative, and
+// closes it, as a transport does when the server answers early.
+func cutShort(r *http.Request, n int) {
+	if r.Body == nil {
+		return
+	}
+	if n < 0 {
+		io.Copy(io.Discard, r.Body)
+	} else {
+		io.ReadFull(r.Body, make([]byte, n))
+	}
+	r.Body.Close()
+}
+
+// TQ3 (stage 3 ledger): "WaitRequest reports on the last request that
+// carried the body (a 307 resend that succeeds is nil even if the first
+// upload was cut short); it still waits for all of them." client.go,
+// Response.WaitRequest: "for every request of the call that carried one: the
+// first and each redirect hop that sent it again. It reports on the last of
+// them: nil when its body was consumed completely (read to EOF, or, for a
+// body of known length, read to that length), or the encoding, iterator,
+// read, premature-close or cancellation error that stopped it." Call: "If
+// request-body consumption fails, the error wraps its cause and the
+// Response is still returned". A 303, and a 301 or 302 after a POST, send
+// no body, so the first request is the last that carried it. The transport
+// reads each body as told and closes it before answering, so every result
+// is settled when the call returns.
+func TestWaitRequestReportsTheLastRequest(t *testing.T) {
+	for _, tt := range []struct {
+		status          int
+		first, hop      int // bytes the transport reads of each body; -1 for all
+		wantUploadError bool
+	}{
+		{307, 3, -1, false},
+		{308, 3, -1, false},
+		{307, -1, 3, true},
+		{307, 3, 3, true},
+		{307, -1, -1, false},
+		{303, 3, -1, true},
+		{302, 3, -1, true},
+		{301, 3, -1, true},
+		{303, -1, -1, false},
+	} {
+		t.Run(fmt.Sprintf("%d, first read %d, hop read %d", tt.status, tt.first, tt.hop), func(t *testing.T) {
+			var hopBody atomic.Bool
+			rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				if r.URL.Path == "/up" {
+					cutShort(r, tt.first)
+					return memResponse(r, tt.status, http.Header{"Location": {"/next"}}, ""), nil
+				}
+				if r.Body != nil && r.Body != http.NoBody {
+					hopBody.Store(true)
+				}
+				cutShort(r, tt.hop)
+				return memResponse(r, 200, nil, "{}"), nil
+			})
+			c := parseAt(t, inflightDoc, "https://api.example.test", testDocURI,
+				&openapi.Options{HTTPClient: &http.Client{Transport: rt}, Redirects: openapi.FollowAll})
+			in := &openapi.Input{Body: []byte("0123456789")}
+
+			resp, err := mustPrepare(t, c, "up", in).Send(t.Context())
+			if err != nil {
+				t.Fatalf("Send: %v", err)
+			}
+			io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+			if resp.StatusCode != 200 {
+				t.Fatalf("status %d, want the hop's 200", resp.StatusCode)
+			}
+			if resends := tt.status == 307 || tt.status == 308; hopBody.Load() != resends {
+				t.Fatalf("the hop carried a body: %t, want %t", hopBody.Load(), resends)
+			}
+			werr := waitResult(t, resp)
+			if (werr != nil) != tt.wantUploadError {
+				t.Errorf("WaitRequest = %v, want an error %t: it reports on the last request that carried the body", werr, tt.wantUploadError)
+			}
+
+			resp, err = c.Call(t.Context(), "up", in, nil)
+			if resp == nil {
+				t.Fatalf("Call returned no Response (error %v)", err)
+			}
+			if (err != nil) != tt.wantUploadError {
+				t.Errorf("Call error %v, want an upload error %t", err, tt.wantUploadError)
+			}
+		})
+	}
+}

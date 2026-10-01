@@ -312,15 +312,16 @@ func TestServeMuxTrailingSlashKeepsNoCredential(t *testing.T) {
 // without the credentials the client added." C3-5: "An error that ends a
 // chain after a response arrived (CheckRedirect's error or the hop limit, a
 // SecretFunc or GetBody failure on a hop) returns that last Response, its
-// body closed, with the *url.Error". Each server repeats the query into its
-// Location.
+// body closed, with the *url.Error"; stage 3 ledger, TQ2: "C3-5 covers every
+// error that ends a chain after a response arrived, a hop's transport
+// failure ... included". Each server repeats the query into its Location.
 func TestHopErrorsNameTheUnsignedHop(t *testing.T) {
 	errStop := errors.New("caller stopped the redirect")
 	errHop := errors.New("token refresh failed")
 	errReopen := errors.New("cannot reopen the body")
 
 	// wantHopError checks err against the unsigned hop URL want, and the
-	// response the C3-5 rule returns, when status is not 0.
+	// response of status the C3-5 rule returns, its body closed.
 	wantHopError := func(t *testing.T, resp *openapi.Response, err error, want string, status int, cause error) {
 		t.Helper()
 		var ue *url.Error
@@ -334,8 +335,10 @@ func TestHopErrorsNameTheUnsignedHop(t *testing.T) {
 			t.Errorf("error %v does not wrap %v", err, cause)
 		}
 		noSecrets(t, err, redirSecrets...)
-		if status != 0 && (resp == nil || resp.StatusCode != status) {
+		if resp == nil || resp.StatusCode != status {
 			t.Errorf("Response = %v, want the %d that arrived (C3-5)", resp, status)
+		} else {
+			wantBodyClosed(t, resp)
 		}
 	}
 
@@ -375,9 +378,7 @@ func TestHopErrorsNameTheUnsignedHop(t *testing.T) {
 				if origin == "another origin" {
 					want = b.URL + "/dead?q=qv"
 				}
-				// Whether a response is returned with a transport failure
-				// on a hop is not checked here.
-				wantHopError(t, resp, err, want, 0, nil)
+				wantHopError(t, resp, err, want, 302, nil)
 			}
 		})
 
@@ -495,7 +496,10 @@ func wantBodyClosed(t *testing.T, resp *openapi.Response) {
 // empty secret ends the call with a *url.Error wrapping f's error, along
 // with the last response, its body closed." net/http's own Client.do returns
 // the 3xx with a CheckRedirect error (go1.25 client.go, "Special case for Go
-// 1 compatibility").
+// 1 compatibility"). Stage 3 ledger, TQ2: "C3-5 covers every error that ends
+// a chain after a response arrived, a hop's transport failure and a Timeout
+// spent before a hop included (doc.go: whenever a response arrived, it is
+// returned)."
 func TestErrorEndingAChainReturnsTheLastResponse(t *testing.T) {
 	errStop := errors.New("caller stopped the redirect")
 	wantChainError := func(t *testing.T, resp *openapi.Response, err error, status int, cause error) {
@@ -577,6 +581,29 @@ func TestErrorEndingAChainReturnsTheLastResponse(t *testing.T) {
 		resp, err := req.Send(t.Context())
 		wantChainError(t, resp, err, 307, errReopen)
 	})
+	t.Run("a transport failure on a hop", func(t *testing.T) {
+		a := newWire(t, routes(map[string]http.HandlerFunc{"/r": redirectWithBody(302, "/dead", "moved"), "/dead": hijackClose}))
+		c := parseFor(t, a, redirDoc, redirOptions(fixedSource(bToken)))
+		resp, err := c.Call(t.Context(), "getR", redirInput("GET"), nil)
+		wantChainError(t, resp, err, 302, nil)
+		resp, err = mustPrepare(t, c, "getR", redirInput("GET")).Send(t.Context())
+		wantChainError(t, resp, err, 302, nil)
+	})
+	t.Run("a Timeout spent before a hop", func(t *testing.T) {
+		const timeout = 300 * time.Millisecond
+		a := newWire(t, routes(map[string]http.HandlerFunc{"/r": redirectWithBody(302, "/next", "moved")}))
+		o := redirOptions(fixedSource(bToken))
+		o.HTTPClient = &http.Client{Timeout: timeout, CheckRedirect: func(*http.Request, []*http.Request) error {
+			time.Sleep(timeout + 100*time.Millisecond)
+			return nil
+		}}
+		c := parseFor(t, a, redirDoc, o)
+		resp, err := c.Call(t.Context(), "getR", redirInput("GET"), nil)
+		wantChainError(t, resp, err, 302, context.DeadlineExceeded)
+		if n := a.count(); n != 1 {
+			t.Errorf("server received %d requests, want the first only", n)
+		}
+	})
 	t.Run("ErrUseLastResponse returns it open", func(t *testing.T) {
 		a := newWire(t, routes(map[string]http.HandlerFunc{"/r": redirectWithBody(302, "/next", "moved")}))
 		o := redirOptions(fixedSource(bToken))
@@ -630,25 +657,32 @@ func wantTimeout(t *testing.T, err error) {
 // "HTTPClient.Timeout bounds the whole chain, as net/http's own loop does
 // (its doc: 'includes connection time, any redirects, and reading the
 // response body'). Each later hop is sent with the time that remains; none
-// left ends the call as net/http's timeout does."
+// left ends the call as net/http's timeout does." Stage 3 ledger, TQ2: the
+// error ends a chain after a response arrived, so that Response is returned
+// with it, its body closed (C3-5).
 func TestTimeoutBoundsTheWholeChain(t *testing.T) {
 	t.Run("hops share the time", func(t *testing.T) {
-		const timeout = 400 * time.Millisecond
+		const timeout = 600 * time.Millisecond
 		ok := func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			io.WriteString(w, "{}")
 		}
 		// Each request alone is well within the Timeout; the chain is not.
 		a := newWire(t, routes(map[string]http.HandlerFunc{
-			"/r":    slowly(250*time.Millisecond, redirect(302, "/next")),
-			"/next": slowly(250*time.Millisecond, ok),
+			"/r":    slowly(300*time.Millisecond, redirect(302, "/next")),
+			"/next": slowly(450*time.Millisecond, ok),
 		}))
 		o := redirOptions(fixedSource(bToken))
 		o.HTTPClient = &http.Client{Timeout: timeout}
 		c := parseFor(t, a, redirDoc, o)
 		start := time.Now()
-		_, err := c.Call(t.Context(), "getR", redirInput("GET"), nil)
+		resp, err := c.Call(t.Context(), "getR", redirInput("GET"), nil)
 		wantTimeout(t, err)
+		if resp == nil || resp.StatusCode != 302 {
+			t.Errorf("Response %v, want the 302 that arrived (TQ2)", resp)
+		} else {
+			wantBodyClosed(t, resp)
+		}
 		if d := time.Since(start); d > 2*time.Second {
 			t.Errorf("the call took %v with a Timeout of %v", d, timeout)
 		}
@@ -663,8 +697,13 @@ func TestTimeoutBoundsTheWholeChain(t *testing.T) {
 			return nil
 		}}
 		c := parseFor(t, a, redirDoc, o)
-		_, err := c.Call(t.Context(), "getR", redirInput("GET"), nil)
+		resp, err := c.Call(t.Context(), "getR", redirInput("GET"), nil)
 		wantTimeout(t, err)
+		if resp == nil || resp.StatusCode != 302 {
+			t.Errorf("Response %v, want the 302 that arrived (TQ2)", resp)
+		} else {
+			wantBodyClosed(t, resp)
+		}
 		if n := a.count(); n != 1 {
 			t.Errorf("server received %d requests, want the first only: no time remained for the hop", n)
 		}

@@ -55,41 +55,44 @@ func newJar(t *testing.T, base string, cookies ...*http.Cookie) http.CookieJar {
 
 // C3-3 (F11, A6): "The client applies the cookie jar itself, as net/http's
 // send does (Jar.Cookies before sending, Jar.SetCookies after each
-// response), on the copy with Jar nil: jar cookies first, then credentials
-// replacing a pair of the same name and going last". doc.go, Credentials:
-// "Query and cookie credentials go last ... and one that replaces a pair of
-// the same name ... removes it and goes last"; Cookies: "one Cookie field".
+// response), on the copy with Jar nil". Stage 3 ledger, TQ1: "one Cookie
+// field: cookie parameters (declared order), then jar cookies (net/http's
+// send appends them after the request's own), then credentials last, each
+// replacing a pair of its name. Jar and parameter pairs of one name are both
+// kept, as net/http does." doc.go, Credentials: "Query and cookie
+// credentials go last ... and one that replaces a pair of the same name ...
+// removes it and goes last"; Cookies: "one Cookie field ... parameters in
+// declared order, then credentials". net/http's cookiejar returns cookies
+// of one path in the order they were set.
 func TestJarCookiesThenCredentials(t *testing.T) {
-	for _, via := range []string{"Call", "Send"} {
-		t.Run(via, func(t *testing.T) {
-			w := newWire(t, nil)
-			jar := newJar(t, w.URL, &http.Cookie{Name: "sid", Value: "from-jar"}, &http.Cookie{Name: "z", Value: "1"})
-			c := credClient(t, w, func(o *openapi.Options) { o.HTTPClient = &http.Client{Jar: jar} })
-			in := &openapi.Input{Params: map[string]any{"c1": "v"}}
-			if via == "Call" {
-				mustCall(t, c, "keyCookie", in, nil)
-			} else {
-				sendAndClose(t, mustPrepare(t, c, "keyCookie", in))
-			}
-			pairs := cookiePairs(t, w.last(t).Header)
-			if len(pairs) == 0 || pairs[len(pairs)-1] != "sid="+cSecret {
-				t.Errorf("Cookie pairs %q, want the credential sid=%s last", pairs, cSecret)
-			}
-			n := 0
-			for _, p := range pairs {
-				if strings.HasPrefix(p, "sid=") {
-					n++
+	for _, tt := range []struct {
+		name string
+		jar  []*http.Cookie
+		want []string
+	}{
+		{"a jar cookie named as the credential",
+			[]*http.Cookie{{Name: "sid", Value: "from-jar"}, {Name: "z", Value: "1"}},
+			[]string{"c1=v", "z=1", "sid=" + cSecret}},
+		{"a jar cookie named as the parameter",
+			[]*http.Cookie{{Name: "c1", Value: "from-jar"}, {Name: "z", Value: "1"}},
+			[]string{"c1=v", "c1=from-jar", "z=1", "sid=" + cSecret}},
+	} {
+		for _, via := range []string{"Call", "Send"} {
+			t.Run(tt.name+", "+via, func(t *testing.T) {
+				w := newWire(t, nil)
+				jar := newJar(t, w.URL, tt.jar...)
+				c := credClient(t, w, func(o *openapi.Options) { o.HTTPClient = &http.Client{Jar: jar} })
+				in := &openapi.Input{Params: map[string]any{"c1": "v"}}
+				if via == "Call" {
+					mustCall(t, c, "keyCookie", in, nil)
+				} else {
+					sendAndClose(t, mustPrepare(t, c, "keyCookie", in))
 				}
-			}
-			if n != 1 {
-				t.Errorf("Cookie pairs %q hold %d pairs named sid, want only the credential", pairs, n)
-			}
-			for _, want := range []string{"z=1", "c1=v"} {
-				if !contains(pairs, want) {
-					t.Errorf("Cookie pairs %q lack %s", pairs, want)
+				if got := cookiePairs(t, w.last(t).Header); strings.Join(got, "; ") != strings.Join(tt.want, "; ") {
+					t.Errorf("Cookie pairs %q, want %q: the parameter, the jar's, then the credential", got, tt.want)
 				}
-			}
-		})
+			})
+		}
 	}
 }
 
@@ -154,8 +157,9 @@ func TestJarNeverEditsRequestHTTP(t *testing.T) {
 	for i := range 2 {
 		sendAndClose(t, req)
 		wantField(t, req.HTTP.Header, "Cookie", "c1=v")
-		if got := cookiePairs(t, w.last(t).Header); !contains(got, "z=1") || got[len(got)-1] != "sid="+cSecret {
-			t.Errorf("send %d: Cookie pairs %q, want the jar's z=1 and the credential last", i, got)
+		want := []string{"c1=v", "z=1", "sid=" + cSecret} // TQ1: parameters, the jar's, credentials
+		if got := cookiePairs(t, w.last(t).Header); strings.Join(got, "; ") != strings.Join(want, "; ") {
+			t.Errorf("send %d: Cookie pairs %q, want %q", i, got, want)
 		}
 	}
 	if hc.Jar != jar {
@@ -703,14 +707,16 @@ func TestQueryCredentialReplacesEncodedName(t *testing.T) {
 
 // F8: "a present security value that is not an array, an entry that is not
 // an object, or scopes that are not an array of strings sets Operation.Err
-// (root security: each inheriting operation)." OAS 3.1.2 sections 4.8.1.1
-// and 4.8.10.1: security is "[Security Requirement Object]"; section
-// 4.8.30.1: a Security Requirement Object's fields are "[string]". describe.go, Operation.Err:
-// "Calling an operation with Err set returns a *RequestError wrapping Err";
-// Operation.Security: "An empty Security means the operation declares no
-// requirement; the client adds no credentials", which a malformed value
-// must not be read as (conformance's TestC_MalformedSecurity: sent without
-// credentials).
+// (root security: each inheriting operation)." describe.go, Operation.Err
+// (TQ6, 0ad55d7): it is set by "a security value, the operation's or the
+// root's it inherits, that is not an array of Security Requirement Objects
+// each mapping names to arrays of strings ... Calling an operation with Err
+// set returns a *RequestError wrapping Err." OAS 3.1.2 sections 4.8.1.1 and
+// 4.8.10.1: security is "[Security Requirement Object]"; section 4.8.30.1: a
+// Security Requirement Object's fields are "[string]". Operation.Security:
+// "An empty Security means the operation declares no requirement; the
+// client adds no credentials", which a malformed value must not be read as
+// (conformance's TestC_MalformedSecurity: sent without credentials).
 func TestMalformedSecurityValue(t *testing.T) {
 	malformed := []string{
 		`null`, `{}`, `{"key_h":[]}`, `["key_h"]`, `"key_h"`, `5`, `true`,
@@ -777,8 +783,11 @@ type schemeCase struct {
 // Alternatives that use it can be applied only when FromTransport satisfies
 // it"; doc.go, Credentials: "FromTransport also satisfies a scheme a
 // requirement names but the document never declares, or declares
-// defectively"). The Secret is given through With, which refuses at each
-// call whatever Load would.
+// defectively"). Stage 3 ledger, TQ4: "Load refuses any credential but
+// FromTransport for a name all of whose schemes are defective
+// (SecurityScheme.Err), as for mutualTLS; each call does so for a
+// Client.With" (doc.go, Credentials: Load refuses "any credential but
+// FromTransport for a name all of whose schemes are mutualTLS").
 func checkSchemeCases(t *testing.T, cases []schemeCase) {
 	t.Helper()
 	for _, tc := range cases {
@@ -800,6 +809,7 @@ func checkSchemeCases(t *testing.T, cases []schemeCase) {
 			if !tc.defective {
 				return
 			}
+			wantLoadRefusesAllButFromTransport(t, doc, w.URL, "s")
 			d := c.With(func(o *openapi.Options) { o.Credentials["s"] = openapi.Secret("s-secret-4Wd") })
 			resp, err := d.Call(t.Context(), "s", nil, nil)
 			re := refusedBeforeSending(t, w, resp, err)
@@ -809,6 +819,40 @@ func checkSchemeCases(t *testing.T, cases []schemeCase) {
 			mustCall(t, e, "s", nil, nil)
 		})
 	}
+}
+
+// wantLoadRefusesAllButFromTransport checks TQ4 for the name of a defective
+// or undeclared scheme in doc: Load refuses a Secret, a Basic and a
+// SecretFunc for it, keyed at its credential, without quoting them, and
+// accepts FromTransport.
+func wantLoadRefusesAllButFromTransport(t *testing.T, doc, base, name string) {
+	t.Helper()
+	for kind, cred := range map[string]openapi.Credential{
+		"Secret":     openapi.Secret("s-secret-4Wd"),
+		"Basic":      openapi.Basic("u", "s-secret-4Wd"),
+		"SecretFunc": fixedSource("s-secret-4Wd").credential(),
+	} {
+		_, err := openapi.Parse(t.Context(), []byte(expand(doc, base)), base+"/openapi.json",
+			&openapi.Options{Credentials: map[string]openapi.Credential{name: cred}})
+		if err == nil {
+			t.Errorf("Load accepted a %s for %q, whose schemes are all defective", kind, name)
+			continue
+		}
+		wantKeys(t, "Settings", asRequestError(t, err).Settings, true, credKey(name))
+		noSecrets(t, err, "s-secret-4Wd")
+	}
+	if _, err := openapi.Parse(t.Context(), []byte(expand(doc, base)), base+"/openapi.json",
+		&openapi.Options{Credentials: map[string]openapi.Credential{name: openapi.FromTransport()}}); err != nil {
+		t.Errorf("Load refused FromTransport for %q: %v", name, err)
+	}
+}
+
+// TQ4 for a scheme a requirement names but the document never declares
+// (describe.go, SecurityScheme.Err: "a defective or missing declaration";
+// TestSecuritySchemeDescriptors: an undeclared scheme has Err set).
+func TestLoadRefusesCredentialForUndeclaredScheme(t *testing.T) {
+	doc := doc31(`"/g":{"get":{"operationId":"g","security":[{"ghost":[]}]}}`, credSchemes)
+	wantLoadRefusesAllButFromTransport(t, doc, "https://api.example.test", "ghost")
 }
 
 // A8: "an OAuth Flow Object missing a URL its flow requires or its scopes
