@@ -351,9 +351,14 @@ func (r *Response) keep(content []byte, cut bool) *Response {
 // finite duplex peer may read the rest of the request only then, and after
 // closing when the read stopped short, since closing ends the upload.
 func (x *exchange) decode(r *Response, out any) error {
-	cfg, ctx := &config{}, context.Context(context.Background())
+	var (
+		cfg *config
+		ctx context.Context
+	)
 	if x != nil {
 		cfg, ctx = x.cfg, x
+	} else {
+		cfg, ctx = &config{}, context.Background()
 	}
 	head, eof, err := cfg.read(r.Response, r.Declaration, out)
 	var upload error
