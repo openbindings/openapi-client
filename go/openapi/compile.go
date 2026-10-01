@@ -69,8 +69,7 @@ func (e *entry) build() *operation {
 	}
 	var o *operation
 	if g := e.group; g != nil {
-		g.once.Do(func() { g.op = e.shape() })
-		c := *g.op
+		c := *loadOrMake(&g.op, e.shape)
 		o = &c
 	} else {
 		o = e.shape()
@@ -595,8 +594,8 @@ type inheritance struct {
 // inherited returns what an operation inherits from the root, compiled
 // once.
 func (d *document) inherited() *inheritance {
-	d.rootOnce.Do(func() {
-		r := &d.inherits
+	return loadOrMake(&d.inherits, func() *inheritance {
+		r := &inheritance{}
 		if s := d.root().get("servers"); s.hasMembers() {
 			r.servers = d.parseServers(s, d.source("/servers"))
 		} else {
@@ -606,8 +605,8 @@ func (d *document) inherited() *inheritance {
 		if sec := d.root().get("security"); sec.ok() {
 			r.security = d.compileSecurity(sec)
 		}
+		return r
 	})
-	return &d.inherits
 }
 
 // parseServers compiles the Server Objects of list, whose Source is src.
