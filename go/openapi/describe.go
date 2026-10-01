@@ -280,13 +280,14 @@ type Media struct {
 
 	// Encoding describes the fields of form or multipart content, as
 	// Params whose Name is the field, each with its effective ContentType:
-	// the properties the schema lists at its top level (after following
-	// $ref), in document order, then those that only declare an Encoding
-	// Object, in the encoding map's order, and in Swagger 2.0 every formData
-	// parameter. For a positional
-	// multipart type in OpenAPI 3.2, it
-	// describes the parts: those of prefixEncoding in order, named "0", "1"
-	// and so on, then that of itemEncoding, named "*".
+	// the properties the schema lists at its top level, in document order,
+	// then those the schemas it reaches by $ref and allOf list, depth first
+	// in document order, each in the place of its first declaration, then
+	// those that only declare an Encoding Object, in the encoding map's
+	// order, and in Swagger 2.0 every formData parameter. For a positional
+	// multipart type in OpenAPI 3.2, it describes the parts: those of
+	// prefixEncoding in order, named "0", "1" and so on, then that of
+	// itemEncoding, named "*".
 	Encoding []*Param
 
 	// Source is where the media type is declared: the absolute URI of its

@@ -332,31 +332,33 @@ type Input struct {
 	//   - For a sequential media type (JSON Lines, JSON text sequences,
 	//     server-sent events), in any edition, Body is a slice, an iter.Seq, or
 	//     an iter.Seq2 whose second value is an error, of any element type;
-	//     each element is one item. Under text/event-stream an item is an
-	//     object with no members but data, event and id, as strings, and retry,
-	//     as a non-negative integer, or an [Event] (or a non-nil *Event), of
-	//     which only the fields it sets are used. It is written as those
-	//     fields, each as a "field: value" line ending in LF, data as one data
-	//     line per line (split at CRLF, LF or CR), then a blank line; any other
-	//     member or type, a line break in event or id, a NUL in id, or a retry
-	//     that is not whole milliseconds, is an item that cannot be encoded;
-	//     invalid UTF-8 is written as U+FFFD, as an event stream is UTF-8.
-	//     Under JSON Lines and JSON text sequences, a []byte or io.Reader item
-	//     is the item's JSON text, written as given and framed (a JSON Lines
-	//     item is followed by LF; a sequence item has RS before it and LF
-	//     after); one holding the framing's separator (LF or CR, or RS) cannot
-	//     be encoded, and a codec's output is framed after its trailing JSON
-	//     whitespace is trimmed. An iterator is written one item at a time as
-	//     it yields, so a large body is never held, and each item reaches the
-	//     connection on its own; for many small items a slice, or a reader the
-	//     caller frames, is faster. It runs on a goroutine of the transport;
-	//     its yield returns false once the body is no longer wanted. Call waits
-	//     for the iterator to return; Send and Stream may return at response
-	//     headers while it is still running. An error from an iter.Seq2, an
-	//     item that cannot be encoded, or the context ending before the
-	//     iterator returns aborts the body and is reported by Call or
-	//     Response.WaitRequest. An iter.Seq[any], an iter.Seq2[any, error], or
-	//     an io.Reader the caller frames avoids per-item reflection.
+	//     each element is one item, encoded as that value on its own would be,
+	//     so a slice and an iterator yielding the same values send the same
+	//     bytes. Under text/event-stream an item is an object with no members
+	//     but data, event and id, as strings, and retry, as a non-negative
+	//     integer, or an [Event] (or a non-nil *Event), of which only the
+	//     fields it sets are used. It is written as those fields, each as a
+	//     "field: value" line ending in LF, data as one data line per line
+	//     (split at CRLF, LF or CR), then a blank line; any other member or
+	//     type, a line break in event or id, a NUL in id, or a retry that is
+	//     not whole milliseconds, is an item that cannot be encoded; invalid
+	//     UTF-8 is written as U+FFFD, as an event stream is UTF-8. Under JSON
+	//     Lines and JSON text sequences, a []byte or io.Reader item is the
+	//     item's JSON text, written as given and framed (a JSON Lines item is
+	//     followed by LF; a sequence item has RS before it and LF after); one
+	//     holding the framing's separator (LF or CR, or RS) cannot be encoded,
+	//     and a codec's output is framed after its trailing JSON whitespace is
+	//     trimmed. An iterator is written one item at a time as it yields, so a
+	//     large body is never held, and each item reaches the connection on its
+	//     own; for many small items a slice, or a reader the caller frames, is
+	//     faster. It runs on a goroutine of the transport; its yield returns
+	//     false once the body is no longer wanted. Call waits for the iterator
+	//     to return; Send and Stream may return at response headers while it is
+	//     still running. An error from an iter.Seq2, an item that cannot be
+	//     encoded, or the context ending before the iterator returns aborts the
+	//     body and is reported by Call or Response.WaitRequest. An
+	//     iter.Seq[any], an iter.Seq2[any, error], or an io.Reader the caller
+	//     frames avoids per-item reflection.
 	//   - Any other value is written by the media type's codec (see Values in
 	//     the package documentation). Under a JSON type,
 	//     json.RawMessage("null") sends null, and bytes go as a base64
