@@ -30,6 +30,10 @@ import (
 // a reader (F5, F10)". Findings A2, A5, F5, F10, F15, F16, F28, F35, and the
 // *Part, *Event and nil-iterator notes. Expected form bytes are derived from
 // json.Marshal itself (jsonForm), the authority, wherever the shape allows.
+// The verification pass's C4-7 amends the dereference sentence ("Dereferences
+// never end the walk ... Past 1,000 dereferences on one path the walk
+// records the pointers on that path ... and a repeat ends the whole walk");
+// its tests are in regress_stage4_walk_test.go.
 
 const valuesPaths = `
 	"/f":{"post":{"operationId":"form","requestBody":{"content":{"application/x-www-form-urlencoded":{
