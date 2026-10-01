@@ -17,11 +17,11 @@ import (
 // A scheme is a Security Scheme Object compiled: its description, and where
 // a credential for it goes.
 type scheme struct {
-	desc SecurityScheme // without the Name and Scopes of a use
-	kind schemeKind
-	dest paramID // the header field, query name or cookie name a credential sets
-	pair string  // a query or cookie credential's name as written
-	auth string  // the auth-scheme and space before a credential in the Authorization field
+	desc    SecurityScheme // without the Name and Scopes of a use
+	kind    schemeKind
+	dest    paramID // the header field, query name or cookie name a credential sets
+	written string  // a query or cookie credential's name as written
+	auth    string  // the auth-scheme and space before a credential in the Authorization field
 }
 
 type schemeKind uint8
@@ -79,19 +79,18 @@ func newScheme(t value, at string) *scheme {
 	switch s.Type {
 	case "apiKey":
 		s.In, s.ParamName = t.str("in"), t.str("name")
-		name := s.ParamName
+		name, field := s.ParamName, textproto.CanonicalMIMEHeaderKey(s.ParamName)
 		switch {
 		case name == "":
 			err = errors.New("an apiKey scheme needs a name")
-		case s.In == "header" && (!isToken(name) || strings.EqualFold(name, "Content-Type") || strings.EqualFold(name, "Cookie") ||
-			slices.ContainsFunc(derivedFields, func(f string) bool { return strings.EqualFold(f, name) })):
+		case s.In == "header" && (!isToken(name) || field == "Content-Type" || field == "Cookie" || slices.Contains(derivedFields, field)):
 			err = fmt.Errorf("an apiKey cannot be sent in the header field %q", name)
 		case s.In == "header":
-			sc.kind, sc.dest = apiKeyHeader, paramID{"header", textproto.CanonicalMIMEHeaderKey(name)}
+			sc.kind, sc.dest = apiKeyHeader, paramID{"header", field}
 		case s.In == "query":
-			sc.kind, sc.dest, sc.pair = apiKeyQuery, paramID{"query", name}, escape(name, unreservedSet)
+			sc.kind, sc.dest, sc.written = apiKeyQuery, paramID{"query", name}, escape(name, unreservedSet)
 		case s.In == "cookie" && isToken(name): // RFC 6265 section 4.1.1
-			sc.kind, sc.dest, sc.pair = apiKeyCookie, paramID{"cookie", name}, name
+			sc.kind, sc.dest, sc.written = apiKeyCookie, paramID{"cookie", name}, name
 		case s.In == "cookie":
 			err = fmt.Errorf("cookie name %q is not a token (RFC 6265 section 4.1.1)", name)
 		default:
@@ -111,11 +110,7 @@ func newScheme(t value, at string) *scheme {
 			sc.kind, sc.auth = httpOther, s.Scheme+" "
 		}
 	case "oauth2":
-		flows := t.get("flows")
-		if flows.kind() != '{' {
-			err = errors.New("an oauth2 scheme needs flows")
-		}
-		s.Flows = oauthFlows(flows)
+		s.Flows, err = oauthFlows(t.get("flows"))
 		sc.kind, sc.dest, sc.auth = httpBearer, authorization, "Bearer "
 	case "openIdConnect":
 		u := t.get("openIdConnectUrl")
@@ -136,28 +131,39 @@ func newScheme(t value, at string) *scheme {
 	return sc
 }
 
-// oauthFlows describes the OAuth Flows Object v, in document order.
-func oauthFlows(v value) []Flow {
+// oauthFlows describes the OAuth Flows Object v, in document order, and
+// says why it is defective: an OAuth Flow Object without a URL its flow
+// requires, as a string, or without its map of scopes (OpenAPI 3.1 section
+// 4.8.29).
+func oauthFlows(v value) ([]Flow, error) {
+	if v.kind() != '{' {
+		return nil, errors.New("an oauth2 scheme needs flows")
+	}
 	var flows []Flow
 	for typ, f := range v.members() {
+		var needs []string // the URLs the flow requires
 		switch typ {
-		case "implicit", "password", "clientCredentials", "authorizationCode":
+		case "implicit":
+			needs = []string{"authorizationUrl"}
+		case "password", "clientCredentials":
+			needs = []string{"tokenUrl"}
+		case "authorizationCode":
+			needs = []string{"authorizationUrl", "tokenUrl"}
 		default:
 			continue
 		}
-		if f.kind() != '{' {
-			continue
+		scopes := f.get("scopes")
+		if f.kind() != '{' || scopes.kind() != '{' || slices.ContainsFunc(needs, func(n string) bool { return f.get(n).kind() != '"' }) {
+			return nil, fmt.Errorf("the %s flow needs %s and scopes", typ, strings.Join(needs, " and "))
 		}
-		flow := Flow{Type: typ, AuthorizationURL: f.str("authorizationUrl"), TokenURL: f.str("tokenUrl"), RefreshURL: f.str("refreshUrl")}
-		if scopes := f.get("scopes"); scopes.kind() == '{' {
-			flow.Scopes = map[string]string{}
-			for name, desc := range scopes.members() {
-				flow.Scopes[name] = desc.string()
-			}
+		flow := Flow{Type: typ, AuthorizationURL: f.str("authorizationUrl"), TokenURL: f.str("tokenUrl"), RefreshURL: f.str("refreshUrl"),
+			Scopes: map[string]string{}}
+		for name, desc := range scopes.members() {
+			flow.Scopes[name] = desc.string()
 		}
 		flows = append(flows, flow)
 	}
-	return flows
+	return flows, nil
 }
 
 // An alternative is a security alternative with its schemes compiled.
@@ -167,46 +173,94 @@ type alternative struct {
 	clash   bool      // two schemes set one header field, query name or cookie name
 }
 
-// securityList describes and compiles the Security Requirement Objects of
-// list, returning the descriptions and the alternatives, which share them.
-func (d *document) securityList(list value) ([]SecurityRequirement, []alternative) {
-	var reqs []SecurityRequirement
-	var alts []alternative
+// A securityPlan is a security value compiled: its descriptions, and the
+// alternatives, which share them; the header fields, query names and cookie
+// names their schemes set; and why the value is not an array of Security
+// Requirement Objects mapping names to arrays of strings.
+type securityPlan struct {
+	reqs  []SecurityRequirement
+	alts  []alternative // identical ones as one, as the key selects the first (see SecurityRequirement.Key)
+	dests map[paramID]bool
+	err   error
+}
+
+// compileSecurity compiles the security value list.
+func (d *document) compileSecurity(list value) securityPlan {
+	if list.kind() != '[' {
+		return securityPlan{err: errSecurityValue}
+	}
+	var p securityPlan
 	for _, r := range list.members() {
-		if list.kind() != '[' || r.kind() != '{' {
-			continue
+		if r.kind() != '{' {
+			return securityPlan{err: errSecurityValue}
 		}
 		var req SecurityRequirement
 		var a alternative
 		for name, scopes := range r.members() {
+			roles, ok := stringList(scopes)
+			if !ok {
+				return securityPlan{err: errSecurityValue}
+			}
 			sc := d.securityScheme(name)
 			s := sc.desc
-			s.Name, s.Scopes = name, scopes.strs()
+			s.Name, s.Scopes = name, roles
 			req.Schemes, a.schemes = append(req.Schemes, s), append(a.schemes, sc)
+			if sc.dest.in != "" {
+				if p.dests == nil {
+					p.dests = map[paramID]bool{}
+				}
+				p.dests[sc.dest] = true
+			}
 		}
 		req.Key = requirementKey(req.Schemes)
 		_, j := clash(a.schemes, nil)
 		a.clash = j > 0
-		reqs, alts = append(reqs, req), append(alts, a)
+		p.reqs, p.alts = append(p.reqs, req), append(p.alts, a)
 	}
-	for i := range alts {
-		alts[i].SecurityRequirement = &reqs[i]
+	for i := range p.alts {
+		p.alts[i].SecurityRequirement = &p.reqs[i]
 	}
-	return reqs, alts
+	if len(p.alts) > 1 && !slices.ContainsFunc(p.alts[1:], func(a alternative) bool { return a.Key != p.alts[0].Key }) {
+		p.alts = p.alts[:1]
+	}
+	return p
+}
+
+var errSecurityValue = errors.New("security is not an array of Security Requirement Objects mapping scheme names to arrays of strings")
+
+// stringList returns the strings of v, and whether v is an array of
+// strings.
+func stringList(v value) ([]string, bool) {
+	if v.kind() != '[' {
+		return nil, false
+	}
+	var s []string
+	for _, item := range v.members() {
+		if item.kind() != '"' {
+			return nil, false
+		}
+		s = append(s, item.text())
+	}
+	return s, true
 }
 
 // requirementKey returns the SecurityRequirement.Key of an alternative
 // with schemes.
 func requirementKey(schemes []SecurityScheme) string {
+	order := make([]int, len(schemes))
+	for i := range order {
+		order[i] = i
+	}
+	slices.SortFunc(order, func(i, j int) int { return strings.Compare(schemes[i].Name, schemes[j].Name) })
 	var b strings.Builder
 	b.WriteByte('{')
-	for i, s := range slices.SortedFunc(slices.Values(schemes), func(a, b SecurityScheme) int { return strings.Compare(a.Name, b.Name) }) {
+	for i, k := range order {
 		if i > 0 {
 			b.WriteByte(',')
 		}
-		canonicalString(&b, s.Name)
+		canonicalString(&b, schemes[k].Name)
 		b.WriteString(":[")
-		for j, scope := range slices.Compact(slices.Sorted(slices.Values(s.Scopes))) {
+		for j, scope := range slices.Compact(slices.Sorted(slices.Values(schemes[k].Scopes))) {
 			if j > 0 {
 				b.WriteByte(',')
 			}
@@ -295,10 +349,10 @@ func (c *Client) selectSecurity(o *operation, in *Input, re *RequestError) *alte
 			return match
 		}
 	}
-	switch {
-	case len(alts) == 0:
+	switch len(alts) {
+	case 0:
 		return nil
-	case !slices.ContainsFunc(alts, func(a alternative) bool { return a.Key != alts[0].Key }):
+	case 1:
 		return &alts[0]
 	}
 	re.setting("Options.Security", fmt.Errorf("the operation offers %d security alternatives; select one with Options.Security, Options.SecurityKey or Input.Security", len(alts)))
@@ -332,7 +386,7 @@ func (c *Client) checkCredentials(o *operation, a *alternative, in *Input, ep en
 		places = true
 		if (sc.kind == httpBearer || sc.kind == httpBasic) && !checked {
 			checked = true
-			if err := secured(ep); err != nil {
+			if err := secured(&url.URL{Scheme: ep.scheme, Host: ep.host}); err != nil {
 				re.fail(err)
 			}
 		}
@@ -364,7 +418,9 @@ func (c *Client) checkCredentials(o *operation, a *alternative, in *Input, ep en
 var (
 	errMutualTLS   = errors.New("a mutualTLS scheme takes no credential but FromTransport")
 	errNotBasic    = errors.New("a Basic credential is for an http basic scheme")
-	errFieldValue  = errors.New("a header field cannot carry the credential: it holds a CR, LF, NUL or other control character, or leading or trailing whitespace")
+	errBasicValue  = errors.New("an http basic credential is a user-id without a colon, a colon and a password, neither holding a control character (RFC 7617 section 2)")
+	errBearerValue = errors.New("a bearer token holds only the characters of RFC 6750's b64token")
+	errFieldValue  = errors.New("a header field cannot carry the credential: it holds a control character other than a tab, or leading or trailing whitespace")
 	errCookieValue = errors.New(`a cookie cannot carry the credential: it holds a ";", a control character, or leading or trailing whitespace`)
 )
 
@@ -384,7 +440,7 @@ func (sc *scheme) callError(c Credential) error {
 	case c.basic() && sc.kind != httpBasic:
 		return errNotBasic
 	case c.kind == badBasicCredential:
-		return errors.New("a Basic username cannot hold a colon, nor either value a control character (RFC 7617 section 2)")
+		return errBasicValue
 	case c.kind != sourceCredential:
 		return sc.checkValue(c.secret())
 	}
@@ -392,29 +448,28 @@ func (sc *scheme) callError(c Credential) error {
 }
 
 // loadError returns why Load refuses c for a name whose scheme is sc, or
-// nil.
+// nil: every problem but a source's value, which only a call has.
 func (sc *scheme) loadError(c Credential) error {
-	switch {
-	case c.kind == noCredential:
+	if c.kind == noCredential {
 		return errors.New("the credential is empty")
-	case c.kind == transportCredential:
-		return nil
-	case sc.kind == mutualTLS:
-		return errMutualTLS
-	case c.basic() && sc.kind != httpBasic:
-		return errNotBasic
-	case c.kind == secretCredential:
-		return sc.checkValue(c.secret())
 	}
-	return nil
+	return sc.callError(c)
 }
 
 // checkValue returns why a credential for sc cannot carry secret, or nil.
 func (sc *scheme) checkValue(secret string) error {
 	switch sc.kind {
-	case apiKeyHeader, httpBearer, httpOther:
+	case apiKeyHeader, httpOther:
 		if !validFieldValue(secret) {
 			return errFieldValue
+		}
+	case httpBearer:
+		if !b64token(secret) {
+			return errBearerValue
+		}
+	case httpBasic:
+		if !strings.Contains(secret, ":") || strings.ContainsFunc(secret, isCTL) {
+			return errBasicValue
 		}
 	case apiKeyCookie:
 		if !validFieldValue(secret) || strings.ContainsAny(secret, ";\t") {
@@ -424,37 +479,45 @@ func (sc *scheme) checkValue(secret string) error {
 	return nil
 }
 
+// b64token reports whether s is an RFC 6750 b64token: 1*( ALPHA / DIGIT /
+// "-" / "." / "_" / "~" / "+" / "/" ) *"=".
+func b64token(s string) bool {
+	t := strings.TrimRight(s, "=")
+	for i := 0; i < len(t); i++ {
+		if c := t[i]; !unreserved(c) && c != '+' && c != '/' {
+			return false
+		}
+	}
+	return t != ""
+}
+
 // credentialKey is the Settings key of the credential for name.
 func credentialKey(name string) string { return "Options.Credentials[" + strconv.Quote(name) + "]" }
 
 // secured returns why a bearer token or Basic credential cannot be sent to
-// ep, or nil: it goes over https or wss, or plain http or ws to a loopback
-// host (RFC 6750 section 5.3, RFC 7617 section 4).
-func secured(ep endpoint) error {
-	switch ep.scheme {
+// u, or nil: it goes over https or wss, or plain http or ws to a loopback
+// host, where it does not leave the machine (RFC 6750 section 5.3, RFC 7617
+// section 4).
+func secured(u *url.URL) error {
+	switch u.Scheme {
 	case "https", "wss":
 		return nil
 	case "http", "ws":
-		if loopback(ep.host) {
+		if loopback(u.Hostname()) {
 			return nil
 		}
-		return fmt.Errorf("a bearer token or Basic credential cannot be sent over plain %s to a host other than a loopback one; use https, or place it with FromTransport", ep.scheme)
+		return fmt.Errorf("a bearer token or Basic credential cannot be sent over plain %s to a host other than a loopback one; use https, or place it with FromTransport", u.Scheme)
 	}
-	return fmt.Errorf("a bearer token or Basic credential sent over %q needs FromTransport", ep.scheme)
+	return fmt.Errorf("a bearer token or Basic credential sent over %q needs FromTransport", u.Scheme)
 }
 
-// loopback reports whether the host of hostport is a loopback address, an
-// IPv4-mapped one included, or localhost or a name under .localhost, with
-// or without a trailing dot (RFC 6761 section 6.3), matched without
+// loopback reports whether host is a loopback IP address, an IPv4-mapped
+// one included, or the name localhost written exactly so, the one name
+// net/http's proxy settings never apply to; it is matched without
 // resolving.
-func loopback(hostport string) bool {
-	u := url.URL{Host: hostport}
-	host := u.Hostname()
-	if ip, err := netip.ParseAddr(host); err == nil {
-		return ip.IsLoopback()
-	}
-	host = strings.TrimSuffix(host, ".")
-	return strings.EqualFold(host, "localhost") || len(host) > len(".localhost") && hasSuffixFold(host, ".localhost")
+func loopback(host string) bool {
+	ip, err := netip.ParseAddr(host)
+	return host == "localhost" || err == nil && ip.IsLoopback()
 }
 
 // sameOrigin reports whether a and b have the same origin: scheme, host and
@@ -522,9 +585,9 @@ func (x *exchange) sign(req *http.Request) (*http.Request, error) {
 		case apiKeyHeader:
 			h[sc.dest.name] = []string{secret}
 		case apiKeyQuery:
-			query = append(query, pair{sc.dest.name, sc.pair + "=" + escape(secret, unreservedSet)})
+			query = append(query, pair{sc.dest.name, sc.written + "=" + escape(secret, unreservedSet)})
 		case apiKeyCookie:
-			cookies = append(cookies, pair{sc.dest.name, sc.pair + "=" + secret})
+			cookies = append(cookies, pair{sc.dest.name, sc.written + "=" + secret})
 		case httpBasic:
 			h["Authorization"] = []string{sc.auth + base64.StdEncoding.EncodeToString([]byte(secret))}
 		default:

@@ -738,7 +738,11 @@ func (d *document) checkNames(ctx context.Context, cfg *config, re *RequestError
 			continue
 		}
 		check(e.node.get("servers"))
-		if s := e.node.get("security"); (s.ok() && sec.list(s) || !s.ok() && free) && sec.key == "{}" {
+		none := free
+		if s := e.node.get("security"); s.ok() {
+			none = sec.list(s)
+		}
+		if none && sec.key == "{}" {
 			sec.key = "" // a credential-free operation offers it
 		}
 		if rb := e.node.get("requestBody"); !media && rb.ok() && methods[e.m].upper != "TRACE" {

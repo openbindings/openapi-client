@@ -19,7 +19,7 @@ type operation struct {
 
 type plan struct {
 	params     []param
-	dests      map[paramID]int // the parameters by location and name, for credentials to find
+	dests      map[paramID]int // the parameters at a destination a credential sets, or nil
 	pathParams []int           // the path parameters, indexes into params
 	path       []pathPart
 	servers    []*server
@@ -155,19 +155,17 @@ func (e *entry) shape() *operation {
 	}
 	o.servers, op.Servers = sl.servers, sl.desc
 
+	sec := d.inherited().security
 	if security.ok() {
-		op.Security, o.security = d.securityList(security)
-	} else {
-		root := d.inherited()
-		op.Security, o.security = root.security, root.alternatives
+		sec = d.compileSecurity(security)
 	}
-	if len(o.security) > 0 {
-		o.dests = make(map[paramID]int, len(o.params))
-		for i, p := range o.params {
-			id := paramID{p.In, p.Name}
-			if p.In == "header" {
-				id.name = p.field
-			}
+	op.Security, o.security, errs = sec.reqs, sec.alts, append(errs, sec.err)
+	for id, i := range ids {
+		switch {
+		case !sec.dests[id]:
+		case o.dests == nil:
+			o.dests = map[paramID]int{id: i}
+		default:
 			o.dests[id] = i
 		}
 	}
@@ -577,9 +575,8 @@ type serverList struct {
 // What an operation inherits from the root: its servers, or the default
 // one, and its security requirements.
 type inheritance struct {
-	servers      *serverList
-	security     []SecurityRequirement
-	alternatives []alternative
+	servers  *serverList
+	security securityPlan
 }
 
 // inherited returns what an operation inherits from the root, compiled
@@ -593,7 +590,9 @@ func (d *document) inherited() *inheritance {
 			sv := d.newServer(&Server{ID: "default", URL: "/"}, value{})
 			r.servers = &serverList{[]*server{sv}, []*Server{sv.Server}}
 		}
-		r.security, r.alternatives = d.securityList(d.root().get("security"))
+		if sec := d.root().get("security"); sec.ok() {
+			r.security = d.compileSecurity(sec)
+		}
 	})
 	return &d.inherits
 }
