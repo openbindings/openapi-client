@@ -170,7 +170,8 @@ type Param struct {
 	ExplodeSet bool
 
 	// AllowReserved is the effective allowReserved: false where the edition
-	// ignores it (see Percent-encoding in the package documentation).
+	// or the media type ignores it, as for a multipart/form-data field (see
+	// Percent-encoding in the package documentation).
 	AllowReserved   bool
 	AllowEmptyValue bool
 
@@ -178,9 +179,10 @@ type Param struct {
 	// described by content rather than by schema and style, or, for a form
 	// or multipart field, its effective contentType: its Encoding's, which
 	// may be a comma-separated list or a range, or else the default the
-	// client uses (see the package documentation). It is empty for a field
-	// whose Encoding sets style, explode or allowReserved, which OpenAPI
-	// says makes contentType ignored.
+	// client uses (see the package documentation). Under
+	// application/x-www-form-urlencoded and multipart/form-data it is empty
+	// for a field whose Encoding sets style, explode or allowReserved, which
+	// OpenAPI says makes contentType ignored there.
 	ContentType string
 
 	// CollectionFormat is, in Swagger 2.0, the collectionFormat of an array
