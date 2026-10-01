@@ -610,8 +610,10 @@ func (c *Client) body(o *operation, in *Input, h http.Header, re *RequestError) 
 	if typ == "" {
 		return payload{}, nil
 	}
-	if _, given := m.param("boundary"); raw && isMultipart(m) && !given {
-		re.setting("Input.MediaType", errors.New("a pre-encoded multipart body needs its boundary in Input.MediaType"))
+	if raw && isMultipart(m) {
+		if _, given := m.param("boundary"); !given {
+			re.setting("Input.MediaType", errors.New("a pre-encoded multipart body needs its boundary in Input.MediaType"))
+		}
 	}
 	h["Content-Type"], p.ctype = []string{typ}, typ
 	return p, md
