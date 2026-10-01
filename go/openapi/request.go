@@ -151,9 +151,9 @@ func (c *Client) newRequest(ctx context.Context, o *operation, in *Input, re *Re
 	}
 	ep := c.selectServer(o, re)
 	var sec selection
-	var supplied []bool // the parameters the credentials supply
+	var byCredential []bool // the parameters the credentials supply
 	if sec.alt = c.selectSecurity(o, in, re); sec.alt != nil {
-		sec.places, supplied = c.checkCredentials(o, sec.alt, in, ep, re)
+		sec.places, byCredential = c.checkCredentials(o, sec.alt, in, ep, re)
 	}
 	req, _ := http.NewRequestWithContext(ctx, o.Method, "", nil)
 	h := req.Header
@@ -189,7 +189,7 @@ func (c *Client) newRequest(ctx context.Context, o *operation, in *Input, re *Re
 				re.input(p.Key, errors.New("the parameter's writer is nil"))
 			}
 		}
-		if supplied != nil && supplied[i] {
+		if byCredential != nil && byCredential[i] {
 			if v != nil || hasWriter {
 				re.input(p.Key, errors.New("the call's credential supplies the parameter"))
 			}
@@ -278,14 +278,22 @@ func (c *Client) newRequest(ctx context.Context, o *operation, in *Input, re *Re
 	}
 	req.ContentLength = p.size
 	if written > 0 {
-		setBody(req, p)
+		wp := p // the body the writers see
+		setBody(req, &wp)
 		o.runWriters(req, in.ParamWriters, re)
-		if len(re.Inputs) > 0 {
+		if sec.places && !sameOrigin(req.URL, &url.URL{Scheme: ep.scheme, Host: ep.host}) {
+			re.fail(errOtherOrigin)
+		}
+		if re.Err != nil || len(re.Inputs) > 0 {
 			return req, payload{}, nil, selection{}
 		}
 	}
 	return req, p, media, sec
 }
+
+// errOtherOrigin refuses a request a caller moved to another origin than
+// its server's when the call places credentials, which go only there.
+var errOtherOrigin = errors.New("the request's URL was changed to another origin, where its credentials cannot go; set Options.BaseURL instead")
 
 // setter names the Header setting with an entry for field, whether or not
 // it has values: Input.Header before Options.Header, or "" for neither.
@@ -567,6 +575,7 @@ func (c *Client) body(o *operation, in *Input, h http.Header, re *RequestError) 
 	}
 	if raw {
 		h["Content-Type"] = []string{typ}
+		p.ctype = typ
 		return p, md
 	}
 	if md == nil {
@@ -583,7 +592,7 @@ func (c *Client) body(o *operation, in *Input, h http.Header, re *RequestError) 
 		re.input("Input.Body"+at, err)
 		return payload{}, nil
 	}
-	return payload{data: b, size: int64(len(b))}, md
+	return payload{data: b, size: int64(len(b)), ctype: typ}, md
 }
 
 // encodeValue encodes v by the caller's codec for m, or, for a JSON type, as
@@ -641,7 +650,7 @@ func (c *Client) mediaType(o *operation, in *Input, re *RequestError) (string, p
 
 // setBody gives req the body p, read again from the start by GetBody when p
 // can be.
-func setBody(req *http.Request, p payload) {
+func setBody(req *http.Request, p *payload) {
 	if p.size != 0 {
 		req.Body = &sentBody{p: p}
 		if p.once == nil {

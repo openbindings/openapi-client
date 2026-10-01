@@ -1,112 +1,152 @@
 package openapi
 
 import (
+	"context"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"strings"
+	"time"
 )
 
-// follow sends signed, which is req with the call's credentials, and each
-// redirect hop the client follows (see Redirects), returning the last
-// response. The http.Client follows none itself. Each response's Request is
-// the request without the credentials the client placed, and so is every
-// earlier one reachable from it.
+// follow sends signed, which is req as it is sent, and each redirect hop
+// the client follows (see Redirects), returning the last response. An
+// error that ends the chain after a response arrived comes with that
+// response, its body closed. Each response's Request is the request without
+// the credentials the client placed, and so is every earlier one reachable
+// from it.
 func (x *exchange) follow(req, signed *http.Request) (*http.Response, error) {
-	first := req
-	var via []*http.Request
-	left := false // a hop has left the call's origin
+	cfg, hc, first := x.cfg, x.cfg.client, req
+	var (
+		via      []*http.Request
+		resp     *http.Response // the last response, which a hop answers
+		left     bool           // a hop has left the call's origin
+		deadline time.Time      // when HTTPClient.Timeout ends the chain
+	)
+	if hc.Timeout > 0 && cfg.Redirects == FollowAll {
+		deadline = time.Now().Add(hc.Timeout)
+	}
+	fail := func(hop *http.Request, err error) error {
+		return &url.Error{Op: urlErrorOp(first.Method), URL: hop.URL.Redacted(), Err: err}
+	}
 	for {
-		resp, err := x.cfg.client.Do(signed)
+		r, err := hc.Do(signed)
 		if err != nil {
-			return nil, redact(err, req.URL)
+			return resp, redact(err, req.URL)
 		}
+		resp = r
 		resp.Request = req
-		if x.cfg.Redirects != FollowAll {
+		if loc, ok := resp.Header[heldLocation]; ok {
+			delete(resp.Header, heldLocation)
+			resp.Header["Location"] = loc
+		}
+		if cfg.jar != nil {
+			if cookies := resp.Cookies(); len(cookies) > 0 {
+				cfg.jar.SetCookies(req.URL, cookies)
+			}
+		}
+		if cfg.Redirects != FollowAll {
 			return resp, nil
 		}
-		method, body, ok := redirect(req, resp.StatusCode)
+		method, keep, ok := redirect(req.Method, resp.StatusCode)
 		loc := resp.Header.Get("Location")
 		if !ok || loc == "" {
 			return resp, nil
 		}
-		u, err := req.URL.Parse(loc)
-		if err != nil {
-			resp.Body.Close()
-			return nil, &url.Error{Op: urlErrorOp(first.Method), URL: req.URL.Redacted(), Err: fmt.Errorf("failed to parse Location header %q: %v", loc, err)}
+		ref, err := url.Parse(loc)
+		body := keep && req.Body != nil && req.Body != http.NoBody
+		if err != nil || body && first.GetBody == nil {
+			return resp, nil // no Location, or a body that cannot be sent again
+		}
+		u := req.URL.ResolveReference(ref)
+		left = left || !sameOrigin(u, first.URL)
+		next := x.hop(req, resp, method, u, keep, left)
+		if !ref.IsAbs() && req.Host != "" && req.Host != req.URL.Host {
+			next.Host = req.Host // as net/http keeps it (Go issue 22233)
 		}
 		via = append(via, req)
-		left = left || !sameOrigin(u, first.URL)
-		next := x.hop(req, resp, method, u, body, left)
-		err = x.cfg.checkRedirect(next, via)
+
+		// CheckRedirect sees the body the hop sends, as net/http shows it.
+		var hb *sentBody
+		if body {
+			if hb, err = x.newBody(); err != nil {
+				discard(resp)
+				return resp, fail(next, err)
+			}
+			next.Body, next.GetBody, next.ContentLength = hb, first.GetBody, first.ContentLength
+		}
+		err = cfg.checkRedirect(next, via)
+		if err == nil && !deadline.IsZero() {
+			hc = new(http.Client)
+			*hc = *cfg.client
+			if hc.Timeout = time.Until(deadline); hc.Timeout <= 0 {
+				err = errChainTimeout{}
+			}
+		}
+		var re RequestError
+		if err == nil {
+			// CheckRedirect may have moved the hop.
+			left = left || next.URL == nil || !sameOrigin(next.URL, first.URL)
+			if signed = x.sign(next, !left, false, &re); re.refused() != nil {
+				err = errors.Join(re.Unwrap()...) // each names its scheme
+			}
+		}
+		switch {
+		case hb == nil:
+		case err == nil && next.Body == hb:
+			x.hand(hb)
+		default: // not sent, or CheckRedirect gave the hop another body
+			hb.Close()
+		}
 		if err == http.ErrUseLastResponse {
 			return resp, nil
 		}
 		discard(resp)
 		if err != nil {
-			return nil, &url.Error{Op: urlErrorOp(first.Method), URL: loc, Err: err}
-		}
-		// CheckRedirect may have changed the URL.
-		left = left || next.URL == nil || !sameOrigin(next.URL, first.URL)
-		signed = next
-		if !left {
-			if signed, err = x.sign(next); err != nil {
-				return nil, &url.Error{Op: urlErrorOp(first.Method), URL: next.URL.Redacted(), Err: errors.Join(err.(*RequestError).Unwrap()...)}
-			}
-		}
-		// The body, once CheckRedirect has let the hop go: an upload that
-		// begins is waited for.
-		if body {
-			if next.Body, err = next.GetBody(); err != nil {
-				return nil, &url.Error{Op: urlErrorOp(first.Method), URL: next.URL.Redacted(), Err: err}
-			}
-			signed.Body = next.Body
-		} else {
-			x.end(x.newGeneration(), nil) // the upload is the hop's, of no body
+			return resp, fail(next, err)
 		}
 		req = next
 	}
 }
 
-// redirect returns how the client follows a response of status to req: the
-// hop's method, and whether it sends req's body again. ok is false when the
-// client does not follow it: for another status, or a body that cannot be
-// sent again.
-func redirect(req *http.Request, status int) (method string, body, ok bool) {
+// redirect returns how the client follows a response of status to a
+// request with method: the hop's method, and whether the hop keeps the
+// request's content, which a change to GET drops (RFC 9110 section 15.4).
+// ok is false for a status the client does not follow.
+func redirect(method string, status int) (hop string, keep, ok bool) {
 	switch {
-	case status == 303 && req.Method != "HEAD", (status == 301 || status == 302) && req.Method == "POST":
+	case status == 303 && method != "HEAD", (status == 301 || status == 302) && method == "POST":
 		return "GET", false, true
 	case status == 303:
-		return req.Method, false, true
-	case status != 301 && status != 302 && status != 307 && status != 308:
-		return "", false, false
+		return method, false, true
+	case status == 301, status == 302, status == 307, status == 308:
+		return method, true, true
 	}
-	body = req.Body != nil && req.Body != http.NoBody
-	return req.Method, body, !body || req.GetBody != nil
+	return "", false, false
 }
 
 // hop returns the request that follows req to u, answering resp, with
-// method, and req's body when body is set. It carries req's header fields,
-// or, once the chain has left the call's origin, only the Content-Type of
-// the body; a hop without the body carries none of its content fields
-// (RFC 9110 section 15.4).
-func (x *exchange) hop(req *http.Request, resp *http.Response, method string, u *url.URL, body, left bool) *http.Request {
-	next, _ := http.NewRequestWithContext(x, method, "", nil)
-	next.URL, next.Response = u, resp
+// method. Its URL is u less the call's query credentials, which the server
+// may have repeated. It carries req's header fields, less the content
+// fields unless keep is set; once the chain has left the call's origin,
+// only the Content-Type the client wrote and a User-Agent with no value,
+// which suppresses net/http's.
+func (x *exchange) hop(req *http.Request, resp *http.Response, method string, u *url.URL, keep, left bool) *http.Request {
+	if names := x.queryNames(); names != nil && u.RawQuery != "" {
+		u.RawQuery = withQuery(u.RawQuery, isOneOf(names), nil)
+	}
+	h := make(http.Header, len(req.Header))
 	for k, vs := range req.Header {
+		ck := textproto.CanonicalMIMEHeaderKey(k)
 		switch {
-		case !body && (strings.HasPrefix(k, "Content-") || k == "Digest" || k == "Last-Modified"):
-		case left && k != "Content-Type":
-		default:
-			next.Header[k] = vs
+		case !keep && (strings.HasPrefix(ck, "Content-") || ck == "Digest" || ck == "Last-Modified"):
+		case !left, ck == "Content-Type" && len(vs) == 1 && vs[0] == x.payload.ctype, ck == "User-Agent" && len(vs) == 0:
+			h[k] = vs
 		}
 	}
-	if body {
-		next.GetBody, next.ContentLength = req.GetBody, req.ContentLength
-	}
-	return next
+	return (&http.Request{Method: method, URL: u, Proto: "HTTP/1.1", ProtoMajor: 1, ProtoMinor: 1, Header: h, Response: resp}).WithContext(x)
 }
 
 // discard reads and closes the body of a response the client follows,
@@ -120,18 +160,38 @@ func discard(resp *http.Response) {
 	resp.Body.Close()
 }
 
-// followNone is the CheckRedirect of the http.Client the client sends with,
-// which follows no redirect, as the client follows them itself. For a 307
-// or 308, the http.Client has already taken the body again, with GetBody,
-// for the hop req, which is never sent.
-func followNone(req *http.Request, _ []*http.Request) error {
-	if b, ok := req.Body.(*sentBody); ok && b.x != nil {
-		b.x.unsent(b.gen)
-		if b.rc != nil {
-			b.rc.Close()
+// noFollow is the Transport of the http.Client the client sends with: the
+// caller's, or http.DefaultTransport for none, moving the Location of a
+// 301, 302, 303, 307 or 308 response to heldLocation, so that the
+// http.Client finds none and returns the response: it never parses the
+// Location, calls GetBody or consults CheckRedirect. The client moves the
+// Location back when Do returns, and follows redirects itself.
+type noFollow struct{ rt http.RoundTripper }
+
+// heldLocation holds a Location from the transport; with a space, it is no
+// field name a response can have.
+const heldLocation = "Location held by openapi"
+
+func (t noFollow) RoundTrip(r *http.Request) (*http.Response, error) {
+	resp, err := t.rt.RoundTrip(r)
+	if err == nil && resp != nil {
+		switch resp.StatusCode {
+		case 301, 302, 303, 307, 308:
+			if loc, ok := resp.Header["Location"]; ok {
+				delete(resp.Header, "Location")
+				resp.Header[heldLocation] = loc
+			}
 		}
 	}
-	return http.ErrUseLastResponse
+	return resp, err
+}
+
+// CancelRequest passes on the cancellation the http.Client makes, for its
+// Timeout, to a transport that has only this way to stop.
+func (t noFollow) CancelRequest(r *http.Request) {
+	if c, ok := t.rt.(interface{ CancelRequest(*http.Request) }); ok {
+		c.CancelRequest(r)
+	}
 }
 
 // tenRedirects is net/http's default CheckRedirect.
@@ -141,6 +201,15 @@ func tenRedirects(_ *http.Request, via []*http.Request) error {
 	}
 	return nil
 }
+
+// errChainTimeout ends a chain whose HTTPClient.Timeout ran out before a
+// hop, reported as net/http reports that Timeout: a timeout that matches
+// context.DeadlineExceeded.
+type errChainTimeout struct{}
+
+func (errChainTimeout) Error() string     { return "Client.Timeout exceeded before a redirect hop" }
+func (errChainTimeout) Timeout() bool     { return true }
+func (errChainTimeout) Is(err error) bool { return err == context.DeadlineExceeded }
 
 // urlErrorOp is the Op of a *url.Error for a request with method, as
 // net/http writes it.

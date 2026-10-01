@@ -2,6 +2,7 @@ package openapi
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"encoding/xml"
@@ -31,8 +32,8 @@ type prepared struct {
 	selection
 	origin  *url.URL // the scheme and host of the server, when the call places credentials
 	payload payload
-	body    io.ReadCloser // the body Prepare set in the request
-	taken   atomic.Bool   // a send has read a body that can be read once
+	body    *sentBody   // the body Prepare set in the request
+	taken   atomic.Bool // a send has handed over a body that can be read once
 }
 
 func (p *prepared) Value(key any) any {
@@ -52,7 +53,8 @@ type exchange struct {
 	cfg *config
 	op  *operation
 	selection
-	resp Response
+	claim *atomic.Bool // a body that can be read once, which the send that hands it over takes
+	resp  Response
 	upload
 }
 
@@ -75,73 +77,60 @@ func exchangeOf(r *http.Response) *exchange {
 	return x
 }
 
-// An upload is the progress of a request body through the transport. Each
-// replay of the body starts a new reading of it, a generation; the result
-// is the final generation's, published once the round trip has returned,
-// when no replay can follow.
+// An upload is the progress of a request body through the transport, read
+// in generations: the first request's, a hop's, or a replay the transport
+// takes with GetBody, each a new reading of the body. Its result is the
+// last generation's that the call handed the transport, published once the
+// chain has returned and every generation handed over has ended, so that
+// no Read of the body is then in flight.
 type upload struct {
 	payload payload                       // the body the client made, or the size of one the caller set
 	getBody func() (io.ReadCloser, error) // the source of a body the caller set
 	first   sentBody                      // the first generation
 
 	mu       sync.Mutex
-	gen      generation // the generation that counts
-	prev     generation // the one before it, which counts again if gen is never sent
-	gens     int32      // the generations started
-	returned bool       // the round trip has returned
-	done     bool       // the result is published
+	last     *sentBody // the last generation handed to the transport
+	open     int       // the generations handed over that have not ended
+	returned bool      // the chain has returned, so that no generation follows
+	done     bool      // the result is published
 	err      error
 	wait     chan struct{}
 }
 
-// A generation is one reading of a request body.
-type generation struct {
-	n      int32
-	ended  bool  // it has ended
-	result error // how it ended
-}
-
 var errClosedEarly = errors.New("openapi: the request body was closed before it was sent completely")
 
-// end records how generation n ended, the first time.
-func (u *upload) end(n int32, err error) {
+// hand records that b goes to the transport, as the last generation.
+func (u *upload) hand(b *sentBody) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	switch {
-	case n == u.gen.n && !u.gen.ended:
-		u.gen.ended, u.gen.result = true, err
-		u.publish()
-	case n == u.prev.n && !u.prev.ended:
-		u.prev.ended, u.prev.result = true, err
+	b.handed, u.last = true, b
+	if !b.ended {
+		u.open++
 	}
 }
 
-// newGeneration starts the reading of a replay.
-func (u *upload) newGeneration() int32 {
-	u.mu.Lock()
-	defer u.mu.Unlock()
-	u.gens++
-	u.prev, u.gen = u.gen, generation{n: u.gens}
-	return u.gens
-}
-
-// unsent drops generation n, a replay that is never sent: the one before it
-// counts again.
-func (u *upload) unsent(n int32) {
-	u.mu.Lock()
-	defer u.mu.Unlock()
-	if n == u.gen.n {
-		u.gen = u.prev
-		u.publish()
-	}
-}
-
-// publish publishes the result once no replay can follow; u.mu is held.
-func (u *upload) publish() {
-	if u.done || !u.returned || !u.gen.ended {
+// end records how b ended, the first time; u.mu is held.
+func (u *upload) end(b *sentBody, err error) {
+	if b.ended {
 		return
 	}
-	u.done, u.err = true, u.gen.result
+	b.ended, b.result = true, err
+	if b.handed {
+		u.open--
+		u.publish()
+	}
+}
+
+// publish publishes the result once the chain has returned and every
+// generation has ended; u.mu is held.
+func (u *upload) publish() {
+	if u.done || !u.returned || u.open > 0 {
+		return
+	}
+	u.done = true
+	if u.last != nil {
+		u.err = u.last.result
+	}
 	if u.wait != nil {
 		close(u.wait)
 	}
@@ -171,19 +160,29 @@ func (u *upload) waitUpload(ctx context.Context) error {
 func (x *exchange) attach(req *http.Request, p payload) {
 	x.payload = p
 	if p.size == 0 {
-		x.gen.ended = true
 		return
 	}
-	x.first = sentBody{x: x, p: p}
+	x.first = sentBody{x: x, p: &x.payload}
 	req.Body = &x.first
 	if p.once == nil {
 		req.GetBody = x.replay
 	}
 }
 
-// replay returns a body that reports its own reading afresh.
+// replay is the GetBody of a request the client sends: a new generation,
+// handed to the transport that calls it.
 func (x *exchange) replay() (io.ReadCloser, error) {
-	b := &sentBody{x: x, p: x.payload}
+	b, err := x.newBody()
+	if err != nil {
+		return nil, err
+	}
+	x.hand(b)
+	return b, nil
+}
+
+// newBody returns a new generation of the body, not yet handed over.
+func (x *exchange) newBody() (*sentBody, error) {
+	b := &sentBody{x: x, p: &x.payload}
 	if x.getBody != nil {
 		rc, err := x.getBody()
 		if err != nil {
@@ -191,7 +190,6 @@ func (x *exchange) replay() (io.ReadCloser, error) {
 		}
 		b.rc = rc
 	}
-	b.gen = x.newGeneration()
 	return b, nil
 }
 
@@ -207,26 +205,23 @@ func (r *Request) newExchange(ctx context.Context) (*exchange, *http.Request, er
 	x := &exchange{Context: ctx, cfg: pr.cfg, op: pr.op, selection: pr.selection}
 	req := r.HTTP.WithContext(x)
 	if x.places && (req.URL == nil || !sameOrigin(req.URL, pr.origin)) {
-		return nil, nil, &RequestError{Err: errors.New("the request's URL was changed to another origin, where its credentials cannot go; set Options.BaseURL instead")}
+		return nil, nil, &RequestError{Err: errOtherOrigin}
 	}
-	req.Header = req.Header.Clone() // a copy, its names canonical, so a credential replaces any spelling of its field
-	canonicalize(req.Header)
 	body := req.Body
-	readOnce := body != nil && body != http.NoBody && req.GetBody == nil
-	if readOnce && pr.taken.Swap(true) {
-		return nil, nil, &RequestError{Err: errors.New("the request body can be read only once, and was sent")}
+	if body != nil && body != http.NoBody && req.GetBody == nil {
+		x.claim = &pr.taken
 	}
+	x.payload = pr.payload
 	switch {
 	case body == nil || body == http.NoBody:
-		x.gen.ended = true
 	case body == pr.body:
 		x.attach(req, pr.payload)
 	default: // a body the caller set, of the length it declares, if any
-		x.getBody, x.payload.size = req.GetBody, -1
+		x.getBody, x.payload = req.GetBody, payload{size: -1, ctype: pr.payload.ctype}
 		if req.ContentLength > 0 {
 			x.payload.size = req.ContentLength
 		}
-		x.first = sentBody{x: x, p: x.payload, rc: body}
+		x.first = sentBody{x: x, p: &x.payload, rc: body}
 		req.Body = &x.first
 		if req.GetBody != nil {
 			req.GetBody = x.replay
@@ -235,19 +230,28 @@ func (r *Request) newExchange(ctx context.Context) (*exchange, *http.Request, er
 	return x, req, nil
 }
 
-// send sends req with the call's credentials, following redirects as
-// Options.Redirects says, and describes the response.
-func (x *exchange) send(req *http.Request) (*Response, error) {
-	signed, err := x.sign(req)
-	if err != nil {
+// send sends req as sign makes it, following redirects as
+// Options.Redirects says, and describes the last response. inPlace says
+// whether sign may add to req's header, which no one else holds. A
+// response that arrived comes with any error that ended the chain.
+func (x *exchange) send(req *http.Request, inPlace bool) (*Response, error) {
+	var re RequestError
+	signed := x.sign(req, true, inPlace, &re)
+	if err := re.refused(); err != nil {
 		return nil, err
+	}
+	if x.claim != nil && x.claim.Swap(true) {
+		return nil, &RequestError{Err: errors.New("the request body can be read only once, and was sent")}
+	}
+	if x.first.p != nil {
+		x.hand(&x.first)
 	}
 	resp, err := x.follow(req, signed)
 	x.mu.Lock()
 	x.returned = true
 	x.publish()
 	x.mu.Unlock()
-	if err != nil {
+	if resp == nil {
 		return nil, withContext(x, err)
 	}
 	r := &x.resp
@@ -258,7 +262,21 @@ func (x *exchange) send(req *http.Request) (*Response, error) {
 			r.Media = match(d.media, d.Message.Media, ct)
 		}
 	}
-	return r, nil
+	return r, withContext(x, err)
+}
+
+// call sends req as send does and applies Call's policy to the response.
+// Once the request has gone to the transport, an error waits for the
+// upload too, so that the body is not read after Call returns.
+func (x *exchange) call(req *http.Request, inPlace bool, out any) (*Response, error) {
+	resp, err := x.send(req, inPlace)
+	if err != nil {
+		if x.returned {
+			x.waitUpload(x)
+		}
+		return resp, err
+	}
+	return resp, x.finish(resp, out)
 }
 
 // finish applies Call's policy to r: a StatusError for a final status other
@@ -586,53 +604,88 @@ func (e *contextError) Error() string   { return e.err.Error() }
 func (e *contextError) Unwrap() []error { return append([]error{e.err}, e.also...) }
 
 // A payload is the content of a request body: bytes, a reader that can be
-// read again from where it stood, or a reader that can be read once.
+// read again from where it stood, or a reader that can be read once; and
+// the Content-Type the client wrote for it.
 type payload struct {
-	data []byte
-	ra   io.ReaderAt
-	off  int64
-	size int64 // the length, or -1 for a reader read once
-	once io.Reader
+	data  []byte
+	ra    io.ReaderAt
+	off   int64
+	size  int64 // the length, or -1 for a reader read once
+	once  io.Reader
+	ctype string
 }
 
-// A sentBody is one generation of a request body that reports its reading:
-// a payload, or a body the caller set, which the client closes as net/http
-// would.
+// A sentBody is one generation of a request body: a payload, or a body the
+// caller set, which the client closes as net/http would. One the client
+// tracks reports its reading to the upload: it ends at the first Read that
+// returns an error, io.EOF included, or at Close, except that a Close
+// during a Read ends it when that Read returns; a Read after the end, or
+// after Close, never reaches the reader.
 type sentBody struct {
 	x   *exchange // tracks the upload, or nil
-	gen int32
-	p   payload
+	p   *payload
 	pos int64
 	rc  io.ReadCloser // read instead of p when set, p.size being its declared length or -1
+
+	// Guarded by x.mu.
+	handed, reading, closed, ended bool
+	result                         error // how it ended
 }
 
-func (b *sentBody) Read(buf []byte) (n int, err error) {
+func (b *sentBody) Read(buf []byte) (int, error) {
+	if b.x == nil {
+		return b.read(buf)
+	}
+	u := &b.x.upload
+	u.mu.Lock()
+	if b.closed || b.ended {
+		err := b.result // nil after io.EOF
+		if b.closed {
+			err = errClosedEarly
+		}
+		u.mu.Unlock()
+		return 0, cmp.Or(err, io.EOF)
+	}
+	b.reading = true
+	u.mu.Unlock()
+	n, err := b.read(buf)
+	u.mu.Lock()
+	b.reading = false
+	switch {
+	case err == io.EOF:
+		u.end(b, nil)
+	case err != nil:
+		u.end(b, withContext(b.x, err))
+	case b.closed:
+		u.end(b, withContext(b.x, errClosedEarly))
+	}
+	u.mu.Unlock()
+	return n, err
+}
+
+// read reads the payload, or the caller's body, a body of known length
+// ending at its length and failing short of it.
+func (b *sentBody) read(buf []byte) (n int, err error) {
+	p := b.p
 	switch {
 	case b.rc != nil:
 		n, err = b.rc.Read(buf)
-	case b.p.once != nil:
-		n, err = b.p.once.Read(buf)
-	case b.pos >= b.p.size:
+	case p.once != nil:
+		n, err = p.once.Read(buf)
+	case b.pos >= p.size:
 		err = io.EOF
-	case b.p.ra != nil:
-		n, err = b.p.ra.ReadAt(buf[:min(int64(len(buf)), b.p.size-b.pos)], b.p.off+b.pos)
+	case p.ra != nil:
+		n, err = p.ra.ReadAt(buf[:min(int64(len(buf)), p.size-b.pos)], p.off+b.pos)
 	default:
-		n = copy(buf, b.p.data[b.pos:])
+		n = copy(buf, p.data[b.pos:])
 	}
 	b.pos += int64(n)
-	if b.p.size >= 0 { // a body of known length: read at its length, short before it
+	if p.size >= 0 {
 		switch {
-		case err == nil && b.pos >= b.p.size:
+		case err == nil && b.pos >= p.size:
 			err = io.EOF
-		case err == io.EOF && b.pos < b.p.size:
+		case err == io.EOF && b.pos < p.size:
 			err = io.ErrUnexpectedEOF
-		}
-	}
-	if err != nil && b.x != nil {
-		if err == io.EOF {
-			b.x.end(b.gen, nil)
-		} else {
-			b.x.end(b.gen, withContext(b.x, err))
 		}
 	}
 	return n, err
@@ -644,7 +697,12 @@ func (b *sentBody) Close() error {
 		err = b.rc.Close()
 	}
 	if b.x != nil {
-		b.x.end(b.gen, withContext(b.x, errClosedEarly))
+		u := &b.x.upload
+		u.mu.Lock()
+		if b.closed = true; !b.reading {
+			u.end(b, withContext(b.x, errClosedEarly))
+		}
+		u.mu.Unlock()
 	}
 	return err
 }

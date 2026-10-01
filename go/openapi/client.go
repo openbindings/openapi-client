@@ -515,11 +515,7 @@ func (c *Client) Call(ctx context.Context, key string, in *Input, out any) (*Res
 	}
 	x.selection = sec
 	x.attach(req, p)
-	resp, err := x.send(req)
-	if err != nil {
-		return nil, err
-	}
-	return resp, x.finish(resp, out)
+	return x.call(req, c.cfg.Redirects != FollowAll, out)
 }
 
 // Prepare builds the request for the operation named key with in, applying
@@ -543,8 +539,9 @@ func (c *Client) Prepare(key string, in *Input) (*Request, error) {
 	if err := re.refused(); err != nil {
 		return nil, err
 	}
-	setBody(req, p)
-	pr.selection, pr.payload, pr.body = sec, p, req.Body
+	pr.selection, pr.payload = sec, p
+	setBody(req, &pr.payload)
+	pr.body, _ = req.Body.(*sentBody)
 	if sec.places {
 		pr.origin = &url.URL{Scheme: req.URL.Scheme, Host: req.URL.Host}
 	}
@@ -608,7 +605,7 @@ func (r *Request) Send(ctx context.Context) (*Response, error) {
 	if err != nil {
 		return nil, err
 	}
-	return x.send(req)
+	return x.send(req, false)
 }
 
 // Call sends r with ctx, adding credentials, and returns as [Client.Call]
@@ -632,11 +629,7 @@ func (r *Request) Call(ctx context.Context, out any) (*Response, error) {
 	if err != nil {
 		return nil, err
 	}
-	resp, err := x.send(req)
-	if err != nil {
-		return nil, err
-	}
-	return resp, x.finish(resp, out)
+	return x.call(req, false, out)
 }
 
 // A Response is a response the server sent to a call: the *http.Response,

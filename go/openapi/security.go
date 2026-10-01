@@ -292,9 +292,6 @@ func clash(schemes []*scheme, skip func(int) bool) (i, j int) {
 	return 0, 0
 }
 
-// noAlternative places no credentials.
-var noAlternative alternative
-
 // A selection is the security alternative a call applies, or nil for none,
 // and whether the client places credentials of it.
 type selection struct {
@@ -541,30 +538,49 @@ func port(u *url.URL) string {
 	return ""
 }
 
-// sign returns req with the credentials of the call's alternative placed,
-// calling their sources with the call's context. That is a copy of req, or
-// req itself when the client places none and the http.Client has no cookie
-// jar, which adds cookies to the header it is given. A *RequestError says
-// why the credentials cannot be placed.
-func (x *exchange) sign(req *http.Request) (*http.Request, error) {
-	a := x.alt
-	switch {
-	case !x.places && x.cfg.client.Jar == nil:
-		return req, nil
-	case !x.places:
-		a = &noAlternative
+// sign returns req as it is sent: with the cookies the HTTPClient's jar
+// has for it and, when creds is set, the credentials of the call's
+// alternative, calling their sources with the call's context. That is a
+// copy of req, or req itself when nothing is added, or with inPlace when
+// only cookies are. Why the credentials cannot be placed is recorded in re.
+func (x *exchange) sign(req *http.Request, creds, inPlace bool, re *RequestError) *http.Request {
+	places := creds && x.places
+	var jarCookies []*http.Cookie
+	if x.cfg.jar != nil && req.URL != nil {
+		jarCookies = x.cfg.jar.Cookies(req.URL) // a jar keys cookies by scheme, host and path, which credentials leave
 	}
-	var re RequestError
-	h := maps.Clone(req.Header)
-	if h == nil {
-		h = http.Header{}
+	if !places && len(jarCookies) == 0 {
+		return req
 	}
-	var query, cookies []pair
+	s := req
+	if places || !inPlace {
+		s = new(http.Request)
+		*s = *req
+		if s.Header = maps.Clone(req.Header); s.Header == nil {
+			s.Header = http.Header{}
+		}
+	}
+	for _, c := range jarCookies {
+		s.AddCookie(c) // after the request's own cookies, as net/http adds them
+	}
+	if !places {
+		return s
+	}
+	a, h := x.alt, s.Header
+	var query, qnames, cookies, cnames []string // the pairs placed, and their names
+	checked := false                            // the plain-http rule
 	for i, sc := range a.schemes {
 		name := a.Schemes[i].Name
 		c := x.cfg.Credentials[name]
 		if !c.places() {
 			continue
+		}
+		if (sc.kind == httpBearer || sc.kind == httpBasic) && !checked {
+			checked = true
+			if err := secured(req.URL); err != nil {
+				re.fail(err)
+				return req
+			}
 		}
 		secret, err := c.source(x.Context)
 		switch {
@@ -575,94 +591,141 @@ func (x *exchange) sign(req *http.Request) (*http.Request, error) {
 		case secret == "":
 			err = fmt.Errorf("the credential source for %q returned an empty secret", name)
 		default:
-			err = sc.checkValue(secret)
+			if err = sc.checkValue(secret); err != nil {
+				err = fmt.Errorf("the credential source for %q: %w", name, err)
+			}
 		}
 		if err != nil {
 			re.setting(credentialKey(name), err)
 			continue
 		}
 		switch sc.kind {
-		case apiKeyHeader:
-			h[sc.dest.name] = []string{secret}
 		case apiKeyQuery:
-			query = append(query, pair{sc.dest.name, sc.written + "=" + escape(secret, unreservedSet)})
+			query, qnames = append(query, sc.written+"="+escape(secret, unreservedSet)), append(qnames, sc.dest.name)
 		case apiKeyCookie:
-			cookies = append(cookies, pair{sc.dest.name, sc.written + "=" + secret})
+			cookies, cnames = append(cookies, sc.written+"="+secret), append(cnames, sc.dest.name)
 		case httpBasic:
-			h["Authorization"] = []string{sc.auth + base64.StdEncoding.EncodeToString([]byte(secret))}
+			h[sc.dest.name] = []string{sc.auth + base64.StdEncoding.EncodeToString([]byte(secret))}
 		default:
-			h["Authorization"] = []string{sc.auth + secret}
+			h[sc.dest.name] = []string{sc.auth + secret}
 		}
 	}
-	if err := re.refused(); err != nil {
-		return nil, err
+	if re.Err != nil || len(re.Settings) > 0 {
+		return req
 	}
-	s := new(http.Request)
-	*s = *req
-	s.Header = h
-	if query != nil {
-		u := *req.URL
-		u.RawQuery = withPairs(u.RawQuery, "&", query, queryName)
-		s.URL = &u
+	// A header or cookie credential replaces every spelling of its field
+	// (RFC 9110 section 5.1), other spellings of Cookie joining its pairs.
+	var spelled []string
+	for k, vs := range h {
+		if ck := textproto.CanonicalMIMEHeaderKey(k); ck != k && x.sets(ck) {
+			if ck == "Cookie" {
+				spelled = append(spelled, vs...)
+			}
+			delete(h, k)
+		}
 	}
 	if cookies != nil {
-		h["Cookie"] = []string{withPairs(strings.Join(h["Cookie"], "; "), "; ", cookies, cookieName)}
+		h["Cookie"] = []string{withCookies(strings.Join(append(slices.Clip(h["Cookie"]), spelled...), "; "), isOneOf(cnames), cookies)}
 	}
-	return s, nil
+	if query != nil {
+		u := *req.URL
+		u.RawQuery = withQuery(u.RawQuery, isOneOf(qnames), query)
+		s.URL = &u
+	}
+	return s
 }
 
-// A pair is a query or cookie credential: the name it replaces, and the
-// pair as written.
-type pair struct{ name, text string }
-
-// withPairs returns list, pairs separated by the first byte of sep, less
-// each pair whose name one of add replaces, followed by add, all separated
-// by sep. name returns a pair of list, as sent, and its name.
-func withPairs(list, sep string, add []pair, name func(string) (string, string)) string {
-	replaced := func(n string) bool { return n == add[0].name }
-	if len(add) > 1 {
-		names := make(map[string]bool, len(add))
-		for _, p := range add {
-			names[p.name] = true
+// sets reports whether a credential the call places sets the header field.
+func (x *exchange) sets(field string) bool {
+	for i, sc := range x.alt.schemes {
+		if (sc.dest.in == "header" && sc.dest.name == field || sc.kind == apiKeyCookie && field == "Cookie") &&
+			x.cfg.Credentials[x.alt.Schemes[i].Name].places() {
+			return true
 		}
-		replaced = func(n string) bool { return names[n] }
 	}
+	return false
+}
+
+// queryNames returns the names of the query credentials the call places.
+func (x *exchange) queryNames() []string {
+	if !x.places {
+		return nil
+	}
+	var names []string
+	for i, sc := range x.alt.schemes {
+		if sc.kind == apiKeyQuery && x.cfg.Credentials[x.alt.Schemes[i].Name].places() {
+			names = append(names, sc.dest.name)
+		}
+	}
+	return names
+}
+
+// isOneOf returns a test of whether a name is one of names.
+func isOneOf(names []string) func(string) bool {
+	if len(names) == 1 {
+		return func(n string) bool { return n == names[0] }
+	}
+	set := make(map[string]bool, len(names))
+	for _, n := range names {
+		set[n] = true
+	}
+	return func(n string) bool { return set[n] }
+}
+
+// withQuery returns the query q less each pair whose name, decoded as
+// application/x-www-form-urlencoded, drop reports, followed by add; every
+// other pair is kept as written, empty ones included.
+func withQuery(q string, drop func(string) bool, add []string) string {
 	var b strings.Builder
-	b.Grow(len(list) + len(add)*32)
-	for s := range strings.SplitSeq(list, sep[:1]) {
-		if s, n := name(s); s != "" && !replaced(n) {
+	b.Grow(len(q) + 32*len(add))
+	n := 0 // the pairs written
+	if q != "" {
+		for s := range strings.SplitSeq(q, "&") {
+			name, _, _ := strings.Cut(s, "=")
+			if strings.ContainsAny(name, "%+") {
+				if d, err := url.QueryUnescape(name); err == nil {
+					name = d
+				}
+			}
+			if !drop(name) {
+				if n++; n > 1 {
+					b.WriteByte('&')
+				}
+				b.WriteString(s)
+			}
+		}
+	}
+	for _, p := range add {
+		if n++; n > 1 {
+			b.WriteByte('&')
+		}
+		b.WriteString(p)
+	}
+	return b.String()
+}
+
+// withCookies returns the cookie pairs of list, without surrounding
+// whitespace, less the empty ones and each whose name drop reports,
+// followed by add, joined by "; ".
+func withCookies(list string, drop func(string) bool, add []string) string {
+	var b strings.Builder
+	b.Grow(len(list) + 32*len(add))
+	for s := range strings.SplitSeq(list, ";") {
+		s = strings.Trim(s, " \t")
+		if name, _, _ := strings.Cut(s, "="); s != "" && !drop(strings.TrimRight(name, " \t")) {
 			if b.Len() > 0 {
-				b.WriteString(sep)
+				b.WriteString("; ")
 			}
 			b.WriteString(s)
 		}
 	}
 	for _, p := range add {
 		if b.Len() > 0 {
-			b.WriteString(sep)
+			b.WriteString("; ")
 		}
-		b.WriteString(p.text)
+		b.WriteString(p)
 	}
 	return b.String()
-}
-
-// queryName returns the query pair s and its name, percent-decoded.
-func queryName(s string) (string, string) {
-	n, _, _ := strings.Cut(s, "=")
-	if strings.ContainsAny(n, "%+") {
-		if d, err := url.QueryUnescape(n); err == nil {
-			n = d
-		}
-	}
-	return s, n
-}
-
-// cookieName returns the cookie pair s, without surrounding whitespace, and
-// its name.
-func cookieName(s string) (string, string) {
-	s = strings.Trim(s, " \t")
-	n, _, _ := strings.Cut(s, "=")
-	return s, strings.TrimRight(n, " \t")
 }
 
 // redact returns err, from the http.Client, with the URL a *url.Error names

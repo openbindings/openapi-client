@@ -16,7 +16,8 @@ import (
 // derive from them.
 type config struct {
 	Options
-	client        *http.Client                               // HTTPClient, following no redirects
+	client        *http.Client                               // HTTPClient, following no redirects and with no cookie jar
+	jar           http.CookieJar                             // HTTPClient's Jar, which the client applies itself
 	checkRedirect func(*http.Request, []*http.Request) error // HTTPClient's CheckRedirect, or net/http's default
 	base          *endpoint                                  // BaseURL, parsed
 	securityNames map[string]bool                            // Security, as a set
@@ -50,15 +51,18 @@ func newConfig(o Options, parent *config) *config {
 	cfg.Security = slices.Clone(o.Security)
 
 	if parent != nil && parent.HTTPClient == o.HTTPClient {
-		cfg.client, cfg.checkRedirect = parent.client, parent.checkRedirect
+		cfg.client, cfg.jar, cfg.checkRedirect = parent.client, parent.jar, parent.checkRedirect
 	} else {
 		hc := o.HTTPClient
 		if hc == nil {
 			hc = http.DefaultClient
 		}
-		client := *hc
-		client.CheckRedirect = followNone // the client follows redirects itself
-		cfg.client, cfg.checkRedirect = &client, hc.CheckRedirect
+		rt := hc.Transport
+		if rt == nil {
+			rt = http.DefaultTransport
+		}
+		cfg.client = &http.Client{Transport: noFollow{rt}, Timeout: hc.Timeout}
+		cfg.jar, cfg.checkRedirect = hc.Jar, hc.CheckRedirect
 		if cfg.checkRedirect == nil {
 			cfg.checkRedirect = tenRedirects
 		}
