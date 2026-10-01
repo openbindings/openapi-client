@@ -25,7 +25,7 @@ type plan struct {
 	servers    []*server
 	security   []alternative   // Operation.Security, compiled
 	body       []parsedMedia   // the request body's Media, parsed
-	encodings  []*formEncoding // and their Encodings, for form and multipart types
+	encodings  []*formEncoding // and the Encodings of the form and multipart ones, by index
 	responses  []responsePlan
 	success    [][]parsedMedia // each 2xx response's concrete media types
 }
@@ -393,7 +393,7 @@ type content struct {
 	source    string // the object's Source
 	media     []*Media
 	parsed    []parsedMedia   // media, parsed
-	encodings []*formEncoding // the Encoding of each form or multipart type
+	encodings []*formEncoding // the Encoding of each form or multipart type, by its index in media
 	success   []parsedMedia   // the concrete media types among them, for a 2xx response
 }
 
@@ -434,11 +434,12 @@ func (d *document) content(t value, at string) *content {
 			default:
 				md.Sequential = pm.class() == sequentialClass || isMultipart(pm)
 			}
-			var enc *formEncoding
 			if ok && (isForm(pm) || isMultipart(pm)) {
+				var enc *formEncoding
 				enc, md.Encoding = d.encodingOf(mv.get("schema"), mat+"/schema", mv.get("encoding"), mat+"/encoding", isMultipart(pm))
+				c.encodings = append(append(c.encodings, make([]*formEncoding, len(c.media)-len(c.encodings))...), enc)
 			}
-			c.media, c.parsed, c.encodings = append(c.media, md), append(c.parsed, pm), append(c.encodings, enc)
+			c.media, c.parsed = append(c.media, md), append(c.parsed, pm)
 		}
 	}
 	return c

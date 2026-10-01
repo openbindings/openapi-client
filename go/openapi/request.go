@@ -588,14 +588,13 @@ func (c *Client) body(o *operation, in *Input, h http.Header, re *RequestError) 
 			re.input("Input.Body", errors.New("an empty content map takes only a []byte or io.Reader body"))
 			return payload{}, nil
 		}
-		enc := o.encodings[slices.Index(o.Body.Media, md)]
 		switch k := m.class(); {
 		case isForm(m):
 			var b builder
-			c.formBody(&b, enc, v, "Input.Body", true, re)
+			c.formBody(&b, o.encoding(md), v, "Input.Body", true, re)
 			p = b.payload()
 		case isMultipart(m):
-			p, typ = c.multipartBody(enc, typ, m, v, re)
+			p, typ = c.multipartBody(o.encoding(md), typ, m, v, re)
 		case k == sequentialClass:
 			p = c.sequentialBody(m, v, re)
 		default:
@@ -617,6 +616,12 @@ func (c *Client) body(o *operation, in *Input, h http.Header, re *RequestError) 
 	}
 	h["Content-Type"], p.ctype = []string{typ}, typ
 	return p, md
+}
+
+// encoding returns the compiled Encoding of the request body's form or
+// multipart Media md.
+func (o *operation) encoding(md *Media) *formEncoding {
+	return o.encodings[slices.Index(o.Body.Media, md)]
 }
 
 // mediaType selects the request body's media type: as sent, parsed, and
