@@ -570,12 +570,15 @@ func (c *Client) body(o *operation, in *Input, h http.Header, re *RequestError) 
 	typ, m, md := c.mediaType(o, in, re)
 	var p payload
 	raw := true // pre-encoded
+	r, reader := in.Body.(io.Reader)
 	switch v := in.Body.(type) {
 	case []byte:
 		p = payload{data: v, size: int64(len(v))}
-	case io.Reader:
-		p = readerPayload(v)
 	default:
+		if reader && !null(v) { // a typed nil is a value
+			p = readerPayload(r)
+			break
+		}
 		raw = false
 		if c.cfg.codecsErr != nil {
 			re.setting("Options.Codecs", c.cfg.codecsErr)
@@ -587,7 +590,14 @@ func (c *Client) body(o *operation, in *Input, h http.Header, re *RequestError) 
 			re.input("Input.Body", errors.New("an empty content map takes only a []byte or io.Reader body"))
 			return payload{}, nil
 		}
+		_, isPart := v.(Part)
+		if pt, ok := v.(*Part); ok && pt != nil {
+			isPart = true
+		}
 		switch k := m.class(); {
+		case isPart && (isForm(m) || isMultipart(m)):
+			re.input("Input.Body", errors.New("a form or multipart body is an object of fields, not a Part"))
+			return payload{}, nil
 		case isForm(m):
 			var b builder
 			c.formBody(&b, o.encoding(md), v, "Input.Body", true, re)
@@ -609,7 +619,10 @@ func (c *Client) body(o *operation, in *Input, h http.Header, re *RequestError) 
 		return payload{}, nil
 	}
 	if raw && isMultipart(m) {
-		if _, given := m.param("boundary"); !given {
+		switch _, given, err := m.boundary(); {
+		case err != nil:
+			re.setting("Input.MediaType", err)
+		case !given:
 			re.setting("Input.MediaType", errors.New("a pre-encoded multipart body needs its boundary in Input.MediaType"))
 		}
 	}

@@ -12,14 +12,21 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // A sequence is how a sequential media type frames its items.
 type sequence struct {
 	events bool        // text/event-stream
-	sep    byte        // what ends an item, LF, or for a JSON text sequence RS, which also begins one
+	rs     bool        // a JSON text sequence: RS before each item
+	seps   [][]byte    // what an item's JSON text cannot hold: LF or CR, which end a JSON Lines item, or RS
 	item   parsedMedia // the media type of each JSON item
 }
+
+var (
+	lineSeps = [][]byte{{'\n'}, {'\r'}}
+	rsSeps   = [][]byte{{0x1e}}
+)
 
 func sequenceOf(m parsedMedia) sequence {
 	switch {
@@ -27,13 +34,14 @@ func sequenceOf(m parsedMedia) sequence {
 		return sequence{events: true}
 	case hasSuffixFold(m.sub, "json-seq"): // RFC 7464, and a +json-seq type of its +json items (RFC 8091)
 		sub := m.sub[:len(m.sub)-len("-seq")]
-		return sequence{sep: 0x1e, item: parsedMedia{m.typ + "/" + sub, m.typ, sub, ""}}
+		return sequence{rs: true, seps: rsSeps, item: parsedMedia{m.typ + "/" + sub, m.typ, sub, ""}}
 	}
-	return sequence{sep: '\n', item: parsedMedia{"application/json", "application", "json", ""}}
+	return sequence{seps: lineSeps, item: defaultMedia[0].parsed}
 }
 
 var (
 	errSeparator = errors.New("a pre-encoded item holds its framing's separator")
+	errCodecSep  = errors.New("the codec's output for the item holds its framing's separator")
 	errEvent     = errors.New("an event stream item is an Event, or an object of data, event and id strings and a retry integer")
 	errorType    = reflect.TypeFor[error]()
 	boolType     = reflect.TypeFor[bool]()
@@ -79,43 +87,37 @@ type itemWriter struct {
 func (c *Client) itemWriter(sq sequence) *itemWriter {
 	w := &itemWriter{c: c, sq: sq}
 	w.codec, _ = c.cfg.codec(sq.item)
-	w.enc = json.NewEncoder(&w.b)
 	return w
-}
-
-// Write appends p to the body, as the Encoder writes an item.
-func (b *builder) Write(p []byte) (int, error) {
-	b.buf = append(b.buf, p...)
-	return len(p), nil
 }
 
 // write writes the item v, returning the JSON Pointer, from v, of what it
 // refuses: an event, or the JSON text v is or encodes, a reader's read as
-// the body is.
+// the body is. A typed nil is the value null, never a reader.
 func (w *itemWriter) write(v any) (string, error) {
-	b, sep, start := &w.b, w.sq.sep, len(w.b.buf)
+	b, start := &w.b, len(w.b.buf)
 	if w.sq.events {
 		var err error
-		b.buf, err = appendEvent(b.buf, v)
+		b.buf, err = w.c.doc.appendEvent(b.buf, v)
 		return "", err
 	}
-	if sep == 0x1e {
-		b.buf = append(b.buf, sep)
+	if w.sq.rs {
+		b.buf = append(b.buf, 0x1e)
 	}
 	var at string
 	var err error
 	switch x := v.(type) {
-	case io.Reader:
-		b.add(source{payload: readerPayload(x), check: []string{string(sep)}})
-		b.buf = append(b.buf, '\n')
 	case []byte:
-		err = w.text(x)
+		err = w.text(x, errSeparator)
 	default:
+		r, reader := v.(io.Reader)
 		switch {
+		case reader && !null(v):
+			b.add(source{payload: readerPayload(r), check: w.sq.seps})
+			b.buf = append(b.buf, '\n')
 		case w.codec != nil:
 			var buf bytes.Buffer
 			if err = w.codec.Encode(&buf, v); err == nil {
-				err = w.text(buf.Bytes())
+				err = w.text(bytes.TrimRight(buf.Bytes(), " \t\n\r"), errCodecSep) // trailing JSON whitespace
 			}
 		case w.static:
 			_, err = w.encode(v)
@@ -129,17 +131,24 @@ func (w *itemWriter) write(v any) (string, error) {
 	return at, err
 }
 
-// text appends an item's JSON text, which cannot hold its separator.
-func (w *itemWriter) text(data []byte) error {
-	if bytes.IndexByte(data, w.sq.sep) >= 0 {
-		return errSeparator
+// text appends an item's JSON text, which cannot hold a separator, refused
+// with err.
+func (w *itemWriter) text(data []byte, err error) error {
+	for _, sep := range w.sq.seps {
+		if bytes.Contains(data, sep) {
+			return err
+		}
 	}
 	w.b.buf = append(append(w.b.buf, data...), '\n')
 	return nil
 }
 
-// encode writes v with the Encoder, returning what it wrote.
+// encode writes v with the Encoder, made at the first, returning what it
+// wrote: JSON text, which holds no separator, then LF.
 func (w *itemWriter) encode(v any) ([]byte, error) {
+	if w.enc == nil {
+		w.enc = json.NewEncoder(&w.b)
+	}
 	start := len(w.b.buf)
 	if err := w.enc.Encode(v); err != nil {
 		return nil, &encodingError{err}
@@ -147,34 +156,43 @@ func (w *itemWriter) encode(v any) ([]byte, error) {
 	return w.b.buf[start:], nil
 }
 
-// appendEvent appends v, an Event or an object with no members but data,
-// event and id, as strings, and retry, as a non-negative integer, as the
-// lines of one event: each a "field: value" line, data split at its line
-// breaks, then a blank line.
-func appendEvent(b []byte, v any) ([]byte, error) {
+// appendEvent appends v, an Event, a non-nil *Event, or an object with no
+// members but data, event and id, as strings, and retry, as a non-negative
+// integer, as the lines of one event: each a "field: value" line, data split
+// at its line breaks, then a blank line. Invalid UTF-8 is written as U+FFFD,
+// as encoding/json writes it; a line break in event or id, and a NUL in id,
+// which a receiver would split at or ignore, cannot be encoded.
+func (d *document) appendEvent(b []byte, v any) ([]byte, error) {
+	if e, ok := v.(*Event); ok && e != nil {
+		v = *e
+	}
 	if e, ok := v.(Event); ok {
 		switch {
-		case strings.ContainsAny(e.Event, "\r\n") || e.IDSet && strings.ContainsAny(e.ID, "\r\n"):
+		case strings.ContainsAny(e.Event, "\r\n") || e.IDSet && strings.ContainsAny(e.ID, "\r\n\x00"):
 			return b, errEvent
 		case e.RetrySet && (e.Retry < 0 || e.Retry%time.Millisecond != 0):
 			return b, errors.New("an event's Retry is a non-negative whole number of milliseconds")
 		}
-		if e.Data != nil {
-			b = appendData(b, string(e.Data))
+		switch {
+		case e.Data == nil:
+		case utf8.Valid(e.Data):
+			b = appendData(b, e.Data)
+		default:
+			b = appendData(b, jsonText(string(e.Data)))
 		}
 		if e.Event != "" {
-			b = append(append(append(b, "event: "...), e.Event...), '\n')
+			b = append(append(append(b, "event: "...), jsonText(e.Event)...), '\n')
 		}
 		if e.IDSet {
-			b = append(append(append(b, "id: "...), e.ID...), '\n')
+			b = append(append(append(b, "id: "...), jsonText(e.ID)...), '\n')
 		}
 		if e.RetrySet {
 			b = append(strconv.AppendInt(append(b, "retry: "...), e.Retry.Milliseconds(), 10), '\n')
 		}
 		return append(b, '\n'), nil
 	}
-	s, err := marshal(v)
-	if _, reader := v.(io.Reader); err != nil || reader || s[0] != '{' {
+	s, _, err := encodeJSON(d, v, marshal) // refusing a reader
+	if err != nil || s[0] != '{' {
 		return b, errEvent
 	}
 	r := &jsonReader{s: s}
@@ -187,7 +205,8 @@ func appendEvent(b []byte, v any) ([]byte, error) {
 		switch {
 		case name == "data" && quoted:
 			b = appendData(b, val)
-		case (name == "event" || name == "id") && quoted && !strings.ContainsAny(val, "\r\n"),
+		case name == "event" && quoted && !strings.ContainsAny(val, "\r\n"),
+			name == "id" && quoted && !strings.ContainsAny(val, "\r\n\x00"),
 			name == "retry" && !quoted && strings.Trim(val, "0123456789") == "":
 			b = append(append(append(append(b, name...), ": "...), val...), '\n')
 		default:
@@ -200,13 +219,16 @@ func appendEvent(b []byte, v any) ([]byte, error) {
 
 // appendData appends a data line for each line of s, split at CRLF, LF or
 // CR (the HTML standard's end-of-line).
-func appendData(b []byte, s string) []byte {
+func appendData[T string | []byte](b []byte, s T) []byte {
 	for {
-		i := strings.IndexAny(s, "\r\n")
-		if i < 0 {
-			return append(append(append(b, "data: "...), s...), '\n')
+		i := 0
+		for i < len(s) && s[i] != '\r' && s[i] != '\n' {
+			i++
 		}
 		b = append(append(append(b, "data: "...), s[:i]...), '\n')
+		if i == len(s) {
+			return b
+		}
 		if s[i] == '\r' && i+1 < len(s) && s[i+1] == '\n' {
 			i++
 		}
@@ -309,7 +331,8 @@ func (it *items) read(buf []byte) (int, error) {
 			it.one[0] = source{payload: p}
 			it.cur.parts = it.one[:]
 		}
-		it.cur.pos, it.cur.tail = 0, append(it.cur.tail[:0], lead(it.cur.parts[0].check)...)
+		it.cur.pos = 0
+		it.cur.begin()
 	}
 }
 

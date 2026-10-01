@@ -674,13 +674,6 @@ type payload struct {
 	parts []source // read in order instead, when set
 }
 
-// A source is one source of a body of several, and how it is read.
-type source struct {
-	payload
-	form  bool     // encoded as a form field is, as it is read
-	check []string // what its content cannot hold, found as it is read
-}
-
 // reader returns what a generation of p reads instead of p's one source:
 // its parts, or its iterator's items, which the generation's Close stops.
 func (p *payload) reader() io.ReadCloser {
@@ -688,7 +681,7 @@ func (p *payload) reader() io.ReadCloser {
 	case ok:
 		return it
 	case p.parts != nil:
-		return &cursor{parts: p.parts, tail: []byte(lead(p.parts[0].check))}
+		return newCursor(p.parts)
 	}
 	return nil
 }
@@ -800,90 +793,4 @@ func (b *sentBody) Close() error {
 		u.mu.Unlock()
 	}
 	return err
-}
-
-// A cursor reads the parts of a body in order.
-type cursor struct {
-	parts []source
-	pos   int64  // read of parts[0]
-	tail  []byte // the end of what parts[0] has given, for its check
-	pend  []byte // what a form part has encoded, not yet read
-	raw   []byte // what a form part has given, to be encoded
-}
-
-func (c *cursor) Close() error { return nil }
-
-func (c *cursor) Read(buf []byte) (int, error) {
-	for {
-		if len(c.pend) > 0 {
-			n := copy(buf, c.pend)
-			c.pend = c.pend[n:]
-			return n, nil
-		}
-		if len(c.parts) == 0 {
-			return 0, io.EOF
-		}
-		p, dst := &c.parts[0], buf
-		if p.form {
-			if c.raw == nil {
-				c.raw = make([]byte, 4<<10)
-			}
-			dst = c.raw
-		}
-		n, err := p.readAt(dst, c.pos)
-		if c.pos += int64(n); err == io.EOF && p.size >= 0 && c.pos < p.size {
-			err = io.ErrUnexpectedEOF
-		}
-		if n > 0 && p.check != nil && c.holds(p.check, dst[:n]) {
-			return 0, errHolds(p.check)
-		}
-		next := err == io.EOF || p.size >= 0 && c.pos >= p.size
-		if next {
-			c.parts, c.pos, err = c.parts[1:], 0, nil
-			if len(c.parts) > 0 {
-				c.tail = append(c.tail[:0], lead(c.parts[0].check)...)
-			}
-		}
-		switch {
-		case p.form:
-			c.pend = appendForm(c.pend[:0], dst[:n])
-		case n > 0 || err != nil || !next:
-			return n, err
-		}
-		if err != nil {
-			return 0, err
-		}
-	}
-}
-
-// holds reports whether data, read after the tail, holds one of patterns,
-// and keeps the end of what has been read as the tail, as long as the
-// longest of them but one byte.
-func (c *cursor) holds(patterns []string, data []byte) bool {
-	c.tail = append(c.tail, data...)
-	found, keep := false, 0
-	for _, s := range patterns {
-		found = found || bytes.Contains(c.tail, []byte(s))
-		keep = max(keep, len(s)-1)
-	}
-	c.tail = append(c.tail[:0], c.tail[max(0, len(c.tail)-keep):]...)
-	return found
-}
-
-// lead returns what precedes a part's content, for its check: the CRLF
-// before a multipart part's content, kept as a tail is, or nothing.
-func lead(patterns []string) string {
-	keep := 0
-	for _, s := range patterns {
-		keep = max(keep, len(s)-1)
-	}
-	return "\r\n"[2-min(2, keep):]
-}
-
-// errHolds is why a part's content, read, ends the body.
-func errHolds(patterns []string) error {
-	if len(patterns[0]) == 1 {
-		return errSeparator
-	}
-	return errDelimiter
 }

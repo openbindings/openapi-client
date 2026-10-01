@@ -38,17 +38,15 @@ type document struct {
 	inherits atomic.Pointer[inheritance] // what operations inherit from the root
 	walks    sync.Map                    // reflect.Type to *walk, for finding readers in bodies
 	refs     sync.Map                    // node to the *resolution of the Reference Object there
+	types    sync.Map                    // schemas' state key to the mediaSet of a field they type
+	forms    sync.Map                    // schemas' state key to the formEncoding of a nested part they type
 
 	// What nodes shared by several places compile to, by node.
 	paramForms  memo[param]
 	contents    memo[*content]
-	encodings   memo[*formEncoding] // a nested multipart part's fields, by its schema
 	serverLists memo[*serverList]
 	schemeNames memo[*scheme] // by the securitySchemes member a name selects
 	schemeForms memo[*scheme] // by the Security Scheme Object a reference reaches
-
-	typesMu sync.Mutex
-	types   map[int32]string // a form or multipart field's default media type, by its schema
 }
 
 // A memo keeps what each node of a document compiles to.

@@ -1,7 +1,6 @@
 package openapi
 
 import (
-	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,95 +10,342 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 )
 
-// A formEncoding is the Encoding of a form or multipart Media, compiled once
-// per node: its fields by name.
+// A formEncoding is the Encoding of a form or multipart Media, or the fields
+// a schema gives a nested part, compiled once: its fields by name, and, for
+// each struct type a body of it has been, that type's fields in the order
+// encoding/json writes them.
 type formEncoding struct {
-	fields map[string]*field
+	byName map[string]*field
+	lists  sync.Map // reflect.Type to []*field
 }
 
-// A field is a form or multipart field compiled: its descriptor and, for
-// one written by RFC 6570, its style, or else the media types it takes.
+// noFields is the encoding of a nested part no schema describes.
+var noFields = &formEncoding{}
+
+// A field is a form or multipart field compiled: its descriptor; the RFC
+// 6570 style its Encoding sets, which applies under form-urlencoded and
+// multipart/form-data; and the media types it otherwise takes.
 type field struct {
 	param
-	types  []string      // the media types ContentType lists, as written
+	styled bool          // its Encoding sets style, explode or allowReserved, where they apply
+	types  []string      // the media types it takes, as written
 	parsed []parsedMedia // types, parsed
 	class  class         // the class of a sole type
 	listed bool          // its Encoding lists them, so a Part's MediaType must match one
-	schema value         // its schema, whose properties a nested multipart part's fields are
+	roots  []value       // its declarations, whose properties a nested part's fields are
 }
 
 // untyped is a field no schema or Encoding describes, whose type is absent
 // (OpenAPI 3.1.2 section 4.8.15.1.1).
-var untyped = &field{param: param{Param: &Param{ContentType: "application/octet-stream"}},
+var untyped = &field{param: param{Param: &Param{ContentType: octetStream.full}},
 	types: []string{octetStream.full}, parsed: []parsedMedia{octetStream}, class: otherClass}
 
-// noFields is the encoding of an object no schema describes.
-var noFields = &formEncoding{}
-
 func (e *formEncoding) field(name string) *field {
-	if f := e.fields[name]; f != nil {
+	if f := e.byName[name]; f != nil {
 		return f
 	}
 	return untyped
 }
 
-// encodingOf compiles the fields of the object schema s, whose Source is
-// src, with the Encoding Objects of encodings, at esrc, and describes them:
-// the properties s lists, then the names only encodings has.
-func (d *document) encodingOf(s value, src string, encodings value, esrc string, multipart bool) (*formEncoding, []*Param) {
-	enc := &formEncoding{fields: map[string]*field{}}
-	var list []*Param
-	s, src = d.object(s, src)
-	for name, ps := range s.get("properties").members() {
-		f := d.newField(name, d.schema(ps, src, "/properties/"+token(name)), encodings.get(name), esrc+"/"+token(name), multipart)
-		enc.fields[name], list = f, append(list, f.Param)
+// fieldsOf returns the fields of e that the struct type t's fields fs, as
+// encoding/json writes them, are, found once per type.
+func (e *formEncoding) fieldsOf(t reflect.Type, fs []jsonField) []*field {
+	if l, ok := e.lists.Load(t); ok {
+		return l.([]*field)
+	}
+	l := make([]*field, len(fs))
+	for i, jf := range fs {
+		l[i] = e.field(jf.name)
+	}
+	got, _ := e.lists.LoadOrStore(t, l)
+	return got.([]*field)
+}
+
+// stylesApply reports whether an Encoding's style, explode and allowReserved
+// apply under m (OpenAPI 3.1.2 section 4.8.15.1.2): form-urlencoded and
+// multipart/form-data.
+func stylesApply(m parsedMedia) bool {
+	return isForm(m) || strings.EqualFold(m.full, "multipart/form-data")
+}
+
+// encodingOf compiles the fields of a form or multipart body whose schema is
+// s, at src, with the Encoding Objects of encodings, at esrc, under the media
+// type or range m, and describes them: the properties s and the schemas its
+// $ref and allOf reach declare, then the names only encodings has.
+func (d *document) encodingOf(s []value, src string, encodings value, esrc string, m parsedMedia) (*formEncoding, []*Param) {
+	fields := map[string]*field{}
+	var names []string
+	var first []*Schema
+	d.closure(s, src, func(s value, at string) {
+		for name, ps := range s.get("properties").members() {
+			if f := fields[name]; f != nil {
+				f.roots = append(f.roots, ps)
+				continue
+			}
+			fields[name] = &field{roots: []value{ps}}
+			names, first = append(names, name), append(first, d.schema(ps, at, "/properties/"+token(name)))
+		}
+	})
+	list := make([]*Param, 0, len(names))
+	for i, name := range names {
+		f := d.newField(name, first[i], fields[name].roots, encodings.get(name), esrc+"/"+token(name), m)
+		fields[name], list = f, append(list, f.Param)
 	}
 	for name, e := range encodings.members() {
-		if enc.fields[name] == nil {
-			f := d.newField(name, nil, e, esrc+"/"+token(name), multipart)
-			enc.fields[name], list = f, append(list, f.Param)
+		if fields[name] == nil {
+			f := d.newField(name, nil, nil, e, esrc+"/"+token(name), m)
+			fields[name], list = f, append(list, f.Param)
 		}
 	}
-	return enc, list
+	return &formEncoding{byName: fields}, list
 }
 
-// nested returns the fields of a multipart part f writes from an object: in
-// OpenAPI 3.1 its schema's properties, each of its default type, compiled
-// once per schema.
-func (d *document) nested(f *field) *formEncoding {
-	if !f.schema.ok() {
+// nested returns the fields of a nested part f writes from an object: in
+// OpenAPI 3.1 those its schemas declare, each of its default type, or, for an
+// item or a field whose schemas allow an array but no object, those its items
+// declare; compiled once per schema.
+func (d *document) nested(f *field, item bool) *formEncoding {
+	roots := f.roots
+	if sh := d.shapeOf(roots); sh.array && (item || !sh.object) {
+		roots = sh.items
+	}
+	if len(roots) == 0 {
 		return noFields
 	}
-	return d.encodings.get(f.schema.i, func() *formEncoding {
-		enc, _ := d.encodingOf(f.schema, "", value{}, "", true)
-		return enc
-	})
+	k := stateKey(roots)
+	if enc, ok := d.forms.Load(k); ok {
+		return enc.(*formEncoding)
+	}
+	enc, _ := d.encodingOf(roots, "", value{}, "", parsedMedia{})
+	got, _ := d.forms.LoadOrStore(k, enc)
+	return got.(*formEncoding)
 }
 
-// object returns the schema s, whose Source is src, or the schema its $ref
-// leads to when it lists no properties of its own.
-func (d *document) object(s value, src string) (value, string) {
-	if ref, _, _ := reference(s); ref.ok() && !s.get("properties").ok() {
-		if t, at, _, err := d.follow(s, src); err == nil {
-			return t, at
+// closure calls f with each schema of s, at src, and every schema they reach
+// by $ref and allOf, depth first in document order, each once and at most
+// maxDepth of them. It reports false when there were more. A $ref is a
+// keyword of its schema (JSON Schema 2020-12 section 8.2.3.1), its target
+// another schema reached, whose own keywords and $ref apply too.
+func (d *document) closure(s []value, src string, f func(s value, at string)) bool {
+	type schema struct {
+		v  value
+		at string
+	}
+	var stack []schema
+	for i := len(s) - 1; i >= 0; i-- {
+		stack = append(stack, schema{s[i], src})
+	}
+	var seen map[int32]bool // made once a schema can be reached twice
+	if len(s) > 1 {
+		seen = map[int32]bool{}
+	}
+	for n := 0; len(stack) > 0; {
+		top := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if !top.v.ok() || seen[top.v.i] {
+			continue
+		}
+		if n++; n > maxDepth {
+			return false
+		}
+		f(top.v, top.at)
+		mark := len(stack)
+		for name, m := range top.v.members() {
+			switch name {
+			case "$ref":
+				if m.kind() != '"' {
+					break
+				}
+				if t, ptr, err := d.target(m.text()); err == nil {
+					at := ""
+					if top.at != "" {
+						at = d.source(ptr)
+					}
+					stack = append(stack, schema{t, at})
+				}
+			case "allOf":
+				i := 0
+				for _, e := range m.members() {
+					at := ""
+					if top.at != "" {
+						at = top.at + "/allOf/" + strconv.Itoa(i)
+					}
+					stack, i = append(stack, schema{e, at}), i+1
+				}
+			}
+		}
+		if len(stack) > mark || seen != nil {
+			if seen == nil {
+				seen = map[int32]bool{}
+			}
+			seen[top.v.i] = true
+			slices.Reverse(stack[mark:]) // the first in document order on top
 		}
 	}
-	return s, src
+	return true
 }
 
-// newField compiles the field name, whose schema is s and Encoding Object e,
-// at src.
-func (d *document) newField(name string, s *Schema, e value, src string, multipart bool) *field {
-	f := &field{param: param{Param: &Param{Name: name, Schema: s}}}
+// A mediaSet is a set of the default media types a field may take.
+type mediaSet uint8
+
+const (
+	textDefault mediaSet = 1 << iota
+	jsonDefault
+	octetDefault
+)
+
+var defaultMedia = [...]struct {
+	set    mediaSet
+	parsed parsedMedia
+}{
+	{jsonDefault, parsedMedia{"application/json", "application", "json", ""}},
+	{octetDefault, octetStream},
+	{textDefault, parsedMedia{"text/plain", "text", "plain", ""}},
+}
+
+// A shape is what a field's schemas say of its values' types: the defaults
+// of the types they allow other than array (OpenAPI 3.1.2 section
+// 4.8.15.1.1), whether they allow an object or an array, and the schemas of
+// an array's items.
+type shape struct {
+	own           mediaSet
+	object, array bool
+	items         []value
+}
+
+// JSON Schema's types, as bits.
+var jsonTypes = map[string]uint8{"string": 1, "number": 2, "integer": 4, "boolean": 8, "object": 16, "array": 32, "null": 64}
+
+// shapeOf returns the shape of the values the schemas s and those their $ref
+// and allOf reach allow: the types they allow, intersected, a schema without
+// type allowing all. A string with a contentEncoding is
+// application/octet-stream, as is a value whose type no schema constrains,
+// or nothing can be.
+func (d *document) shapeOf(s []value) shape {
+	allowed, constrained, encoded := uint8(127), false, false
+	var items []value
+	all := d.closure(s, "", func(s value, _ string) {
+		if t := s.get("type"); t.ok() {
+			set := uint8(0)
+			if t.kind() == '"' {
+				set = jsonTypes[t.text()]
+			}
+			for _, n := range t.members() {
+				set |= jsonTypes[n.string()]
+			}
+			allowed, constrained = allowed&set, true
+		}
+		encoded = encoded || s.get("contentEncoding").ok()
+		if it := s.get("items"); it.ok() {
+			items = append(items, it)
+		}
+	})
+	var sh shape
+	switch {
+	case !all || !constrained || allowed&^64 == 0:
+		return shape{own: octetDefault}
+	case allowed&1 != 0 && encoded:
+		sh.own = octetDefault
+	case allowed&1 != 0:
+		sh.own = textDefault
+	}
+	if allowed&(2|4|8) != 0 {
+		sh.own |= textDefault
+	}
+	if sh.object = allowed&16 != 0; sh.object {
+		sh.own |= jsonDefault
+	}
+	if sh.array = allowed&32 != 0; sh.array && len(items) == 0 {
+		sh.own |= octetDefault // items allowing anything have no type
+	}
+	sh.items = items
+	return sh
+}
+
+// stateKey identifies the schemas s for the document's caches.
+func stateKey(s []value) any {
+	if len(s) == 1 {
+		return s[0].i
+	}
+	var b strings.Builder
+	for _, v := range s {
+		b.WriteString(strconv.Itoa(int(v.i)))
+		b.WriteByte(',')
+	}
+	return b.String()
+}
+
+// defaults returns the default media types of a field whose schemas are s:
+// those of the types they allow, an array's following its items. An items
+// chain that leads back into schemas being resolved contributes the absent
+// type, so that every schema of a cycle has the same set, whichever is
+// resolved first. The chain is followed without recursion, and each set is
+// computed once.
+func (d *document) defaults(s []value) mediaSet {
+	type step struct {
+		key any
+		own mediaSet
+	}
+	var path []step
+	var on map[any]int // where each key is on the path, once it goes on
+	var acc mediaSet
+	cycle := -1
+	for len(s) > 0 {
+		if len(path) > maxDepth { // the absent type, past the bound on links
+			acc = octetDefault
+			break
+		}
+		k := stateKey(s)
+		if set, ok := d.types.Load(k); ok {
+			acc = set.(mediaSet)
+			break
+		}
+		if i, ok := on[k]; ok {
+			cycle = i
+			break
+		}
+		sh := d.shapeOf(s)
+		path = append(path, step{k, sh.own})
+		if !sh.array {
+			break
+		}
+		if on == nil {
+			on = map[any]int{}
+		}
+		on[k], s = len(path)-1, sh.items
+	}
+	if cycle >= 0 {
+		acc = octetDefault
+		for _, st := range path[cycle:] {
+			acc |= st.own
+		}
+		for _, st := range path[cycle:] {
+			d.types.Store(st.key, acc)
+		}
+		path = path[:cycle]
+	}
+	for i := len(path) - 1; i >= 0; i-- {
+		acc |= path[i].own
+		d.types.Store(path[i].key, acc)
+	}
+	return acc
+}
+
+// newField compiles the field name, whose first declaration is schema and
+// all of them roots, and whose Encoding Object is e, at src, under m.
+func (d *document) newField(name string, schema *Schema, roots []value, e value, src string, m parsedMedia) *field {
+	f := &field{param: param{Param: &Param{Name: name, Schema: schema}}, roots: roots}
 	p := f.Param
-	if s != nil {
-		f.schema, p.Source = s.v, s.Source()
+	if schema != nil {
+		p.Source = schema.Source()
 	}
 	if e.ok() {
 		p.Source = src
 	}
+	multipart := isMultipart(m)
 	var style, explode, reserved, ctype value
 	for k, v := range e.members() {
 		switch k {
@@ -117,27 +363,32 @@ func (d *document) newField(name string, s *Schema, e value, src string, multipa
 			}
 		}
 	}
-	if style.ok() || explode.ok() || reserved.ok() { // RFC 6570, contentType ignored (OpenAPI 3.1.2 section 4.8.15.1.2)
-		p.Style, p.ExplodeSet, p.AllowReserved = cmp.Or(style.string(), "form"), explode.ok(), reserved.kind() == 't'
-		p.Explode = explode.kind() == 't' || !explode.ok() && p.Style == "form" || p.Style == "deepObject"
-		switch {
-		case !styleAllowed("query", p.Style):
-			p.Err = fmt.Errorf("style %q is not allowed for a field", p.Style)
-		case p.Explode && (p.Style == "spaceDelimited" || p.Style == "pipeDelimited"):
-			p.Err = fmt.Errorf("OpenAPI does not define the %s style with explode true", p.Style)
+	// RFC 6570 fields apply under form-urlencoded and multipart/form-data, and
+	// then contentType is ignored; a range of multipart types may be either
+	// (OpenAPI 3.1.2 section 4.8.15.1.2).
+	f.style = &noStyle
+	if f.styled = (style.ok() || explode.ok() || reserved.ok()) && (stylesApply(m) || multipart && m.sub == "*"); f.styled {
+		p.Style, p.AllowReserved = style.string(), reserved.kind() == 't' && !multipart
+		if p.Style == "" {
+			p.Style = "form"
 		}
-		f.style, f.set, f.name = cmp.Or(styles[p.Style], &noStyle), unreservedSet, escape(name, unreservedSet)
-		if p.AllowReserved {
-			f.set = reservedSet
+		f.param = compileStyle(p, "query", explode)
+		if stylesApply(m) {
+			return f
 		}
+	}
+	if f.listed = ctype.ok(); !f.listed {
+		set := d.defaults(roots)
+		for _, dm := range defaultMedia {
+			if set&dm.set != 0 || set == 0 && dm.set == octetDefault {
+				f.types, f.parsed = append(f.types, dm.parsed.full), append(f.parsed, dm.parsed)
+			}
+		}
+		p.ContentType, f.class = strings.Join(f.types, ", "), f.parsed[0].class()
 		return f
 	}
-	f.style, f.listed = &noStyle, ctype.ok()
-	if p.ContentType = ctype.string(); !f.listed {
-		p.ContentType = d.fieldType(f.schema)
-	}
-	for t := range strings.SplitSeq(p.ContentType, ",") {
-		t = strings.Trim(t, " \t")
+	p.ContentType = ctype.string()
+	for _, t := range mediaList(p.ContentType) {
 		m, ok := parseMedia(t)
 		if !ok {
 			p.Err = fmt.Errorf("contentType %q is not a list of media types or ranges", p.ContentType)
@@ -146,6 +397,24 @@ func (d *document) newField(name string, s *Schema, e value, src string, multipa
 		f.types, f.parsed, f.class = append(f.types, t), append(f.parsed, m), m.class()
 	}
 	return f
+}
+
+// mediaList splits a comma-separated list of media types, a comma inside a
+// quoted parameter value excepted (RFC 9110 section 5.6.4).
+func mediaList(s string) []string {
+	var list []string
+	quoted, start := false, 0
+	for i := 0; i <= len(s); i++ {
+		switch {
+		case i == len(s) || s[i] == ',' && !quoted:
+			list, start = append(list, trimOWS(s[start:i])), i+1
+		case s[i] == '\\' && quoted:
+			i++
+		case s[i] == '"':
+			quoted = !quoted
+		}
+	}
+	return list
 }
 
 // headers describes the Header Objects of an Encoding's headers map h, at
@@ -164,65 +433,6 @@ func (d *document) headers(h value, src string) []*Param {
 		list = append(list, p)
 	}
 	return list
-}
-
-// fieldType returns the default media type of a field whose schema is s
-// (OpenAPI 3.1.2 section 4.8.15.1.1): application/octet-stream with no type
-// or for a string with a contentEncoding, text/plain for any other string, a
-// number, integer or boolean, application/json for an object, and for an
-// array its items' type, following references. Several types, null aside,
-// list each one's. It is computed once per schema; a cycle of references or
-// items has no type.
-func (d *document) fieldType(s value) string {
-	d.typesMu.Lock()
-	defer d.typesMu.Unlock()
-	return d.defaultType(s)
-}
-
-func (d *document) defaultType(s value) string {
-	if !s.ok() {
-		return octetStream.full
-	}
-	if t, ok := d.types[s.i]; ok {
-		return cmp.Or(t, octetStream.full) // "" while computed: a cycle
-	}
-	if d.types == nil {
-		d.types = map[int32]string{}
-	}
-	d.types[s.i] = ""
-	t := s.get("type")
-	names := t.strs()
-	if t.kind() == '"' {
-		names = []string{t.text()}
-	}
-	var types []string
-	if ref, _, _ := reference(s); !t.ok() && ref.ok() {
-		if target, _, _, err := d.follow(s, ""); err == nil {
-			types = append(types, d.defaultType(target))
-		}
-	}
-	for _, n := range names {
-		ct := "text/plain"
-		switch {
-		case n == "string" && s.get("contentEncoding").ok():
-			ct = octetStream.full
-		case n == "object":
-			ct = "application/json"
-		case n == "array":
-			ct = d.defaultType(s.get("items"))
-		case n != "string" && n != "number" && n != "integer" && n != "boolean":
-			continue
-		}
-		if !slices.Contains(types, ct) {
-			types = append(types, ct)
-		}
-	}
-	ct := strings.Join(types, ", ")
-	if ct == "" {
-		ct = octetStream.full
-	}
-	d.types[s.i] = ct
-	return ct
 }
 
 // media returns the media type of a value of f, as written and parsed, and
@@ -246,31 +456,73 @@ func (f *field) media(mt string) (string, parsedMedia, class, error) {
 	return mt, m, m.class(), nil
 }
 
+// A fieldValue is one value of a field, resolved: its content, its Part, if
+// it is one, and its media type, as written and parsed, and its class.
+type fieldValue struct {
+	v  any
+	pt *Part
+	mt string
+	m  parsedMedia
+	k  class
+}
+
+// value resolves v, a value of f named name at at, in a form body or else a
+// part, recording why it cannot be sent: its Part's problems, a name a part
+// cannot carry, f's Err, and its media type's problems. ok is false when
+// nothing is to be sent.
+func (f *field) value(v any, name string, at key, form bool, re *RequestError) (fieldValue, bool) {
+	v, pt, ok := part(v, at, form, re)
+	if !ok {
+		return fieldValue{}, false
+	}
+	mt, m, k, err := f.media(pt.mediaType())
+	switch {
+	case !form && !quotable(name):
+		re.input(at.String(), errors.New("a part name cannot hold a control character other than a tab"))
+	case f.Err != nil:
+		re.input(at.String(), f.Err)
+	case err != nil:
+		re.setting(at.String(), err)
+	default:
+		return fieldValue{v, pt, mt, m, k}, true
+	}
+	return fieldValue{}, false
+}
+
+var errNotObject = errors.New("the body is an object, a map or a struct, whose properties are its fields or parts")
+
 // members calls f with each member of v, an object, as encoding/json writes
-// them: a map's in the order of their keys, a struct's fields, and those
-// of the object a MarshalJSON writes. It reports false when v is no object.
-func (d *document) members(v any, f func(name string, v any)) bool {
-	if m, ok := v.(map[string]any); ok {
+// them, and the field of enc it is, returning nil, or why v is no object, or
+// encoding/json's error for it. It walks a map, its keys as json takes them, sorted; a struct's fields
+// as json chooses and omits them; and pointers and interfaces. A value json
+// writes by its own method, and one past maxDepth dereferences, json writes,
+// and its members are those of that JSON, json refusing a cycle.
+func (d *document) members(v any, enc *formEncoding, f func(name string, fd *field, v any)) error {
+	if m, ok := v.(map[string]any); ok && m != nil {
 		for _, k := range slices.Sorted(maps.Keys(m)) {
-			f(k, m[k])
+			f(k, enc.field(k), m[k])
 		}
-		return m != nil
+		return nil
 	}
 	rv := reflect.ValueOf(v)
-	for rv.IsValid() {
-		if w := d.walkOf(rv.Type(), nil); w.json || w.text || rv.CanAddr() && (w.ptrJSON || w.ptrText) {
-			return jsonMembers(rv.Interface(), f)
+	for derefs := 0; rv.IsValid(); derefs++ {
+		w := d.walkOf(rv.Type(), nil)
+		switch {
+		case derefs > maxDepth || w.json || w.text || rv.CanAddr() && (w.ptrJSON || w.ptrText):
+			return jsonMembers(rv.Interface(), enc, f)
+		case w.reader:
+			return errNotObject
 		}
 		switch rv.Kind() {
 		case reflect.Pointer, reflect.Interface:
 			if rv.IsNil() {
-				return false
+				return errNotObject
 			}
 			rv = rv.Elem()
 			continue
 		case reflect.Map:
-			if rv.IsNil() {
-				return false
+			if rv.IsNil() || !jsonKeys(rv.Type()) {
+				return jsonMembers(rv.Interface(), enc, f) // null, or json's error for the keys
 			}
 			type member struct {
 				name string
@@ -278,48 +530,70 @@ func (d *document) members(v any, f func(name string, v any)) bool {
 			}
 			ms := make([]member, 0, rv.Len())
 			for it := rv.MapRange(); it.Next(); {
-				ms = append(ms, member{mapKey(it.Key()), it.Value()})
+				name, err := mapKey(it.Key())
+				if err != nil {
+					return &encodingError{err}
+				}
+				ms = append(ms, member{name, it.Value()})
 			}
 			slices.SortFunc(ms, func(a, b member) int { return strings.Compare(a.name, b.name) })
 			for _, m := range ms {
-				f(m.name, m.v.Interface())
+				f(m.name, enc.field(m.name), d.elem(m.v))
 			}
-			return true
+			return nil
 		case reflect.Struct:
-			for _, jf := range d.walkOf(rv.Type(), nil).fields {
+			fds := enc.fieldsOf(rv.Type(), w.fields)
+			for i, jf := range w.fields {
 				fv, err := rv.FieldByIndexErr(jf.index)
 				if err != nil || !fv.CanInterface() || jf.omitZero && omitsZero(fv) || jf.omitEmpty && omitsEmpty(fv) {
 					continue // json writes no such field
 				}
-				x := fv.Interface()
-				if jf.quoted && !(fv.Kind() == reflect.Pointer && fv.IsNil()) {
-					s, _ := marshal(x)
-					x = s // a JSON string holding the scalar's JSON
+				x := d.elem(fv)
+				if jf.quoted && !null(x) {
+					if w := d.walkOf(reflect.TypeOf(x), nil); !w.json && !w.text {
+						if s, err := marshal(x); err == nil {
+							x = s // the string option: a JSON string holding the scalar's JSON, unless a method writes it
+						}
+					}
 				}
-				f(jf.name, x)
+				f(jf.name, fds[i], x)
 			}
-			return true
+			return nil
 		}
 		break
 	}
-	return false
+	return errNotObject
 }
 
-// jsonMembers calls f with the members of the object v's JSON is, each as
-// its JSON text.
-func jsonMembers(v any, f func(name string, v any)) bool {
+// jsonMembers calls f with the members of the object encoding/json writes for
+// v, each as its JSON text, and the fields of enc they are.
+func jsonMembers(v any, enc *formEncoding, f func(name string, fd *field, v any)) error {
 	s, err := marshal(v)
-	if err != nil || s[0] != '{' {
-		return false
+	switch {
+	case err != nil:
+		return err
+	case s[0] != '{':
+		return errNotObject
 	}
 	r := &jsonReader{s: s}
 	r.each(func(name string) error {
 		start := r.i
 		r.skip()
-		f(name, json.RawMessage(r.s[start:r.i]))
+		f(name, enc.field(name), json.RawMessage(r.s[start:r.i]))
 		return nil
 	})
-	return true
+	return nil
+}
+
+// elem returns the value v holds as encoding/json reaches it: a pointer to
+// it where v can be addressed and that pointer's method writes it.
+func (d *document) elem(v reflect.Value) any {
+	if v.CanAddr() {
+		if w := d.walkOf(v.Type(), nil); !w.json && !w.text && (w.ptrJSON || w.ptrText) {
+			return v.Addr().Interface()
+		}
+	}
+	return v.Interface()
 }
 
 // A key is where a field's value is in a body, for a RequestError: the
@@ -344,7 +618,7 @@ func (k key) String() string {
 func (d *document) values(v any, at key, f func(v any, at key)) {
 	item := func(i int) key { at.item = i; return at }
 	switch x := v.(type) {
-	case nil, string, int, bool, float64, json.Number, []byte, Part, io.Reader:
+	case nil, string, int, bool, float64, json.Number, []byte, Part, *Part, io.Reader:
 	case []any:
 		for i, v := range x {
 			if !null(v) {
@@ -352,19 +626,15 @@ func (d *document) values(v any, at key, f func(v any, at key)) {
 			}
 		}
 		return
-	case []string:
-		for i, v := range x {
-			f(v, item(i))
-		}
-		return
 	default:
 		rv := reflect.ValueOf(v)
-		for rv.Kind() == reflect.Pointer && !rv.IsNil() && !d.walkOf(rv.Type(), nil).json {
+		for derefs := 0; rv.Kind() == reflect.Pointer && !rv.IsNil() && derefs <= maxDepth && !d.walkOf(rv.Type(), nil).json; derefs++ {
 			rv = rv.Elem()
 		}
-		switch w := d.walkOf(rv.Type(), nil); {
-		case w.json:
-			if s, err := marshal(v); err == nil && s[0] == '[' {
+		w := d.walkOf(rv.Type(), nil)
+		switch {
+		case w.json || rv.CanAddr() && w.ptrJSON:
+			if s, err := marshal(d.elem(rv)); err == nil && s[0] == '[' {
 				r, i := &jsonReader{s: s}, 0
 				r.each(func(string) error {
 					start := r.i
@@ -380,8 +650,8 @@ func (d *document) values(v any, at key, f func(v any, at key)) {
 		case w.text || rv.Kind() != reflect.Slice && rv.Kind() != reflect.Array || rv.Kind() == reflect.Slice && bytesKind(rv.Type()):
 		default:
 			for i := range rv.Len() {
-				if v := rv.Index(i); !nullValue(v) {
-					f(v.Interface(), item(i))
+				if v := d.elem(rv.Index(i)); !null(v) {
+					f(v, item(i))
 				}
 			}
 			return
@@ -398,25 +668,31 @@ func bytesKind(t reflect.Type) bool {
 	return t.Elem().Kind() == reflect.Uint8 && !e.Implements(marshalerType) && !e.Implements(textMarshalerType)
 }
 
-// null reports whether encoding/json writes v as null by its Go value.
-func null(v any) bool { return v == nil || nullValue(reflect.ValueOf(v)) }
-
-func nullValue(v reflect.Value) bool {
-	switch v.Kind() {
+// null reports whether encoding/json writes v as null by its Go value: a nil
+// interface, pointer, map or slice.
+func null(v any) bool {
+	switch rv := reflect.ValueOf(v); rv.Kind() {
+	case reflect.Invalid:
+		return true
 	case reflect.Pointer, reflect.Map, reflect.Slice, reflect.Interface:
-		return v.IsNil()
+		return rv.IsNil()
 	}
 	return false
 }
 
-// part returns the content of v, a field's value, its Part, if it is one,
-// and whether to send it, recording at at why the Part cannot be used; form
-// refuses what applies only to parts.
+// part returns the content of v, a field's value, its Part, if it is one or
+// a non-nil *Part, and whether to send it, recording at at why the Part
+// cannot be used; form refuses what applies only to parts.
 func part(v any, at key, form bool, re *RequestError) (any, *Part, bool) {
-	if _, ok := v.(Part); !ok {
+	var pt *Part
+	switch p := v.(type) {
+	case Part:
+		pt = &p
+	case *Part:
+		pt = p
+	default:
 		return v, nil, true
 	}
-	pt := v.(Part)
 	err := checkHeader(pt.Header)
 	switch {
 	case form && (pt.Filename != "" || pt.NoFilename || len(pt.Header) > 0):
@@ -430,7 +706,7 @@ func part(v any, at key, form bool, re *RequestError) (any, *Part, bool) {
 		re.input(at.String(), err)
 		return nil, nil, false
 	}
-	return pt.Content, &pt, !null(pt.Content)
+	return pt.Content, pt, !null(pt.Content)
 }
 
 // quotable reports whether a quoted-string can carry s: no control

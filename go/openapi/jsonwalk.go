@@ -5,7 +5,6 @@ import (
 	"encoding"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"reflect"
 	"slices"
@@ -53,7 +52,7 @@ func marshal(v any) (string, error) {
 // cycle is left for json, which refuses a cycle, to encode.
 func encodeJSON[T string | []byte](d *document, v any, encode func(any) (T, error)) (T, string, error) {
 	var b T
-	at, found, levels, _ := d.findReader(v, 1)
+	at, found, levels, _ := d.findReader(v, 1, 0)
 	switch {
 	case found:
 		return b, at, errReader
@@ -208,12 +207,14 @@ const (
 	cyclic  = -2 // and that value is one around it, so that the value may be a cycle
 )
 
-// findReader walks x, at level, as encoding/json writes it, returning the
-// JSON Pointer, from x, of an io.Reader or Part that json reaches, and at
-// most as many levels as its JSON reaches, or what else it tells. It stops at
-// a value past maxDepth, returning where that value is held, and walks the
+// findReader walks x, at level, after derefs pointer and interface
+// dereferences, as encoding/json writes it, returning the JSON Pointer, from
+// x, of an io.Reader or Part that json reaches, and at most as many levels as
+// its JSON reaches, or what else it tells. It stops at a value past
+// maxDepth, returning where that value is held, and past maxDepth
+// dereferences leaves the value to json, which detects a cycle. It walks the
 // values json itself creates without reflection.
-func (d *document) findReader(x any, level int) (at string, found bool, levels int, deep uintptr) {
+func (d *document) findReader(x any, level, derefs int) (at string, found bool, levels int, deep uintptr) {
 	if level > maxDepth {
 		return "", false, deeper, identity(reflect.ValueOf(x))
 	}
@@ -222,7 +223,7 @@ func (d *document) findReader(x any, level int) (at string, found bool, levels i
 	case nil, string, bool, float64, json.Number:
 	case map[string]any:
 		for k, v := range x {
-			at, found, l, deep := d.findReader(v, level+1)
+			at, found, l, deep := d.findReader(v, level+1, derefs)
 			switch {
 			case found:
 				return "/" + escapeToken(k) + at, true, 0, 0
@@ -234,7 +235,7 @@ func (d *document) findReader(x any, level int) (at string, found bool, levels i
 		}
 	case []any:
 		for i, v := range x {
-			at, found, l, deep := d.findReader(v, level+1)
+			at, found, l, deep := d.findReader(v, level+1, derefs)
 			switch {
 			case found:
 				return "/" + strconv.Itoa(i) + at, true, 0, 0
@@ -245,7 +246,7 @@ func (d *document) findReader(x any, level int) (at string, found bool, levels i
 			levels = deepest(levels, l)
 		}
 	default:
-		return d.findValue(reflect.ValueOf(x), level)
+		return d.findValue(reflect.ValueOf(x), level, derefs)
 	}
 	return "", false, levels, 0
 }
@@ -279,9 +280,12 @@ func around(l int, deep uintptr, v reflect.Value) (int, uintptr) {
 
 // findValue is findReader for a value of any type, as json reaches it: its
 // pointer's methods apply only where it is addressable.
-func (d *document) findValue(v reflect.Value, level int) (string, bool, int, uintptr) {
-	if level > maxDepth {
+func (d *document) findValue(v reflect.Value, level, derefs int) (string, bool, int, uintptr) {
+	switch {
+	case level > maxDepth:
 		return "", false, deeper, identity(v)
+	case derefs > maxDepth:
+		return "", false, unknown, 0
 	}
 	switch v.Kind() {
 	case reflect.Interface, reflect.Pointer, reflect.Map, reflect.Slice:
@@ -305,7 +309,7 @@ func (d *document) findValue(v reflect.Value, level int) (string, bool, int, uin
 	}
 	levels := level
 	step := func(fv reflect.Value, token func() string) (string, bool, int, uintptr, bool) {
-		at, found, l, deep := d.findValue(fv, level+1)
+		at, found, l, deep := d.findValue(fv, level+1, derefs)
 		switch {
 		case found:
 			return "/" + token() + at, true, 0, 0, true
@@ -319,11 +323,11 @@ func (d *document) findValue(v reflect.Value, level int) (string, bool, int, uin
 	switch v.Kind() {
 	case reflect.Interface:
 		if v.CanInterface() {
-			return d.findReader(v.Interface(), level)
+			return d.findReader(v.Interface(), level, derefs+1)
 		}
-		return d.findValue(v.Elem(), level)
+		return d.findValue(v.Elem(), level, derefs+1)
 	case reflect.Pointer:
-		return d.findValue(v.Elem(), level)
+		return d.findValue(v.Elem(), level, derefs+1)
 	case reflect.Struct:
 		for _, f := range w.fields {
 			fv, err := v.FieldByIndexErr(f.index)
@@ -336,7 +340,7 @@ func (d *document) findValue(v reflect.Value, level int) (string, bool, int, uin
 		}
 	case reflect.Map:
 		for it := v.MapRange(); it.Next(); {
-			if at, found, l, deep, stop := step(it.Value(), func() string { return escapeToken(mapKey(it.Key())) }); stop {
+			if at, found, l, deep, stop := step(it.Value(), func() string { k, _ := mapKey(it.Key()); return escapeToken(k) }); stop {
 				return at, found, l, deep
 			}
 		}
@@ -368,7 +372,7 @@ func omitsZero(v reflect.Value) bool {
 		}
 		return v.Addr().Interface().(zeroer).IsZero()
 	}
-	return false
+	return v.IsZero()
 }
 
 // omitsEmpty reports whether json's omitempty omits v: false, 0, a nil
@@ -383,19 +387,34 @@ func omitsEmpty(v reflect.Value) bool {
 	return v.IsZero()
 }
 
-// mapKey returns the name encoding/json writes for a map key.
-func mapKey(k reflect.Value) string {
-	switch {
-	case k.Kind() == reflect.String:
-		return k.String()
-	case k.Kind() == reflect.Pointer && k.IsNil():
-		return "" // as encoding/json names a nil TextMarshaler, the only nil key it writes
+// jsonKeys reports whether encoding/json writes a map of type t: its keys
+// are strings, integers or TextMarshalers.
+func jsonKeys(t reflect.Type) bool {
+	switch t.Key().Kind() {
+	case reflect.String, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		return true
+	}
+	return t.Key().Implements(textMarshalerType)
+}
+
+// mapKey returns the name encoding/json writes for a map key json accepts,
+// or its MarshalText's error.
+func mapKey(k reflect.Value) (string, error) {
+	if k.Kind() == reflect.String {
+		return k.String(), nil
 	}
 	if tm, ok := k.Interface().(encoding.TextMarshaler); ok {
-		b, _ := tm.MarshalText()
-		return string(b)
+		if k.Kind() == reflect.Pointer && k.IsNil() {
+			return "", nil // as encoding/json names a nil TextMarshaler
+		}
+		b, err := tm.MarshalText()
+		return string(b), err
 	}
-	return fmt.Sprint(k.Interface())
+	if k.CanInt() {
+		return strconv.FormatInt(k.Int(), 10), nil
+	}
+	return strconv.FormatUint(k.Uint(), 10), nil
 }
 
 // jsonFields returns the fields of struct type t that encoding/json writes,

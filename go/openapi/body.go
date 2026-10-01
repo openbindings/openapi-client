@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"net/textproto"
 	"net/url"
 	"slices"
@@ -24,9 +23,11 @@ func isMultipart(m parsedMedia) bool { return strings.EqualFold(m.typ, "multipar
 // appendContent appends v, encoded as content of media type m, of codec
 // class k, to dst: by the caller's codec for m, as encoding/json writes it
 // for a JSON type, and otherwise as text, a string as its bytes and, for a
-// text type, a number or boolean in its JSON spelling. It returns the JSON
-// Pointer, from v, of what it refuses, and reports a value whose JSON data
-// is null, which a field leaves out and only a JSON type encodes.
+// text type, a number or boolean in its JSON spelling. Every value it
+// encodes itself is walked first, for a reader or Part and for its depth.
+// It returns the JSON Pointer, from v, of what it refuses, and reports a
+// value whose JSON data is null, which a field leaves out and only a JSON
+// type encodes.
 func (c *Client) appendContent(dst []byte, m parsedMedia, k class, v any) (b []byte, at string, null bool, err error) {
 	if codec, _ := c.cfg.codec(m); codec != nil {
 		var buf bytes.Buffer
@@ -56,10 +57,10 @@ func (c *Client) appendContent(dst []byte, m parsedMedia, k class, v any) (b []b
 	case k == sequentialClass || isMultipart(m) || isForm(m):
 		return dst, "", false, fmt.Errorf("%s cannot encode this value", m.full)
 	}
-	s, err := marshal(v)
+	s, at, err := encodeJSON(c.doc, v, marshal)
 	switch {
 	case err != nil:
-		return dst, "", false, err
+		return dst, at, false, err
 	case s[0] == '"':
 		return append(dst, jsonString(s)...), "", false, nil
 	case k == textClass && s[0] != '{' && s[0] != '[' && s[0] != 'n':
@@ -70,30 +71,52 @@ func (c *Client) appendContent(dst []byte, m parsedMedia, k class, v any) (b []b
 	return dst, "", s == "null", fmt.Errorf("%s takes a string", m.full)
 }
 
-// A builder assembles a body: bytes, and between them the parts that read
+// A builder assembles a body: bytes, and between them the sources that read
 // a caller's reader or bytes.
 type builder struct {
 	buf   []byte
 	parts []source
 }
 
-// add adds the source p after the bytes so far.
-func (b *builder) add(p source) {
+// A source is one source of a body of several, and how it is read: as it
+// is, encoded as a form field is, or checked for the delimiters of a
+// multipart body or the separators of a sequence, which end the body when
+// found.
+type source struct {
+	payload
+	form      bool
+	check     [][]byte // the delimiters or separators its content cannot hold
+	delimiter bool     // check holds delimiters, which content after a line break may not begin with either
+}
+
+// flush makes the bytes so far a source.
+func (b *builder) flush() {
 	if len(b.buf) > 0 {
 		b.parts = append(b.parts, source{payload: payload{data: b.buf, size: int64(len(b.buf))}})
 		b.buf = b.buf[len(b.buf):]
 	}
+}
+
+// add adds the source p after the bytes so far.
+func (b *builder) add(p source) {
+	b.flush()
 	b.parts = append(b.parts, p)
 }
 
-// payload returns the body: its bytes alone, or its parts, which can be
+// Write appends p to the body, as an Encoder writes an item.
+func (b *builder) Write(p []byte) (int, error) {
+	b.buf = append(b.buf, p...)
+	return len(p), nil
+}
+
+// payload returns the body: its bytes alone, or its sources, which can be
 // sent again, with a length, unless one is read once.
 func (b *builder) payload() payload {
 	if b.parts == nil {
 		return payload{data: b.buf, size: int64(len(b.buf))}
 	}
-	b.add(source{})
-	p := payload{parts: b.parts[:len(b.parts)-1]}
+	b.flush()
+	p := payload{parts: b.parts}
 	for _, part := range p.parts {
 		if part.size < 0 {
 			p.size = -1
@@ -104,19 +127,113 @@ func (b *builder) payload() payload {
 	return p
 }
 
+// A cursor reads the sources of a body in order.
+type cursor struct {
+	parts []source
+	pos   int64  // read of parts[0]
+	tail  []byte // the end of what parts[0] has given, for its check
+	pend  []byte // what a form source has encoded, not yet read
+	enc   []byte // pend's array, kept
+	raw   []byte // what a form source has given, to be encoded
+}
+
+func newCursor(parts []source) *cursor {
+	c := &cursor{parts: parts}
+	c.begin()
+	return c
+}
+
+// begin starts parts[0]: content after a delimiter line follows a line
+// break.
+func (c *cursor) begin() {
+	if c.tail = c.tail[:0]; len(c.parts) > 0 && c.parts[0].delimiter {
+		c.tail = append(c.tail, '\n')
+	}
+}
+
+func (c *cursor) Close() error { return nil }
+
+func (c *cursor) Read(buf []byte) (int, error) {
+	for {
+		if len(c.pend) > 0 {
+			n := copy(buf, c.pend)
+			c.pend = c.pend[n:]
+			return n, nil
+		}
+		if len(c.parts) == 0 {
+			return 0, io.EOF
+		}
+		p, dst := &c.parts[0], buf
+		if p.form {
+			if c.raw == nil {
+				c.raw = make([]byte, 4<<10)
+			}
+			dst = c.raw
+		}
+		n, err := p.readAt(dst, c.pos)
+		if c.pos += int64(n); err == io.EOF && p.size >= 0 && c.pos < p.size {
+			err = io.ErrUnexpectedEOF
+		}
+		if n > 0 && p.check != nil && c.holds(p.check, dst[:n]) {
+			if p.delimiter {
+				return 0, errDelimiter
+			}
+			return 0, errSeparator
+		}
+		next := err == io.EOF || p.size >= 0 && c.pos >= p.size
+		if next {
+			c.parts, c.pos, err = c.parts[1:], 0, nil
+			c.begin()
+		}
+		switch {
+		case p.form:
+			c.enc = appendForm(c.enc[:0], dst[:n])
+			c.pend = c.enc
+		case n > 0 || err != nil || !next:
+			return n, err
+		}
+		if err != nil {
+			return 0, err
+		}
+	}
+}
+
+// holds reports whether data, read after the tail, holds one of patterns,
+// searching the seam where the tail meets data and data itself, and keeps
+// as the tail the end of what has been read, the longest pattern but one
+// byte.
+func (c *cursor) holds(patterns [][]byte, data []byte) bool {
+	keep := 0
+	for _, s := range patterns {
+		keep = max(keep, len(s)-1)
+	}
+	seam := len(c.tail)
+	c.tail = append(c.tail, data[:min(len(data), keep)]...)
+	found := false
+	for _, s := range patterns {
+		found = found || bytes.Contains(c.tail, s) || bytes.Contains(data, s)
+	}
+	if len(data) >= keep {
+		c.tail = append(c.tail[:0], data[len(data)-keep:]...)
+	} else {
+		c.tail = append(c.tail[:0], c.tail[max(0, seam+len(data)-keep):]...)
+	}
+	return found
+}
+
 // formBody encodes the object v as an application/x-www-form-urlencoded body
 // by the fields of enc, into b, recording problems in re at keys after body.
 // A reader that can be read again is read now, so the body is encoded once;
 // one read once is encoded as the body is read, unless readers are refused,
-// as in a parameter.
+// as in content.
 func (c *Client) formBody(b *builder, enc *formEncoding, v any, body string, readers bool, re *RequestError) {
 	var scratch []byte // a field's content, before it is encoded
 	if b.buf == nil {
 		b.buf = make([]byte, 0, 128)
 	}
-	ok := c.doc.members(v, func(name string, v any) {
-		at, f := key{body, name, -1}, enc.field(name)
-		if f.Style != "" {
+	err := c.doc.members(v, enc, func(name string, f *field, v any) {
+		at := key{body, name, -1}
+		if f.styled {
 			lead := ""
 			if len(b.buf) > 0 || b.parts != nil {
 				lead = "&"
@@ -129,17 +246,8 @@ func (c *Client) formBody(b *builder, enc *formEncoding, v any, body string, rea
 			return
 		}
 		c.doc.values(v, at, func(v any, at key) {
-			v, pt, ok := part(v, at, true, re)
+			fv, ok := f.value(v, name, at, true, re)
 			if !ok {
-				return
-			}
-			_, m, k, err := f.media(pt.mediaType())
-			switch {
-			case f.Err != nil:
-				re.input(at.String(), f.Err)
-				return
-			case err != nil:
-				re.setting(at.String(), err)
 				return
 			}
 			lead, inner := len(b.buf), ""
@@ -147,22 +255,28 @@ func (c *Client) formBody(b *builder, enc *formEncoding, v any, body string, rea
 				b.buf = append(b.buf, '&')
 			}
 			b.buf = append(appendForm(b.buf, name), '=')
-			switch v := v.(type) {
+			var err error
+			switch x := fv.v.(type) {
 			case []byte:
-				b.buf = appendForm(b.buf, v)
+				b.buf = appendForm(b.buf, x)
 			case io.Reader:
-				if !readers {
-					err = errors.New("a reader cannot serialize a parameter")
-				} else if p := readerPayload(v); p.size < 0 {
+				switch p := readerPayload(x); {
+				case !readers:
+					err = errFormReader
+				case p.size < 0:
 					b.add(source{payload: p, form: true})
-				} else if data, rerr := p.bytes(); rerr != nil {
-					err = fmt.Errorf("reading the field's reader: %w", rerr)
-				} else {
-					b.buf = appendForm(b.buf, data)
+				default:
+					b.buf, err = p.appendForm(b.buf)
 				}
 			default:
+				if isForm(fv.m) {
+					var s string
+					s, err = c.formContent(c.doc.nested(f, at.item >= 0), x)
+					b.buf = appendForm(b.buf, s)
+					break
+				}
 				var null bool
-				if scratch, inner, null, err = c.appendContent(scratch[:0], m, k, v); null {
+				if scratch, inner, null, err = c.appendContent(scratch[:0], fv.m, fv.k, x); null {
 					b.buf = b.buf[:lead] // left out
 					return
 				}
@@ -173,18 +287,32 @@ func (c *Client) formBody(b *builder, enc *formEncoding, v any, body string, rea
 			}
 		})
 	})
-	if !ok {
-		re.input(body, errors.New("the body is an object, a map or a struct, whose properties are its fields"))
+	if err != nil {
+		re.input(body, err)
 	}
 }
 
-// bytes returns the content of p, a reader that can be read again, read
-// now with ReadAt, so that it is not drained.
-func (p *payload) bytes() ([]byte, error) {
+var errFormReader = errors.New("form content inside a field or parameter cannot hold a reader")
+
+// appendForm appends the content of p, a reader that can be read again, as
+// appendForm writes it, read now with ReadAt in chunks, so that it is
+// neither drained nor held whole.
+func (p *payload) appendForm(b []byte) ([]byte, error) {
 	if p.ra == nil {
-		return p.data[:p.size], nil
+		return appendForm(b, p.data[:p.size]), nil
 	}
-	return io.ReadAll(io.NewSectionReader(p.ra, p.off, p.size))
+	chunk := make([]byte, min(p.size, 32<<10))
+	for pos := int64(0); pos < p.size; {
+		n, err := p.ra.ReadAt(chunk[:min(int64(len(chunk)), p.size-pos)], p.off+pos)
+		b, pos = appendForm(b, chunk[:n]), pos+int64(n)
+		switch {
+		case err == io.EOF:
+			return b, nil
+		case err != nil:
+			return b, fmt.Errorf("reading the field's reader: %w", err)
+		}
+	}
+	return b, nil
 }
 
 // styled returns v written in the RFC 6570 style of p, as a query
@@ -207,6 +335,7 @@ var formSet = func() *charset {
 // appendForm appends s to b as the WHATWG serializer writes it: a space as
 // +, formSet as it is, every other byte as %XX.
 func appendForm[T string | []byte](b []byte, s T) []byte {
+	b = slices.Grow(b, len(s))
 	for i := 0; i < len(s); i++ {
 		switch c := s[i]; {
 		case formSet[c] == 1:
@@ -221,7 +350,7 @@ func appendForm[T string | []byte](b []byte, s T) []byte {
 }
 
 // formContent encodes v as application/x-www-form-urlencoded content of a
-// parameter, whose fields enc describes.
+// field or parameter, whose fields enc describes.
 func (c *Client) formContent(enc *formEncoding, v any) (string, error) {
 	var b builder
 	var re RequestError
@@ -235,16 +364,17 @@ func (c *Client) formContent(enc *formEncoding, v any) (string, error) {
 // multipartBody encodes the object v as a multipart body of type typ, m
 // parsed, by the fields of enc, returning it and its Content-Type.
 func (c *Client) multipartBody(enc *formEncoding, typ string, m parsedMedia, v any, re *RequestError) (payload, string) {
-	boundary, given := m.param("boundary")
+	boundary, given, err := m.boundary()
 	switch {
+	case err != nil:
+		re.setting("Input.MediaType", err)
+		return payload{}, typ
 	case !given:
 		boundary = newBoundary(nil)
 		typ += "; boundary=" + boundary
-	case !validBoundary(boundary):
-		re.setting("Input.MediaType", errBoundary)
 	}
 	var b builder
-	w := partWriter{c: c, b: &b, re: new(RequestError)} // its own: the writers' recursion takes it to the heap
+	w := partWriter{c: c, b: &b, re: new(RequestError), styles: stylesApply(m)} // its own: the writers' recursion takes it to the heap
 	w.parts(enc, v, "Input.Body", boundary, given)
 	for k, err := range w.re.Settings {
 		re.setting(k, err)
@@ -262,9 +392,10 @@ type partWriter struct {
 	b        *builder
 	re       *RequestError
 	boundary string
+	styles   bool     // RFC 6570 fields apply, as under multipart/form-data
 	written  bool     // a part, after which a delimiter begins with CRLF
-	outer    []string // the delimiters of the body around, which its parts and delimiters cannot hold
-	own      []string // and those the parts cannot hold: outer, and a given boundary's
+	outer    [][]byte // the delimiters of the body around, which its parts and delimiters cannot hold
+	own      [][]byte // and those the parts cannot hold: outer, and a given boundary's
 	nested   bool     // the body is a part's, whose parts cannot be multipart
 }
 
@@ -273,11 +404,11 @@ type partWriter struct {
 func (w *partWriter) parts(enc *formEncoding, v any, body, boundary string, given bool) {
 	w.boundary, w.own = boundary, w.outer
 	if given {
-		w.own = append(slices.Clip(w.outer), "\r\n--"+boundary)
+		w.own = append(slices.Clip(w.outer), delimiters(boundary)...)
 	}
-	ok := w.c.doc.members(v, func(name string, v any) {
-		at, f := key{body, name, -1}, enc.field(name)
-		if f.Style == "" {
+	err := w.c.doc.members(v, enc, func(name string, f *field, v any) {
+		at := key{body, name, -1}
+		if !f.styled || !w.styles {
 			w.c.doc.values(v, at, func(v any, at key) { w.write(f, name, v, at) })
 			return
 		}
@@ -299,8 +430,8 @@ func (w *partWriter) parts(enc *formEncoding, v any, body, boundary string, give
 			}
 		}
 	})
-	if !ok {
-		w.re.input(body, errors.New("the body is an object, a map or a struct, whose properties are its parts"))
+	if err != nil {
+		w.re.input(body, err)
 	}
 	if !w.delimiter("--") {
 		w.re.input(body, errDelimiter)
@@ -320,91 +451,89 @@ func (w *partWriter) delimiter(end string) bool {
 }
 
 // textField is the field of a part RFC 6570 writes.
-var textField = &field{param: param{Param: &Param{ContentType: "text/plain"}}, types: []string{"text/plain"},
-	parsed: []parsedMedia{{"text/plain", "text", "plain", ""}}, class: textClass}
+var textField = &field{param: param{Param: &Param{ContentType: "text/plain"}, style: &noStyle}, types: []string{"text/plain"},
+	parsed: []parsedMedia{defaultMedia[2].parsed}, class: textClass}
 
 // write writes v, a value of f named name, as a part, at at: its header,
 // then its content, as given, encoded by its media type, or, one level
 // deep, as a multipart body of its own.
 func (w *partWriter) write(f *field, name string, v any, at key) {
 	c, b, re := w.c, w.b, w.re
-	v, pt, ok := part(v, at, false, re)
+	fv, ok := f.value(v, name, at, false, re)
 	if !ok {
 		return
 	}
-	mt, m, k, err := f.media(pt.mediaType())
-	switch {
-	case !quotable(name):
-		re.input(at.String(), errors.New("a part name cannot hold a control character other than a tab"))
-		return
-	case f.Err != nil:
-		re.input(at.String(), f.Err)
-		return
-	case err != nil:
-		re.setting(at.String(), err)
-		return
-	}
 	var content []byte // written as it is, unless v is a reader or a nested body
-	r, raw := v.(io.Reader)
-	multipart := isMultipart(m)
-	boundary, given := m.param("boundary")
-	switch x := v.(type) {
+	r, raw := fv.v.(io.Reader)
+	mt, multipart := fv.mt, isMultipart(fv.m)
+	boundary, given, berr := fv.m.boundary()
+	switch x := fv.v.(type) {
 	case []byte:
 		content, raw = x, true
 	case io.Reader:
 	default:
-		if multipart {
-			break
-		}
-		var inner string
-		var null bool
-		if content, inner, null, err = c.appendContent(nil, m, k, v); null || err != nil {
-			if !null {
-				re.input(at.String()+inner, err)
+		var err error
+		inner := ""
+		switch {
+		case multipart:
+		case isForm(fv.m):
+			var s string
+			if s, err = c.formContent(c.doc.nested(f, at.item >= 0), x); err == nil {
+				content = []byte(s)
 			}
+		default:
+			var null bool
+			if content, inner, null, err = c.appendContent(nil, fv.m, fv.k, x); null {
+				return
+			}
+		}
+		if err != nil {
+			re.input(at.String()+inner, err)
 			return
 		}
 	}
 	switch {
-	case raw && multipart && !given:
+	case !multipart:
+	case berr != nil:
+		re.setting(at.String(), berr)
+		return
+	case raw && !given:
 		re.setting(at.String(), errors.New("pre-encoded multipart content needs its boundary in Part.MediaType"))
 		return
-	case !multipart || raw:
+	case raw:
 	case w.nested:
 		re.input(at.String(), errors.New("a multipart part nested one level cannot hold another"))
 		return
 	case !given:
 		boundary = newBoundary(w.own)
 		mt += "; boundary=" + boundary
-	case !validBoundary(boundary):
-		re.setting(at.String(), errBoundary)
-		return
 	}
 
 	ok = w.delimiter("")
 	start := len(b.buf)
-	disposition := false // a Part.Header field replaces it
-	if pt != nil {
-		for k := range pt.Header {
-			disposition = disposition || textproto.CanonicalMIMEHeaderKey(k) == "Content-Disposition"
+	var fields []headerField // the Part's, sorted by their canonical names
+	disposition := false     // one replaces the client's Content-Disposition
+	if fv.pt != nil {
+		for k, vs := range fv.pt.Header {
+			ck := textproto.CanonicalMIMEHeaderKey(k)
+			fields, disposition = append(fields, headerField{ck, vs}), disposition || ck == "Content-Disposition"
 		}
+		slices.SortFunc(fields, func(a, b headerField) int { return strings.Compare(a.name, b.name) })
 	}
 	if !disposition {
 		b.buf = appendQuoted(append(b.buf, "Content-Disposition: form-data; name="...), name)
 		switch {
-		case pt != nil && pt.Filename != "":
-			b.buf = appendQuoted(append(b.buf, "; filename="...), pt.Filename)
-		case raw && !multipart && (pt == nil || !pt.NoFilename):
+		case fv.pt != nil && fv.pt.Filename != "":
+			b.buf = appendQuoted(append(b.buf, "; filename="...), fv.pt.Filename)
+		case raw && !multipart && (fv.pt == nil || !fv.pt.NoFilename):
 			b.buf = appendQuoted(append(b.buf, "; filename="...), name)
 		}
 		b.buf = append(b.buf, "\r\n"...)
 	}
 	b.buf = append(append(append(b.buf, "Content-Type: "...), mt...), "\r\n"...)
-	if pt != nil {
-		for _, k := range slices.Sorted(maps.Keys(pt.Header)) {
-			for _, v := range pt.Header[k] {
-				b.buf = append(append(append(append(b.buf, textproto.CanonicalMIMEHeaderKey(k)...), ": "...), v...), "\r\n"...)
-			}
+	for _, h := range fields {
+		for _, v := range h.values {
+			b.buf = append(append(append(append(b.buf, h.name...), ": "...), v...), "\r\n"...)
 		}
 	}
 	b.buf = append(b.buf, "\r\n"...)
@@ -412,10 +541,10 @@ func (w *partWriter) write(f *field, name string, v any, at key) {
 	case !ok || holds(b.buf[start:], w.own) || holds(content, w.own):
 		re.input(at.String(), errDelimiter)
 	case r != nil:
-		b.add(source{payload: readerPayload(r), check: w.own})
+		b.add(source{payload: readerPayload(r), check: w.own, delimiter: true})
 	case multipart && !raw:
 		nw := partWriter{c: c, b: b, re: re, outer: w.own, nested: true}
-		nw.parts(c.doc.nested(f), v, at.String(), boundary, given)
+		nw.parts(c.doc.nested(f, at.item >= 0), fv.v, at.String(), boundary, given)
 	case raw && len(content) > 0:
 		b.add(source{payload: payload{data: content, size: int64(len(content))}}) // not copied
 	default:
@@ -423,26 +552,39 @@ func (w *partWriter) write(f *field, name string, v any, at key) {
 	}
 }
 
+// A headerField is a header field of a part.
+type headerField struct {
+	name   string
+	values []string
+}
+
 var (
 	errDelimiter = errors.New("the content holds the multipart body's boundary delimiter (RFC 2046 section 5.1.1)")
 	errBoundary  = errors.New("the boundary is not one RFC 2046 section 5.1.1 allows")
+	errBoundary2 = errors.New("the media type gives two boundary parameters")
 )
 
-// holds reports whether data, which begins a line, holds one of the
-// delimiters, each CRLF "--" and a boundary: at its start, after the CRLF
-// before it, or within.
-func holds(data []byte, delimiters []string) bool {
+// delimiters returns the delimiters of boundary as content cannot hold them:
+// "--" and the boundary after a CR or an LF, as receivers in wide use split
+// parts at either, and so at the start of a part's content too.
+func delimiters(boundary string) [][]byte {
+	return [][]byte{[]byte("\r--" + boundary), []byte("\n--" + boundary)}
+}
+
+// holds reports whether data, at the start of a line, holds one of the
+// delimiters.
+func holds(data []byte, delimiters [][]byte) bool {
 	for _, d := range delimiters {
-		if bytes.HasPrefix(data, []byte(d[2:])) || bytes.Contains(data, []byte(d)) {
+		if bytes.HasPrefix(data, d[1:]) || bytes.Contains(data, d) {
 			return true
 		}
 	}
 	return false
 }
 
-// newBoundary returns a random boundary whose delimiter holds none of the
-// delimiters given.
-func newBoundary(delimiters []string) string {
+// newBoundary returns a random boundary whose delimiter line holds none of
+// the delimiters given, which are those of valid boundaries.
+func newBoundary(delimiters [][]byte) string {
 	for {
 		var r [16]byte
 		rand.Read(r[:])

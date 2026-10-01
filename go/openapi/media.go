@@ -78,6 +78,25 @@ func trimOWS(s string) string {
 	return s
 }
 
+// boundary returns the boundary parameter of a multipart type, reporting
+// whether it is given, and refusing an invalid one or two.
+func (m parsedMedia) boundary() (b string, given bool, err error) {
+	m.eachParam(func(name, value string) bool {
+		if strings.EqualFold(name, "boundary") {
+			if given {
+				err = errBoundary2
+				return false
+			}
+			b, given = value, true
+		}
+		return true
+	})
+	if err == nil && given && !validBoundary(b) {
+		err = errBoundary
+	}
+	return b, given, err
+}
+
 // param returns the value of the parameter name, compared without regard
 // to case.
 func (m parsedMedia) param(name string) (value string, found bool) {
