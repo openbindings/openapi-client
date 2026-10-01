@@ -435,6 +435,117 @@ func TestCheckRedirectGetBodyCopyNotWaitedFor(t *testing.T) {
 	})
 }
 
+// VP4, as ruled on the test author's question: "when CheckRedirect
+// installs its GetBody copy as the hop's Body, that copy is sent, so it
+// counts as handed to the transport. Call and WaitRequest wait for it as for
+// any hop body, and WaitRequest reports its result, since it is the last
+// request that carried the body." client.go, Response.WaitRequest: it waits
+// "for every request of the call that carried one: the first and each
+// redirect hop that sent it again. It reports on the last of them". The
+// transport reads the first body completely, and the hop's as each case
+// says; in the last case it closes the hop's body only when the test lets
+// it.
+func TestCheckRedirectInstalledCopyIsWaitedFor(t *testing.T) {
+	const payload = "0123456789"
+	install := func(r *http.Request, _ []*http.Request) error {
+		rc, err := r.GetBody()
+		if err != nil {
+			return err
+		}
+		r.Body = rc
+		return nil
+	}
+	newClient := func(t *testing.T, hop func(r *http.Request)) *openapi.Client {
+		rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			if r.URL.Path == "/up" {
+				cutShort(r, -1)
+				return memResponse(r, 307, http.Header{"Location": {"/next"}}, ""), nil
+			}
+			hop(r)
+			return memResponse(r, 200, nil, "{}"), nil
+		})
+		return parseAt(t, inflightDoc, "https://api.example.test", testDocURI, &openapi.Options{
+			HTTPClient: &http.Client{Transport: rt, CheckRedirect: install}, Redirects: openapi.FollowAll,
+		})
+	}
+	for _, tt := range []struct {
+		name    string
+		read    int // bytes of the installed copy the transport reads; -1 for all
+		wantErr bool
+	}{{"read completely", -1, false}, {"cut short", 3, true}} {
+		t.Run(tt.name, func(t *testing.T) {
+			var got atomic.Value
+			c := newClient(t, func(r *http.Request) {
+				if tt.read < 0 {
+					b, _ := io.ReadAll(r.Body)
+					got.Store(string(b))
+					r.Body.Close()
+					return
+				}
+				cutShort(r, tt.read)
+			})
+			in := &openapi.Input{Body: []byte(payload)}
+			resp, err := mustPrepare(t, c, "up", in).Send(t.Context())
+			if err != nil {
+				t.Fatalf("Send: %v", err)
+			}
+			io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+			if werr := waitResult(t, resp); (werr != nil) != tt.wantErr {
+				t.Errorf("WaitRequest = %v, want an error %t: it reports on the copy the hop sent", werr, tt.wantErr)
+			}
+			if tt.read < 0 && got.Load() != payload {
+				t.Errorf("the hop sent %v, want the installed copy, %q", got.Load(), payload)
+			}
+			resp, err = c.Call(t.Context(), "up", in, nil)
+			if resp == nil || resp.StatusCode != 200 {
+				t.Fatalf("Call returned %v (error %v), want the hop's 200", resp, err)
+			}
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Call error %v, want an upload error %t", err, tt.wantErr)
+			}
+		})
+	}
+	t.Run("waited for until the transport closes it", func(t *testing.T) {
+		for _, via := range []string{"Call", "Send"} {
+			gate, answered := make(chan struct{}), make(chan struct{})
+			var gateOnce, answerOnce sync.Once
+			t.Cleanup(func() { gateOnce.Do(func() { close(gate) }) })
+			c := newClient(t, func(r *http.Request) {
+				io.Copy(io.Discard, r.Body)
+				go func() { <-gate; r.Body.Close() }()
+				answerOnce.Do(func() { close(answered) })
+			})
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			in := &openapi.Input{Body: []byte(payload)}
+			returned := make(chan struct{})
+			if via == "Call" {
+				go func() {
+					defer close(returned)
+					c.Call(ctx, "up", in, nil)
+				}()
+				await(t, answered, "the hop's answer")
+				wantNotReturned(t, returned, "Call returned before the transport closed the copy CheckRedirect installed")
+			} else {
+				resp, err := mustPrepare(t, c, "up", in).Send(ctx)
+				if err != nil {
+					t.Fatalf("Send: %v", err)
+				}
+				io.Copy(io.Discard, resp.Body)
+				resp.Body.Close()
+				go func() {
+					defer close(returned)
+					resp.WaitRequest(ctx)
+				}()
+				wantNotReturned(t, returned, "WaitRequest returned before the transport closed the copy CheckRedirect installed")
+			}
+			gateOnce.Do(func() { close(gate) })
+			await(t, returned, via+" after the transport's Close")
+		}
+	})
+}
+
 // scriptServer is a TCP listener that answers each request, one per
 // connection, with the raw response reply gives for its path, recording the
 // paths requested.
