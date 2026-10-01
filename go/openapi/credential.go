@@ -52,8 +52,7 @@ func static(secret string) func(context.Context) (string, error) {
 //   - apiKey: the key, sent in the declared header, query parameter or
 //     cookie.
 //   - http bearer, oauth2 and openIdConnect: the token, sent as
-//     "Authorization: Bearer <token>"; RFC 6750 limits it to b64token
-//     characters.
+//     "Authorization: Bearer <token>".
 //   - http basic (and Swagger 2.0 basic): the user-id and password joined
 //     by a colon, as RFC 7617 writes them, sent base64-encoded. [Basic]
 //     builds it.

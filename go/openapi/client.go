@@ -176,12 +176,16 @@ type Codec interface {
 }
 
 // Redirects says which 3xx responses the client follows. Only 301, 302, 303,
-// 307 and 308 with a Location holding a URI reference can be followed. A 303 is
+// 307 and 308 with a Location that url.Parse accepts can be followed, as
+// net/http follows them. A 303 is
 // followed with GET (HEAD stays HEAD) and no body. A 301 or 302 changes POST to
 // GET with no body, and keeps any other method and its body, as 307 and 308 do.
 // A hop that drops the body drops Content-Type and the other content fields,
 // and a hop that must resend a body that cannot be sent again (see Input.Body)
-// is not followed. A 3xx not followed is the outcome, a *StatusError. The
+// is not followed. When the server answered before reading a body that the
+// hop then drops, the upload is incomplete, and Call reports it with the final
+// response (see WaitRequest). A 3xx not followed is the outcome, a
+// *StatusError. The
 // client adds no Referer. The HTTPClient's CheckRedirect is still consulted on
 // every hop the client follows, after the client applies the rules below and
 // before it places credentials on the hop, and can restore a field the caller
@@ -638,8 +642,9 @@ func (r *Request) Call(ctx context.Context, out any) (*Response, error) {
 // For a Response from Call, Body has been read and closed, except with a
 // StatusError or a DecodeError, when it reads that error's Content. For one
 // from Stream or Send, Body is open and must be closed. Its Request is the last
-// request sent, after any redirects, with the credentials the client added
-// removed from its URL and its header fields, and so is every earlier request
+// request sent, after any redirects, without the credentials the client added
+// to its URL and header fields or the cookies the HTTPClient's Jar supplied,
+// and so is every earlier request
 // reachable from it. The responses in that chain hold what the server sent.
 type Response struct {
 	*http.Response
@@ -709,7 +714,8 @@ func (r *Response) Decode(out any) error {
 // not expose when bytes are written to the network. A nil result here
 // therefore proves body consumption, not delivery or server acceptance.
 // The wait is safe to repeat and to call concurrently. It relies on the
-// transport closing the request body, as http.RoundTripper requires; with
+// transport closing the request body, as http.RoundTripper requires, and
+// every copy it takes with GetBody; with
 // a transport that neither reads nor closes it, the wait, and Call's,
 // ends only with the context.
 // A cancellation of ctx ends only this wait; cancel the call's original

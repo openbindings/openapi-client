@@ -363,16 +363,17 @@
 // Options.Credentials["name"]: by Load for a static credential (by each call,
 // for a Client from Client.With), by the call for a source's. Such a value is
 // a header field value with a control character other than a tab, or with
-// leading or trailing whitespace; a cookie value with ";" or a control
-// character; a bearer token with a character outside RFC 6750's b64token;
-// and a Basic value without the colon, or with a control character in the
+// leading or trailing whitespace; a cookie value with ";", a control
+// character, or leading or trailing whitespace; and a Basic value without the
+// colon, or with a control character in the
 // user-id or password, which RFC 7617 forbids.
 //
 // Bearer tokens (http bearer, oauth2, openIdConnect) and Basic credentials
 // are sent only over https or wss, as RFC 6750 requires and RFC 7617
 // advises, or to a loopback host, where they do not leave the machine: a
 // loopback IP address, an IPv4-mapped one included, or the name localhost
-// written exactly so, the one name net/http's proxy settings never apply to.
+// written exactly so, the one name http.ProxyFromEnvironment never sends
+// through a proxy.
 // Other names, such as those under .localhost, can be proxied or resolved
 // elsewhere, so they are not loopback here. A call that would send one over
 // plain http or ws to any other host is refused. The
