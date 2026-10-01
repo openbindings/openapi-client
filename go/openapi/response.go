@@ -166,13 +166,14 @@ func (u *upload) waitUpload(ctx context.Context) error {
 // settle waits for the upload before Call returns: for its result, or, once
 // the call's context is done, until every generation the transport was
 // handed has ended, the client closing those the transport has not, so that
-// Call never returns while its body is read or its iterator runs.
+// Call never returns while its body is read or its iterator runs. A
+// generation closed during a Read ends as the Read returns.
 func (x *exchange) settle() error {
 	err := x.waitUpload(x)
 	x.mu.Lock()
 	var open []*sentBody
 	for _, b := range x.gens {
-		if !x.done && !b.ended {
+		if !x.done && !b.closed {
 			open = append(open, b)
 		}
 	}
