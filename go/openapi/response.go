@@ -81,12 +81,13 @@ func exchangeOf(r *http.Response) *exchange {
 // in generations: the first request's, a hop's, or a replay the transport
 // takes with GetBody, each a new reading of the body. Its result is the
 // last generation's that the call handed the transport, published once the
-// chain has returned and every generation handed over has ended, so that
-// no Read of the body is then in flight.
+// chain has returned and the transport has closed every generation it was
+// handed, so that no Read or Close of the body is then to come.
 type upload struct {
-	payload payload                       // the body the client made, or the size of one the caller set
-	getBody func() (io.ReadCloser, error) // the source of a body the caller set
-	first   sentBody                      // the first generation
+	payload  payload                       // the body the client made, or the size of one the caller set
+	getBody  func() (io.ReadCloser, error) // the source of a body the caller set
+	first    sentBody                      // the first generation
+	checking atomic.Bool                   // CheckRedirect runs: a copy it takes is not handed over
 
 	mu       sync.Mutex
 	last     *sentBody // the last generation handed to the transport
@@ -103,18 +104,24 @@ var errClosedEarly = errors.New("openapi: the request body was closed before it 
 func (u *upload) hand(b *sentBody) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
+	if b.handed || u.checking.Load() {
+		return
+	}
 	b.handed, u.last = true, b
 	if !b.ended {
 		u.open++
 	}
 }
 
-// end records how b ended, the first time; u.mu is held.
-func (u *upload) end(b *sentBody, err error) {
+// end ends b, the first time, with how its reading finished, or as closed
+// early; u.mu is held.
+func (u *upload) end(b *sentBody) {
 	if b.ended {
 		return
 	}
-	b.ended, b.result = true, err
+	if b.ended = true; !b.finished {
+		b.result = withContext(b.x, errClosedEarly)
+	}
 	if b.handed {
 		u.open--
 		u.publish()
@@ -208,8 +215,8 @@ func (r *Request) newExchange(ctx context.Context) (*exchange, *http.Request, er
 		return nil, nil, &RequestError{Err: errOtherOrigin}
 	}
 	body := req.Body
-	if body != nil && body != http.NoBody && req.GetBody == nil {
-		x.claim = &pr.taken
+	if body != nil && body != http.NoBody && (body != pr.body || req.GetBody == nil) {
+		x.claim = &pr.taken // HTTP.Body goes once; a body the caller set and GetBody give later sends theirs
 	}
 	x.payload = pr.payload
 	switch {
@@ -231,17 +238,23 @@ func (r *Request) newExchange(ctx context.Context) (*exchange, *http.Request, er
 }
 
 // send sends req as sign makes it, following redirects as
-// Options.Redirects says, and describes the last response. inPlace says
-// whether sign may add to req's header, which no one else holds. A
-// response that arrived comes with any error that ended the chain.
-func (x *exchange) send(req *http.Request, inPlace bool) (*Response, error) {
+// Options.Redirects says, and describes the last response. A response that
+// arrived comes with any error that ended the chain.
+func (x *exchange) send(req *http.Request) (*Response, error) {
 	var re RequestError
-	signed := x.sign(req, true, inPlace, &re)
+	signed := x.sign(req, x.Context, true, &re)
 	if err := re.refused(); err != nil {
 		return nil, err
 	}
-	if x.claim != nil && x.claim.Swap(true) {
-		return nil, &RequestError{Err: errors.New("the request body can be read only once, and was sent")}
+	if x.claim != nil && x.claim.Swap(true) { // HTTP.Body went with an earlier send
+		if x.getBody == nil {
+			return nil, &RequestError{Err: errors.New("the request body can be read only once, and was sent")}
+		}
+		rc, err := x.getBody()
+		if err != nil {
+			return nil, &RequestError{Err: fmt.Errorf("the request body's GetBody: %w", err)}
+		}
+		x.first.rc = rc
 	}
 	if x.first.p != nil {
 		x.hand(&x.first)
@@ -268,8 +281,8 @@ func (x *exchange) send(req *http.Request, inPlace bool) (*Response, error) {
 // call sends req as send does and applies Call's policy to the response.
 // Once the request has gone to the transport, an error waits for the
 // upload too, so that the body is not read after Call returns.
-func (x *exchange) call(req *http.Request, inPlace bool, out any) (*Response, error) {
-	resp, err := x.send(req, inPlace)
+func (x *exchange) call(req *http.Request, out any) (*Response, error) {
+	resp, err := x.send(req)
 	if err != nil {
 		if x.returned {
 			x.waitUpload(x)
@@ -617,10 +630,10 @@ type payload struct {
 
 // A sentBody is one generation of a request body: a payload, or a body the
 // caller set, which the client closes as net/http would. One the client
-// tracks reports its reading to the upload: it ends at the first Read that
-// returns an error, io.EOF included, or at Close, except that a Close
-// during a Read ends it when that Read returns; a Read after the end, or
-// after Close, never reaches the reader.
+// tracks reports to the upload: the first Read that returns an error, io.EOF
+// included, says how its reading finished, and no later Read reaches the
+// reader; it ends at the transport's Close, or, when a Read is then in
+// flight, as that Read returns.
 type sentBody struct {
 	x   *exchange // tracks the upload, or nil
 	p   *payload
@@ -628,8 +641,8 @@ type sentBody struct {
 	rc  io.ReadCloser // read instead of p when set, p.size being its declared length or -1
 
 	// Guarded by x.mu.
-	handed, reading, closed, ended bool
-	result                         error // how it ended
+	handed, reading, finished, closed, ended bool
+	result                                   error // how its reading finished: nil at io.EOF
 }
 
 func (b *sentBody) Read(buf []byte) (int, error) {
@@ -638,8 +651,8 @@ func (b *sentBody) Read(buf []byte) (int, error) {
 	}
 	u := &b.x.upload
 	u.mu.Lock()
-	if b.closed || b.ended {
-		err := b.result // nil after io.EOF
+	if b.closed || b.finished {
+		err := b.result
 		if b.closed {
 			err = errClosedEarly
 		}
@@ -650,14 +663,14 @@ func (b *sentBody) Read(buf []byte) (int, error) {
 	u.mu.Unlock()
 	n, err := b.read(buf)
 	u.mu.Lock()
-	b.reading = false
-	switch {
-	case err == io.EOF:
-		u.end(b, nil)
-	case err != nil:
-		u.end(b, withContext(b.x, err))
-	case b.closed:
-		u.end(b, withContext(b.x, errClosedEarly))
+	if b.reading = false; err != nil {
+		b.finished = true
+		if err != io.EOF {
+			b.result = withContext(b.x, err)
+		}
+	}
+	if b.closed {
+		u.end(b)
 	}
 	u.mu.Unlock()
 	return n, err
@@ -700,7 +713,7 @@ func (b *sentBody) Close() error {
 		u := &b.x.upload
 		u.mu.Lock()
 		if b.closed = true; !b.reading {
-			u.end(b, withContext(b.x, errClosedEarly))
+			u.end(b)
 		}
 		u.mu.Unlock()
 	}

@@ -519,7 +519,7 @@ func (c *Client) Call(ctx context.Context, key string, in *Input, out any) (*Res
 	}
 	x.selection = sec
 	x.attach(req, p)
-	return x.call(req, c.cfg.Redirects != FollowAll, out)
+	return x.call(req, out)
 }
 
 // Prepare builds the request for the operation named key with in, applying
@@ -609,7 +609,7 @@ func (r *Request) Send(ctx context.Context) (*Response, error) {
 	if err != nil {
 		return nil, err
 	}
-	return x.send(req, false)
+	return x.send(req)
 }
 
 // Call sends r with ctx, adding credentials, and returns as [Client.Call]
@@ -633,7 +633,7 @@ func (r *Request) Call(ctx context.Context, out any) (*Response, error) {
 	if err != nil {
 		return nil, err
 	}
-	return x.call(req, false, out)
+	return x.call(req, out)
 }
 
 // A Response is a response the server sent to a call: the *http.Response,

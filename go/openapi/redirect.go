@@ -3,6 +3,7 @@ package openapi
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/textproto"
@@ -62,12 +63,13 @@ func (x *exchange) follow(req, signed *http.Request) (*http.Response, error) {
 		u := req.URL.ResolveReference(ref)
 		left = left || !sameOrigin(u, first.URL)
 		next := x.hop(req, resp, method, u, keep, left)
-		if !ref.IsAbs() && req.Host != "" && req.Host != req.URL.Host {
-			next.Host = req.Host // as net/http keeps it (Go issue 22233)
+		if ref.Host == "" && req.Host != "" && req.Host != req.URL.Host {
+			next.Host = req.Host // with no authority in the Location, as net/http keeps it (Go issue 22233)
 		}
 		via = append(via, req)
 
-		// CheckRedirect sees the body the hop sends, as net/http shows it.
+		// CheckRedirect sees the body the hop sends, as net/http shows it; a
+		// copy it takes with GetBody is its own.
 		var hb *sentBody
 		if body {
 			if hb, err = x.newBody(); err != nil {
@@ -76,35 +78,42 @@ func (x *exchange) follow(req, signed *http.Request) (*http.Response, error) {
 			}
 			next.Body, next.GetBody, next.ContentLength = hb, first.GetBody, first.ContentLength
 		}
+		x.checking.Store(true)
 		err = cfg.checkRedirect(next, via)
-		if err == nil && !deadline.IsZero() {
+		x.checking.Store(false)
+		if err != http.ErrUseLastResponse {
+			discard(resp)
+		}
+		if err == nil { // CheckRedirect may have moved the hop
+			left = left || next.URL == nil || !sameOrigin(next.URL, first.URL)
+			src, cancel := x.Context, func() {}
+			if !deadline.IsZero() {
+				src, cancel = context.WithDeadline(x.Context, deadline)
+			}
+			var re RequestError
+			if signed = x.sign(next, src, !left, &re); re.refused() != nil {
+				err = re.sent()
+			}
+			cancel()
+		}
+		if err == nil && !deadline.IsZero() { // what remains, charged for everything since the chain began
 			hc = new(http.Client)
 			*hc = *cfg.client
 			if hc.Timeout = time.Until(deadline); hc.Timeout <= 0 {
 				err = errChainTimeout{}
 			}
 		}
-		var re RequestError
-		if err == nil {
-			// CheckRedirect may have moved the hop.
-			left = left || next.URL == nil || !sameOrigin(next.URL, first.URL)
-			if signed = x.sign(next, !left, false, &re); re.refused() != nil {
-				err = re.sent()
-			}
+		sent, _ := next.Body.(*sentBody) // the hop's body, when the client made it
+		if hb != nil && (err != nil || sent != hb) {
+			hb.Close() // not sent, or CheckRedirect gave the hop another body
 		}
 		switch {
-		case hb == nil:
-		case err == nil && next.Body == hb:
-			x.hand(hb)
-		default: // not sent, or CheckRedirect gave the hop another body
-			hb.Close()
-		}
-		if err == http.ErrUseLastResponse {
+		case err == http.ErrUseLastResponse:
 			return resp, nil
-		}
-		discard(resp)
-		if err != nil {
+		case err != nil:
 			return resp, fail(next, err)
+		case sent != nil && sent.x == x:
+			x.hand(sent)
 		}
 		req = next
 	}
@@ -131,7 +140,8 @@ func redirect(method string, status int) (hop string, keep, ok bool) {
 // may have repeated. It carries req's header fields, less the content
 // fields unless keep is set; once the chain has left the call's origin,
 // only the Content-Type the client wrote and a User-Agent with no value,
-// which suppresses net/http's.
+// which suppresses net/http's. With a jar, its Cookie field leaves out the
+// cookies resp sets, which the jar supplies.
 func (x *exchange) hop(req *http.Request, resp *http.Response, method string, u *url.URL, keep, left bool) *http.Request {
 	if names := x.queryNames(); names != nil && u.RawQuery != "" {
 		u.RawQuery = withQuery(u.RawQuery, isOneOf(names), nil)
@@ -143,6 +153,20 @@ func (x *exchange) hop(req *http.Request, resp *http.Response, method string, u 
 		case !keep && (strings.HasPrefix(ck, "Content-") || ck == "Digest" || ck == "Last-Modified"):
 		case !left, ck == "Content-Type" && len(vs) == 1 && vs[0] == x.payload.ctype, ck == "User-Agent" && len(vs) == 0:
 			h[k] = vs
+		}
+	}
+	// As net/http has it (Go issue 17494).
+	if x.cfg.jar != nil && len(h["Cookie"]) > 0 {
+		if set := resp.Cookies(); len(set) > 0 {
+			names := make([]string, len(set))
+			for i, c := range set {
+				names[i] = c.Name
+			}
+			if list := withCookies(strings.Join(h["Cookie"], "; "), isOneOf(names), nil); list != "" {
+				h["Cookie"] = []string{list}
+			} else {
+				delete(h, "Cookie")
+			}
 		}
 	}
 	return (&http.Request{Method: method, URL: u, Proto: "HTTP/1.1", ProtoMajor: 1, ProtoMinor: 1, Header: h, Response: resp}).WithContext(x)
@@ -160,20 +184,27 @@ func discard(resp *http.Response) {
 }
 
 // noFollow is the Transport of the http.Client the client sends with: the
-// caller's, or http.DefaultTransport for none, moving the Location of a
-// 301, 302, 303, 307 or 308 response to heldLocation, so that the
-// http.Client finds none and returns the response: it never parses the
+// caller's, or http.DefaultTransport at each send for none, moving the
+// Location of a 301, 302, 303, 307 or 308 response to heldLocation, so that
+// the http.Client finds none and returns the response: it never parses the
 // Location, calls GetBody or consults CheckRedirect. The client moves the
 // Location back when Do returns, and follows redirects itself.
 type noFollow struct{ rt http.RoundTripper }
 
-// heldLocation holds a Location from the transport; with a space, it is no
-// field name a response can have.
-const heldLocation = "Location held by openapi"
+// heldLocation holds a Location from the transport; with a colon, it is no
+// field name HTTP/1 can carry or HTTP/2 accepts.
+const heldLocation = "openapi:Location"
 
 func (t noFollow) RoundTrip(r *http.Request) (*http.Response, error) {
-	resp, err := t.rt.RoundTrip(r)
-	if err == nil && resp != nil && redirection(resp.StatusCode) {
+	rt := t.transport()
+	resp, err := rt.RoundTrip(r)
+	switch {
+	case err != nil:
+	case resp == nil: // what net/http would say of the caller's transport, which it does not see
+		return nil, fmt.Errorf("http: RoundTripper implementation (%T) returned a nil *Response with a nil error", rt)
+	case resp.Body == nil && resp.ContentLength > 0 && r.Method != "HEAD":
+		return nil, fmt.Errorf("http: RoundTripper implementation (%T) returned a *Response with content length %d but a nil Body", rt, resp.ContentLength)
+	case redirection(resp.StatusCode):
 		move(resp.Header, "Location", heldLocation)
 	}
 	return resp, err
@@ -195,9 +226,16 @@ func move(h http.Header, from, to string) {
 // CancelRequest passes on the cancellation the http.Client makes, for its
 // Timeout, to a transport that has only this way to stop.
 func (t noFollow) CancelRequest(r *http.Request) {
-	if c, ok := t.rt.(interface{ CancelRequest(*http.Request) }); ok {
+	if c, ok := t.transport().(interface{ CancelRequest(*http.Request) }); ok {
 		c.CancelRequest(r)
 	}
+}
+
+func (t noFollow) transport() http.RoundTripper {
+	if t.rt == nil {
+		return http.DefaultTransport
+	}
+	return t.rt
 }
 
 // tenRedirects is net/http's default CheckRedirect.

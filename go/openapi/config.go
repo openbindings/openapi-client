@@ -57,11 +57,7 @@ func newConfig(o Options, parent *config) *config {
 		if hc == nil {
 			hc = http.DefaultClient
 		}
-		rt := hc.Transport
-		if rt == nil {
-			rt = http.DefaultTransport
-		}
-		cfg.client = &http.Client{Transport: noFollow{rt}, Timeout: hc.Timeout}
+		cfg.client = &http.Client{Transport: noFollow{hc.Transport}, Timeout: hc.Timeout}
 		cfg.jar, cfg.checkRedirect = hc.Jar, hc.CheckRedirect
 		if cfg.checkRedirect == nil {
 			cfg.checkRedirect = tenRedirects

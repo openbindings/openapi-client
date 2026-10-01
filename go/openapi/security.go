@@ -1,6 +1,7 @@
 package openapi
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -543,10 +544,10 @@ func port(u *url.URL) string {
 
 // sign returns req as it is sent: with the cookies the HTTPClient's jar
 // has for it and, when creds is set, the credentials of the call's
-// alternative, calling their sources with the call's context. That is a
-// copy of req, or req itself when nothing is added, or with inPlace when
-// only cookies are. Why the credentials cannot be placed is recorded in re.
-func (x *exchange) sign(req *http.Request, creds, inPlace bool, re *RequestError) *http.Request {
+// alternative, calling their sources with src. That is a copy of req, or req
+// itself when nothing is added. Why the credentials cannot be placed is
+// recorded in re, the setting's key naming the scheme.
+func (x *exchange) sign(req *http.Request, src context.Context, creds bool, re *RequestError) *http.Request {
 	places := creds && x.places
 	var jarCookies []*http.Cookie
 	if x.cfg.jar != nil && req.URL != nil {
@@ -555,13 +556,10 @@ func (x *exchange) sign(req *http.Request, creds, inPlace bool, re *RequestError
 	if !places && len(jarCookies) == 0 {
 		return req
 	}
-	s := req
-	if places || !inPlace {
-		s = new(http.Request)
-		*s = *req
-		if s.Header = maps.Clone(req.Header); s.Header == nil {
-			s.Header = http.Header{}
-		}
+	s := new(http.Request)
+	*s = *req
+	if s.Header = maps.Clone(req.Header); s.Header == nil {
+		s.Header = http.Header{}
 	}
 	for _, c := range jarCookies {
 		s.AddCookie(c) // after the request's own cookies, as net/http adds them
@@ -597,10 +595,10 @@ func (x *exchange) sign(req *http.Request, creds, inPlace bool, re *RequestError
 				return req
 			}
 		}
-		secret, err := c.source(x.Context)
+		secret, err := c.source(src)
 		switch {
 		case err != nil:
-			re.fail(withContext(x.Context, fmt.Errorf("the credential source for %q: %w", name, err)))
+			re.fail(withContext(src, fmt.Errorf("the credential source for %q: %w", name, err)))
 			continue
 		case c.kind != sourceCredential: // checked when the call was prepared
 		case secret == "":
