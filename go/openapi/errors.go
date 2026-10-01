@@ -85,8 +85,9 @@ type RequestError struct {
 	// a bearer or Basic credential that would go over plain http or ws, a
 	// selected alternative two of whose schemes set the same field, an out that
 	// cannot receive a result, a prepared request whose URL was changed to
-	// another origin, or a second send of a body that can be read only once.
-	// Several are joined, as by errors.Join.
+	// another origin, a second send of a body that can be read only once, or
+	// the error of HTTP.GetBody when a later send of a prepared request takes
+	// its body from it. Several are joined, as by errors.Join.
 	Err error
 }
 
