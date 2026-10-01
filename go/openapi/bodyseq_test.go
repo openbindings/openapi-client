@@ -354,6 +354,8 @@ func TestSequentialItemRefusals(t *testing.T) {
 		input     string
 	}{
 		{"data not a string", "sse", []any{ok, map[string]any{"data": 5}}, "Input.Body/1"},
+		{"data an object", "sse", []any{ok, map[string]any{"data": map[string]int{"a": 1}}}, "Input.Body/1"},
+		{"id an array", "sse", []any{ok, map[string]any{"id": []string{"a"}}}, "Input.Body/1"},
 		{"another member", "sse", []any{ok, map[string]any{"data": "x", "comment": "y"}}, "Input.Body/1"},
 		{"LF in event", "sse", []any{ok, map[string]any{"event": "a\nb"}}, "Input.Body/1"},
 		{"CR in event", "sse", []any{ok, map[string]any{"event": "a\rb"}}, "Input.Body/1"},

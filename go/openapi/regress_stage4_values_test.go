@@ -148,8 +148,9 @@ type marshalerBody struct {
 // encoding/json gives: omitzero through IsZero (a value or pointer
 // receiver, a time.Time); a pointer-receiver MarshalJSON or MarshalText
 // used for an addressable field (the body given by pointer) and not for an
-// unaddressable one; a MarshalJSON body walked by its JSON members, and a
-// MarshalJSON property whose JSON is an array split into items (F35).
+// unaddressable one; ",string"; a MarshalJSON body walked by its JSON
+// members, and a MarshalJSON property whose JSON is an array split into
+// items (F35: lines no test reached).
 func TestC41EncodingJSONEquivalence(t *testing.T) {
 	w, c := valuesClient(t)
 	cases := []struct {
@@ -164,6 +165,10 @@ func TestC41EncodingJSONEquivalence(t *testing.T) {
 		{"a MarshalJSON body", bodyJSON{}, "s=1&n=2"},
 		{"a MarshalJSON array property", map[string]any{"arr": arrayJSON{}}, "arr=a&arr=b"},
 		{"int map keys as encoding/json sorts them", map[int]string{2: "b", 10: "a"}, "10=a&2=b"},
+		{"the string option", struct {
+			N int  `json:"n,string"`
+			P bool `json:"p,string"`
+		}{5, true}, "n=5&p=true"},
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
