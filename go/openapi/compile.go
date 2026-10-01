@@ -160,12 +160,14 @@ func (e *entry) shape() *operation {
 		sec = d.compileSecurity(security)
 	}
 	op.Security, o.security, errs = sec.reqs, sec.alts, append(errs, sec.err)
-	for id, i := range ids {
-		switch {
-		case !sec.dests[id]:
-		case o.dests == nil:
-			o.dests = map[paramID]int{id: i}
-		default:
+	if len(sec.dests) > 0 { // keep the parameters where a credential goes
+		for id, i := range ids {
+			if !sec.dests[id] {
+				continue
+			}
+			if o.dests == nil {
+				o.dests = map[paramID]int{}
+			}
 			o.dests[id] = i
 		}
 	}
