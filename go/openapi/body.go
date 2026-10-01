@@ -275,6 +275,12 @@ func (c *Client) formBody(b *builder, enc *formEncoding, v any, body string, rea
 					b.buf = appendForm(b.buf, s)
 					break
 				}
+				if s, ok := x.(string); ok && fv.k != jsonClass {
+					if codec, _ := c.cfg.codec(fv.m); codec == nil {
+						b.buf = appendForm(b.buf, s) // its bytes, as appendContent writes them, without a copy
+						break
+					}
+				}
 				var null bool
 				if scratch, inner, null, err = c.appendContent(scratch[:0], fv.m, fv.k, x); null {
 					b.buf = b.buf[:lead] // left out
