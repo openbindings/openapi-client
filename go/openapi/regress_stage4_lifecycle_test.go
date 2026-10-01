@@ -180,31 +180,63 @@ func firstUseAll(tb testing.TB, doc []byte, n, workers int) time.Duration {
 	return time.Since(start)
 }
 
-// C4-6 (F13): concurrent first calls to form and multipart operations do
-// not serialize behind a document-wide lock: describing 400 such operations
-// from several goroutines takes at most three quarters of the time it takes
-// from one, best of 5 interleaved runs each. A shared lock held across
-// compilation makes the parallel run as slow as the serial one, or slower.
-func TestC46ConcurrentFirstUseDoesNotSerialize(t *testing.T) {
-	if testing.Short() {
-		t.Skip("timing test")
-	}
-	workers := min(runtime.GOMAXPROCS(0), 8)
-	if workers < 4 {
-		t.Skipf("needs at least 4 processors, has %d", workers)
-	}
+// C4-6 (F13), IP4F-1: concurrent first uses of form and multipart
+// operations give what a serial first use gives (IP4F-1: "the first stored
+// result wins and every caller sees it"), descriptors and prepared bytes
+// alike, clean under -race: 400 operations first used by 8 goroutines, each
+// in its own order, three times. Stage 4 ledger, IP4F-7: "TestC46's
+// wall-clock ratio fails under machine load; the parallel first-use check
+// moves to the gate's benchmark pair (serial vs parallel, reported by the
+// loop owner), and the test keeps only what is deterministic"; that pair is
+// BenchmarkFirstUseFormsSerial and BenchmarkFirstUseFormsParallel below.
+func TestC46ConcurrentFirstUse(t *testing.T) {
 	const n = 400
 	doc := formOpsDoc(n)
-	serial, parallel := time.Duration(1<<63-1), time.Duration(1<<63-1)
-	for range 5 {
-		runtime.GC()
-		serial = min(serial, firstUseAll(t, doc, n, 1))
-		runtime.GC()
-		parallel = min(parallel, firstUseAll(t, doc, n, workers))
+	fresh := func() *openapi.Client {
+		c, err := openapi.Parse(context.Background(), doc, "https://h.example.test/openapi.json", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c
 	}
-	t.Logf("1 goroutine: %v; %d goroutines: %v (%.2fx)", serial, workers, parallel, float64(parallel)/float64(serial))
-	if parallel > serial*3/4 {
-		t.Errorf("%d goroutines took %v against %v for one; first use serializes", workers, parallel, serial)
+	in := &openapi.Input{MediaType: "application/x-www-form-urlencoded", Body: map[string]any{"a": "x y", "b": []int{1, 2}}}
+	describe := func(c *openapi.Client) string {
+		var b strings.Builder
+		for i := range n {
+			op := mustOp(t, c, fmt.Sprintf("up%d", i))
+			for _, m := range op.Body.Media {
+				for _, e := range m.Encoding {
+					fmt.Fprintf(&b, "%s %s %s: %q %q %v %v %d %v\n", op.Key, m.Type, e.Name, e.ContentType, e.Style, e.Explode, e.AllowReserved, len(e.Headers), e.Err)
+				}
+			}
+			req, err := c.Prepare(op.Key, in)
+			if err != nil {
+				fmt.Fprintf(&b, "%s: %v\n", op.Key, err)
+				continue
+			}
+			fmt.Fprintf(&b, "%s sends %q\n", op.Key, preparedBody(t, req))
+		}
+		return b.String()
+	}
+	want := describe(fresh())
+	for round := range 3 {
+		c := fresh()
+		var wg sync.WaitGroup
+		for w := range 8 {
+			wg.Go(func() {
+				for j := range n {
+					key := fmt.Sprintf("up%d", (j*7+w*53)%n) // a different order on each goroutine
+					if _, err := c.Prepare(key, in); err != nil {
+						t.Error(err)
+					}
+				}
+			})
+		}
+		wg.Wait()
+		if got := describe(c); got != want {
+			t.Errorf("round %d: concurrent first use differs from serial:\n%s", round, lineDiff(got, want))
+			break
+		}
 	}
 }
 

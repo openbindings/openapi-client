@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -548,4 +549,24 @@ func preparedBody(t testing.TB, req *openapi.Request) []byte {
 		t.Fatalf("reading GetBody: %v", err)
 	}
 	return b
+}
+
+// lineDiff returns the lines where got and want, texts of several lines,
+// differ.
+func lineDiff(got, want string) string {
+	g, w := strings.Split(got, "\n"), strings.Split(want, "\n")
+	var b strings.Builder
+	for i := range max(len(g), len(w)) {
+		var gl, wl string
+		if i < len(g) {
+			gl = g[i]
+		}
+		if i < len(w) {
+			wl = w[i]
+		}
+		if gl != wl {
+			fmt.Fprintf(&b, "got  %s\nwant %s\n", gl, wl)
+		}
+	}
+	return b.String()
 }
