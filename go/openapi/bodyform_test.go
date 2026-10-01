@@ -1,8 +1,10 @@
 package openapi_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"slices"
 	"strings"
 	"testing"
@@ -13,9 +15,13 @@ import (
 // Stage 4, application/x-www-form-urlencoded bodies, checked byte for byte.
 // client.go, Input.Body: "For form and multipart media, Body is an object
 // (a map or a struct) whose properties are the fields. A property may be a
-// []byte, an io.Reader or a [Part]; an array property sends one field or
-// part per item under the property's name, unless its collectionFormat or
-// Encoding style says otherwise." doc.go, Fixed rules, Form bodies: "Form
+// []byte, an io.Reader or a [Part]; a property whose value is an array
+// sends one field or part per item under the property's name, unless its
+// collectionFormat or Encoding style says otherwise, each item taking the
+// property's content type (an array schema's items type by default); any
+// other value is one field or part." Part: "In an
+// application/x-www-form-urlencoded body only Content and MediaType apply,
+// and Filename, NoFilename or Header is refused." doc.go, Fixed rules, Form bodies: "Form
 // bodies use the WHATWG application/x-www-form-urlencoded encoder in every
 // edition (a space as +, letters, digits and *-._ literal, every other byte
 // as %XX), except that a property whose Encoding sets style, explode or
@@ -397,6 +403,15 @@ func TestFormBodyRefusals(t *testing.T) {
 		{"a range given", "form", map[string]any{"pick": openapi.Part{Content: "x", MediaType: "text/*"}}, nil, []string{"Input.Body/pick"}},
 		{"a type not offered", "form", map[string]any{"pick": openapi.Part{Content: "x", MediaType: "application/xml"}}, nil, []string{"Input.Body/pick"}},
 		{"an item's type not offered", "form", map[string]any{"pick": []any{openapi.Part{Content: "x", MediaType: "text/plain"}, openapi.Part{Content: "y", MediaType: "text/csv"}}}, nil, []string{"Input.Body/pick/1"}},
+		// client.go, Part: "In an application/x-www-form-urlencoded body only
+		// Content and MediaType apply, and Filename, NoFilename or Header is
+		// refused" (stage 4 ledger, Q18), at the field's key.
+		{"a Part's Filename", "form", map[string]any{"pick": openapi.Part{Content: "x", MediaType: "text/plain", Filename: "f.txt"}}, []string{"Input.Body/pick"}, nil},
+		{"a Part's NoFilename", "form", map[string]any{"s": openapi.Part{Content: "x", NoFilename: true}}, []string{"Input.Body/s"}, nil},
+		{"a Part's Header", "form", map[string]any{"s": openapi.Part{Content: "x", Header: http.Header{"X-A": {"v"}}}}, []string{"Input.Body/s"}, nil},
+		{"an item Part's Header", "form", map[string]any{"a": []any{"x", openapi.Part{Content: "y", Header: http.Header{"X-A": {"v"}}}}}, []string{"Input.Body/a/1"}, nil},
+		// The pointer passes through a Part (stage 4 ledger, Q14).
+		{"reader inside a Part's JSON", "form", map[string]any{"pick": openapi.Part{Content: map[string]any{"r": strings.NewReader("x")}, MediaType: "application/json"}}, []string{"Input.Body/pick/r"}, nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -409,11 +424,13 @@ func TestFormBodyRefusals(t *testing.T) {
 	}
 }
 
-// A form body is a value the client encodes: Prepare encodes it once, so
-// HTTP.Body and every GetBody give the same bytes (doc.go, Fixed rules,
-// Form bodies: "A body is encoded once, so HTTP.Body and every GetBody
-// give the same bytes"), with Content-Length (Header fields: "for a body
-// that can be sent again").
+// A form body whose every source can be sent again is encoded once, when
+// prepared, so HTTP.Body and every GetBody give the same bytes (doc.go,
+// Fixed rules, Form bodies: "A body is encoded once, so HTTP.Body and every
+// GetBody give the same bytes"), with Content-Length (Header fields: "for a
+// body that can be sent again"; stage 4 ledger, Q10: "replayable readers
+// read by ReadAt, not drained"). TestBodyReplayPrepared covers a form body
+// holding a reader read once, which has no Content-Length.
 func TestFormBodyPrepared(t *testing.T) {
 	c := parseAt(t, doc31(formDoc), "https://api.example.test", testDocURI, nil)
 	req := mustPrepare(t, c, "form", &openapi.Input{Body: map[string]any{"s": "a b", "a": []string{"1", "2"}, "o": map[string]int{"k": 1}}})
@@ -430,5 +447,59 @@ func TestFormBodyPrepared(t *testing.T) {
 	op := mustOp(t, c, "form")
 	if req.Media != reqMedia(t, op, 0) {
 		t.Errorf("Request.Media is not Operation.Body.Media[0]")
+	}
+
+	sr, br := strings.NewReader("r r"), bytes.NewReader([]byte("b&b"))
+	req = mustPrepare(t, c, "form", &openapi.Input{Body: map[string]any{"raw": []any{sr, br}, "s": "x"}})
+	const withReaders = "raw=r+r&raw=b%26b&s=x"
+	if got := string(preparedBody(t, req)); got != withReaders || req.HTTP.ContentLength != int64(len(withReaders)) {
+		t.Errorf("GetBody gave %q with ContentLength %d, want %q", got, req.HTTP.ContentLength, withReaders)
+	}
+	if sr.Len() != 3 || br.Len() != 3 {
+		t.Errorf("Prepare drained a reader: Len %d, %d", sr.Len(), br.Len())
+	}
+}
+
+// A property's value decides how many fields it sends (stage 4 ledger, Q7;
+// client.go, Input.Body): an array value, []byte excluded, one field per
+// item, each typed by the items schema when the property's schema is an
+// array, else by the property's own type, an Encoding contentType applying
+// to each; any other value one field, typed by the items type for an array
+// schema.
+func TestFormBodyArrayValues(t *testing.T) {
+	w := newWire(t, nil)
+	c := parseFor(t, w, doc31(formDoc), nil)
+	for _, tt := range []struct {
+		name string
+		body map[string]any
+		want string
+	}{
+		{"strings for a string", map[string]any{"s": []string{"x y", "z"}}, "s=x+y&s=z"},
+		{"objects for an object", map[string]any{"o": []any{map[string]int{"a": 1}, map[string]int{"b": 2}}}, "o=%7B%22a%22%3A1%7D&o=%7B%22b%22%3A2%7D"},
+		{"numbers for an integer", map[string]any{"i": []int{1, 2}}, "i=1&i=2"},
+		{"strings for an untyped property", map[string]any{"raw": []string{"x", "y"}}, "raw=x&raw=y"},
+		{"an Encoding contentType for each item", map[string]any{"j": []string{"x", "y"}}, "j=%22x%22&j=%22y%22"},
+		{"a scalar for an array", map[string]any{"a": "x y"}, "a=x+y"},
+		{"an object for an array of objects", map[string]any{"ao": map[string]int{"k": 1}}, "ao=%7B%22k%22%3A1%7D"},
+		{"bytes for an array are one field", map[string]any{"a": []byte("x&y")}, "a=x%26y"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			mustCall(t, c, "form", &openapi.Input{Body: tt.body}, nil)
+			if got := w.last(t); string(got.Body) != tt.want {
+				t.Errorf("body %q, want %q", got.Body, tt.want)
+			}
+		})
+	}
+}
+
+// A field string that is not valid UTF-8 is sent as given, each byte %XX
+// (stage 4 ledger, Q9: "invalid UTF-8 in field strings is sent as given
+// (form: each byte %XX), as stage 2 and whole text bodies").
+func TestFormBodyInvalidUTF8(t *testing.T) {
+	w := newWire(t, nil)
+	c := parseFor(t, w, doc31(formDoc), nil)
+	mustCall(t, c, "form", &openapi.Input{Body: map[string]any{"s": "a\xffb", "raw": "\xfe", "a": []string{"\xc3"}}}, nil)
+	if got, want := string(w.last(t).Body), "a=%C3&raw=%FE&s=a%FFb"; got != want {
+		t.Errorf("body %q, want %q", got, want)
 	}
 }

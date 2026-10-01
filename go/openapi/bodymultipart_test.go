@@ -13,22 +13,29 @@ import (
 // mime/multipart and checked part by part: names, filenames, media types,
 // header fields and content. client.go, Input.Body: "For form and multipart
 // media, Body is an object (a map or a struct) whose properties are the
-// fields. A property may be a []byte, an io.Reader or a [Part]; an array
-// property sends one field or part per item under the property's name";
-// Part: names and filenames "written in its Content-Disposition as given,
-// each as a quoted-string with \ and " escaped, never as filename*; a CR or
-// LF in either is refused", Filename "Empty means the default: the part's
-// name for a []byte or io.Reader Content, and none otherwise", NoFilename
-// "sends no filename, whatever the Content", Header "holds other header
-// fields of the part ... A Content-Disposition field replaces the one the
-// client writes; Content-Type is refused (set MediaType)". doc.go, Fixed
-// rules, Form bodies: "Multipart/form-data fields are never URI
+// fields. A property may be a []byte, an io.Reader or a [Part]; a property
+// whose value is an array sends one field or part per item under the
+// property's name, unless its collectionFormat or Encoding style says
+// otherwise, each item taking the property's content type (an array
+// schema's items type by default); any other value is one field or part."
+// Part: "A part's name and filename are written in its Content-Disposition
+// as given, each as a quoted-string with \ and " escaped, never as
+// filename*; a control character other than a tab in either is refused, as
+// a quoted-string cannot carry it"; Filename "Empty means the default: the
+// part's name for a []byte or io.Reader Content whose media type is not
+// multipart, and none otherwise"; NoFilename "sends no filename, whatever
+// the Content"; Header "holds other header fields of the part, such as those
+// its Encoding declares, under the rules for Options.Header's field names
+// and values. A Content-Disposition field replaces the one the client
+// writes; Content-Type, in any spelling, is refused (set MediaType)". doc.go,
+// Fixed rules, Form bodies: "Multipart/form-data fields are never URI
 // percent-encoded." OAS 3.1.2 section 4.8.15.1.1 gives each part's default
 // Content-Type from its schema, and section 4.8.15.3: "Array properties are
 // handled by applying the same name to multiple parts, as is recommended by
 // [RFC7578] Section 4.3". RFC 7578 section 4.2: "Each part MUST contain a
 // Content-Disposition header field where the disposition type is
-// "form-data"".
+// "form-data"". Stage 4 ledger, test round (6e13978), Q4 to Q7, Q9, Q11,
+// Q13 to Q15.
 
 const mpPaths = `
 	"/oas1":{"post":{"operationId":"oas1","requestBody":{"content":{"multipart/form-data":{"schema":{"type":"object","properties":{
@@ -251,6 +258,9 @@ func TestMultipartPartOverrides(t *testing.T) {
 		{"filename as given", "mp", "doc", openapi.Part{Content: []byte("x"), Filename: "../etc/pass wd%41"}, wantPart{disposition: formData("doc", "../etc/pass wd%41"), ctype: "application/pdf", content: "x"}},
 		{"name escaped", "raw", `n"a\me`, "v", wantPart{disposition: `form-data; name="n\"a\\me"`, ctype: "application/octet-stream", content: "v"}},
 		{"name as given", "raw", "é a/b", "v", wantPart{disposition: formData("é a/b"), ctype: "application/octet-stream", content: "v"}},
+		{"a tab in a name", "raw", "a\tb", "v", wantPart{disposition: formData("a\tb"), ctype: "application/octet-stream", content: "v"}},
+		{"a tab in a filename", "mp", "doc", openapi.Part{Content: []byte("x"), Filename: "a\tb.pdf"}, wantPart{disposition: formData("doc", "a\tb.pdf"), ctype: "application/pdf", content: "x"}},
+		{"a tab inside a Header value", "mp", "title", openapi.Part{Content: "x", Header: http.Header{"X-Note": {"a\tb"}}}, wantPart{disposition: formData("title"), ctype: "text/plain", content: "x", extra: http.Header{"X-Note": {"a\tb"}}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -261,15 +271,21 @@ func TestMultipartPartOverrides(t *testing.T) {
 }
 
 // Refusals, at the keys errors.go gives: Inputs for a value that cannot be
-// sent ("a Part that sets both Filename and NoFilename"; client.go, Part: a
-// CR or LF in a name or filename "is refused", "Content-Type is refused";
-// stage brief, Refusals: "a property or part value its media type cannot
-// encode"; client.go, Input.Body: a Part or reader "inside a JSON value is
-// refused with an Inputs entry at its place in Body", and Body is an
-// object, a slice being an OpenAPI 3.2 shape), and Settings for a part's
-// media type the call must give or gave wrongly (RequestError.Settings:
-// "for a part's media type, "Input.Body" followed by the part's JSON
-// Pointer"; Part.MediaType: "A range is refused").
+// sent ("a Part that sets both Filename and NoFilename"; client.go, Part: "a
+// control character other than a tab in either is refused", Header "under
+// the rules for Options.Header's field names and values" and
+// "Content-Type, in any spelling, is refused"; stage 4 ledger, Q11: "Part.Header
+// names must be tokens and values pass the header-field rule (C3-7)", the
+// doc.go Credentials rule of "a control character other than a tab, or ...
+// leading or trailing whitespace"; stage brief, Refusals: "a property or part
+// value its media type cannot encode"; client.go, Input.Body: a Part or
+// reader "inside a JSON value is refused with an Inputs entry at its place
+// in Body", the pointer passing through a Part with no Content segment
+// (ledger, Q14), and Body is an object, a slice being an OpenAPI 3.2
+// shape), and Settings for a part's media type the call must give or gave
+// wrongly (RequestError.Settings: "for a part's media type, "Input.Body"
+// followed by the part's JSON Pointer"; Part.MediaType: "A range is
+// refused").
 func TestMultipartRefusals(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, mpDoc(), nil)
@@ -287,12 +303,28 @@ func TestMultipartRefusals(t *testing.T) {
 		{"LF in a name", "raw", map[string]any{"a\nb": "x"}, []string{"Input.Body/a\nb"}, nil},
 		{"LF in a filename", "mp", map[string]any{"doc": openapi.Part{Content: []byte("x"), Filename: "a\nb"}}, []string{"Input.Body/doc"}, nil},
 		{"CR in a filename", "mp", map[string]any{"doc": openapi.Part{Content: []byte("x"), Filename: "a\rb"}}, []string{"Input.Body/doc"}, nil},
+		{"NUL in a name", "raw", map[string]any{"a\x00b": "x"}, []string{"Input.Body/a\x00b"}, nil},
+		{"ESC in a name", "raw", map[string]any{"a\x1bb": "x"}, []string{"Input.Body/a\x1bb"}, nil},
+		{"DEL in a name", "raw", map[string]any{"a\x7fb": "x"}, []string{"Input.Body/a\x7fb"}, nil},
+		{"NUL in a filename", "mp", map[string]any{"doc": openapi.Part{Content: []byte("x"), Filename: "a\x00"}}, []string{"Input.Body/doc"}, nil},
+		{"DEL in a filename", "mp", map[string]any{"doc": openapi.Part{Content: []byte("x"), Filename: "a\x7f"}}, []string{"Input.Body/doc"}, nil},
+		{"Header name not a token", "mp", map[string]any{"title": openapi.Part{Content: "x", Header: http.Header{"X Bad": {"v"}}}}, []string{"Input.Body/title"}, nil},
+		{"Header name with a colon", "mp", map[string]any{"title": openapi.Part{Content: "x", Header: http.Header{"X:Bad": {"v"}}}}, []string{"Input.Body/title"}, nil},
+		{"Header value with CR LF", "mp", map[string]any{"title": openapi.Part{Content: "x", Header: http.Header{"X-A": {"a\r\nX-Injected: 1"}}}}, []string{"Input.Body/title"}, nil},
+		{"Header value with LF", "mp", map[string]any{"title": openapi.Part{Content: "x", Header: http.Header{"X-A": {"a\nb"}}}}, []string{"Input.Body/title"}, nil},
+		{"Header value with NUL", "mp", map[string]any{"title": openapi.Part{Content: "x", Header: http.Header{"X-A": {"a\x00b"}}}}, []string{"Input.Body/title"}, nil},
+		{"Header value with another control", "mp", map[string]any{"title": openapi.Part{Content: "x", Header: http.Header{"X-A": {"a\x01b"}}}}, []string{"Input.Body/title"}, nil},
+		{"Header value with leading space", "mp", map[string]any{"title": openapi.Part{Content: "x", Header: http.Header{"X-A": {" a"}}}}, []string{"Input.Body/title"}, nil},
+		{"Header value with trailing tab", "mp", map[string]any{"title": openapi.Part{Content: "x", Header: http.Header{"X-A": {"a\t"}}}}, []string{"Input.Body/title"}, nil},
+		{"CONTENT-TYPE in Header", "mp", map[string]any{"title": openapi.Part{Content: "x", Header: http.Header{"CONTENT-TYPE": {"text/csv"}}}}, []string{"Input.Body/title"}, nil},
+		{"reader inside a Part's JSON", "mp", map[string]any{"any": openapi.Part{Content: map[string]any{"r": strings.NewReader("x")}, MediaType: "application/json"}}, []string{"Input.Body/any/r"}, nil},
+		{"array items inside Parts", "mp", map[string]any{"meta": []any{map[string]int{"a": 1}, openapi.Part{Content: []any{0, strings.NewReader("x")}, MediaType: "application/json"}}}, []string{"Input.Body/meta/1/1"}, nil},
 		{"object under text/plain", "mp", map[string]any{"title": map[string]string{"a": "b"}}, []string{"Input.Body/title"}, nil},
 		{"number under octet-stream", "mp", map[string]any{"blob": 5}, []string{"Input.Body/blob"}, nil},
 		{"object under a Part's text/plain", "mp", map[string]any{"any": openapi.Part{Content: map[string]int{"a": 1}, MediaType: "text/plain"}}, []string{"Input.Body/any"}, nil},
 		{"array item under text/plain", "mp", map[string]any{"tags": []any{"a", map[string]int{"b": 1}}}, []string{"Input.Body/tags/1"}, nil},
 		{"reader inside a JSON part", "mp", map[string]any{"meta": map[string]any{"r": strings.NewReader("x")}}, []string{"Input.Body/meta/r"}, nil},
-		{"Part inside a JSON part", "mp", map[string]any{"meta": []any{openapi.Part{Content: "x"}}}, []string{"Input.Body/meta/0"}, nil},
+		{"Part inside a JSON part", "mp", map[string]any{"meta": map[string]any{"p": openapi.Part{Content: "x"}}}, []string{"Input.Body/meta/p"}, nil},
 		{"a string body", "mp", "title=x", []string{"Input.Body"}, nil},
 		{"a slice body in OpenAPI 3.1", "mp", []any{map[string]string{"title": "x"}}, []string{"Input.Body"}, nil},
 		{"a range needs Part.MediaType", "mp", map[string]any{"img": []byte("x")}, nil, []string{"Input.Body/img"}},
@@ -316,8 +348,10 @@ func TestMultipartRefusals(t *testing.T) {
 // (readMultipart checks it), or given (client.go, Input.MediaType:
 // "MediaType may carry parameters, which are sent as given: a pre-encoded
 // multipart body requires its boundary here, and a boundary given for a
-// multipart body the client encodes is used"; Options.MediaType selects "as
-// Input.MediaType does"), a quoted one included (RFC 2046: "bchars :=
+// multipart body the client encodes is used, a part whose content holds its
+// delimiter being an input that cannot be encoded (RFC 2046 section
+// 5.1.1)"; Options.MediaType selects "as Input.MediaType does"), a quoted
+// one included (RFC 2046: "bchars :=
 // bcharsnospace / " "", so a boundary may hold a space, and RFC 9110
 // section 8.3.1 quotes such a parameter value).
 func TestMultipartBoundary(t *testing.T) {
@@ -383,10 +417,13 @@ func TestMultipartBoundary(t *testing.T) {
 // prefixEncoding or itemEncoding; a []byte or io.Reader supplies it
 // pre-encoded, with its boundary in Part.MediaType"). In OpenAPI 3.1 an
 // Encoding Object has no encoding of its own, so the nested parts take the
-// defaults of the nested schema's properties. Nesting past one level is
-// refused at its Inputs key (stage brief, Refusals). The disposition type of
-// a multipart/mixed part is not settled (see the test author's questions):
-// only its name parameter is checked.
+// defaults of the nested schema's properties, each named by its
+// Content-Disposition form-data (stage 4 ledger, Q5), with exactly that
+// field and its Content-Type (ledger, readings confirmed). A part whose
+// media type is multipart takes no default filename (client.go,
+// Part.Filename; ledger, Q15). Nesting past one level is refused at its
+// Inputs key (stage brief, Refusals), the pointer passing through a Part
+// (ledger, Q14).
 func TestMultipartNested(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, mpDoc(), nil)
@@ -397,34 +434,33 @@ func TestMultipartNested(t *testing.T) {
 		t.Fatalf("%d parts, want 1", len(parts))
 	}
 	p := parts[0]
-	if d := p.header.Get("Content-Disposition"); d != formData("bundle") {
-		t.Errorf("Content-Disposition %q, want %q", d, formData("bundle"))
+	if d := p.header.Get("Content-Disposition"); d != formData("bundle") || len(p.header) != 2 {
+		t.Errorf("Content-Disposition %q (%d fields), want %q", d, len(p.header), formData("bundle"))
 	}
 	mt, params, err := mime.ParseMediaType(p.header.Get("Content-Type"))
 	if err != nil || mt != "multipart/mixed" || len(params) != 1 {
 		t.Fatalf("nested Content-Type %q, want multipart/mixed with a boundary", p.header.Get("Content-Type"))
 	}
 	_, _, nested := readMultipart(t, p.header.Get("Content-Type"), p.body)
-	want := []struct{ name, ctype, content string }{{"a", "text/plain", "x y"}, {"b", "application/json", `{"k":1}`}}
-	if len(nested) != len(want) {
-		t.Fatalf("%d nested parts, want %d", len(nested), len(want))
-	}
-	for i, w := range want {
-		np := nested[i]
-		if name := dispositionParams(t, np.header.Get("Content-Disposition"))["name"]; name != w.name {
-			t.Errorf("nested part %d: name %q, want %q", i, name, w.name)
-		}
-		if ct := np.header.Get("Content-Type"); ct != w.ctype || string(np.body) != w.content || len(np.header) != 2 {
-			t.Errorf("nested part %d: %q %q (%d fields), want %q %q", i, ct, np.body, len(np.header), w.ctype, w.content)
-		}
-	}
-
-	// Pre-encoded, with its boundary in Part.MediaType.
-	const inner = "--in\r\nContent-Type: text/plain\r\n\r\nz\r\n--in--\r\n"
-	_, parts = sendMultipart(t, w, c, "mp", "multipart/form-data", map[string]any{
-		"bundle": openapi.Part{Content: []byte(inner), MediaType: "multipart/mixed; boundary=in", NoFilename: true},
+	checkParts(t, nested, []wantPart{
+		{disposition: formData("a"), ctype: "text/plain", content: "x y"},
+		{disposition: formData("b"), ctype: "application/json", content: `{"k":1}`},
 	})
-	checkParts(t, parts, []wantPart{{disposition: formData("bundle"), ctype: "multipart/mixed; boundary=in", content: inner}})
+
+	// Pre-encoded, with its boundary in Part.MediaType, from bytes and from
+	// a reader: no filename.
+	const inner = "--in\r\nContent-Type: text/plain\r\n\r\nz\r\n--in--\r\n"
+	for _, content := range []any{[]byte(inner), strings.NewReader(inner)} {
+		_, parts = sendMultipart(t, w, c, "mp", "multipart/form-data", map[string]any{
+			"bundle": openapi.Part{Content: content, MediaType: "multipart/mixed; boundary=in"},
+		})
+		checkParts(t, parts, []wantPart{{disposition: formData("bundle"), ctype: "multipart/mixed; boundary=in", content: inner}})
+	}
+	// A Part naming a multipart type for a field with no Encoding.
+	_, parts = sendMultipart(t, w, c, "mp", "multipart/form-data", map[string]any{
+		"any": openapi.Part{Content: []byte(inner), MediaType: "multipart/related; boundary=in"},
+	})
+	checkParts(t, parts, []wantPart{{disposition: formData("any"), ctype: "multipart/related; boundary=in", content: inner}})
 
 	for _, tt := range []struct {
 		name     string
@@ -434,6 +470,8 @@ func TestMultipartNested(t *testing.T) {
 	}{
 		{"pre-encoded without a boundary", map[string]any{"bundle": []byte(inner)}, nil, []string{"Input.Body/bundle"}},
 		{"two levels", map[string]any{"bundle": map[string]any{"a": "x", "b": openapi.Part{MediaType: "multipart/mixed", Content: map[string]string{"c": "d"}}}}, []string{"Input.Body/bundle/b"}, nil},
+		{"two levels through a Part", map[string]any{"any": openapi.Part{MediaType: "multipart/mixed", Content: map[string]any{
+			"x": openapi.Part{MediaType: "multipart/mixed", Content: map[string]string{"y": "z"}}}}}, []string{"Input.Body/any/x"}, nil},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			before := w.count()
@@ -447,25 +485,18 @@ func TestMultipartNested(t *testing.T) {
 
 // Another multipart type with an object Body: one part per property (stage
 // brief, Scope: "multipart/form-data and other multipart types (object
-// Body): one part per property"), each named in its Content-Disposition
-// (client.go, Part), typed by its schema.
+// Body): one part per property"), each with Content-Disposition form-data
+// and its name (stage 4 ledger, Q5; OAS 3.1.2 section 4.8.15.3: such types
+// may be supported "when Content-Disposition: form-data is used with a name
+// parameter"), typed by its schema.
 func TestMultipartMixedObject(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, mpDoc(), nil)
 	_, parts := sendMultipart(t, w, c, "mixed", "multipart/mixed", map[string]any{"a": "x", "b": 7})
-	want := []struct{ name, ctype, content string }{{"a", "text/plain", "x"}, {"b", "text/plain", "7"}}
-	if len(parts) != len(want) {
-		t.Fatalf("%d parts, want %d", len(parts), len(want))
-	}
-	for i, w := range want {
-		p := parts[i]
-		if name := dispositionParams(t, p.header.Get("Content-Disposition"))["name"]; name != w.name {
-			t.Errorf("part %d: name %q, want %q", i, name, w.name)
-		}
-		if ct := p.header.Get("Content-Type"); ct != w.ctype || string(p.body) != w.content {
-			t.Errorf("part %d: %q %q, want %q %q", i, ct, p.body, w.ctype, w.content)
-		}
-	}
+	checkParts(t, parts, []wantPart{
+		{disposition: formData("a"), ctype: "text/plain", content: "x"},
+		{disposition: formData("b"), ctype: "text/plain", content: "7"},
+	})
 }
 
 // RFC 6570 fields in multipart/form-data: OAS 3.1.2 Appendix C, "When
@@ -477,9 +508,8 @@ func TestMultipartMixedObject(t *testing.T) {
 // allowReserved"; section 4.8.15.1.2: "When using RFC6570-style
 // serialization for multipart/form-data, URI percent-encoding MUST NOT be
 // applied". doc.go, Values: an undefined value (an empty array) is omitted.
-// Whether such a part carries a Content-Type is not settled (OAS 3.1.2: with
-// style set, "the value of contentType (implicit or explicit) SHALL be
-// ignored"), so it is not checked.
+// Each such part is text/plain (stage 4 ledger, Q4: RFC 7578 section 4.4's
+// default, as OpenAPI says contentType is ignored), its value unencoded.
 func TestMultipartStyledFields(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, mpDoc(), nil)
@@ -492,7 +522,7 @@ func TestMultipartStyledFields(t *testing.T) {
 		"sp": []string{"a", "b c"},
 	})
 	text := func(name, content string) wantPart {
-		return wantPart{disposition: formData(name), content: content, anyType: true}
+		return wantPart{disposition: formData(name), ctype: "text/plain", content: content}
 	}
 	checkParts(t, parts, []wantPart{
 		text("d[x]", "1"),
@@ -507,4 +537,137 @@ func TestMultipartStyledFields(t *testing.T) {
 	})
 	_, parts = sendMultipart(t, w, c, "styled", "multipart/form-data", map[string]any{"f1": []string{}, "f2": "s t"})
 	checkParts(t, parts, []wantPart{text("f2", "s t")})
+}
+
+// A property's value decides how many parts it sends (stage 4 ledger, Q7;
+// client.go, Input.Body): an array value, []byte excluded, one part per
+// item, each typed by the items schema when the property's schema is an
+// array, else by the property's own type, an Encoding contentType applying
+// to each; any other value one part, typed by the items type for an array
+// schema.
+func TestMultipartArrayValues(t *testing.T) {
+	w := newWire(t, nil)
+	c := parseFor(t, w, mpDoc(), nil)
+	tests := []struct {
+		name string
+		prop string
+		v    any
+		want []wantPart
+	}{
+		{"strings for a string", "title", []string{"a", "b"}, []wantPart{
+			{disposition: formData("title"), ctype: "text/plain", content: "a"},
+			{disposition: formData("title"), ctype: "text/plain", content: "b"},
+		}},
+		{"objects for an object", "meta", []any{map[string]int{"a": 1}, map[string]int{"b": 2}}, []wantPart{
+			{disposition: formData("meta"), ctype: "application/json", content: `{"a":1}`},
+			{disposition: formData("meta"), ctype: "application/json", content: `{"b":2}`},
+		}},
+		{"a scalar for an array", "tags", "x", []wantPart{
+			{disposition: formData("tags"), ctype: "text/plain", content: "x"},
+		}},
+		{"bytes for an array are one part", "tags", []byte("raw"), []wantPart{
+			{disposition: formData("tags", "tags"), ctype: "text/plain", content: "raw"},
+		}},
+		{"bytes items for an untyped property", "blob", [][]byte{[]byte("a"), []byte("b")}, []wantPart{
+			{disposition: formData("blob", "blob"), ctype: "application/octet-stream", content: "a"},
+			{disposition: formData("blob", "blob"), ctype: "application/octet-stream", content: "b"},
+		}},
+		{"an Encoding contentType for each item", "doc", []any{[]byte("%PDF-1"), strings.NewReader("%PDF-2")}, []wantPart{
+			{disposition: formData("doc", "doc"), ctype: "application/pdf", content: "%PDF-1"},
+			{disposition: formData("doc", "doc"), ctype: "application/pdf", content: "%PDF-2"},
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, parts := sendMultipart(t, w, c, "mp", "multipart/form-data", map[string]any{tt.prop: tt.v})
+			checkParts(t, parts, tt.want)
+		})
+	}
+}
+
+// An untyped property is application/octet-stream (OAS 3.1.2 section
+// 4.8.15.1.1: type absent, application/octet-stream), whether the schema
+// gives it no type or does not list it, so it takes a string, []byte or
+// reader; a number is refused at its key, the error naming the media type
+// (stage 4 ledger, Q6: "{"count": 5} is refused at its key, naming the
+// media type. No inference from Go values").
+func TestUntypedPropertyTakesOctets(t *testing.T) {
+	w := newWire(t, nil)
+	c := parseFor(t, w, mpDoc(), nil)
+	_, parts := sendMultipart(t, w, c, "raw", "multipart/form-data", map[string]any{"count": "5"})
+	checkParts(t, parts, []wantPart{{disposition: formData("count"), ctype: "application/octet-stream", content: "5"}})
+	fc := parseFor(t, w, doc31(formDoc), nil)
+	for _, tt := range []struct {
+		c        *openapi.Client
+		key, at  string
+		property string
+	}{
+		{c, "raw", "Input.Body/count", "count"},
+		{c, "mp", "Input.Body/blob", "blob"},
+		{fc, "bare", "Input.Body/count", "count"},
+		{fc, "form", "Input.Body/raw", "raw"},
+	} {
+		before := w.count()
+		resp, err := tt.c.Call(t.Context(), tt.key, &openapi.Input{Body: map[string]any{tt.property: 5}}, nil)
+		re := refusedSince(t, w, before, resp, err)
+		wantKeys(t, tt.key+" Inputs", re.Inputs, true, tt.at)
+		if e := re.Inputs[tt.at]; e == nil || !strings.Contains(e.Error(), "application/octet-stream") {
+			t.Errorf("%s: %v does not name application/octet-stream", tt.key, e)
+		}
+	}
+}
+
+// A field string that is not valid UTF-8 is sent as given (stage 4 ledger,
+// Q9), as stage 2 sends a content parameter's.
+func TestMultipartInvalidUTF8(t *testing.T) {
+	w := newWire(t, nil)
+	c := parseFor(t, w, mpDoc(), nil)
+	_, parts := sendMultipart(t, w, c, "mp", "multipart/form-data", map[string]any{"title": "a\xffb", "any": "\xfe"})
+	checkParts(t, parts, []wantPart{
+		{disposition: formData("any"), ctype: "application/octet-stream", content: "\xfe"},
+		{disposition: formData("title"), ctype: "text/plain", content: "a\xffb"},
+	})
+}
+
+// With a boundary the caller gives, a part whose content holds its
+// delimiter, CRLF "--" boundary (RFC 2046 section 5.1.1: "The boundary
+// delimiter MUST NOT appear inside any of the encapsulated parts"), is
+// refused at its key before sending (client.go, Input.MediaType; stage 4
+// ledger, Q13); one streamed from a reader read once ends the body as an
+// upload error. The boundary's text alone, not as a delimiter, is sent.
+func TestMultipartGivenBoundaryInContent(t *testing.T) {
+	const mt = "multipart/form-data; boundary=b0und4ry"
+	w := newWire(t, nil)
+	c := parseFor(t, w, mpDoc(), nil)
+	for _, tt := range []struct {
+		name string
+		body map[string]any
+		at   string
+	}{
+		{"bytes", map[string]any{"blob": []byte("x\r\n--b0und4ry\r\ny")}, "Input.Body/blob"},
+		{"text", map[string]any{"title": "a\r\n--b0und4ry--"}, "Input.Body/title"},
+		{"an item", map[string]any{"tags": []string{"ok", "z\r\n--b0und4ry"}}, "Input.Body/tags/1"},
+		{"a Part", map[string]any{"doc": openapi.Part{Content: []byte("\r\n--b0und4ry"), Filename: "f.pdf"}}, "Input.Body/doc"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			before := w.count()
+			resp, err := c.Call(t.Context(), "mp", &openapi.Input{Body: tt.body, MediaType: mt}, nil)
+			re := refusedSince(t, w, before, resp, err)
+			wantKeys(t, "Inputs", re.Inputs, true, tt.at)
+		})
+	}
+	mustCall(t, c, "mp", &openapi.Input{Body: map[string]any{"title": "the b0und4ry word, --b0und4ry"}, MediaType: mt}, nil)
+	_, _, parts := readMultipart(t, mt, w.last(t).Body)
+	checkParts(t, parts, []wantPart{{disposition: formData("title"), ctype: "text/plain", content: "the b0und4ry word, --b0und4ry"}})
+
+	srv := newBodyServer(t, false, "")
+	sc := parseAt(t, mpDoc(), srv.URL, srv.URL+"/openapi.json", nil)
+	ctx, _ := gateCtx(t)
+	r := awaitCall(t, callAsync(ctx, sc, "mp", &openapi.Input{Body: map[string]any{"blob": newOnce("x\r\n--b0und4ry\r\ny")}, MediaType: mt}), "Call")
+	if r.err == nil || isRequestError(r.err) {
+		t.Fatalf("Call = %v, want an upload error, not a *RequestError", r.err)
+	}
+	if _, err := srv.finished(t); err == nil {
+		t.Errorf("the server read a complete body")
+	}
 }

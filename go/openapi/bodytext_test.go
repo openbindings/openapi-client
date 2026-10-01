@@ -137,6 +137,10 @@ func TestOtherTypeBodies(t *testing.T) {
 		{"png", json.Number("1")},
 		{"xml", xmlPet{Name: "Rex"}},
 		{"xml", 5},
+		// text/xml is XML class, the classes being taken in order (doc.go,
+		// Values: "taking the first that applies"; stage 4 ledger, Q17).
+		{"textXML", 5},
+		{"textXML", true},
 		{"atom", map[string]any{"feed": "x"}},
 		{"text", map[string]string{"a": "b"}},
 		{"text", []any{1, 2}},

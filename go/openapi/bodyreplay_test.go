@@ -33,6 +33,10 @@ import (
 // *StatusError". doc.go, Fixed rules, Form bodies: "A body is encoded once,
 // so HTTP.Body and every GetBody give the same bytes"; Header fields: the
 // client generates "Content-Length for a body that can be sent again".
+// Stage 4 ledger, Q10: "a form body whose every source can be sent again is
+// encoded once when prepared (replayable readers read by ReadAt, not
+// drained), so it has Content-Length; one holding a reader read once is
+// encoded as the transport reads it, without Content-Length".
 
 const replayPaths = `
 	"/r/text":{"post":{"operationId":"text","requestBody":{"content":{"text/plain":{}}}}},
@@ -82,7 +86,7 @@ func replayCases(t *testing.T) []replayCase {
 		{"form values", "form", func(*testing.T) any { return map[string]any{"s": "a b"} }, false, true, exactly("s=a+b")},
 		{"form with a strings.Reader", "form", func(*testing.T) any {
 			return map[string]any{"raw": strings.NewReader("r r"), "s": "x"}
-		}, false, false, exactly("raw=r+r&s=x")},
+		}, false, true, exactly("raw=r+r&s=x")},
 		{"form with a read-once reader", "form", func(*testing.T) any {
 			return map[string]any{"raw": newOnce("r r"), "s": "x"}
 		}, true, false, exactly("raw=r+r&s=x")},
@@ -183,6 +187,9 @@ func TestBodyReplayPrepared(t *testing.T) {
 				if tt.sized && (r.ContentLength != int64(len(r.Body)) || len(r.TransferEncoding) != 0) {
 					t.Errorf("sent with Content-Length %d, Transfer-Encoding %q, for %d bytes", r.ContentLength, r.TransferEncoding, len(r.Body))
 				}
+				if tt.once && !slices.Contains(r.TransferEncoding, "chunked") {
+					t.Errorf("a body read once sent with Content-Length %d, Transfer-Encoding %q; want no length", r.ContentLength, r.TransferEncoding)
+				}
 			}
 			if tt.once {
 				resp, err := req.Call(t.Context(), nil)
@@ -272,6 +279,14 @@ func TestBodySourcesUntouched(t *testing.T) {
 	_, _, parts := readMultipart(t, w.last(t).Header.Get("Content-Type"), w.last(t).Body)
 	if len(parts) != 4 || string(parts[0].body) != "buffered" || string(parts[1].body) != "reader" || string(parts[2].body) != "once" {
 		t.Errorf("parts %d", len(parts))
+	}
+	sr := strings.NewReader("form reader")
+	mustCall(t, c, "form", &openapi.Input{Body: map[string]any{"raw": []any{sr, buf, br}}}, nil)
+	if sr.Len() != len("form reader") || buf.Len() != len("buffered") || br.Len() != len("reader") {
+		t.Errorf("a form body drained a source: %d, %d, %d", sr.Len(), buf.Len(), br.Len())
+	}
+	if got := string(w.last(t).Body); got != "raw=form+reader&raw=buffered&raw=reader" {
+		t.Errorf("form body %q", got)
 	}
 }
 

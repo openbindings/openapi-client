@@ -243,12 +243,13 @@ const depthBodyDoc = `{"openapi":"3.1.0","info":{"title":"t","version":"1"},"ser
 }}`
 
 // doc.go, Values: "A value the client encodes that is nested deeper than
-// 1,000 levels, counted in the JSON encoding/json writes ..., is refused at
-// its key". Whether a field's or item's levels count from the body or from
-// the field is not settled (see the test author's questions), so the limit
-// is checked with a margin: 990 levels in the field or item are sent, 1,010
-// are refused at the field's or item's key. Refusing costs time and bytes
-// linear in the depth; so does accepting.
+// 1,000 levels, counted in the JSON encoding/json writes (a MarshalJSON's
+// output included) from the root of that value (a body, a field or part, a
+// sequential item), is refused at its key" (stage 4 ledger, Q8). A scalar
+// leaf counts as a level, the outermost value being level 1 (stage 2
+// ledger, Q9): 999 objects around a leaf in a field, a part or an item are
+// sent, 1,000 are refused at its key. Refusing costs time and bytes linear
+// in the depth; so does accepting.
 func TestBodyDepthLimit(t *testing.T) {
 	c, err := openapi.Parse(context.Background(), []byte(depthBodyDoc), testDocURI, nil)
 	if err != nil {
@@ -265,13 +266,13 @@ func TestBodyDepthLimit(t *testing.T) {
 	}
 	for _, b := range bodies {
 		// nestMap(n, leaf) is n objects around a leaf: n+1 levels.
-		if _, err := c.Prepare(b.key, &openapi.Input{Body: b.body(nestMap(989, "x"))}); err != nil {
-			t.Errorf("%s: 990 levels refused: %.200v", b.key, err)
+		if _, err := c.Prepare(b.key, &openapi.Input{Body: b.body(nestMap(999, "x"))}); err != nil {
+			t.Errorf("%s: 1,000 levels refused: %.200v", b.key, err)
 		}
-		_, err := c.Prepare(b.key, &openapi.Input{Body: b.body(nestMap(1009, "x"))})
+		_, err := c.Prepare(b.key, &openapi.Input{Body: b.body(nestMap(1000, "x"))})
 		var re *openapi.RequestError
 		if !errors.As(err, &re) {
-			t.Errorf("%s: 1,010 levels = %v, want a refusal", b.key, err)
+			t.Errorf("%s: 1,001 levels = %v, want a refusal", b.key, err)
 			continue
 		}
 		wantKeys(t, b.key+" Inputs", re.Inputs, true, b.at)

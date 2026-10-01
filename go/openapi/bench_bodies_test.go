@@ -163,9 +163,8 @@ func BenchmarkMemBodyJSONLines(b *testing.B)     { benchBodyCall(b, 2) }
 func BenchmarkMemBodyJSONLinesHand(b *testing.B) { benchBodyHand(b, 2) }
 
 // Each benchmark's client request carries the body its hand-written
-// counterpart builds: the form byte for byte, the multipart body part by
-// part (its boundary is random on either side), the JSON Lines items line by
-// line.
+// counterpart builds: the form and the JSON Lines body byte for byte, the
+// multipart body part by part (its boundary is random on either side).
 func TestBodyBenchRequestsMatch(t *testing.T) {
 	c, _ := bodyBenchClient(t)
 	for _, bb := range bodyBenches {
@@ -189,7 +188,9 @@ func TestBodyBenchRequestsMatch(t *testing.T) {
 				if gotCT != wantCT {
 					t.Errorf("Content-Type %q, hand-written %q", gotCT, wantCT)
 				}
-				wantLines(t, got, strings.Split(strings.TrimSuffix(string(want), "\n"), "\n")...)
+				if !bytes.Equal(got, want) {
+					t.Errorf("client sends %q, hand-written %q", got, want)
+				}
 			default:
 				if gotCT != wantCT || !bytes.Equal(got, want) {
 					t.Errorf("client sends %q as %q, hand-written %q as %q", got, gotCT, want, wantCT)

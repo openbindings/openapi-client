@@ -16,9 +16,10 @@ import (
 // the client's encoding with a reference built from net/url and the RFC
 // 6570 oracle in the suite; a multipart round trip target through
 // mime/multipart"). Both prepare the body and read it from GetBody, so they
-// send nothing. Strings that are not valid UTF-8 are skipped: whether a
-// field's string is sent as given or as JSON data holds it (U+FFFD) is not
-// settled for form and multipart fields (see the test author's questions).
+// send nothing. A content-encoded field's string that is not valid UTF-8 is
+// sent as given (stage 4 ledger, Q9), and the targets give such strings to
+// those fields only: names, and values that go through JSON or RFC 6570,
+// are kept valid.
 
 const fuzzFormDoc = `{"openapi":"3.1.0","info":{"title":"f","version":"1"},"servers":[{"url":"https://api.example.test"}],"paths":{
 	"/f":{"post":{"operationId":"f","requestBody":{"content":{"application/x-www-form-urlencoded":{
@@ -45,12 +46,13 @@ var fuzzStyled = map[string]struct {
 	"sp": {"pipeDelimited", false, true},
 }
 
-// FuzzFormBody: for arbitrary strings, a form body of a text/plain field, a
-// JSON field, an array field, a field under every RFC 6570 configuration
-// and a field with an arbitrary name is prepared, and its bytes are
-// compared with what formEnc (net/url, adjusted to the WHATWG set and
-// checked against it) and styledField (the RFC 6570 oracle) derive, the
-// fields in sorted key order (doc.go, Fixed rules, Order and Form bodies).
+// FuzzFormBody: for arbitrary strings, a form body of a text/plain field
+// (whose string may be any bytes), a JSON field, an array field, a field
+// under every RFC 6570 configuration and a field with an arbitrary name is
+// prepared, and its bytes are compared with what formEnc (net/url, adjusted
+// to the WHATWG set and checked against it) and styledField (the RFC 6570
+// oracle) derive, the fields in sorted key order (doc.go, Fixed rules, Order
+// and Form bodies).
 func FuzzFormBody(f *testing.F) {
 	c, err := openapi.Parse(context.Background(), []byte(fuzzFormDoc), fuzzURI, nil)
 	if err != nil {
@@ -65,16 +67,16 @@ func FuzzFormBody(f *testing.F) {
 		{"~-._", "!*'()", "$@:", "|^`", "\"<>\\", "{}[]#?"},
 		{"%41", "%zz", "%", "%2f", "[x]", "#?"},
 	} {
-		f.Add(s[0], s[1], s[2], s[3], s[4], s[5])
+		f.Add(s[0], s[1], s[2], s[3], s[4], s[5], s[0]+"\xff"+s[1])
 	}
-	f.Fuzz(func(t *testing.T, a, b, k1, v1, k2, n string) {
+	f.Fuzz(func(t *testing.T, a, b, k1, v1, k2, n, x string) {
 		for _, s := range []string{a, b, k1, v1, k2, n} {
 			if !utf8.ValidString(s) {
 				t.Skip()
 			}
 		}
 		body := map[string]any{
-			"c":  a,
+			"c":  x,
 			"j":  map[string]string{k1: v1},
 			"l":  []string{a, b},
 			"sf": []string{a, b},
@@ -130,11 +132,10 @@ const fuzzMultipartDoc = `{"openapi":"3.1.0","info":{"title":"f","version":"1"},
 // fuzzPartTypes are the media types a fuzzed part is given.
 var fuzzPartTypes = []string{"application/octet-stream", "image/png", "text/plain; charset=utf-8", "application/vnd.x+json", "multipart/mixed; boundary=inner"}
 
-// headerUnsafe reports a byte net/textproto refuses in a header value, so
-// that mime/multipart cannot read the part back: a control character other
-// than a tab, or DEL. The contract refuses only CR and LF in a name or
-// filename (client.go, Part), so a part holding another is not asserted.
-func headerUnsafe(s string) bool {
+// controlChar reports a control character other than a tab, or DEL, which
+// a quoted-string cannot carry (RFC 9110 section 5.6.4) and client.go,
+// Part, refuses in a name or filename.
+func controlChar(s string) bool {
 	return strings.ContainsFunc(s, func(r rune) bool { return r < 0x20 && r != '\t' || r == 0x7f })
 }
 
@@ -144,11 +145,15 @@ func headerUnsafe(s string) bool {
 // Content-Disposition is formData's (client.go, Part: "written in its
 // Content-Disposition as given, each as a quoted-string with \ and "
 // escaped, never as filename*"; Filename "Empty means the default: the
-// part's name for a []byte or io.Reader Content"), its Content-Type the one
-// given or the schema's (text/plain for t), its content the bytes as given
-// (doc.go, Fixed rules, Form bodies: "Multipart/form-data fields are never
-// URI percent-encoded"). A CR or LF in the name or filename, or Filename
-// with NoFilename, is refused at the property's Inputs key.
+// part's name for a []byte or io.Reader Content whose media type is not
+// multipart, and none otherwise"), its Content-Type the one given or the
+// schema's (text/plain for t), its content the bytes as given (doc.go, Fixed
+// rules, Form bodies: "Multipart/form-data fields are never URI
+// percent-encoded"; stage 4 ledger, Q9, for a text value that is not valid
+// UTF-8). A control character other than a tab in the name or filename
+// (client.go, Part: "a control character other than a tab in either is
+// refused"; ledger, Q11, DEL included), or Filename with NoFilename, is
+// refused at the property's Inputs key.
 func FuzzMultipartRoundTrip(f *testing.F) {
 	c, err := openapi.Parse(context.Background(), []byte(fuzzMultipartDoc), fuzzURI, nil)
 	if err != nil {
@@ -161,23 +166,28 @@ func FuzzMultipartRoundTrip(f *testing.F) {
 	f.Add("n", "f\nx", []byte("v"), "t", uint8(4), false)
 	f.Add("n", "f", []byte("v"), "t", uint8(0), true)
 	f.Add("ü 日本", "../../etc/passwd", []byte("\r\n--"), "--", uint8(2), false)
+	f.Add("a\x00b", "f", []byte("v"), "\xff", uint8(0), false)
+	f.Add("n", "f\x7f", []byte("v"), "t", uint8(1), false)
+	f.Add("a\tb", "c\td", []byte("v"), "t", uint8(4), false)
+	f.Add("nested", "", []byte("--inner--"), "t", uint8(4), false)
 	f.Fuzz(func(t *testing.T, name, filename string, content []byte, text string, ct uint8, noFilename bool) {
-		if name == "t" || !utf8.ValidString(name) || !utf8.ValidString(filename) || !utf8.ValidString(text) {
+		if name == "t" || !utf8.ValidString(name) || !utf8.ValidString(filename) {
 			t.Skip()
 		}
 		mt := fuzzPartTypes[int(ct)%len(fuzzPartTypes)]
 		part := openapi.Part{Content: content, MediaType: mt, Filename: filename, NoFilename: noFilename}
 		req, err := c.Prepare("m", &openapi.Input{Body: map[string]any{name: part, "t": text}})
 		key := "Input.Body/" + jsonPtr(name)
-		if strings.ContainsAny(name+filename, "\r\n") || noFilename && filename != "" {
+		if controlChar(name) || controlChar(filename) || noFilename && filename != "" {
 			var re *openapi.RequestError
 			if !errors.As(err, &re) || len(re.Inputs) != 1 || re.Inputs[key] == nil {
 				t.Fatalf("Prepare(%q, filename %q, NoFilename %t) = %v, want a refusal at Inputs[%q]", name, filename, noFilename, err, key)
 			}
 			return
 		}
-		if headerUnsafe(name) || headerUnsafe(filename) || name == "" && filename == "" && !noFilename {
-			return
+		multi := strings.HasPrefix(mt, "multipart/")
+		if name == "" && filename == "" && !noFilename && !multi {
+			return // the default filename would be the empty name: not settled
 		}
 		if err != nil {
 			t.Fatalf("Prepare(%q, filename %q): %v", name, filename, err)
@@ -191,7 +201,7 @@ func FuzzMultipartRoundTrip(f *testing.F) {
 		case noFilename:
 		case filename != "":
 			disposition = formData(name, filename)
-		default:
+		case !multi:
 			disposition = formData(name, name)
 		}
 		file := wantPart{disposition: disposition, ctype: mt, content: string(content)}

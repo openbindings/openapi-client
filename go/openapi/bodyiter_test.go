@@ -144,9 +144,8 @@ func TestIteratorWritesItemsAsTheyYield(t *testing.T) {
 				}
 			})
 		}, func(t *testing.T, body []byte) {
-			evs := sseEvents(t, string(body))
-			if len(evs) != 3 || len(evs[2]) != 1 || evs[2][0] != (sseField{"data", "item-3"}) {
-				t.Errorf("events %q from %q", evs, body)
+			if want := "data: item-1\n\ndata: item-2\n\ndata: item-3\n\n"; string(body) != want {
+				t.Errorf("body %q, want %q", body, want)
 			}
 		}},
 	} {

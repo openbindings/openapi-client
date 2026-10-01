@@ -188,13 +188,17 @@ func quoted(s string) string {
 	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(s) + `"`
 }
 
-// formData is the Content-Disposition of a multipart/form-data part named
-// name, with a filename when one is given (RFC 7578 section 4.2: "Each part
-// MUST contain a Content-Disposition header field where the disposition
-// type is "form-data". The Content-Disposition header field MUST also
-// contain an additional parameter of "name""; client.go, Part: "A part's
-// name and filename are written in its Content-Disposition as given, each
-// as a quoted-string with \ and " escaped, never as filename*").
+// formData is the Content-Disposition of a part named name, with a
+// filename when one is given (RFC 7578 section 4.2: "Each part MUST contain
+// a Content-Disposition header field where the disposition type is
+// "form-data". The Content-Disposition header field MUST also contain an
+// additional parameter of "name""; client.go, Part: "A part's name and
+// filename are written in its Content-Disposition as given, each as a
+// quoted-string with \ and " escaped, never as filename*"). Every named part
+// of every multipart type takes it, nested multipart included (stage 4
+// ledger, Q5; OAS 3.1.2 section 4.8.15.3: other multipart types may be
+// supported "when Content-Disposition: form-data is used with a name
+// parameter").
 func formData(name string, filename ...string) string {
 	s := "form-data; name=" + quoted(name)
 	for _, f := range filename {
@@ -260,13 +264,12 @@ func validBoundary(b string) bool {
 
 // wantPart is what one part must hold: its Content-Disposition and
 // Content-Type exactly ("" for none), its content, and any other field
-// exactly. With anyType, the Content-Type is not checked.
+// exactly.
 type wantPart struct {
 	disposition string
 	ctype       string
 	content     string
 	extra       http.Header
-	anyType     bool
 }
 
 // checkParts compares parts with want, part by part: each part's header
@@ -293,9 +296,6 @@ func checkParts(t testing.TB, parts []mpart, want []wantPart) {
 			fields[textproto.CanonicalMIMEHeaderKey(k)] = vs
 		}
 		for k, vs := range p.header {
-			if k == "Content-Type" && w.anyType {
-				continue
-			}
 			if want, ok := fields[k]; !ok || !slices.Equal(vs, want) {
 				t.Errorf("part %d: %s = %q, want %q", i, k, vs, want)
 			}
@@ -311,29 +311,18 @@ func checkParts(t testing.TB, parts []mpart, want []wantPart) {
 	}
 }
 
-// dispositionParams parses a Content-Disposition value, for a multipart
-// type other than form-data, whose disposition type the contract does not
-// settle (see the stage 4 test author's questions).
-func dispositionParams(t testing.TB, v string) map[string]string {
-	t.Helper()
-	_, params, err := mime.ParseMediaType(v)
-	if err != nil {
-		t.Fatalf("Content-Disposition %q: %v", v, err)
-	}
-	return params
-}
-
 // wantLines checks a JSON Lines body: the items, each followed by "\n",
-// where the last "\n" may be left out (JSON Lines, "Line Separator is
-// '\n'": "The last character in the file may be a line separator, and it
-// will be treated the same as if there was no line separator present").
-// Whether the client writes the last separator is not settled by the
-// contract (see the stage 4 test author's questions).
+// the last included (JSON Lines: "Line Separator is '\n'"; stage 4 ledger,
+// Q1: "every JSON Lines item is followed by "\n", the last included";
+// client.go, Input.Body: "a JSON Lines item is followed by LF").
 func wantLines(t testing.TB, body []byte, items ...string) {
 	t.Helper()
-	want := strings.Join(items, "\n")
-	if s := string(body); s != want && s != want+"\n" || len(items) == 0 && len(body) != 0 {
-		t.Errorf("body %q, want the lines %q", body, items)
+	var want strings.Builder
+	for _, it := range items {
+		want.WriteString(it + "\n")
+	}
+	if string(body) != want.String() {
+		t.Errorf("body %q, want %q", body, want.String())
 	}
 }
 
@@ -347,44 +336,36 @@ func jsonSeq(items ...string) string {
 	return b.String()
 }
 
-// sseField is one field line of an event stream: its name and value.
-type sseField struct{ name, value string }
-
-// sseEvents splits a text/event-stream body into its events, as the HTML
-// standard reads one (section 9.2.5: "event = *( comment / field )
-// end-of-line"; "field = 1*name-char [ colon [ space ] *any-char ]
-// end-of-line"; "end-of-line = ( cr lf / cr / lf )"; section 9.2.6: the
-// field name is the line up to the first colon, and "If value starts with a
-// U+0020 SPACE character, remove it from value"). Every line must be a
-// field, every event must end with a blank line, and nothing may follow the
-// last.
-func sseEvents(t testing.TB, body string) [][]sseField {
+// sseLines splits a text/event-stream body into its events, each the list
+// of its lines without their LF. client.go, Input.Body: each field is
+// written "as a "field: value" line ending in LF", then the event ends in
+// "a blank line" (stage 4 ledger, Q2: "always one space", "each ending in
+// LF, and the event in a blank line"; HTML standard, section 9.2.5: "event =
+// *( comment / field ) end-of-line"). Every line must end in LF, and no CR
+// may appear; an event of no lines is a blank line alone (ledger, Q2: "an
+// item that sets none is a blank line").
+func sseLines(t testing.TB, body string) [][]string {
 	t.Helper()
-	s := strings.ReplaceAll(body, "\r\n", "\n")
-	s = strings.ReplaceAll(s, "\r", "\n")
-	if s != "" && !strings.HasSuffix(s, "\n\n") {
-		t.Errorf("event stream %q does not end with a blank line", body)
+	if strings.ContainsRune(body, '\r') {
+		t.Errorf("event stream %q holds a CR", body)
 	}
-	var events [][]sseField
-	var cur []sseField
-	for _, line := range strings.SplitAfter(s, "\n") {
-		if line == "" {
+	if body != "" && !strings.HasSuffix(body, "\n") {
+		t.Errorf("event stream %q does not end in LF", body)
+	}
+	var events [][]string
+	cur := []string{}
+	for _, line := range strings.Split(strings.TrimSuffix(body, "\n"), "\n") {
+		if body == "" {
 			break
 		}
-		line = strings.TrimSuffix(line, "\n")
 		if line == "" {
 			events = append(events, cur)
-			cur = nil
+			cur = []string{}
 			continue
 		}
-		name, value, ok := strings.Cut(line, ":")
-		if !ok || name == "" {
-			t.Errorf("event stream %q: line %q is not a field", body, line)
-			continue
-		}
-		cur = append(cur, sseField{name, strings.TrimPrefix(value, " ")})
+		cur = append(cur, line)
 	}
-	if cur != nil {
+	if len(cur) != 0 {
 		t.Errorf("event stream %q: the last event has no blank line", body)
 	}
 	return events

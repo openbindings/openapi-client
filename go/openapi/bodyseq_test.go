@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"iter"
 	"math"
 	"slices"
@@ -22,14 +23,20 @@ import (
 // item. Under text/event-stream an item is an object with no members but
 // data, event and id, as strings, and retry, as a non-negative integer, or
 // an [Event], of which only the fields it sets are used. It is written as
-// those fields, data as one data line per line, then a blank line; any
-// other member or type, or a line break in event or id, is an item that
-// cannot be encoded." Stage brief, Scope: "each item encoded as its own body
-// would be". The framing is each authority's: JSON Lines ("Each Line is a
-// Valid JSON Value"; "Line Separator is '\n'"), RFC 7464 section 2.2
-// ("JSON-sequence = *(RS JSON-text LF)"), and the HTML standard's event
-// stream (section 9.2.5). Whether a JSON Lines body ends with "\n" is not
-// settled (wantLines accepts both).
+// those fields, each as a "field: value" line ending in LF, data as one data
+// line per line (split at CRLF, LF or CR), then a blank line; any other
+// member or type, a line break in event or id, or a retry that is not whole
+// milliseconds, is an item that cannot be encoded. Under JSON Lines and JSON
+// text sequences, a []byte or io.Reader item is the item's JSON text,
+// written as given and framed (a JSON Lines item is followed by LF; a
+// sequence item has RS before it and LF after); one holding the framing's
+// separator (LF, or RS) cannot be encoded." Stage brief, Scope: "each item
+// encoded as its own body would be". The framing is each authority's: JSON
+// Lines ("Each Line is a Valid JSON Value"; "Line Separator is '\n'"), RFC
+// 7464 section 2.2 ("JSON-sequence = *(RS JSON-text LF)"), and the HTML
+// standard's event stream (section 9.2.5). Stage 4 ledger, test round
+// (6e13978): Q1 (every JSON Lines item is followed by LF, the last
+// included), Q2 (event stream writing), Q16 (pre-encoded items).
 
 const seqPaths = `
 	"/jsonl":{"post":{"operationId":"jsonl","requestBody":{"content":{"application/jsonl":{}}}}},
@@ -138,9 +145,12 @@ func TestJSONTextSequenceBodies(t *testing.T) {
 	}
 }
 
-// Pre-encoded JSON items: stage brief, Scope, "each item encoded as its own
-// body would be", and a []byte body is "sent as its bytes" (client.go,
-// Input.Body).
+// Pre-encoded items (client.go, Input.Body: under JSON Lines and JSON text
+// sequences "a []byte or io.Reader item is the item's JSON text, written as
+// given and framed"; stage 4 ledger, Q16), from a slice and from iterators;
+// a sequence item may hold LF, which only JSON Lines uses as its separator.
+// A whole body given as bytes is pre-encoded under a sequential type too, as
+// under any type.
 func TestSequentialPreEncodedItems(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, seqDoc(), nil)
@@ -151,55 +161,100 @@ func TestSequentialPreEncodedItems(t *testing.T) {
 	if got := w.last(t); string(got.Body) != jsonSeq(`{"pre":"encoded"}`, `[1, 2]`) {
 		t.Errorf("json-seq body %q", got.Body)
 	}
-	// A whole body given as bytes is pre-encoded under a sequential type
-	// too, as under any type (client.go, Input.Body).
+	readers := func() []io.Reader { return []io.Reader{strings.NewReader(`{"r":1}`), newOnce(`"once"`)} }
+	mustCall(t, c, "ndjson", &openapi.Input{Body: readers()}, nil)
+	wantLines(t, w.last(t).Body, `{"r":1}`, `"once"`)
+	mustCall(t, c, "geoseq", &openapi.Input{Body: seqOf(readers()...)}, nil)
+	if got := w.last(t); string(got.Body) != jsonSeq(`{"r":1}`, `"once"`) {
+		t.Errorf("json-seq body %q", got.Body)
+	}
+	mustCall(t, c, "jsonl", &openapi.Input{Body: []any{[]byte(`1`), Pet{Name: "Rex"}, strings.NewReader(`[]`)}}, nil)
+	wantLines(t, w.last(t).Body, `1`, `{"name":"Rex"}`, `[]`)
+	mustCall(t, c, "seq", &openapi.Input{Body: [][]byte{[]byte("[1,\n2]")}}, nil)
+	if got := w.last(t); string(got.Body) != jsonSeq("[1,\n2]") {
+		t.Errorf("json-seq body %q, want an item holding LF framed", got.Body)
+	}
 	mustCall(t, c, "jsonl", &openapi.Input{Body: []byte("{}\n{}\n")}, nil)
 	if got := w.last(t); string(got.Body) != "{}\n{}\n" {
 		t.Errorf("pre-encoded body %q", got.Body)
 	}
 }
 
-// An sseCase is a body and the events it must produce.
+// A reader item that holds the framing's separator ends the body as an
+// upload error when the separator is found (stage 4 ledger, Q16: "a
+// reader's ends the body when found"): the server never receives a
+// complete body, and Call's error is not a *RequestError.
+func TestSequentialReaderItemHoldingSeparator(t *testing.T) {
+	for _, tt := range []struct {
+		key  string
+		item string
+	}{
+		{"jsonl", "{}\n{}"},
+		{"seq", "\x1e1"},
+	} {
+		t.Run(tt.key, func(t *testing.T) {
+			srv := newBodyServer(t, false, "")
+			c := parseAt(t, seqDoc(), srv.URL, srv.URL+"/openapi.json", nil)
+			ctx, _ := gateCtx(t)
+			r := awaitCall(t, callAsync(ctx, c, tt.key, &openapi.Input{Body: []io.Reader{newOnce(tt.item)}}), "Call")
+			if r.err == nil || isRequestError(r.err) {
+				t.Fatalf("Call = %v, want an upload error, not a *RequestError", r.err)
+			}
+			if _, err := srv.finished(t); err == nil {
+				t.Errorf("the server read a complete body")
+			}
+		})
+	}
+}
+
+// An sseCase is a body and the event stream it must be: each event's lines.
 type sseCase struct {
 	name    string
 	body    any
-	events  [][]sseField
-	ordered bool // the item's fields follow member order (an object)
+	events  [][]string
+	ordered bool // the items are objects, whose fields follow member order
 }
 
-// Server-sent events: each item's fields, data as one data line per line,
-// then a blank line, read back by the HTML standard's rules (sseEvents). An
-// object's fields follow its members' order (doc.go, Fixed rules, Order: an
-// object value's members "follow the order encoding/json writes members
-// in"); an Event's fields are checked as a set, data lines in order. An
-// Event writes only the fields it sets: Data when not nil, Event when not
-// "", ID when IDSet, Retry when RetrySet, in whole milliseconds (stream.go,
-// Event: "Retry is the retry field, in whole milliseconds"); retry is
-// written in base ten digits alone (HTML standard, section 9.2.6: "If the
-// field value consists of only ASCII digits").
+// Server-sent events, byte for byte: each field a "field: value" line with
+// one space, ending in LF, then a blank line (client.go, Input.Body; stage 4
+// ledger, Q2: "always one space, so a value starting with a space survives
+// the parser's removal of one"); data split at CRLF, LF and CR, one data
+// line each (Q2: "the standard's line endings"; HTML standard, section
+// 9.2.5: "end-of-line = ( cr lf / cr / lf )"), so "a\n" is a data line "a"
+// and an empty one, which the standard's parser reads back as "a\n"; data
+// "" written as "data: " (Q2); an item that sets no field a blank line
+// alone (Q2). An object's fields follow its members' order as encoding/json
+// orders them (doc.go, Fixed rules, Order; ledger, readings confirmed); an
+// Event's lines are compared as a set, data lines in order. An Event writes
+// only the fields it sets: Data when not nil, Event when not "", ID when
+// IDSet, Retry when RetrySet, in whole milliseconds (stream.go, Event:
+// "Retry is the retry field, in whole milliseconds"), in base ten digits
+// (HTML standard, section 9.2.6: "If the field value consists of only ASCII
+// digits").
 func TestEventStreamBodies(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, seqDoc(), nil)
-	f := func(kv ...string) []sseField {
-		var fs []sseField
-		for i := 0; i < len(kv); i += 2 {
-			fs = append(fs, sseField{kv[i], kv[i+1]})
-		}
-		return fs
-	}
 	maps := []map[string]any{
 		{"data": "a\nb", "event": "e", "id": "1", "retry": 1000},
 		{"data": "only"},
 		{"event": "ping"},
 		{"id": "", "data": " lead"},
 		{"retry": 0, "data": "x"},
+		{"data": "a\r\nb\rc\nd"},
+		{"data": ""},
+		{"data": "a\n"},
+		{},
 	}
-	mapEvents := [][]sseField{
-		f("data", "a", "data", "b", "event", "e", "id", "1", "retry", "1000"),
-		f("data", "only"),
-		f("event", "ping"),
-		f("data", " lead", "id", ""),
-		f("data", "x", "retry", "0"),
+	mapEvents := [][]string{
+		{"data: a", "data: b", "event: e", "id: 1", "retry: 1000"},
+		{"data: only"},
+		{"event: ping"},
+		{"data:  lead", "id: "},
+		{"data: x", "retry: 0"},
+		{"data: a", "data: b", "data: c", "data: d"},
+		{"data: "},
+		{"data: a", "data: "},
+		{},
 	}
 	events := []openapi.Event{
 		{Data: []byte("x"), Event: "upd", ID: "7", IDSet: true, Retry: 1500 * time.Millisecond, RetrySet: true},
@@ -207,17 +262,23 @@ func TestEventStreamBodies(t *testing.T) {
 		{ID: "", IDSet: true, Data: []byte("reset")},
 		{Data: []byte("w"), ID: "not set"},
 		{Retry: 0, RetrySet: true, Data: []byte("now")},
+		{Data: []byte{}},
+		{},
+		{Data: []byte("p\r\nq\rr")},
 	}
-	eventEvents := [][]sseField{
-		f("data", "x", "event", "upd", "id", "7", "retry", "1500"),
-		f("data", "y", "data", "z"),
-		f("data", "reset", "id", ""),
-		f("data", "w"),
-		f("data", "now", "retry", "0"),
+	eventEvents := [][]string{
+		{"data: x", "event: upd", "id: 7", "retry: 1500"},
+		{"data: y", "data: z"},
+		{"data: reset", "id: "},
+		{"data: w"},
+		{"data: now", "retry: 0"},
+		{"data: "},
+		{},
+		{"data: p", "data: q", "data: r"},
 	}
 	type sseItem struct {
-		Data  string `json:"data"`
 		Event string `json:"event,omitempty"`
+		Data  string `json:"data"`
 	}
 	for _, tt := range []sseCase{
 		{"slice of maps", maps, mapEvents, true},
@@ -225,8 +286,8 @@ func TestEventStreamBodies(t *testing.T) {
 		{"slice of Events", events, eventEvents, false},
 		{"iter.Seq of Events", seqOf(events...), eventEvents, false},
 		{"iter.Seq[any] of Events", seqOf[any](events[0], events[1]), eventEvents[:2], false},
-		{"slice of any, mixed", []any{maps[0], events[1]}, [][]sseField{mapEvents[0], eventEvents[1]}, false},
-		{"struct items", []sseItem{{Data: "d"}, {Data: "e", Event: "n"}}, [][]sseField{f("data", "d"), f("data", "e", "event", "n")}, true},
+		{"slice of any, mixed", []any{maps[0], events[1]}, [][]string{mapEvents[0], eventEvents[1]}, false},
+		{"struct items in field order", []sseItem{{Data: "d"}, {Data: "e", Event: "n"}}, [][]string{{"data: d"}, {"event: n", "data: e"}}, true},
 		{"empty", []openapi.Event{}, nil, true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -235,28 +296,39 @@ func TestEventStreamBodies(t *testing.T) {
 			if ct := got.Header.Values("Content-Type"); !slices.Equal(ct, []string{"text/event-stream"}) {
 				t.Errorf("Content-Type = %q", ct)
 			}
-			evs := sseEvents(t, string(got.Body))
+			if tt.ordered {
+				var want strings.Builder
+				for _, ev := range tt.events {
+					for _, line := range ev {
+						want.WriteString(line + "\n")
+					}
+					want.WriteString("\n")
+				}
+				if string(got.Body) != want.String() {
+					t.Errorf("body %q, want %q", got.Body, want.String())
+				}
+				return
+			}
+			evs := sseLines(t, string(got.Body))
 			if len(evs) != len(tt.events) {
 				t.Fatalf("%d events in %q, want %d", len(evs), got.Body, len(tt.events))
 			}
 			for i := range evs {
-				g, want := evs[i], tt.events[i]
-				if !tt.ordered {
-					g, want = sortedFields(g), sortedFields(want)
-				}
-				if !slices.Equal(g, want) {
-					t.Errorf("event %d: fields %q, want %q (body %q)", i, g, want, got.Body)
+				if g, want := sortedLines(evs[i]), sortedLines(tt.events[i]); !slices.Equal(g, want) {
+					t.Errorf("event %d: lines %q, want %q (body %q)", i, g, want, got.Body)
 				}
 			}
 		})
 	}
 }
 
-// sortedFields orders fields by name, keeping the data lines' own order.
-func sortedFields(fs []sseField) []sseField {
-	fs = slices.Clone(fs)
-	sort.SliceStable(fs, func(i, j int) bool { return fs[i].name < fs[j].name })
-	return fs
+// sortedLines orders an event's lines by field name, keeping the data
+// lines' own order.
+func sortedLines(lines []string) []string {
+	lines = slices.Clone(lines)
+	name := func(l string) string { n, _, _ := strings.Cut(l, ":"); return n }
+	sort.SliceStable(lines, func(i, j int) bool { return name(lines[i]) < name(lines[j]) })
+	return lines
 }
 
 // unencodable is a channel, which encoding/json cannot encode.
@@ -267,10 +339,14 @@ var unencodable = make(chan int)
 // "Input.Body" followed by the JSON Pointer to it (errors.go,
 // RequestError.Inputs; stage brief, Refusals: "a property or part value its
 // media type cannot encode ... each at its Inputs key"). Event stream items
-// as client.go, Input.Body, lists them; JSON items as encoding/json fails on
+// as client.go, Input.Body, lists them ("any other member or type, a line
+// break in event or id, or a retry that is not whole milliseconds"; stage 4
+// ledger, Q2, a negative Retry too, and Q16: "Under text/event-stream an
+// item is only an object or an Event"); JSON items as encoding/json fails on
 // them, or holding a reader or Part (client.go, Input.Body: "A Part or
 // io.Reader inside a JSON value is refused with an Inputs entry at its place
-// in Body").
+// in Body"); a pre-encoded item holding its framing's separator (Input.Body:
+// "one holding the framing's separator (LF, or RS) cannot be encoded").
 func TestSequentialItemRefusals(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, seqDoc(), nil)
@@ -296,6 +372,13 @@ func TestSequentialItemRefusals(t *testing.T) {
 		{"a Part item", "sse", []any{ok, openapi.Part{Content: "x"}}, "Input.Body/1"},
 		{"Event with LF in Event", "sse", []openapi.Event{{Data: []byte("x")}, {Event: "a\nb"}}, "Input.Body/1"},
 		{"Event with CR in ID", "sse", []openapi.Event{{Data: []byte("x")}, {ID: "a\rb", IDSet: true}}, "Input.Body/1"},
+		{"Event with a Retry not in whole milliseconds", "sse", []openapi.Event{{Data: []byte("x")}, {Retry: 1500 * time.Microsecond, RetrySet: true}}, "Input.Body/1"},
+		{"Event with a negative Retry", "sse", []openapi.Event{{Data: []byte("x")}, {Retry: -time.Second, RetrySet: true}}, "Input.Body/1"},
+		{"a []byte item", "sse", []any{ok, []byte("data: x\n\n")}, "Input.Body/1"},
+		{"a reader item", "sse", []any{ok, strings.NewReader("data: x\n\n")}, "Input.Body/1"},
+		{"JSON Lines: a []byte item holding LF", "jsonl", []any{[]byte("{}\n{}")}, "Input.Body/0"},
+		{"JSON Lines: a []byte item ending in LF", "ndjson", [][]byte{[]byte("1"), []byte("2\n")}, "Input.Body/1"},
+		{"sequence: a []byte item holding RS", "seq", []any{[]byte("1"), []byte("\x1e2")}, "Input.Body/1"},
 		{"JSON: infinity", "jsonl", []any{1, math.Inf(1)}, "Input.Body/1"},
 		{"JSON: a channel", "seq", []any{unencodable}, "Input.Body/0"},
 		{"JSON: a reader inside", "jsonl", []any{map[string]any{"r": strings.NewReader("x")}}, "Input.Body/0/r"},
