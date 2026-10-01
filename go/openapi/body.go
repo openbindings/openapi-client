@@ -74,13 +74,13 @@ func (c *Client) appendContent(dst []byte, m parsedMedia, k class, v any) (b []b
 // a caller's reader or bytes.
 type builder struct {
 	buf   []byte
-	parts []payload
+	parts []source
 }
 
-// add adds the part p after the bytes so far.
-func (b *builder) add(p payload) {
+// add adds the source p after the bytes so far.
+func (b *builder) add(p source) {
 	if len(b.buf) > 0 {
-		b.parts = append(b.parts, payload{data: b.buf, size: int64(len(b.buf))})
+		b.parts = append(b.parts, source{payload: payload{data: b.buf, size: int64(len(b.buf))}})
 		b.buf = b.buf[len(b.buf):]
 	}
 	b.parts = append(b.parts, p)
@@ -92,7 +92,7 @@ func (b *builder) payload() payload {
 	if b.parts == nil {
 		return payload{data: b.buf, size: int64(len(b.buf))}
 	}
-	b.add(payload{})
+	b.add(source{})
 	p := payload{parts: b.parts[:len(b.parts)-1]}
 	for _, part := range p.parts {
 		if part.size < 0 {
@@ -154,7 +154,7 @@ func (c *Client) formBody(b *builder, enc *formEncoding, v any, body string, rea
 				if !readers {
 					err = errors.New("a reader cannot serialize a parameter")
 				} else if p := readerPayload(v); p.size < 0 {
-					b.add(payload{once: v, size: -1, form: true})
+					b.add(source{payload: p, form: true})
 				} else if data, rerr := p.bytes(); rerr != nil {
 					err = fmt.Errorf("reading the field's reader: %w", rerr)
 				} else {
@@ -412,14 +412,12 @@ func (w *partWriter) write(f *field, name string, v any, at key) {
 	case !ok || holds(b.buf[start:], w.own) || holds(content, w.own):
 		re.input(at.String(), errDelimiter)
 	case r != nil:
-		p := readerPayload(r)
-		p.check = w.own
-		b.add(p)
+		b.add(source{payload: readerPayload(r), check: w.own})
 	case multipart && !raw:
 		nw := partWriter{c: c, b: b, re: re, outer: w.own, nested: true}
 		nw.parts(c.doc.nested(f), v, at.String(), boundary, given)
 	case raw && len(content) > 0:
-		b.add(payload{data: content, size: int64(len(content))}) // not copied
+		b.add(source{payload: payload{data: content, size: int64(len(content))}}) // not copied
 	default:
 		b.buf = append(b.buf, content...)
 	}

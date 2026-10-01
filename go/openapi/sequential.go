@@ -45,7 +45,7 @@ var (
 func (c *Client) sequentialBody(m parsedMedia, v any, re *RequestError) payload {
 	w := c.itemWriter(sequenceOf(m))
 	if seq := iterator(v); seq != nil {
-		return payload{items: &items{w: w, seq: seq}, size: -1}
+		return payload{once: &items{w: w, seq: seq}, size: -1}
 	}
 	rv := reflect.ValueOf(v)
 	if k := rv.Kind(); k != reflect.Slice && k != reflect.Array {
@@ -106,9 +106,7 @@ func (w *itemWriter) write(v any) (string, error) {
 	var err error
 	switch x := v.(type) {
 	case io.Reader:
-		p := readerPayload(x)
-		p.check = []string{string(sep)}
-		b.add(p)
+		b.add(source{payload: readerPayload(x), check: []string{string(sep)}})
 		b.buf = append(b.buf, '\n')
 	case []byte:
 		err = w.text(x)
@@ -261,9 +259,9 @@ type items struct {
 	once            sync.Once // stops the iterator
 	next            func() (any, error, bool)
 	stop            func()
-	n               int        // the items yielded
-	cur             cursor     // the item being read
-	one             [1]payload // its bytes, when it has no reader
+	n               int       // the items yielded
+	cur             cursor    // the item being read
+	one             [1]source // its bytes, when it has no reader
 }
 
 func (it *items) Read(buf []byte) (int, error) {
@@ -308,7 +306,7 @@ func (it *items) read(buf []byte) (int, error) {
 		it.n++
 		p := b.payload()
 		if it.cur.parts = p.parts; p.parts == nil {
-			it.one[0] = p
+			it.one[0] = source{payload: p}
 			it.cur.parts = it.one[:]
 		}
 		it.cur.pos, it.cur.tail = 0, append(it.cur.tail[:0], lead(it.cur.parts[0].check)...)
