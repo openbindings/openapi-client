@@ -392,3 +392,51 @@ func TestA8ContentTypeListQuoteAware(t *testing.T) {
 		t.Errorf("form body %q", got.Body)
 	}
 }
+
+// Stage 4 ledger, RQ5: Media.Encoding lists fields only for a form type, a
+// multipart type, or a range of multipart types such as multipart/*; for
+// */* and application/* it lists none, their fields depending on the type
+// a call selects (describe.go, Media.Encoding: "the fields of form or
+// multipart content").
+func TestRQ5RangeEncodingDescriptors(t *testing.T) {
+	doc := doc31(`"/r":{"post":{"operationId":"ranges","requestBody":{"content":{
+		"*/*":{"schema":{"type":"object","properties":{"x":{"type":"string"}}}},
+		"application/*":{"schema":{"type":"object","properties":{"x":{"type":"string"}}}},
+		"multipart/*":{"schema":{"type":"object","properties":{"x":{"type":"string"}}}}}}}}`)
+	c := parseAt(t, doc, "https://api.example.test", testDocURI, nil)
+	op := mustOp(t, c, "ranges")
+	for i, want := range []int{0, 0, 1} {
+		m := reqMedia(t, op, i)
+		if len(m.Encoding) != want {
+			t.Errorf("%s Encoding %q, want %d fields", m.Type, encodingNames(m), want)
+		}
+	}
+	if e := encodingByName(t, reqMedia(t, op, 2))["x"]; e == nil || e.ContentType != "text/plain" {
+		t.Errorf("multipart/* x = %+v, want text/plain", e)
+	}
+}
+
+// Stage 4 ledger, RQ6: Media.Encoding's order is the schema's own
+// properties in document order, then those reached through $ref and allOf,
+// depth first in document order, a property's first declaration fixing its
+// place, then the names only the encoding map has (describe.go,
+// Media.Encoding: "the properties the schema lists at its top level (after
+// following $ref), in document order, then those that only declare an
+// Encoding Object, in the encoding map's order"). Here the schema writes a
+// $ref, its own properties, then two allOf branches, the second a $ref; R,
+// reached first, has an allOf of its own and repeats own2; allOf's first
+// branch repeats r1.
+func TestRQ6EncodingOrder(t *testing.T) {
+	doc := doc31(`"/o":{"post":{"operationId":"ordered","requestBody":{"content":{"multipart/form-data":{
+		"schema":{"$ref":"#/components/schemas/R","properties":{"own1":{"type":"string"},"own2":{"type":"string"}},
+			"allOf":[{"properties":{"a1":{},"r1":{}}},{"$ref":"#/components/schemas/A2"}]},
+		"encoding":{"enc":{"contentType":"text/csv"},"a1":{"contentType":"image/png"},"enc2":{"contentType":"text/csv"}}}}}}}`,
+		`"components":{"schemas":{
+			"R":{"type":"object","properties":{"r1":{"type":"string"},"own2":{}},"allOf":[{"properties":{"rr":{"type":"integer"}}}]},
+			"A2":{"properties":{"a2":{"type":"boolean"}}}}}`)
+	c := parseAt(t, doc, "https://api.example.test", testDocURI, nil)
+	want := []string{"own1", "own2", "r1", "rr", "a1", "a2", "enc", "enc2"}
+	if got := encodingNames(reqMedia(t, mustOp(t, c, "ordered"), 0)); !slices.Equal(got, want) {
+		t.Errorf("Encoding %q, want %q", got, want)
+	}
+}

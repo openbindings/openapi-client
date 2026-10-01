@@ -24,7 +24,7 @@ import (
 // Encoding style says otherwise, each item taking the property's content
 // type (an array schema's items type by default); any other value is one
 // field or part. ... A multipart object with no fields sends the close
-// delimiter alone, as browsers and mime/multipart.Writer do."
+// delimiter alone ("--" boundary "--" CRLF), as browsers do."
 // Part: "A part's name and filename are written in its Content-Disposition
 // as given, each as a quoted-string with \ and " escaped, never as
 // filename*; a control character other than a tab in either is refused, as

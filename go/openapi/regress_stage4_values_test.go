@@ -34,10 +34,14 @@ import (
 const valuesPaths = `
 	"/f":{"post":{"operationId":"form","requestBody":{"content":{"application/x-www-form-urlencoded":{
 		"schema":{"type":"object","properties":{"n":{"type":"string"},"t":{"type":"string"},"s":{"type":"string"},"z":{"type":"string"},
-			"p":{"type":"string"},"x":{"type":"string"},"k":{"type":"string"},"o":{"type":"object"},"r":{},"arr":{"type":"array","items":{"type":"string"}}}}}}}}},
+			"p":{"type":"string"},"x":{"type":"string"},"k":{"type":"string"},"o":{"type":"object"},"r":{},"arr":{"type":"array","items":{"type":"string"}},
+			"j":{"type":"integer"},"b":{"type":"boolean"}}},
+		"encoding":{"j":{"contentType":"application/json"},"b":{"contentType":"application/json"}}}}}}},
 	"/m":{"post":{"operationId":"mp","requestBody":{"content":{"multipart/form-data":{
 		"schema":{"type":"object","properties":{"n":{"type":"string"},"t":{"type":"string"},"s":{"type":"string"},"z":{"type":"string"},
-			"p":{"type":"string"},"x":{"type":"string"},"k":{"type":"string"},"o":{"type":"object"},"r":{},"arr":{"type":"array","items":{"type":"string"}}}}}}}}},
+			"p":{"type":"string"},"x":{"type":"string"},"k":{"type":"string"},"o":{"type":"object"},"r":{},"arr":{"type":"array","items":{"type":"string"}},
+			"j":{"type":"integer"},"b":{"type":"boolean"}}},
+		"encoding":{"j":{"contentType":"application/json"},"b":{"contentType":"application/json"}}}}}}},
 	"/bf":{"post":{"operationId":"bareForm","requestBody":{"content":{"application/x-www-form-urlencoded":{}}}}},
 	"/bm":{"post":{"operationId":"bareMp","requestBody":{"content":{"multipart/form-data":{}}}}},
 	"/j":{"post":{"operationId":"json","requestBody":{"content":{"application/json":{}}}}},
@@ -193,6 +197,28 @@ func TestC41EncodingJSONEquivalence(t *testing.T) {
 	})
 	_, parts = sendMultipart(t, w, c, "mp", "multipart/form-data", omitZeroBody{Z: alwaysZero{"v"}, P: ptrZero{"v"}, S: "x"})
 	checkParts(t, parts, []wantPart{{disposition: formData("s"), ctype: "text/plain", content: "x"}})
+}
+
+// C4-1, stage 4 ledger RQ3: under a JSON-typed field a ",string" member
+// holds its JSON data, the string encoding/json makes of it, so the JSON
+// content is `"5"` and `"true"` (doc.go, Values: "The client first converts
+// a value to JSON data as encoding/json would (struct tags ...)"), in a form
+// body percent-encoded, in a multipart part as it is.
+func TestRQ3StringOptionUnderJSONField(t *testing.T) {
+	w, c := valuesClient(t)
+	body := struct {
+		J int  `json:"j,string"`
+		B bool `json:"b,string"`
+	}{5, true}
+	mustCall(t, c, "form", &openapi.Input{Body: body}, nil)
+	if got := w.last(t); string(got.Body) != "j=%225%22&b=%22true%22" {
+		t.Errorf("form body %q, want j=%%225%%22&b=%%22true%%22", got.Body)
+	}
+	_, parts := sendMultipart(t, w, c, "mp", "multipart/form-data", body)
+	checkParts(t, parts, []wantPart{
+		{disposition: formData("j"), ctype: "application/json", content: `"5"`},
+		{disposition: formData("b"), ctype: "application/json", content: `"true"`},
+	})
 }
 
 // C4-1 (A5): map keys exactly as encoding/json accepts them: a map whose

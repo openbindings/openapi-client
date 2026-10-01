@@ -210,7 +210,9 @@ func TestC43JSONLinesItemHoldingCR(t *testing.T) {
 // id"), and an Event's invalid UTF-8 is written as U+FFFD, one per invalid
 // byte, as the object path's JSON data has it ("invalid UTF-8 is written as
 // U+FFFD, as an event stream is UTF-8"; HTML standard: "Event streams in
-// this specification must always be encoded as UTF-8").
+// this specification must always be encoded as UTF-8"), a run of invalid
+// bytes as one U+FFFD each, as encoding/json writes it (stage 4 ledger,
+// RQ4).
 func TestC43EventStreamNULAndUTF8(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, seqDoc(), nil)
@@ -227,8 +229,17 @@ func TestC43EventStreamNULAndUTF8(t *testing.T) {
 	mustCall(t, c, "sse", &openapi.Input{Body: []any{
 		openapi.Event{Data: []byte("\xffa\nb\xfe"), Event: "e\xfe", ID: "i\xff", IDSet: true},
 		map[string]any{"data": "m\xffn"},
+		openapi.Event{Data: []byte("r\xff\xfe\xc3s"), Event: "\xc0\xaf", ID: "\xed\xa0\x80", IDSet: true},
+		map[string]any{"data": "t\xff\xfe"},
 	}}, nil)
-	const want = "data: �a\ndata: b�\nevent: e�\nid: i�\n\ndata: m�n\n\n"
+	const fffd = "\xef\xbf\xbd" // U+FFFD in UTF-8
+	want := "data: " + fffd + "a\ndata: b" + fffd + "\nevent: e" + fffd + "\nid: i" + fffd + "\n\ndata: m" + fffd + "n\n\n" +
+		"data: r" + strings.Repeat(fffd, 3) + "s\nevent: " + strings.Repeat(fffd, 2) + "\nid: " + strings.Repeat(fffd, 3) + "\n\n" +
+		"data: t" + strings.Repeat(fffd, 2) + "\n\n"
+	// encoding/json writes one U+FFFD for each of those invalid bytes.
+	if ref, _ := json.Marshal("\xff\xfe\xc3\xc0\xaf\xed\xa0\x80"); string(ref) != `"`+strings.Repeat(`\ufffd`, 8)+`"` {
+		t.Fatalf("test bug: encoding/json writes %s", ref)
+	}
 	if got := w.last(t); string(got.Body) != want {
 		t.Errorf("event stream %q, want %q", got.Body, want)
 	}
@@ -303,13 +314,12 @@ func TestF20FormTypedPart(t *testing.T) {
 }
 
 // F27 (T1, client.go, Input.Body: "A multipart object with no fields sends
-// the close delimiter alone, as browsers and mime/multipart.Writer do"): an
-// empty object, one whose every property is null, and a Part with nil
-// Content (stage 4 ledger, IP4-3: omitted like null) each send the close
-// delimiter of the given boundary alone, which mime/multipart reads as no
-// parts. Whether a CRLF precedes it, as mime/multipart.Writer writes and
-// RFC 2046's close-delimiter includes, or not, as browsers write, is left
-// open.
+// the close delimiter alone ("--" boundary "--" CRLF), as browsers do"; stage
+// 4 ledger, RQ2: the WHATWG form-data algorithm, the body starting at the
+// dash-boundary as RFC 2046's multipart-body does): an empty object, one
+// whose every property is null, and a Part with nil Content (ledger, IP4-3:
+// omitted like null) each send exactly "--B--" CRLF, which mime/multipart
+// reads as no parts.
 func TestF27EmptyMultipart(t *testing.T) {
 	const mt = "multipart/form-data; boundary=B"
 	w := newWire(t, nil)
@@ -317,8 +327,8 @@ func TestF27EmptyMultipart(t *testing.T) {
 	for _, body := range []map[string]any{{}, {"title": nil}, {"any": openapi.Part{MediaType: "text/plain"}}} {
 		mustCall(t, c, "mp", &openapi.Input{Body: body, MediaType: mt}, nil)
 		got := w.last(t)
-		if b := string(got.Body); b != "--B--\r\n" && b != "\r\n--B--\r\n" {
-			t.Errorf("%v: body %q, want the close delimiter alone", body, b)
+		if b := string(got.Body); b != "--B--\r\n" {
+			t.Errorf("%v: body %q, want %q", body, b, "--B--\r\n")
 		}
 		if _, _, parts := readMultipart(t, mt, got.Body); len(parts) != 0 {
 			t.Errorf("%v: %d parts", body, len(parts))
