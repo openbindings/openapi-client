@@ -31,7 +31,8 @@ import (
 // Redirects: "a hop that must resend a body that cannot be sent again (see
 // Input.Body) is not followed" and "A 3xx not followed is the outcome, a
 // *StatusError". doc.go, Fixed rules, Form bodies: "A body is encoded once,
-// so HTTP.Body and every GetBody give the same bytes"; Header fields: the
+// when the call is prepared, so HTTP.Body and every GetBody give the same
+// bytes; a file in a field is read into memory then"; Header fields: the
 // client generates "Content-Length for a body that can be sent again".
 // Stage 4 ledger, Q10: "a form body whose every source can be sent again is
 // encoded once when prepared (replayable readers read by ReadAt, not

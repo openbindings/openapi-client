@@ -12,7 +12,8 @@ import (
 // the effective explode, and ExplodeSet whether the document writes it" (OAS
 // 3.1.2 section 4.8.12.2.2: "When style is "form", the default value is
 // true. For all other styles, the default value is false"); AllowReserved
-// "the effective allowReserved: false where the edition ignores it";
+// "the effective allowReserved: false where the edition or the media type
+// ignores it";
 // ContentType for a content parameter; Err "why built-in serialization
 // cannot use the value" (doc.go, Fixed rules, Styles: set "where the
 // document alone decides it"). Explode is true for deepObject, whatever the

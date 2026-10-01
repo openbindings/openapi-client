@@ -15,11 +15,14 @@ import (
 // Stage 4, application/x-www-form-urlencoded bodies, checked byte for byte.
 // client.go, Input.Body: "For form and multipart media, Body is an object
 // (a map or a struct) whose properties are the fields. A property may be a
-// []byte, an io.Reader or a [Part]; a property whose value is an array
-// sends one field or part per item under the property's name, unless its
-// collectionFormat or Encoding style says otherwise, each item taking the
-// property's content type (an array schema's items type by default); any
-// other value is one field or part." Part: "In an
+// []byte, an io.Reader or a [Part] (or a non-nil *Part); a property whose
+// value is an array sends one field or part per item under the property's
+// name, unless its collectionFormat or Encoding style says otherwise, each
+// item taking the property's content type (an array schema's items type by
+// default); any other value is one field or part. A field an Encoding style
+// serializes takes JSON data, so a []byte there is a base64 string and a
+// Part or reader is refused. A typed nil is a value, never a reader, so a
+// property or item holding one is omitted as null." Part: "In an
 // application/x-www-form-urlencoded body only Content and MediaType apply,
 // and Filename, NoFilename or Header is refused." doc.go, Fixed rules, Form bodies: "Form
 // bodies use the WHATWG application/x-www-form-urlencoded encoder in every
@@ -426,8 +429,9 @@ func TestFormBodyRefusals(t *testing.T) {
 
 // A form body whose every source can be sent again is encoded once, when
 // prepared, so HTTP.Body and every GetBody give the same bytes (doc.go,
-// Fixed rules, Form bodies: "A body is encoded once, so HTTP.Body and every
-// GetBody give the same bytes"), with Content-Length (Header fields: "for a
+// Fixed rules, Form bodies: "A body is encoded once, when the call is
+// prepared, so HTTP.Body and every GetBody give the same bytes; a file in a
+// field is read into memory then"), with Content-Length (Header fields: "for a
 // body that can be sent again"; stage 4 ledger, Q10: "replayable readers
 // read by ReadAt, not drained"). TestBodyReplayPrepared covers a form body
 // holding a reader read once, which has no Content-Length.

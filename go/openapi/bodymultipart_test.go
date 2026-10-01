@@ -18,11 +18,13 @@ import (
 // mime/multipart and checked part by part: names, filenames, media types,
 // header fields and content. client.go, Input.Body: "For form and multipart
 // media, Body is an object (a map or a struct) whose properties are the
-// fields. A property may be a []byte, an io.Reader or a [Part]; a property
-// whose value is an array sends one field or part per item under the
-// property's name, unless its collectionFormat or Encoding style says
-// otherwise, each item taking the property's content type (an array
-// schema's items type by default); any other value is one field or part."
+// fields. A property may be a []byte, an io.Reader or a [Part] (or a
+// non-nil *Part); a property whose value is an array sends one field or
+// part per item under the property's name, unless its collectionFormat or
+// Encoding style says otherwise, each item taking the property's content
+// type (an array schema's items type by default); any other value is one
+// field or part. ... A multipart object with no fields sends the close
+// delimiter alone, as browsers and mime/multipart.Writer do."
 // Part: "A part's name and filename are written in its Content-Disposition
 // as given, each as a quoted-string with \ and " escaped, never as
 // filename*; a control character other than a tab in either is refused, as
@@ -354,8 +356,9 @@ func TestMultipartRefusals(t *testing.T) {
 // "MediaType may carry parameters, which are sent as given: a pre-encoded
 // multipart body requires its boundary here, and a boundary given for a
 // multipart body the client encodes is used, a part whose content holds its
-// delimiter being an input that cannot be encoded (RFC 2046 section
-// 5.1.1)"; Options.MediaType selects "as Input.MediaType does"), a quoted
+// delimiter, or "--" and the boundary after a CR or LF, being an input that
+// cannot be encoded (RFC 2046 section 5.1.1)"; Options.MediaType selects "as
+// Input.MediaType does"), a quoted
 // one included (RFC 2046: "bchars :=
 // bcharsnospace / " "", so a boundary may hold a space, and RFC 9110
 // section 8.3.1 quotes such a parameter value).

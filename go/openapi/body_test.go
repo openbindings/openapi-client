@@ -572,7 +572,9 @@ func TestCodecsForRequestBodies(t *testing.T) {
 }
 
 // client.go, Options.Codecs: "Load refuses any other key, and one that names
-// a sequential or multipart type, whose framing stays the client's". The
+// a sequential, multipart or application/x-www-form-urlencoded type, whose
+// framing and field encoding stay the client's, as OpenAPI's Encoding Object
+// governs them" (the form key: stage 4 ledger, review round, F7). The
 // refusal is keyed Options.Codecs (errors.go, RequestError.Settings).
 func TestLoadRefusesCodecKeys(t *testing.T) {
 	codec := tagCodec{tag: "X"}
@@ -589,6 +591,8 @@ func TestLoadRefusesCodecKeys(t *testing.T) {
 		"application/json-seq",
 		"text/event-stream",
 		"+json-seq",
+		"application/x-www-form-urlencoded", // form field encoding (F7)
+		"Application/X-WWW-Form-Urlencoded",
 	} {
 		_, err := openapi.Parse(t.Context(), []byte(expand(bodyDoc, "https://api.example.test")), testDocURI,
 			&openapi.Options{Codecs: map[string]openapi.Codec{key: codec}})

@@ -16,12 +16,14 @@ import (
 // Style "as declared or as OpenAPI defaults it ..., or empty when the value
 // is serialized by ContentType instead"; Explode "the effective explode
 // (true for deepObject, which ignores the field), and ExplodeSet whether the
-// document writes it"; AllowReserved "the effective allowReserved";
-// ContentType "for a form or multipart field, its effective contentType: its
-// Encoding's, which may be a comma-separated list or a range, or else the
-// default the client uses ... It is empty for a field whose Encoding sets
-// style, explode or allowReserved, which OpenAPI says makes contentType
-// ignored"; Headers "the header fields a multipart field's Encoding
+// document writes it"; AllowReserved "the effective allowReserved: false
+// where the edition or the media type ignores it, as for a
+// multipart/form-data field"; ContentType "for a form or multipart field,
+// its effective contentType: its Encoding's, which may be a comma-separated
+// list or a range, or else the default the client uses ... Under
+// application/x-www-form-urlencoded and multipart/form-data it is empty for
+// a field whose Encoding sets style, explode or allowReserved, which OpenAPI
+// says makes contentType ignored there"; Headers "the header fields a multipart field's Encoding
 // declares for its part, except Content-Type, which OpenAPI ignores there";
 // Source "a JSON Pointer to its ... Encoding Object"; Err "why built-in
 // serialization cannot use the value". Media.Err: "A schema or Encoding

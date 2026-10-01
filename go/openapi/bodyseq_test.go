@@ -21,15 +21,18 @@ import (
 // whose second value is an error, of any element type; each element is one
 // item. Under text/event-stream an item is an object with no members but
 // data, event and id, as strings, and retry, as a non-negative integer, or
-// an [Event], of which only the fields it sets are used. It is written as
-// those fields, each as a "field: value" line ending in LF, data as one data
+// an [Event] (or a non-nil *Event), of which only the fields it sets are
+// used. It is written as those fields, each as a "field: value" line ending
+// in LF, data as one data
 // line per line (split at CRLF, LF or CR), then a blank line; any other
-// member or type, a line break in event or id, or a retry that is not whole
-// milliseconds, is an item that cannot be encoded. Under JSON Lines and JSON
-// text sequences, a []byte or io.Reader item is the item's JSON text,
-// written as given and framed (a JSON Lines item is followed by LF; a
+// member or type, a line break in event or id, a NUL in id, or a retry that
+// is not whole milliseconds, is an item that cannot be encoded; invalid
+// UTF-8 is written as U+FFFD, as an event stream is UTF-8. Under JSON Lines
+// and JSON text sequences, a []byte or io.Reader item is the item's JSON
+// text, written as given and framed (a JSON Lines item is followed by LF; a
 // sequence item has RS before it and LF after); one holding the framing's
-// separator (LF, or RS) cannot be encoded." Stage brief, Scope: "each item
+// separator (LF or CR, or RS) cannot be encoded, and a codec's output is
+// framed after its trailing JSON whitespace is trimmed." Stage brief, Scope: "each item
 // encoded as its own body would be". The framing is each authority's: JSON
 // Lines ("Each Line is a Valid JSON Value"; "Line Separator is '\n'"), RFC
 // 7464 section 2.2 ("JSON-sequence = *(RS JSON-text LF)"), and the HTML
@@ -339,7 +342,8 @@ var unencodable = make(chan int)
 // them, or holding a reader or Part (client.go, Input.Body: "A Part or
 // io.Reader inside a JSON value is refused with an Inputs entry at its place
 // in Body"); a pre-encoded item holding its framing's separator (Input.Body:
-// "one holding the framing's separator (LF, or RS) cannot be encoded").
+// "one holding the framing's separator (LF or CR, or RS) cannot be
+// encoded").
 func TestSequentialItemRefusals(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, seqDoc(), nil)
@@ -388,8 +392,10 @@ func TestSequentialItemRefusals(t *testing.T) {
 
 // The items of a sequential type use the codec for their own type
 // (client.go, Options.Codecs: Load refuses a codec key "that names a
-// sequential or multipart type, whose framing stays the client's; their
-// items and parts use the codec for their own type", and entries for
+// sequential, multipart or application/x-www-form-urlencoded type, whose
+// framing and field encoding stay the client's, as OpenAPI's Encoding Object
+// governs them; their items and parts use the codec for their own type",
+// and entries for
 // "application/json" "replace encoding/json everywhere"). The codec
 // receives each item as given (doc.go, Values); an Encode error refuses the
 // call at the item's Inputs key.
