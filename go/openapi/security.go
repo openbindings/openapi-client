@@ -131,15 +131,15 @@ func newScheme(t value, at string) *scheme {
 	return sc
 }
 
-// oauthFlows describes the OAuth Flows Object v, in document order, and
-// says why it is defective: an OAuth Flow Object without a URL its flow
-// requires, as a string, or without its map of scopes (OpenAPI 3.1 section
+// oauthFlows describes the flows of the OAuth Flows Object v that are
+// objects, in document order, with the fields they have, and says why v is
+// defective: a flow that is not an OAuth Flow Object, or that lacks a URL
+// its type requires, as a string, or its map of scopes (OpenAPI 3.1 section
 // 4.8.29).
-func oauthFlows(v value) ([]Flow, error) {
+func oauthFlows(v value) (flows []Flow, err error) {
 	if v.kind() != '{' {
 		return nil, errors.New("an oauth2 scheme needs flows")
 	}
-	var flows []Flow
 	for typ, f := range v.members() {
 		var needs []string // the URLs the flow requires
 		switch typ {
@@ -153,17 +153,22 @@ func oauthFlows(v value) ([]Flow, error) {
 			continue
 		}
 		scopes := f.get("scopes")
-		if f.kind() != '{' || scopes.kind() != '{' || slices.ContainsFunc(needs, func(n string) bool { return f.get(n).kind() != '"' }) {
-			return nil, fmt.Errorf("the %s flow needs %s and scopes", typ, strings.Join(needs, " and "))
+		if err == nil && (f.kind() != '{' || scopes.kind() != '{' || slices.ContainsFunc(needs, func(n string) bool { return f.get(n).kind() != '"' })) {
+			err = fmt.Errorf("the %s flow needs %s and scopes", typ, strings.Join(needs, " and "))
 		}
-		flow := Flow{Type: typ, AuthorizationURL: f.str("authorizationUrl"), TokenURL: f.str("tokenUrl"), RefreshURL: f.str("refreshUrl"),
-			Scopes: map[string]string{}}
-		for name, desc := range scopes.members() {
-			flow.Scopes[name] = desc.string()
+		if f.kind() != '{' {
+			continue
+		}
+		flow := Flow{Type: typ, AuthorizationURL: f.str("authorizationUrl"), TokenURL: f.str("tokenUrl"), RefreshURL: f.str("refreshUrl")}
+		if scopes.kind() == '{' {
+			flow.Scopes = map[string]string{}
+			for name, desc := range scopes.members() {
+				flow.Scopes[name] = desc.string()
+			}
 		}
 		flows = append(flows, flow)
 	}
-	return flows, nil
+	return flows, err
 }
 
 // An alternative is a security alternative with its schemes compiled.
@@ -416,7 +421,6 @@ var (
 	errMutualTLS   = errors.New("a mutualTLS scheme takes no credential but FromTransport")
 	errNotBasic    = errors.New("a Basic credential is for an http basic scheme")
 	errBasicValue  = errors.New("an http basic credential is a user-id without a colon, a colon and a password, neither holding a control character (RFC 7617 section 2)")
-	errBearerValue = errors.New("a bearer token holds only the characters of RFC 6750's b64token")
 	errFieldValue  = errors.New("a header field cannot carry the credential: it holds a control character other than a tab, or leading or trailing whitespace")
 	errCookieValue = errors.New(`a cookie cannot carry the credential: it holds a ";", a control character, or leading or trailing whitespace`)
 )
@@ -456,13 +460,9 @@ func (sc *scheme) loadError(c Credential) error {
 // checkValue returns why a credential for sc cannot carry secret, or nil.
 func (sc *scheme) checkValue(secret string) error {
 	switch sc.kind {
-	case apiKeyHeader, httpOther:
+	case apiKeyHeader, httpBearer, httpOther:
 		if !validFieldValue(secret) {
 			return errFieldValue
-		}
-	case httpBearer:
-		if !b64token(secret) {
-			return errBearerValue
 		}
 	case httpBasic:
 		if !strings.Contains(secret, ":") || strings.ContainsFunc(secret, isCTL) {
@@ -474,18 +474,6 @@ func (sc *scheme) checkValue(secret string) error {
 		}
 	}
 	return nil
-}
-
-// b64token reports whether s is an RFC 6750 b64token: 1*( ALPHA / DIGIT /
-// "-" / "." / "_" / "~" / "+" / "/" ) *"=".
-func b64token(s string) bool {
-	t := strings.TrimRight(s, "=")
-	for i := 0; i < len(t); i++ {
-		if c := t[i]; !unreserved(c) && c != '+' && c != '/' {
-			return false
-		}
-	}
-	return t != ""
 }
 
 // credentialKey is the Settings key of the credential for name.
@@ -519,9 +507,24 @@ func loopback(host string) bool {
 
 // sameOrigin reports whether a and b have the same origin: scheme, host and
 // port, a scheme's default port being the same as none (RFC 6454 section
-// 4).
+// 4). Only ASCII letters compare without regard to case (RFC 3986 section
+// 6.2.2.1), so two hosts are never one origin.
 func sameOrigin(a, b *url.URL) bool {
-	return strings.EqualFold(a.Scheme, b.Scheme) && strings.EqualFold(a.Hostname(), b.Hostname()) && port(a) == port(b)
+	return equalFoldASCII(a.Scheme, b.Scheme) && equalFoldASCII(a.Hostname(), b.Hostname()) && port(a) == port(b)
+}
+
+// equalFoldASCII reports whether a and b are equal, ASCII letters compared
+// without regard to case and every other byte exactly.
+func equalFoldASCII(a, b string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range len(a) {
+		if c, d := a[i]|0x20, b[i]|0x20; a[i] != b[i] && (c != d || c < 'a' || c > 'z') { // 0x20 lowers a letter
+			return false
+		}
+	}
+	return true
 }
 
 // port returns u's port, or its scheme's default.
@@ -601,11 +604,9 @@ func (x *exchange) sign(req *http.Request, creds, inPlace bool, re *RequestError
 			continue
 		case c.kind != sourceCredential: // checked when the call was prepared
 		case secret == "":
-			err = fmt.Errorf("the credential source for %q returned an empty secret", name)
+			err = errors.New("the credential source returned an empty secret")
 		default:
-			if err = sc.checkValue(secret); err != nil {
-				err = fmt.Errorf("the credential source for %q: %w", name, err)
-			}
+			err = sc.checkValue(secret)
 		}
 		if err != nil {
 			re.setting(credentialKey(name), err)

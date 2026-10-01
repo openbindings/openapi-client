@@ -89,7 +89,7 @@ func (x *exchange) follow(req, signed *http.Request) (*http.Response, error) {
 			// CheckRedirect may have moved the hop.
 			left = left || next.URL == nil || !sameOrigin(next.URL, first.URL)
 			if signed = x.sign(next, !left, false, &re); re.refused() != nil {
-				err = errors.Join(re.Unwrap()...) // each names its scheme
+				err = re.sent()
 			}
 		}
 		switch {

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/textproto"
 	"net/url"
@@ -51,6 +52,17 @@ func (e *RequestError) refused() error {
 	}
 	re := *e
 	return &re
+}
+
+// sent returns the problems e holds, found on a redirect hop after the call
+// sent its first request, as an error that is not a *RequestError: each
+// setting's error with its key, which names the scheme.
+func (e *RequestError) sent() error {
+	errs := []error{e.Err}
+	for _, k := range slices.Sorted(maps.Keys(e.Settings)) {
+		errs = append(errs, fmt.Errorf("%s: %w", label(k), e.Settings[k]))
+	}
+	return errors.Join(errs...)
 }
 
 // An encodingError is a value encoding/json cannot encode, reported without
