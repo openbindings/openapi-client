@@ -23,7 +23,10 @@ import (
 // per $ref or items link (iterative, or bounded at 1,000 links, past which
 // the absent type applies); each node's result is computed once (P1); the
 // default set is held as a set of the three possible defaults and
-// formatted only for a descriptor." Findings F2, F9, F17, A3; and F4/A7
+// formatted only for a descriptor." The verification pass's C4-8 withdraws
+// the bound ("Items chains are followed iteratively with each node's set
+// memoized and no length bound: a long chain gets its true default"; see
+// regress_stage4_inspect_test.go). Findings F2, F9, F17, A3; and F4/A7
 // (nested multipart from array items), F6/A6 (RFC 6570 fields ignored
 // outside form-urlencoded and multipart/form-data, OAS 3.1.2 section
 // 4.8.15.1.2: "This field SHALL be ignored if the request body media type
@@ -216,9 +219,11 @@ func chainDoc(n int) []byte {
 // C4-2 (F2): "No compile path recurses once per $ref or items link". A
 // 900,000-link chain (40 MB, under the default document bound) is
 // described without a crash, at a cost linear in the chain from 225,000
-// links: parse and Operations(), which describes the field. At 6917b84 it
-// ended the process with a fatal stack overflow, so it runs in a child
-// process.
+// links: parse and Operations(), which describes the field, text/plain as
+// the string at the chain's end gives it (C4-8, which withdraws the
+// 1,000-link cut: "a long chain gets its true default"; at b4872f9 the cut
+// gave application/octet-stream). At 6917b84 it ended the process with a
+// fatal stack overflow, so it runs in a child process.
 func TestC42LongItemsChain(t *testing.T) {
 	if !inChild(t) {
 		return
@@ -233,6 +238,8 @@ func TestC42LongItemsChain(t *testing.T) {
 			ops := c.Operations()
 			if len(ops) != 1 || ops[0].Err != nil || ops[0].Body == nil || len(ops[0].Body.Media[0].Encoding) != 1 {
 				t.Errorf("the chained field is not described")
+			} else if e := ops[0].Body.Media[0].Encoding[0]; e.ContentType != "text/plain" {
+				t.Errorf("the chained field's ContentType is %q, want text/plain", e.ContentType)
 			}
 		}
 	})
