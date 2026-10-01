@@ -52,10 +52,11 @@ func static(secret string) func(context.Context) (string, error) {
 //   - apiKey: the key, sent in the declared header, query parameter or
 //     cookie.
 //   - http bearer, oauth2 and openIdConnect: the token, sent as
-//     "Authorization: Bearer <token>".
+//     "Authorization: Bearer <token>"; RFC 6750 limits it to b64token
+//     characters.
 //   - http basic (and Swagger 2.0 basic): the user-id and password joined
 //     by a colon, as RFC 7617 writes them, sent base64-encoded. [Basic]
-//     builds and checks it.
+//     builds it.
 //   - any other http scheme: everything after the scheme name in the
 //     Authorization field.
 //
@@ -85,9 +86,9 @@ func Secret(secret string) Credential {
 // oauth2.ReuseTokenSource does. An error from f, or an empty secret, on the
 // first request refuses the call with a *RequestError: nothing is sent. On a
 // redirect hop the first request has already been sent, so an error or an
-// empty secret ends the call with the *url.Error the http.Client returns,
-// wrapping f's error. An error
-// from f is passed on as it is.
+// empty secret ends the call with a *url.Error wrapping f's error, along
+// with the last response, its body closed. An error from f is passed on as
+// it is.
 //
 // For a golang.org/x/oauth2 TokenSource ts:
 //
@@ -107,7 +108,8 @@ func SecretFunc(f func(ctx context.Context) (string, error)) Credential {
 
 // Basic returns a Credential for http basic authentication (RFC 7617),
 // sent in UTF-8. A username containing a colon, or either value containing
-// a control character, refuses the call.
+// a control character, is refused as the package doc's Credentials section
+// says of every credential value.
 func Basic(username, password string) Credential {
 	if username == "" && password == "" {
 		return Credential{}

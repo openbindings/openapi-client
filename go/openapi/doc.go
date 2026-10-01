@@ -135,11 +135,11 @@
 // cut the body short. A memory bound that is hit is an
 // [*http.MaxBytesError].
 //
-// No credential appears in the text of an error the client creates, nor in
-// any *url.Error in the chain of one it returns: credentials the client
-// added to a URL are redacted there. Errors made by the caller's own code,
-// such as its transport or a credential source, are passed on as they are,
-// even when their text quotes a URL.
+// No credential appears in the text of an error the client creates, nor in the
+// URL of the *url.Error the http.Client returns, which names the request
+// without the credentials the client added. Errors made by the caller's own
+// code, such as its transport or a credential source, are passed on as they
+// are, even when their text quotes a URL.
 //
 // # Configuration when the document is incomplete
 //
@@ -359,16 +359,23 @@
 // the same name. Query and cookie credentials go last, in the order the
 // alternative lists their schemes, and one that replaces a pair of the same
 // name, including one edited into Request.HTTP, removes it and goes last. A
-// credential value a header field cannot carry (a CR, LF or NUL, or leading
-// or trailing whitespace) is refused at Options.Credentials["name"]: by Load
-// for a static credential, by the call for a source's.
+// credential value its destination cannot carry is refused at
+// Options.Credentials["name"]: by Load for a static credential (by each call,
+// for a Client from Client.With), by the call for a source's. Such a value is
+// a header field value with a control character other than a tab, or with
+// leading or trailing whitespace; a cookie value with ";" or a control
+// character; a bearer token with a character outside RFC 6750's b64token;
+// and a Basic value without the colon, or with a control character in the
+// user-id or password, which RFC 7617 forbids.
 //
 // Bearer tokens (http bearer, oauth2, openIdConnect) and Basic credentials
-// are sent only over https, wss, or to a loopback host (a loopback address,
-// an IPv4-mapped one included, or localhost or a name under .localhost, with
-// or without a trailing dot, as RFC 6761 reserves them, matched without
-// resolving), as RFC 6750 requires and RFC 7617 advises; a call
-// that would send one over plain http or ws elsewhere is refused. The
+// are sent only over https or wss, as RFC 6750 requires and RFC 7617
+// advises, or to a loopback host, where they do not leave the machine: a
+// loopback IP address, an IPv4-mapped one included, or the name localhost
+// written exactly so, the one name net/http's proxy settings never apply to.
+// Other names, such as those under .localhost, can be proxied or resolved
+// elsewhere, so they are not loopback here. A call that would send one over
+// plain http or ws to any other host is refused. The
 // caller's transport is responsible for actually securing wss. A URL scheme
 // other than http, https, ws or wss requires FromTransport for these
 // credentials. API keys, which no RFC governs, are not restricted by this

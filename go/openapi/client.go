@@ -176,17 +176,17 @@ type Codec interface {
 }
 
 // Redirects says which 3xx responses the client follows. Only 301, 302, 303,
-// 307 and 308 with a Location can be followed. A 303 is followed with GET
-// (HEAD stays HEAD) and no body. A 301 or 302 changes POST to GET with no
-// body, and keeps any other method and its body, as 307 and 308 do. A hop
-// that drops the body drops Content-Type and the other content fields, and
-// a hop that must resend a body that cannot be sent again (see Input.Body)
+// 307 and 308 with a Location holding a URI reference can be followed. A 303 is
+// followed with GET (HEAD stays HEAD) and no body. A 301 or 302 changes POST to
+// GET with no body, and keeps any other method and its body, as 307 and 308 do.
+// A hop that drops the body drops Content-Type and the other content fields,
+// and a hop that must resend a body that cannot be sent again (see Input.Body)
 // is not followed. A 3xx not followed is the outcome, a *StatusError. The
-// client adds no Referer. The HTTPClient's CheckRedirect is still consulted
-// on every hop the client follows, after the client applies the rules below
-// and before it places credentials on the hop, and can restore a field the
-// caller deliberately wants to forward; with a nil CheckRedirect, net/http's
-// limit of 10 hops applies.
+// client adds no Referer. The HTTPClient's CheckRedirect is still consulted on
+// every hop the client follows, after the client applies the rules below and
+// before it places credentials on the hop, and can restore a field the caller
+// deliberately wants to forward; with a nil CheckRedirect, the chain stops
+// after 10 requests, as net/http's default does.
 //
 // On a hop to another origin (scheme, host and port), the client removes the
 // credentials it added and any header a security scheme placed, the
@@ -615,7 +615,8 @@ func (r *Request) Send(ctx context.Context) (*Response, error) {
 // does. When r's body can be sent again (HTTP.GetBody is set, or there is
 // no body), r may be sent any number of times, concurrently too. Otherwise
 // it may be sent once, and sending it again is refused with a
-// *RequestError, nothing sent.
+// *RequestError, nothing sent; a send refused with a *RequestError does not
+// count.
 func (r *Request) Call(ctx context.Context, out any) (*Response, error) {
 	var re RequestError
 	if r.HTTP != nil {
@@ -646,7 +647,7 @@ func (r *Request) Call(ctx context.Context, out any) (*Response, error) {
 // from Stream or Send, Body is open and must be closed. Its Request is the last
 // request sent, after any redirects, with the credentials the client added
 // removed from its URL and its header fields, and so is every earlier request
-// reachable from it.
+// reachable from it. The responses in that chain hold what the server sent.
 type Response struct {
 	*http.Response
 
@@ -705,10 +706,12 @@ func (r *Response) Decode(out any) error {
 }
 
 // WaitRequest waits until the HTTP transport has consumed the complete
-// request body or stopped consuming it. It returns nil for a bodyless
-// request or when the body was consumed completely (read to EOF, or, for a
-// body of known length, read to that length), or the encoding, iterator, read,
-// premature-close or cancellation error that stopped it. A write error
+// request body or stopped consuming it, for every request of the call that
+// carried one: the first and each redirect hop that sent it again. It
+// returns nil when no request had a body or each body was consumed
+// completely (read to EOF, or, for a body of known length, read to that
+// length), or the encoding, iterator, read, premature-close or cancellation
+// error that stopped one. A write error
 // reported by RoundTrip is returned by Send; a general RoundTripper does
 // not expose when bytes are written to the network. A nil result here
 // therefore proves body consumption, not delivery or server acceptance.
