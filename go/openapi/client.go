@@ -708,10 +708,10 @@ func (r *Response) Decode(out any) error {
 // WaitRequest waits until the HTTP transport has consumed the complete
 // request body or stopped consuming it, for every request of the call that
 // carried one: the first and each redirect hop that sent it again. It
-// returns nil when no request had a body or each body was consumed
-// completely (read to EOF, or, for a body of known length, read to that
-// length), or the encoding, iterator, read, premature-close or cancellation
-// error that stopped one. A write error
+// reports on the last of them: nil when its body was consumed completely
+// (read to EOF, or, for a body of known length, read to that length), or the
+// encoding, iterator, read, premature-close or cancellation error that
+// stopped it. It returns nil when no request carried a body. A write error
 // reported by RoundTrip is returned by Send; a general RoundTripper does
 // not expose when bytes are written to the network. A nil result here
 // therefore proves body consumption, not delivery or server acceptance.
