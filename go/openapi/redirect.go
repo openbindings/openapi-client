@@ -38,9 +38,8 @@ func (x *exchange) follow(req, signed *http.Request) (*http.Response, error) {
 		}
 		resp = r
 		resp.Request = req
-		if loc, ok := resp.Header[heldLocation]; ok {
-			delete(resp.Header, heldLocation)
-			resp.Header["Location"] = loc
+		if redirection(resp.StatusCode) {
+			move(resp.Header, heldLocation, "Location")
 		}
 		if cfg.jar != nil {
 			if cookies := resp.Cookies(); len(cookies) > 0 {
@@ -174,16 +173,23 @@ const heldLocation = "Location held by openapi"
 
 func (t noFollow) RoundTrip(r *http.Request) (*http.Response, error) {
 	resp, err := t.rt.RoundTrip(r)
-	if err == nil && resp != nil {
-		switch resp.StatusCode {
-		case 301, 302, 303, 307, 308:
-			if loc, ok := resp.Header["Location"]; ok {
-				delete(resp.Header, "Location")
-				resp.Header[heldLocation] = loc
-			}
-		}
+	if err == nil && resp != nil && redirection(resp.StatusCode) {
+		move(resp.Header, "Location", heldLocation)
 	}
 	return resp, err
+}
+
+// redirection reports whether net/http follows a response of status.
+func redirection(status int) bool {
+	return status == 301 || status == 302 || status == 303 || status == 307 || status == 308
+}
+
+// move renames the field from of h to.
+func move(h http.Header, from, to string) {
+	if vs, ok := h[from]; ok {
+		delete(h, from)
+		h[to] = vs
+	}
 }
 
 // CancelRequest passes on the cancellation the http.Client makes, for its
