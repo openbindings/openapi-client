@@ -166,8 +166,7 @@ func (c *Client) newRequest(ctx context.Context, o *operation, in *Input, re *Re
 	if sec.alt = c.selectSecurity(o, in, re); sec.alt != nil {
 		sec.places, byCredential = c.checkCredentials(o, sec.alt, in, ep, re)
 	}
-	req, _ := http.NewRequestWithContext(ctx, o.Method, "", nil)
-	h := req.Header
+	h := http.Header{}
 	applyFields(h, cfg.Header)
 	applyFields(h, in.Header)
 
@@ -273,14 +272,14 @@ func (c *Client) newRequest(ctx context.Context, o *operation, in *Input, re *Re
 		}
 	}
 	p, media := c.body(o, in, h, re)
+	// The request, made as http.NewRequestWithContext makes one, its URL
+	// written rather than parsed.
+	s := b.String()
+	u := &url.URL{Scheme: ep.scheme, Host: ep.host, Path: s[:query], RawPath: s[:query]} // as written: net/http would otherwise escape sub-delimiters
+	req := (&http.Request{Method: o.Method, URL: u, Proto: "HTTP/1.1", ProtoMajor: 1, ProtoMinor: 1, Header: h, Host: ep.host}).WithContext(ctx)
 	if re.Err != nil || len(re.Settings) > 0 || len(re.Inputs) > 0 {
 		return req, payload{}, nil, selection{}
 	}
-
-	s := b.String()
-	u := req.URL
-	u.Scheme, u.Host, req.Host = ep.scheme, ep.host, ep.host
-	u.RawPath, u.Path = s[:query], s[:query] // as written: net/http would otherwise escape sub-delimiters
 	if query < len(s) {
 		u.RawQuery = s[query+1:]
 	}

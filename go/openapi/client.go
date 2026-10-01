@@ -634,7 +634,8 @@ func (r *Request) Send(ctx context.Context) (*Response, error) {
 	if err != nil {
 		return nil, err
 	}
-	return x.send(req)
+	resp, _, err := x.send(req)
+	return resp, err
 }
 
 // Call sends r with ctx, adding credentials, and returns as [Client.Call]
@@ -725,7 +726,7 @@ func (r *Response) Decode(out any) error {
 	if err := checkOut(out); err != nil {
 		return &DecodeError{Response: r, Err: err}
 	}
-	return exchangeOf(r.Response).decode(r, out)
+	return exchangeOf(r.Response).decode(r, mediaOf(r.Header), out)
 }
 
 // WaitRequest waits until the HTTP transport has consumed the complete

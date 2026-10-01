@@ -16,7 +16,7 @@ var octetStream = parsedMedia{"application/octet-stream", "application", "octet-
 // parseMedia parses s, reporting whether it is a media type or range.
 func parseMedia(s string) (parsedMedia, bool) {
 	full, params, _ := strings.Cut(s, ";")
-	full = strings.Trim(full, " \t")
+	full = trimOWS(full)
 	typ, sub, ok := strings.Cut(full, "/")
 	m := parsedMedia{full, typ, sub, params}
 	return m, ok && isToken(typ) && isToken(sub) && (typ != "*" || sub == "*") && m.eachParam(nil)
@@ -30,7 +30,9 @@ func (m parsedMedia) concrete() bool { return m.typ != "*" && m.sub != "*" }
 func (m parsedMedia) eachParam(f func(name, value string) bool) bool {
 	s := m.params
 	for {
-		s = strings.TrimLeft(s, " \t")
+		for s != "" && (s[0] == ' ' || s[0] == '\t') {
+			s = s[1:]
+		}
 		if s == "" {
 			return true
 		}
@@ -56,10 +58,24 @@ func (m parsedMedia) eachParam(f func(name, value string) bool) bool {
 		if f != nil && !f(name, value) {
 			return false
 		}
-		if s = strings.TrimLeft(s, " \t"); s != "" && s[0] != ';' {
+		for s != "" && (s[0] == ' ' || s[0] == '\t') {
+			s = s[1:]
+		}
+		if s != "" && s[0] != ';' {
 			return false
 		}
 	}
+}
+
+// trimOWS trims spaces and tabs from both ends of s.
+func trimOWS(s string) string {
+	for s != "" && (s[0] == ' ' || s[0] == '\t') {
+		s = s[1:]
+	}
+	for s != "" && (s[len(s)-1] == ' ' || s[len(s)-1] == '\t') {
+		s = s[:len(s)-1]
+	}
+	return s
 }
 
 // param returns the value of the parameter name, compared without regard
@@ -178,6 +194,9 @@ const (
 )
 
 func (m parsedMedia) class() class {
+	if m.full == "application/json" {
+		return jsonClass
+	}
 	app, text := strings.EqualFold(m.typ, "application"), strings.EqualFold(m.typ, "text")
 	is := func(sub string) bool { return strings.EqualFold(m.sub, sub) }
 	switch {
