@@ -3,7 +3,6 @@ package openapi
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -578,53 +577,44 @@ func (c *Client) body(o *operation, in *Input, h http.Header, re *RequestError) 
 	case io.Reader:
 		p = readerPayload(v)
 	default:
-		if raw = false; c.cfg.codecsErr != nil {
+		raw = false
+		if c.cfg.codecsErr != nil {
 			re.setting("Options.Codecs", c.cfg.codecsErr)
+		}
+		if typ == "" {
+			return payload{}, nil
+		}
+		if md == nil {
+			re.input("Input.Body", errors.New("an empty content map takes only a []byte or io.Reader body"))
+			return payload{}, nil
+		}
+		enc := o.encodings[slices.Index(o.Body.Media, md)]
+		switch k := m.class(); {
+		case isForm(m):
+			var b builder
+			c.formBody(&b, enc, v, "Input.Body", true, re)
+			p = b.payload()
+		case isMultipart(m):
+			p, typ = c.multipartBody(enc, typ, m, v, re)
+		case k == sequentialClass:
+			p = c.sequentialBody(m, v, re)
+		default:
+			b, at, _, err := c.encodeContent(m, k, v)
+			if err != nil {
+				re.input("Input.Body"+at, err)
+				return payload{}, nil
+			}
+			p = payload{data: b, size: int64(len(b))}
 		}
 	}
 	if typ == "" {
 		return payload{}, nil
 	}
-	if raw {
-		h["Content-Type"] = []string{typ}
-		p.ctype = typ
-		return p, md
+	if _, given := m.param("boundary"); raw && isMultipart(m) && !given {
+		re.setting("Input.MediaType", errors.New("a pre-encoded multipart body needs its boundary in Input.MediaType"))
 	}
-	if md == nil {
-		re.input("Input.Body", errors.New("an empty content map takes only a []byte or io.Reader body"))
-		return payload{}, nil
-	}
-	h["Content-Type"] = []string{typ}
-	b, at, ok, err := c.encodeValue(m, m.class(), in.Body)
-	switch {
-	case !ok:
-		re.fail(notYet("encoding a " + m.full + " body"))
-		return payload{}, nil
-	case err != nil:
-		re.input("Input.Body"+at, err)
-		return payload{}, nil
-	}
-	return payload{data: b, size: int64(len(b)), ctype: typ}, md
-}
-
-// encodeValue encodes v by the caller's codec for m, or, for a JSON type, as
-// encoding/json writes it, refusing an io.Reader or Part that json reaches,
-// at the JSON Pointer it returns, and nesting deeper than 1,000 levels. ok is
-// false for any other type.
-func (c *Client) encodeValue(m parsedMedia, k class, v any) (b []byte, at string, ok bool, err error) {
-	if codec, _ := c.cfg.codec(m); codec != nil {
-		var buf bytes.Buffer
-		err = codec.Encode(&buf, v)
-		return buf.Bytes(), "", true, err
-	}
-	if k != jsonClass {
-		return nil, "", false, nil
-	}
-	if b, err = json.Marshal(v); err != nil { // first, as it refuses a cycle, which the walk would follow
-		return nil, "", true, &encodingError{err}
-	}
-	at, err = checkJSON(c.doc, v, b)
-	return b, at, true, err
+	h["Content-Type"], p.ctype = []string{typ}, typ
+	return p, md
 }
 
 // mediaType selects the request body's media type: as sent, parsed, and
@@ -664,9 +654,9 @@ func (c *Client) mediaType(o *operation, in *Input, re *RequestError) (string, p
 // can be.
 func setBody(req *http.Request, p *payload) {
 	if p.size != 0 {
-		req.Body = &sentBody{p: p}
-		if p.once == nil {
-			req.GetBody = func() (io.ReadCloser, error) { return &sentBody{p: p}, nil }
+		req.Body = newSent(nil, p)
+		if p.size > 0 {
+			req.GetBody = func() (io.ReadCloser, error) { return newSent(nil, p), nil }
 		}
 	}
 }

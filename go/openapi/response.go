@@ -90,10 +90,10 @@ type upload struct {
 	checking atomic.Bool                   // CheckRedirect runs: a copy it takes is not handed over
 
 	mu       sync.Mutex
-	last     *sentBody // the last generation handed to the transport
-	open     int       // the generations handed over that have not ended
-	returned bool      // the chain has returned, so that no generation follows
-	done     bool      // the result is published
+	gens     []*sentBody // the generations handed to the transport
+	open     int         // those that have not ended
+	returned bool        // the chain has returned, so that no generation follows
+	done     bool        // the result is published
 	err      error
 	wait     chan struct{}
 }
@@ -107,7 +107,7 @@ func (u *upload) hand(b *sentBody) {
 	if b.handed || u.checking.Load() {
 		return
 	}
-	b.handed, u.last = true, b
+	b.handed, u.gens = true, append(u.gens, b)
 	if !b.ended {
 		u.open++
 	}
@@ -135,8 +135,8 @@ func (u *upload) publish() {
 		return
 	}
 	u.done = true
-	if u.last != nil {
-		u.err = u.last.result
+	if len(u.gens) > 0 {
+		u.err = u.gens[len(u.gens)-1].result
 	}
 	if u.wait != nil {
 		close(u.wait)
@@ -163,15 +163,38 @@ func (u *upload) waitUpload(ctx context.Context) error {
 	}
 }
 
+// settle waits for the upload before Call returns: for its result, or, once
+// the call's context is done, until every generation the transport was
+// handed has ended, the client closing those the transport has not, so that
+// Call never returns while its body is read or its iterator runs.
+func (x *exchange) settle() error {
+	err := x.waitUpload(x)
+	x.mu.Lock()
+	var open []*sentBody
+	for _, b := range x.gens {
+		if !x.done && !b.ended {
+			open = append(open, b)
+		}
+	}
+	x.mu.Unlock()
+	if open == nil {
+		return err
+	}
+	for _, b := range open {
+		b.Close()
+	}
+	return x.waitUpload(context.Background())
+}
+
 // attach sets req's body to one that reports its reading of p.
 func (x *exchange) attach(req *http.Request, p payload) {
 	x.payload = p
 	if p.size == 0 {
 		return
 	}
-	x.first = sentBody{x: x, p: &x.payload}
+	x.first = sentBody{x: x, p: &x.payload, src: x.payload.source()}
 	req.Body = &x.first
-	if p.once == nil {
+	if p.size >= 0 {
 		req.GetBody = x.replay
 	}
 }
@@ -189,7 +212,7 @@ func (x *exchange) replay() (io.ReadCloser, error) {
 
 // newBody returns a new generation of the body, not yet handed over.
 func (x *exchange) newBody() (*sentBody, error) {
-	b := &sentBody{x: x, p: &x.payload}
+	b := newSent(x, &x.payload)
 	if x.getBody != nil {
 		rc, err := x.getBody()
 		if err != nil {
@@ -285,7 +308,7 @@ func (x *exchange) call(req *http.Request, out any) (*Response, error) {
 	resp, err := x.send(req)
 	if err != nil {
 		if x.returned {
-			x.waitUpload(x)
+			x.settle()
 		}
 		return resp, err
 	}
@@ -305,7 +328,7 @@ func (x *exchange) finish(r *Response, out any) error {
 	}
 	r.Body.Close()
 	se.Response = r.keep(se.Content, se.Err != nil)
-	return join(se, x.waitUpload(x))
+	return join(se, x.settle())
 }
 
 // keep makes r's Body read content, in place of the body it has read, and
@@ -327,24 +350,18 @@ func (r *Response) keep(content []byte, cut bool) *Response {
 // finite duplex peer may read the rest of the request only then, and after
 // closing when the read stopped short, since closing ends the upload.
 func (x *exchange) decode(r *Response, out any) error {
-	var (
-		cfg *config
-		ctx context.Context
-		u   *upload
-	)
+	cfg, ctx := &config{}, context.Context(context.Background())
 	if x != nil {
-		cfg, ctx, u = x.cfg, x, &x.upload
-	} else {
-		cfg, ctx, u = &config{}, context.Background(), &upload{done: true}
+		cfg, ctx = x.cfg, x
 	}
 	head, eof, err := cfg.read(r.Response, r.Declaration, out)
 	var upload error
-	if eof {
-		upload = u.waitUpload(ctx)
+	if eof && x != nil {
+		upload = x.settle()
 	}
 	r.Body.Close()
-	if !eof {
-		upload = u.waitUpload(ctx)
+	if !eof && x != nil {
+		upload = x.settle()
 	}
 	if err != nil {
 		return join(decodeError(r, head, withContext(ctx, err)), upload)
@@ -617,15 +634,46 @@ func (e *contextError) Error() string   { return e.err.Error() }
 func (e *contextError) Unwrap() []error { return append([]error{e.err}, e.also...) }
 
 // A payload is the content of a request body: bytes, a reader that can be
-// read again from where it stood, or a reader that can be read once; and
-// the Content-Type the client wrote for it.
+// read again from where it stood, a reader read once, or, for a body of
+// several sources, its parts in order or an iterator's items, encoded as
+// they are read; and the Content-Type the client wrote for it.
 type payload struct {
 	data  []byte
 	ra    io.ReaderAt
 	off   int64
-	size  int64 // the length, or -1 for a reader read once
+	size  int64 // the length, or -1 when the body can be read only once
 	once  io.Reader
 	ctype string
+
+	parts []payload // the sources of a body of several, in order
+	items *items    // an iterator's items
+	form  bool      // as a part, encoded as a form field is, as it is read
+	check []string  // as a part, what its content cannot hold, found as it is read
+}
+
+// source returns what a generation of p reads, when p has several sources.
+func (p *payload) source() io.Reader {
+	switch {
+	case p.items != nil:
+		return p.items
+	case p.parts != nil:
+		return &cursor{parts: p.parts, tail: []byte(lead(p.parts[0].check))}
+	}
+	return nil
+}
+
+// readAt reads p's one source from pos: its bytes, its reader at p.off+pos,
+// or its reader read once.
+func (p *payload) readAt(buf []byte, pos int64) (int, error) {
+	switch {
+	case p.once != nil:
+		return p.once.Read(buf)
+	case pos >= p.size:
+		return 0, io.EOF
+	case p.ra != nil:
+		return p.ra.ReadAt(buf[:min(int64(len(buf)), p.size-pos)], p.off+pos)
+	}
+	return copy(buf, p.data[pos:p.size]), nil
 }
 
 // A sentBody is one generation of a request body: a payload, or a body the
@@ -633,17 +681,22 @@ type payload struct {
 // tracks reports to the upload: the first Read that returns an error, io.EOF
 // included, says how its reading finished, and no later Read reaches the
 // reader; it ends at the transport's Close, or, when a Read is then in
-// flight, as that Read returns.
+// flight, as that Read returns. A Read once the call's context is done
+// fails without reaching it.
 type sentBody struct {
 	x   *exchange // tracks the upload, or nil
 	p   *payload
 	pos int64
 	rc  io.ReadCloser // read instead of p when set, p.size being its declared length or -1
+	src io.Reader     // read instead of p when p has several sources
 
 	// Guarded by x.mu.
 	handed, reading, finished, closed, ended bool
 	result                                   error // how its reading finished: nil at io.EOF
 }
+
+// newSent returns a generation of p, tracked by x if not nil.
+func newSent(x *exchange, p *payload) *sentBody { return &sentBody{x: x, p: p, src: p.source()} }
 
 func (b *sentBody) Read(buf []byte) (int, error) {
 	if b.x == nil {
@@ -651,6 +704,9 @@ func (b *sentBody) Read(buf []byte) (int, error) {
 	}
 	u := &b.x.upload
 	u.mu.Lock()
+	if err := b.x.Err(); err != nil && !b.closed && !b.finished {
+		b.finished, b.result = true, withContext(b.x, err)
+	}
 	if b.closed || b.finished {
 		err := b.result
 		if b.closed {
@@ -683,14 +739,10 @@ func (b *sentBody) read(buf []byte) (n int, err error) {
 	switch {
 	case b.rc != nil:
 		n, err = b.rc.Read(buf)
-	case p.once != nil:
-		n, err = p.once.Read(buf)
-	case b.pos >= p.size:
-		err = io.EOF
-	case p.ra != nil:
-		n, err = p.ra.ReadAt(buf[:min(int64(len(buf)), p.size-b.pos)], p.off+b.pos)
+	case b.src != nil:
+		n, err = b.src.Read(buf)
 	default:
-		n = copy(buf, p.data[b.pos:])
+		n, err = p.readAt(buf, b.pos)
 	}
 	b.pos += int64(n)
 	if p.size >= 0 {
@@ -704,10 +756,15 @@ func (b *sentBody) read(buf []byte) (n int, err error) {
 	return n, err
 }
 
+// Close closes the caller's body, stops an iterator once no Read of it is
+// in flight, and ends the generation.
 func (b *sentBody) Close() error {
 	var err error
 	if b.rc != nil {
 		err = b.rc.Close()
+	}
+	if c, ok := b.src.(io.Closer); ok {
+		c.Close()
 	}
 	if b.x != nil {
 		u := &b.x.upload
@@ -718,4 +775,88 @@ func (b *sentBody) Close() error {
 		u.mu.Unlock()
 	}
 	return err
+}
+
+// A cursor reads the parts of a body in order.
+type cursor struct {
+	parts []payload
+	pos   int64  // read of parts[0]
+	tail  []byte // the end of what parts[0] has given, for its check
+	pend  []byte // what a form part has encoded, not yet read
+	raw   []byte // what a form part has given, to be encoded
+}
+
+func (c *cursor) Read(buf []byte) (int, error) {
+	for {
+		if len(c.pend) > 0 {
+			n := copy(buf, c.pend)
+			c.pend = c.pend[n:]
+			return n, nil
+		}
+		if len(c.parts) == 0 {
+			return 0, io.EOF
+		}
+		p, dst := &c.parts[0], buf
+		if p.form {
+			if c.raw == nil {
+				c.raw = make([]byte, 4<<10)
+			}
+			dst = c.raw
+		}
+		n, err := p.readAt(dst, c.pos)
+		if c.pos += int64(n); err == io.EOF && p.size >= 0 && c.pos < p.size {
+			err = io.ErrUnexpectedEOF
+		}
+		if n > 0 && p.check != nil && c.holds(p.check, dst[:n]) {
+			return 0, errHolds(p.check)
+		}
+		next := err == io.EOF || p.size >= 0 && c.pos >= p.size
+		if next {
+			c.parts, c.pos, err = c.parts[1:], 0, nil
+			if len(c.parts) > 0 {
+				c.tail = append(c.tail[:0], lead(c.parts[0].check)...)
+			}
+		}
+		switch {
+		case p.form:
+			c.pend = appendForm(c.pend[:0], dst[:n])
+		case n > 0 || err != nil || !next:
+			return n, err
+		}
+		if err != nil {
+			return 0, err
+		}
+	}
+}
+
+// holds reports whether data, read after the tail, holds one of patterns,
+// and keeps the end of what has been read as the tail, as long as the
+// longest of them but one byte.
+func (c *cursor) holds(patterns []string, data []byte) bool {
+	c.tail = append(c.tail, data...)
+	found, keep := false, 0
+	for _, s := range patterns {
+		found = found || bytes.Contains(c.tail, []byte(s))
+		keep = max(keep, len(s)-1)
+	}
+	c.tail = append(c.tail[:0], c.tail[max(0, len(c.tail)-keep):]...)
+	return found
+}
+
+// lead returns what precedes a part's content, for its check: the CRLF
+// before a multipart part's content, kept as a tail is, or nothing.
+func lead(patterns []string) string {
+	keep := 0
+	for _, s := range patterns {
+		keep = max(keep, len(s)-1)
+	}
+	return "\r\n"[2-min(2, keep):]
+}
+
+// errHolds is why a part's content, read, ends the body.
+func errHolds(patterns []string) error {
+	if len(patterns[0]) == 1 {
+		return errSeparator
+	}
+	return errDelimiter
 }

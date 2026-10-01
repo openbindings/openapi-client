@@ -23,8 +23,9 @@ type plan struct {
 	pathParams []int           // the path parameters, indexes into params
 	path       []pathPart
 	servers    []*server
-	security   []alternative // Operation.Security, compiled
-	body       []parsedMedia // the request body's Media, parsed
+	security   []alternative   // Operation.Security, compiled
+	body       []parsedMedia   // the request body's Media, parsed
+	encodings  []*formEncoding // and their Encodings, for form and multipart types
 	responses  []responsePlan
 	success    [][]parsedMedia // each 2xx response's concrete media types
 }
@@ -35,9 +36,10 @@ type param struct {
 	*style
 	set      *charset // how its values are percent-encoded, or nil to write them as given
 	required bool
-	field    string       // a header parameter's canonical field name
-	name     string       // the name, percent-encoded
-	media    *parsedMedia // a content parameter's ContentType, parsed
+	field    string        // a header parameter's canonical field name
+	name     string        // the name, percent-encoded
+	media    *parsedMedia  // a content parameter's ContentType, parsed
+	form     *formEncoding // the fields of a form-urlencoded content parameter
 }
 
 // A pathPart is literal text of the path template, percent-encoded, or one
@@ -131,7 +133,7 @@ func (e *entry) shape() *operation {
 			errs = append(errs, op.Body.Err)
 		}
 		op.Body.Required = target.flag("required")
-		o.body = c.parsed
+		o.body, o.encodings = c.parsed, c.encodings
 	}
 	if responses.kind() == '{' {
 		for key, r := range responses.members() {
@@ -280,8 +282,8 @@ func (d *document) param(v value, src string) param {
 // at.
 func (d *document) newParam(t value, at string) param {
 	p := &Param{Source: at}
-	var explode, schema, content value
-	entries, media := 0, true
+	var explode, schema, content, media value
+	entries, valid := 0, true
 	for name, m := range t.members() { // one pass: a member's name is read from the source
 		switch name {
 		case "name":
@@ -310,11 +312,11 @@ func (d *document) newParam(t value, at string) param {
 	if content.ok() {
 		for typ, m := range content.members() {
 			if entries++; entries == 1 {
-				p.ContentType = typ
+				p.ContentType, media = typ, m
 				p.Schema = d.schema(m.get("schema"), at, "/content/"+token(typ)+"/schema")
 			}
 		}
-		_, media = parseMedia(p.ContentType)
+		_, valid = parseMedia(p.ContentType)
 		p.Style, p.AllowReserved = "", false
 	} else {
 		if p.Style == "" {
@@ -334,7 +336,7 @@ func (d *document) newParam(t value, at string) param {
 		p.Err = fmt.Errorf("parameter location %q is not path, query, header or cookie", p.In)
 	case content.ok() && (content.kind() != '{' || entries != 1 || schema.ok()):
 		p.Err = errors.New("a parameter needs a content map of exactly one entry, and then no schema")
-	case !media:
+	case !valid:
 		p.Err = fmt.Errorf("invalid media type %q", p.ContentType)
 	case !content.ok() && !styleAllowed(p.In, p.Style):
 		p.Err = fmt.Errorf("style %q is not allowed for a %s parameter", p.Style, p.In)
@@ -357,6 +359,9 @@ func (d *document) newParam(t value, at string) param {
 	if content.ok() {
 		m, _ := parseMedia(p.ContentType)
 		pp.media = &m
+		if isForm(m) { // its fields, of their default types: Encoding applies to bodies only
+			pp.form, _ = d.encodingOf(media.get("schema"), at+"/content/"+token(p.ContentType)+"/schema", value{}, "", false)
+		}
 	}
 	switch p.In {
 	case "header":
@@ -385,10 +390,11 @@ func styleAllowed(in, style string) bool {
 // A content is the content map of a Request Body or Response Object,
 // compiled once for every reference to it.
 type content struct {
-	source  string // the object's Source
-	media   []*Media
-	parsed  []parsedMedia // media, parsed
-	success []parsedMedia // the concrete media types among them, for a 2xx response
+	source    string // the object's Source
+	media     []*Media
+	parsed    []parsedMedia   // media, parsed
+	encodings []*formEncoding // the Encoding of each form or multipart type
+	success   []parsedMedia   // the concrete media types among them, for a 2xx response
 }
 
 // noContent is the content of an object a reference cannot reach.
@@ -426,9 +432,13 @@ func (d *document) content(t value, at string) *content {
 				c.success = append(c.success, pm)
 				fallthrough
 			default:
-				md.Sequential = pm.class() == sequentialClass || strings.EqualFold(pm.typ, "multipart")
+				md.Sequential = pm.class() == sequentialClass || isMultipart(pm)
 			}
-			c.media, c.parsed = append(c.media, md), append(c.parsed, pm)
+			var enc *formEncoding
+			if ok && (isForm(pm) || isMultipart(pm)) {
+				enc, md.Encoding = d.encodingOf(mv.get("schema"), mat+"/schema", mv.get("encoding"), mat+"/encoding", isMultipart(pm))
+			}
+			c.media, c.parsed, c.encodings = append(c.media, md), append(c.parsed, pm), append(c.encodings, enc)
 		}
 	}
 	return c

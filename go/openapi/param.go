@@ -53,7 +53,7 @@ var (
 // the style's first.
 func (c *Client) writeParam(b *strings.Builder, lead string, p *param, v any, re *RequestError) (given, written bool) {
 	if p.ContentType == "" {
-		e := emitter{param: p, b: b, lead: lead}
+		e := emitter{param: p, b: b, lead: lead, limit: maxLength}
 		given, err := e.write(c.doc, v)
 		if err == nil && e.n > 0 && b.Len() > maxLength { // an item escaped past it
 			err = errTooLong
@@ -100,7 +100,8 @@ func (c *Client) writeParam(b *strings.Builder, lead string, p *param, v any, re
 }
 
 // encode returns v encoded as a body of p's media type is, a []byte being
-// the encoded content, or why it cannot be.
+// the encoded content and a form being written by the fields its schema
+// lists, or why it cannot be.
 func (c *Client) encode(p *param, v any) (string, error) {
 	m, k := *p.media, p.media.class()
 	if k == sequentialClass || strings.EqualFold(m.typ, "multipart") {
@@ -112,27 +113,11 @@ func (c *Client) encode(p *param, v any) (string, error) {
 	case io.Reader:
 		return "", errors.New("a reader cannot serialize a parameter")
 	}
-	if b, _, ok, err := c.encodeValue(m, k, v); ok {
-		return string(b), err
+	if isForm(m) {
+		return c.formContent(p.form, v)
 	}
-	if strings.EqualFold(m.full, "application/x-www-form-urlencoded") {
-		return "", notYet("encoding application/x-www-form-urlencoded content")
-	}
-	if s, ok := v.(string); ok {
-		return s, nil // its bytes, as given
-	}
-	s, err := marshal(v)
-	switch {
-	case err != nil:
-		return "", err
-	case s[0] == '"':
-		return jsonString(s), nil
-	case k == textClass && s[0] != '{' && s[0] != '[' && s[0] != 'n':
-		return s, nil
-	case k == textClass:
-		return "", fmt.Errorf("%s takes a string, number or boolean", m.full)
-	}
-	return "", fmt.Errorf("%s takes a string", m.full)
+	b, _, _, err := c.encodeContent(m, k, v)
+	return string(b), err
 }
 
 // jsonText returns s as JSON data holds it: each byte of invalid UTF-8
@@ -152,10 +137,11 @@ func jsonText(s string) string {
 // once the value proves defined.
 type emitter struct {
 	*param
-	b    *strings.Builder
-	lead string
-	n    int  // the items or members written
-	held bool // the first item of a named value not exploded was "", and whether "=" follows it depends on a second
+	b     *strings.Builder
+	lead  string
+	limit int  // the most bytes b may hold, or 0 for no bound, as in a body
+	n     int  // the items or members written
+	held  bool // the first item of a named value not exploded was "", and whether "=" follows it depends on a second
 }
 
 // write writes v, reporting whether it is defined. A value it gives
@@ -179,10 +165,7 @@ func (e *emitter) write(d *document, v any) (bool, error) {
 		}
 		return e.end(len(v))
 	}
-	s, err := marshal(v)
-	if err == nil {
-		_, err = checkJSON(d, v, s)
-	}
+	s, _, err := encodeJSON(d, v, marshal)
 	if err != nil {
 		return false, err
 	}
@@ -241,13 +224,13 @@ func (e *emitter) primitive(s string) (bool, error) {
 // next writes what precedes an item or member of at least n bytes: the
 // value's start before the first, unless the parameter cannot be
 // serialized, else a separator. It refuses one that would take the builder
-// past maxLength. A named value not exploded defers the "=" after its name
+// past its limit. A named value not exploded defers the "=" after its name
 // while its first item, empty says, is "".
 func (e *emitter) next(n int, empty bool) error {
 	switch {
 	case e.n == 0 && e.Err != nil:
 		return e.Err
-	case e.b.Len()+n > maxLength:
+	case e.limit > 0 && e.b.Len()+n > e.limit:
 		return errTooLong
 	case e.n == 0:
 		e.b.WriteString(e.lead)
