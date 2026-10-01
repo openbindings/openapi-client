@@ -292,12 +292,17 @@ func refChainFanIn(n int, kind string) []byte {
 	return []byte(b.String())
 }
 
-// retainedBy reports the heap f's result keeps live after a GC.
+// retainedBy reports the heap f's result keeps live after a GC. Each
+// reading follows two collections, so objects that an earlier test left in
+// a sync.Pool, which survive one collection in its victim cache, are gone
+// from both readings rather than freed between them.
 func retainedBy(f func() any) int64 {
 	var before, after runtime.MemStats
 	runtime.GC()
+	runtime.GC()
 	runtime.ReadMemStats(&before)
 	keep := f()
+	runtime.GC()
 	runtime.GC()
 	runtime.ReadMemStats(&after)
 	runtime.KeepAlive(keep)

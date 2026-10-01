@@ -8,7 +8,6 @@ import (
 	"net/textproto"
 	"net/url"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 )
@@ -17,14 +16,17 @@ import (
 // derive from them.
 type config struct {
 	Options
-	client       *http.Client     // HTTPClient, following no redirects
-	base         *endpoint        // BaseURL, parsed
-	mediaType    parsedMedia      // MediaType, parsed
-	mediaTypeErr error            // why MediaType cannot be used, refusing calls that send a body
-	codecs       map[string]Codec // Codecs, by lowercase key
-	codecsErr    error            // why a Codecs key cannot be used, refusing calls that use a codec
-	refused      map[string]error // settings no call can use, by Settings key
-	endpoints    sync.Map         // *server to the endpoint it resolves to with Variables
+	client        *http.Client                               // HTTPClient, following no redirects and with no cookie jar
+	jar           http.CookieJar                             // HTTPClient's Jar, which the client applies itself
+	checkRedirect func(*http.Request, []*http.Request) error // HTTPClient's CheckRedirect, or net/http's default
+	base          *endpoint                                  // BaseURL, parsed
+	securityNames map[string]bool                            // Security, as a set
+	mediaType     parsedMedia                                // MediaType, parsed
+	mediaTypeErr  error                                      // why MediaType cannot be used, refusing calls that send a body
+	codecs        map[string]Codec                           // Codecs, by lowercase key
+	codecsErr     error                                      // why a Codecs key cannot be used, refusing calls that use a codec
+	refused       map[string]error                           // settings no call can use, by Settings key
+	endpoints     sync.Map                                   // *server to the endpoint it resolves to with Variables
 }
 
 // newConfig copies o, its maps and slices included, and checks what it can
@@ -42,32 +44,26 @@ func newConfig(o Options, parent *config) *config {
 		refuse("Options.Header", err)
 	}
 	cfg.Header = o.Header.Clone()
-	for k, v := range cfg.Header {
-		if ck := textproto.CanonicalMIMEHeaderKey(k); ck != k {
-			delete(cfg.Header, k)
-			cfg.Header[ck] = v
-		}
-	}
+	canonicalize(cfg.Header)
 	cfg.Variables = clone(o.Variables)
 	cfg.Credentials = clone(o.Credentials)
 	cfg.Codecs = clone(o.Codecs)
 	cfg.Security = slices.Clone(o.Security)
 
 	if parent != nil && parent.HTTPClient == o.HTTPClient {
-		cfg.client = parent.client
+		cfg.client, cfg.jar, cfg.checkRedirect = parent.client, parent.jar, parent.checkRedirect
 	} else {
 		hc := o.HTTPClient
 		if hc == nil {
 			hc = http.DefaultClient
 		}
-		client := *hc
-		client.CheckRedirect = followNone
-		cfg.client = &client
+		cfg.client = &http.Client{Transport: noFollow{hc.Transport}, Timeout: hc.Timeout}
+		cfg.jar, cfg.checkRedirect = hc.Jar, hc.CheckRedirect
+		if cfg.checkRedirect == nil {
+			cfg.checkRedirect = tenRedirects
+		}
 	}
-	switch {
-	case o.Redirects == FollowAll:
-		refuse("Options.Redirects", notYet("following redirects"))
-	case o.Redirects != FollowNone:
+	if o.Redirects != FollowNone && o.Redirects != FollowAll {
 		refuse("Options.Redirects", fmt.Errorf("unknown value %d", o.Redirects))
 	}
 	if o.BaseURL != "" {
@@ -86,14 +82,14 @@ func newConfig(o Options, parent *config) *config {
 	if o.Server != "" && o.ServerID != "" {
 		refuse("Options.ServerID", errors.New("cannot be set with Options.Server"))
 	}
-	for name := range o.Credentials {
-		refuse("Options.Credentials["+strconv.Quote(name)+"]", notYet("credentials"))
-	}
 	if o.Security != nil {
-		refuse("Options.Security", notYet("Options.Security"))
-	}
-	if o.SecurityKey != "" {
-		refuse("Options.SecurityKey", notYet("Options.SecurityKey"))
+		if o.SecurityKey != "" {
+			refuse("Options.SecurityKey", errors.New("cannot be set with Options.Security"))
+		}
+		cfg.securityNames = make(map[string]bool, len(o.Security))
+		for _, name := range o.Security {
+			cfg.securityNames[name] = true
+		}
 	}
 	if o.MediaType != "" {
 		var ok bool
@@ -119,8 +115,6 @@ func newConfig(o Options, parent *config) *config {
 	}
 	return cfg
 }
-
-func followNone(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 
 // derivedFields are the header fields net/http derives or HTTP forbids a
 // client to set (RFC 9110 sections 6.6.2 and 8.6, RFC 9113 section 8.2.2).
@@ -149,6 +143,17 @@ func checkHeader(fields http.Header) error {
 		}
 	}
 	return nil
+}
+
+// canonicalize puts every field name of h in canonical form, joining the
+// values of spellings of one field.
+func canonicalize(h http.Header) {
+	for k, vs := range h {
+		if ck := textproto.CanonicalMIMEHeaderKey(k); ck != k {
+			delete(h, k)
+			h[ck] = append(h[ck], vs...)
+		}
+	}
 }
 
 // validFieldValue reports whether s can be sent as a field value: no

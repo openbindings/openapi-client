@@ -454,9 +454,9 @@ func TestG8ExactLengthConsumer(t *testing.T) {
 }
 
 // T1-19: "It relies on the transport closing the request body, as
-// http.RoundTripper requires; with a transport that neither reads nor
-// closes it, the wait, and Call's, ends only with the context" (client.go,
-// Response.WaitRequest). The call ends at its deadline, not before and not
+// http.RoundTripper requires, and every copy it takes with GetBody; with a
+// transport that neither reads nor closes it, the wait, and Call's, ends
+// only with the context" (client.go, Response.WaitRequest). The call ends at its deadline, not before and not
 // never, with the Response and the context's error.
 func TestT1_19TransportIgnoringBody(t *testing.T) {
 	canned := roundTripFunc(func(r *http.Request) (*http.Response, error) {

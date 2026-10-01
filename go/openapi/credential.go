@@ -1,6 +1,9 @@
 package openapi
 
-import "context"
+import (
+	"context"
+	"strings"
+)
 
 // A Credential satisfies one security scheme. How and where the client
 // uses one, and when it refuses a call instead, is in the package
@@ -14,6 +17,35 @@ type Credential struct {
 	kind   int
 }
 
+// The kinds of Credential.
+const (
+	noCredential        = iota // the zero Credential, which an empty secret is
+	secretCredential           // Secret
+	basicCredential            // Basic
+	badBasicCredential         // Basic, with a value RFC 7617 does not allow
+	sourceCredential           // SecretFunc
+	transportCredential        // FromTransport
+)
+
+// places reports whether the client places c in requests.
+func (c Credential) places() bool {
+	return c.kind == secretCredential || c.kind == basicCredential || c.kind == sourceCredential
+}
+
+// basic reports whether c was made by Basic.
+func (c Credential) basic() bool { return c.kind == basicCredential || c.kind == badBasicCredential }
+
+// secret returns the secret a Credential made by Secret or Basic holds.
+func (c Credential) secret() string {
+	s, _ := c.source(context.Background())
+	return s
+}
+
+// static returns the source of a Credential that holds secret.
+func static(secret string) func(context.Context) (string, error) {
+	return func(context.Context) (string, error) { return secret, nil }
+}
+
 // Secret returns a Credential holding one secret, whose meaning follows the
 // scheme's type:
 //
@@ -23,14 +55,17 @@ type Credential struct {
 //     "Authorization: Bearer <token>".
 //   - http basic (and Swagger 2.0 basic): the user-id and password joined
 //     by a colon, as RFC 7617 writes them, sent base64-encoded. [Basic]
-//     builds and checks it.
+//     builds it.
 //   - any other http scheme: everything after the scheme name in the
 //     Authorization field.
 //
 // An empty secret, as from an environment variable that was never set, is
 // no credential.
 func Secret(secret string) Credential {
-	panic("unimplemented")
+	if secret == "" {
+		return Credential{}
+	}
+	return Credential{static(secret), secretCredential}
 }
 
 // SecretFunc returns a Credential whose secret, as for [Secret], f returns
@@ -49,9 +84,10 @@ func Secret(secret string) Credential {
 // refresh it once rather than on every call at expiry, as
 // oauth2.ReuseTokenSource does. An error from f, or an empty secret, on the
 // first request refuses the call with a *RequestError: nothing is sent. On a
-// redirect hop the first request has already been sent, so the call ends
-// with the *url.Error the http.Client returns, wrapping f's error. An error
-// from f is passed on as it is.
+// redirect hop the first request has already been sent, so an error or an
+// empty secret ends the call with a *url.Error wrapping f's error, along
+// with the last response, its body closed. An error from f is passed on as
+// it is.
 //
 // For a golang.org/x/oauth2 TokenSource ts:
 //
@@ -63,15 +99,29 @@ func Secret(secret string) Credential {
 //		return t.AccessToken, nil
 //	})
 func SecretFunc(f func(ctx context.Context) (string, error)) Credential {
-	panic("unimplemented")
+	if f == nil {
+		return Credential{}
+	}
+	return Credential{f, sourceCredential}
 }
 
 // Basic returns a Credential for http basic authentication (RFC 7617),
 // sent in UTF-8. A username containing a colon, or either value containing
-// a control character, refuses the call.
+// a control character, is refused as the package doc's Credentials section
+// says of every credential value.
 func Basic(username, password string) Credential {
-	panic("unimplemented")
+	if username == "" && password == "" {
+		return Credential{}
+	}
+	kind := basicCredential
+	if strings.ContainsRune(username, ':') || strings.ContainsFunc(username+password, isCTL) { // RFC 7617 section 2
+		kind = badBasicCredential
+	}
+	return Credential{static(username + ":" + password), kind}
 }
+
+// isCTL reports whether r is a control character (RFC 5234 appendix B.1).
+func isCTL(r rune) bool { return r < ' ' || r == 0x7f }
 
 // FromTransport returns a Credential that marks a scheme as satisfied by
 // the HTTPClient itself, such as an oauth2.Transport or a request-signing
@@ -83,5 +133,5 @@ func Basic(username, password string) Credential {
 // for example by comparing each request's URL with the first one's. A
 // credential the client places itself is kept to the call's origin.
 func FromTransport() Credential {
-	panic("unimplemented")
+	return Credential{kind: transportCredential}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"net/url"
 )
 
 // A Client calls the operations of one loaded document. It is safe for
@@ -175,32 +176,36 @@ type Codec interface {
 }
 
 // Redirects says which 3xx responses the client follows. Only 301, 302, 303,
-// 307 and 308 with a Location can be followed. A 303 is followed with GET
-// (HEAD stays HEAD) and no body. A 301 or 302 changes POST to GET with no
-// body, and keeps any other method and its body, as 307 and 308 do. A hop
-// that drops the body drops Content-Type and the other content fields, and
-// a hop that must resend a body that cannot be sent again (see Input.Body)
-// is not followed. A 3xx not followed is the outcome, a *StatusError. The
-// HTTPClient's CheckRedirect is still consulted on every hop the client
-// follows, after the client applies the rules below, and can restore a
-// field the caller deliberately wants to forward; with a nil
-// CheckRedirect, net/http's limit of 10 hops applies.
+// 307 and 308 with a Location that url.Parse accepts can be followed, as
+// net/http follows them. A 303 is
+// followed with GET (HEAD stays HEAD) and no body. A 301 or 302 changes POST to
+// GET with no body, and keeps any other method and its body, as 307 and 308 do.
+// A hop that drops the body drops Content-Type and the other content fields,
+// and a hop that must resend a body that cannot be sent again (see Input.Body)
+// is not followed. When the server answered before reading a body that the
+// hop then drops, the upload is incomplete, and Call reports it with the final
+// response (see WaitRequest). A 3xx not followed is the outcome, a
+// *StatusError. The
+// client adds no Referer. The HTTPClient's CheckRedirect is still consulted on
+// every hop the client follows, after the client applies the rules below and
+// before it places credentials on the hop, and can restore a field the caller
+// deliberately wants to forward; with a nil CheckRedirect, the chain stops
+// after 10 requests, as net/http's default does.
 //
 // On a hop to another origin (scheme, host and port), the client removes the
 // credentials it added and any header a security scheme placed, the
 // Authorization and Cookie fields (cookie parameters included), all header
 // parameters, and every field supplied through Options.Header, Input.Header, or
 // an edit to Request.HTTP.Header. Generated fields needed to describe a
-// replayed body, such as Content-Type and Content-Length, are rebuilt. Referer
-// is removed if it holds a query credential the client added. CheckRedirect may
-// restore a field intentionally, such as Range or Accept; the client does not
-// infer whether an arbitrary caller header is a secret. On a hop within the
-// origin, header and cookie credentials are placed again; a query credential
-// goes only on the request the client builds, never onto a Location. Once a hop
-// has left the call's origin, no later hop has credentials, header parameters
-// or caller fields placed again, even one back on that origin. A transport that
-// satisfies a FromTransport scheme sees every hop, other origins included and
-// must apply its own origin policy.
+// replayed body, such as Content-Type and Content-Length, are rebuilt.
+// CheckRedirect may restore a field intentionally, such as Range or Accept;
+// the client does not infer whether an arbitrary caller header is a secret.
+// On a hop within the origin, header and cookie credentials are placed again;
+// a query credential goes only on the request the client builds, never onto a
+// Location. Once a hop has left the call's origin, no later hop has
+// credentials, header parameters or caller fields placed again, even one back
+// on that origin. A transport that satisfies a FromTransport scheme sees every
+// hop, other origins included and must apply its own origin policy.
 type Redirects int
 
 const (
@@ -507,18 +512,14 @@ func (c *Client) Call(ctx context.Context, key string, in *Input, out any) (*Res
 	x := &exchange{Context: ctx, cfg: c.cfg, op: o}
 	re := RequestError{Err: o.Err}
 	c.cfg.checkOut(out, &re)
-	req, p, _, security := c.newRequest(x, o, in, &re)
+	req, p, _, sec := c.newRequest(x, o, in, &re)
 	c.cfg.checkAccept(o, req.Header, out, &re)
 	if err := re.refused(); err != nil {
 		return nil, err
 	}
-	x.security = security
+	x.selection = sec
 	x.attach(req, p)
-	resp, err := x.send(req)
-	if err != nil {
-		return nil, err
-	}
-	return resp, x.finish(resp, out)
+	return x.call(req, out)
 }
 
 // Prepare builds the request for the operation named key with in, applying
@@ -538,13 +539,17 @@ func (c *Client) Prepare(key string, in *Input) (*Request, error) {
 	}
 	pr := &prepared{Context: context.Background(), cfg: c.cfg, op: o}
 	re := RequestError{Err: o.Err}
-	req, p, media, security := c.newRequest(pr, o, in, &re)
+	req, p, media, sec := c.newRequest(pr, o, in, &re)
 	if err := re.refused(); err != nil {
 		return nil, err
 	}
-	setBody(req, p)
-	pr.security, pr.payload, pr.body = security, p, req.Body
-	return &Request{HTTP: req, Media: media, Security: security}, nil
+	pr.selection, pr.payload = sec, p
+	setBody(req, &pr.payload)
+	pr.body, _ = req.Body.(*sentBody)
+	if sec.places {
+		pr.origin = &url.URL{Scheme: req.URL.Scheme, Host: req.URL.Host}
+	}
+	return &Request{HTTP: req, Media: media, Security: sec.key()}, nil
 }
 
 // A Request is a call prepared by [Client.Prepare] and not yet sent. A
@@ -611,7 +616,8 @@ func (r *Request) Send(ctx context.Context) (*Response, error) {
 // does. When r's body can be sent again (HTTP.GetBody is set, or there is
 // no body), r may be sent any number of times, concurrently too. Otherwise
 // it may be sent once, and sending it again is refused with a
-// *RequestError, nothing sent.
+// *RequestError, nothing sent; a send refused with a *RequestError does not
+// count.
 func (r *Request) Call(ctx context.Context, out any) (*Response, error) {
 	var re RequestError
 	if r.HTTP != nil {
@@ -627,11 +633,7 @@ func (r *Request) Call(ctx context.Context, out any) (*Response, error) {
 	if err != nil {
 		return nil, err
 	}
-	resp, err := x.send(req)
-	if err != nil {
-		return nil, err
-	}
-	return resp, x.finish(resp, out)
+	return x.call(req, out)
 }
 
 // A Response is a response the server sent to a call: the *http.Response,
@@ -640,9 +642,10 @@ func (r *Request) Call(ctx context.Context, out any) (*Response, error) {
 // For a Response from Call, Body has been read and closed, except with a
 // StatusError or a DecodeError, when it reads that error's Content. For one
 // from Stream or Send, Body is open and must be closed. Its Request is the last
-// request sent, after any redirects, with the credentials the client added
-// removed, from its URL, its header fields and its Referer, and so is every
-// earlier request reachable from it.
+// request sent, after any redirects, without the credentials the client added
+// to its URL and header fields or the cookies the HTTPClient's Jar supplied,
+// and so is every earlier request
+// reachable from it. The responses in that chain hold what the server sent.
 type Response struct {
 	*http.Response
 
@@ -701,15 +704,18 @@ func (r *Response) Decode(out any) error {
 }
 
 // WaitRequest waits until the HTTP transport has consumed the complete
-// request body or stopped consuming it. It returns nil for a bodyless
-// request or when the body was consumed completely (read to EOF, or, for a
-// body of known length, read to that length), or the encoding, iterator, read,
-// premature-close or cancellation error that stopped it. A write error
+// request body or stopped consuming it, for every request of the call that
+// carried one: the first and each redirect hop that sent it again. It
+// reports on the last of them: nil when its body was consumed completely
+// (read to EOF, or, for a body of known length, read to that length), or the
+// encoding, iterator, read, premature-close or cancellation error that
+// stopped it. It returns nil when no request carried a body. A write error
 // reported by RoundTrip is returned by Send; a general RoundTripper does
 // not expose when bytes are written to the network. A nil result here
 // therefore proves body consumption, not delivery or server acceptance.
 // The wait is safe to repeat and to call concurrently. It relies on the
-// transport closing the request body, as http.RoundTripper requires; with
+// transport closing the request body, as http.RoundTripper requires, and
+// every copy it takes with GetBody; with
 // a transport that neither reads nor closes it, the wait, and Call's,
 // ends only with the context.
 // A cancellation of ctx ends only this wait; cancel the call's original

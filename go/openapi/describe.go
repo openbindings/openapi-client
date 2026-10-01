@@ -119,21 +119,22 @@ type Operation struct {
 	// Client.Document.
 	Source string
 
-	// Err is why the operation cannot be called, or nil. It is set by a
-	// defect without which no request can be built: an unresolvable
-	// operation or path reference; an unresolvable parameter or request
-	// body reference, whose identity and requiredness cannot be known, and
-	// whose part's Source is the reference's own location; a Path Item
-	// field that both the Path Item and its $ref target define (see
-	// Operation); or a path template that does not match any knowable
-	// parameter key. A required parameter with a known Key but
-	// unsupported serialization has its own Param.Err, which Input.ParamWriters
-	// may bypass. Calling an operation with Err set returns a
-	// *RequestError wrapping Err. A defect in an optional part is reported
-	// on that part instead, and fails a call only when the call uses it.
-	// Wherever an Err's cause is a reference that could not be resolved, it
-	// wraps [ErrUnresolved], and the retrieval error when retrieving a
-	// document failed.
+	// Err is why the operation cannot be called, or nil. It is set by a defect
+	// without which no request can be built: an unresolvable operation or path
+	// reference; an unresolvable parameter or request body reference, whose
+	// identity and requiredness cannot be known, and whose part's Source is the
+	// reference's own location; a Path Item field that both the Path Item and
+	// its $ref target define (see Operation); a path template that does not
+	// match any knowable parameter key; or a security value, the operation's or
+	// the root's it inherits, that is not an array of Security Requirement
+	// Objects each mapping names to arrays of strings. A required parameter
+	// with a known Key but unsupported serialization has its own Param.Err,
+	// which Input.ParamWriters may bypass. Calling an operation with Err set
+	// returns a *RequestError wrapping Err. A defect in an optional part is
+	// reported on that part instead, and fails a call only when the call uses
+	// it. Wherever an Err's cause is a reference that could not be resolved, it
+	// wraps [ErrUnresolved], and the retrieval error when retrieving a document
+	// failed.
 	Err error
 }
 
