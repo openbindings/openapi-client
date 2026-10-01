@@ -30,6 +30,7 @@ type field struct {
 	param
 	types  []string      // the media types ContentType lists, as written
 	parsed []parsedMedia // types, parsed
+	class  class         // the class of a sole type
 	listed bool          // its Encoding lists them, so a Part's MediaType must match one
 	schema value         // its schema, whose properties a nested multipart part's fields are
 }
@@ -37,7 +38,7 @@ type field struct {
 // untyped is a field no schema or Encoding describes, whose type is absent
 // (OpenAPI 3.1.2 section 4.8.15.1.1).
 var untyped = &field{param: param{Param: &Param{ContentType: "application/octet-stream"}},
-	types: []string{octetStream.full}, parsed: []parsedMedia{octetStream}}
+	types: []string{octetStream.full}, parsed: []parsedMedia{octetStream}, class: otherClass}
 
 // noFields is the encoding of an object no schema describes.
 var noFields = &formEncoding{}
@@ -138,7 +139,7 @@ func (d *document) newField(name string, s *Schema, e value, src string, multipa
 	}
 	f.style, f.listed = &noStyle, ctype.ok()
 	if p.ContentType = ctype.string(); !f.listed {
-		p.ContentType = d.fieldType(f.schema, 0)
+		p.ContentType = d.fieldType(f.schema)
 	}
 	for t := range strings.SplitSeq(p.ContentType, ",") {
 		t = strings.Trim(t, " \t")
@@ -147,7 +148,7 @@ func (d *document) newField(name string, s *Schema, e value, src string, multipa
 			p.Err = fmt.Errorf("contentType %q is not a list of media types or ranges", p.ContentType)
 			break
 		}
-		f.types, f.parsed = append(f.types, t), append(f.parsed, m)
+		f.types, f.parsed, f.class = append(f.types, t), append(f.parsed, m), m.class()
 	}
 	return f
 }
@@ -174,22 +175,37 @@ func (d *document) headers(h value, src string) []*Param {
 // (OpenAPI 3.1.2 section 4.8.15.1.1): application/octet-stream with no type
 // or for a string with a contentEncoding, text/plain for any other string, a
 // number, integer or boolean, application/json for an object, and for an
-// array its items' type. Several types, null aside, list each one's.
-func (d *document) fieldType(s value, depth int) string {
-	for ; depth < maxDepth && !s.get("type").ok(); depth++ { // a reference followed
-		ref, _, _ := reference(s)
-		t, _, _, err := d.follow(s, "")
-		if !ref.ok() || err != nil {
-			break
-		}
-		s = t
+// array its items' type, following references. Several types, null aside,
+// list each one's. It is computed once per schema; a cycle of references or
+// items has no type.
+func (d *document) fieldType(s value) string {
+	d.typesMu.Lock()
+	defer d.typesMu.Unlock()
+	return d.defaultType(s)
+}
+
+func (d *document) defaultType(s value) string {
+	if !s.ok() {
+		return octetStream.full
 	}
+	if t, ok := d.types[s.i]; ok {
+		return cmp.Or(t, octetStream.full) // "" while computed: a cycle
+	}
+	if d.types == nil {
+		d.types = map[int32]string{}
+	}
+	d.types[s.i] = ""
 	t := s.get("type")
 	names := t.strs()
 	if t.kind() == '"' {
 		names = []string{t.text()}
 	}
 	var types []string
+	if ref, _, _ := reference(s); !t.ok() && ref.ok() {
+		if target, _, _, err := d.follow(s, ""); err == nil {
+			types = append(types, d.defaultType(target))
+		}
+	}
 	for _, n := range names {
 		ct := "text/plain"
 		switch {
@@ -197,8 +213,8 @@ func (d *document) fieldType(s value, depth int) string {
 			ct = octetStream.full
 		case n == "object":
 			ct = "application/json"
-		case n == "array" && depth < maxDepth:
-			ct = d.fieldType(s.get("items"), depth+1)
+		case n == "array":
+			ct = d.defaultType(s.get("items"))
 		case n != "string" && n != "number" && n != "integer" && n != "boolean":
 			continue
 		}
@@ -206,31 +222,33 @@ func (d *document) fieldType(s value, depth int) string {
 			types = append(types, ct)
 		}
 	}
-	if len(types) == 0 {
-		return octetStream.full
+	ct := strings.Join(types, ", ")
+	if ct == "" {
+		ct = octetStream.full
 	}
-	return strings.Join(types, ", ")
+	d.types[s.i] = ct
+	return ct
 }
 
-// media returns the media type of a value of f, as written and parsed: mt,
-// a Part's MediaType, when set, which must be concrete and match one of the
-// types f's Encoding lists, if it lists any; else f's own, when one concrete
-// type selects itself.
-func (f *field) media(mt string) (string, parsedMedia, error) {
+// media returns the media type of a value of f, as written and parsed, and
+// its class: mt, a Part's MediaType, when set, which must be concrete and
+// match one of the types f's Encoding lists, if it lists any; else f's own,
+// when one concrete type selects itself.
+func (f *field) media(mt string) (string, parsedMedia, class, error) {
 	if mt == "" {
 		if len(f.parsed) == 1 && f.parsed[0].concrete() {
-			return f.types[0], f.parsed[0], nil
+			return f.types[0], f.parsed[0], f.class, nil
 		}
-		return "", parsedMedia{}, fmt.Errorf("the field offers %s; select one with Part.MediaType", f.ContentType)
+		return "", parsedMedia{}, 0, fmt.Errorf("the field offers %s; select one with Part.MediaType", f.ContentType)
 	}
 	m, ok := parseMedia(mt)
 	switch {
 	case !ok || !m.concrete():
-		return "", parsedMedia{}, errors.New("Part.MediaType is not a concrete media type")
+		return "", parsedMedia{}, 0, errors.New("Part.MediaType is not a concrete media type")
 	case f.listed && !slices.ContainsFunc(f.parsed, func(d parsedMedia) bool { _, ok := d.covers(m); return ok }):
-		return "", parsedMedia{}, fmt.Errorf("the field does not offer %s", m.full)
+		return "", parsedMedia{}, 0, fmt.Errorf("the field does not offer %s", m.full)
 	}
-	return mt, m, nil
+	return mt, m, m.class(), nil
 }
 
 // isForm and isMultipart report the types whose bodies are fields.
@@ -239,40 +257,53 @@ func isForm(m parsedMedia) bool {
 }
 func isMultipart(m parsedMedia) bool { return strings.EqualFold(m.typ, "multipart") }
 
-// encodeContent encodes v as content of media type m, of codec class k: by
-// the caller's codec for m, as encoding/json writes it for a JSON type, and
-// otherwise as text, a string as its bytes and, for a text type, a number or
-// boolean in its JSON spelling. It returns the JSON Pointer, from v, of what
-// it refuses, and reports a value whose JSON data is null, which a field
-// leaves out and only a JSON type encodes.
-func (c *Client) encodeContent(m parsedMedia, k class, v any) (b []byte, at string, null bool, err error) {
+// appendContent appends v, encoded as content of media type m, of codec
+// class k, to dst: by the caller's codec for m, as encoding/json writes it
+// for a JSON type, and otherwise as text, a string as its bytes and, for a
+// text type, a number or boolean in its JSON spelling. It returns the JSON
+// Pointer, from v, of what it refuses, and reports a value whose JSON data
+// is null, which a field leaves out and only a JSON type encodes.
+func (c *Client) appendContent(dst []byte, m parsedMedia, k class, v any) (b []byte, at string, null bool, err error) {
 	if codec, _ := c.cfg.codec(m); codec != nil {
 		var buf bytes.Buffer
 		err = codec.Encode(&buf, v)
-		return buf.Bytes(), "", false, err
+		return append(dst, buf.Bytes()...), "", false, err
+	}
+	switch x := v.(type) {
+	case string:
+		if k != jsonClass {
+			return append(dst, x...), "", false, nil // its bytes, as given
+		}
+	case int:
+		if k == textClass {
+			return strconv.AppendInt(dst, int64(x), 10), "", false, nil
+		}
+	case bool:
+		if k == textClass {
+			return strconv.AppendBool(dst, x), "", false, nil
+		}
 	}
 	switch {
 	case k == jsonClass:
-		b, at, err = encodeJSON(c.doc, v, marshalJSON)
-		return b, at, string(b) == "null", err
+		if b, at, err = encodeJSON(c.doc, v, marshalJSON); dst != nil {
+			b = append(dst, b...)
+		}
+		return b, at, string(b[len(dst):]) == "null", err
 	case k == sequentialClass || isMultipart(m) || isForm(m):
-		return nil, "", false, fmt.Errorf("%s cannot encode this value", m.full)
-	}
-	if s, ok := v.(string); ok {
-		return []byte(s), "", false, nil // its bytes, as given
+		return dst, "", false, fmt.Errorf("%s cannot encode this value", m.full)
 	}
 	s, err := marshal(v)
 	switch {
 	case err != nil:
-		return nil, "", false, err
+		return dst, "", false, err
 	case s[0] == '"':
-		return []byte(jsonString(s)), "", false, nil
+		return append(dst, jsonString(s)...), "", false, nil
 	case k == textClass && s[0] != '{' && s[0] != '[' && s[0] != 'n':
-		return []byte(s), "", false, nil
+		return append(dst, s...), "", false, nil
 	case k == textClass:
-		return nil, "", s == "null", fmt.Errorf("%s takes a string, number or boolean", m.full)
+		return dst, "", s == "null", fmt.Errorf("%s takes a string, number or boolean", m.full)
 	}
-	return nil, "", s == "null", fmt.Errorf("%s takes a string", m.full)
+	return dst, "", s == "null", fmt.Errorf("%s takes a string", m.full)
 }
 
 // members calls f with each member of v, an object, as encoding/json writes
@@ -351,22 +382,39 @@ func jsonMembers(v any, f func(name string, v any)) bool {
 	return true
 }
 
+// A key is where a field's value is in a body, for a RequestError: the
+// body's key, then, as a JSON Pointer, the property's name and an item's
+// index, if any; built only for a problem.
+type key struct {
+	body, name string
+	item       int // -1 for the property's value
+}
+
+func (k key) String() string {
+	s := k.body + "/" + escapeToken(k.name)
+	if k.item >= 0 {
+		s += "/" + strconv.Itoa(k.item)
+	}
+	return s
+}
+
 // values calls f with v, a field's value, at at, or, when encoding/json
-// writes v as an array and v is no []byte, with each item, at its index
-// after at. A value or item whose JSON data is null is left out.
-func (d *document) values(v any, at string, f func(v any, at string)) {
+// writes v as an array and v is no []byte, with each item, at its index. A
+// value or item whose JSON data is null is left out.
+func (d *document) values(v any, at key, f func(v any, at key)) {
+	item := func(i int) key { at.item = i; return at }
 	switch x := v.(type) {
-	case nil, []byte, Part, io.Reader:
+	case nil, string, int, bool, float64, json.Number, []byte, Part, io.Reader:
 	case []any:
-		for i, item := range x {
-			if !null(item) {
-				f(item, at+"/"+strconv.Itoa(i))
+		for i, v := range x {
+			if !null(v) {
+				f(v, item(i))
 			}
 		}
 		return
 	case []string:
-		for i, item := range x {
-			f(item, at+"/"+strconv.Itoa(i))
+		for i, v := range x {
+			f(v, item(i))
 		}
 		return
 	default:
@@ -377,13 +425,12 @@ func (d *document) values(v any, at string, f func(v any, at string)) {
 		switch w := d.walkOf(rv.Type(), nil); {
 		case w.json:
 			if s, err := marshal(v); err == nil && s[0] == '[' {
-				r := &jsonReader{s: s}
-				i := 0
+				r, i := &jsonReader{s: s}, 0
 				r.each(func(string) error {
 					start := r.i
 					r.skip()
-					if item := r.s[start:r.i]; item != "null" {
-						f(json.RawMessage(item), at+"/"+strconv.Itoa(i))
+					if v := r.s[start:r.i]; v != "null" {
+						f(json.RawMessage(v), item(i))
 					}
 					i++
 					return nil
@@ -393,8 +440,8 @@ func (d *document) values(v any, at string, f func(v any, at string)) {
 		case w.text || rv.Kind() != reflect.Slice && rv.Kind() != reflect.Array || rv.Kind() == reflect.Slice && bytesKind(rv.Type()):
 		default:
 			for i := range rv.Len() {
-				if item := rv.Index(i); !nullValue(item) {
-					f(item.Interface(), at+"/"+strconv.Itoa(i))
+				if v := rv.Index(i); !nullValue(v) {
+					f(v.Interface(), item(i))
 				}
 			}
 			return
@@ -456,16 +503,17 @@ func (b *builder) payload() payload {
 	return p
 }
 
-// part returns the content and Part of v, a field's value, recording why a
-// Part cannot be used at at; form refuses what applies only to parts.
-func part(v any, at string, form bool, re *RequestError) (any, *Part, bool) {
-	pt, ok := v.(Part)
-	if !ok {
+// part returns the content of v, a field's value, its Part, if it is one,
+// and whether to send it, recording at at why the Part cannot be used; form
+// refuses what applies only to parts.
+func part(v any, at key, form bool, re *RequestError) (any, *Part, bool) {
+	if _, ok := v.(Part); !ok {
 		return v, nil, true
 	}
+	pt := v.(Part)
 	err := checkHeader(pt.Header)
 	switch {
-	case form && (pt.Filename != "" || pt.NoFilename || pt.Header != nil):
+	case form && (pt.Filename != "" || pt.NoFilename || len(pt.Header) > 0):
 		err = errors.New("a form field takes no Filename, NoFilename or Header")
 	case pt.Filename != "" && pt.NoFilename:
 		err = errors.New("the Part sets both Filename and NoFilename")
@@ -473,7 +521,7 @@ func part(v any, at string, form bool, re *RequestError) (any, *Part, bool) {
 		err = errors.New("a filename cannot hold a control character other than a tab")
 	}
 	if err != nil {
-		re.input(at, err)
+		re.input(at.String(), err)
 		return nil, nil, false
 	}
 	return pt.Content, &pt, !null(pt.Content)
@@ -486,40 +534,43 @@ func quotable(s string) bool {
 }
 
 // formBody encodes the object v as an application/x-www-form-urlencoded body
-// by the fields of enc, into b, its keys after key, recording problems in
-// re. A reader that can be read again is read now, so the body is encoded
+// by the fields of enc, into b, recording problems in re at keys after body. A reader that can be read again is read now, so the body is encoded
 // once; one read once is encoded as the body is read, unless readers are
 // refused, as in a parameter.
-func (c *Client) formBody(b *builder, enc *formEncoding, v any, key string, readers bool, re *RequestError) {
+func (c *Client) formBody(b *builder, enc *formEncoding, v any, body string, readers bool, re *RequestError) {
+	var scratch []byte // a field's content, before it is encoded
+	if b.buf == nil {
+		b.buf = make([]byte, 0, 128)
+	}
 	ok := c.doc.members(v, func(name string, v any) {
-		at, f := key+"/"+escapeToken(name), enc.field(name)
+		at, f := key{body, name, -1}, enc.field(name)
 		if f.Style != "" {
-			var s strings.Builder
-			e := emitter{param: &f.param, b: &s}
+			lead := ""
 			if len(b.buf) > 0 || b.parts != nil {
-				e.lead = "&"
+				lead = "&"
 			}
-			if _, err := e.write(c.doc, v); err != nil {
-				re.input(at, err)
+			s, err := c.styled(&f.param, v, lead)
+			if err != nil {
+				re.input(at.String(), err)
 			}
-			b.buf = append(b.buf, s.String()...)
+			b.buf = append(b.buf, s...)
 			return
 		}
-		c.doc.values(v, at, func(v any, at string) {
+		c.doc.values(v, at, func(v any, at key) {
 			v, pt, ok := part(v, at, true, re)
 			if !ok {
 				return
 			}
-			_, m, err := f.media(pt.mediaType())
+			_, m, k, err := f.media(pt.mediaType())
 			switch {
 			case f.Err != nil:
-				re.input(at, f.Err)
+				re.input(at.String(), f.Err)
 				return
 			case err != nil:
-				re.setting(at, err)
+				re.setting(at.String(), err)
 				return
 			}
-			lead := len(b.buf)
+			lead, inner := len(b.buf), ""
 			if lead > 0 || b.parts != nil {
 				b.buf = append(b.buf, '&')
 			}
@@ -538,21 +589,20 @@ func (c *Client) formBody(b *builder, enc *formEncoding, v any, key string, read
 					b.buf = appendForm(b.buf, data)
 				}
 			default:
-				content, inner, null, cerr := c.encodeContent(m, m.class(), v)
-				if null {
+				var null bool
+				if scratch, inner, null, err = c.appendContent(scratch[:0], m, k, v); null {
 					b.buf = b.buf[:lead] // left out
 					return
 				}
-				at, err = at+inner, cerr
-				b.buf = appendForm(b.buf, content)
+				b.buf = appendForm(b.buf, scratch)
 			}
 			if err != nil {
-				re.input(at, err)
+				re.input(at.String()+inner, err)
 			}
 		})
 	})
 	if !ok {
-		re.input(key, errors.New("the body is an object, a map or a struct, whose properties are its fields"))
+		re.input(body, errors.New("the body is an object, a map or a struct, whose properties are its fields"))
 	}
 }
 
@@ -570,6 +620,15 @@ func (p *payload) bytes() ([]byte, error) {
 		return p.data[:p.size], nil
 	}
 	return io.ReadAll(io.NewSectionReader(p.ra, p.off, p.size))
+}
+
+// styled returns v written in the RFC 6570 style of p, as a query
+// parameter's value is, after lead, with no bound on its length.
+func (c *Client) styled(p *param, v any, lead string) (string, error) {
+	var s strings.Builder
+	e := emitter{param: p, b: &s, lead: lead}
+	_, err := e.write(c.doc, v)
+	return s.String(), err
 }
 
 // formSet is what the WHATWG application/x-www-form-urlencoded serializer
@@ -639,29 +698,28 @@ type partWriter struct {
 }
 
 // parts writes the object v as parts with boundary, given or generated, by
-// the fields of enc, their keys after key, then the close delimiter.
-func (w *partWriter) parts(enc *formEncoding, v any, key, boundary string, given bool) {
+// the fields of enc, their keys after body, then the close delimiter.
+func (w *partWriter) parts(enc *formEncoding, v any, body, boundary string, given bool) {
 	w.boundary, w.own = boundary, w.outer
 	if given {
 		w.own = append(slices.Clip(w.outer), "\r\n--"+boundary)
 	}
 	ok := w.c.doc.members(v, func(name string, v any) {
-		at, f := key+"/"+escapeToken(name), enc.field(name)
+		at, f := key{body, name, -1}, enc.field(name)
 		if f.Style == "" {
-			w.c.doc.values(v, at, func(v any, at string) { w.write(f, name, v, at) })
+			w.c.doc.values(v, at, func(v any, at key) { w.write(f, name, v, at) })
 			return
 		}
 		// RFC 6570 names and values, without URI percent-encoding (OpenAPI
 		// 3.1.2 Appendix C), each a text/plain part (RFC 7578 section 4.4).
 		p := f.param
 		p.set = unreservedSet
-		var s strings.Builder
-		e := emitter{param: &p, b: &s}
-		if _, err := e.write(w.c.doc, v); err != nil {
-			w.re.input(at, err)
+		s, err := w.c.styled(&p, v, "")
+		if err != nil {
+			w.re.input(at.String(), err)
 			return
 		}
-		for pair := range strings.SplitSeq(s.String(), "&") {
+		for pair := range strings.SplitSeq(s, "&") {
 			if pair != "" {
 				n, v, _ := strings.Cut(pair, "=")
 				n, _ = url.PathUnescape(n)
@@ -671,47 +729,48 @@ func (w *partWriter) parts(enc *formEncoding, v any, key, boundary string, given
 		}
 	})
 	if !ok {
-		w.re.input(key, errors.New("the body is an object, a map or a struct, whose properties are its parts"))
+		w.re.input(body, errors.New("the body is an object, a map or a struct, whose properties are its parts"))
 	}
-	w.delimiter(key, "--")
+	if !w.delimiter("--") {
+		w.re.input(body, errDelimiter)
+	}
 }
 
-// delimiter writes a delimiter line, or with end "--" the close delimiter.
-func (w *partWriter) delimiter(at, end string) {
-	s := "\r\n--" + w.boundary + end + "\r\n"
-	if !w.written {
-		s = s[2:]
+// delimiter writes a delimiter line, or with end "--" the close delimiter,
+// reporting whether it holds none of the delimiters around.
+func (w *partWriter) delimiter(end string) bool {
+	start := len(w.b.buf)
+	if w.written {
+		w.b.buf = append(w.b.buf, "\r\n"...)
 	}
-	if holds([]byte(s), w.outer) {
-		w.re.input(at, errDelimiter)
-	}
-	w.b.buf = append(w.b.buf, s...)
+	w.b.buf = append(append(append(append(w.b.buf, "--"...), w.boundary...), end...), "\r\n"...)
 	w.written = true
+	return !holds(w.b.buf[start:], w.outer)
 }
 
 // textField is the field of a part RFC 6570 writes.
 var textField = &field{param: param{Param: &Param{ContentType: "text/plain"}}, types: []string{"text/plain"},
-	parsed: []parsedMedia{{"text/plain", "text", "plain", ""}}}
+	parsed: []parsedMedia{{"text/plain", "text", "plain", ""}}, class: textClass}
 
 // write writes v, a value of f named name, as a part, at at: its header,
 // then its content, as given, encoded by its media type, or, one level
 // deep, as a multipart body of its own.
-func (w *partWriter) write(f *field, name string, v any, at string) {
+func (w *partWriter) write(f *field, name string, v any, at key) {
 	c, b, re := w.c, w.b, w.re
 	v, pt, ok := part(v, at, false, re)
 	if !ok {
 		return
 	}
-	mt, m, err := f.media(pt.mediaType())
+	mt, m, k, err := f.media(pt.mediaType())
 	switch {
 	case !quotable(name):
-		re.input(at, errors.New("a part name cannot hold a control character other than a tab"))
+		re.input(at.String(), errors.New("a part name cannot hold a control character other than a tab"))
 		return
 	case f.Err != nil:
-		re.input(at, f.Err)
+		re.input(at.String(), f.Err)
 		return
 	case err != nil:
-		re.setting(at, err)
+		re.setting(at.String(), err)
 		return
 	}
 	var content []byte // written as it is, unless v is a reader or a nested body
@@ -728,30 +787,30 @@ func (w *partWriter) write(f *field, name string, v any, at string) {
 		}
 		var inner string
 		var null bool
-		if content, inner, null, err = c.encodeContent(m, m.class(), v); null || err != nil {
+		if content, inner, null, err = c.appendContent(nil, m, k, v); null || err != nil {
 			if !null {
-				re.input(at+inner, err)
+				re.input(at.String()+inner, err)
 			}
 			return
 		}
 	}
 	switch {
 	case raw && multipart && !given:
-		re.setting(at, errors.New("pre-encoded multipart content needs its boundary in Part.MediaType"))
+		re.setting(at.String(), errors.New("pre-encoded multipart content needs its boundary in Part.MediaType"))
 		return
 	case !multipart || raw:
 	case w.nested:
-		re.input(at, errors.New("a multipart part nested one level cannot hold another"))
+		re.input(at.String(), errors.New("a multipart part nested one level cannot hold another"))
 		return
 	case !given:
 		boundary = newBoundary(w.own)
 		mt += "; boundary=" + boundary
 	case !validBoundary(boundary):
-		re.setting(at, errBoundary)
+		re.setting(at.String(), errBoundary)
 		return
 	}
 
-	w.delimiter(at, "")
+	ok = w.delimiter("")
 	start := len(b.buf)
 	disposition := false // a Part.Header field replaces it
 	if pt != nil {
@@ -779,15 +838,15 @@ func (w *partWriter) write(f *field, name string, v any, at string) {
 	}
 	b.buf = append(b.buf, "\r\n"...)
 	switch {
-	case holds(b.buf[start:], w.own) || content != nil && holds(content, w.own):
-		re.input(at, errDelimiter)
+	case !ok || holds(b.buf[start:], w.own) || holds(content, w.own):
+		re.input(at.String(), errDelimiter)
 	case r != nil:
 		p := readerPayload(r)
 		p.check = w.own
 		b.add(p)
 	case multipart && !raw:
 		nw := partWriter{c: c, b: b, re: re, outer: w.own, nested: true}
-		nw.parts(c.doc.nested(f), v, at, boundary, given)
+		nw.parts(c.doc.nested(f), v, at.String(), boundary, given)
 	case raw && len(content) > 0:
 		b.add(payload{data: content, size: int64(len(content))}) // not copied
 	default:
@@ -819,7 +878,7 @@ func newBoundary(delimiters []string) string {
 		var r [16]byte
 		rand.Read(r[:])
 		b := hex.EncodeToString(r[:])
-		if !holds([]byte("\r\n--"+b), delimiters) {
+		if len(delimiters) == 0 || !holds([]byte("\r\n--"+b), delimiters) {
 			return b
 		}
 	}

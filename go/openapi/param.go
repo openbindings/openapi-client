@@ -116,7 +116,7 @@ func (c *Client) encode(p *param, v any) (string, error) {
 	if isForm(m) {
 		return c.formContent(p.form, v)
 	}
-	b, _, _, err := c.encodeContent(m, k, v)
+	b, _, _, err := c.appendContent(nil, m, k, v)
 	return string(b), err
 }
 

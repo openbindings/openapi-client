@@ -2,6 +2,7 @@ package openapi
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -42,58 +43,110 @@ var (
 // the sequential type m: a slice's items now, and an iterator's as the
 // body is read.
 func (c *Client) sequentialBody(m parsedMedia, v any, re *RequestError) payload {
-	sq := sequenceOf(m)
+	w := c.itemWriter(sequenceOf(m))
 	if seq := iterator(v); seq != nil {
-		return payload{items: &items{c: c, sq: sq, seq: seq}, size: -1}
+		return payload{items: &items{w: w, seq: seq}, size: -1}
 	}
 	rv := reflect.ValueOf(v)
 	if k := rv.Kind(); k != reflect.Slice && k != reflect.Array {
 		re.input("Input.Body", errors.New("a sequential body is a slice or an iterator of its items"))
 		return payload{}
 	}
-	var b builder
+	if t := rv.Type().Elem(); t.Kind() != reflect.Interface {
+		e := c.doc.walkOf(t, nil)
+		w.static = !e.holds && e.levels > 0 && e.levels <= maxDepth // a proven bound, no reader
+	}
 	for i := range rv.Len() {
-		item := rv.Index(i).Interface()
-		if at, err := c.item(&b, sq, item); err != nil {
+		if at, err := w.write(rv.Index(i).Interface()); err != nil {
 			re.input("Input.Body/"+strconv.Itoa(i)+at, err)
 		}
 	}
-	return b.payload()
+	return w.b.payload()
 }
 
-// item appends the item v, framed, to b, returning the JSON Pointer, from
-// v, of what it refuses: an event, or the JSON text v is or encodes, a
-// reader's read as the body is.
-func (c *Client) item(b *builder, sq sequence, v any) (string, error) {
-	if sq.events {
+// An itemWriter writes the items of one sequential body, framed, into b: a
+// JSON item by the caller's codec for its type, if any, or by one
+// encoding/json Encoder, whose LF after each value ends it.
+type itemWriter struct {
+	c      *Client
+	sq     sequence
+	b      builder
+	codec  Codec
+	enc    *json.Encoder
+	static bool // the items' type holds no reader and nests at most 1,000 levels
+}
+
+func (c *Client) itemWriter(sq sequence) *itemWriter {
+	w := &itemWriter{c: c, sq: sq}
+	w.codec, _ = c.cfg.codec(sq.item)
+	w.enc = json.NewEncoder(&w.b)
+	return w
+}
+
+// Write appends p to the body, as the Encoder writes an item.
+func (b *builder) Write(p []byte) (int, error) {
+	b.buf = append(b.buf, p...)
+	return len(p), nil
+}
+
+// write writes the item v, returning the JSON Pointer, from v, of what it
+// refuses: an event, or the JSON text v is or encodes, a reader's read as
+// the body is.
+func (w *itemWriter) write(v any) (string, error) {
+	b, sep, start := &w.b, w.sq.sep, len(w.b.buf)
+	if w.sq.events {
 		var err error
 		b.buf, err = appendEvent(b.buf, v)
 		return "", err
 	}
-	if sq.sep == 0x1e {
-		b.buf = append(b.buf, 0x1e)
+	if sep == 0x1e {
+		b.buf = append(b.buf, sep)
 	}
+	var at string
+	var err error
 	switch x := v.(type) {
 	case io.Reader:
 		p := readerPayload(x)
-		p.check = []string{string(sq.sep)}
+		p.check = []string{string(sep)}
 		b.add(p)
+		b.buf = append(b.buf, '\n')
+	case []byte:
+		err = w.text(x)
 	default:
-		data, ok := v.([]byte)
-		if !ok {
-			var at string
-			var err error
-			if data, at, _, err = c.encodeContent(sq.item, jsonClass, v); err != nil {
-				return at, err
+		switch {
+		case w.codec != nil:
+			var buf bytes.Buffer
+			if err = w.codec.Encode(&buf, v); err == nil {
+				err = w.text(buf.Bytes())
 			}
+		case w.static:
+			_, err = w.encode(v)
+		default:
+			_, at, err = encodeJSON(w.c.doc, v, w.encode)
 		}
-		if bytes.IndexByte(data, sq.sep) >= 0 {
-			return "", errSeparator
-		}
-		b.buf = append(b.buf, data...)
 	}
-	b.buf = append(b.buf, '\n')
-	return "", nil
+	if err != nil {
+		b.buf = b.buf[:start]
+	}
+	return at, err
+}
+
+// text appends an item's JSON text, which cannot hold its separator.
+func (w *itemWriter) text(data []byte) error {
+	if bytes.IndexByte(data, w.sq.sep) >= 0 {
+		return errSeparator
+	}
+	w.b.buf = append(append(w.b.buf, data...), '\n')
+	return nil
+}
+
+// encode writes v with the Encoder, returning what it wrote.
+func (w *itemWriter) encode(v any) ([]byte, error) {
+	start := len(w.b.buf)
+	if err := w.enc.Encode(v); err != nil {
+		return nil, &encodingError{err}
+	}
+	return w.b.buf[start:], nil
 }
 
 // appendEvent appends v, an Event or an object with no members but data,
@@ -200,8 +253,7 @@ func iterator(v any) iter.Seq2[any, error] {
 // then, and stops, its yield returning false, once the body is closed and
 // no Read is in flight.
 type items struct {
-	c   *Client
-	sq  sequence
+	w   *itemWriter
 	seq iter.Seq2[any, error]
 
 	mu              sync.Mutex
@@ -211,7 +263,6 @@ type items struct {
 	stop            func()
 	n               int        // the items yielded
 	cur             cursor     // the item being read
-	b               builder    // where it is encoded
 	one             [1]payload // its bytes, when it has no reader
 }
 
@@ -249,12 +300,13 @@ func (it *items) read(buf []byte) (int, error) {
 		case err != nil:
 			return 0, err
 		}
-		it.b.buf, it.b.parts = it.b.buf[:0], it.b.parts[:0]
-		if at, err := it.c.item(&it.b, it.sq, v); err != nil {
+		b := &it.w.b
+		b.buf, b.parts = b.buf[:0], b.parts[:0]
+		if at, err := it.w.write(v); err != nil {
 			return 0, fmt.Errorf("item %d%s: %w", it.n, at, err)
 		}
 		it.n++
-		p := it.b.payload()
+		p := b.payload()
 		if it.cur.parts = p.parts; p.parts == nil {
 			it.one[0] = p
 			it.cur.parts = it.one[:]

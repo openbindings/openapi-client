@@ -38,9 +38,12 @@ type document struct {
 	refs   map[int32]resolution // Reference Objects followed, by node
 
 	// What nodes shared by several places compile to, by node.
-	paramForms  memo[param]
-	contents    memo[*content]
-	encodings   memo[*formEncoding] // a nested multipart part's fields, by its schema
+	paramForms memo[param]
+	contents   memo[*content]
+	encodings  memo[*formEncoding] // a nested multipart part's fields, by its schema
+
+	typesMu     sync.Mutex
+	types       map[int32]string // a form or multipart field's default media type, by its schema
 	serverLists memo[*serverList]
 	schemeNames memo[*scheme] // by the securitySchemes member a name selects
 	schemeForms memo[*scheme] // by the Security Scheme Object a reference reaches

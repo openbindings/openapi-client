@@ -599,7 +599,7 @@ func (c *Client) body(o *operation, in *Input, h http.Header, re *RequestError) 
 		case k == sequentialClass:
 			p = c.sequentialBody(m, v, re)
 		default:
-			b, at, _, err := c.encodeContent(m, k, v)
+			b, at, _, err := c.appendContent(nil, m, k, v)
 			if err != nil {
 				re.input("Input.Body"+at, err)
 				return payload{}, nil
