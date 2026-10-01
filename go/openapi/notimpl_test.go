@@ -16,7 +16,10 @@ import (
 // OpenAPI 3.2 querystring comes with its edition in stage 6. Stage 3
 // replaced the refusals of credentials, Options.Security,
 // Options.SecurityKey and FollowAll with credentials_test.go,
-// security_test.go and redirects_test.go.
+// security_test.go and redirects_test.go. Stage 4 replaced the refusal of
+// form, multipart, text, XML and sequential bodies with bodytext_test.go,
+// bodyform_test.go, bodymultipart_test.go, bodyseq_test.go and
+// bodyiter_test.go.
 
 // Stage brief, Loading: "Any other edition, YAML (first significant byte not
 // '{') ... is a refusal with a clear error (YAML is stage 5, other editions
@@ -33,36 +36,5 @@ func TestStage1RefusesOtherDocuments(t *testing.T) {
 		if err == nil || c != nil {
 			t.Errorf("%s: Parse = %v, %v; want a refusal in stage 1", name, c, err)
 		}
-	}
-}
-
-// Stage brief, Requests: "Form, multipart, text, XML and sequential bodies
-// are stage 4: refuse with a not-implemented Err." A structured value under
-// those types is refused; a pre-encoded body is not (see
-// TestPreEncodedBody).
-func TestStage1RefusesStructuredBodies(t *testing.T) {
-	w := newWire(t, nil)
-	doc := doc31(`
-		"/form":{"post":{"operationId":"form","requestBody":{"content":{"application/x-www-form-urlencoded":{}}}}},
-		"/multipart":{"post":{"operationId":"multipart","requestBody":{"content":{"multipart/form-data":{}}}}},
-		"/text":{"post":{"operationId":"text","requestBody":{"content":{"text/plain":{}}}}},
-		"/xml":{"post":{"operationId":"xml","requestBody":{"content":{"application/xml":{}}}}},
-		"/jsonl":{"post":{"operationId":"jsonl","requestBody":{"content":{"application/jsonl":{}}}}}`)
-	c := parseFor(t, w, doc, nil)
-	tests := []struct {
-		key  string
-		body any
-	}{
-		{"form", map[string]string{"a": "b"}},
-		{"multipart", map[string]any{"title": "Q3"}},
-		{"text", "hello"},
-		{"xml", xmlPet{Name: "Rex"}},
-		{"jsonl", []Pet{{Name: "Rex"}}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.key, func(t *testing.T) {
-			resp, err := c.Call(t.Context(), tt.key, &openapi.Input{Body: tt.body}, nil)
-			refusedBeforeSending(t, w, resp, err)
-		})
 	}
 }
