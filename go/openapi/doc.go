@@ -93,7 +93,8 @@
 // own MarshalJSON or MarshalText encodes it. A JSON body
 // or JSON part is exactly what its codec writes, null members, [] and {}
 // included. A value the client encodes that is nested deeper than 1,000 levels,
-// counted in the JSON encoding/json writes (a MarshalJSON's output included),
+// counted in the JSON encoding/json writes (a MarshalJSON's output included)
+// from the root of that value (a body, a field or part, a sequential item),
 // is refused at its key; a caller's codec receives the value as given. A
 // parameter that would take the request target or a header field past 1 MiB,
 // far beyond the 8,000 octets RFC 9110 section 4.1 asks servers to accept,

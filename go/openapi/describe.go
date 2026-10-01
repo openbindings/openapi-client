@@ -178,7 +178,9 @@ type Param struct {
 	// described by content rather than by schema and style, or, for a form
 	// or multipart field, its effective contentType: its Encoding's, which
 	// may be a comma-separated list or a range, or else the default the
-	// client uses (see the package documentation).
+	// client uses (see the package documentation). It is empty for a field
+	// whose Encoding sets style, explode or allowReserved, which OpenAPI
+	// says makes contentType ignored.
 	ContentType string
 
 	// CollectionFormat is, in Swagger 2.0, the collectionFormat of an array
@@ -194,7 +196,7 @@ type Param struct {
 	Schema *Schema
 
 	// Headers lists the header fields a multipart field's Encoding declares
-	// for its part.
+	// for its part, except Content-Type, which OpenAPI ignores there.
 	Headers []*Param
 
 	// Source is where the value is declared: the absolute URI of its
@@ -274,11 +276,12 @@ type Media struct {
 	// the package documentation), or a range that covers only such types.
 	Sequential bool
 
-	// Encoding describes the fields of form or multipart content, in
-	// document order, as Params whose Name is the field, each with its
-	// effective ContentType: each property that declares an Encoding Object
-	// or that the schema lists at its top level (after following $ref),
-	// and in Swagger 2.0 every formData parameter. For a positional
+	// Encoding describes the fields of form or multipart content, as
+	// Params whose Name is the field, each with its effective ContentType:
+	// the properties the schema lists at its top level (after following
+	// $ref), in document order, then those that only declare an Encoding
+	// Object, in the encoding map's order, and in Swagger 2.0 every formData
+	// parameter. For a positional
 	// multipart type in OpenAPI 3.2, it
 	// describes the parts: those of prefixEncoding in order, named "0", "1"
 	// and so on, then that of itemEncoding, named "*".
