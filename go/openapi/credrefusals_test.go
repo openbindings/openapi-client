@@ -265,9 +265,10 @@ func TestAlternativeSettingOneFieldTwice(t *testing.T) {
 // and Basic credentials are sent only over https or wss, as RFC 6750
 // requires and RFC 7617 advises, or to a loopback host, where they do not
 // leave the machine: a loopback IP address, an IPv4-mapped one included, or
-// the name localhost written exactly so, the one name net/http's proxy
-// settings never apply to. Other names, such as those under .localhost, can
-// be proxied or resolved elsewhere, so they are not loopback here. A call
+// the name localhost written exactly so, the one name
+// http.ProxyFromEnvironment never sends through a proxy. Other names, such
+// as those under .localhost, can be proxied or resolved elsewhere, so they
+// are not loopback here. A call
 // that would send one over plain http or ws to any other host is refused.
 // ... A URL scheme other than http, https, ws or wss requires FromTransport
 // for these credentials. API keys, which no RFC governs, are not restricted

@@ -212,8 +212,8 @@ func TestRedirectMethodsAndBodies(t *testing.T) {
 }
 
 // client.go, Redirects: "Only 301, 302, 303, 307 and 308 with a Location
-// holding a URI reference can be followed ... A 3xx not followed is the
-// outcome, a *StatusError";
+// that url.Parse accepts can be followed, as net/http follows them ... A 3xx
+// not followed is the outcome, a *StatusError";
 // Options.Redirects: "zero means none"; "a hop that must resend a body that
 // cannot be sent again (see Input.Body) is not followed". client.go,
 // Input.Body: "Any other reader, such as a pipe or os.Stdin ... is read
@@ -693,8 +693,9 @@ func wantNoCredentialsIn(t *testing.T, r *http.Request) {
 }
 
 // client.go, Response: "Its Request is the last request sent, after any
-// redirects, with the credentials the client added removed from its URL and
-// its header fields, and so is every earlier request reachable from it."
+// redirects, without the credentials the client added to its URL and header
+// fields or the cookies the HTTPClient's Jar supplied, and so is every
+// earlier request reachable from it."
 func TestResponseRequestHasNoCredentials(t *testing.T) {
 	t.Run("after same-origin hops", func(t *testing.T) {
 		a := newWire(t, routes(map[string]http.HandlerFunc{"/r": redirect(307, "/next"), "/next": redirect(308, "/last")}))

@@ -148,10 +148,10 @@ func callOrSend(t *testing.T, c *openapi.Client, via, key string, in *openapi.In
 // appends the credential only where the origin rule allows.
 // Response.Request, via, CheckRedirect's view and every URL in an error the
 // client creates come from the unsigned view." client.go, Response: "Its
-// Request is the last request sent, after any redirects, with the
-// credentials the client added removed from its URL and its header fields,
-// and so is every earlier request reachable from it. The responses in that
-// chain hold what the server sent." The servers repeat the query, as a
+// Request is the last request sent, after any redirects, without the
+// credentials the client added to its URL and header fields or the cookies
+// the HTTPClient's Jar supplied, and so is every earlier request reachable
+// from it. The responses in that chain hold what the server sent." The servers repeat the query, as a
 // trailing-slash redirect does.
 func TestEchoedQueryCredentialNotInUnsignedView(t *testing.T) {
 	for _, origin := range []string{"same origin", "another origin"} {
@@ -424,9 +424,10 @@ func TestHopErrorsNameTheUnsignedHop(t *testing.T) {
 
 // C3-5: "A 3xx the client cannot follow is the outcome: a Location that is
 // not a URI reference is 'no Location' (T1 in Redirects), so its text is
-// never quoted." client.go, Redirects: "Only 301, 302, 303, 307 and 308
-// with a Location holding a URI reference can be followed ... A 3xx not
-// followed is the outcome, a *StatusError." C3-1: net/http's Client.do must
+// never quoted"; VP7: C3-5 reads as Redirects does. client.go, Redirects:
+// "Only 301, 302, 303, 307 and 308 with a Location that url.Parse accepts
+// can be followed, as net/http follows them ... A 3xx not followed is the
+// outcome, a *StatusError." C3-1: net/http's Client.do must
 // not parse the Location either, so FollowNone gives the same outcome (F2,
 // A3). O1: an unparsable Location echoing the query is never quoted.
 // client.go, Response: "The responses in that chain hold what the server

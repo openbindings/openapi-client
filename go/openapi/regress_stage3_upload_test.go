@@ -76,10 +76,16 @@ const grace = 150 * time.Millisecond
 // returned while the caller's Read was in flight.
 func wantStillWaiting(t *testing.T, done <-chan struct{}, what string) {
 	t.Helper()
+	wantNotReturned(t, done, what+" returned while the transport was inside a Read of the caller's body")
+}
+
+// wantNotReturned fails with msg if done is closed after the grace period.
+func wantNotReturned(t *testing.T, done <-chan struct{}, msg string) {
+	t.Helper()
 	time.Sleep(grace)
 	select {
 	case <-done:
-		t.Errorf("%s returned while the transport was inside a Read of the caller's body", what)
+		t.Error(msg)
 	default:
 	}
 }
@@ -332,8 +338,11 @@ func cutShort(r *http.Request, n int) {
 // body of known length, read to that length), or the encoding, iterator,
 // read, premature-close or cancellation error that stopped it." Call: "If
 // request-body consumption fails, the error wraps its cause and the
-// Response is still returned". A 303, and a 301 or 302 after a POST, send
-// no body, so the first request is the last that carried it. The transport
+// Response is still returned"; Redirects: "When the server answered before
+// reading a body that the hop then drops, the upload is incomplete, and Call
+// reports it with the final response (see WaitRequest)." A 303, and a 301
+// or 302 after a POST, send no body, so the first request is the last that
+// carried it. The transport
 // reads each body as told and closes it before answering, so every result
 // is settled when the call returns.
 func TestWaitRequestReportsTheLastRequest(t *testing.T) {

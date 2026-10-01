@@ -261,8 +261,8 @@ func TestParamWriterCannotMoveCredentials(t *testing.T) {
 
 // F3 and C3-6: doc.go, Credentials: bearer and Basic credentials go over
 // plain http only to "a loopback IP address, an IPv4-mapped one included,
-// or the name localhost written exactly so, the one name net/http's proxy
-// settings never apply to"; C3-6: "the origin and plain-http checks run
+// or the name localhost written exactly so, the one name
+// http.ProxyFromEnvironment never sends through a proxy"; C3-6: "the origin and plain-http checks run
 // against the URL actually sent, on every hop the client signs" (panel F3:
 // a hop from http://localhost:P to http://LOCALHOST:P is the same origin,
 // signed again without the rule, and net/http proxies it). The transport
@@ -353,14 +353,18 @@ func valueCases() []valueCase {
 	// but a tab, and no whitespace around it.
 	add("key_h", "keyHeader", true, "Zq9 a\tb", "Zq9-\xc3\xa9")
 	add("key_h", "keyHeader", false, "Zq9\x01", "Zq9\x7f", " Zq9", "Zq9\t", "Zq9\rX", "Zq9\nX", "Zq9\x00")
-	// A bearer token (RFC 6750 section 2.1): b64token = 1*( ALPHA / DIGIT /
-	// "-" / "." / "_" / "~" / "+" / "/" ) *"=".
-	add("bearer", "bearer", true, "Zq9", "Zq9-A.z_0~9+/", "Zq9=", "Zq9==", "mF_9.B5f-4.1JqM-Zq9")
-	add("bearer", "bearer", false, "Zq9 a", "Zq9,a", "Zq9\"a", "Zq9;a", "=Zq9", "Zq9=a", "Zq9\ta", "Zq9\xc3\xa9", "Zq9:a", "Zq9\\a", "Zq9@a", "Zq9\x01")
-	add("bearer_uc", "bearerUpper", false, "Zq9 a", "Zq9=a")
-	add("oauth", "oauth", false, "Zq9 a", "Zq9,a")
-	add("oidc", "oidc", false, "Zq9 a", "Zq9;a")
-	add("oauth", "oauth", true, "Zq9-A.z_0~9+/==")
+	// A bearer token (http bearer, oauth2, openIdConnect): a header field
+	// value only (VN4), not RFC 6750's b64token, so Laravel Sanctum's
+	// "<id>|<token>" and other characters b64token excludes are carried.
+	add("bearer", "bearer", true, "Zq9", "Zq9-A.z_0~9+/", "Zq9=", "Zq9==", "mF_9.B5f-4.1JqM-Zq9", "1|Zq9abcdef",
+		"Zq9 a", "Zq9,a", "Zq9\"a", "Zq9;a", "=Zq9", "Zq9=a", "Zq9\ta", "Zq9\xc3\xa9", "Zq9:a", "Zq9\\a", "Zq9@a")
+	add("bearer", "bearer", false, "Zq9\x01", "Zq9\x7f", "Zq9\x00", "Zq9\rX", "Zq9\nX", " Zq9", "Zq9 ", "\tZq9", "Zq9\t")
+	add("bearer_uc", "bearerUpper", true, "Zq9 a", "1|Zq9")
+	add("bearer_uc", "bearerUpper", false, "Zq9\x01", "Zq9 ")
+	add("oauth", "oauth", true, "Zq9-A.z_0~9+/==", "Zq9 a", "Zq9,a")
+	add("oauth", "oauth", false, "Zq9\x7f", " Zq9")
+	add("oidc", "oidc", true, "Zq9 a", "Zq9;a")
+	add("oidc", "oidc", false, "Zq9\nX", "Zq9\t")
 	// An http basic user-pass (RFC 7617 section 2): user-id ":" password,
 	// neither holding a control character (RFC 5234's CTL, %x00-1F / %x7F).
 	add("basic", "basic", true, "Zq9:pw", ":Zq9", "Zq9:", "Zq9:p:w", "\xc3\xbcZq9:p\xc3\xa4ss", "Zq9 a:p w")
@@ -369,10 +373,11 @@ func valueCases() []valueCase {
 	add("dpop", "dpop", true, "Zq9 a,b=\"c\"", "Zq9\tx")
 	add("dpop", "dpop", false, "Zq9\x01", " Zq9", "Zq9 ", "Zq9\nX")
 	// A cookie value, as RFC 6265 section 5 lets a user agent send it: no
-	// ";" and no control character (stage 3 ledger, C3-7 and R6: a
-	// backslash, a quote, a comma or a space within is carried).
+	// ";", no control character, and no whitespace around it, which section
+	// 5.2 trims (stage 3 ledger, C3-7, R6 and VP8: a backslash, a quote, a
+	// comma or a space within is carried).
 	add("key_c", "keyCookie", true, "Zq9\\a", "Zq9\"a", "Zq9,a", "Zq9 a")
-	add("key_c", "keyCookie", false, "Zq9;a", "Zq9\x00", "Zq9\ta", "Zq9\x7f", "Zq9\r\nX")
+	add("key_c", "keyCookie", false, "Zq9;a", "Zq9\x00", "Zq9\ta", "Zq9\x7f", "Zq9\r\nX", " Zq9", "Zq9 ")
 	// A query value is percent-encoded, so any value can be carried.
 	add("key_q", "keyQuery", true, "Zq9 a;b&c=d", "Zq9\x01")
 	return cases
@@ -382,19 +387,21 @@ func valueCases() []valueCase {
 // Options.Credentials["name"] (Load for a static one, the call for a
 // source's) wherever its wire syntax cannot carry it". C3-8: "every static
 // credential problem is refused by Load (by each call for a Client.With's
-// Options), a source's value by the call". doc.go, Credentials: "A
+// Options), a source's value by the call". VN4 (reversing C3-7's bearer
+// item): "bearer tokens (bearer, oauth2, openIdConnect) are held only to the
+// header-field rule, not to RFC 6750's b64token. Laravel Sanctum's widely
+// deployed '<id>|<token>' is outside b64token". doc.go, Credentials: "A
 // credential value its destination cannot carry is refused at
 // Options.Credentials["name"]: by Load for a static credential (by each
 // call, for a Client from Client.With), by the call for a source's. Such a
 // value is a header field value with a control character other than a tab,
-// or with leading or trailing whitespace; a cookie value with ";" or a
-// control character; a bearer token with a character outside RFC 6750's
-// b64token; and a Basic value without the colon, or with a control
-// character in the user-id or password, which RFC 7617 forbids."
-// credential.go, Secret: for http basic, "the user-id and password joined by
-// a colon, as RFC 7617 writes them"; for a bearer token, "RFC 6750 limits it
-// to b64token characters". A refusal never quotes the value (doc.go,
-// Outcomes).
+// or with leading or trailing whitespace; a cookie value with ";", a control
+// character, or leading or trailing whitespace; and a Basic value without
+// the colon, or with a control character in the user-id or password, which
+// RFC 7617 forbids." credential.go, Secret: for http basic, "the user-id
+// and password joined by a colon, as RFC 7617 writes them"; for a bearer
+// token, "the token, sent as 'Authorization: Bearer <token>'". A refusal
+// never quotes the value (doc.go, Outcomes).
 func TestCredentialValueSyntax(t *testing.T) {
 	w := newWire(t, nil)
 	base := credClient(t, w, nil)
@@ -475,17 +482,18 @@ func TestBasicForAnotherSchemeThroughWith(t *testing.T) {
 }
 
 // F13: "a hop's refused credential names its scheme; no unchecked type
-// assertion." C3-7 applies on a hop as on the first request (the value is a
-// source's, refused by the call), and C3-5 returns the response that
-// arrived. errors.go, RequestError.Err: "a credential source's error (naming
-// the scheme)"; credential.go, SecretFunc: on a hop, "an error or an empty
-// secret ends the call with a *url.Error ... along with the last response".
+// assertion." C3-7, as VN4 leaves it, applies on a hop as on the first
+// request (the value is a source's, refused by the call), and C3-5 returns
+// the response that arrived. errors.go, RequestError.Err: "a credential
+// source's error (naming the scheme)"; credential.go, SecretFunc: on a hop,
+// "an error or an empty secret ends the call with a *url.Error ... along
+// with the last response".
 func TestHopCredentialRefusalNamesItsScheme(t *testing.T) {
 	doc := doc31(`"/r":{"get":{"operationId":"getR"}}`, `"security":[{"corp_bearer":[]}]`,
 		`"components":{"securitySchemes":{"corp_bearer":{"type":"http","scheme":"bearer"}}}`)
 	for name, bad := range map[string]string{
-		"a value no header field carries": "bad\nhop-5Zx",
-		"a value outside b64token":        "bad hop-5Zx",
+		"a value no header field carries":  "bad\nhop-5Zx",
+		"a value with trailing whitespace": "bad-hop-5Zx ",
 	} {
 		t.Run(name, func(t *testing.T) {
 			a := newWire(t, routes(map[string]http.HandlerFunc{"/r": redirect(302, "/next")}))
