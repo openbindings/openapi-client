@@ -104,7 +104,7 @@ func (c *Client) writeParam(b *strings.Builder, lead string, p *param, v any, re
 // lists, or why it cannot be.
 func (c *Client) encode(p *param, v any) (string, error) {
 	m, k := *p.media, p.media.class()
-	if k == sequentialClass || strings.EqualFold(m.typ, "multipart") {
+	if k == sequentialClass || isMultipart(m) {
 		return "", fmt.Errorf("%s cannot serialize a parameter", m.full)
 	}
 	switch v := v.(type) {
