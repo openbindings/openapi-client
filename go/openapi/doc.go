@@ -398,8 +398,8 @@
 // uses, as a likely misspelling, an empty static credential (Secret(""),
 // Basic("", "") or the zero Credential), a [Basic] credential for a name
 // none of whose schemes is http basic, and any credential but FromTransport
-// for a name all of whose schemes are mutualTLS. FromTransport also satisfies a
-// scheme a
-// requirement names but the document never declares, or declares
+// for a name all of whose schemes are mutualTLS, or undeclared or declared
+// defectively (see SecurityScheme.Err). FromTransport is what satisfies a
+// scheme a requirement names but the document never declares, or declares
 // defectively.
 package openapi
