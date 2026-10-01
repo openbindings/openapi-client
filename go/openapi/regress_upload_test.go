@@ -20,9 +20,10 @@ import (
 
 // F14 (#14, A3, A4, A6, #18): the upload state machine, and the review's
 // additions for the body-rewind and blocking-wait paths (#26). The
-// contract: client.go, Response.WaitRequest ("It returns nil for a bodyless
-// request or when the body reached EOF, or the encoding, iterator, read,
-// premature-close or cancellation error that stopped it"), Call ("Call
+// contract: client.go, Response.WaitRequest ("It returns nil when no request
+// had a body or each body was consumed completely (read to EOF, or, for a
+// body of known length, read to that length), or the encoding, iterator,
+// read, premature-close or cancellation error that stopped one"), Call ("Call
 // drains a successful response and waits for complete consumption of its
 // request body before closing the response body. This lets a peer make
 // progress on both sides of a finite duplex exchange. If request-body

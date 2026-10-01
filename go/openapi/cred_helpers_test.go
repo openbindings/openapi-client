@@ -23,8 +23,8 @@ import (
 // redirects): a document with one operation per security scheme type, the
 // credentials for it, an in-memory transport for hosts that must never be
 // dialled, a raw listener that keeps the bytes of every request, counting
-// credential sources, and a check that no secret appears in an error or in
-// any *url.Error in its chain.
+// credential sources, and a check that no secret appears in an error's
+// text or in a *url.Error's URL.
 
 // Secrets the stage 3 tests place. Each is distinctive, so finding one in
 // an error or on the wire is unambiguous.
@@ -316,9 +316,12 @@ func contains(list []string, s string) bool {
 
 // noSecrets fails if any of secrets appears in err's text, or in the URL or
 // text of any *url.Error in its chain (doc.go, Outcomes: "No credential
-// appears in the text of an error the client creates, nor in any *url.Error
-// in the chain of one it returns: credentials the client added to a URL are
-// redacted there").
+// appears in the text of an error the client creates, nor in the URL of the
+// *url.Error the http.Client returns, which names the request without the
+// credentials the client added"). It walks the whole chain, which is
+// stricter than that: use it only where the caller's own code makes no error
+// that quotes a credential (stage 3 ledger, A2: such an error "is passed on
+// as it is").
 func noSecrets(t testing.TB, err error, secrets ...string) {
 	t.Helper()
 	if err == nil {

@@ -875,9 +875,9 @@ func (f *failingReader) Read(p []byte) (int, error) {
 	return 0, errBoom
 }
 
-// client.go, Response.WaitRequest: "It returns nil for a bodyless request or
-// when the body reached EOF ... The wait is safe to repeat and to call
-// concurrently." client.go, Call: "If request-body consumption fails, the
+// client.go, Response.WaitRequest: "It returns nil when no request had a
+// body or each body was consumed completely (read to EOF ...) ... The wait
+// is safe to repeat and to call concurrently." client.go, Call: "If request-body consumption fails, the
 // error wraps its cause".
 func TestWaitRequest(t *testing.T) {
 	_, c := respClient(t, jsonAnswer(200, `{}`), nil)

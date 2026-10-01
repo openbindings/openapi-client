@@ -212,7 +212,8 @@ func TestRedirectMethodsAndBodies(t *testing.T) {
 }
 
 // client.go, Redirects: "Only 301, 302, 303, 307 and 308 with a Location
-// can be followed ... A 3xx not followed is the outcome, a *StatusError";
+// holding a URI reference can be followed ... A 3xx not followed is the
+// outcome, a *StatusError";
 // Options.Redirects: "zero means none"; "a hop that must resend a body that
 // cannot be sent again (see Input.Body) is not followed". client.go,
 // Input.Body: "Any other reader, such as a pipe or os.Stdin ... is read
@@ -295,10 +296,11 @@ func TestRedirectStatusesNotFollowed(t *testing.T) {
 // parameters included), all header parameters, and every field supplied
 // through Options.Header, Input.Header, or an edit to Request.HTTP.Header.
 // Generated fields needed to describe a replayed body, such as
-// Content-Type and Content-Length, are rebuilt. Referer is removed if it
-// holds a query credential the client added ... a query credential goes
-// only on the request the client builds, never onto a Location." The second
-// origin is a raw listener, so every byte of the hop is checked.
+// Content-Type and Content-Length, are rebuilt ... a query credential goes
+// only on the request the client builds, never onto a Location"; "The
+// client adds no Referer" (stage 3 ledger, R2: "A caller's Referer is a
+// caller field like any other"). The second origin is a raw listener, so
+// every byte of the hop is checked.
 func TestRedirectCrossOriginStrips(t *testing.T) {
 	for _, via := range []string{"Call", "Send"} {
 		t.Run(via, func(t *testing.T) {
@@ -602,11 +604,12 @@ func chain(hops int) http.HandlerFunc {
 	}
 }
 
-// client.go, Redirects: "with a nil CheckRedirect, net/http's limit of 10
-// hops applies", and a caller's CheckRedirect decides otherwise. net/http is
-// the authority for its own limit: the same chain is sent through a plain
-// http.Client, and the client must make as many requests and fail or
-// succeed as it does, a failure being the *url.Error net/http returns.
+// client.go, Redirects: "with a nil CheckRedirect, the chain stops after 10
+// requests, as net/http's default does", and a caller's CheckRedirect
+// decides otherwise. net/http is the authority for its own limit: the same
+// chain is sent through a plain http.Client, and the client must make as
+// many requests and fail or succeed as it does, a failure being the
+// *url.Error net/http returns.
 func TestRedirectHopLimit(t *testing.T) {
 	for _, hops := range []int{9, 10, 11} {
 		t.Run(strconv.Itoa(hops), func(t *testing.T) {
@@ -665,8 +668,7 @@ func requestChain(r *http.Request) []*http.Request {
 }
 
 // wantNoCredentialsIn fails if any request of the chain from r holds a
-// credential the client added: in its URL, its header fields, or its
-// Referer.
+// credential the client added: in its URL or its header fields.
 func wantNoCredentialsIn(t *testing.T, r *http.Request) {
 	t.Helper()
 	if r == nil {
@@ -691,9 +693,8 @@ func wantNoCredentialsIn(t *testing.T, r *http.Request) {
 }
 
 // client.go, Response: "Its Request is the last request sent, after any
-// redirects, with the credentials the client added removed, from its URL,
-// its header fields and its Referer, and so is every earlier request
-// reachable from it."
+// redirects, with the credentials the client added removed from its URL and
+// its header fields, and so is every earlier request reachable from it."
 func TestResponseRequestHasNoCredentials(t *testing.T) {
 	t.Run("after same-origin hops", func(t *testing.T) {
 		a := newWire(t, routes(map[string]http.HandlerFunc{"/r": redirect(307, "/next"), "/next": redirect(308, "/last")}))
@@ -790,10 +791,12 @@ func TestFromTransportSeesEveryHop(t *testing.T) {
 }
 
 // credential.go, SecretFunc: "On a redirect hop the first request has
-// already been sent, so an error or an empty secret ends the call with the
-// *url.Error the http.Client returns, wrapping f's error" (stage 3 ledger,
-// Q12: "an empty secret from a SecretFunc on a hop ends the call as an
-// error does (*url.Error, no hop sent)").
+// already been sent, so an error or an empty secret ends the call with a
+// *url.Error wrapping f's error, along with the last response, its body
+// closed" (stage 3 ledger, Q12: "an empty secret from a SecretFunc on a hop
+// ends the call as an error does (*url.Error, no hop sent)"; C3-5: such an
+// error "returns that last Response, its body closed, with the
+// *url.Error").
 func TestSecretFuncFailsOnHop(t *testing.T) {
 	errHop := errors.New("token refresh failed")
 	for name, answer := range map[string]func(int64) (string, error){
@@ -814,10 +817,15 @@ func TestSecretFuncFailsOnHop(t *testing.T) {
 			a := newWire(t, routes(map[string]http.HandlerFunc{"/r": redirect(307, "/next")}))
 			src := &source{fn: func(_ context.Context, n int64) (string, error) { return answer(n) }}
 			c := parseFor(t, a, redirDoc, redirOptions(src))
-			_, err := c.Call(t.Context(), "getR", redirInput("GET"), nil)
+			resp, err := c.Call(t.Context(), "getR", redirInput("GET"), nil)
 			var ue *url.Error
 			if !errors.As(err, &ue) {
 				t.Errorf("Call error %v (%T), want a *url.Error", err, err)
+			}
+			if resp == nil || resp.StatusCode != 307 {
+				t.Errorf("Call returned Response %v, want the 307 that arrived", resp)
+			} else {
+				wantBodyClosed(t, resp)
 			}
 			if name == "error" && !errors.Is(err, errHop) {
 				t.Errorf("Call error %v does not wrap the source's error", err)
