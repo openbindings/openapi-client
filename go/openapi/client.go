@@ -313,7 +313,7 @@ type Input struct {
 	//     []byte there is a base64 string and a Part or reader is refused. A
 	//     typed nil is a value, never a reader, so a property or item holding
 	//     one is omitted as null. A multipart object with no fields sends the
-	//     close delimiter alone, as browsers and mime/multipart.Writer do.
+	//     close delimiter alone ("--" boundary "--" CRLF), as browsers do.
 	//   - For OpenAPI 3.2 multipart/form-data, Body may instead be a slice,
 	//     one part per element, in order: each a one-property object, whose
 	//     property names the part and whose value is its content, encoded as
