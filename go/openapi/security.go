@@ -566,7 +566,19 @@ func (x *exchange) sign(req *http.Request, creds, inPlace bool, re *RequestError
 	if !places {
 		return s
 	}
-	a, h := x.alt, s.Header
+	// A header or cookie credential replaces every spelling of its field
+	// (RFC 9110 section 5.1), other spellings of Cookie joining its pairs.
+	h := s.Header
+	var spelled []string
+	for k, vs := range h {
+		if ck := textproto.CanonicalMIMEHeaderKey(k); ck != k && x.sets(ck) {
+			if ck == "Cookie" {
+				spelled = append(spelled, vs...)
+			}
+			delete(h, k)
+		}
+	}
+	a := x.alt
 	var query, qnames, cookies, cnames []string // the pairs placed, and their names
 	checked := false                            // the plain-http rule
 	for i, sc := range a.schemes {
@@ -612,17 +624,6 @@ func (x *exchange) sign(req *http.Request, creds, inPlace bool, re *RequestError
 	}
 	if re.Err != nil || len(re.Settings) > 0 {
 		return req
-	}
-	// A header or cookie credential replaces every spelling of its field
-	// (RFC 9110 section 5.1), other spellings of Cookie joining its pairs.
-	var spelled []string
-	for k, vs := range h {
-		if ck := textproto.CanonicalMIMEHeaderKey(k); ck != k && x.sets(ck) {
-			if ck == "Cookie" {
-				spelled = append(spelled, vs...)
-			}
-			delete(h, k)
-		}
 	}
 	if cookies != nil {
 		h["Cookie"] = []string{withCookies(strings.Join(append(slices.Clip(h["Cookie"]), spelled...), "; "), isOneOf(cnames), cookies)}
