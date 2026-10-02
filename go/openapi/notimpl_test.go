@@ -19,14 +19,13 @@ import (
 // security_test.go and redirects_test.go. Stage 4 replaced the refusal of
 // form, multipart, text, XML and sequential bodies with bodytext_test.go,
 // bodyform_test.go, bodymultipart_test.go, bodyseq_test.go and
-// bodyiter_test.go.
+// bodyiter_test.go. Stage 5 replaced the refusal of YAML with
+// docyaml_test.go.
 
-// Stage brief, Loading: "Any other edition, YAML (first significant byte not
-// '{') ... is a refusal with a clear error (YAML is stage 5, other editions
-// stage 6)."
+// Stage brief, Loading: "Any other edition ... is a refusal with a clear
+// error (... other editions stage 6)."
 func TestStage1RefusesOtherDocuments(t *testing.T) {
 	docs := map[string]string{
-		"YAML":        "openapi: 3.1.0\ninfo: {title: t, version: \"1\"}\npaths: {}\n",
 		"Swagger 2.0": `{"swagger":"2.0","info":{"title":"t","version":"1"},"paths":{}}`,
 		"OpenAPI 3.0": `{"openapi":"3.0.4","info":{"title":"t","version":"1"},"paths":{}}`,
 		"OpenAPI 3.2": `{"openapi":"3.2.0","info":{"title":"t","version":"1"},"paths":{}}`,
