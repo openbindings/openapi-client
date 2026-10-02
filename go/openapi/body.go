@@ -515,6 +515,9 @@ func (w *partWriter) write(f *field, name string, v any, at key) {
 		mt += "; boundary=" + boundary
 	}
 
+	if len(b.buf) >= 64<<10 { // a body of many parts is kept in pieces, never copied whole as it grows
+		b.flush()
+	}
 	ok = w.delimiter("")
 	start := len(b.buf)
 	var fields []headerField // the Part's, sorted by their canonical names
