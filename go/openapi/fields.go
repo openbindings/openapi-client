@@ -748,7 +748,11 @@ func (d *document) members(v any, enc *formEncoding, f func(name string, fd *fie
 		}
 		return nil
 	}
-	rv, ok := d.deref(reflect.ValueOf(v))
+	rv := reflect.ValueOf(v)
+	if h, ok := v.(held); ok {
+		rv = h.p.Elem()
+	}
+	rv, ok := d.deref(rv)
 	if !ok {
 		return jsonMembers(v, enc, f)
 	}
@@ -848,11 +852,21 @@ func (d *document) deref(v reflect.Value) (reflect.Value, bool) {
 
 // elem returns the value v holds as encoding/json reaches it: a pointer to
 // it where v can be addressed and json writes it otherwise than a copy, by
-// a pointer's method at it or inside it, unless that pointer would be read
-// as a reader.
+// a pointer's method at it or inside it, held when that pointer is a reader;
+// and held when v's interface type selects a method other than the value's
+// own.
 func (d *document) elem(v reflect.Value) any {
-	if v.CanAddr() {
-		if w := d.walkOf(v.Type(), nil); w.addr && !w.ptrRead {
+	switch {
+	case v.Kind() == reflect.Interface:
+		if w := d.walkOf(v.Type(), nil); w.text && !w.json && !v.IsNil() && d.walkOf(v.Elem().Type(), nil).json {
+			p := reflect.New(v.Type())
+			p.Elem().Set(v)
+			return held{p}
+		}
+	case v.CanAddr():
+		if w := d.walkOf(v.Type(), nil); w.addr && w.ptrRead {
+			return held{v.Addr()}
+		} else if w.addr {
 			return v.Addr().Interface()
 		}
 	}
@@ -890,7 +904,11 @@ func (d *document) values(v any, at key, f func(v any, at key)) {
 		}
 		return
 	default:
-		rv, ok := d.deref(reflect.ValueOf(v))
+		rv := reflect.ValueOf(v)
+		if h, ok := v.(held); ok {
+			rv = h.p.Elem()
+		}
+		rv, ok := d.deref(rv)
 		if !ok || !rv.IsValid() {
 			break // a cycle, which json refuses as it encodes the value
 		}

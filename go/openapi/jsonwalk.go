@@ -32,9 +32,29 @@ var (
 
 type zeroer interface{ IsZero() bool }
 
+// A held value is a field's value that encoding/json writes otherwise than
+// the value alone: one it reaches addressably and whose pointer, which its
+// methods need, is a reader, which the value is not; or one held in an
+// interface type with MarshalText but not MarshalJSON, whose method json
+// calls whatever MarshalJSON the value has. It is p, a pointer to the value
+// where it is held, which json writes as it writes the value there; the
+// field's content is the value p points to.
+type held struct{ p reflect.Value }
+
+// bare returns v, or the value it holds.
+func bare(v any) any {
+	if h, ok := v.(held); ok {
+		return h.p.Elem().Interface()
+	}
+	return v
+}
+
 // marshal returns v as encoding/json writes it, but for HTML characters,
 // which it leaves unescaped: the JSON data of a parameter value.
 func marshal(v any) (string, error) {
+	if h, ok := v.(held); ok {
+		v = h.p.Interface()
+	}
 	var b strings.Builder
 	enc := json.NewEncoder(&b)
 	enc.SetEscapeHTML(false)
@@ -69,6 +89,9 @@ func encodeJSON[T string | []byte](d *document, v any, encode func(any) (T, erro
 
 // marshalJSON is json.Marshal, its error an *encodingError.
 func marshalJSON(v any) ([]byte, error) {
+	if h, ok := v.(held); ok {
+		v = h.p.Interface()
+	}
 	b, err := json.Marshal(v)
 	if err != nil {
 		return nil, &encodingError{err}
@@ -279,6 +302,8 @@ func (w *walker) any(x any, level, derefs int) (at string, found bool, levels in
 			}
 			levels = deepest(levels, l)
 		}
+	case held:
+		return w.value(x.p.Elem(), level, derefs)
 	default:
 		return w.value(reflect.ValueOf(x), level, derefs)
 	}

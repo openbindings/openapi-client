@@ -31,7 +31,7 @@ func isMultipart(m parsedMedia) bool { return strings.EqualFold(m.typ, "multipar
 func (c *Client) appendContent(dst []byte, m parsedMedia, k class, v any) (b []byte, at string, null bool, err error) {
 	if codec, _ := c.cfg.codec(m); codec != nil {
 		var buf bytes.Buffer
-		err = codec.Encode(&buf, v)
+		err = codec.Encode(&buf, bare(v))
 		return append(dst, buf.Bytes()...), "", false, err
 	}
 	switch x := v.(type) {
