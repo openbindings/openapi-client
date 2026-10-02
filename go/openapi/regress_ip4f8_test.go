@@ -956,3 +956,25 @@ func TestIP4F8CheckRedirectErrorOp(t *testing.T) {
 		t.Errorf("Send = %v, want a *url.Error with Op Get wrapping CheckRedirect's error", err)
 	}
 }
+
+// credential.go, SecretFunc: "A nil f, like an empty secret, is no
+// credential" (T1, 5ee091c; the IP4F-8 question on credential.go:102): Load
+// refuses it as it refuses the zero Credential, at Options.Credentials[name],
+// and a Client With derives, which skips that check, refuses a call that
+// needs it as it refuses a call with no credential at all, nothing sent.
+func TestIP4F8SecretFuncOfNil(t *testing.T) {
+	w := newWire(t, nil)
+	err := parseErr(t, credDoc, w.URL, &openapi.Options{Credentials: map[string]openapi.Credential{"bearer": openapi.SecretFunc(nil)}})
+	wantKeys(t, "Settings", asRequestError(t, err).Settings, true, credKey("bearer"))
+	c := parseFor(t, w, credDoc, nil)
+	_, missing := c.Call(t.Context(), "bearer", nil, nil)
+	want := asRequestError(t, missing)
+	nilFunc := c.With(func(o *openapi.Options) {
+		o.Credentials = map[string]openapi.Credential{"bearer": openapi.SecretFunc(nil)}
+	})
+	resp, err := nilFunc.Call(t.Context(), "bearer", nil, nil)
+	re := refusedBeforeSending(t, w, resp, err)
+	if got, wantKeys := sortedKeys(re.Settings), sortedKeys(want.Settings); fmt.Sprint(got) != fmt.Sprint(wantKeys) || len(got) == 0 {
+		t.Errorf("Settings %q, want %q, as with no credential", got, wantKeys)
+	}
+}

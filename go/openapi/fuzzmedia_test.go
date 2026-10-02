@@ -33,11 +33,17 @@ import (
 // must read it as mime does: a response key written as mime reads the
 // element matches a Content-Type of the element as written, and the reverse.
 //
-// Inputs that use a construct on which RFC 9110 and mime.ParseMediaType
-// disagree (mediaQuirks) are left out pending the loop owner's ruling, as
-// the test author's report asks: an empty parameter before another, a
-// quoted-pair of a byte mime does not unescape, a "*" in a parameter name,
-// and a parameter named twice with different values.
+// RFC 9110 governs the client's media-type grammar, and mime.ParseMediaType
+// is the oracle except on four constructs, where the client follows RFC 9110
+// (stage 4 ledger, "Verification round tests", the VP11 ruling); inputs that
+// use one (mediaQuirks) are left out: an empty parameter (RFC 9110 section
+// 5.6.6: "parameters = *( OWS ";" OWS [ parameter ] )"), a quoted-pair of
+// any octet (section 5.6.4: "Recipients that process the value of a
+// quoted-string MUST handle a quoted-pair as if it were replaced by the
+// octet following the backslash"), a "*" in a parameter name (no RFC 2231 in
+// media type parameters: section 5.6.6's parameter-name is a token), and a
+// parameter given twice (accepted, the boundary excepted: stage 4 ledger,
+// C4-3, "a media type with two boundary parameters is refused").
 
 // mediaElements splits s at commas outside quoted strings, a backslash in a
 // quoted string escaping the byte after it (RFC 9110 section 5.6.4), each
@@ -60,13 +66,15 @@ func mediaElements(s string) []string {
 
 // mediaQuirks names the construct of the media type e, as the client's RFC
 // 9110 reading takes its parameters (a type, then OWS ";" OWS [ parameter ]
-// repeated), on which RFC 9110 and mime.ParseMediaType disagree, or returns
-// "": an empty parameter before another (RFC 9110 section 5.6.6 allows it;
-// mime refuses all but a last one); a quoted-pair of a byte that is not one
-// of mime's tspecials (RFC 9110 section 5.6.4: "as if it were replaced by the
-// octet following the backslash"; mime keeps the backslash); a "*" in a
-// parameter name (RFC 2231, which mime applies); and a parameter named twice
-// with different values (mime refuses it).
+// repeated), on which RFC 9110 and mime.ParseMediaType disagree and the
+// client follows RFC 9110 (the VP11 ruling), or returns "": an empty
+// parameter before another (RFC 9110 section 5.6.6 allows it; mime refuses
+// all but a last one); a quoted-pair of a byte that is not one of mime's
+// tspecials (RFC 9110 section 5.6.4: "as if it were replaced by the octet
+// following the backslash"; mime keeps the backslash); a "*" in a parameter
+// name (RFC 2231, which mime applies and media type parameters do not
+// have); and a parameter named twice with different values (RFC 9110
+// accepts it, but for the boundary, C4-3; mime refuses it).
 func mediaQuirks(e string) string {
 	_, s, _ := strings.Cut(e, ";")
 	values := map[string]string{}
