@@ -945,8 +945,9 @@ func (k key) String() string {
 
 // values calls f with v, a field's value, at at, or, when encoding/json
 // writes v as an array and v is no []byte, with each item, at its index. A
-// value or item whose JSON data is null is left out.
-func (d *document) values(v any, at key, f func(v any, at key)) {
+// value or item whose JSON data is null is left out. It reports whether v
+// is a nonempty array, which counts as given even if no items are written.
+func (d *document) values(v any, at key, f func(v any, at key)) bool {
 	item := func(i int) key { at.item = i; return at }
 	switch x := v.(type) {
 	case nil, string, int, bool, float64, json.Number, []byte, Part, *Part, io.Reader:
@@ -956,7 +957,7 @@ func (d *document) values(v any, at key, f func(v any, at key)) {
 				f(v, item(i))
 			}
 		}
-		return
+		return len(x) > 0
 	default:
 		rv := reflect.ValueOf(v)
 		if h, ok := v.(held); ok {
@@ -980,7 +981,7 @@ func (d *document) values(v any, at key, f func(v any, at key)) {
 					i++
 					return nil
 				})
-				return
+				return s[1] != ']'
 			}
 		case w.text || rv.CanAddr() && w.ptrText || k != reflect.Slice && k != reflect.Array || k == reflect.Slice && bytesKind(rv.Type()):
 		default:
@@ -989,12 +990,13 @@ func (d *document) values(v any, at key, f func(v any, at key)) {
 					f(v, item(i))
 				}
 			}
-			return
+			return rv.Len() > 0
 		}
 	}
 	if !null(v) {
 		f(v, at)
 	}
+	return false
 }
 
 // bytesKind reports whether encoding/json writes the slice type t as base64.

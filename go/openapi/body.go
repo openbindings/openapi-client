@@ -233,7 +233,7 @@ func (c *Client) formBody(b *builder, enc *formEncoding, v any, body string, rea
 		b.buf = make([]byte, 0, 128)
 	}
 	plain := len(c.cfg.codecs) == 0
-	err := c.membersChecked(v, enc, body, re, b, func(name string, f *field, v any) {
+	err := c.membersChecked(v, enc, body, re, b, func(name string, f *field, v any) (given bool) {
 		if f.legacy.ok() {
 			at := key{body, name, -1}
 			if f.legacy.str("type") == "file" {
@@ -248,7 +248,8 @@ func (c *Client) formBody(b *builder, enc *formEncoding, v any, body string, rea
 			if len(b.buf) > 0 || b.parts != nil {
 				lead = "&"
 			}
-			if _, err := c.writeLegacy(&out, lead, &f.param, v, true); err != nil {
+			var err error
+			if given, err = c.writeLegacy(&out, lead, &f.param, v, true); err != nil {
 				re.input(at.String(), err)
 			}
 			b.buf = append(b.buf, out.String()...)
@@ -270,7 +271,7 @@ func (c *Client) formBody(b *builder, enc *formEncoding, v any, body string, rea
 			b.buf = append(b.buf, s...)
 			return
 		}
-		c.doc.values(v, at, func(v any, at key) {
+		given = c.doc.values(v, at, func(v any, at key) {
 			fv, ok := f.value(v, name, at, true, re)
 			if !ok {
 				return
@@ -317,6 +318,7 @@ func (c *Client) formBody(b *builder, enc *formEncoding, v any, body string, rea
 				re.input(at.String()+inner, err)
 			}
 		})
+		return
 	})
 	if err != nil {
 		re.input(body, err)
@@ -492,7 +494,7 @@ func (w *partWriter) parts(enc *formEncoding, v any, body, boundary string, give
 			return
 		}
 	}
-	err := w.c.membersChecked(v, enc, body, w.re, w.b, func(name string, f *field, v any) {
+	err := w.c.membersChecked(v, enc, body, w.re, w.b, func(name string, f *field, v any) (given bool) {
 		at := key{body, name, -1}
 		if f.legacy.ok() && f.CollectionFormat != "" && f.CollectionFormat != "multi" {
 			s, _, err := encodeJSON(w.c.doc, v, marshal)
@@ -509,7 +511,7 @@ func (w *partWriter) parts(enc *formEncoding, v any, body, boundary string, give
 			return
 		}
 		if !f.styled || !w.styles {
-			w.c.doc.values(v, at, func(v any, at key) { w.write(f, name, v, at) })
+			given = w.c.doc.values(v, at, func(v any, at key) { w.write(f, name, v, at) })
 			return
 		}
 		// RFC 6570 names and values, without URI percent-encoding (OpenAPI
@@ -529,6 +531,7 @@ func (w *partWriter) parts(enc *formEncoding, v any, body, boundary string, give
 				w.write(textField, n, v, at)
 			}
 		}
+		return
 	})
 	if err != nil {
 		w.re.input(body, err)

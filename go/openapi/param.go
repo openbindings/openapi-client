@@ -53,12 +53,13 @@ var (
 // the style's first.
 func (c *Client) writeParam(b *strings.Builder, lead string, p *param, v any, re *RequestError) (given, written bool) {
 	if p.legacy.ok() {
+		before := b.Len()
 		given, err := c.writeLegacy(b, lead, p, v, false)
 		if err != nil {
 			re.input(p.Key, err)
 			return false, false
 		}
-		return given, given
+		return given, b.Len() != before
 	}
 	if p.ContentType == "" {
 		e := emitter{param: p, b: b, lead: lead, limit: maxLength}

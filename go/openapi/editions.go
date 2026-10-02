@@ -100,9 +100,6 @@ func legacyValues(r *jsonReader, schema value, set *charset) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		if len(items) == 0 {
-			return []string{""}, nil
-		}
 		cf := schema.str("collectionFormat")
 		if cf == "multi" {
 			return items, nil
@@ -134,7 +131,8 @@ func (c *Client) writeLegacy(b *strings.Builder, lead string, p *param, v any, f
 		set = nil
 	}
 	vals, err := legacyValues(&jsonReader{s: s}, p.legacy, set)
-	if err != nil || len(vals) == 0 {
+	given := len(vals) > 0 || s[0] == '[' && s[1] != ']'
+	if err != nil || !given {
 		return false, err
 	}
 	if p.Err != nil {
@@ -308,15 +306,15 @@ func (d *document) swaggerResponse(v value, src string, produces value) (*Messag
 
 // membersChecked adds Swagger required-field checks without making a second
 // pass through caller values or changing the general object encoder.
-func (c *Client) membersChecked(v any, enc *formEncoding, body string, re *RequestError, b *builder, f func(string, *field, any)) error {
+func (c *Client) membersChecked(v any, enc *formEncoding, body string, re *RequestError, b *builder, f func(string, *field, any) bool) error {
 	if !enc.required {
-		return c.doc.members(v, enc, f)
+		return c.doc.members(v, enc, func(name string, fd *field, v any) { f(name, fd, v) })
 	}
 	seen := map[string]bool{}
 	err := c.doc.members(v, enc, func(name string, fd *field, v any) {
 		buf, parts := len(b.buf), len(b.parts)
-		f(name, fd, v)
-		seen[name] = len(b.buf) != buf || len(b.parts) != parts
+		given := f(name, fd, v)
+		seen[name] = given || len(b.buf) != buf || len(b.parts) != parts
 	})
 	for name, fd := range enc.byName {
 		if fd.Required && !seen[name] {
