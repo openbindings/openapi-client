@@ -627,8 +627,7 @@ func (r *reader) drain() {
 }
 
 // visit reads v as a k node whose base outside it is base: its identifiers,
-// its references, and the nodes it holds, its members read once while it
-// holds few nodes to read.
+// its references, and the nodes it holds.
 func (r *reader) visit(v value, k kind, base *url.URL) {
 	switch {
 	case k == anyKind && v.kind() == '[':
@@ -641,23 +640,6 @@ func (r *reader) visit(v value, k kind, base *url.URL) {
 	case v.kind() != '{' || k == dataKind:
 		return
 	}
-	slotOf := func(name string) (slot, bool) {
-		switch k {
-		case anyKind:
-			return slot{anyKind, '1'}, true
-		case callbackKind:
-			return slot{pathItemKind, '1'}, !strings.HasPrefix(name, "x-")
-		}
-		s, ok := model[k][name]
-		return s, ok
-	}
-	type child struct {
-		name string
-		m    value
-		s    slot
-	}
-	var kids [12]child
-	n := 0 // the members that hold nodes to read, those past len(kids) read again
 	var ref, dynamicRef, id, anchor, dynamicAnchor, disc, dialect value
 	for name, m := range v.members() {
 		switch name {
@@ -675,12 +657,6 @@ func (r *reader) visit(v value, k kind, base *url.URL) {
 			disc = m
 		case "$schema":
 			dialect = m
-		}
-		if s, ok := slotOf(name); ok {
-			if n < len(kids) {
-				kids[n] = child{name, m, s}
-			}
-			n++
 		}
 	}
 	switch {
@@ -715,17 +691,16 @@ func (r *reader) visit(v value, k kind, base *url.URL) {
 		r.reference(ref, k, base)
 		return
 	}
-	for _, c := range kids[:min(n, len(kids))] {
-		r.into(c.name, c.m, c.s.k, c.s.how, base)
-	}
-	if n > len(kids) {
-		i := 0
-		for name, m := range v.members() {
-			if s, ok := slotOf(name); ok {
-				if i++; i > len(kids) {
-					r.into(name, m, s.k, s.how, base)
-				}
-			}
+	for name, m := range v.members() {
+		s, ok := model[k][name]
+		switch k {
+		case anyKind:
+			s, ok = slot{anyKind, '1'}, true
+		case callbackKind:
+			s, ok = slot{pathItemKind, '1'}, !strings.HasPrefix(name, "x-")
+		}
+		if ok {
+			r.into(name, m, s.k, s.how, base)
 		}
 	}
 }
