@@ -333,6 +333,7 @@ func TestDocumentsFetchedInParallel(t *testing.T) {
 		const base = "https://docs.example.test/"
 		m := newMemFetch(map[string]string{base + "openapi.json": entry, base + "a.json": content["a"], base + "b.json": content["b"]})
 		arrived := map[string]chan struct{}{base + "a.json": make(chan struct{}), base + "b.json": make(chan struct{})}
+		closers := map[string]*sync.Once{base + "a.json": {}, base + "b.json": {}}
 		var mu sync.Mutex
 		timedOut := false
 		m.before = func(uri string) {
@@ -340,7 +341,7 @@ func TestDocumentsFetchedInParallel(t *testing.T) {
 			if !ok {
 				return
 			}
-			close(mine)
+			closers[uri].Do(func() { close(mine) })
 			other := arrived[base+"a.json"]
 			if uri == base+"a.json" {
 				other = arrived[base+"b.json"]

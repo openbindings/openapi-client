@@ -259,10 +259,13 @@ func TestOriginsWithAllowReferenceRefused(t *testing.T) {
 // redirect hop/final URI. It is called before the fetch or hop". A hop to
 // another origin is refused, and that origin receives nothing, even when a
 // later hop would come back; Origins admits it; a document's base and
-// retrieval URI are where it was finally retrieved from.
+// retrieval URI are where it was finally retrieved from; a redirect loop
+// is a retrieval failure (net/http's client stops after 10 requests).
 func TestRedirectHopsChecked(t *testing.T) {
 	a, cc := newSite(t), newSite(t)
-	a.put("/openapi.json", entry31(paramOps(map[string]string{"away": "b.json#/P", "back": "r1.json#/P", "same": "moved.json#/P"})))
+	a.put("/openapi.json", entry31(paramOps(map[string]string{"away": "b.json#/P", "back": "r1.json#/P", "same": "moved.json#/P", "loop": "l1.json#/P"})))
+	a.handle("/l1.json", redirect(http.StatusFound, a.uri("/l2.json")))
+	a.handle("/l2.json", redirect(http.StatusFound, a.uri("/l1.json")))
 	a.handle("/b.json", redirect(http.StatusFound, cc.uri("/b.json")))
 	a.handle("/r1.json", redirect(http.StatusFound, a.uri("/r2.json")))
 	a.handle("/r2.json", redirect(http.StatusTemporaryRedirect, cc.uri("/x.json")))
@@ -278,6 +281,14 @@ func TestRedirectHopsChecked(t *testing.T) {
 	refusedRef(t, c, "away", cc.uri("/b.json"))
 	refusedRef(t, c, "back", cc.uri("/x.json"))
 	admittedRef(t, c, "same")
+	// A redirect loop ends as a retrieval failure, disabling what reaches
+	// it, after a bounded number of hops.
+	if op := mustOp(t, c, "loop"); !errors.Is(op.Err, openapi.ErrUnresolved) {
+		t.Errorf("loop Err = %v, want unresolved", op.Err)
+	}
+	if n := a.count("/l1.json") + a.count("/l2.json"); n > 20 {
+		t.Errorf("a redirect loop was followed for %d requests", n)
+	}
 	if n := cc.total(); n != 0 {
 		t.Errorf("the other origin received %d requests", n)
 	}

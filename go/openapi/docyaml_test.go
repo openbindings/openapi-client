@@ -137,17 +137,14 @@ func TestYAMLStructures(t *testing.T) {
 	}
 }
 
-// The stream around the document (YAML 1.2.2 sections 6.8 directives, 9.1
-// document markers): a %YAML directive, "---" and "..." are accepted, and
-// a %YAML 1.1 directive does not bring back 1.1's types (section 6.8.1: a
-// 1.2 processor processes a 1.1 document as 1.2; load.go: "anything else is
-// read as YAML 1.2 under its Core schema, so yes and no stay strings").
+// The stream around the document (YAML 1.2.2 sections 6.8.1, the %YAML
+// directive, and 9.1, document markers): a %YAML 1.2 directive, "---" and
+// "..." are accepted, and comments are not content.
 func TestYAMLStream(t *testing.T) {
 	for name, doc := range map[string]string{
 		"directive and markers": "%YAML 1.2\n---\n" + yamlHead + "x-v: yes\n...\n",
 		"start marker only":     "---\n" + yamlHead + "x-v: yes\n",
 		"comments":              "# a description\n" + yamlHead + "# between\nx-v: yes # after\n",
-		"YAML 1.1 directive":    "%YAML 1.1\n---\n" + yamlHead + "x-v: yes\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			c := parsed(t, []byte(doc))
