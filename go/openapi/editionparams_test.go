@@ -200,6 +200,7 @@ func TestEditionsQuerystring(t *testing.T) {
 func TestEditionsQuerystringDefects(t *testing.T) {
 	for _, decl := range []string{
 		`{"name":"q","in":"querystring","schema":{"type":"string"},"required":true}`,
+		`{"name":"q","in":"querystring","style":"form","content":{"text/plain":{}}}`,
 		`{"name":"q","in":"querystring","content":{"text/plain":{}}},{"name":"r","in":"query"}`,
 		`{"name":"q","in":"querystring","content":{"text/plain":{}}},{"name":"r","in":"querystring","content":{"text/plain":{}}}`,
 	} {
@@ -213,7 +214,13 @@ func TestEditionsQuerystringDefects(t *testing.T) {
 			if req != nil || err == nil {
 				t.Fatal("invalid querystring combination prepared")
 			}
-			asRequestError(t, err)
+			re := asRequestError(t, err)
+			if len(values) == 1 {
+				if param(t, mustOp(t, c, "GET /x"), 0).Err == nil {
+					t.Error("malformed querystring lacks Param.Err")
+				}
+				wantKeys(t, "Inputs", re.Inputs, false, "q")
+			}
 		})
 	}
 	for _, version := range []string{"3.0.4", "3.1.2"} {

@@ -218,7 +218,7 @@ func TestEditionsSelfAndRetrievalBases(t *testing.T) {
 	const requestURI = "https://api.example.test/start.json"
 	const finalURI = "https://api.example.test/retrieved/root.json"
 	const selfURI = "https://api.example.test/models/root.json"
-	doc := editionDoc("3.2.1", `"/x":{"$ref":"part.json"}`, `"$self":"../models/root.json","servers":[{"url":"./v1"}]`)
+	doc := editionDoc("3.2.1", `"/x":{"$ref":"part.json"}`, `"$self":"../models/root.json","servers":[{"url":"./v1"}],"components":{"parameters":{"P":{"name":"X-Ref","in":"header","schema":{"type":"string"}}}}`)
 	var mu sync.Mutex
 	seen := map[string]int{}
 	l := openapi.Loader{Fetch: func(_ context.Context, uri string) (io.ReadCloser, string, error) {
@@ -229,7 +229,7 @@ func TestEditionsSelfAndRetrievalBases(t *testing.T) {
 		case requestURI:
 			return io.NopCloser(strings.NewReader(doc)), finalURI, nil
 		case "https://api.example.test/models/part.json":
-			return io.NopCloser(strings.NewReader(`{"query":{"operationId":"op","parameters":[{"name":"q","in":"querystring","content":{"text/plain":{}}}]}}`)), "", nil
+			return io.NopCloser(strings.NewReader(`{"query":{"operationId":"op","parameters":[{"name":"q","in":"querystring","content":{"text/plain":{}}},{"$ref":"https://api.example.test/start.json#/components/parameters/P"}]}}`)), "", nil
 		}
 		return nil, "", fmt.Errorf("unexpected URI %s", uri)
 	}}
@@ -237,11 +237,14 @@ func TestEditionsSelfAndRetrievalBases(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := mustPrepare(t, c, "op", &openapi.Input{Params: map[string]any{"q": "a/b"}})
+	req := mustPrepare(t, c, "op", &openapi.Input{Params: map[string]any{"q": "a/b", "X-Ref": "retrieval alias"}})
 	if got := req.HTTP.URL.String(); got != "https://api.example.test/retrieved/v1/x?a%2Fb" {
 		t.Errorf("URL %q", got)
 	}
-	for _, uri := range []string{requestURI, finalURI, selfURI} {
+	if req.HTTP.Header.Get("X-Ref") != "retrieval alias" {
+		t.Error("requested URI did not resolve to loaded entry")
+	}
+	for _, uri := range []string{finalURI, selfURI} {
 		b := c.Document(uri)
 		if !json.Valid(b) {
 			t.Errorf("alias %s: %s", uri, b)
@@ -297,4 +300,13 @@ func TestEditionsDiscoveryBoundaries(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustPrepare(t, c, "GET /x", nil)
+	// A reference base does not grant retrieval-origin admission.
+	l.AllowReference = nil
+	c, err = l.Parse(t.Context(), []byte(editionDoc("3.2.1", `"/x":{"$ref":"part.json"}`, `"$self":"https://api.example.test/root.json"`)), "", &openapi.Options{BaseURL: "https://api.example.test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if op := mustOp(t, c, "GET /x"); op.Err == nil {
+		t.Error("absolute self granted reference admission")
+	}
 }
