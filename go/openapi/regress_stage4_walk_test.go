@@ -2,6 +2,7 @@ package openapi_test
 
 import (
 	"bytes"
+	"encoding"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -343,6 +344,19 @@ const jwReached = `{"Spy":"reached"}`
 
 func spy() jwSpy { return jwSpy{"reached"} }
 
+// jwBoth has both of json's methods; jwMarshalers is an interface type that
+// embeds both (IFP6 (b)).
+type (
+	jwBoth       struct{}
+	jwMarshalers interface {
+		json.Marshaler
+		encoding.TextMarshaler
+	}
+)
+
+func (jwBoth) MarshalJSON() ([]byte, error) { return []byte(`"json"`), nil }
+func (jwBoth) MarshalText() ([]byte, error) { return []byte("text"), nil }
+
 // Readers behind methods: json reaches R only where it writes the holder by
 // reflection.
 type (
@@ -516,6 +530,17 @@ func walkShapes() []struct {
 			L *jwPtrTextList   `json:"l"`
 			X *jwPtrJSONReader `json:"x"`
 		}{R: (*jwSpy)(nil)}},
+		{"interface fields whose types have methods", struct {
+			T  encoding.TextMarshaler `json:"t"`
+			J  json.Marshaler         `json:"j"`
+			B  jwMarshalers           `json:"b"`
+			A  any                    `json:"a"`
+			TP encoding.TextMarshaler `json:"tp"`
+			TN encoding.TextMarshaler `json:"tn"`
+			JN json.Marshaler         `json:"jn"`
+		}{T: jwBoth{}, J: jwBoth{}, B: jwBoth{}, A: jwBoth{}, TP: &jwBoth{}}},
+		{"a slice of encoding.TextMarshaler", []encoding.TextMarshaler{jwBoth{}, &jwBoth{}, nil}},
+		{"a map of encoding.TextMarshaler", map[string]encoding.TextMarshaler{"k": jwBoth{}, "n": nil}},
 		{"reader in a pointer MarshalJSON", jwPtrJSONReader{spy()}},
 		{"reader in a pointer MarshalText", jwPtrTextReader{spy()}},
 		{"reader in a value MarshalJSON", jwValJSONReader{spy()}},
@@ -753,76 +778,113 @@ func jwFieldsDoc(names []string) string {
 func TestC47EncodingJSONDifferential(t *testing.T) {
 	for _, sh := range walkShapes() {
 		for _, pos := range walkPositions() {
-			t.Run(sh.name+" at "+pos.name, func(t *testing.T) {
-				body := pos.wrap(reflect.ValueOf(sh.v))
-				want, jerr := json.Marshal(body)
-				spyAt, reached := "", false
-				if jerr == nil {
-					spyAt, reached = spyPointer(t, want)
-				}
-				object := jerr == nil && want[0] == '{'
-				var names []string
-				if object {
-					for _, m := range jsonMembersOf(t, want) {
-						names = append(names, m.name)
-					}
-				}
-				c := parseAt(t, jwFieldsDoc(names), "https://api.example.test", testDocURI, nil)
-				check := func(key string, f func(req *openapi.Request)) {
-					t.Helper()
-					req, err := c.Prepare(key, &openapi.Input{Body: body})
-					switch {
-					case key != "json" && reached && strings.Count(spyAt, "/") == 1:
-						// The reader is a property of the body, which a form or
-						// multipart body sends as its content (client.go,
-						// Input.Body: "A property may be a []byte, an io.Reader
-						// or a [Part]"), not as JSON.
-					case jerr != nil:
-						if !isRequestError(err) {
-							t.Errorf("%s: json.Marshal refuses (%v); Prepare = %v", key, jerr, err)
-						}
-					case key != "json" && !object:
-						if err == nil {
-							t.Errorf("%s: json writes %s, no object; Prepare sent %q", key, want, sentBody(t, req))
-							return
-						}
-						wantKeys(t, key+" Inputs", asRequestError(t, err).Inputs, true, "Input.Body")
-					case reached:
-						if err == nil {
-							t.Errorf("%s: json reaches the reader (%s); Prepare sent %q", key, want, sentBody(t, req))
-							return
-						}
-						wantKeys(t, key+" Inputs", asRequestError(t, err).Inputs, true, "Input.Body"+spyAt)
-					case err != nil:
-						t.Errorf("%s: json writes %s; Prepare refused: %v", key, want, err)
-					default:
-						f(req)
-					}
-				}
-				check("json", func(req *openapi.Request) {
-					if got := sentBody(t, req); !bytes.Equal(got, want) {
-						t.Errorf("JSON body %s, json.Marshal writes %s", got, want)
-					}
-				})
-				check("form", func(req *openapi.Request) {
-					var pairs []string
-					for _, f := range fieldsOf(t, want) {
-						pairs = append(pairs, formPairs(f.name, string(f.raw)))
-					}
-					if got, w := string(sentBody(t, req)), strings.Join(pairs, "&"); got != w {
-						t.Errorf("form body %q, want %q from json.Marshal's %s", got, w, want)
-					}
-				})
-				check("mp", func(req *openapi.Request) {
-					var parts []wantPart
-					for _, f := range fieldsOf(t, want) {
-						parts = append(parts, wantPart{disposition: formData(f.name), ctype: "application/json", content: string(f.raw)})
-					}
-					_, _, got := readMultipart(t, req.HTTP.Header.Get("Content-Type"), sentBody(t, req))
-					checkParts(t, got, parts)
-				})
-			})
+			t.Run(sh.name+" at "+pos.name, func(t *testing.T) { againstJSON(t, pos.wrap(reflect.ValueOf(sh.v))) })
 		}
+	}
+}
+
+// againstJSON sends body as a JSON, a form and a multipart body, checking
+// each against what json.Marshal writes for it, as TestC47EncodingJSONDifferential
+// says.
+func againstJSON(t *testing.T, body any) {
+	t.Helper()
+	want, jerr := json.Marshal(body)
+	spyAt, reached := "", false
+	if jerr == nil {
+		spyAt, reached = spyPointer(t, want)
+	}
+	object := jerr == nil && want[0] == '{'
+	var names []string
+	if object {
+		for _, m := range jsonMembersOf(t, want) {
+			names = append(names, m.name)
+		}
+	}
+	c := parseAt(t, jwFieldsDoc(names), "https://api.example.test", testDocURI, nil)
+	check := func(key string, f func(req *openapi.Request)) {
+		t.Helper()
+		req, err := c.Prepare(key, &openapi.Input{Body: body})
+		switch {
+		case key != "json" && reached && strings.Count(spyAt, "/") == 1:
+			// The reader is a property of the body, which a form or
+			// multipart body sends as its content (client.go,
+			// Input.Body: "A property may be a []byte, an io.Reader
+			// or a [Part]"), not as JSON.
+		case jerr != nil:
+			if !isRequestError(err) {
+				t.Errorf("%s: json.Marshal refuses (%v); Prepare = %v", key, jerr, err)
+			}
+		case key != "json" && !object:
+			if err == nil {
+				t.Errorf("%s: json writes %s, no object; Prepare sent %q", key, want, sentBody(t, req))
+				return
+			}
+			wantKeys(t, key+" Inputs", asRequestError(t, err).Inputs, true, "Input.Body")
+		case reached:
+			if err == nil {
+				t.Errorf("%s: json reaches the reader (%s); Prepare sent %q", key, want, sentBody(t, req))
+				return
+			}
+			wantKeys(t, key+" Inputs", asRequestError(t, err).Inputs, true, "Input.Body"+spyAt)
+		case err != nil:
+			t.Errorf("%s: json writes %s; Prepare refused: %v", key, want, err)
+		default:
+			f(req)
+		}
+	}
+	check("json", func(req *openapi.Request) {
+		if got := sentBody(t, req); !bytes.Equal(got, want) {
+			t.Errorf("JSON body %s, json.Marshal writes %s", got, want)
+		}
+	})
+	check("form", func(req *openapi.Request) {
+		var pairs []string
+		for _, f := range fieldsOf(t, want) {
+			pairs = append(pairs, formPairs(f.name, string(f.raw)))
+		}
+		if got, w := string(sentBody(t, req)), strings.Join(pairs, "&"); got != w {
+			t.Errorf("form body %q, want %q from json.Marshal's %s", got, w, want)
+		}
+	})
+	check("mp", func(req *openapi.Request) {
+		var parts []wantPart
+		for _, f := range fieldsOf(t, want) {
+			parts = append(parts, wantPart{disposition: formData(f.name), ctype: "application/json", content: string(f.raw)})
+		}
+		_, _, got := readMultipart(t, req.HTTP.Header.Get("Content-Type"), sentBody(t, req))
+		checkParts(t, got, parts)
+	})
+}
+
+// jwReadByPtr is no io.Reader, but its pointer is, and it holds a type whose
+// pointer has MarshalJSON (IFP6 (a)).
+type jwReadByPtr struct {
+	J jwPtrJSON `json:"j"`
+	V int       `json:"v"`
+}
+
+func (*jwReadByPtr) Read([]byte) (int, error) { return 0, io.EOF }
+
+// C4-7, IFP6 (a): "a struct that is not a reader but whose pointer is, held
+// addressably with a pointer-method type inside, must be written as json
+// writes it, the reader test applying to the value json writes and never to
+// the pointer handed for its methods". At every position that holds the
+// value, addressable or not, the JSON, form and multipart bodies are what
+// json.Marshal writes (TestC47EncodingJSONDifferential's checks). A
+// position where the caller gives the pointer itself, an io.Reader, is the
+// raw-content case of Input.Body and is not among these.
+func TestC47PointerReaderHeldAddressably(t *testing.T) {
+	for _, pos := range walkPositions() {
+		if pos.name == "top level, by pointer" || pos.name == "behind a pointer in a property" {
+			continue
+		}
+		t.Run(pos.name, func(t *testing.T) { againstJSON(t, pos.wrap(reflect.ValueOf(jwReadByPtr{V: 1}))) })
+	}
+	b, _ := json.Marshal(&struct {
+		A jwReadByPtr `json:"a"`
+	}{})
+	if string(b) != `{"a":{"j":"pj","v":0}}` {
+		t.Fatalf("test bug: json.Marshal writes %s", b)
 	}
 }
 
