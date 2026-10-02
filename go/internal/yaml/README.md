@@ -38,6 +38,8 @@ this third-party footprint is recorded separately from client-owned code.
    Node.Style, using the same representation as other explicit tags.
    This allows the client's Core resolver to recognize scalar strings
    directly, including anchored scalars, without rescanning source text.
+   Reject the distinct verbatim `!<!>` spelling during scanning, as
+   required by YAML 1.2.2 section 6.9.1, example 6.25.
 4. Add Decoder.ErrorPosition in position.go. It reads the existing
    reader byte offset or scanner/parser/alias mark without changing
    parser state. The client uses these typed positions to report the

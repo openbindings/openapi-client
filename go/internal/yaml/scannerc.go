@@ -1970,6 +1970,10 @@ func yaml_parser_scan_tag(parser *yaml_parser_t, token *yaml_token_t) bool {
 		if !yaml_parser_scan_tag_uri(parser, false, nil, start_mark, &suffix) {
 			return false
 		}
+		if string(suffix) == "!" {
+			return yaml_parser_set_scanner_error(parser, "while scanning a tag",
+				start_mark, "verbatim tag must not be the non-specific tag '!'")
+		}
 
 		// Check for '>' and eat it.
 		if parser.buffer[parser.buffer_pos] != '>' {
