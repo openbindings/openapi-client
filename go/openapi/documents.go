@@ -247,13 +247,13 @@ func (t *tree) kind() kind {
 // identifier names, if one does.
 type claim struct {
 	v       value
-	ptr     string
+	ptr     *documentPath
 	base    *url.URL
 	dialect string
 	other   *claim
 }
 
-func (c *claim) source() string { return c.v.t.source(c.ptr) }
+func (c *claim) source() string { return c.v.t.source(c.ptr.pointer()) }
 
 // A discovery reads the documents a load reaches: a reader for each, the
 // references to URIs nothing read identifies yet, those that something now
@@ -298,8 +298,7 @@ type reader struct {
 	seen    map[visit]uint8 // 1 queued, 2 entered recursively
 	dialect string          // the document default for schema resources
 	queue   []item
-	at      string   // the JSON Pointer of the item being read
-	path    []string // and the reference tokens from it to the node being read
+	at      *documentPath // shared physical path to the node being read
 	busy    bool
 }
 
@@ -315,7 +314,7 @@ type item struct {
 	v       value
 	k       kind
 	base    *url.URL
-	ptr     string
+	ptr     *documentPath
 	dialect string
 }
 
@@ -501,12 +500,12 @@ func (dc *discovery) read(f fetch, buf []byte, scratch *reader) (*reader, error)
 	}
 	k := t.kind()
 	r := dc.newReader(t, k)
-	r.queue, r.path = append(scratch.queue[:0], r.queue...), scratch.path[:0]
+	r.queue = append(scratch.queue[:0], r.queue...)
 	for _, w := range f.wants {
-		r.open(t.root(), k, t.base, "", t.uri, r.dialect, w)
+		r.open(t.root(), k, t.base, nil, t.uri, r.dialect, w)
 	}
 	r.drain()
-	scratch.queue, scratch.path, r.queue, r.path = r.queue, r.path, nil, nil
+	scratch.queue, r.queue = r.queue, nil
 	return r, nil
 }
 
@@ -519,7 +518,7 @@ func (d *document) newReader(t *tree, k kind) *reader {
 		r.dialect = t.root().get("jsonSchemaDialect").string()
 	}
 	if t.declares || t.reaches && k == rootKind {
-		r.open(t.root(), k, t.base, "", t.uri, r.dialect, want{k: k})
+		r.open(t.root(), k, t.base, nil, t.uri, r.dialect, want{k: k})
 	}
 	return r
 }
@@ -667,7 +666,7 @@ func (dc *discovery) wake(r *reader) {
 // schema, to be read by the reader of its document.
 func (dc *discovery) follow(uri string, w want) {
 	if t := dc.named[uri]; t != nil {
-		dc.readers[t].open(t.root(), t.kind(), t.base, "", t.uri, dc.readers[t].dialect, w)
+		dc.readers[t].open(t.root(), t.kind(), t.base, nil, t.uri, dc.readers[t].dialect, w)
 		dc.wake(dc.readers[t])
 	} else if c := dc.ids[uri]; c != nil {
 		dc.readers[c.v.t].open(c.v, schemaKind, c.base, c.ptr, uri, c.dialect, w)
@@ -703,7 +702,7 @@ func (dc *discovery) drain() {
 // base, at ptr, which uri identifies, to be read, unless it is read already
 // or its document holds nothing discovery needs; one a plain name names that
 // r has not read is needed of the discovery.
-func (r *reader) open(n value, k kind, base *url.URL, ptr, uri, dialect string, w want) {
+func (r *reader) open(n value, k kind, base *url.URL, ptr *documentPath, uri, dialect string, w want) {
 	if !r.t.reaches && !r.t.declares {
 		return
 	}
@@ -713,7 +712,7 @@ func (r *reader) open(n value, k kind, base *url.URL, ptr, uri, dialect string, 
 		return
 	case frag != "" && frag[0] == '/':
 		n, base, dialect = descend(n, k, frag, base, dialect)
-		ptr += frag
+		ptr = &documentPath{parent: ptr, part: frag}
 	case frag != "":
 		c := r.ids[uri+"#"+frag]
 		if c == nil {
@@ -736,7 +735,7 @@ func (r *reader) drain() {
 	for n := len(r.queue); n > 0; n = len(r.queue) {
 		it := r.queue[n-1]
 		r.queue = r.queue[:n-1]
-		r.at, r.path = it.ptr, r.path[:0]
+		r.at = it.ptr
 		r.visit(it.v, it.k, it.base, it.dialect)
 	}
 }
@@ -840,7 +839,8 @@ func (r *reader) visit(v value, k kind, base *url.URL, effective string) {
 // into visits m, the member name of the node being read, as a k node, or as
 // an array or map of them, as how says.
 func (r *reader) into(name string, m value, k kind, how byte, base *url.URL, dialect string) {
-	r.path = append(r.path, name)
+	parent := r.at
+	r.at = &documentPath{parent: parent, part: name, token: true}
 	switch {
 	case how == '1':
 		r.visit(m, k, base, dialect)
@@ -856,7 +856,7 @@ func (r *reader) into(name string, m value, k kind, how byte, base *url.URL, dia
 			r.into(key, c, k, '1', base, dialect)
 		}
 	}
-	r.path = r.path[:len(r.path)-1]
+	r.at = parent
 }
 
 // claim records that key, an absolute URI, identifies v, whose base outside
@@ -867,19 +867,35 @@ func (r *reader) claim(key string, v value, base *url.URL, dialect string) {
 		if r.ids == nil {
 			r.ids = map[string]*claim{}
 		}
-		r.ids[key], r.claimed = &claim{v: v, ptr: r.pointer(), base: base, dialect: dialect}, append(r.claimed, key)
+		r.ids[key], r.claimed = &claim{v: v, ptr: r.at, base: base, dialect: dialect}, append(r.claimed, key)
 	case c.v != v && c.other == nil:
-		c.other, r.claimed = &claim{v: v, ptr: r.pointer()}, append(r.claimed, key)
+		c.other, r.claimed = &claim{v: v, ptr: r.at}, append(r.claimed, key)
 	}
 }
 
-// pointer returns the JSON Pointer of the node being read.
-func (r *reader) pointer() string {
+// A documentPath shares its ancestors with sibling and child identifiers.
+// Discovery never copies a full pointer for each nested schema; only a
+// requested Source, resolution result or diagnostic materializes the text.
+type documentPath struct {
+	parent *documentPath
+	part   string
+	token  bool // one raw token, otherwise a JSON Pointer suffix already escaped
+}
+
+func (p *documentPath) pointer() string {
+	var parts []*documentPath
+	for at := p; at != nil; at = at.parent {
+		parts = append(parts, at)
+	}
 	var b strings.Builder
-	b.WriteString(r.at)
-	for _, tok := range r.path {
-		b.WriteByte('/')
-		b.WriteString(escapeToken(tok))
+	for i := len(parts) - 1; i >= 0; i-- {
+		at := parts[i]
+		if at.token {
+			b.WriteByte('/')
+			b.WriteString(escapeToken(at.part))
+		} else {
+			b.WriteString(at.part)
+		}
 	}
 	return b.String()
 }
@@ -919,7 +935,7 @@ func (r *reader) reference(ref value, k kind, base *url.URL) {
 	case c != nil:
 		r.open(c.v, schemaKind, c.base, c.ptr, uri, c.dialect, w)
 	case uri == t.uri:
-		r.open(t.root(), t.kind(), t.base, "", uri, r.dialect, w)
+		r.open(t.root(), t.kind(), t.base, nil, uri, r.dialect, w)
 	default:
 		r.refs = append(r.refs, need{uri, w})
 	}
@@ -1127,7 +1143,7 @@ func (d *document) node(uri string) (value, string, error) {
 	case c != nil && t != nil && c.v != t.root():
 		return value{}, "", fmt.Errorf("%s names both the document %s and %s", uri, t.uri, c.source())
 	case c != nil:
-		return c.v, c.ptr, nil
+		return c.v, c.ptr.pointer(), nil
 	case t != nil:
 		return t.root(), "", nil
 	case d.failed[uri] != nil:
