@@ -3,7 +3,6 @@ package openapi_test
 import (
 	"context"
 	"fmt"
-	"strings"
 	"testing"
 
 	"github.com/openbindings/openapi-client/go/openapi"
@@ -63,7 +62,7 @@ func FuzzEditionQuerystring(f *testing.F) {
 		if got := req.HTTP.URL.RawQuery; got != want {
 			t.Fatalf("query %q want %q", got, want)
 		}
-		if strings.Contains(req.HTTP.URL.Fragment, "#") {
+		if req.HTTP.URL.Fragment != "" {
 			t.Fatal("query leaked into fragment")
 		}
 	})

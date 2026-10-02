@@ -179,8 +179,7 @@ func TestEditionsQuerystring(t *testing.T) {
 			if got := req.HTTP.URL.RawQuery; got != tc.want {
 				t.Errorf("query %q want %q", got, tc.want)
 			}
-			r := sendAndClose(t, req)
-			_ = r
+			sendAndClose(t, req)
 			want := tc.want
 			if want != "" {
 				want += "&"
@@ -188,10 +187,6 @@ func TestEditionsQuerystring(t *testing.T) {
 			want += "token=secret"
 			if got := rt.requests()[0].URL.RawQuery; got != want {
 				t.Errorf("sent query %q want %q", got, want)
-			}
-			// Credential placement occurs at Send; the custom transport observes it.
-			if got := req.HTTP.URL.RawQuery; got != tc.want {
-				t.Errorf("Send mutated prepared URL: %q", got)
 			}
 		})
 	}

@@ -341,3 +341,39 @@ func TestEditionsPositionalIteratorError(t *testing.T) {
 		t.Errorf("read error %v", err)
 	}
 }
+
+// Owner stage 6 positional-null clarification: omitted null wire parts do
+// not compact source-array positions (OAS 3.2.1 4.14.5.2). Iterators are
+// admitted for multipart types other than form-data, per Input.Body.
+func TestEditionsPositionalNullKeepsEncodingIndex(t *testing.T) {
+	for _, media := range []string{"multipart/mixed", "multipart/form-data"} {
+		t.Run(media, func(t *testing.T) {
+			c := editionClient(t, positionalDoc(media, `"prefixEncoding":[{"contentType":"text/plain"},{"contentType":"application/json"}],"itemEncoding":{"contentType":"application/octet-stream"}`), nil)
+			value := any(map[string]int{"n": 1})
+			if media == "multipart/form-data" {
+				value = map[string]any{"payload": value}
+			}
+			values := []any{nil, value}
+			bodies := []any{values}
+			if media != "multipart/form-data" {
+				bodies = append(bodies, iter.Seq[any](func(yield func(any) bool) {
+					for _, v := range values {
+						if !yield(v) {
+							return
+						}
+					}
+				}))
+			}
+			for _, body := range bodies {
+				req := mustPrepare(t, c, "POST /x", &openapi.Input{Body: body})
+				_, _, parts := readMultipart(t, req.HTTP.Header.Get("Content-Type"), editionBody(t, req))
+				if len(parts) != 1 {
+					t.Fatalf("parts %d want 1", len(parts))
+				}
+				if parts[0].header.Get("Content-Type") != "application/json" || string(trimNL(parts[0].body)) != `{"n":1}` {
+					t.Errorf("part %#v", parts[0])
+				}
+			}
+		})
+	}
+}
