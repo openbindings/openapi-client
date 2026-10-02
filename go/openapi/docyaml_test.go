@@ -327,6 +327,9 @@ func TestYAMLAliasBounds(t *testing.T) {
 // nodes number about 120, so the aliases it may add before rejection number
 // at most about 12,000, and rejecting it allocates little.
 func TestYAMLAliasBomb(t *testing.T) {
+	if !inChild(t) { // a loader that expands it would exhaust memory
+		return
+	}
 	var b strings.Builder
 	b.WriteString(yamlHead + "x-l0: &l0 [" + strings.TrimSuffix(strings.Repeat("lol, ", 10), ", ") + "]\n")
 	for i := 1; i < 10; i++ {

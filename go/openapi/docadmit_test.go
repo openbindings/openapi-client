@@ -440,26 +440,50 @@ func TestMaxBytesAcrossDocuments(t *testing.T) {
 
 // load.go, Load: "ctx bounds the whole load, reading and parsing included":
 // a referenced document whose server never answers, or whose Fetch waits,
-// ends the load with the context's error when the context ends.
+// ends the load with the context's error when the context ends. The server
+// and the Fetch also give up when the test ends, so a load that ignores the
+// context fails the test rather than hanging it.
 func TestContextBoundsTheWholeLoad(t *testing.T) {
+	type result struct {
+		c   *openapi.Client
+		err error
+	}
+	await := func(t *testing.T, load func() (*openapi.Client, error), want error) {
+		t.Helper()
+		done := make(chan result, 1)
+		go func() {
+			c, err := load()
+			done <- result{c, err}
+		}()
+		select {
+		case r := <-done:
+			if r.err == nil || r.c != nil || !errors.Is(r.err, want) {
+				t.Errorf("Load = %v, %v; want the context's error", r.c, r.err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Errorf("Load had not returned 10 seconds after its context ended")
+		}
+	}
 	t.Run("http", func(t *testing.T) {
 		s := newSite(t)
+		release := make(chan struct{})
+		t.Cleanup(func() { close(release) }) // before the site closes
 		s.put("/openapi.json", entry31(paramOps(map[string]string{"slow": "slow.json#/P"})))
-		s.handle("/slow.json", func(w http.ResponseWriter, r *http.Request) { <-r.Context().Done() })
+		s.handle("/slow.json", func(w http.ResponseWriter, r *http.Request) {
+			select {
+			case <-r.Context().Done():
+			case <-release:
+			}
+		})
 		ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
 		defer cancel()
-		start := time.Now()
-		c, err := openapi.Load(ctx, s.uri("/openapi.json"), nil)
-		if err == nil || c != nil || !errors.Is(err, context.DeadlineExceeded) {
-			t.Errorf("Load = %v, %v; want the context's error", c, err)
-		}
-		if d := time.Since(start); d > 10*time.Second {
-			t.Errorf("Load returned %v after its deadline", d)
-		}
+		await(t, func() (*openapi.Client, error) { return openapi.Load(ctx, s.uri("/openapi.json"), nil) }, context.DeadlineExceeded)
 	})
 	t.Run("Fetch", func(t *testing.T) {
 		const base = "https://docs.example.test/"
 		m := newMemFetch(map[string]string{base + "openapi.json": bare31(paramOps(map[string]string{"slow": "slow.json#/P"}))})
+		release := make(chan struct{})
+		t.Cleanup(func() { close(release) })
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		l := &openapi.Loader{Fetch: func(fctx context.Context, uri string) (io.ReadCloser, string, error) {
@@ -467,13 +491,14 @@ func TestContextBoundsTheWholeLoad(t *testing.T) {
 				return m.fetch(fctx, uri)
 			}
 			cancel()
-			<-fctx.Done()
-			return nil, "", fctx.Err()
+			select {
+			case <-fctx.Done():
+				return nil, "", fctx.Err()
+			case <-release:
+				return nil, "", errors.New("the test ended")
+			}
 		}}
-		c, err := l.Load(ctx, base+"openapi.json", nil)
-		if err == nil || c != nil || !errors.Is(err, context.Canceled) {
-			t.Errorf("Load = %v, %v; want the context's error", c, err)
-		}
+		await(t, func() (*openapi.Client, error) { return l.Load(ctx, base+"openapi.json", nil) }, context.Canceled)
 	})
 }
 
