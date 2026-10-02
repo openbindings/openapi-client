@@ -84,6 +84,7 @@ type yamlWriter struct {
 	added, addedBytes  int64 // what aliases added
 	maxAdded, maxBytes int64
 	reaches, declares  bool // see tree
+	editionRefs        bool
 }
 
 // A written is what a node an alias names was written as: its nodes, its
@@ -106,7 +107,7 @@ func yamlTree(ctx context.Context, root *yaml.Node, src, uri string, unit, size 
 		return nil, err
 	}
 	return &tree{src: w.b.String(), nodes: w.nodes, escapes: w.escapes, decoded: make([]atomic.Pointer[string], len(w.escapes)),
-		reaches: w.reaches, declares: w.declares}, nil
+		reaches: w.reaches, declares: w.declares, editionRefs: w.editionRefs}, nil
 }
 
 // count returns the nodes of n, each alias one, noting the nodes aliases
@@ -237,8 +238,8 @@ func (w *yamlWriter) mapping(n *yaml.Node, depth int) (int, error) {
 		if err != nil {
 			return 0, err
 		}
-		if levels = max(levels, l+1); len(key.Value) > 1 && (key.Value[0] == '$' || key.Value[0] == 'm') {
-			note(key.Value, w.b.String()[start:], &w.reaches, &w.declares)
+		if levels = max(levels, l+1); len(key.Value) > 1 && (key.Value[0] == '$' || key.Value[0] == 'm' || key.Value[0] == 'd' || key.Value[0] == 's') {
+			note(key.Value, w.b.String()[start:], &w.reaches, &w.declares, &w.editionRefs)
 		}
 	}
 	w.b.WriteByte('}')

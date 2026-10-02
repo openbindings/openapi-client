@@ -78,22 +78,25 @@ type route struct{ method, path string }
 // lists them.
 var methods = [...]struct{ name, upper string }{
 	{"get", "GET"}, {"put", "PUT"}, {"post", "POST"}, {"delete", "DELETE"},
-	{"options", "OPTIONS"}, {"head", "HEAD"}, {"patch", "PATCH"}, {"trace", "TRACE"},
+	{"options", "OPTIONS"}, {"head", "HEAD"}, {"patch", "PATCH"}, {"trace", "TRACE"}, {"query", "QUERY"},
 }
 
 // An entry is an indexed operation, or a Paths entry that cannot be read.
 // Its descriptor and plan are compiled on first use.
 type entry struct {
-	doc    *document
-	path   string
-	id     string
-	m      int      // the method, an index into methods; -1 for a Paths entry that cannot be read
-	node   value    // the Operation Object
-	levels *level   // the Path Item chain
-	sum    *summary // what its levels define, shared with every chain that defines the same
-	err    error    // why the entry cannot be read, or its method is defined twice
-	group  *group   // the entries sharing its Operation Object and inherited fields, or nil
-	op     atomic.Pointer[operation]
+	additional      string
+	additionalLevel *level
+	forbidden       bool
+	doc             *document
+	path            string
+	id              string
+	m               int      // the method, an index into methods; -1 for a Paths entry that cannot be read
+	node            value    // the Operation Object
+	levels          *level   // the Path Item chain
+	sum             *summary // what its levels define, shared with every chain that defines the same
+	err             error    // why the entry cannot be read, or its method is defined twice
+	group           *group   // the entries sharing its Operation Object and inherited fields, or nil
+	op              atomic.Pointer[operation]
 }
 
 // A group is the entries of several Paths entries that reach one Operation
@@ -117,8 +120,15 @@ type level struct {
 // that does, a bit in dup saying a farther one does too. Nil summarizes a
 // chain that defines none.
 type summary struct {
-	at  [serversField + 1]*level
-	dup uint16
+	at    [serversField + 1]*level
+	dup   uint16
+	extra []extraOperation
+}
+
+type extraOperation struct {
+	name  string
+	level *level
+	dup   bool
 }
 
 // The Path Item fields a summary covers after the methods.
@@ -134,7 +144,7 @@ func (s *summary) add(l *level) *summary {
 	for name, v := range l.v.members() {
 		f, present := -1, v.kind() == '{'
 		for m := range methods {
-			if methods[m].name == name {
+			if methods[m].name == name && (name != "query" || l.v.t.edition == 32) && (name != "trace" || l.v.t.edition != 20) {
 				f = m
 			}
 		}
@@ -158,6 +168,26 @@ func (s *summary) add(l *level) *summary {
 		}
 		sum.at[f] = l
 	}
+	if extra := l.v.get("additionalOperations"); l.v.t.edition == 32 && extra.hasMembers() {
+		if sum == s {
+			sum = new(summary)
+			if s != nil {
+				*sum = *s
+			}
+		}
+		previous := sum.extra
+		sum.extra = nil
+		for name, v := range extra.members() {
+			if v.kind() == '{' {
+				sum.extra = append(sum.extra, extraOperation{name, l, slices.ContainsFunc(previous, func(e extraOperation) bool { return e.name == name })})
+			}
+		}
+		for _, old := range previous {
+			if !extra.get(old.name).ok() {
+				sum.extra = append(sum.extra, old)
+			}
+		}
+	}
 	return sum
 }
 
@@ -177,7 +207,18 @@ func loadOrMake[T any](p *atomic.Pointer[T], build func() *T) *T {
 }
 
 // source returns the Operation Object's Source.
+func (e *entry) method() string {
+	if e.additionalLevel != nil {
+		return e.additional
+	}
+	return methods[e.m].upper
+}
+
 func (e *entry) source() string {
+	if e.additionalLevel != nil {
+		l := e.additionalLevel
+		return l.v.t.source(l.ptr + "/additionalOperations/" + escapeToken(e.additional))
+	}
 	l := e.sum.at[e.m]
 	return l.v.t.source(l.ptr + "/" + methods[e.m].name)
 }
@@ -440,11 +481,15 @@ func newDocument(ld *loading, content, uri string) (*document, error) {
 	switch {
 	case !root.get("openapi").ok() && !root.get("swagger").ok():
 		return nil, fmt.Errorf("openapi: %s: no openapi or swagger field", uri)
-	case isPatchOf(d.version, "3.1"):
-	case root.str("swagger") == "2.0" || isPatchOf(d.version, "3.0") || isPatchOf(d.version, "3.2"):
-		return nil, fmt.Errorf("openapi: %s: this edition is not implemented yet: %w", uri, errors.ErrUnsupported)
+	case root.str("swagger") == "2.0":
+		d.version = "2.0"
+	case isPatchOf(d.version, "3.0"), isPatchOf(d.version, "3.1"), isPatchOf(d.version, "3.2"):
 	default:
 		return nil, fmt.Errorf("openapi: %s: unsupported version", uri)
+	}
+	t.setEdition(31)
+	if t.edition <= 30 && !root.get("paths").ok() {
+		return nil, fmt.Errorf("openapi: %s: no paths", uri)
 	}
 	if !root.get("paths").ok() && !root.get("components").ok() && !root.get("webhooks").ok() {
 		return nil, fmt.Errorf("openapi: %s: no paths, components or webhooks", uri)
@@ -550,6 +595,19 @@ func (d *document) index(ctx context.Context) error {
 				first++
 			}
 		}
+		if sum != nil {
+			for _, x := range sum.extra {
+				n := x.level.v.get("additionalOperations").get(x.name)
+				e := &entry{doc: d, path: path, id: n.str("operationId"), node: n, levels: levels, sum: sum, additional: x.name, additionalLevel: x.level}
+				e.forbidden = !isToken(x.name) || slices.ContainsFunc(methods[:], func(m struct{ name, upper string }) bool { return m.upper == x.name })
+				if e.forbidden {
+					e.err = fmt.Errorf("forbidden additional method %q", x.name)
+				} else if x.dup {
+					e.err = fmt.Errorf("the Path Item and its $ref target both define %s", x.name)
+				}
+				d.recordOperation(e)
+			}
+		}
 	}
 	return nil
 }
@@ -562,8 +620,16 @@ func (d *document) addOperation(path string, m int, levels *level, sum *summary)
 	if sum.dup&(1<<m) != 0 {
 		e.err = fmt.Errorf("the Path Item and its $ref target both define %s", methods[m].name)
 	}
+	d.recordOperation(e)
+	return e
+}
+
+func (d *document) recordOperation(e *entry) {
 	d.entries = append(d.entries, e)
-	d.byRoute[route{methods[m].upper, path}] = e
+	if e.forbidden {
+		return
+	}
+	d.byRoute[route{e.method(), e.path}] = e
 	if e.id != "" && !isMethodAndPath(e.id) {
 		if _, dup := d.byID[e.id]; dup {
 			d.byID[e.id] = nil
@@ -571,7 +637,6 @@ func (d *document) addOperation(path string, m int, levels *level, sum *summary)
 			d.byID[e.id] = e
 		}
 	}
-	return e
 }
 
 func isMethodAndPath(key string) bool {
@@ -604,7 +669,7 @@ func (d *document) lookup(key string) (*entry, error) {
 	var keys []string
 	for _, e := range d.entries {
 		if e.id == key {
-			keys = append(keys, label(methods[e.m].upper+" "+e.path))
+			keys = append(keys, label(e.method()+" "+e.path))
 		}
 	}
 	return nil, fmt.Errorf("%w: %q is the operationId of %s", ErrNoOperation, key, strings.Join(keys, ", "))
@@ -720,7 +785,7 @@ func (d *document) follow(v value, src string) (value, string, string, error) {
 		ref, desc, _ = reference(v)
 	}
 	for k := len(walked) - 1; k >= 0; k-- {
-		if _, desc, described := reference(walked[k]); described && r.err == nil {
+		if _, desc, described := reference(walked[k]); described && walked[k].t.edition >= 31 && r.err == nil {
 			r.desc = desc
 		}
 		kept, _ := d.refs.LoadOrStore(walked[k].id(), &resolution{r.v, r.src, r.desc, r.err})
@@ -767,7 +832,7 @@ func (d *document) checkNames(ctx context.Context, cfg *config, re *RequestError
 	check := func(list value) {
 		for _, s := range list.members() {
 			u := s.str("url")
-			server = server || u == cfg.Server
+			server = server || u == cfg.Server || s.t.edition == 32 && s.str("name") == cfg.Server
 			serverID = serverID || idOf(s) == cfg.ServerID
 			if len(unused) > 0 {
 				_, names, _ := splitTemplate(u)
@@ -809,6 +874,16 @@ func (d *document) checkNames(ctx context.Context, cfg *config, re *RequestError
 			continue
 		}
 		check(e.node.get("servers"))
+		if e.node.t.edition == 20 && (!server || !serverID || !media) {
+			o := e.compile()
+			for _, s := range o.Servers {
+				server = server || s.URL == cfg.Server
+				serverID = serverID || s.ID == cfg.ServerID
+			}
+			if o.Body != nil {
+				media = media || match(o.body, o.Body.Media, cfg.mediaType, true) != nil
+			}
+		}
 		none := free
 		if s := e.node.get("security"); s.ok() {
 			none = sec.list(s)
@@ -816,7 +891,7 @@ func (d *document) checkNames(ctx context.Context, cfg *config, re *RequestError
 		if none && sec.key == "{}" {
 			sec.key = "" // a credential-free operation offers it
 		}
-		if rb := e.node.get("requestBody"); !media && rb.ok() && methods[e.m].upper != "TRACE" {
+		if rb := e.node.get("requestBody"); !media && rb.ok() && e.method() != "TRACE" && e.method() != "CONNECT" && !(e.node.t.edition == 30 && slices.Contains([]string{"GET", "HEAD", "DELETE", "OPTIONS"}, e.method())) {
 			body, _, _, err := d.follow(rb, "")
 			if err != nil || !first(body) {
 				continue

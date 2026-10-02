@@ -271,7 +271,7 @@ func (c *Client) Document(uri string) []byte {
 	base, frag, hasFrag := strings.Cut(uri, "#")
 	t := d.tree
 	if base != "" {
-		if t = d.named[base]; t == nil || t.uri != base {
+		if t = d.named[base]; t == nil {
 			return nil
 		}
 	}

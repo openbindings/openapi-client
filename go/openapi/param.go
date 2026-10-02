@@ -52,6 +52,14 @@ var (
 // given, a defined value, and whether it wrote anything. In a path, lead is
 // the style's first.
 func (c *Client) writeParam(b *strings.Builder, lead string, p *param, v any, re *RequestError) (given, written bool) {
+	if p.legacy.ok() {
+		given, err := c.writeLegacy(b, lead, p, v, false)
+		if err != nil {
+			re.input(p.Key, err)
+			return false, false
+		}
+		return given, given
+	}
 	if p.ContentType == "" {
 		e := emitter{param: p, b: b, lead: lead, limit: maxLength}
 		given, err := e.write(c.doc, v)
@@ -82,12 +90,15 @@ func (c *Client) writeParam(b *strings.Builder, lead string, p *param, v any, re
 		re.input(p.Key, err)
 		return false, false
 	}
+	if p.In == "querystring" && s == "" {
+		return false, false
+	}
 	b.WriteString(lead)
 	if p.In == "query" || p.In == "cookie" {
 		b.WriteString(p.name)
 		b.WriteByte('=')
 	}
-	if p.In == "header" || p.In == "cookie" {
+	if p.In == "header" || p.In == "cookie" || p.In == "querystring" && isForm(*p.media) {
 		b.WriteString(s) // as given
 	} else {
 		escapeTo(b, s, unreservedSet)
@@ -147,6 +158,13 @@ type emitter struct {
 // write writes v, reporting whether it is defined. A value it gives
 // encoding/json is checked as d checks JSON it encodes.
 func (e *emitter) write(d *document, v any) (bool, error) {
+	if e.cookie32 {
+		if s, _, err := encodeJSON(d, v, marshal); err != nil {
+			return false, err
+		} else if !e.Explode && (s[0] == '[' || s[0] == '{') && s != "[]" && s != "{}" {
+			return false, errors.New("a cookie array or object requires explode")
+		}
+	}
 	switch v := v.(type) {
 	case string:
 		return e.primitive(jsonText(v))
@@ -255,6 +273,9 @@ func (e *emitter) next(n int, empty bool) error {
 
 // item writes an array's item s.
 func (e *emitter) item(s string) error {
+	if e.cookie32 && e.set == nil && strings.ContainsFunc(s, func(r rune) bool { return r == ';' || r < 32 || r == 127 }) {
+		return errors.New("a cookie value cannot hold a semicolon or control character")
+	}
 	if err := e.next(len(s), s == ""); err != nil {
 		return err
 	}

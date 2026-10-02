@@ -205,6 +205,9 @@ func (c *Client) newRequest(ctx context.Context, o *operation, in *Input, re *Re
 			}
 			continue
 		}
+		if p.legacy.ok() && p.field == "Content-Type" && o.Body != nil && in.Body != nil {
+			continue
+		}
 		if p.In == "path" && p.Err == nil {
 			continue // serialized in the path
 		}
@@ -212,7 +215,7 @@ func (c *Client) newRequest(ctx context.Context, o *operation, in *Input, re *Re
 		supplied, wrote := hasWriter, hasWriter // a writer supplies it
 		switch {
 		case hasWriter || v == nil:
-		case p.In == "query":
+		case p.In == "query" || p.In == "querystring":
 			lead := "&"
 			if b.Len() == query {
 				lead = "?"
@@ -397,10 +400,10 @@ func (c *Client) selectServer(o *operation, re *RequestError) endpoint {
 	case cfg.Server != "":
 		setting = "Options.Server"
 		for _, sv := range o.servers {
-			if sv.URL == cfg.Server && s != nil {
+			if (sv.URL == cfg.Server || sv.Name == cfg.Server) && s != nil {
 				re.setting(setting, fmt.Errorf("%q names several servers; use Options.ServerID", cfg.Server))
 				return endpoint{}
-			} else if sv.URL == cfg.Server {
+			} else if sv.URL == cfg.Server || sv.Name == cfg.Server {
 				s = sv
 			}
 		}

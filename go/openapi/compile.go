@@ -34,6 +34,8 @@ type plan struct {
 
 // A param is a parameter with its serialization compiled.
 type param struct {
+	legacy   value
+	cookie32 bool
 	*Param
 	*style
 	set      *charset // how its values are percent-encoded, or nil to write them as given
@@ -80,6 +82,10 @@ func (e *entry) build() *operation {
 		o = e.shape()
 	}
 	o.Key, o.Path = e.id, e.path
+	if e.forbidden {
+		o.Key = ""
+		return o
+	}
 	if e.id == "" || d.byID[e.id] != e {
 		o.Key = o.Method + " " + o.Path
 	}
@@ -96,7 +102,7 @@ func (e *entry) shape() *operation {
 	d, n, src := e.doc, e.node, e.source()
 	o := &operation{doc: d}
 	op := &o.Operation
-	op.ID, op.Method, op.Source = e.id, methods[e.m].upper, src
+	op.ID, op.Method, op.Source = e.id, e.method(), src
 	var params, body, responses, servers, security value
 	for name, m := range n.members() { // one pass: a member's name is read from the source
 		switch name {
@@ -127,9 +133,24 @@ func (e *entry) shape() *operation {
 	errs = append(errs, err)
 	errs = o.addParams(list, at, ids, errs)
 	errs = o.addParams(params, src+"/parameters", ids, errs)
+	if n.t.edition == 20 {
+		errs = append(errs, o.swaggerBody(n))
+	}
 	o.assignKeys()
+	queries, wholes := 0, 0
+	for _, p := range o.params {
+		if p.In == "query" {
+			queries++
+		}
+		if p.In == "querystring" {
+			wholes++
+		}
+	}
+	if wholes > 1 || wholes > 0 && queries > 0 {
+		errs = append(errs, errors.New("querystring cannot coexist with another query or querystring parameter"))
+	}
 
-	if body.ok() && op.Method != "TRACE" {
+	if body.ok() && op.Method != "TRACE" && op.Method != "CONNECT" && !(n.t.edition == 30 && slices.Contains([]string{"GET", "HEAD", "DELETE", "OPTIONS"}, op.Method)) {
 		var target value
 		var c *content
 		op.Body, target, c = d.message(body, src+"/requestBody", true)
@@ -143,6 +164,13 @@ func (e *entry) shape() *operation {
 		for key, r := range responses.members() {
 			if !strings.HasPrefix(key, "x-") {
 				m, _, c := d.message(r, src+"/responses/"+token(key), false)
+				if n.t.edition == 20 {
+					produces := n.get("produces")
+					if !produces.ok() {
+						produces = d.root().get("produces")
+					}
+					m, c = d.swaggerResponse(r, src+"/responses/"+token(key), produces)
+				}
 				m.Key = key
 				o.addResponse(m, c)
 			}
@@ -151,6 +179,8 @@ func (e *entry) shape() *operation {
 
 	var sl *serverList
 	switch s, at, err := e.field(serversField); {
+	case n.t.edition == 20:
+		sl = d.swaggerServers(n.get("schemes"))
 	case servers.hasMembers():
 		sl = d.parseServers(servers, src+"/servers")
 	case s.ok():
@@ -212,7 +242,7 @@ func (o *operation) addParams(list value, src string, ids map[uint32]int, errs [
 		pp := o.doc.param(v, src, i)
 		i++
 		p := pp.Param
-		if p.In == "header" && (strings.EqualFold(p.Name, "Accept") || strings.EqualFold(p.Name, "Content-Type") || strings.EqualFold(p.Name, "Authorization")) {
+		if p.In == "header" && pp.legacy.t == nil && (strings.EqualFold(p.Name, "Accept") || strings.EqualFold(p.Name, "Content-Type") || strings.EqualFold(p.Name, "Authorization")) {
 			continue
 		}
 		if p.In == "" {
@@ -339,6 +369,9 @@ func (d *document) newParam(t value, at string) param {
 			content = m
 		}
 	}
+	if t.t.edition == 20 {
+		return d.swaggerParam(t, at, p)
+	}
 	if content.ok() {
 		for typ, m := range content.members() {
 			if entries++; entries == 1 {
@@ -352,8 +385,10 @@ func (d *document) newParam(t value, at string) param {
 		p.Schema = d.schema(schema, at, "/schema")
 	}
 	switch {
-	case !slices.Contains([]string{"path", "query", "header", "cookie"}, p.In):
+	case !slices.Contains([]string{"path", "query", "header", "cookie"}, p.In) && !(p.In == "querystring" && t.t.edition == 32):
 		p.Err = fmt.Errorf("parameter location %q is not path, query, header or cookie", p.In)
+	case p.In == "querystring" && (!content.ok() || t.get("style").ok() || explode.ok() || t.get("allowReserved").ok()):
+		p.Err = errors.New("querystring requires content and cannot declare style, explode or allowReserved")
 	case content.ok() && (content.kind() != '{' || entries != 1 || schema.ok()):
 		p.Err = errors.New("a parameter needs a content map of exactly one entry, and then no schema")
 	case !valid:
@@ -370,7 +405,11 @@ func (d *document) newParam(t value, at string) param {
 		m, _ := parseMedia(p.ContentType)
 		pp = param{Param: p, style: &noStyle, set: unreservedSet, name: escape(p.Name, unreservedSet), media: &m}
 		if isForm(m) { // its fields, of their default types: Encoding applies to bodies only
-			pp.form, _ = d.encodingOf([]value{media.get("schema")}, at+"/content/"+token(p.ContentType)+"/schema", value{}, "", m)
+			enc := value{}
+			if p.In == "querystring" {
+				enc = media.get("encoding")
+			}
+			pp.form, _ = d.encodingOf([]value{media.get("schema")}, at+"/content/"+token(p.ContentType)+"/schema", enc, at+"/content/"+token(p.ContentType)+"/encoding", m)
 		}
 	} else {
 		if p.Style == "" {
@@ -379,9 +418,18 @@ func (d *document) newParam(t value, at string) param {
 				p.Style = "form"
 			}
 		}
-		p.AllowReserved = p.AllowReserved && p.In == "query"
+		p.AllowReserved = p.AllowReserved && (p.In == "query" || t.t.edition == 32 && (p.In == "path" || p.In == "cookie" && p.Style == "form"))
 		pp = compileStyle(p, p.In, explode)
+		if p.Style == "cookie" {
+			if t.t.edition != 32 || p.In != "cookie" {
+				p.Err = errors.New("cookie style requires OpenAPI 3.2 cookie location")
+			} else {
+				pp.style, pp.set, pp.name = &cookieForm, nil, p.Name
+				p.Explode = explode.kind() != 'f'
+			}
+		}
 	}
+	pp.cookie32 = p.In == "cookie" && t.t.edition == 32
 	pp.required = p.Required || p.In == "path"
 	switch {
 	case p.In == "cookie" && p.Style == "form":
@@ -427,7 +475,7 @@ func styleAllowed(in, style string) bool {
 	case "header":
 		return style == "simple"
 	}
-	return style == "form"
+	return style == "form" || in == "cookie" && style == "cookie"
 }
 
 // A content is the content map of a Request Body or Response Object, and a
@@ -477,6 +525,9 @@ func (d *document) content(t value, at string, request bool) *content {
 		for typ, mv := range m.members() {
 			mat := at + "/content/" + token(typ)
 			md := &Media{Type: typ, Source: mat, Schema: d.schema(mv.get("schema"), mat, "/schema")}
+			if mv.t.edition == 32 {
+				md.ItemSchema = d.schema(mv.get("itemSchema"), mat, "/itemSchema")
+			}
 			pm, ok := parseMedia(typ)
 			switch {
 			case !ok:
@@ -504,6 +555,9 @@ func (d *document) content(t value, at string, request bool) *content {
 				enc, md.Encoding = d.encodingOf(schema, mat+"/schema", mv.get("encoding"), mat+"/encoding", pm)
 			case pm.typ == "*" || pm.sub == "*" && strings.EqualFold(pm.typ, "application"):
 				enc, _ = d.encodingOf(schema, mat+"/schema", value{}, "", pm)
+			}
+			if request && isMultipart(pm) && mv.t.edition == 32 {
+				md.Encoding = d.positionalEncoding(enc, mv, schema, mat, md.Encoding...)
 			}
 			c.media, c.parsed, c.encodings = append(c.media, md), append(c.parsed, pm), append(c.encodings, enc)
 		}
@@ -677,12 +731,47 @@ func (d *document) inherited() *inheritance {
 	})
 }
 
+// swaggerServers assembles entry host/basePath with the operation's schemes.
+func (d *document) swaggerServers(schemes value) *serverList {
+	r := d.root()
+	if !schemes.hasMembers() {
+		schemes = r.get("schemes")
+	}
+	list := schemes.strs()
+	host := r.str("host")
+	if d.tree.httpBase() {
+		if host == "" {
+			host = d.base.Host
+		}
+		if len(list) == 0 {
+			list = []string{d.base.Scheme}
+		}
+	}
+	if len(list) == 0 {
+		list = []string{""}
+	}
+	sl := &serverList{}
+	for i, scheme := range list {
+		s := &Server{ID: "swagger-" + strconv.Itoa(i) + "-" + scheme, URL: scheme + "://" + host + r.str("basePath")}
+		sv := newServer(s, value{}, d.tree)
+		if host == "" || scheme == "" {
+			s.Err = errors.New("Swagger server requires host and schemes or an HTTP retrieval URI")
+			sv.fixed = nil
+		}
+		sl.servers, sl.desc = append(sl.servers, sv), append(sl.desc, s)
+	}
+	return sl
+}
+
 // parseServers compiles the Server Objects of list, whose Source is src.
 func (d *document) parseServers(list value, src string) *serverList {
 	sl := &serverList{}
 	for _, v := range list.members() {
 		at := src + "/" + strconv.Itoa(len(sl.servers))
 		s := &Server{ID: idOf(v), URL: v.str("url"), Description: v.str("description"), Source: at}
+		if v.t.edition == 32 {
+			s.Name = v.str("name")
+		}
 		sl.servers, sl.desc = append(sl.servers, newServer(s, v.get("variables"), list.t)), append(sl.desc, s)
 	}
 	return sl

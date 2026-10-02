@@ -19,8 +19,13 @@ import (
 // each struct type a body of it has been, that type's fields in the order
 // encoding/json writes them.
 type formEncoding struct {
-	byName map[string]*field
-	lists  sync.Map // reflect.Type to []*field
+	positional []*field
+	rest       *field
+	ordered    bool
+	required   bool
+	fallback   *field
+	byName     map[string]*field
+	lists      sync.Map // reflect.Type to []*field
 }
 
 // noFields is the encoding of a nested part no schema describes.
@@ -30,6 +35,7 @@ var noFields = &formEncoding{}
 // 6570 style its Encoding sets, which applies under form-urlencoded and
 // multipart/form-data; and the media types it otherwise takes.
 type field struct {
+	encoding value
 	param
 	styled bool                            // its Encoding sets style, explode or allowReserved, where they apply
 	types  []string                        // the media types it takes, as written
@@ -50,6 +56,9 @@ var untyped = &field{param: param{Param: &Param{ContentType: octetStream.full}},
 func (e *formEncoding) field(name string) *field {
 	if f := e.byName[name]; f != nil {
 		return f
+	}
+	if e.fallback != nil {
+		return e.fallback
 	}
 	return untyped
 }
@@ -104,7 +113,11 @@ func (d *document) encodingOf(s []value, src string, encodings value, esrc strin
 			fields[name], list = f, append(list, p)
 		}
 	}
-	return &formEncoding{byName: fields}, list
+	enc := &formEncoding{byName: fields}
+	if d.tree.edition <= 30 {
+		enc.fallback = textField
+	}
+	return enc, list
 }
 
 // nested returns the fields of a nested part f writes from an object: in
@@ -118,6 +131,12 @@ func (d *document) nested(f *field, item bool) *formEncoding {
 	}
 	if enc := p.Load(); enc != nil {
 		return enc
+	}
+	if f.encoding.ok() && f.encoding.t.edition == 32 {
+		enc, _ := d.encodingOf(f.roots, "", f.encoding.get("encoding"), f.Source+"/encoding", parsedMedia{})
+		d.positionalEncoding(enc, f.encoding, f.roots, f.Source)
+		p.CompareAndSwap(nil, enc)
+		return p.Load()
 	}
 	roots, enc := f.roots, noFields
 	if l := d.typing(roots); l.array && (item || !l.object) {
@@ -164,7 +183,7 @@ type kid struct {
 }
 
 // JSON Schema's types, as bits.
-var jsonTypes = map[string]uint8{"string": 1, "number": 2, "integer": 4, "boolean": 8, "object": 16, "array": 32, "null": 64}
+var jsonTypes = map[string]uint8{"string": 1, "number": 2, "integer": 4, "boolean": 8, "object": 16, "array": 32, "null": 64, "file": 1}
 
 // meet makes s what s and t say together.
 func (s *shape) meet(t *shape) {
@@ -200,6 +219,15 @@ func (d *document) own(v value) (shape, []kid) {
 			ref = m
 		case "allOf":
 			all = m
+		}
+	}
+	if v.t.edition <= 30 && ref.ok() {
+		t, enc, props, all, s.items = value{}, value{}, value{}, value{}, value{}
+	}
+	if v.t.edition <= 30 && !ref.ok() && (v.str("format") == "binary" || v.str("format") == "byte" || t.string() == "file") {
+		enc = v
+		if t.string() == "file" {
+			s.encoded = true
 		}
 	}
 	if t.ok() {
@@ -441,6 +469,9 @@ func (d *document) typing(s []value) typing {
 	var l typing
 	switch t := sh.types; {
 	case !sh.typed || t&^64 == 0:
+		if len(s) > 0 && s[0].ok() && s[0].t.edition <= 30 {
+			return typing{own: textDefault}
+		}
 		return typing{own: octetDefault}
 	case t&1 != 0 && sh.encoded:
 		l.own = octetDefault
@@ -571,7 +602,7 @@ func (d *document) keepSet(k state, set mediaSet) {
 // newField compiles the field name, whose first declaration is schema and
 // all of them roots, and whose Encoding Object is e, at src, under m.
 func (d *document) newField(name string, schema *Schema, roots []value, e value, src string, m parsedMedia) (*field, *Param) {
-	f := &field{param: param{Param: &Param{Name: name, Schema: schema}}, roots: roots}
+	f := &field{encoding: e, param: param{Param: &Param{Name: name, Schema: schema}}, roots: roots}
 	p := f.Param
 	if schema != nil {
 		p.Source = schema.Source()
@@ -601,6 +632,9 @@ func (d *document) newField(name string, schema *Schema, roots []value, e value,
 	// then contentType is ignored; a range of multipart types may be either
 	// (OpenAPI 3.1.2 section 4.8.15.1.2).
 	f.style = &noStyle
+	if e.ok() && e.t.edition == 30 && multipart {
+		style, explode, reserved = value{}, value{}, value{}
+	}
 	if f.styled = (style.ok() || explode.ok() || reserved.ok()) && (stylesApply(m) || multipart && m.sub == "*"); f.styled {
 		p.Style, p.AllowReserved = style.string(), reserved.kind() == 't' && !multipart
 		if p.Style == "" {
@@ -665,13 +699,17 @@ func mediaList(s string) []string {
 func (d *document) headers(h value, src string) []*Param {
 	var list []*Param
 	for name, v := range h.members() {
-		if strings.EqualFold(name, "Content-Type") {
+		if strings.EqualFold(name, "Content-Type") && h.t.edition != 20 {
 			continue
 		}
 		t, at, desc, err := d.follow(v, src+"/"+token(name))
 		p := &Param{Name: name, In: "header", Description: desc, Source: at, Err: err}
 		if err == nil {
 			p.Required, p.Deprecated, p.Schema = t.flag("required"), t.flag("deprecated"), d.schema(t.get("schema"), at, "/schema")
+			if t.t.edition == 20 {
+				pp := d.swaggerParam(t, at, p)
+				p = pp.Param
+			}
 		}
 		list = append(list, p)
 	}

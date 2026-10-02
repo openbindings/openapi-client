@@ -44,24 +44,30 @@ var authorization = paramID{"header", "Authorization"}
 // from names, compiled once for each declaration: the component of that name
 // where the Loader's SchemeLookup looks, following references.
 func (d *document) securityScheme(name string, from *tree) *scheme {
-	in := [...]*tree{d.tree, from} // SchemesInEntryFirst
-	switch d.schemes {
-	case SchemesInEntry:
-		in[1] = d.tree
-	case SchemesInReferrer:
-		in[0] = from
-	}
-	var v value
-	for _, t := range in {
-		if v = t.root().get("components").get("securitySchemes").get(name); v.ok() {
-			break
-		}
-	}
+	v := d.schemeComponent(name, from)
 	if !v.ok() {
+		if from.edition == 32 {
+			t, ptr, err := d.targetName(from, name)
+			if err != nil {
+				return &scheme{desc: SecurityScheme{Err: err}}
+			}
+			v = t
+			return d.schemeForms.get(v.id(), func() *scheme {
+				t, at, _, err := d.follow(v, v.t.source(ptr))
+				if err != nil {
+					return &scheme{desc: SecurityScheme{Err: err}}
+				}
+				return newScheme(t, at)
+			})
+		}
 		return &scheme{desc: SecurityScheme{Err: fmt.Errorf("the document declares no security scheme %q", name)}}
 	}
 	return d.schemeNames.get(v.id(), func() *scheme {
-		src := v.t.source("/components/securitySchemes/" + escapeToken(name))
+		prefix := "/components/securitySchemes/"
+		if v.t.edition == 20 {
+			prefix = "/securityDefinitions/"
+		}
+		src := v.t.source(prefix + escapeToken(name))
 		t, at, desc, err := d.follow(v, src)
 		switch {
 		case err != nil:
@@ -79,6 +85,26 @@ func (d *document) securityScheme(name string, from *tree) *scheme {
 	})
 }
 
+func (d *document) schemeComponent(name string, from *tree) value {
+	in := [...]*tree{d.tree, from}
+	switch d.schemes {
+	case SchemesInEntry:
+		in[1] = d.tree
+	case SchemesInReferrer:
+		in[0] = from
+	}
+	for _, t := range in {
+		v := t.root().get("components").get("securitySchemes").get(name)
+		if t.edition == 20 {
+			v = t.root().get("securityDefinitions").get(name)
+		}
+		if v.ok() {
+			return v
+		}
+	}
+	return value{}
+}
+
 // newScheme compiles the Security Scheme Object t, whose Source is at.
 func newScheme(t value, at string) *scheme {
 	sc := &scheme{desc: SecurityScheme{Source: at}}
@@ -88,6 +114,9 @@ func newScheme(t value, at string) *scheme {
 		return sc
 	}
 	s.Type, s.Description = t.str("type"), t.str("description")
+	if t.t.edition == 32 {
+		s.Deprecated, s.OAuth2MetadataURL = t.flag("deprecated"), t.str("oauth2MetadataUrl")
+	}
 	var err error
 	switch s.Type {
 	case "apiKey":
@@ -109,6 +138,12 @@ func newScheme(t value, at string) *scheme {
 		default:
 			err = fmt.Errorf("apiKey location %q is not query, header or cookie", s.In)
 		}
+	case "basic":
+		if t.t.edition == 20 {
+			s.Type, s.Scheme, sc.kind, sc.dest, sc.auth = "http", "basic", httpBasic, authorization, "Basic "
+		} else {
+			err = errors.New("basic is a Swagger security type")
+		}
 	case "http":
 		s.Scheme, s.BearerFormat = t.str("scheme"), t.str("bearerFormat")
 		sc.dest = authorization
@@ -123,7 +158,18 @@ func newScheme(t value, at string) *scheme {
 			sc.kind, sc.auth = httpOther, s.Scheme+" "
 		}
 	case "oauth2":
-		s.Flows, err = oauthFlows(t.get("flows"))
+		if t.t.edition == 20 {
+			typ := t.str("flow")
+			switch typ {
+			case "application":
+				typ = "clientCredentials"
+			case "accessCode":
+				typ = "authorizationCode"
+			}
+			s.Flows, err = appendFlow(nil, typ, t)
+		} else {
+			s.Flows, err = oauthFlows(t.get("flows"))
+		}
 		sc.kind, sc.dest, sc.auth = httpBearer, authorization, "Bearer "
 	case "openIdConnect":
 		u := t.get("openIdConnectUrl")
@@ -154,34 +200,51 @@ func oauthFlows(v value) (flows []Flow, err error) {
 		return nil, errors.New("an oauth2 scheme needs flows")
 	}
 	for typ, f := range v.members() {
-		var needs []string // the URLs the flow requires
-		switch typ {
-		case "implicit":
-			needs = []string{"authorizationUrl"}
-		case "password", "clientCredentials":
-			needs = []string{"tokenUrl"}
-		case "authorizationCode":
-			needs = []string{"authorizationUrl", "tokenUrl"}
-		default:
+		if typ == "deviceAuthorization" && v.t.edition != 32 {
 			continue
 		}
-		scopes := f.get("scopes")
-		if err == nil && (f.kind() != '{' || scopes.kind() != '{' || slices.ContainsFunc(needs, func(n string) bool { return f.get(n).kind() != '"' })) {
-			err = fmt.Errorf("the %s flow needs %s and scopes", typ, strings.Join(needs, " and "))
+		var e error
+		flows, e = appendFlow(flows, typ, f)
+		if err == nil {
+			err = e
 		}
-		if f.kind() != '{' {
-			continue
-		}
-		flow := Flow{Type: typ, AuthorizationURL: f.str("authorizationUrl"), TokenURL: f.str("tokenUrl"), RefreshURL: f.str("refreshUrl")}
-		if scopes.kind() == '{' {
-			flow.Scopes = map[string]string{}
-			for name, desc := range scopes.members() {
-				flow.Scopes[name] = desc.string()
-			}
-		}
-		flows = append(flows, flow)
 	}
 	return flows, err
+}
+
+func appendFlow(flows []Flow, typ string, f value) ([]Flow, error) {
+	var needs []string
+	switch typ {
+	case "implicit":
+		needs = []string{"authorizationUrl"}
+	case "password", "clientCredentials":
+		needs = []string{"tokenUrl"}
+	case "authorizationCode":
+		needs = []string{"authorizationUrl", "tokenUrl"}
+	case "deviceAuthorization":
+		needs = []string{"deviceAuthorizationUrl", "tokenUrl"}
+	default:
+		return flows, nil
+	}
+	var err error
+	scopes := f.get("scopes")
+	if f.kind() != '{' || scopes.kind() != '{' || slices.ContainsFunc(needs, func(n string) bool { return f.get(n).kind() != '"' }) {
+		err = fmt.Errorf("the %s flow needs %s and scopes", typ, strings.Join(needs, " and "))
+	}
+	if f.kind() != '{' {
+		return flows, err
+	}
+	flow := Flow{Type: typ, AuthorizationURL: f.str("authorizationUrl"), TokenURL: f.str("tokenUrl"), RefreshURL: f.str("refreshUrl")}
+	if f.t.edition == 32 {
+		flow.DeviceAuthorizationURL = f.str("deviceAuthorizationUrl")
+	}
+	if scopes.kind() == '{' {
+		flow.Scopes = map[string]string{}
+		for name, desc := range scopes.members() {
+			flow.Scopes[name] = desc.string()
+		}
+	}
+	return append(flows, flow), err
 }
 
 // An alternative is a security alternative with its schemes compiled.

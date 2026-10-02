@@ -29,6 +29,8 @@ const many = 16
 // each fact once: the index of a container with many members, and the value
 // of an escaped string.
 type tree struct {
+	edition   int                    // 20, 30, 31 or 32; versionless fragments inherit the entry model
+	refbase   *url.URL               // reference base, including a 3.2 $self
 	uri       string                 // the URI the document was retrieved from
 	base      *url.URL               // uri, parsed
 	dir       string                 // uri up to its last slash, when it reaches others and has a path and no query
@@ -44,6 +46,7 @@ type tree struct {
 	// reference discovery read leads, by node, but one to a fragment of the
 	// document itself.
 	reaches, declares bool
+	editionRefs       bool
 	located           map[int32]location
 
 	// Read without a lock, each computed unlocked and kept as first stored.
@@ -393,7 +396,7 @@ func parseTree(ctx context.Context, src, uri string, unit int) (*tree, error) {
 	if cap(p.nodes)-len(p.nodes) > len(p.nodes)/8 {
 		p.nodes = slices.Clone(p.nodes)
 	}
-	return &tree{src: src, nodes: p.nodes, escapes: p.escapes, decoded: make([]atomic.Pointer[string], len(p.escapes)), reaches: p.reaches, declares: p.declares}, nil
+	return &tree{src: src, nodes: p.nodes, escapes: p.escapes, decoded: make([]atomic.Pointer[string], len(p.escapes)), reaches: p.reaches, declares: p.declares, editionRefs: p.editionRefs}, nil
 }
 
 // A scanner reads a JSON text into a tree's nodes.
@@ -406,17 +409,20 @@ type scanner struct {
 	escapes           []uint32 // the offsets of the strings read with an escape
 	names             []string // the member names of the objects being read
 	reaches, declares bool     // see tree
+	editionRefs       bool
 }
 
 // note records what a member named name, whose value's text begins v, tells
 // discovery (see tree).
-func note(name, v string, reaches, declares *bool) {
+func note(name, v string, reaches, declares, editionRefs *bool) {
 	switch name {
 	case "$ref", "$dynamicRef":
 		*reaches = *reaches || !strings.HasPrefix(v, `"#`)
 	case "mapping":
 		*reaches = true
-	case "$id", "$anchor", "$dynamicAnchor":
+	case "defaultMapping", "security":
+		*editionRefs = true
+	case "$id", "$anchor", "$dynamicAnchor", "$self":
 		*declares = true
 	}
 }
@@ -492,8 +498,8 @@ func (p *scanner) container(depth int) error {
 				return p.errorAt(p.i, "expected a colon")
 			}
 			p.i++
-			if p.space(); len(name) > 1 && (name[0] == '$' || name[0] == 'm') {
-				note(name, p.src[p.i:], &p.reaches, &p.declares)
+			if p.space(); len(name) > 1 && (name[0] == '$' || name[0] == 'm' || name[0] == 'd' || name[0] == 's') {
+				note(name, p.src[p.i:], &p.reaches, &p.declares, &p.editionRefs)
 			}
 		}
 		if err := p.value(depth+1, uint32(at)); err != nil {

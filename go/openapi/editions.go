@@ -1,0 +1,413 @@
+package openapi
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"hash/maphash"
+	"net/textproto"
+	"slices"
+	"strings"
+)
+
+// swaggerSchema keeps the Schema subset of a Parameter or Items Object.
+func swaggerSchema(v value) json.RawMessage {
+	var b strings.Builder
+	b.WriteByte('{')
+	first := true
+	for name, m := range v.members() {
+		if !slices.Contains([]string{"type", "format", "items", "default", "enum", "maximum", "exclusiveMaximum", "minimum", "exclusiveMinimum", "maxLength", "minLength", "pattern", "maxItems", "minItems", "uniqueItems", "multipleOf"}, name) {
+			continue
+		}
+		if !first {
+			b.WriteByte(',')
+		}
+		first = false
+		canonicalString(&b, name)
+		b.WriteByte(':')
+		b.WriteString(m.raw())
+	}
+	b.WriteByte('}')
+	return json.RawMessage(b.String())
+}
+
+func (d *document) swaggerParam(t value, at string, p *Param) param {
+	p.Style, p.AllowReserved, p.Explode, p.ExplodeSet = "", false, false, false
+	p.Schema = &Schema{doc: d, v: t, src: at, legacy: true}
+	if string(swaggerSchema(t)) == "{}" {
+		p.Schema = nil
+	}
+	st := styles["simple"]
+	if p.In == "query" || p.In == "formData" {
+		st = styles["form"]
+	}
+	pp := param{Param: p, legacy: t, style: st, set: unreservedSet, name: escape(p.Name, unreservedSet), required: p.Required || p.In == "path"}
+	if p.In == "header" {
+		pp.field, pp.set = textproto.CanonicalMIMEHeaderKey(p.Name), nil
+	}
+	if t.str("type") == "array" {
+		p.CollectionFormat = t.str("collectionFormat")
+		if p.CollectionFormat == "" {
+			p.CollectionFormat = "csv"
+		}
+		for v, depth := t, 0; v.str("type") == "array"; v, depth = v.get("items"), depth+1 {
+			cf := v.str("collectionFormat")
+			if !slices.Contains([]string{"", "csv", "ssv", "tsv", "pipes", "multi"}, cf) || cf == "multi" && (depth > 0 || p.In != "query" && p.In != "formData") {
+				p.Err = fmt.Errorf("unsupported collectionFormat %q for %s", cf, p.In)
+			}
+		}
+	}
+	if !slices.Contains([]string{"path", "query", "header", "body", "formData"}, p.In) {
+		p.Err = fmt.Errorf("unsupported Swagger parameter location %q", p.In)
+	}
+	if p.In == "header" && (!isToken(p.Name) || slices.Contains(derivedFields, pp.field) || pp.field == "Cookie") {
+		p.Err = errors.New("unsupported header parameter field")
+	}
+	pp.idHash = paramHash(p.In, pp.identity().name)
+	// Keep the same name hash that assignKeys uses for all parameters.
+	pp.nameHash = uint32(maphash.String(paramSeed, p.Name))
+	loc, _, dot := strings.Cut(p.Name, ".")
+	pp.dotted = p.Name == "" || strings.HasPrefix(p.Name, "/") || strings.HasPrefix(p.Name, "Input.Body") || dot && slices.Contains([]string{"path", "query", "header", "cookie", "querystring"}, loc)
+	return pp
+}
+
+// legacyValues serializes nested arrays from the inside out; undefined
+// members contribute nothing. Delimiters are escaped at their own level.
+func legacyValues(r *jsonReader, schema value, set *charset) ([]string, error) {
+	switch r.s[r.i] {
+	case 'n':
+		r.skip()
+		return nil, nil
+	case '{':
+		if !r.skip() {
+			return nil, nil
+		}
+		return nil, errors.New("Swagger parameters cannot serialize objects")
+	case '[':
+		var items []string
+		err := r.each(func(string) error {
+			xs, err := legacyValues(r, schema.get("items"), set)
+			if err == nil {
+				items = append(items, xs...)
+			}
+			return err
+		})
+		if err != nil || len(items) == 0 {
+			return nil, err
+		}
+		cf := schema.str("collectionFormat")
+		if cf == "multi" {
+			return items, nil
+		}
+		delim := map[string]string{"": ",", "csv": ",", "ssv": " ", "tsv": "\t", "pipes": "|"}[cf]
+		if delim == "" {
+			return nil, fmt.Errorf("unsupported collectionFormat %q", cf)
+		}
+		if set != nil && delim != "," {
+			delim = escape(delim, set)
+		}
+		return []string{strings.Join(items, delim)}, nil
+	default:
+		s := r.scalar()
+		if set != nil {
+			s = escape(s, set)
+		}
+		return []string{s}, nil
+	}
+}
+
+func (c *Client) writeLegacy(b *strings.Builder, lead string, p *param, v any, form bool) (bool, error) {
+	s, _, err := encodeJSON(c.doc, v, marshal)
+	if err != nil {
+		return false, err
+	}
+	set := p.set
+	if form {
+		set = nil
+	}
+	vals, err := legacyValues(&jsonReader{s: s}, p.legacy, set)
+	if err != nil || len(vals) == 0 {
+		return false, err
+	}
+	if p.Err != nil {
+		return false, p.Err
+	}
+	for i, v := range vals {
+		if i == 0 {
+			b.WriteString(lead)
+		} else {
+			b.WriteByte('&')
+		}
+		if p.In == "query" || form {
+			name := p.name
+			if form {
+				name = string(appendForm(nil, p.Name))
+			}
+			b.WriteString(name)
+			if !(v == "" && c.cfg.NameOnlyEmpty && p.AllowEmptyValue) {
+				b.WriteByte('=')
+			}
+		}
+		if form {
+			b.Write(appendForm(nil, v))
+		} else {
+			b.WriteString(v)
+		}
+		if !form && b.Len() > maxLength {
+			return false, errTooLong
+		}
+	}
+	return true, nil
+}
+
+// swaggerBody removes body/formData declarations from the parameter plan
+// and normalizes their media without rewriting the authored document.
+func (o *operation) swaggerBody(n value) error {
+	var fields []param
+	var body *param
+	kept := o.params[:0]
+	for i := range o.params {
+		p := o.params[i]
+		switch p.In {
+		case "body":
+			if body != nil {
+				return errors.New("several Swagger body parameters")
+			}
+			body = &p
+		case "formData":
+			fields = append(fields, p)
+		default:
+			kept = append(kept, p)
+		}
+	}
+	o.params = kept
+	if body == nil && len(fields) == 0 {
+		return nil
+	}
+	if body != nil && len(fields) > 0 {
+		return errors.New("Swagger body and formData parameters cannot coexist")
+	}
+	types := n.get("consumes")
+	if !types.ok() {
+		types = o.doc.root().get("consumes")
+	}
+	var schema *Schema
+	var src, desc string
+	required := false
+	var encoding *formEncoding
+	var params []*Param
+	list := types.strs()
+	if body != nil {
+		schema = o.doc.schema(body.legacy.get("schema"), body.Source, "/schema")
+		src, desc, required = body.Source, body.Description, body.Required
+	} else {
+		encoding = &formEncoding{byName: map[string]*field{}}
+		properties := map[string]json.RawMessage{}
+		var req []string
+		for _, p := range fields {
+			f := *textField
+			f.param = p
+			f.ContentType = "text/plain"
+			f.roots = []value{p.legacy}
+			f.plain = false
+			if p.legacy.str("type") == "file" {
+				f.types, f.parsed, f.class = []string{octetStream.full}, []parsedMedia{octetStream}, otherClass
+				f.ContentType = octetStream.full
+			}
+			encoding.byName[p.Name] = &f
+			params = append(params, f.Param)
+			properties[p.Name] = swaggerSchema(p.legacy)
+			if p.Required {
+				encoding.required = true
+				req = append(req, p.Name)
+				required = true
+			}
+		}
+		raw, _ := json.Marshal(struct {
+			Type       string                     `json:"type"`
+			Properties map[string]json.RawMessage `json:"properties"`
+			Required   []string                   `json:"required,omitempty"`
+		}{"object", properties, req})
+		schema = &Schema{doc: o.doc, v: n, synthetic: raw}
+		for _, typ := range list {
+			m, ok := parseMedia(typ)
+			if ok && (isForm(m) || strings.EqualFold(m.full, "multipart/form-data")) {
+				continue
+			}
+			list = slices.DeleteFunc(list, func(s string) bool { return s == typ })
+		}
+	}
+	if len(list) == 0 {
+		list = []string{""}
+	}
+	c := o.doc.swaggerContent(schema, list, src)
+	if encoding != nil {
+		for i, md := range c.media {
+			md.Encoding = params
+			c.encodings[i] = encoding
+		}
+	}
+	o.Body = &Message{Required: required, Source: src, Description: desc, Media: c.media}
+	o.body, o.encodings = c.parsed, c.encodings
+	return nil
+}
+
+func (d *document) swaggerContent(schema *Schema, types []string, src string) *content {
+	c := &content{source: src}
+	if len(types) == 0 {
+		types = []string{""}
+	}
+	for _, typ := range types {
+		md := &Media{Type: typ, Schema: schema, Source: src}
+		pm, ok := parseMedia(typ)
+		if typ == "" {
+			pm, _ = parseMedia("*/*")
+			ok = true
+		}
+		if !ok {
+			md.Err = fmt.Errorf("invalid media type %q", typ)
+		}
+		md.Sequential = pm.class() == sequentialClass || isMultipart(pm)
+		var enc *formEncoding
+		if schema != nil {
+			enc, md.Encoding = d.encodingOf([]value{schema.v}, schema.Source(), value{}, "", pm)
+		} else {
+			enc = noFields
+		}
+		c.media, c.parsed, c.encodings = append(c.media, md), append(c.parsed, pm), append(c.encodings, enc)
+		if ok && pm.concrete() {
+			c.success = append(c.success, pm)
+		}
+	}
+	return c
+}
+
+func (d *document) swaggerResponse(v value, src string, produces value) (*Message, *content) {
+	t, at, desc, err := d.follow(v, src)
+	if err != nil {
+		return &Message{Source: src, Err: err}, &noContent
+	}
+	c := &content{source: at}
+	if schema := d.schema(t.get("schema"), at, "/schema"); schema != nil {
+		c = d.swaggerContent(schema, produces.strs(), at)
+	}
+	c.headers = d.headers(t.get("headers"), at+"/headers")
+	return &Message{Source: at, Description: desc, Headers: c.headers, Media: c.media}, c
+}
+
+// membersChecked adds Swagger required-field checks without making a second
+// pass through caller values or changing the general object encoder.
+func (c *Client) membersChecked(v any, enc *formEncoding, body string, re *RequestError, f func(string, *field, any)) error {
+	if !enc.required {
+		return c.doc.members(v, enc, f)
+	}
+	seen := map[string]bool{}
+	err := c.doc.members(v, enc, func(name string, fd *field, v any) {
+		if !null(v) {
+			seen[name] = true
+		}
+		f(name, fd, v)
+	})
+	for name, fd := range enc.byName {
+		if fd.Required && !seen[name] {
+			re.input((key{body, name, -1}).String(), errMissing)
+		}
+	}
+	return err
+}
+
+// positionalEncoding compiles all positional schema/Encoding combinations
+// once; looking up an item does no document traversal.
+func (d *document) positionalEncoding(enc *formEncoding, v value, roots []value, src string, named ...*Param) []*Param {
+	enc.ordered = true
+	var schemas []value
+	var rest value
+	d.closure(roots, src+"/schema", func(s value, _ string) {
+		if schemas == nil {
+			for _, p := range s.get("prefixItems").members() {
+				schemas = append(schemas, p)
+			}
+		}
+		if !rest.ok() {
+			rest = s.get("items")
+		}
+	})
+	var prefix []value
+	for _, e := range v.get("prefixEncoding").members() {
+		prefix = append(prefix, e)
+	}
+	if len(prefix) == 0 && !v.get("itemEncoding").ok() {
+		named = slices.Clone(named)
+	} else {
+		named = nil
+	}
+	for i := range max(len(prefix), len(schemas)) {
+		var schema, e value
+		if i < len(schemas) {
+			schema = schemas[i]
+		} else {
+			schema = rest
+		}
+		if i < len(prefix) {
+			e = prefix[i]
+		} else {
+			e = v.get("itemEncoding")
+		}
+		name := fmt.Sprint(i)
+		f, p := d.newField(name, d.schema(schema, src, "/schema/prefixItems/"+name), schemaRoots(schema), e, src+"/prefixEncoding/"+name, parsedMedia{})
+		enc.positional = append(enc.positional, f)
+		if i < len(prefix) {
+			named = append(named, p)
+		}
+	}
+	f, p := d.newField("*", d.schema(rest, src, "/schema/items"), schemaRoots(rest), v.get("itemEncoding"), src+"/itemEncoding", parsedMedia{})
+	enc.rest = f
+	if v.get("itemEncoding").ok() {
+		named = append(named, p)
+	}
+	return named
+}
+
+func (w *partWriter) position(enc *formEncoding, v any, body string, i int) {
+	at := key{body, fmt.Sprint(i), -1}
+	if null(v) {
+		return
+	}
+	f := enc.rest
+	if i < len(enc.positional) {
+		f = enc.positional[i]
+	}
+	if !w.styles {
+		w.write(f, "", v, at)
+		return
+	}
+	// Form-data arrays retain explicit names, rather than assigning index names.
+	switch p := v.(type) {
+	case Part:
+		if len(p.Header.Values("Content-Disposition")) > 0 {
+			w.write(f, "", p, at)
+			return
+		}
+	case *Part:
+		if p != nil && len(p.Header.Values("Content-Disposition")) > 0 {
+			w.write(f, "", p, at)
+			return
+		}
+	}
+	count := 0
+	var name string
+	var content any
+	err := w.c.doc.members(v, noFields, func(n string, _ *field, x any) { count++; name, content = n, x })
+	if err != nil || count != 1 {
+		w.re.input(at.String(), errors.New("a form-data array item requires a one-property object or Part with Content-Disposition"))
+		return
+	}
+	w.write(f, name, content, at)
+}
+
+func schemaRoots(v value) []value {
+	if v.ok() {
+		return []value{v}
+	}
+	return nil
+}
