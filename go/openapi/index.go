@@ -605,18 +605,12 @@ type resolution struct {
 // named by the reference of its first Reference Object in node order, so
 // that every chain into it names it alike.
 func (d *document) follow(v value, src string) (value, string, string, error) {
-	ref, desc, described := reference(v)
+	ref, desc, _ := reference(v)
 	if !ref.ok() {
 		return v, src, desc, nil
 	}
-	type step struct {
-		i         int32 // the Reference Object (see value.id)
-		ref       value
-		desc      string
-		described bool
-	}
-	var walked []step     // the Reference Objects followed, not yet published
-	var on map[int32]bool // walked, once a scan of it would be long
+	var walked []value    // the Reference Objects followed, not yet published
+	var on map[int32]bool // their ids (see value.id), once a scan of walked would be long
 	var r resolution
 	for at := ""; ; {
 		i := v.id()
@@ -628,16 +622,16 @@ func (d *document) follow(v value, src string) (value, string, string, error) {
 			r = resolution{v: v, src: v.t.source(at), desc: desc}
 			break
 		}
-		if on[i] || on == nil && slices.ContainsFunc(walked, func(s step) bool { return s.i == i }) {
-			cycle := walked[slices.IndexFunc(walked, func(s step) bool { return s.i == i }):]
-			first := slices.MinFunc(cycle, func(a, b step) int { return cmp.Compare(a.i, b.i) })
-			r = resolution{err: fmt.Errorf("%w %q: a reference cycle", ErrUnresolved, first.ref.text())}
+		if on[i] || on == nil && slices.ContainsFunc(walked, func(w value) bool { return w.id() == i }) {
+			cycle := walked[slices.IndexFunc(walked, func(w value) bool { return w.id() == i }):]
+			first, _, _ := reference(slices.MinFunc(cycle, func(a, b value) int { return cmp.Compare(a.id(), b.id()) }))
+			r = resolution{err: fmt.Errorf("%w %q: a reference cycle", ErrUnresolved, first.text())}
 			break
 		}
-		if walked = append(walked, step{i, ref, desc, described}); len(walked) == 16 {
+		if walked = append(walked, v); len(walked) == 16 {
 			on = map[int32]bool{}
-			for _, s := range walked {
-				on[s.i] = true
+			for _, w := range walked {
+				on[w.id()] = true
 			}
 		} else if on != nil {
 			on[i] = true
@@ -648,13 +642,13 @@ func (d *document) follow(v value, src string) (value, string, string, error) {
 			break
 		}
 		v, at = next, nextAt
-		ref, desc, described = reference(v)
+		ref, desc, _ = reference(v)
 	}
 	for k := len(walked) - 1; k >= 0; k-- {
-		if s := walked[k]; s.described && r.err == nil {
-			r.desc = s.desc
+		if _, desc, described := reference(walked[k]); described && r.err == nil {
+			r.desc = desc
 		}
-		kept, _ := d.refs.LoadOrStore(walked[k].i, &resolution{r.v, r.src, r.desc, r.err})
+		kept, _ := d.refs.LoadOrStore(walked[k].id(), &resolution{r.v, r.src, r.desc, r.err})
 		r = *kept.(*resolution)
 	}
 	return r.v, r.src, r.desc, r.err

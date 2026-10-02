@@ -470,8 +470,8 @@ func (d *document) message(v value, src string, request bool) (*Message, value, 
 // Request Body Object when request.
 func (d *document) content(t value, at string, request bool) *content {
 	c := &content{source: at}
-	if !request {
-		c.headers = d.headers(t.get("headers"), at+"/headers")
+	if h := t.get("headers"); h.ok() && !request {
+		c.headers = d.headers(h, at+"/headers")
 	}
 	if m := t.get("content"); m.kind() == '{' {
 		for typ, mv := range m.members() {
