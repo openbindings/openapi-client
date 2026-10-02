@@ -644,29 +644,43 @@ func (c *Client) mediaType(o *operation, in *Input, re *RequestError) (string, p
 		re.setting("Options.MediaType", cfg.mediaTypeErr)
 	}
 	typ := in.MediaType
-	if typ == "" && cfg.MediaType != "" && cfg.mediaTypeErr == nil && match(o.body, declared, cfg.mediaType) != nil {
+	if typ == "" && cfg.MediaType != "" && cfg.mediaTypeErr == nil && match(o.body, declared, cfg.mediaType, true) != nil {
 		typ = cfg.MediaType
 	}
 	if typ == "" {
-		if len(declared) == 1 && declared[0].Err == nil && o.body[0].concrete() {
+		switch {
+		case len(declared) == 1 && declared[0].Err != nil:
+			re.setting("Input.MediaType", mediaErr(declared[0]))
+		case len(declared) == 1 && o.body[0].concrete():
 			return declared[0].Type, o.body[0], declared[0]
+		default:
+			re.setting("Input.MediaType", errors.New("the operation offers no single concrete media type; select one with Input.MediaType or Options.MediaType"))
 		}
-		re.setting("Input.MediaType", errors.New("the operation offers no single concrete media type; select one with Input.MediaType or Options.MediaType"))
 		return "", parsedMedia{}, nil
 	}
 	m, ok := parseMedia(typ)
-	var md *Media
-	switch {
-	case !ok || !m.concrete():
+	if !ok || !m.concrete() {
 		re.setting("Input.MediaType", errors.New("not a concrete media type"))
 		return "", parsedMedia{}, nil
-	case len(declared) > 0:
-		if md = match(o.body, declared, m); md == nil {
-			re.setting("Input.MediaType", fmt.Errorf("the operation does not declare %s", m.full))
+	}
+	var md *Media
+	if len(declared) > 0 {
+		switch md = match(o.body, declared, m, true); {
+		case md == nil:
+			re.setting("Input.MediaType", fmt.Errorf("the operation does not declare %s", typ))
+			return "", parsedMedia{}, nil
+		case md.Err != nil:
+			re.setting("Input.MediaType", mediaErr(md))
 			return "", parsedMedia{}, nil
 		}
 	}
 	return typ, m, md
+}
+
+// mediaErr is the refusal of a call that the declared media type md, whose
+// Err is set, would govern.
+func mediaErr(md *Media) error {
+	return fmt.Errorf("the media type declared at %s: %w", md.Source, md.Err)
 }
 
 // setBody gives req the body p, read again from the start by GetBody when p

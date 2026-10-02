@@ -44,7 +44,8 @@ type document struct {
 
 	// What nodes shared by several places compile to, by node.
 	paramForms  memo[param]
-	contents    memo[*content]
+	bodies      memo[*content] // a Request Body Object's
+	contents    memo[*content] // a Response Object's
 	serverLists memo[*serverList]
 	schemeNames memo[*scheme] // by the securitySchemes member a name selects
 	schemeForms memo[*scheme] // by the Security Scheme Object a reference reaches

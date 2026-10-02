@@ -167,16 +167,17 @@ func (m parsedMedia) covers(t parsedMedia) (specificity [2]int, ok bool) {
 	return specificity, ok
 }
 
-// match returns the Media of ms, parsed as declared, that t matches, or nil
-// when none does or several tie.
-func match(declared []parsedMedia, ms []*Media, t parsedMedia) *Media {
+// match returns the Media of ms, parsed as declared, that t matches most
+// specifically, or nil when none does or several tie; with errs, one whose
+// Err is set may be it.
+func match(declared []parsedMedia, ms []*Media, t parsedMedia, errs bool) *Media {
 	var best *Media
 	var bestSpec [2]int
 	tie := false
 	for i, m := range declared {
 		spec, ok := m.covers(t)
 		switch {
-		case !ok || ms[i].Err != nil:
+		case !ok || !errs && ms[i].Err != nil:
 		case best == nil || spec[0] > bestSpec[0] || spec[0] == bestSpec[0] && spec[1] > bestSpec[1]:
 			best, bestSpec, tie = ms[i], spec, false
 		case spec == bestSpec:

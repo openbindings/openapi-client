@@ -36,6 +36,7 @@ type field struct {
 	parsed []parsedMedia                   // types, parsed
 	class  class                           // the class of a sole type
 	listed bool                            // its Encoding lists them, so a Part's MediaType must match one
+	err    error                           // why its contentType cannot type a value
 	roots  []value                         // its declarations, whose properties a nested part's fields are
 	nested [2]atomic.Pointer[formEncoding] // the fields of its nested part, and of an item's
 }
@@ -93,13 +94,13 @@ func (d *document) encodingOf(s []value, src string, encodings value, esrc strin
 	})
 	list := make([]*Param, 0, len(names))
 	for i, name := range names {
-		f := d.newField(name, first[i], fields[name].roots, encodings.get(name), esrc+"/"+token(name), m)
-		fields[name], list = f, append(list, f.Param)
+		f, p := d.newField(name, first[i], fields[name].roots, encodings.get(name), esrc+"/"+token(name), m)
+		fields[name], list = f, append(list, p)
 	}
 	for name, e := range encodings.members() {
 		if fields[name] == nil {
-			f := d.newField(name, nil, nil, e, esrc+"/"+token(name), m)
-			fields[name], list = f, append(list, f.Param)
+			f, p := d.newField(name, nil, nil, e, esrc+"/"+token(name), m)
+			fields[name], list = f, append(list, p)
 		}
 	}
 	return &formEncoding{byName: fields}, list
@@ -591,7 +592,7 @@ func (d *document) keepSet(k state, set mediaSet) {
 
 // newField compiles the field name, whose first declaration is schema and
 // all of them roots, and whose Encoding Object is e, at src, under m.
-func (d *document) newField(name string, schema *Schema, roots []value, e value, src string, m parsedMedia) *field {
+func (d *document) newField(name string, schema *Schema, roots []value, e value, src string, m parsedMedia) (*field, *Param) {
 	f := &field{param: param{Param: &Param{Name: name, Schema: schema}}, roots: roots}
 	p := f.Param
 	if schema != nil {
@@ -629,7 +630,7 @@ func (d *document) newField(name string, schema *Schema, roots []value, e value,
 		}
 		f.param = compileStyle(p, "query", explode)
 		if stylesApply(m) {
-			return f
+			return f, p
 		}
 	}
 	if f.listed = ctype.ok(); !f.listed {
@@ -640,18 +641,25 @@ func (d *document) newField(name string, schema *Schema, roots []value, e value,
 			}
 		}
 		p.ContentType, f.class = strings.Join(f.types, ", "), f.parsed[0].class()
-		return f
+		return f, p
 	}
 	p.ContentType = ctype.string()
 	for _, t := range mediaList(p.ContentType) {
 		m, ok := parseMedia(t)
 		if !ok {
-			p.Err = fmt.Errorf("contentType %q is not a list of media types or ranges", p.ContentType)
+			f.err = fmt.Errorf("contentType %q is not a list of media types or ranges", p.ContentType)
 			break
 		}
 		f.types, f.parsed, f.class = append(f.types, t), append(f.parsed, m), m.class()
 	}
-	return f
+	if p.Err == nil {
+		if p.Err = f.err; f.styled && f.err != nil { // a range, whose style applies to form-data calls, which ignore contentType
+			sp := *p
+			sp.Err = nil
+			f.Param = &sp
+		}
+	}
+	return f, p
 }
 
 // mediaList splits a comma-separated list of media types, a comma inside a
@@ -734,8 +742,8 @@ func (f *field) value(v any, name string, at key, form bool, re *RequestError) (
 	switch {
 	case !form && !quotable(name):
 		re.input(at.String(), errors.New("a part name cannot hold a control character other than a tab"))
-	case f.Err != nil:
-		re.input(at.String(), f.Err)
+	case f.err != nil:
+		re.input(at.String(), f.err)
 	case err != nil:
 		re.setting(at.String(), err)
 	default:

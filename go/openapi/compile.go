@@ -128,7 +128,7 @@ func (e *entry) shape() *operation {
 	if body.ok() && op.Method != "TRACE" {
 		var target value
 		var c *content
-		op.Body, target, c = d.message(body, src+"/requestBody")
+		op.Body, target, c = d.message(body, src+"/requestBody", true)
 		if !target.ok() {
 			errs = append(errs, op.Body.Err)
 		}
@@ -138,7 +138,7 @@ func (e *entry) shape() *operation {
 	if responses.kind() == '{' {
 		for key, r := range responses.members() {
 			if !strings.HasPrefix(key, "x-") {
-				m, _, c := d.message(r, src+"/responses/"+token(key))
+				m, _, c := d.message(r, src+"/responses/"+token(key), false)
 				m.Key = key
 				o.addResponse(m, c)
 			}
@@ -408,25 +408,31 @@ type content struct {
 // noContent is the content of an object a reference cannot reach.
 var noContent content
 
-// message describes the Request Body or Response Object v, whose Source is
-// src, following references, with its content. The target is absent when a
-// reference cannot be resolved; the Message then reports it in Err.
-func (d *document) message(v value, src string) (*Message, value, *content) {
+// message describes the Request Body, when request, or Response Object v,
+// whose Source is src, following references, with its content. The target
+// is absent when a reference cannot be resolved; the Message then reports it
+// in Err.
+func (d *document) message(v value, src string, request bool) (*Message, value, *content) {
 	t, at, desc, err := d.follow(v, src)
 	if err != nil {
 		return &Message{Source: src, Err: err}, value{}, &noContent
 	}
+	memo := &d.contents
+	if request {
+		memo = &d.bodies
+	}
 	var c *content
 	if t.i == v.i { // only this place reaches it
-		c = d.content(t, at)
+		c = d.content(t, at, request)
 	} else {
-		c = d.contents.get(t.i, func() *content { return d.content(t, at) })
+		c = memo.get(t.i, func() *content { return d.content(t, at, request) })
 	}
 	return &Message{Description: desc, Source: c.source, Media: c.media}, t, c
 }
 
-// content compiles the content map of the object t, whose Source is at.
-func (d *document) content(t value, at string) *content {
+// content compiles the content map of the object t, whose Source is at, a
+// Request Body Object when request.
+func (d *document) content(t value, at string, request bool) *content {
 	c := &content{source: at}
 	if m := t.get("content"); m.kind() == '{' {
 		for typ, mv := range m.members() {
@@ -442,15 +448,16 @@ func (d *document) content(t value, at string) *content {
 			default:
 				md.Sequential = pm.class() == sequentialClass || isMultipart(pm)
 			}
-			// A form or multipart type, or a range of multipart types, has
-			// the fields its schema and Encoding give; */* and application/*,
-			// which cover such types, those of its schema alone (OpenAPI
-			// 3.1.2 section 4.8.14: Encoding applies to form and multipart
-			// types).
+			// A request's form or multipart type, or range of multipart
+			// types, has the fields its schema and Encoding give; */* and
+			// application/*, which cover such types, those of its schema alone
+			// (OpenAPI 3.1.2 section 4.8.14: Encoding applies to form and
+			// multipart types, and to Request Body Objects only). A response's
+			// boundary is the response's.
 			var enc *formEncoding
 			schema := []value{mv.get("schema")}
 			switch {
-			case !ok:
+			case !ok || !request:
 			case isForm(pm) || isMultipart(pm):
 				if _, _, err := pm.boundary(); err != nil {
 					md.Err = err
