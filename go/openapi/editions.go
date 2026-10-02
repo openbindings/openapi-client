@@ -211,16 +211,13 @@ func (o *operation) swaggerBody(n value) error {
 		properties := map[string]json.RawMessage{}
 		var req []string
 		for _, p := range fields {
-			f := *textField
-			f.param = p
+			f := &field{param: p, roots: []value{p.legacy}, types: textField.types, parsed: textField.parsed, class: textClass}
 			f.ContentType = "text/plain"
-			f.roots = []value{p.legacy}
-			f.plain = false
 			if p.legacy.str("type") == "file" {
 				f.types, f.parsed, f.class = []string{octetStream.full}, []parsedMedia{octetStream}, otherClass
 				f.ContentType = octetStream.full
 			}
-			encoding.byName[p.Name] = &f
+			encoding.byName[p.Name] = f
 			params = append(params, f.Param)
 			properties[p.Name] = swaggerSchema(p.legacy)
 			if p.Required {
