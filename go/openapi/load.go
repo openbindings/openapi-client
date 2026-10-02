@@ -66,42 +66,48 @@ func Parse(ctx context.Context, content []byte, uri string, opts *Options) (*Cli
 // is '{' is read as JSON and, if it is not JSON, as YAML; anything else is read
 // as YAML 1.2 under its Core schema, so yes and no stay strings, << is an
 // ordinary key, and a scalar key such as an unquoted 200 is read as the string
-// it spells. Numbers keep the exact value written. A duplicate key, a key that
-// is not a scalar, or a second document in the stream rejects the document, and
-// so, in every edition, does a value JSON cannot hold (.inf, .nan, or a tag
-// outside the Core schema, such as !!timestamp), since Document and Raw are
-// JSON. A document whose aliases would add more than 1,000,000 nodes, or more
-// than 100 times its own node count, or that nests deeper than 1,000 levels
-// (the outermost value being level 1), is rejected too. A rejection names the
-// document's URI and the line and column of the problem, both counted from 1,
-// the column in bytes after any byte order mark. Reference cycles are
-// detected, never followed forever.
+// it spells. A %YAML directive for version 1.x is read as 1.2, and any other
+// major version rejects the document (YAML 1.2.2 section 6.8.1). Numbers keep
+// the exact value written. A duplicate key, a key that is not a scalar, or a
+// second document in the stream rejects the document, and so, in every edition,
+// does a value JSON cannot hold (.inf, .nan, or a tag outside the Core schema,
+// such as !!timestamp), since Document and Raw are JSON. A document whose
+// aliases would add more than 1,000,000 nodes, more than 100 times its own node
+// count, or more than 100 times its own size in bytes, or that nests deeper
+// than 1,000 levels (the outermost value being level 1), is rejected too. A
+// rejection names the document's URI and the line and column of the problem,
+// both counted from 1, the column in the document's own bytes (two per UTF-16
+// code unit, four per UTF-32 character) after any byte order mark; a node's
+// position is where it starts, its tag included. Reference cycles are detected,
+// never followed forever.
 //
-// The references followed are $ref in Reference Objects, Path Items and
-// Schema Objects, $dynamicRef, Discriminator mapping and defaultMapping
-// values that are not component names, and OpenAPI 3.2 security
-// requirement URIs, anywhere in a document, webhooks and callbacks
-// included; operationRef and externalValue are not retrieved. They resolve
-// against each document's base: its OpenAPI 3.2 $self, itself resolved
-// first against the URI the document was retrieved from when relative, or
-// else that URI.
-// Inside a 3.1 or 3.2 schema, the nearest $id sets the base, as JSON Schema
-// 2020-12 says (see Schema for other dialects). A fragment is
-// percent-decoded as UTF-8 before it is read as a JSON Pointer or a plain
-// name.
+// The references followed are $ref in Reference Objects, Path Items and Schema
+// Objects, $dynamicRef, Discriminator mapping and defaultMapping values that
+// are not component names (a value that could be a component name is read as
+// one, as OpenAPI recommends, and never fetched), and OpenAPI 3.2 security
+// requirement URIs, anywhere in a document, webhooks and callbacks included;
+// operationRef and externalValue are not retrieved. They resolve against each
+// document's base: its OpenAPI 3.2 $self, itself resolved first against the URI
+// the document was retrieved from when relative, or else that URI. Inside a 3.1
+// or 3.2 schema, the nearest $id sets the base, as JSON Schema 2020-12 says
+// (see Schema for other dialects). A fragment is percent-decoded as UTF-8
+// before it is read as a JSON Pointer or a plain name.
 //
-// A reference resolves first to what loaded documents identify: a document
-// by its retrieval URI or 3.2 $self, a schema by $id, a plain name by
-// $anchor or $dynamicAnchor. This is decided once every document reached is
-// parsed. Only a URI no loaded document identifies is admitted and fetched,
-// and the fetched document is then searched the same way. A URI claimed by
-// two documents or schemas is unresolvable, and the error names both. A
-// reference that names a 3.2 document by the URI it was retrieved from
-// rather than its $self, or that reaches a schema by a JSON Pointer
-// crossing a nearer $id, still resolves; it stays visible as written where
-// it is written, in a Schema's Raw or in Document at the Source of the
-// object holding it. Security requirement names resolve as [SchemeLookup]
-// says.
+// A reference resolves first to what loaded documents identify: a document by
+// its retrieval URI (and the URI requested, when a redirect led there) or 3.2
+// $self, a schema by $id, a plain name by $anchor or $dynamicAnchor. This is
+// decided once every document reached is parsed. Only a URI no loaded document
+// identifies is admitted and fetched, and the fetched document is then searched
+// the same way. A reference to a URI with userinfo, or to a file URL naming a
+// host other than localhost, is unresolvable and never fetched, as Load refuses
+// such a uri. A URI claimed by two different documents or schemas is
+// unresolvable, and the error names both; a document's URI and the $id of the
+// schema at its root claim one schema. A reference that names a 3.2 document by
+// the URI it was retrieved from rather than its $self, or that reaches a schema
+// by a JSON Pointer crossing a nearer $id, still resolves; it stays visible as
+// written where it is written, in a Schema's Raw or in Document at the Source
+// of the object holding it. Security requirement names resolve as
+// [SchemeLookup] says.
 type Loader struct {
 	// Fetch, if set, retrieves each document the loader needs in place of
 	// the default (http and https with the Options' HTTPClient, file URLs
@@ -136,11 +142,11 @@ type Loader struct {
 	// It does not apply to fragment-only references within a document.
 	//
 	// With nil, http and https references may reach the entry document's
-	// original origin and Origins. For a file entry, references may reach
+	// original origin and Origins. For a file entry, file references may reach
 	// only files under the entry file's directory, after cleaning paths and
 	// resolving symlinks; Origins does not enlarge that file boundary. The
-	// default retrieval checks every redirect hop. A custom Fetch must
-	// enforce its own rules for unobservable intermediate hops.
+	// default retrieval checks every redirect hop. A custom Fetch must enforce
+	// its own rules for unobservable intermediate hops.
 	AllowReference func(from, to string) bool
 
 	// MaxBytes bounds the bytes one load retrieves, all documents together.
@@ -231,6 +237,13 @@ func (c *Client) DocumentURIs() []string {
 // there is returned as written, and resolves against its document's base.
 // Without one, each call copies the whole document, so call it once per
 // document and keep the result.
+//
+// A YAML document's JSON has no insignificant whitespace, its members in the
+// order written and its strings as encoding/json writes them without HTML
+// escaping. A number keeps its spelling where JSON's grammar allows it;
+// otherwise only what the grammar requires changes: a leading + is dropped, a
+// 0 is written before a leading point, a point with no digit after it is
+// dropped, and a hexadecimal or octal integer is written in decimal.
 //
 // A Source's fragment, like a SchemaReference.URI's, is a JSON Pointer
 // percent-encoded as RFC 6901 section 6 says, as in

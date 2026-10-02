@@ -21,12 +21,12 @@ var ErrNoOperation = errors.New("openapi: no such operation")
 
 // ErrUnresolved is wrapped by the Err of a part whose defect is a reference
 // that cannot be resolved, a reference cycle included, as distinct from a
-// malformed declaration. The Err
-// names the reference, and wraps the retrieval error too when fetching its
-// document failed, or an error naming the refused URI when admission
-// refused it, so a caller can tell a fixable fetch or admission (see
-// Loader.Origins, Loader.AllowReference and Loader.Fetch) from a broken
-// document.
+// malformed declaration. The Err names the reference, and wraps the retrieval
+// error too when fetching or reading its document failed (one that cannot be
+// read is named with its line and column, as Load names an entry document's),
+// or an error naming the refused URI when admission refused it, so a caller can
+// tell a fixable fetch or admission (see Loader.Origins, Loader.AllowReference
+// and Loader.Fetch) from a broken document.
 var ErrUnresolved = errors.New("openapi: unresolved reference")
 
 // A RequestError is an API call refused before it was sent, or Options
