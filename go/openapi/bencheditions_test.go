@@ -3,11 +3,13 @@ package openapi_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -64,6 +66,7 @@ func BenchmarkEditions(b *testing.B) {
 }
 
 var editionBenchValues = []string{"red shoes", "sale/clearance", "new"}
+var editionBenchObject = map[string]int{"n": 1}
 
 func editionBenchClient(t testing.TB, kind string) *openapi.Client {
 	var doc string
@@ -85,7 +88,7 @@ func editionBenchInput(kind string) *openapi.Input {
 	case "Querystring":
 		return &openapi.Input{Params: map[string]any{"whole": map[string]any{"tags": editionBenchValues}}}
 	default:
-		return &openapi.Input{MediaType: "multipart/mixed; boundary=edition-bench", Body: []any{"metadata", map[string]int{"n": 1}}}
+		return &openapi.Input{MediaType: "multipart/mixed; boundary=edition-bench", Body: []any{"metadata", editionBenchObject}}
 	}
 }
 
@@ -96,24 +99,37 @@ func editionBenchHand(kind string) (*http.Request, error) {
 	base := "https://api.example.test/x"
 	switch kind {
 	case "Collection":
-		var encoded []string
-		for _, v := range editionBenchValues {
-			encoded = append(encoded, pctName(v))
+		var target strings.Builder
+		target.WriteString(base + "?tags=")
+		for i, v := range editionBenchValues {
+			if i > 0 {
+				target.WriteString("%7C")
+			}
+			target.WriteString(strings.ReplaceAll(url.QueryEscape(v), "+", "%20"))
 		}
-		return http.NewRequest("GET", base+"?tags="+strings.Join(encoded, "%7C"), nil)
+		return http.NewRequest("GET", target.String(), nil)
 	case "Querystring":
-		var pairs []string
-		for _, v := range editionBenchValues {
-			pairs = append(pairs, formPairs("tags", v))
+		var target strings.Builder
+		target.WriteString(base + "?")
+		for i, v := range editionBenchValues {
+			if i > 0 {
+				target.WriteByte('&')
+			}
+			target.WriteString("tags=")
+			target.WriteString(formEnc(v))
 		}
-		return http.NewRequest("GET", base+"?"+strings.Join(pairs, "&"), nil)
+		return http.NewRequest("GET", target.String(), nil)
 	default:
+		encoded, err := json.Marshal(editionBenchObject)
+		if err != nil {
+			return nil, err
+		}
 		var body bytes.Buffer
 		w := multipart.NewWriter(&body)
 		if err := w.SetBoundary("edition-bench"); err != nil {
 			return nil, err
 		}
-		for i, content := range []string{"metadata", `{"n":1}`} {
+		for i := range 2 {
 			media := "text/plain"
 			if i == 1 {
 				media = "application/json"
@@ -122,7 +138,12 @@ func editionBenchHand(kind string) (*http.Request, error) {
 			if err != nil {
 				return nil, err
 			}
-			if _, err = io.WriteString(p, content); err != nil {
+			if i == 0 {
+				_, err = io.WriteString(p, "metadata")
+			} else {
+				_, err = p.Write(encoded)
+			}
+			if err != nil {
 				return nil, err
 			}
 		}
@@ -134,6 +155,45 @@ func editionBenchHand(kind string) (*http.Request, error) {
 			req.Header.Set("Content-Type", "multipart/mixed; boundary=edition-bench")
 		}
 		return req, err
+	}
+}
+
+// The hand controls are also checked on the pre-editions baseline, where
+// client/hand parity cannot run past unsupported-edition admission.
+func TestEditionHandControls(t *testing.T) {
+	for _, tc := range []struct{ kind, target string }{
+		{"Collection", "/x?tags=red%20shoes%7Csale%2Fclearance%7Cnew"},
+		{"Querystring", "/x?tags=red+shoes&tags=sale%2Fclearance&tags=new"},
+		{"Positional", "/x"},
+	} {
+		t.Run(tc.kind, func(t *testing.T) {
+			req, err := editionBenchHand(tc.kind)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if req.URL.RequestURI() != tc.target {
+				t.Errorf("target %q want %q", req.URL.RequestURI(), tc.target)
+			}
+			if tc.kind != "Positional" {
+				return
+			}
+			body, err := io.ReadAll(req.Body)
+			req.Body.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _, parts := readMultipart(t, req.Header.Get("Content-Type"), body)
+			if len(parts) != 2 {
+				t.Fatalf("parts %d", len(parts))
+			}
+			want, err := json.Marshal(editionBenchObject)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(parts[0].body) != "metadata" || !bytes.Equal(parts[1].body, want) {
+				t.Errorf("parts %#v", parts)
+			}
+		})
 	}
 }
 
