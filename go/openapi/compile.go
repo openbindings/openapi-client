@@ -265,23 +265,18 @@ func (o *operation) assignKeys() {
 // Source in the list, made only then.
 func (d *document) param(v value, list string, i int) param {
 	src := func() string { return list + "/" + strconv.Itoa(i) }
-	at := ""
-	if ref, _, _ := reference(v); !ref.ok() {
-		at = src()
+	if ref, desc, _ := reference(v); !ref.ok() { // only this place reaches it
+		pp := d.newParam(v, src())
+		pp.Description = desc
+		return pp
 	}
-	t, at, desc, err := d.follow(v, at)
+	t, at, desc, err := d.follow(v, "")
 	if err != nil {
 		return param{Param: &Param{Source: src(), Err: err}}
 	}
-	var pp param
-	if t.i == v.i { // only this place reaches it
-		pp = d.newParam(t, at)
-	} else {
-		pp = d.paramForms.get(t.i, func() param { return d.newParam(t, at) })
-		c := *pp.Param
-		pp.Param = &c
-	}
-	pp.Description = desc
+	pp := d.paramForms.get(t.i, func() param { return d.newParam(t, at) })
+	c := *pp.Param
+	pp.Param, c.Description = &c, desc
 	return pp
 }
 

@@ -634,12 +634,27 @@ func (d *document) follow(v value, src string) (value, string, string, error) {
 }
 
 // reference returns v's $ref, if it is a string, and its description, if
-// it gives one.
+// it gives one, read in one pass while v has few members and looked up
+// otherwise.
 func reference(v value) (ref value, desc string, described bool) {
-	if ref = v.get("$ref"); ref.kind() != '"' {
+	var d value
+	n := 0
+	for name, m := range v.members() {
+		if n++; n > many {
+			ref, d = v.get("$ref"), v.get("description")
+			break
+		}
+		switch name {
+		case "$ref":
+			ref = m
+		case "description":
+			d = m
+		}
+	}
+	if ref.kind() != '"' {
 		ref = value{}
 	}
-	if d := v.get("description"); d.kind() == '"' {
+	if d.kind() == '"' {
 		desc, described = d.text(), true
 	}
 	return ref, desc, described
