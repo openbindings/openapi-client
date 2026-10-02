@@ -15,8 +15,10 @@ https://proxy.golang.org/go.yaml.in/yaml/v3/@v/v3.0.5.zip.
 
 `upstream.sha256` records the unmodified SHA-256 of every copied file,
 using its name in this directory. `openapi.patch` records the complete
-local source difference, including the added position accessor. Reversing
-that patch reconstructs the source baseline verified by the manifest.
+local source difference, including the added position accessor. From a copy of this directory,
+`git apply --reverse --unidiff-zero openapi.patch` reconstructs the source
+baseline verified by the manifest. Zero-context hunks keep the exact patch
+free of whitespace-only context lines.
 The original 13 Go files total 11,346 physical lines and 331,678 bytes;
 this third-party footprint is recorded separately from client-owned code.
 
