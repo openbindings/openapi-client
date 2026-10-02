@@ -372,7 +372,8 @@ func unescapeToken(s string) (string, bool) {
 // per code unit as retrieved, as the document at uri, stopping when ctx is
 // done.
 func parseTree(ctx context.Context, src, uri string, unit int) (*tree, error) {
-	p := scanner{ctx: ctx, src: src, uri: uri, unit: unit}
+	var names [many]string
+	p := scanner{ctx: ctx, src: src, uri: uri, unit: unit, names: names[:0]}
 	if uint64(len(src)) >= math.MaxUint32 {
 		return nil, p.errorAt(0, "the document is 4 GiB or larger")
 	}

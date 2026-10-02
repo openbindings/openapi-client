@@ -715,7 +715,7 @@ func (r *reader) open(n value, k kind, base *url.URL, ptr *documentPath, uri, di
 	case frag != "":
 		c := r.ids[uri+"#"+frag]
 		if c == nil {
-			r.need(need{uri + "#" + frag, want{"", w.k, w.t, w.rank}})
+			r.refs = append(r.refs, need{uri + "#" + frag, want{"", w.k, w.t, w.rank}})
 			return
 		}
 		n, base, ptr, dialect = c.v, c.base, c.ptr, c.dialect
@@ -942,19 +942,8 @@ func (r *reader) reference(ref value, k kind, base *url.URL) {
 	case uri == t.uri:
 		r.open(t.root(), t.kind(), t.base, nil, uri, r.dialect, w)
 	default:
-		r.need(need{uri, w})
+		r.refs = append(r.refs, need{uri, w})
 	}
-}
-
-// need coalesces nearby repeated references without allocating a second index.
-// The fixed window bounds work independently of the number of references.
-func (r *reader) need(n need) {
-	for _, old := range r.refs[max(0, len(r.refs)-4):] {
-		if old == n {
-			return
-		}
-	}
-	r.refs = append(r.refs, n)
 }
 
 // descend returns the node the JSON Pointer ptr names under v, a k node
@@ -1078,19 +1067,19 @@ type resolving struct {
 // RFC 3986 section 5.2 resolves it, to t's directory URI followed by it, and
 // any other relative path once for each directory; the rest resolve once for
 // each base.
-func (d *document) resolve(t *tree, base *url.URL, doc string) *resolved {
+func (d *document) resolve(t *tree, base *url.URL, doc string) resolved {
 	k := resolving{base: base, doc: doc}
 	if i := strings.IndexAny(doc, ":/?"); base == t.base && t.dir != "" && doc != "" && (i < 0 || i > 0 && doc[i] == '/') {
 		if plainPath(doc) {
-			return &resolved{uri: t.canonicalDir() + doc}
+			return resolved{uri: t.canonicalDir() + doc}
 		}
 		k = resolving{dir: t.dir, doc: doc}
 	}
 	if r, ok := d.resolutions.Load(k); ok {
-		return r.(*resolved)
+		return *r.(*resolved)
 	}
 	r, _ := d.resolutions.LoadOrStore(k, resolve(base, doc))
-	return r.(*resolved)
+	return *r.(*resolved)
 }
 
 // canonicalDir returns the URI of t's directory as net/url writes it,

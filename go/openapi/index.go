@@ -234,7 +234,9 @@ func (ld *loading) retrieve(uri string, froms []string, buf []byte) (string, str
 			final = uri
 		}
 		if err == nil {
-			base, err = url.Parse(final)
+			if final != uri || !base.IsAbs() {
+				base, err = url.Parse(final)
+			}
 			if err != nil || !base.IsAbs() {
 				err = errors.New("the final document URI must be an absolute URI")
 			} else if err = checkURI(base, final); err == nil && from != "" && !ld.admit(from, final, base) {
@@ -505,11 +507,7 @@ func token(name string) string { return escape(escapeToken(name), fragmentSet) }
 func (d *document) index(ctx context.Context) error {
 	d.byID, d.byRoute, d.broken = map[string]*entry{}, map[route]*entry{}, map[string]*entry{}
 	var targets map[int32]link
-	type groupKey struct {
-		sum *summary
-		m   int
-	}
-	var groups map[groupKey]*group
+	var groups map[*summary]int // first contiguous entries sharing a summary
 	for path, item := range d.root().get("paths").members() {
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("openapi: %w", err)
@@ -528,20 +526,28 @@ func (d *document) index(ctx context.Context) error {
 			d.broken[path] = e
 			continue
 		}
+		first, shared := 0, false
+		if sum != nil && levels.next != nil {
+			first, shared = groups[sum]
+			if !shared {
+				if groups == nil {
+					groups = map[*summary]int{}
+				}
+				groups[sum] = len(d.entries)
+			}
+		}
 		for m := range methods {
 			if sum == nil || sum.at[m] == nil {
 				continue
 			}
 			e := d.addOperation(path, m, levels, sum)
-			if levels.next != nil { // a $ref: other Paths entries may reach the same
-				k := groupKey{sum, m}
-				if groups[k] == nil {
-					if groups == nil {
-						groups = map[groupKey]*group{}
-					}
-					groups[k] = new(group)
+			if shared {
+				original := d.entries[first]
+				if original.group == nil {
+					original.group = new(group)
 				}
-				e.group = groups[k]
+				e.group = original.group
+				first++
 			}
 		}
 	}
