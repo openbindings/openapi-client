@@ -180,10 +180,11 @@ func TestYAMLDetection(t *testing.T) {
 // does a value JSON cannot hold (.inf, .nan, or a tag outside the Core
 // schema, such as !!timestamp)"; "invalid UTF-8 rejects the document"; and
 // "A rejection names the document's URI and the line and column of the
-// problem, both counted from 1, the column in bytes". Keys are compared as
-// the strings they spell, so 200 and "200" are one key. A tagged node's
-// position may be its tag's or its content's (YAML 1.2.2 section 6.9: the
-// properties are part of the node), so both are accepted.
+// problem, both counted from 1, the column in the document's own bytes ...;
+// a node's position is where it starts, its tag included" (stage 5 ledger,
+// SQ11). Keys are compared as the strings they spell, so 200 and "200" are
+// one key. Every column differs from the line, so naming the line alone
+// never passes for naming the column.
 func TestYAMLRejections(t *testing.T) {
 	tests := []struct {
 		name string
@@ -201,20 +202,21 @@ func TestYAMLRejections(t *testing.T) {
 		{"mapping key, flow", "x-a: {{k: v}: 1}\n", 6, []int{7}},
 		{"alias of a mapping as a key", "x-m: &m {a: 1}\nx-a:\n  *m : 1\n", 8, []int{3}},
 		{"a second document after ...", "...\nx-b: 1\n", 7, []int{1}},
-		{".inf", "x-v: .inf\n", 6, []int{6}},
+		{".inf", "x-v:  .inf\n", 6, []int{7}},
 		{"-.inf", "x-v: [0, -.inf]\n", 6, []int{10}},
-		{".Inf", "x-v: .Inf\n", 6, []int{6}},
-		{"+.INF", "x-v: +.INF\n", 6, []int{6}},
-		{".nan", "x-v: .nan\n", 6, []int{6}},
-		{".NaN", "x-v: .NaN\n", 6, []int{6}},
+		{".Inf", "x-v:  .Inf\n", 6, []int{7}},
+		{"+.INF", "x-v:  +.INF\n", 6, []int{7}},
+		{".nan", "x-v:  .nan\n", 6, []int{7}},
+		{".NaN", "x-v:  .NaN\n", 6, []int{7}},
 		{".NAN in a mapping", "x-v: {k: .NAN}\n", 6, []int{10}},
-		{"!!float .inf", "x-v: !!float .inf\n", 6, []int{6, 14}},
-		{"!!timestamp", "x-v: !!timestamp 2001-12-14\n", 6, []int{6, 18}},
-		{"!!binary", "x-v: !!binary aGk=\n", 6, []int{6, 15}},
-		{"!!set", "x-v: !!set {a: null}\n", 6, []int{6, 12}},
-		{"a local tag", "x-v: !local x\n", 6, []int{6, 13}},
+		{"!!float .inf", "x-v: [0, !!float .inf]\n", 6, []int{10}},
+		{"!!timestamp", "x-v: [0, !!timestamp 2001-12-14]\n", 6, []int{10}},
+		{"!!binary", "x-v: [0, !!binary aGk=]\n", 6, []int{10}},
+		{"!!set", "x-v: [0, !!set {a: null}]\n", 6, []int{10}},
+		{"a local tag", "x-v: [0, !local x]\n", 6, []int{10}},
+		{"a tag and an anchor", "x-v:\n  - !!timestamp &t 2001-12-14\n", 7, []int{5}},
 		{"invalid UTF-8", "x-v: \"a\xffb\"\n", 6, []int{8}},
-		{"an undefined alias", "x-v: *nope\n", 6, []int{6}},
+		{"an undefined alias", "x-v:  *nope\n", 6, []int{7}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

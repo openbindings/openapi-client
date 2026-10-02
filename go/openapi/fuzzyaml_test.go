@@ -276,10 +276,11 @@ var fuzzYAMLSeeds = []string{
 }
 
 // FuzzYAMLRobustness: any input, YAML or not, is read or rejected without
-// a panic, in bounded time and memory (load.go, Loader: the alias bound of
-// 1,000,000 added nodes or 100 times the document's own, and the 1,000-level
-// depth bound); a document that loads describes its operations, and
-// Document is JSON.
+// a panic, in bounded time and memory (load.go, Loader: aliases add at most
+// 1,000,000 nodes, 100 times the document's own node count and 100 times
+// its own size in bytes, the last ruled in SQ2, and nesting stops at 1,000
+// levels, so an input of at most 4 KiB grows by at most 400 KB); a
+// document that loads describes its operations, and Document is JSON.
 func FuzzYAMLRobustness(f *testing.F) {
 	for _, seed := range fuzzYAMLSeeds {
 		f.Add([]byte(seed))
@@ -303,7 +304,7 @@ func FuzzYAMLRobustness(f *testing.F) {
 		if d > 10*time.Second {
 			t.Fatalf("a %d-byte input took %v", len(data), d)
 		}
-		if n := after.TotalAlloc - before.TotalAlloc; n > 1<<30 {
+		if n := after.TotalAlloc - before.TotalAlloc; n > 256<<20 {
 			t.Fatalf("a %d-byte input allocated %d bytes", len(data), n)
 		}
 	})
