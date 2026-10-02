@@ -1,6 +1,15 @@
 --- a/yamlprivateh.go
 +++ b/yamlprivateh.go
-@@ -123,10 +123,7 @@
+@@ -19,6 +19,8 @@
+ // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ // SOFTWARE.
++
++// Modified for the OpenAPI client; see README.md and openapi.patch.
+ 
+ package yaml
+ 
+@@ -123,10 +125,7 @@
  // Check if the character at the specified position is a line break.
  func is_break(b []byte, i int) bool {
  	return (b[i] == '\r' || // CR (#xD)
@@ -12,7 +21,7 @@
  }
  
  func is_crlf(b []byte, i int) bool {
-@@ -140,9 +137,6 @@
+@@ -140,9 +139,6 @@
  	// is_break:
  	b[i] == '\r' || // CR (#xD)
  		b[i] == '\n' || // LF (#xA)
@@ -22,7 +31,7 @@
  		// is_z:
  		b[i] == 0)
  }
-@@ -156,9 +150,6 @@
+@@ -156,9 +152,6 @@
  		// is_breakz:
  		b[i] == '\r' || // CR (#xD)
  		b[i] == '\n' || // LF (#xA)
@@ -32,7 +41,7 @@
  		b[i] == 0)
  }
  
-@@ -171,9 +162,6 @@
+@@ -171,9 +164,6 @@
  		// is_breakz:
  		b[i] == '\r' || // CR (#xD)
  		b[i] == '\n' || // LF (#xA)
@@ -44,7 +53,16 @@
  
 --- a/scannerc.go
 +++ b/scannerc.go
-@@ -579,14 +579,6 @@
+@@ -19,6 +19,8 @@
+ // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ // SOFTWARE.
++
++// Modified for the OpenAPI client; see README.md and openapi.patch.
+ 
+ package yaml
+ 
+@@ -579,14 +581,6 @@
  		// CR|LF . LF
  		s = append(s, '\n')
  		parser.buffer_pos += 1
@@ -61,7 +79,16 @@
  	}
 --- a/decode.go
 +++ b/decode.go
-@@ -169,7 +169,7 @@
+@@ -12,6 +12,8 @@
+ // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ // See the License for the specific language governing permissions and
+ // limitations under the License.
++
++// Modified for the OpenAPI client; see README.md and openapi.patch.
+ 
+ package yaml
+ 
+@@ -169,7 +171,7 @@
  
  func (p *parser) node(kind Kind, defaultTag, tag, value string) *Node {
  	var style Style
