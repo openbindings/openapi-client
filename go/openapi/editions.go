@@ -143,21 +143,31 @@ func (c *Client) writeLegacy(b *strings.Builder, lead string, p *param, v any, f
 			delim = escape(delim, p.set)
 		}
 		for i, v := range values {
-			if i == 0 {
-				b.WriteString(lead)
-			} else if p.CollectionFormat == "multi" {
-				b.WriteByte('&')
-			} else {
-				b.WriteString(delim)
+			sep := lead
+			if i > 0 {
+				sep = delim
+				if p.CollectionFormat == "multi" {
+					sep = "&"
+				}
 			}
-			if p.In == "query" && (i == 0 || p.CollectionFormat == "multi") {
+			named := p.In == "query" && (i == 0 || p.CollectionFormat == "multi")
+			room := maxLength - b.Len() - len(sep)
+			if named {
+				room -= len(p.name) + 1
+			}
+			if len(v) > room {
+				return false, errTooLong
+			}
+			s := jsonText(v)
+			if len(s) > room || p.set != nil && len(s) > room/3 && escapedSize(s, p.set, false) > room {
+				return false, errTooLong
+			}
+			b.WriteString(sep)
+			if named {
 				b.WriteString(p.name)
 				b.WriteByte('=')
 			}
-			escapeTo(b, jsonText(v), p.set)
-			if b.Len() > maxLength {
-				return false, errTooLong
-			}
+			escapeTo(b, s, p.set)
 		}
 		return true, nil
 	}

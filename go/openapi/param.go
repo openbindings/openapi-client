@@ -77,9 +77,9 @@ func (c *Client) writeParam(b *strings.Builder, lead string, p *param, v any, re
 		re.setting("Options.Codecs", c.cfg.codecsErr)
 	}
 	if p.In == "querystring" && p.Err == nil && isForm(*p.media) && len(c.cfg.codecs) == 0 {
-		if written, ok := simpleForm(b, lead, p.form, v); ok {
-			if b.Len() > maxLength {
-				re.input(p.Key, errTooLong)
+		if written, ok, err := simpleForm(b, lead, p.form, v); ok {
+			if err != nil {
+				re.input(p.Key, err)
 			}
 			return written, written
 		}

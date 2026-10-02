@@ -416,10 +416,10 @@ func appendForm[T string | []byte](b []byte, s T) []byte {
 // simpleForm writes only exact string fields and string slices, whose normal
 // field encoder writes bytes as given. Every other value, styled/JSON field
 // or required-field plan falls back before this writes anything.
-func simpleForm(b *strings.Builder, lead string, enc *formEncoding, v any) (written, ok bool) {
+func simpleForm(b *strings.Builder, lead string, enc *formEncoding, v any) (written, ok bool, err error) {
 	m, ok := v.(map[string]any)
 	if !ok || m == nil || enc.required || enc.swagger {
-		return false, false
+		return false, false, nil
 	}
 	var local [8]string
 	names := local[:0]
@@ -433,15 +433,24 @@ func simpleForm(b *strings.Builder, lead string, enc *formEncoding, v any) (writ
 			}
 		case string:
 		default:
-			return false, false
+			return false, false, nil
 		}
 		if f := enc.field(name); !f.plain || f.class == jsonClass {
-			return false, false
+			return false, false, nil
 		}
 		names = append(names, name)
 	}
 	slices.Sort(names)
-	write := func(name, value string) {
+	write := func(name, value string) bool {
+		sep := lead
+		if written {
+			sep = "&"
+		}
+		room := maxLength - b.Len() - len(sep) - 1
+		if len(name) > room || len(value) > room-len(name) ||
+			len(name)+len(value) > room/3 && escapedSize(name, formSet, true)+escapedSize(value, formSet, true) > room {
+			return false
+		}
 		if written {
 			b.WriteByte('&')
 		} else {
@@ -451,18 +460,23 @@ func simpleForm(b *strings.Builder, lead string, enc *formEncoding, v any) (writ
 		formString(b, name)
 		b.WriteByte('=')
 		formString(b, value)
+		return true
 	}
 	for _, name := range names {
 		switch x := m[name].(type) {
 		case string:
-			write(name, x)
+			if !write(name, x) {
+				return written, true, errTooLong
+			}
 		case []string:
 			for _, s := range x {
-				write(name, s)
+				if !write(name, s) {
+					return written, true, errTooLong
+				}
 			}
 		}
 	}
-	return written, true
+	return written, true, nil
 }
 
 func formString(b *strings.Builder, s string) {

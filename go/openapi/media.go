@@ -326,6 +326,19 @@ func escapeTo(b *strings.Builder, s string, set *charset) {
 	b.WriteString(s[start:])
 }
 
+// escapedSize is needed only near a parameter's limit: otherwise three
+// bytes per input byte is a cheap upper bound. A form writes spaces as +.
+func escapedSize(s string, set *charset, form bool) int {
+	n := len(s)
+	for i := range len(s) {
+		if k := set[s[i]]; k == 1 || form && s[i] == ' ' || k == 2 && i+2 < len(s) && hexDigit(s[i+1]) && hexDigit(s[i+2]) {
+			continue
+		}
+		n += 2
+	}
+	return n
+}
+
 // escape returns s percent-encoded with set: s itself when set keeps every
 // byte.
 func escape(s string, set *charset) string {

@@ -85,13 +85,12 @@ var methods = [...]struct{ name, upper string }{
 // An entry is an indexed operation, or a Paths entry that cannot be read.
 // Its descriptor and plan are compiled on first use.
 type entry struct {
-	additional      string
 	additionalLevel *level
 	forbidden       bool
+	m               int8 // the method, an index into methods; -1 for a Paths entry that cannot be read
 	doc             *document
 	path            string
 	id              string
-	m               int      // the method, an index into methods; -1 for a Paths entry that cannot be read
 	node            value    // the Operation Object
 	levels          *level   // the Path Item chain
 	sum             *summary // what its levels define, shared with every chain that defines the same
@@ -186,7 +185,7 @@ func loadOrMake[T any](p *atomic.Pointer[T], build func() *T) *T {
 // source returns the Operation Object's Source.
 func (e *entry) method() string {
 	if e.additionalLevel != nil {
-		return e.additional
+		return e.node.t.name(e.node.i)
 	}
 	return methods[e.m].upper
 }
@@ -194,7 +193,7 @@ func (e *entry) method() string {
 func (e *entry) source() string {
 	if e.additionalLevel != nil {
 		l := e.additionalLevel
-		return l.v.t.source(l.ptr + "/additionalOperations/" + escapeToken(e.additional))
+		return l.v.t.source(l.ptr + "/additionalOperations/" + escapeToken(e.method()))
 	}
 	l := e.sum.at[e.m]
 	return l.v.t.source(l.ptr + "/" + methods[e.m].name)
@@ -581,7 +580,7 @@ func (d *document) index(ctx context.Context) error {
 				if n.kind() != '{' {
 					continue
 				}
-				e := &entry{doc: d, path: path, id: n.str("operationId"), node: n, levels: levels, sum: sum, additional: name, additionalLevel: l}
+				e := &entry{doc: d, path: path, id: n.str("operationId"), node: n, levels: levels, sum: sum, additionalLevel: l}
 				e.forbidden = !isToken(name) || slices.ContainsFunc(methods[:], func(m struct{ name, upper string }) bool { return m.upper == name })
 				if e.forbidden {
 					e.err = fmt.Errorf("forbidden additional method %q", name)
@@ -607,7 +606,7 @@ func (d *document) index(ctx context.Context) error {
 // which sum summarizes.
 func (d *document) addOperation(path string, m int, levels *level, sum *summary) *entry {
 	n := sum.at[m].v.get(methods[m].name)
-	e := &entry{doc: d, path: path, id: n.str("operationId"), m: m, node: n, levels: levels, sum: sum}
+	e := &entry{doc: d, path: path, id: n.str("operationId"), m: int8(m), node: n, levels: levels, sum: sum}
 	if sum.dup&(1<<m) != 0 {
 		e.err = fmt.Errorf("the Path Item and its $ref target both define %s", methods[m].name)
 	}
@@ -882,7 +881,7 @@ func (d *document) checkNames(ctx context.Context, cfg *config, re *RequestError
 		if none && sec.key == "{}" {
 			sec.key = "" // a credential-free operation offers it
 		}
-		if rb := e.node.get("requestBody"); !media && rb.ok() && e.method() != "TRACE" && e.method() != "CONNECT" && !(e.node.t.edition == 30 && slices.Contains([]string{"GET", "HEAD", "DELETE", "OPTIONS"}, e.method())) {
+		if rb := e.node.get("requestBody"); e.node.t.edition != 20 && !media && rb.ok() && e.method() != "TRACE" && e.method() != "CONNECT" && !(e.node.t.edition == 30 && slices.Contains([]string{"GET", "HEAD", "DELETE", "OPTIONS"}, e.method())) {
 			body, _, _, err := d.follow(rb, "")
 			if err != nil || !first(body) {
 				continue
