@@ -55,6 +55,7 @@ type document struct {
 	bodies      memo[*content] // a Request Body Object's
 	contents    memo[*content] // a Response Object's
 	serverLists memo[*serverList]
+	mediaForms  sync.Map      // mediaUse to *mediaPlan, since the same target can govern different types
 	schemeNames memo[*scheme] // by the securitySchemes member a name selects
 	schemeForms memo[*scheme] // by the Security Scheme Object a reference reaches
 }
@@ -120,21 +121,15 @@ type level struct {
 // that does, a bit in dup saying a farther one does too. Nil summarizes a
 // chain that defines none.
 type summary struct {
-	at    [serversField + 1]*level
-	dup   uint16
-	extra []extraOperation
-}
-
-type extraOperation struct {
-	name  string
-	level *level
-	dup   bool
+	at  [additionalField + 1]*level
+	dup uint16
 }
 
 // The Path Item fields a summary covers after the methods.
 const (
 	parametersField = len(methods) + iota
 	serversField
+	additionalField
 )
 
 // add returns the summary of the chain from l, whose rest s summarizes: s
@@ -153,6 +148,8 @@ func (s *summary) add(l *level) *summary {
 			f, present = parametersField, true
 		case "servers":
 			f, present = serversField, v.hasMembers()
+		case "additionalOperations":
+			f, present = additionalField, l.v.t.edition == 32 && v.kind() == '{'
 		}
 		if f < 0 || !present {
 			continue
@@ -167,26 +164,6 @@ func (s *summary) add(l *level) *summary {
 			sum.dup |= 1 << f
 		}
 		sum.at[f] = l
-	}
-	if extra := l.v.get("additionalOperations"); l.v.t.edition == 32 && extra.hasMembers() {
-		if sum == s {
-			sum = new(summary)
-			if s != nil {
-				*sum = *s
-			}
-		}
-		previous := sum.extra
-		sum.extra = nil
-		for name, v := range extra.members() {
-			if v.kind() == '{' {
-				sum.extra = append(sum.extra, extraOperation{name, l, slices.ContainsFunc(previous, func(e extraOperation) bool { return e.name == name })})
-			}
-		}
-		for _, old := range previous {
-			if !extra.get(old.name).ok() {
-				sum.extra = append(sum.extra, old)
-			}
-		}
 	}
 	return sum
 }
@@ -595,15 +572,18 @@ func (d *document) index(ctx context.Context) error {
 				first++
 			}
 		}
-		if sum != nil {
-			for _, x := range sum.extra {
-				n := x.level.v.get("additionalOperations").get(x.name)
-				e := &entry{doc: d, path: path, id: n.str("operationId"), node: n, levels: levels, sum: sum, additional: x.name, additionalLevel: x.level}
-				e.forbidden = !isToken(x.name) || slices.ContainsFunc(methods[:], func(m struct{ name, upper string }) bool { return m.upper == x.name })
+		if sum != nil && sum.at[additionalField] != nil {
+			l := sum.at[additionalField]
+			for name, n := range l.v.get("additionalOperations").members() {
+				if n.kind() != '{' {
+					continue
+				}
+				e := &entry{doc: d, path: path, id: n.str("operationId"), node: n, levels: levels, sum: sum, additional: name, additionalLevel: l}
+				e.forbidden = !isToken(name) || slices.ContainsFunc(methods[:], func(m struct{ name, upper string }) bool { return m.upper == name })
 				if e.forbidden {
-					e.err = fmt.Errorf("forbidden additional method %q", x.name)
-				} else if x.dup {
-					e.err = fmt.Errorf("the Path Item and its $ref target both define %s", x.name)
+					e.err = fmt.Errorf("forbidden additional method %q", name)
+				} else if sum.dup&(1<<additionalField) != 0 {
+					e.err = errors.New("the Path Item and its $ref target both define additionalOperations")
 				}
 				d.recordOperation(e)
 			}

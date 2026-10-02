@@ -163,13 +163,16 @@ func (e *entry) shape() *operation {
 	if responses.kind() == '{' {
 		for key, r := range responses.members() {
 			if !strings.HasPrefix(key, "x-") {
-				m, _, c := d.message(r, src+"/responses/"+token(key), false)
+				var m *Message
+				var c *content
 				if n.t.edition == 20 {
 					produces := n.get("produces")
 					if !produces.ok() {
 						produces = d.root().get("produces")
 					}
 					m, c = d.swaggerResponse(r, src+"/responses/"+token(key), produces)
+				} else {
+					m, _, c = d.message(r, src+"/responses/"+token(key), false)
 				}
 				m.Key = key
 				o.addResponse(m, c)
@@ -376,7 +379,11 @@ func (d *document) newParam(t value, at string) param {
 		for typ, m := range content.members() {
 			if entries++; entries == 1 {
 				p.ContentType, media = typ, m
-				p.Schema = d.schema(m.get("schema"), at, "/content/"+token(typ)+"/schema")
+				mat := at + "/content/" + token(typ)
+				if m.t.edition == 32 {
+					media, mat, _, p.Err = d.follow(m, mat)
+				}
+				p.Schema = d.schema(media.get("schema"), mat, "/schema")
 			}
 		}
 		_, valid = parseMedia(p.ContentType)
@@ -385,6 +392,7 @@ func (d *document) newParam(t value, at string) param {
 		p.Schema = d.schema(schema, at, "/schema")
 	}
 	switch {
+	case p.Err != nil:
 	case !slices.Contains([]string{"path", "query", "header", "cookie"}, p.In) && !(p.In == "querystring" && t.t.edition == 32):
 		p.Err = fmt.Errorf("parameter location %q is not path, query, header or cookie", p.In)
 	case p.In == "querystring" && (!content.ok() || t.get("style").ok() || explode.ok() || t.get("allowReserved").ok()):
@@ -523,46 +531,82 @@ func (d *document) content(t value, at string, request bool) *content {
 	}
 	if m := t.get("content"); m.kind() == '{' {
 		for typ, mv := range m.members() {
-			mat := at + "/content/" + token(typ)
-			md := &Media{Type: typ, Source: mat, Schema: d.schema(mv.get("schema"), mat, "/schema")}
-			if mv.t.edition == 32 {
-				md.ItemSchema = d.schema(mv.get("itemSchema"), mat, "/itemSchema")
+			p := d.media(mv, at+"/content/"+token(typ), typ, request)
+			c.media, c.parsed, c.encodings = append(c.media, p.md), append(c.parsed, p.parsed), append(c.encodings, p.encoding)
+			if p.valid && p.parsed.concrete() {
+				c.success = append(c.success, p.parsed)
 			}
-			pm, ok := parseMedia(typ)
-			switch {
-			case !ok:
-				md.Err = fmt.Errorf("invalid media type %q", typ)
-			case pm.concrete():
-				c.success = append(c.success, pm)
-				fallthrough
-			default:
-				md.Sequential = pm.class() == sequentialClass || isMultipart(pm)
-			}
-			// A request's form or multipart type, or range of multipart
-			// types, has the fields its schema and Encoding give; */* and
-			// application/*, which cover such types, those of its schema alone
-			// (OpenAPI 3.1.2 section 4.8.14: Encoding applies to form and
-			// multipart types, and to Request Body Objects only). A response's
-			// boundary is the response's.
-			var enc *formEncoding
-			schema := []value{mv.get("schema")}
-			switch {
-			case !ok || !request:
-			case isForm(pm) || isMultipart(pm):
-				if _, _, err := pm.boundary(); err != nil {
-					md.Err = err
-				}
-				enc, md.Encoding = d.encodingOf(schema, mat+"/schema", mv.get("encoding"), mat+"/encoding", pm)
-			case pm.typ == "*" || pm.sub == "*" && strings.EqualFold(pm.typ, "application"):
-				enc, _ = d.encodingOf(schema, mat+"/schema", value{}, "", pm)
-			}
-			if request && isMultipart(pm) && mv.t.edition == 32 {
-				md.Encoding = d.positionalEncoding(enc, mv, schema, mat, md.Encoding...)
-			}
-			c.media, c.parsed, c.encodings = append(c.media, md), append(c.parsed, pm), append(c.encodings, enc)
 		}
 	}
 	return c
+}
+
+type mediaUse struct {
+	node    int32
+	typ     string
+	request bool
+}
+type mediaPlan struct {
+	md       *Media
+	parsed   parsedMedia
+	valid    bool
+	encoding *formEncoding
+}
+
+// media preserves use-specific media keys while sharing the normalization of
+// a referenced declaration under each media type and request/response role.
+func (d *document) media(v value, src, typ string, request bool) *mediaPlan {
+	t, at, err := v, src, error(nil)
+	if v.t.edition == 32 {
+		t, at, _, err = d.follow(v, src)
+	}
+	if err != nil {
+		pm, valid := parseMedia(typ)
+		return &mediaPlan{md: &Media{Type: typ, Source: src, Err: err}, parsed: pm, valid: valid}
+	}
+	if t == v {
+		return d.newMedia(t, at, typ, request)
+	}
+	key := mediaUse{t.id(), typ, request}
+	if p, ok := d.mediaForms.Load(key); ok {
+		return p.(*mediaPlan)
+	}
+	p, _ := d.mediaForms.LoadOrStore(key, d.newMedia(t, at, typ, request))
+	return p.(*mediaPlan)
+}
+
+func (d *document) newMedia(v value, src, typ string, request bool) *mediaPlan {
+	md := &Media{Type: typ, Source: src, Schema: d.schema(v.get("schema"), src, "/schema")}
+	if v.t.edition == 32 {
+		md.ItemSchema = d.schema(v.get("itemSchema"), src, "/itemSchema")
+	}
+	pm, ok := parseMedia(typ)
+	p := &mediaPlan{md: md, parsed: pm, valid: ok}
+	if !ok {
+		md.Err = fmt.Errorf("invalid media type %q", typ)
+		return p
+	}
+	md.Sequential = pm.class() == sequentialClass || isMultipart(pm)
+	if !request {
+		return p
+	}
+	schema := schemaRoots(v.get("schema"))
+	switch {
+	case isForm(pm) || isMultipart(pm):
+		if _, _, err := pm.boundary(); err != nil {
+			md.Err = err
+		}
+		p.encoding, md.Encoding = d.encodingOf(schema, src+"/schema", v.get("encoding"), src+"/encoding", pm)
+	case pm.typ == "*" || pm.sub == "*" && strings.EqualFold(pm.typ, "application"):
+		p.encoding, _ = d.encodingOf(schema, src+"/schema", value{}, "", pm)
+	}
+	if p.encoding != nil && v.t.edition <= 30 {
+		p.encoding.fallback = textField
+	}
+	if isMultipart(pm) && v.t.edition == 32 {
+		md.Encoding = d.positionalEncoding(p.encoding, v, schema, src, md.Encoding...)
+	}
+	return p
 }
 
 func (o *operation) addResponse(m *Message, c *content) {
@@ -737,6 +781,15 @@ func (d *document) swaggerServers(schemes value) *serverList {
 	if !schemes.hasMembers() {
 		schemes = r.get("schemes")
 	}
+	key := d.root().id()
+	if schemes.hasMembers() {
+		key = schemes.id()
+	}
+	return d.serverLists.get(key, func() *serverList { return d.buildSwaggerServers(schemes) })
+}
+
+func (d *document) buildSwaggerServers(schemes value) *serverList {
+	r := d.root()
 	list := schemes.strs()
 	host := r.str("host")
 	if d.tree.httpBase() {
@@ -752,7 +805,10 @@ func (d *document) swaggerServers(schemes value) *serverList {
 	}
 	sl := &serverList{}
 	for i, scheme := range list {
-		s := &Server{ID: "swagger-" + strconv.Itoa(i) + "-" + scheme, URL: scheme + "://" + host + r.str("basePath")}
+		s := &Server{ID: "swagger-" + idOf(r) + "-" + strconv.Itoa(i), URL: scheme + "://" + host + r.str("basePath")}
+		if schemes.hasMembers() {
+			s.ID = "swagger-" + idOf(schemes) + "-" + strconv.Itoa(i)
+		}
 		sv := newServer(s, value{}, d.tree)
 		if host == "" || scheme == "" {
 			s.Err = errors.New("Swagger server requires host and schemes or an HTTP retrieval URI")

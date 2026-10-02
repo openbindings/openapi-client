@@ -233,13 +233,16 @@ func (c *Client) formBody(b *builder, enc *formEncoding, v any, body string, rea
 		b.buf = make([]byte, 0, 128)
 	}
 	plain := len(c.cfg.codecs) == 0
-	err := c.membersChecked(v, enc, body, re, func(name string, f *field, v any) {
+	err := c.membersChecked(v, enc, body, re, b, func(name string, f *field, v any) {
 		if f.legacy.ok() {
 			at := key{body, name, -1}
 			if f.legacy.str("type") == "file" {
 				re.input(at.String(), errors.New("a Swagger file requires multipart/form-data"))
 				return
 			}
+		}
+		if f.legacy.ok() && f.CollectionFormat != "" && !rawField(v) || f.legacy.ok() && c.cfg.NameOnlyEmpty && f.AllowEmptyValue && emptyString(v) {
+			at := key{body, name, -1}
 			var out strings.Builder
 			lead := ""
 			if len(b.buf) > 0 || b.parts != nil {
@@ -489,7 +492,7 @@ func (w *partWriter) parts(enc *formEncoding, v any, body, boundary string, give
 			return
 		}
 	}
-	err := w.c.membersChecked(v, enc, body, w.re, func(name string, f *field, v any) {
+	err := w.c.membersChecked(v, enc, body, w.re, w.b, func(name string, f *field, v any) {
 		at := key{body, name, -1}
 		if f.legacy.ok() && f.CollectionFormat != "" && f.CollectionFormat != "multi" {
 			s, _, err := encodeJSON(w.c.doc, v, marshal)

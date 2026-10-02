@@ -118,6 +118,10 @@ func newScheme(t value, at string) *scheme {
 		s.Deprecated, s.OAuth2MetadataURL = t.flag("deprecated"), t.str("oauth2MetadataUrl")
 	}
 	var err error
+	if t.t.edition == 20 && !slices.Contains([]string{"basic", "apiKey", "oauth2"}, s.Type) || t.t.edition == 30 && s.Type == "mutualTLS" {
+		s.Err = fmt.Errorf("security type %q is not defined in this edition", s.Type)
+		return sc
+	}
 	switch s.Type {
 	case "apiKey":
 		s.In, s.ParamName = t.str("in"), t.str("name")
@@ -131,6 +135,8 @@ func newScheme(t value, at string) *scheme {
 			sc.kind, sc.dest = apiKeyHeader, paramID{"header", field}
 		case s.In == "query":
 			sc.kind, sc.dest, sc.written = apiKeyQuery, paramID{"query", name}, escape(name, unreservedSet)
+		case s.In == "cookie" && t.t.edition == 20:
+			err = errors.New("Swagger apiKey location must be header or query")
 		case s.In == "cookie" && isToken(name): // RFC 6265 section 4.1.1
 			sc.kind, sc.dest, sc.written = apiKeyCookie, paramID{"cookie", name}, name
 		case s.In == "cookie":
@@ -167,6 +173,9 @@ func newScheme(t value, at string) *scheme {
 				typ = "authorizationCode"
 			}
 			s.Flows, err = appendFlow(nil, typ, t)
+			if len(s.Flows) == 0 {
+				err = fmt.Errorf("unknown Swagger OAuth flow %q", typ)
+			}
 		} else {
 			s.Flows, err = oauthFlows(t.get("flows"))
 		}

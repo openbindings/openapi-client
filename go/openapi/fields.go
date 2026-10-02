@@ -23,6 +23,7 @@ type formEncoding struct {
 	rest       *field
 	ordered    bool
 	required   bool
+	swagger    bool
 	fallback   *field
 	byName     map[string]*field
 	lists      sync.Map // reflect.Type to []*field
@@ -706,6 +707,21 @@ func (d *document) headers(h value, src string) []*Param {
 		p := &Param{Name: name, In: "header", Description: desc, Source: at, Err: err}
 		if err == nil {
 			p.Required, p.Deprecated, p.Schema = t.flag("required"), t.flag("deprecated"), d.schema(t.get("schema"), at, "/schema")
+			if content := t.get("content"); content.ok() {
+				n := 0
+				for typ, m := range content.members() {
+					n++
+					p.ContentType = typ
+					mat := at + "/content/" + token(typ)
+					if m.t.edition == 32 {
+						m, mat, _, p.Err = d.follow(m, mat)
+					}
+					p.Schema = d.schema(m.get("schema"), mat, "/schema")
+				}
+				if n != 1 || t.get("schema").ok() {
+					p.Err = errors.New("a Header content map requires exactly one entry and no schema")
+				}
+			}
 			if t.t.edition == 20 {
 				pp := d.swaggerParam(t, at, p)
 				p = pp.Param

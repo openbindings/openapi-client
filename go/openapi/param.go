@@ -158,13 +158,7 @@ type emitter struct {
 // write writes v, reporting whether it is defined. A value it gives
 // encoding/json is checked as d checks JSON it encodes.
 func (e *emitter) write(d *document, v any) (bool, error) {
-	if e.cookie32 {
-		if s, _, err := encodeJSON(d, v, marshal); err != nil {
-			return false, err
-		} else if !e.Explode && (s[0] == '[' || s[0] == '{') && s != "[]" && s != "{}" {
-			return false, errors.New("a cookie array or object requires explode")
-		}
-	}
+
 	switch v := v.(type) {
 	case string:
 		return e.primitive(jsonText(v))
@@ -293,6 +287,9 @@ func (e *emitter) item(s string) error {
 
 // member writes an object's member named k, whose value is s.
 func (e *emitter) member(k, s string) error {
+	if e.cookie32 && e.set == nil && (badCookieText(k) || badCookieText(s)) {
+		return errors.New("a cookie name or value cannot hold a semicolon or control character")
+	}
 	if err := e.next(len(k)+len(s), false); err != nil { // not exploded, it holds a delimiter
 		return err
 	}
@@ -314,6 +311,9 @@ func (e *emitter) member(k, s string) error {
 // members is, though none of them be (RFC 6570 section 2.3); then, not
 // exploded, it is written as "" is, and exploded, nothing is written.
 func (e *emitter) end(items int) (bool, error) {
+	if e.cookie32 && !e.Explode && (e.n > 0 || items > 0) {
+		return false, errors.New("a cookie array or object requires explode")
+	}
 	var err error
 	switch {
 	case e.n > 0 || items == 0:
@@ -484,4 +484,8 @@ func (o *operation) runWriters(req *http.Request, writers map[string]func(*http.
 			re.input(p.Key, errors.New("the writer left its {name} token, or a RawPath that is not an encoding of Path"))
 		}
 	}
+}
+
+func badCookieText(s string) bool {
+	return strings.ContainsFunc(s, func(r rune) bool { return r == ';' || r < 32 || r == 127 })
 }

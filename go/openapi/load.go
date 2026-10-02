@@ -80,6 +80,10 @@ func Parse(ctx context.Context, content []byte, uri string, opts *Options) (*Cli
 // position is where it starts, its tag included. Reference cycles are detected,
 // never followed forever.
 //
+// An OpenAPI document uses the edition declared at its root. A referenced
+// document with neither an openapi nor a swagger field uses the entry
+// document's edition; its object type comes from the reference's context.
+//
 // The references followed are $ref in Reference Objects, Path Items and Schema
 // Objects, $dynamicRef, Discriminator mapping and defaultMapping values that
 // are not component names (a value that could be a component name is read as
@@ -272,7 +276,11 @@ func (c *Client) Document(uri string) []byte {
 	t := d.tree
 	if base != "" {
 		if t = d.named[base]; t == nil {
-			return nil
+			claim := d.ids[base]
+			if claim == nil || claim.other != nil || claim.v.i != 0 || claim.v.t.edition != 32 || claim.v.t.refbase.String() != base {
+				return nil
+			}
+			t = claim.v.t
 		}
 	}
 	v := t.root()

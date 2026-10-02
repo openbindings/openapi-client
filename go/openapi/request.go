@@ -594,6 +594,14 @@ func (c *Client) body(o *operation, in *Input, h http.Header, re *RequestError) 
 			re.input("Input.Body", errors.New("an empty content map takes only a []byte or io.Reader body"))
 			return payload{}, nil
 		}
+		if md.Err != nil {
+			re.input("Input.Body", mediaErr(md))
+			return payload{}, md
+		}
+		if enc := o.encoding(md); enc != nil && enc.swagger && !isForm(m) && !strings.EqualFold(m.full, "multipart/form-data") {
+			re.input("Input.Body", errors.New("Swagger formData requires a form media type"))
+			return payload{}, md
+		}
 		_, isPart := v.(Part)
 		if pt, ok := v.(*Part); ok && pt != nil {
 			isPart = true
@@ -653,7 +661,7 @@ func (c *Client) mediaType(o *operation, in *Input, re *RequestError) (string, p
 	}
 	if typ == "" {
 		switch {
-		case len(declared) == 1 && declared[0].Err != nil:
+		case len(declared) == 1 && declared[0].Err != nil && !errors.Is(declared[0].Err, ErrUnresolved):
 			re.setting("Input.MediaType", mediaErr(declared[0]))
 		case len(declared) == 1 && o.body[0].concrete():
 			return declared[0].Type, o.body[0], declared[0]
@@ -673,7 +681,7 @@ func (c *Client) mediaType(o *operation, in *Input, re *RequestError) (string, p
 		case md == nil:
 			re.setting("Input.MediaType", fmt.Errorf("the operation does not declare %s", typ))
 			return "", parsedMedia{}, nil
-		case md.Err != nil:
+		case md.Err != nil && !errors.Is(md.Err, ErrUnresolved):
 			re.setting("Input.MediaType", mediaErr(md))
 			return "", parsedMedia{}, nil
 		}

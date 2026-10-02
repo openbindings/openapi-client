@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/maphash"
+	"io"
 	"net/textproto"
 	"slices"
 	"strings"
@@ -84,6 +85,10 @@ func legacyValues(r *jsonReader, schema value, set *charset) ([]string, error) {
 		}
 		return nil, errors.New("Swagger parameters cannot serialize objects")
 	case '[':
+		if r.s[r.i+1] == ']' {
+			r.i += 2
+			return nil, nil
+		}
 		var items []string
 		err := r.each(func(string) error {
 			xs, err := legacyValues(r, schema.get("items"), set)
@@ -92,8 +97,11 @@ func legacyValues(r *jsonReader, schema value, set *charset) ([]string, error) {
 			}
 			return err
 		})
-		if err != nil || len(items) == 0 {
+		if err != nil {
 			return nil, err
+		}
+		if len(items) == 0 {
+			return []string{""}, nil
 		}
 		cf := schema.str("collectionFormat")
 		if cf == "multi" {
@@ -144,7 +152,7 @@ func (c *Client) writeLegacy(b *strings.Builder, lead string, p *param, v any, f
 				name = string(appendForm(nil, p.Name))
 			}
 			b.WriteString(name)
-			if !(v == "" && c.cfg.NameOnlyEmpty && p.AllowEmptyValue) {
+			if !(s == `""` && v == "" && c.cfg.NameOnlyEmpty && p.AllowEmptyValue) {
 				b.WriteByte('=')
 			}
 		}
@@ -201,7 +209,7 @@ func (o *operation) swaggerBody(n value) error {
 		schema = o.doc.schema(body.legacy.get("schema"), body.Source, "/schema")
 		src, desc, required = body.Source, body.Description, body.Required
 	} else {
-		encoding = &formEncoding{byName: map[string]*field{}}
+		encoding = &formEncoding{byName: map[string]*field{}, swagger: true}
 		properties := map[string]json.RawMessage{}
 		var req []string
 		for _, p := range fields {
@@ -269,10 +277,13 @@ func (d *document) swaggerContent(schema *Schema, types []string, src string) *c
 		}
 		md.Sequential = pm.class() == sequentialClass || isMultipart(pm)
 		var enc *formEncoding
-		if schema != nil {
+		if schema != nil && (isForm(pm) || isMultipart(pm) || pm.typ == "*" || pm.sub == "*" && strings.EqualFold(pm.typ, "application")) {
 			enc, md.Encoding = d.encodingOf([]value{schema.v}, schema.Source(), value{}, "", pm)
 		} else {
 			enc = noFields
+		}
+		if !isForm(pm) && !isMultipart(pm) {
+			md.Encoding = nil
 		}
 		c.media, c.parsed, c.encodings = append(c.media, md), append(c.parsed, pm), append(c.encodings, enc)
 		if ok && pm.concrete() {
@@ -297,16 +308,15 @@ func (d *document) swaggerResponse(v value, src string, produces value) (*Messag
 
 // membersChecked adds Swagger required-field checks without making a second
 // pass through caller values or changing the general object encoder.
-func (c *Client) membersChecked(v any, enc *formEncoding, body string, re *RequestError, f func(string, *field, any)) error {
+func (c *Client) membersChecked(v any, enc *formEncoding, body string, re *RequestError, b *builder, f func(string, *field, any)) error {
 	if !enc.required {
 		return c.doc.members(v, enc, f)
 	}
 	seen := map[string]bool{}
 	err := c.doc.members(v, enc, func(name string, fd *field, v any) {
-		if !null(v) {
-			seen[name] = true
-		}
+		buf, parts := len(b.buf), len(b.parts)
 		f(name, fd, v)
+		seen[name] = len(b.buf) != buf || len(b.parts) != parts
 	})
 	for name, fd := range enc.byName {
 		if fd.Required && !seen[name] {
@@ -411,3 +421,12 @@ func schemaRoots(v value) []value {
 	}
 	return nil
 }
+
+func rawField(v any) bool {
+	switch v.(type) {
+	case []byte, io.Reader, Part, *Part:
+		return true
+	}
+	return false
+}
+func emptyString(v any) bool { s, ok := v.(string); return ok && s == "" }

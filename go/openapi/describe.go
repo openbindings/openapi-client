@@ -55,7 +55,9 @@ func (c *Client) Operation(key string) (*Operation, error) {
 // and a field on both sides, which OpenAPI leaves undefined, sets Err on
 // each operation whose request it affects (that method's operation, or
 // every operation that uses the parameters or servers), except that the
-// Path Item's own summary and description win. In OpenAPI 3.1 and 3.2,
+// Path Item's own summary and description win. For additionalOperations,
+// the nearest map supplies the operations and a duplicate field sets Err
+// on each of them. In OpenAPI 3.1 and 3.2,
 // where a parameter, request body, response, media type, header or
 // security scheme is a Reference Object that gives a description, that
 // description replaces the target's, the Reference Object nearest the use
@@ -599,8 +601,8 @@ func (s *Schema) Dialect() string {
 	if d := s.v.str("$schema"); d != "" {
 		return d
 	}
-	if s.doc.dialect != "" {
-		return s.doc.dialect
+	if d := s.v.t.root().str("jsonSchemaDialect"); d != "" {
+		return d
 	}
 	if s.v.t.edition == 32 {
 		return "https://spec.openapis.org/oas/3.2/dialect/2025-09-17"

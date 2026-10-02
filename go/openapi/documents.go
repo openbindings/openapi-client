@@ -194,6 +194,7 @@ const (
 	refKind // an Example, Link or Security Scheme Object: only a Reference Object holds a reference
 	schemaKind
 	schemaIDsKind // schema locations inspected for identifiers, without following references
+	itemsKind     // Swagger Items Object, not a schema or Reference Object
 )
 
 // A slot is what a member of an object holds: a k node ('1'), or an array
@@ -292,7 +293,16 @@ func modelSlot(k kind, name string, edition int) (slot, bool) {
 				return slot{}, false
 			}
 		case parameterKind:
-			return slot{schemaKind, '1'}, name == "schema" || name == "items"
+			if name == "items" {
+				return slot{itemsKind, '1'}, true
+			}
+			return slot{schemaKind, '1'}, name == "schema"
+		case itemsKind:
+			return slot{itemsKind, '1'}, name == "items"
+		case schemaKind:
+			if !slices.Contains([]string{"items", "allOf", "properties", "additionalProperties"}, name) {
+				return slot{}, false
+			}
 		case responseKind:
 			if name == "schema" {
 				return slot{schemaKind, '1'}, true
@@ -319,6 +329,19 @@ func modelSlot(k kind, name string, edition int) (slot, bool) {
 			if name == "additionalOperations" {
 				return slot{operationKind, '{'}, true
 			}
+		case componentsKind:
+			if name == "mediaTypes" {
+				return slot{mediaKind, '{'}, true
+			}
+		case encodingKind:
+			switch name {
+			case "encoding":
+				return slot{encodingKind, '{'}, true
+			case "prefixEncoding":
+				return slot{encodingKind, '['}, true
+			case "itemEncoding":
+				return slot{encodingKind, '1'}, true
+			}
 		case mediaKind:
 			if name == "itemSchema" {
 				return slot{schemaKind, '1'}, true
@@ -330,6 +353,9 @@ func modelSlot(k kind, name string, edition int) (slot, bool) {
 				return slot{encodingKind, '1'}, true
 			}
 		}
+	}
+	if int(k) >= len(model) {
+		return slot{}, false
 	}
 	s, ok := model[k][name]
 	return s, ok
@@ -388,8 +414,8 @@ type reader struct {
 	claimed []string          // the identifiers the discovery has not taken
 	refs    []need            // the references to other documents the discovery has not taken
 	located map[int32]location
-	// Two bits per kind and node: queued, entered recursively. The 15
-	// kinds through schemaIDsKind occupy 30 bits; new kinds must still fit.
+	// Two bits per kind and node: queued, entered recursively. The sixteen
+	// kinds through itemsKind occupy all 32 bits; new kinds require widening.
 	seen    []uint32
 	dialect string // the document default for schema resources
 	queue   []item
@@ -588,7 +614,7 @@ func (dc *discovery) read(f fetch, buf []byte, scratch *reader) (*reader, error)
 	if err != nil {
 		return nil, err
 	}
-	t.setEdition(f.wants[0].t.edition)
+	t.setEdition(dc.tree.edition)
 	k := t.kind()
 	r := dc.newReader(t, k)
 	r.queue = append(scratch.queue[:0], r.queue...)
@@ -608,7 +634,7 @@ func (d *document) newReader(t *tree, k kind) *reader {
 		t.setEdition(d.tree.edition)
 	}
 	r := &reader{d: d, t: t}
-	if k == rootKind {
+	if k == rootKind && t.edition >= 31 {
 		r.dialect = t.root().get("jsonSchemaDialect").string()
 	}
 	if t.refbase != t.base {
@@ -628,10 +654,6 @@ func (dc *discovery) add(t *tree, uri string, r *reader) bool {
 	if prev == nil {
 		dc.named[t.uri], dc.trees, dc.readers[t] = t, append(dc.trees, t), r
 		dc.identify(t.uri)
-		if t.refbase != t.base {
-			dc.named[t.refbase.String()] = t
-			dc.identify(t.refbase.String())
-		}
 		dc.take(r)
 	}
 	if uri != "" && dc.named[uri] == nil {
@@ -770,7 +792,11 @@ func (dc *discovery) follow(uri string, w want) {
 		dc.readers[t].open(t.root(), t.kind(), t.refbase, nil, t.uri, dc.readers[t].dialect, w)
 		dc.wake(dc.readers[t])
 	} else if c := dc.ids[uri]; c != nil {
-		dc.readers[c.v.t].open(c.v, schemaKind, c.base, c.ptr, uri, c.dialect, w)
+		k, base := schemaKind, c.base
+		if c.v.i == 0 && c.v.t.refbase.String() == uri {
+			k, base = c.v.t.kind(), c.v.t.refbase
+		}
+		dc.readers[c.v.t].open(c.v, k, base, c.ptr, uri, c.dialect, w)
 		dc.wake(dc.readers[c.v.t])
 	}
 }
@@ -911,11 +937,17 @@ func (r *reader) visit(v value, k kind, base *url.URL, effective string) {
 		}
 		if k == schemaKind {
 			r.reference(ref, k, base)
+			if r.t.edition <= 30 && ref.kind() == '"' {
+				return
+			}
 			r.reference(dynamicRef, k, base)
 			if r.t.edition == 32 {
 				r.reference(disc.get("defaultMapping"), k, base)
 			}
 			for _, m := range disc.get("mapping").members() {
+				if r.t.edition == 20 {
+					break
+				}
 				if m.kind() == '"' && !componentName.MatchString(m.text()) {
 					r.reference(m, k, base)
 				}
@@ -923,7 +955,7 @@ func (r *reader) visit(v value, k kind, base *url.URL, effective string) {
 		}
 	case k == pathItemKind:
 		r.reference(ref, k, base)
-	case k >= parameterKind && ref.kind() == '"': // a Reference Object
+	case (k >= parameterKind && k <= refKind || k == mediaKind && r.t.edition == 32) && ref.kind() == '"': // a Reference Object
 		r.reference(ref, k, base)
 		return
 	}
@@ -1065,7 +1097,11 @@ func (r *reader) referenceValue(ref value, text string, k kind, base *url.URL) {
 	w := want{frag, k, t, rank}
 	switch c := r.ids[uri]; {
 	case c != nil:
-		r.open(c.v, schemaKind, c.base, c.ptr, uri, c.dialect, w)
+		kind, base := schemaKind, c.base
+		if c.v.i == 0 && c.v.t.refbase.String() == uri {
+			kind, base = c.v.t.kind(), c.v.t.refbase
+		}
+		r.open(c.v, kind, base, c.ptr, uri, c.dialect, w)
 	case uri == t.uri:
 		r.open(t.root(), t.kind(), t.refbase, nil, uri, r.dialect, w)
 	default:
