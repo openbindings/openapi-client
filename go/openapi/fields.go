@@ -294,21 +294,13 @@ func (d *document) walk(v value) *shape {
 		kids, kept []kid // all it names, and those that declare or are of its cycle
 		next, low  int
 	}
-	var buf [4]node
-	var pbuf, obuf [4]int
-	nodes, path, open := buf[:0], pbuf[:0], obuf[:0] // nodes in the order entered, which is each one's index
-	var byNode map[int32]int                         // once there are many
+	var nodes []node     // in the order entered, which is each one's index
+	var path, open []int // the walk's path, and the nodes whose cycle is not complete
+	byNode := map[int32]int{}
 	for next := v; ; {
 		if next.ok() { // enter it
+			byNode[next.i] = len(nodes)
 			nodes, path, open = append(nodes, node{v: next, s: s, kids: kids, kept: kids[:0], low: len(nodes)}), append(path, len(nodes)), append(open, len(nodes))
-			if byNode == nil && len(nodes) > many {
-				byNode = map[int32]int{}
-				for n := range nodes {
-					byNode[nodes[n].v.i] = n
-				}
-			} else if byNode != nil {
-				byNode[next.i] = len(nodes) - 1
-			}
 			next = value{}
 		}
 		top := path[len(path)-1]
@@ -317,9 +309,6 @@ func (d *document) walk(v value) *shape {
 			k := n.kids[n.next]
 			n.next++
 			m, ok := byNode[k.v.i]
-			for j := 0; byNode == nil && j < len(nodes) && !ok; j++ {
-				m, ok = j, nodes[j].v.i == k.v.i
-			}
 			switch ks := d.facts(k.v.i).shape.Load(); {
 			case ks != nil:
 				n.s.meet(ks)
@@ -350,14 +339,14 @@ func (d *document) walk(v value) *shape {
 			continue
 		}
 		i := slices.Index(open, top) // n and the nodes opened after it are a cycle, or n alone
-		s := n.s
+		cs := n.s
 		for _, m := range open[i:] {
-			s.meet(&nodes[m].s)
+			cs.meet(&nodes[m].s)
 		}
 		var done *shape
 		for _, m := range open[i:] {
-			ms := s
-			if ms.kids = nodes[m].kept; !s.declares {
+			ms := cs
+			if ms.kids = nodes[m].kept; !cs.declares {
 				ms.kids = nil
 			}
 			if ks := d.keep(nodes[m].v, ms); m == top {
@@ -381,30 +370,18 @@ func (d *document) closure(s []value, src string, f func(s value, at string)) {
 		v  value
 		at string
 	}
-	var sbuf [8]schema
-	var vbuf [many]int32
-	stack, visited := sbuf[:0], vbuf[:0] // the schemas visited, scanned while few
-	var seen map[int32]bool              // and then looked up
+	var stack []schema
 	for i := len(s) - 1; i >= 0; i-- {
 		stack = append(stack, schema{s[i], src})
 	}
+	seen := map[int32]bool{}
 	for len(stack) > 0 {
 		top := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
-		if !top.v.ok() || seen[top.v.i] || seen == nil && slices.Contains(visited, top.v.i) {
+		if !top.v.ok() || seen[top.v.i] {
 			continue
 		}
-		if seen == nil && len(visited) == many {
-			seen = map[int32]bool{}
-			for _, i := range visited {
-				seen[i] = true
-			}
-		}
-		if seen != nil {
-			seen[top.v.i] = true
-		} else {
-			visited = append(visited, top.v.i)
-		}
+		seen[top.v.i] = true
 		f(top.v, top.at)
 		kids := d.shapeOf(top.v).kids
 		for i := len(kids) - 1; i >= 0; i-- { // the first in document order on top
