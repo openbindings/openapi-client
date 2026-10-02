@@ -414,10 +414,11 @@ func styleAllowed(in, style string) bool {
 	return style == "form"
 }
 
-// A content is the content map of a Request Body or Response Object,
-// compiled once for every reference to it.
+// A content is the content map of a Request Body or Response Object, and a
+// response's headers, compiled once for every reference to it.
 type content struct {
 	source    string // the object's Source
+	headers   []*Param
 	media     []*Media
 	parsed    []parsedMedia   // media, parsed
 	encodings []*formEncoding // the fields of each Media, under a form or multipart type it covers
@@ -446,13 +447,16 @@ func (d *document) message(v value, src string, request bool) (*Message, value, 
 	} else {
 		c = memo.get(t.i, func() *content { return d.content(t, at, request) })
 	}
-	return &Message{Description: desc, Source: c.source, Media: c.media}, t, c
+	return &Message{Description: desc, Source: c.source, Headers: c.headers, Media: c.media}, t, c
 }
 
 // content compiles the content map of the object t, whose Source is at, a
 // Request Body Object when request.
 func (d *document) content(t value, at string, request bool) *content {
 	c := &content{source: at}
+	if !request {
+		c.headers = d.headers(t.get("headers"), at+"/headers")
+	}
 	if m := t.get("content"); m.kind() == '{' {
 		for typ, mv := range m.members() {
 			mat := at + "/content/" + token(typ)

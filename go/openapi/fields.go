@@ -660,8 +660,8 @@ func mediaList(s string) []string {
 	return list
 }
 
-// headers describes the Header Objects of an Encoding's headers map h, at
-// src, but Content-Type, which OpenAPI ignores there.
+// headers describes the Header Objects of the headers map h of an Encoding
+// or Response Object, at src, but Content-Type, which OpenAPI ignores there.
 func (d *document) headers(h value, src string) []*Param {
 	var list []*Param
 	for name, v := range h.members() {
