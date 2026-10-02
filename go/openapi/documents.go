@@ -154,7 +154,7 @@ const (
 )
 
 // A slot is what a member of an object holds: a k node ('1'), or an array
-// ('[') or map ('{') of them.
+// ('[') or map ('{') of them; 'x' is a map with specification extensions.
 type slot struct {
 	k   kind
 	how byte
@@ -164,7 +164,7 @@ type slot struct {
 // they hold (OpenAPI 3.1.2 section 4.8; JSON Schema 2020-12 core sections
 // 8.2.4, 10 and 11, and validation section 8.5, for a schema's subschemas).
 var model = [...]map[string]slot{
-	rootKind: {"paths": {pathItemKind, '{'}, "webhooks": {pathItemKind, '{'}, "components": {componentsKind, '1'}},
+	rootKind: {"paths": {pathItemKind, 'x'}, "webhooks": {pathItemKind, '{'}, "components": {componentsKind, '1'}},
 	componentsKind: {"schemas": {schemaKind, '{'}, "responses": {responseKind, '{'}, "parameters": {parameterKind, '{'},
 		"examples": {refKind, '{'}, "requestBodies": {requestBodyKind, '{'}, "headers": {parameterKind, '{'},
 		"securitySchemes": {refKind, '{'}, "links": {refKind, '{'}, "callbacks": {callbackKind, '{'}, "pathItems": {pathItemKind, '{'}},
@@ -172,7 +172,7 @@ var model = [...]map[string]slot{
 		"post": {operationKind, '1'}, "delete": {operationKind, '1'}, "options": {operationKind, '1'},
 		"head": {operationKind, '1'}, "patch": {operationKind, '1'}, "trace": {operationKind, '1'}},
 	operationKind: {"parameters": {parameterKind, '['}, "requestBody": {requestBodyKind, '1'},
-		"responses": {responseKind, '{'}, "callbacks": {callbackKind, '{'}},
+		"responses": {responseKind, 'x'}, "callbacks": {callbackKind, '{'}},
 	parameterKind:   {"schema": {schemaKind, '1'}, "content": {mediaKind, '{'}, "examples": {refKind, '{'}},
 	requestBodyKind: {"content": {mediaKind, '{'}},
 	mediaKind:       {"schema": {schemaKind, '1'}, "examples": {refKind, '{'}, "encoding": {encodingKind, '{'}},
@@ -203,10 +203,11 @@ func (t *tree) kind() kind {
 // document, and the base outside it, with another node that the same
 // identifier names, if one does.
 type claim struct {
-	v     value
-	ptr   string
-	base  *url.URL
-	other *claim
+	v       value
+	ptr     string
+	base    *url.URL
+	dialect string
+	other   *claim
 }
 
 func (c *claim) source() string { return c.v.t.source(c.ptr) }
@@ -251,7 +252,8 @@ type reader struct {
 	claimed []string          // the identifiers the discovery has not taken
 	refs    []need            // the references to other documents the discovery has not taken
 	located map[int32]location
-	seen    map[visit]bool
+	seen    map[visit]uint8 // 1 queued, 2 entered recursively
+	dialect string          // the document default for schema resources
 	queue   []item
 	at      string   // the JSON Pointer of the item being read
 	path    []string // and the reference tokens from it to the node being read
@@ -267,10 +269,11 @@ type need struct {
 // An item is a k node to read, whose base outside it is base, at ptr in its
 // document.
 type item struct {
-	v    value
-	k    kind
-	base *url.URL
-	ptr  string
+	v       value
+	k       kind
+	base    *url.URL
+	ptr     string
+	dialect string
 }
 
 type visit struct {
@@ -455,7 +458,7 @@ func (dc *discovery) read(f fetch, buf []byte, scratch *reader) (*reader, error)
 	r := dc.newReader(t, k)
 	r.queue, r.path = append(scratch.queue[:0], r.queue...), scratch.path[:0]
 	for _, w := range f.wants {
-		r.open(t.root(), k, t.base, "", t.uri, w)
+		r.open(t.root(), k, t.base, "", t.uri, r.dialect, w)
 	}
 	r.drain()
 	scratch.queue, scratch.path, r.queue, r.path = r.queue, r.path, nil, nil
@@ -467,8 +470,11 @@ func (dc *discovery) read(f fetch, buf []byte, scratch *reader) (*reader, error)
 // an OpenAPI document, a reference that may reach another document.
 func (d *document) newReader(t *tree, k kind) *reader {
 	r := &reader{d: d, t: t}
+	if k == rootKind {
+		r.dialect = t.root().get("jsonSchemaDialect").string()
+	}
 	if t.declares || t.reaches && k == rootKind {
-		r.open(t.root(), k, t.base, "", t.uri, want{k: k})
+		r.open(t.root(), k, t.base, "", t.uri, r.dialect, want{k: k})
 	}
 	return r
 }
@@ -616,10 +622,10 @@ func (dc *discovery) wake(r *reader) {
 // schema, to be read by the reader of its document.
 func (dc *discovery) follow(uri string, w want) {
 	if t := dc.named[uri]; t != nil {
-		dc.readers[t].open(t.root(), t.kind(), t.base, "", t.uri, w)
+		dc.readers[t].open(t.root(), t.kind(), t.base, "", t.uri, dc.readers[t].dialect, w)
 		dc.wake(dc.readers[t])
 	} else if c := dc.ids[uri]; c != nil {
-		dc.readers[c.v.t].open(c.v, schemaKind, c.base, c.ptr, uri, w)
+		dc.readers[c.v.t].open(c.v, schemaKind, c.base, c.ptr, uri, c.dialect, w)
 		dc.wake(dc.readers[c.v.t])
 	}
 }
@@ -652,7 +658,7 @@ func (dc *discovery) drain() {
 // base, at ptr, which uri identifies, to be read, unless it is read already
 // or its document holds nothing discovery needs; one a plain name names that
 // r has not read is needed of the discovery.
-func (r *reader) open(n value, k kind, base *url.URL, ptr, uri string, w want) {
+func (r *reader) open(n value, k kind, base *url.URL, ptr, uri, dialect string, w want) {
 	if !r.t.reaches && !r.t.declares {
 		return
 	}
@@ -661,7 +667,7 @@ func (r *reader) open(n value, k kind, base *url.URL, ptr, uri string, w want) {
 	case err != nil:
 		return
 	case frag != "" && frag[0] == '/':
-		n, base = descend(n, k, frag, base)
+		n, base, dialect = descend(n, k, frag, base, dialect)
 		ptr += frag
 	case frag != "":
 		c := r.ids[uri+"#"+frag]
@@ -669,14 +675,14 @@ func (r *reader) open(n value, k kind, base *url.URL, ptr, uri string, w want) {
 			r.refs = append(r.refs, need{uri + "#" + frag, want{"", w.k, w.t, w.rank}})
 			return
 		}
-		n, base, ptr = c.v, c.base, c.ptr
+		n, base, ptr, dialect = c.v, c.base, c.ptr, c.dialect
 	}
-	if n.ok() && !r.seen[visit{n, w.k}] {
+	if n.ok() && r.seen[visit{n, w.k}] == 0 {
 		if r.seen == nil {
-			r.seen = map[visit]bool{}
+			r.seen = map[visit]uint8{}
 		}
-		r.seen[visit{n, w.k}] = true
-		r.queue = append(r.queue, item{n, w.k, base, ptr})
+		r.seen[visit{n, w.k}] = 1
+		r.queue = append(r.queue, item{n, w.k, base, ptr, dialect})
 	}
 }
 
@@ -686,18 +692,22 @@ func (r *reader) drain() {
 		it := r.queue[n-1]
 		r.queue = r.queue[:n-1]
 		r.at, r.path = it.ptr, r.path[:0]
-		r.visit(it.v, it.k, it.base)
+		r.visit(it.v, it.k, it.base, it.dialect)
 	}
 }
 
 // visit reads v as a k node whose base outside it is base: its identifiers,
 // its references, and the nodes it holds.
-func (r *reader) visit(v value, k kind, base *url.URL) {
+func (r *reader) visit(v value, k kind, base *url.URL, effective string) {
+	if r.seen[visit{v, k}] == 2 || k == anyKind && r.seen[visit{v, schemaKind}] != 0 {
+		return
+	}
+	r.seen[visit{v, k}] = 2
 	switch {
 	case k == anyKind && v.kind() == '[':
 		i := 0
 		for _, m := range v.members() {
-			r.into(strconv.Itoa(i), m, anyKind, '1', base)
+			r.into(strconv.Itoa(i), m, anyKind, '1', base, effective)
 			i++
 		}
 		return
@@ -723,8 +733,11 @@ func (r *reader) visit(v value, k kind, base *url.URL) {
 			dialect = m
 		}
 	}
+	if dialect.kind() == '"' {
+		effective = dialect.string()
+	}
 	switch {
-	case (k == schemaKind || k == anyKind) && dialect.ok() && !ownDialect(dialect.string()):
+	case (k == schemaKind || k == anyKind) && effective != "" && !ownDialect(effective):
 		return // another dialect: its identifiers and references are not read
 	case k == schemaKind || k == anyKind:
 		outer := base
@@ -732,12 +745,12 @@ func (r *reader) visit(v value, k kind, base *url.URL) {
 			if u, err := base.Parse(id.text()); err == nil {
 				u.Fragment, u.RawFragment = "", ""
 				base = u
-				r.claim(u.String(), v, outer)
+				r.claim(u.String(), v, outer, effective)
 			}
 		}
 		for _, a := range [...]value{anchor, dynamicAnchor} {
 			if a.kind() == '"' {
-				r.claim(base.String()+"#"+a.text(), v, outer)
+				r.claim(base.String()+"#"+a.text(), v, outer, effective)
 			}
 		}
 		if k == schemaKind {
@@ -759,33 +772,40 @@ func (r *reader) visit(v value, k kind, base *url.URL) {
 		s, ok := model[k][name]
 		switch k {
 		case anyKind:
-			s, ok = slot{anyKind, '1'}, true
+			if dialect.ok() || id.ok() || anchor.ok() || dynamicAnchor.ok() {
+				s, ok = model[schemaKind][name]
+				if ok {
+					s.k = anyKind // identify schema locations without following unused references
+				}
+			} else {
+				s, ok = slot{anyKind, '1'}, true
+			}
 		case callbackKind:
 			s, ok = slot{pathItemKind, '1'}, !strings.HasPrefix(name, "x-")
 		}
 		if ok {
-			r.into(name, m, s.k, s.how, base)
+			r.into(name, m, s.k, s.how, base, effective)
 		}
 	}
 }
 
 // into visits m, the member name of the node being read, as a k node, or as
 // an array or map of them, as how says.
-func (r *reader) into(name string, m value, k kind, how byte, base *url.URL) {
+func (r *reader) into(name string, m value, k kind, how byte, base *url.URL, dialect string) {
 	r.path = append(r.path, name)
 	switch {
 	case how == '1':
-		r.visit(m, k, base)
-	case m.kind() == how:
+		r.visit(m, k, base, dialect)
+	case m.kind() == how || how == 'x' && m.kind() == '{':
 		i := 0
 		for key, c := range m.members() {
 			if how == '[' {
 				key = strconv.Itoa(i)
 				i++
-			} else if (k == pathItemKind || k == responseKind) && strings.HasPrefix(key, "x-") {
+			} else if how == 'x' && strings.HasPrefix(key, "x-") {
 				continue // an extension of a Paths, Responses or Callback Object
 			}
-			r.into(key, c, k, '1', base)
+			r.into(key, c, k, '1', base, dialect)
 		}
 	}
 	r.path = r.path[:len(r.path)-1]
@@ -793,13 +813,13 @@ func (r *reader) into(name string, m value, k kind, how byte, base *url.URL) {
 
 // claim records that key, an absolute URI, identifies v, whose base outside
 // it is base.
-func (r *reader) claim(key string, v value, base *url.URL) {
+func (r *reader) claim(key string, v value, base *url.URL, dialect string) {
 	switch c := r.ids[key]; {
 	case c == nil:
 		if r.ids == nil {
 			r.ids = map[string]*claim{}
 		}
-		r.ids[key], r.claimed = &claim{v: v, ptr: r.pointer(), base: base}, append(r.claimed, key)
+		r.ids[key], r.claimed = &claim{v: v, ptr: r.pointer(), base: base, dialect: dialect}, append(r.claimed, key)
 	case c.v != v && c.other == nil:
 		c.other, r.claimed = &claim{v: v, ptr: r.pointer()}, append(r.claimed, key)
 	}
@@ -849,9 +869,9 @@ func (r *reader) reference(ref value, k kind, base *url.URL) {
 	w := want{frag, k, t, rank}
 	switch c := r.ids[uri]; {
 	case c != nil:
-		r.open(c.v, schemaKind, c.base, c.ptr, uri, w)
+		r.open(c.v, schemaKind, c.base, c.ptr, uri, c.dialect, w)
 	case uri == t.uri:
-		r.open(t.root(), t.kind(), t.base, "", uri, w)
+		r.open(t.root(), t.kind(), t.base, "", uri, r.dialect, w)
 	default:
 		r.refs = append(r.refs, need{uri, w})
 	}
@@ -860,11 +880,14 @@ func (r *reader) reference(ref value, k kind, base *url.URL) {
 // descend returns the node the JSON Pointer ptr names under v, a k node
 // whose base outside it is base, and the base outside that node: the $id of
 // each schema on the way sets it.
-func descend(v value, k kind, ptr string, base *url.URL) (value, *url.URL) {
+func descend(v value, k kind, ptr string, base *url.URL, dialect string) (value, *url.URL, string) {
 	how := byte('1')
 	for ptr != "" && v.ok() {
 		if how == '1' && (k == schemaKind || k == anyKind) && v.t.declares {
-			if id := v.get("$id"); id.kind() == '"' {
+			if local := v.get("$schema"); local.kind() == '"' {
+				dialect = local.string()
+			}
+			if id := v.get("$id"); id.kind() == '"' && (dialect == "" || ownDialect(dialect)) {
 				if u, err := base.Parse(id.text()); err == nil {
 					u.Fragment, u.RawFragment = "", ""
 					base = u
@@ -873,7 +896,7 @@ func descend(v value, k kind, ptr string, base *url.URL) (value, *url.URL) {
 		}
 		tok, rest, ok := nextToken(ptr)
 		if !ok {
-			return value{}, base
+			return value{}, base, dialect
 		}
 		v, ptr = v.step(tok), rest
 		switch name, _ := unescapeToken(tok); {
@@ -889,7 +912,7 @@ func descend(v value, k kind, ptr string, base *url.URL) (value, *url.URL) {
 			k, how = s.k, s.how
 		}
 	}
-	return v, base
+	return v, base, dialect
 }
 
 // ownDialect reports whether the schema dialect d reads identifiers as JSON

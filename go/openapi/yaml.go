@@ -367,11 +367,12 @@ func yamlScalar(n *yaml.Node) (text string, quoted bool, err error) {
 	case n.Style&(yaml.DoubleQuotedStyle|yaml.SingleQuotedStyle|yaml.LiteralStyle|yaml.FoldedStyle) != 0:
 		tag = "!!str"
 	}
+	if tag == "!" || tag == "!!str" {
+		return s, true, nil
+	}
 	number, numeric, err := yamlNumber(s)
 	integer := numeric && (strings.HasPrefix(s, "0o") || strings.HasPrefix(s, "0x") || !strings.ContainsAny(s, ".eE"))
 	switch {
-	case tag == "!" || tag == "!!str":
-		return s, true, nil
 	case (tag == "" || tag == "!!null") && (s == "" || s == "~" || s == "null" || s == "Null" || s == "NULL"):
 		return "null", false, nil
 	case (tag == "" || tag == "!!bool") && (s == "true" || s == "True" || s == "TRUE" || s == "false" || s == "False" || s == "FALSE"):
