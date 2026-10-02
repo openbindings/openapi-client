@@ -214,7 +214,7 @@ func (d *document) own(v value) (shape, []kid) {
 	s.encoded, s.declares = enc.ok(), props.ok() || s.items.ok()
 	var kids []kid
 	if ref.kind() == '"' {
-		if t, ptr, err := d.target(ref.text()); err == nil {
+		if t, ptr, err := d.target(ref); err == nil {
 			kids = append(kids, kid{t, ptr, -1})
 		}
 	}
@@ -253,14 +253,14 @@ func (d *document) facts(i int32) *facts {
 // recursion that finds the schemas of each cycle, which reach each other and
 // so share what they say (Tarjan's strongly connected components).
 func (d *document) shapeOf(v value) *shape {
-	f := d.facts(v.i)
+	f := d.facts(v.id())
 	if s := f.shape.Load(); s != nil {
 		return s
 	}
 	s, kids := d.own(v)
 	kept := kids[:0] // filtered in place
 	for _, k := range kids {
-		ks := d.facts(k.v.i).shape.Load()
+		ks := d.facts(k.v.id()).shape.Load()
 		if ks == nil {
 			if s, kids := d.own(k.v); len(kids) == 0 {
 				ks = d.keep(k.v, s)
@@ -280,7 +280,7 @@ func (d *document) shapeOf(v value) *shape {
 // keep publishes s as the shape of v, unless one is, returning the one
 // published.
 func (d *document) keep(v value, s shape) *shape {
-	f := d.facts(v.i)
+	f := d.facts(v.id())
 	f.shape.CompareAndSwap(nil, &s)
 	return f.shape.Load()
 }
@@ -299,7 +299,7 @@ func (d *document) walk(v value) *shape {
 	byNode := map[int32]int{}
 	for next := v; ; {
 		if next.ok() { // enter it
-			byNode[next.i] = len(nodes)
+			byNode[next.id()] = len(nodes)
 			nodes, path, open = append(nodes, node{v: next, s: s, kids: kids, kept: kids[:0], low: len(nodes)}), append(path, len(nodes)), append(open, len(nodes))
 			next = value{}
 		}
@@ -308,8 +308,8 @@ func (d *document) walk(v value) *shape {
 		if n.next < len(n.kids) {
 			k := n.kids[n.next]
 			n.next++
-			m, ok := byNode[k.v.i]
-			switch ks := d.facts(k.v.i).shape.Load(); {
+			m, ok := byNode[k.v.id()]
+			switch ks := d.facts(k.v.id()).shape.Load(); {
 			case ks != nil:
 				n.s.meet(ks)
 				if ks.declares {
@@ -378,10 +378,10 @@ func (d *document) closure(s []value, src string, f func(s value, at string)) {
 	for len(stack) > 0 {
 		top := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
-		if !top.v.ok() || seen[top.v.i] {
+		if !top.v.ok() || seen[top.v.id()] {
 			continue
 		}
-		seen[top.v.i] = true
+		seen[top.v.id()] = true
 		f(top.v, top.at)
 		kids := d.shapeOf(top.v).kids
 		for i := len(kids) - 1; i >= 0; i-- { // the first in document order on top
@@ -389,7 +389,7 @@ func (d *document) closure(s []value, src string, f func(s value, at string)) {
 			switch {
 			case top.at == "":
 			case k.n < 0:
-				at = d.source(k.ptr)
+				at = k.v.t.source(k.ptr)
 			default:
 				at = top.at + "/allOf/" + strconv.Itoa(k.n)
 			}
@@ -478,11 +478,11 @@ type state struct {
 
 func stateOf(s []value) state {
 	if len(s) == 1 {
-		return state{i: s[0].i}
+		return state{i: s[0].id()}
 	}
 	var b strings.Builder
 	for _, v := range s {
-		b.WriteString(strconv.Itoa(int(v.i)))
+		b.WriteString(strconv.Itoa(int(v.id())))
 		b.WriteByte(',')
 	}
 	return state{i: -1, list: b.String()}
@@ -660,8 +660,8 @@ func mediaList(s string) []string {
 	return list
 }
 
-// headers describes the Header Objects of an Encoding's headers map h, at
-// src, but Content-Type, which OpenAPI ignores there.
+// headers describes the Header Objects of the headers map h of an Encoding
+// or Response Object, at src, but Content-Type, which OpenAPI ignores there.
 func (d *document) headers(h value, src string) []*Param {
 	var list []*Param
 	for name, v := range h.members() {

@@ -493,7 +493,7 @@ func (c *Client) resolve(s *server, setting string, re *RequestError) (endpoint,
 	if !ok {
 		return endpoint{}, false
 	}
-	ep, err := c.doc.resolveServerURL(u)
+	ep, err := s.t.resolveServerURL(u)
 	if err != nil {
 		err = fmt.Errorf("server URL %q cannot be used with the variables' values: %w", s.URL, err)
 		if len(values) == 0 && re != nil {
@@ -531,16 +531,17 @@ func dotSegment(u string, start, end int) bool {
 	return false
 }
 
-// resolveServerURL resolves the server URL s by the URL rule.
-func (d *document) resolveServerURL(s string) (endpoint, error) {
+// resolveServerURL resolves the server URL s, written in the document t, by
+// the URL rule.
+func (t *tree) resolveServerURL(s string) (endpoint, error) {
 	u, err := url.Parse(s)
 	switch {
 	case err != nil:
 		return endpoint{}, errors.New("it is not a URL")
-	case !u.IsAbs() && !d.httpBase():
+	case !u.IsAbs() && !t.httpBase():
 		return endpoint{}, errors.New("a relative URL needs a document retrieved over http or https")
 	case !u.IsAbs():
-		u = d.base.ResolveReference(u)
+		u = t.base.ResolveReference(u)
 	}
 	if u.Host == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || strings.Contains(s, "#") {
 		return endpoint{}, errors.New("it has no host, or has userinfo, a query or a fragment")
@@ -550,7 +551,7 @@ func (d *document) resolveServerURL(s string) (endpoint, error) {
 
 // httpBase reports whether relative server URLs resolve against the
 // document's URI.
-func (d *document) httpBase() bool { return d.base.Scheme == "http" || d.base.Scheme == "https" }
+func (t *tree) httpBase() bool { return t.base.Scheme == "http" || t.base.Scheme == "https" }
 
 // body encodes the request body, setting its Content-Type in h, and
 // returns its content and the Media governing it.

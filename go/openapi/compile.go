@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"errors"
 	"fmt"
+	"hash/maphash"
 	"net/textproto"
 	"slices"
 	"strconv"
@@ -37,6 +38,9 @@ type param struct {
 	*style
 	set      *charset // how its values are percent-encoded, or nil to write them as given
 	required bool
+	dotted   bool          // whether its Key is its location and name joined by a dot
+	idHash   uint32        // a hash of its identity, by location and name (see find)
+	nameHash uint32        // and of its name alone
 	field    string        // a header parameter's canonical field name
 	name     string        // the name, percent-encoded
 	media    *parsedMedia  // a content parameter's ContentType, parsed
@@ -65,7 +69,7 @@ func (e *entry) build() *operation {
 	d := e.doc
 	if e.m < 0 {
 		o := &operation{doc: d}
-		o.Path, o.Source, o.Err = e.path, d.source(e.levels.ptr), e.err
+		o.Path, o.Source, o.Err = e.path, e.levels.v.t.source(e.levels.ptr), e.err
 		return o
 	}
 	var o *operation
@@ -89,7 +93,7 @@ func (e *entry) build() *operation {
 // path its Path Item chain reaches it from: all but the Key and what the
 // path template decides.
 func (e *entry) shape() *operation {
-	d, n, src := e.doc, e.node, e.doc.source(e.ptr())
+	d, n, src := e.doc, e.node, e.source()
 	o := &operation{doc: d}
 	op := &o.Operation
 	op.ID, op.Method, op.Source = e.id, methods[e.m].upper, src
@@ -118,7 +122,7 @@ func (e *entry) shape() *operation {
 	}
 	errs := []error{e.err}
 
-	ids := map[paramID]int{}
+	ids := map[uint32]int{}
 	list, at, err := e.field(parametersField)
 	errs = append(errs, err)
 	errs = o.addParams(list, at, ids, errs)
@@ -151,7 +155,7 @@ func (e *entry) shape() *operation {
 		sl = d.parseServers(servers, src+"/servers")
 	case s.ok():
 		errs = append(errs, err)
-		sl = d.serverLists.get(s.i, func() *serverList { return d.parseServers(s, at) })
+		sl = d.serverLists.get(s.id(), func() *serverList { return d.parseServers(s, at) })
 	default:
 		sl = d.inherited().servers
 	}
@@ -162,15 +166,12 @@ func (e *entry) shape() *operation {
 		sec = d.compileSecurity(security)
 	}
 	op.Security, o.security, errs = sec.reqs, sec.alts, append(errs, sec.err)
-	if len(sec.dests) > 0 { // keep the parameters where a credential goes
-		for id, i := range ids {
-			if !sec.dests[id] {
-				continue
-			}
+	for dest := range sec.dests { // keep the parameters where a credential goes
+		if k, ok := find(ids, paramHash(dest.in, dest.name), func(j int) bool { return o.params[j].identity() == dest }); ok {
 			if o.dests == nil {
 				o.dests = map[paramID]int{}
 			}
-			o.dests[id] = i
+			o.dests[dest] = ids[k]
 		}
 	}
 	op.Err = errors.Join(errs...)
@@ -193,16 +194,16 @@ func (e *entry) field(f int) (value, string, error) {
 	if e.sum.dup&(1<<f) != 0 {
 		err = fmt.Errorf("the Path Item and its $ref target both define %s", name)
 	}
-	return l.v.get(name), e.doc.source(l.ptr + "/" + name), err
+	return l.v.get(name), l.v.t.source(l.ptr + "/" + name), err
 }
 
 // A paramID identifies a parameter by location and name, a header's name
-// compared without regard to case.
+// compared without regard to case (see param.identity).
 type paramID struct{ in, name string }
 
 // addParams adds the parameters of list, each taking the place of an
 // earlier one it identifies.
-func (o *operation) addParams(list value, src string, ids map[paramID]int, errs []error) []error {
+func (o *operation) addParams(list value, src string, ids map[uint32]int, errs []error) []error {
 	if list.kind() != '[' {
 		return errs
 	}
@@ -214,19 +215,15 @@ func (o *operation) addParams(list value, src string, ids map[paramID]int, errs 
 		if p.In == "header" && (strings.EqualFold(p.Name, "Accept") || strings.EqualFold(p.Name, "Content-Type") || strings.EqualFold(p.Name, "Authorization")) {
 			continue
 		}
-		id := paramID{p.In, p.Name}
-		switch p.In {
-		case "":
+		if p.In == "" {
 			errs = append(errs, p.Err) // its identity cannot be known
 			o.params = append(o.params, pp)
 			continue
-		case "header":
-			id.name = pp.field // canonical, so compared without regard to case
 		}
-		if j, ok := ids[id]; ok {
-			o.params[j] = pp
+		if k, ok := find(ids, pp.idHash, func(j int) bool { return o.params[j].identity() == pp.identity() }); ok {
+			o.params[ids[k]] = pp
 		} else {
-			ids[id] = len(o.params)
+			ids[k] = len(o.params)
 			o.params = append(o.params, pp)
 		}
 	}
@@ -236,9 +233,13 @@ func (o *operation) addParams(list value, src string, ids map[paramID]int, errs 
 // assignKeys sets each parameter's Key and lists the parameters in
 // Operation.Params.
 func (o *operation) assignKeys() {
-	names := make(map[string]int, len(o.params))
-	for _, p := range o.params {
-		names[p.Name]++
+	names := make(map[uint32]int, len(o.params)) // the first parameter of each name
+	for i, pp := range o.params {
+		if k, ok := find(names, pp.nameHash, func(j int) bool { return o.params[j].Name == pp.Name }); ok {
+			o.params[names[k]].dotted, o.params[i].dotted = true, true
+		} else {
+			names[k] = i
+		}
 	}
 	for i, pp := range o.params {
 		p := pp.Param
@@ -249,12 +250,40 @@ func (o *operation) assignKeys() {
 		if p.In == "" {
 			continue
 		}
-		loc, _, dotted := strings.Cut(p.Name, ".")
 		p.Key = p.Name
-		if names[p.Name] > 1 || p.Name == "" || strings.HasPrefix(p.Name, "/") || strings.HasPrefix(p.Name, "Input.Body") ||
-			dotted && slices.Contains([]string{"path", "query", "header", "cookie", "querystring"}, loc) {
+		if pp.dotted {
 			p.Key = p.In + "." + p.Name
 		}
+	}
+}
+
+// identity returns the location and name that identify the parameter, its
+// header field name for a header, compared without regard to case.
+func (pp *param) identity() paramID {
+	if pp.In == "header" {
+		return paramID{pp.In, pp.field}
+	}
+	return paramID{pp.In, pp.Name}
+}
+
+// paramSeed seeds the hashes of parameter identities and names.
+var paramSeed = maphash.MakeSeed()
+
+// paramHash hashes the parameter identity in and name.
+func paramHash(in, name string) uint32 {
+	return uint32(maphash.String(paramSeed, name) ^ maphash.String(paramSeed, in)<<1)
+}
+
+// find returns the key of m, from h on, that holds the index of a
+// parameter same reports equal, or the first free one, where such a
+// parameter goes. A parameter's key hashes what same compares, computed once
+// per node, and those that hash alike take the keys that follow.
+func find(m map[uint32]int, h uint32, same func(int) bool) (uint32, bool) {
+	for {
+		if i, ok := m[h]; !ok || same(i) {
+			return h, ok
+		}
+		h++
 	}
 }
 
@@ -274,7 +303,7 @@ func (d *document) param(v value, list string, i int) param {
 	if err != nil {
 		return param{Param: &Param{Source: src(), Err: err}}
 	}
-	pp := d.paramForms.get(t.i, func() param { return d.newParam(t, at) })
+	pp := d.paramForms.get(t.id(), func() param { return d.newParam(t, at) })
 	c := *pp.Param
 	pp.Param, c.Description = &c, desc
 	return pp
@@ -360,6 +389,10 @@ func (d *document) newParam(t value, at string) param {
 	case p.In == "header":
 		pp.field, pp.set = textproto.CanonicalMIMEHeaderKey(p.Name), nil
 	}
+	loc, _, dotted := strings.Cut(p.Name, ".")
+	pp.idHash, pp.nameHash = paramHash(p.In, pp.identity().name), uint32(maphash.String(paramSeed, p.Name))
+	pp.dotted = p.Name == "" || strings.HasPrefix(p.Name, "/") || strings.HasPrefix(p.Name, "Input.Body") ||
+		dotted && slices.Contains([]string{"path", "query", "header", "cookie", "querystring"}, loc)
 	return pp
 }
 
@@ -397,10 +430,11 @@ func styleAllowed(in, style string) bool {
 	return style == "form"
 }
 
-// A content is the content map of a Request Body or Response Object,
-// compiled once for every reference to it.
+// A content is the content map of a Request Body or Response Object, and a
+// response's headers, compiled once for every reference to it.
 type content struct {
 	source    string // the object's Source
+	headers   []*Param
 	media     []*Media
 	parsed    []parsedMedia   // media, parsed
 	encodings []*formEncoding // the fields of each Media, under a form or multipart type it covers
@@ -424,18 +458,21 @@ func (d *document) message(v value, src string, request bool) (*Message, value, 
 		memo = &d.bodies
 	}
 	var c *content
-	if t.i == v.i { // only this place reaches it
+	if t == v { // only this place reaches it
 		c = d.content(t, at, request)
 	} else {
-		c = memo.get(t.i, func() *content { return d.content(t, at, request) })
+		c = memo.get(t.id(), func() *content { return d.content(t, at, request) })
 	}
-	return &Message{Description: desc, Source: c.source, Media: c.media}, t, c
+	return &Message{Description: desc, Source: c.source, Headers: c.headers, Media: c.media}, t, c
 }
 
 // content compiles the content map of the object t, whose Source is at, a
 // Request Body Object when request.
 func (d *document) content(t value, at string, request bool) *content {
 	c := &content{source: at}
+	if h := t.get("headers"); h.ok() && !request {
+		c.headers = d.headers(h, at+"/headers")
+	}
 	if m := t.get("content"); m.kind() == '{' {
 		for typ, mv := range m.members() {
 			mat := at + "/content/" + token(typ)
@@ -578,6 +615,7 @@ func canonicalString(b *strings.Builder, s string) {
 // literal text and variables alternating.
 type server struct {
 	*Server
+	t     *tree     // the document that holds it, against whose URI a relative URL resolves
 	text  []string  // the literal text around the variables
 	vars  []urlVar  // each variable of the template, in order
 	fixed *endpoint // the URL with every variable at its default, if usable
@@ -629,7 +667,7 @@ func (d *document) inherited() *inheritance {
 		if s := d.root().get("servers"); s.hasMembers() {
 			r.servers = d.parseServers(s, d.source("/servers"))
 		} else {
-			sv := d.newServer(&Server{ID: "default", URL: "/"}, value{})
+			sv := newServer(&Server{ID: "default", URL: "/"}, value{}, d.tree)
 			r.servers = &serverList{[]*server{sv}, []*Server{sv.Server}}
 		}
 		if sec := d.root().get("security"); sec.ok() {
@@ -645,20 +683,21 @@ func (d *document) parseServers(list value, src string) *serverList {
 	for _, v := range list.members() {
 		at := src + "/" + strconv.Itoa(len(sl.servers))
 		s := &Server{ID: idOf(v), URL: v.str("url"), Description: v.str("description"), Source: at}
-		sl.servers, sl.desc = append(sl.servers, d.newServer(s, v.get("variables"))), append(sl.desc, s)
+		sl.servers, sl.desc = append(sl.servers, newServer(s, v.get("variables"), list.t)), append(sl.desc, s)
 	}
 	return sl
 }
 
-// idOf returns the Server.ID of the Server Object v: its node's index, which
-// no other declaration in the document has, and which every operation that
-// inherits it shares.
-func idOf(v value) string { return strconv.Itoa(int(v.i)) }
+// idOf returns the Server.ID of the Server Object v: its node's number,
+// which no other declaration in the documents loaded has, and which every
+// operation that inherits it shares.
+func idOf(v value) string { return strconv.Itoa(int(v.id())) }
 
-// newServer completes s from its URL template and declared variables.
-func (d *document) newServer(s *Server, declared value) *server {
+// newServer completes s, written in the document t, from its URL template
+// and declared variables.
+func newServer(s *Server, declared value, t *tree) *server {
 	text, names, _ := splitTemplate(s.URL)
-	sv := &server{Server: s, text: text}
+	sv := &server{Server: s, t: t, text: text}
 	var index map[string]int
 	for _, name := range names {
 		j, seen := index[name]
@@ -701,15 +740,15 @@ func (d *document) newServer(s *Server, declared value) *server {
 	literal := sv.substitute(func(int, int) string { return "x" })
 	_, authority, path = urlParts(literal)
 	if len(sv.vars) == 0 {
-		if _, err := d.resolveServerURL(literal); err != nil {
+		if _, err := t.resolveServerURL(literal); err != nil {
 			s.Err = fmt.Errorf("server URL %q cannot be used: %w", s.URL, err)
 		}
 	} else if strings.ContainsAny(literal, "?#") || authority >= 0 && strings.Contains(literal[authority:path], "@") ||
-		strings.HasPrefix(sv.text[0], "/") && !d.httpBase() {
+		strings.HasPrefix(sv.text[0], "/") && !t.httpBase() {
 		s.Err = fmt.Errorf("server URL %q cannot be used whatever its variables' values", s.URL)
 	}
 	if s.Err == nil && !slices.ContainsFunc(s.Variables, func(v Variable) bool { return !v.DefaultSet }) {
-		if ep, err := d.resolveServerURL(defaults); err == nil {
+		if ep, err := t.resolveServerURL(defaults); err == nil {
 			sv.fixed = &ep
 		}
 	}

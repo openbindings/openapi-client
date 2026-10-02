@@ -1,0 +1,73 @@
+--- a/decode.go
++++ b/decode.go
+@@ -14,0 +15,2 @@
++
++// Modified for the OpenAPI client; see README.md and openapi.patch.
+@@ -172 +174 @@
+-	if tag != "" && tag != "!" {
++	if tag != "" {
+--- /dev/null
++++ b/position.go
+@@ -0,0 +1,17 @@
++package yaml
++
++// ErrorPosition returns the last decoding error's byte offset when the
++// reader rejected input, or -1 and a one-based line and character column
++// for scanner, parser and alias errors. It reads the same marks used by
++// the decoder, before its public error discards the column information.
++func (dec *Decoder) ErrorPosition() (offset, line, column int) {
++	p := dec.parser
++	if p.parser.error == yaml_READER_ERROR {
++		return p.parser.problem_offset, 0, 0
++	}
++	mark := p.parser.problem_mark
++	if p.parser.error == yaml_NO_ERROR {
++		mark = p.event.start_mark
++	}
++	return -1, mark.line + 1, mark.column + 1
++}
+--- a/scannerc.go
++++ b/scannerc.go
+@@ -21,0 +22,2 @@
++
++// Modified for the OpenAPI client; see README.md and openapi.patch.
+@@ -582,8 +583,0 @@
+-	case buf[pos] == '\xC2' && buf[pos+1] == '\x85':
+-		// NEL . LF
+-		s = append(s, '\n')
+-		parser.buffer_pos += 2
+-	case buf[pos] == '\xE2' && buf[pos+1] == '\x80' && (buf[pos+2] == '\xA8' || buf[pos+2] == '\xA9'):
+-		// LS|PS . LS|PS
+-		s = append(s, buf[parser.buffer_pos:pos+3]...)
+-		parser.buffer_pos += 3
+@@ -1912 +1906 @@
+-	for is_alpha(parser.buffer, parser.buffer_pos) {
++	for !is_blankz(parser.buffer, parser.buffer_pos) && bytes.IndexByte([]byte("[]{},"), parser.buffer[parser.buffer_pos]) < 0 {
+@@ -1977,0 +1972,4 @@
++		}
++		if string(suffix) == "!" {
++			return yaml_parser_set_scanner_error(parser, "while scanning a tag",
++				start_mark, "verbatim tag must not be the non-specific tag '!'")
+--- a/yamlprivateh.go
++++ b/yamlprivateh.go
+@@ -21,0 +22,2 @@
++
++// Modified for the OpenAPI client; see README.md and openapi.patch.
+@@ -126,4 +128 @@
+-		b[i] == '\n' || // LF (#xA)
+-		b[i] == 0xC2 && b[i+1] == 0x85 || // NEL (#x85)
+-		b[i] == 0xE2 && b[i+1] == 0x80 && b[i+2] == 0xA8 || // LS (#x2028)
+-		b[i] == 0xE2 && b[i+1] == 0x80 && b[i+2] == 0xA9) // PS (#x2029)
++		b[i] == '\n') // LF (#xA)
+@@ -143,3 +141,0 @@
+-		b[i] == 0xC2 && b[i+1] == 0x85 || // NEL (#x85)
+-		b[i] == 0xE2 && b[i+1] == 0x80 && b[i+2] == 0xA8 || // LS (#x2028)
+-		b[i] == 0xE2 && b[i+1] == 0x80 && b[i+2] == 0xA9 || // PS (#x2029)
+@@ -159,3 +154,0 @@
+-		b[i] == 0xC2 && b[i+1] == 0x85 || // NEL (#x85)
+-		b[i] == 0xE2 && b[i+1] == 0x80 && b[i+2] == 0xA8 || // LS (#x2028)
+-		b[i] == 0xE2 && b[i+1] == 0x80 && b[i+2] == 0xA9 || // PS (#x2029)
+@@ -174,3 +166,0 @@
+-		b[i] == 0xC2 && b[i+1] == 0x85 || // NEL (#x85)
+-		b[i] == 0xE2 && b[i+1] == 0x80 && b[i+2] == 0xA8 || // LS (#x2028)
+-		b[i] == 0xE2 && b[i+1] == 0x80 && b[i+2] == 0xA9 || // PS (#x2029)

@@ -1,9 +1,6 @@
 package openapi
 
-import (
-	"encoding/json"
-	"strings"
-)
+import "encoding/json"
 
 // Operations describes every operation of the document, in document order:
 // paths as listed, within a path the methods in the order get, put, post,
@@ -571,13 +568,12 @@ func (s *Schema) Source() string {
 // it (see Schema for other dialects).
 func (s *Schema) Base() string {
 	d := s.Dialect()
-	if id := s.v.get("$id"); id.kind() == '"' && (d == "https://json-schema.org/draft/2020-12/schema" ||
-		strings.HasPrefix(d, "https://spec.openapis.org/oas/3.1/dialect/") || strings.HasPrefix(d, "https://spec.openapis.org/oas/3.2/dialect/")) {
-		if u, err := s.doc.base.Parse(id.text()); err == nil {
+	if id := s.v.get("$id"); id.kind() == '"' && ownDialect(d) {
+		if u, err := s.v.t.base.Parse(id.text()); err == nil {
 			return u.String()
 		}
 	}
-	return s.doc.uri
+	return s.v.t.uri
 }
 
 // Dialect is the JSON Schema dialect the schema is written in, in OpenAPI

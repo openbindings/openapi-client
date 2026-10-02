@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"iter"
 	"math"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
-	"unicode/utf8"
 )
 
 // maxDepth is how deeply a document may nest, the outermost value being
@@ -22,15 +22,29 @@ const maxDepth = 1000
 // index rather than a walk.
 const many = 16
 
-// A tree is a parsed JSON text: its source, and one node per value in
-// document order, each container followed by its members. Nodes hold only
-// offsets; names, strings and numbers are read from the source when used.
-// What lookups derive is kept, each fact once: the index of a container
-// with many members, and the value of an escaped string.
+// A tree is a loaded document, parsed: the URI it was retrieved from, its
+// JSON text, and one node per value in document order, each container
+// followed by its members. Nodes hold only offsets; names, strings and
+// numbers are read from the text when used. What lookups derive is kept,
+// each fact once: the index of a container with many members, and the value
+// of an escaped string.
 type tree struct {
-	src     string
-	nodes   []node
-	escapes []uint32 // the offsets of the strings written with an escape, in order
+	uri       string                 // the URI the document was retrieved from
+	base      *url.URL               // uri, parsed
+	dir       string                 // uri up to its last slash, when it reaches others and has a path and no query
+	canonical atomic.Pointer[string] // the URI of its directory, as net/url writes it (see canonicalDir)
+	src       string
+	nodes     []node
+	escapes   []uint32 // the offsets of the strings written with an escape, in order
+	off       int32    // the number of its first node among the nodes of every document loaded
+
+	// What discovery reads it for: a reference that may reach another
+	// document (one not to a fragment of itself, or a discriminator mapping
+	// value); an identifier ($id, $anchor or $dynamicAnchor). And where each
+	// reference discovery read leads, by node, but one to a fragment of the
+	// document itself.
+	reaches, declares bool
+	located           map[int32]location
 
 	// Read without a lock, each computed unlocked and kept as first stored.
 	indexes sync.Map                 // container to []int32: an object's members sorted by name, an array's items
@@ -52,6 +66,10 @@ type value struct {
 }
 
 func (v value) ok() bool { return v.t != nil }
+
+// id returns the value's number among the nodes of every document loaded,
+// by which what it compiles to is kept.
+func (v value) id() int32 { return v.t.off + v.i }
 
 // hasMembers reports whether v is an object or array that is not empty.
 func (v value) hasMembers() bool {
@@ -294,32 +312,43 @@ func (t *tree) index(i int32) []int32 {
 // at returns the value a JSON Pointer names under v, or an absent value.
 func (v value) at(ptr string) value {
 	for ptr != "" && v.ok() {
-		if ptr[0] != '/' {
+		tok, rest, ok := nextToken(ptr)
+		if !ok {
 			return value{}
 		}
-		tok := ptr[1:]
-		if i := strings.IndexByte(tok, '/'); i >= 0 {
-			tok, ptr = tok[:i], tok[i:]
-		} else {
-			ptr = ""
-		}
-		tok, ok := unescapeToken(tok)
-		switch {
-		case !ok:
-			return value{}
-		case v.kind() == '{':
-			v = v.get(tok)
-		case v.kind() == '[':
-			n, err := strconv.Atoi(tok)
-			if err != nil || tok[0] < '0' || tok[0] > '9' || tok[0] == '0' && len(tok) > 1 { // digits, without a leading zero
-				return value{}
-			}
-			v = v.item(n)
-		default:
-			return value{}
-		}
+		v, ptr = v.step(tok), rest
 	}
 	return v
+}
+
+// nextToken splits the first reference token, still escaped, from a JSON
+// Pointer, reporting false when ptr does not begin with "/".
+func nextToken(ptr string) (tok, rest string, ok bool) {
+	if ptr[0] != '/' {
+		return "", "", false
+	}
+	if i := strings.IndexByte(ptr[1:], '/'); i >= 0 {
+		return ptr[1 : 1+i], ptr[1+i:], true
+	}
+	return ptr[1:], "", true
+}
+
+// step returns the member of v an escaped reference token names, or an
+// absent value.
+func (v value) step(tok string) value {
+	tok, ok := unescapeToken(tok)
+	switch {
+	case !ok:
+	case v.kind() == '{':
+		return v.get(tok)
+	case v.kind() == '[':
+		n, err := strconv.Atoi(tok)
+		if err != nil || tok[0] < '0' || tok[0] > '9' || tok[0] == '0' && len(tok) > 1 { // digits, without a leading zero
+			return value{}
+		}
+		return v.item(n)
+	}
+	return value{}
 }
 
 var (
@@ -339,19 +368,14 @@ func unescapeToken(s string) (string, bool) {
 	return tokenUnescaper.Replace(s), strings.Count(s, "~") == strings.Count(s, "~0")+strings.Count(s, "~1")
 }
 
-// parseTree reads src, a JSON text (RFC 8259), as the document at uri,
-// stopping when ctx is done.
-func parseTree(ctx context.Context, src, uri string) (*tree, error) {
-	p := scanner{ctx: ctx, src: src, uri: uri}
+// parseTree reads src, a JSON text (RFC 8259) in UTF-8 that took unit bytes
+// per code unit as retrieved, as the document at uri, stopping when ctx is
+// done.
+func parseTree(ctx context.Context, src, uri string, unit int) (*tree, error) {
+	var names [many]string
+	p := scanner{ctx: ctx, src: src, uri: uri, unit: unit, names: names[:0]}
 	if uint64(len(src)) >= math.MaxUint32 {
 		return nil, p.errorAt(0, "the document is 4 GiB or larger")
-	}
-	if !utf8.ValidString(src) {
-		i := 0
-		for r, n := utf8.DecodeRuneInString(src); r != utf8.RuneError || n != 1; r, n = utf8.DecodeRuneInString(src[i:]) {
-			i += n
-		}
-		return nil, p.errorAt(i, "invalid UTF-8")
 	}
 	// Each value but the outermost follows a "{", "[" or "," in its
 	// container, and takes two bytes with its separator, so both bound the
@@ -369,17 +393,32 @@ func parseTree(ctx context.Context, src, uri string) (*tree, error) {
 	if cap(p.nodes)-len(p.nodes) > len(p.nodes)/8 {
 		p.nodes = slices.Clone(p.nodes)
 	}
-	return &tree{src: src, nodes: p.nodes, escapes: p.escapes, decoded: make([]atomic.Pointer[string], len(p.escapes))}, nil
+	return &tree{src: src, nodes: p.nodes, escapes: p.escapes, decoded: make([]atomic.Pointer[string], len(p.escapes)), reaches: p.reaches, declares: p.declares}, nil
 }
 
 // A scanner reads a JSON text into a tree's nodes.
 type scanner struct {
-	ctx      context.Context
-	src, uri string
-	i        int      // the read position
-	nodes    []node   // the nodes read
-	escapes  []uint32 // the offsets of the strings read with an escape
-	names    []string // the member names of the objects being read
+	ctx               context.Context
+	src, uri          string
+	unit              int      // the bytes a code unit took as retrieved
+	i                 int      // the read position
+	nodes             []node   // the nodes read
+	escapes           []uint32 // the offsets of the strings read with an escape
+	names             []string // the member names of the objects being read
+	reaches, declares bool     // see tree
+}
+
+// note records what a member named name, whose value's text begins v, tells
+// discovery (see tree).
+func note(name, v string, reaches, declares *bool) {
+	switch name {
+	case "$ref", "$dynamicRef":
+		*reaches = *reaches || !strings.HasPrefix(v, `"#`)
+	case "mapping":
+		*reaches = true
+	case "$id", "$anchor", "$dynamicAnchor":
+		*declares = true
+	}
 }
 
 // value reads the value at p.i, the member named at offset name, if not 0.
@@ -453,7 +492,9 @@ func (p *scanner) container(depth int) error {
 				return p.errorAt(p.i, "expected a colon")
 			}
 			p.i++
-			p.space()
+			if p.space(); len(name) > 1 && (name[0] == '$' || name[0] == 'm') {
+				note(name, p.src[p.i:], &p.reaches, &p.declares)
+			}
 		}
 		if err := p.value(depth+1, uint32(at)); err != nil {
 			return err
@@ -539,10 +580,4 @@ func (p *scanner) number() error {
 	return nil
 }
 
-// errorAt reports a rejection at byte offset i, by line and column, both
-// counted from 1, the column in bytes.
-func (p *scanner) errorAt(i int, msg string) error {
-	line := 1 + strings.Count(p.src[:i], "\n")
-	col := i - strings.LastIndexByte(p.src[:i], '\n')
-	return fmt.Errorf("openapi: %s:%d:%d: %s", p.uri, line, col, msg)
-}
+func (p *scanner) errorAt(i int, msg string) error { return rejection(p.uri, p.src, i, p.unit, msg) }

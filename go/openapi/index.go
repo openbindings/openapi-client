@@ -1,6 +1,7 @@
 package openapi
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha1"
 	"errors"
@@ -18,14 +19,21 @@ import (
 	"sync/atomic"
 )
 
-// A document is a loaded OpenAPI document: its tree, and the index of its
-// operations. Derived Clients share it.
+// A document is a loaded OpenAPI description: its entry document's tree,
+// every document its references reach, what they identify, and the index of
+// its operations. Derived Clients share it.
 type document struct {
-	*tree
-	uri     string   // the URI the document was retrieved from
-	base    *url.URL // uri, parsed
-	version string
-	dialect string // jsonSchemaDialect
+	*tree          // the entry document's
+	version string // the entry's
+	dialect string // the entry's jsonSchemaDialect
+	schemes SchemeLookup
+
+	trees  []*tree           // every document loaded: the entry, then the others by URI
+	named  map[string]*tree  // by the URI each was retrieved from, and the URI requested when a redirect led there
+	ids    map[string]*claim // by each $id, and each base and plain name, the schemas declare
+	failed map[string]error  // why each document that could not be loaded was not, by the URI requested
+
+	resolutions sync.Map // resolving to *resolved (see resolve)
 
 	entries []*entry          // in document order
 	byID    map[string]*entry // by operationId; nil for one several operations share
@@ -54,7 +62,8 @@ type document struct {
 // A memo keeps what each node of a document compiles to.
 type memo[T any] struct{ m sync.Map }
 
-// get returns what compile makes of node i: the first result published.
+// get returns what compile makes of node i (see value.id): the first result
+// published.
 func (m *memo[T]) get(i int32, compile func() T) T {
 	if v, ok := m.m.Load(i); ok {
 		return v.(T)
@@ -167,12 +176,19 @@ func loadOrMake[T any](p *atomic.Pointer[T], build func() *T) *T {
 	return p.Load()
 }
 
-// ptr returns the Operation Object's JSON Pointer.
-func (e *entry) ptr() string { return e.sum.at[e.m].ptr + "/" + methods[e.m].name }
+// source returns the Operation Object's Source.
+func (e *entry) source() string {
+	l := e.sum.at[e.m]
+	return l.v.t.source(l.ptr + "/" + methods[e.m].name)
+}
 
 // checkURI refuses a document URI with userinfo or a fragment.
 func checkURI(u *url.URL, raw string) error {
 	switch {
+	case strings.TrimSpace(raw) != raw:
+		return errors.New("a document URI cannot hold leading or trailing whitespace")
+	case u.Scheme == "file" && u.Host != "" && u.Host != "localhost":
+		return errors.New("a file URL cannot name a host other than localhost (RFC 8089)")
 	case u.User != nil:
 		return errors.New("a document URI cannot hold userinfo (RFC 9110 section 4.2.4)")
 	case u.Fragment != "" || strings.Contains(raw, "#"):
@@ -181,41 +197,78 @@ func checkURI(u *url.URL, raw string) error {
 	return nil
 }
 
-// fetch retrieves the document at uri, returning its content and the URI it
-// was finally retrieved from.
-func (l *Loader) fetch(ctx context.Context, uri string, hc *http.Client) (string, string, error) {
+// retrieve returns the content of the document at uri, the URI it was
+// finally retrieved from, and that URI parsed, or nil, copying the content
+// through buf, if not nil. froms is nil for the entry document; otherwise it
+// lists, in order, the documents whose references reach uri: the first that
+// may retrieve it must also admit every redirect hop and the final URI, and
+// errRefused says none may.
+func (ld *loading) retrieve(uri string, froms []string, buf []byte) (string, string, *url.URL, error) {
 	var (
 		r     io.ReadCloser
 		final = uri
 		size  = int64(-1)
+		ctx   = ld.ctx
 	)
-	shown := uri
 	u, err := url.Parse(uri)
 	switch {
 	case strings.TrimSpace(uri) != uri: // not shown: it may be a URI with userinfo
-		return "", "", errors.New("openapi: load: the URI has leading or trailing whitespace")
+		return "", "", nil, errors.New("openapi: load: the URI has leading or trailing whitespace")
 	case err != nil && hasScheme(uri): // shown neither, as its userinfo cannot be found
-		return "", "", errors.New("openapi: load: the URI cannot be parsed (RFC 3986)")
+		return "", "", nil, errors.New("openapi: load: the URI cannot be parsed (RFC 3986)")
 	case err != nil || len(u.Scheme) <= 1: // not a URL: a file path, perhaps with a drive letter
 		u, err = &url.URL{}, nil
 	default:
-		shown = u.Redacted()
 		err = checkURI(u, uri)
+	}
+	base, from := u, "" // final, parsed, and the referrer retrieving it
+	if i := slices.IndexFunc(froms, func(f string) bool { return err == nil && ld.admit(f, uri, u) }); i >= 0 {
+		from = froms[i]
+	} else if err == nil && froms != nil {
+		err = errRefused
 	}
 	switch {
 	case err != nil:
-	case l.Fetch != nil:
-		if r, final, err = l.Fetch(ctx, uri); final == "" {
+	case ld.Fetch != nil:
+		if r, final, err = ld.Fetch(ctx, uri); final == "" {
 			final = uri
 		}
+		if err == nil {
+			if final != uri || !base.IsAbs() {
+				base, err = url.Parse(final)
+			}
+			if err != nil || !base.IsAbs() {
+				err = errors.New("the final document URI must be an absolute URI")
+			} else if err = checkURI(base, final); err == nil && from != "" && !ld.admit(from, final, base) {
+				err = notAdmitted(final)
+			}
+		}
 	case u.Scheme == "http" || u.Scheme == "https":
+		c, next := *ld.hc, ld.hc.CheckRedirect
+		if next == nil {
+			next = tenRedirects
+		}
+		c.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+			to := *req.URL
+			to.Fragment, to.RawFragment = "", ""
+			if err := checkURI(&to, to.String()); err != nil {
+				return err
+			}
+			if from != "" && !ld.admit(from, to.String(), &to) {
+				return notAdmitted(to.String())
+			}
+			return next(req, via)
+		}
+		hc := &c
 		var req *http.Request
 		var resp *http.Response
 		if req, err = http.NewRequestWithContext(ctx, "GET", uri, nil); err == nil {
 			if resp, err = hc.Do(req); err == nil {
 				r, size = resp.Body, resp.ContentLength
 				if resp.Request != nil {
-					final = resp.Request.URL.String()
+					to := *resp.Request.URL
+					to.Fragment, to.RawFragment = "", ""
+					final, base = to.String(), &to
 				}
 				if resp.StatusCode/100 != 2 {
 					err = errors.New(status(resp.StatusCode))
@@ -225,12 +278,20 @@ func (l *Loader) fetch(ctx context.Context, uri string, hc *http.Client) (string
 	case u.Scheme == "file" && u.Host != "" && u.Host != "localhost":
 		err = errors.New("a file URL cannot name a host other than localhost (RFC 8089)")
 	case u.Scheme == "file":
-		r, size, err = open(ctx, filepath.FromSlash(u.Path))
+		path := filepath.FromSlash(u.Path)
+		if from != "" && ld.AllowReference == nil && ld.root != nil {
+			if path, err = ld.filePath(path); err == nil {
+				r, size, err = open(ctx, path, ld.root)
+			}
+		} else {
+			r, size, err = open(ctx, path, nil)
+		}
 	case u.Scheme == "":
 		var abs string
 		if abs, err = filepath.Abs(uri); err == nil {
-			final = (&url.URL{Scheme: "file", Path: filepath.ToSlash(abs)}).String()
-			r, size, err = open(ctx, abs)
+			base = &url.URL{Scheme: "file", Path: filepath.ToSlash(abs)}
+			final = base.String()
+			r, size, err = open(ctx, abs, nil)
 		}
 	default:
 		err = fmt.Errorf("unsupported URI scheme %q", u.Scheme)
@@ -240,17 +301,12 @@ func (l *Loader) fetch(ctx context.Context, uri string, hc *http.Client) (string
 	}
 	if err == nil {
 		var b strings.Builder
-		bound := limit(l.MaxBytes, 64<<20)
-		b.Grow(int(min(max(size, 0), bound, 1<<20)))
-		var n int64
-		if n, err = io.Copy(&b, io.LimitReader(ctxReader{ctx, r}, bound+1)); n > bound {
-			err = &http.MaxBytesError{Limit: bound}
-		}
-		if err == nil {
-			return b.String(), final, nil
+		b.Grow(int(min(max(size, 0), max(ld.left.Load(), 0), 1<<20)))
+		if _, err = io.CopyBuffer(&b, counted{ld, ctxReader{ctx, r}}, buf); err == nil {
+			return b.String(), final, base, nil
 		}
 	}
-	return "", "", fmt.Errorf("openapi: load %s: %w", shown, withContext(ctx, err))
+	return "", "", nil, fmt.Errorf("openapi: load %s: %w", safeURI(uri), safeRetrievalError(withContext(ctx, err)))
 }
 
 // hasScheme reports whether s begins with a URI scheme longer than a drive
@@ -287,64 +343,98 @@ func (c ctxReader) Read(p []byte) (int, error) {
 // regular file. Opening or reading such a file, a FIFO or a device, may
 // block: a goroutine does both, writing to a pipe that the end of ctx
 // closes with the context's error, and closing the file.
-func open(ctx context.Context, path string) (io.ReadCloser, int64, error) {
-	fi, err := os.Stat(path)
+func open(ctx context.Context, path string, root *os.Root) (io.ReadCloser, int64, error) {
+	type result struct {
+		f   *os.File
+		err error
+	}
+	ready := make(chan result)
+	go func() {
+		var f *os.File
+		var err error
+		if root != nil {
+			f, err = root.Open(path)
+		} else {
+			f, err = os.Open(path)
+		}
+		select {
+		case ready <- result{f, err}:
+		case <-ctx.Done():
+			if f != nil {
+				f.Close()
+			}
+		}
+	}()
+	var f *os.File
+	select {
+	case r := <-ready:
+		if r.err != nil {
+			return nil, 0, r.err
+		}
+		f = r.f
+	case <-ctx.Done():
+		return nil, 0, ctx.Err()
+	}
+	fi, err := f.Stat()
 	if err != nil {
+		f.Close()
 		return nil, 0, err
 	}
 	if fi.Mode().IsRegular() {
-		f, err := os.Open(path)
-		if err != nil {
-			return nil, 0, err
-		}
 		return f, fi.Size(), nil
 	}
 	pr, pw := io.Pipe()
-	stop := context.AfterFunc(ctx, func() { pw.CloseWithError(ctx.Err()) })
+	stop := context.AfterFunc(ctx, func() { pw.CloseWithError(ctx.Err()); f.Close() })
 	go func() {
 		defer stop()
-		f, err := os.Open(path)
-		if err == nil {
-			defer f.Close()
-			defer context.AfterFunc(ctx, func() { f.Close() })()
-			_, err = io.Copy(pw, f)
-		}
+		defer f.Close()
+		_, err := io.Copy(pw, f)
 		pw.CloseWithError(err)
 	}()
 	return pr, -1, nil
 }
 
-// newDocument parses content, retrieved from uri, and indexes its
-// operations.
-func newDocument(ctx context.Context, content, uri string) (*document, error) {
-	if err := ctx.Err(); err != nil {
+// safeURI never renders userinfo, even when malformed text cannot be parsed.
+func safeURI(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "(invalid URI)"
+	}
+	u.User = nil
+	return u.String()
+}
+
+// retrievalError changes presentation only: the original typed error and
+// every cause remain reachable through errors.Is and errors.As.
+type retrievalError struct {
+	cause error
+	shown string
+}
+
+func (e *retrievalError) Error() string { return e.shown }
+func (e *retrievalError) Unwrap() error { return e.cause }
+func safeRetrievalError(err error) error {
+	var u *url.Error
+	if errors.As(err, &u) {
+		return &retrievalError{err, fmt.Sprintf("%s %q: %v", u.Op, safeURI(u.URL), safeRetrievalError(u.Err))}
+	}
+	return err
+}
+
+// newDocument reads content, retrieved from uri, and every document its
+// references reach, and indexes its operations.
+func newDocument(ld *loading, content, uri string) (*document, error) {
+	if err := ld.ctx.Err(); err != nil {
 		return nil, fmt.Errorf("openapi: %w", err)
 	}
 	if uri == "" {
 		uri = contentURN(content)
 	}
-	base, err := url.Parse(uri)
-	switch {
-	case err != nil: // not shown, as its userinfo cannot be found
-		err = errors.New("the document URI cannot be parsed (RFC 3986)")
-	case !base.IsAbs():
-		err = errors.New("the document URI is not absolute")
-	}
-	if err == nil {
-		err = checkURI(base, uri)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("openapi: %w", err)
-	}
-	src := strings.TrimPrefix(content, "\xEF\xBB\xBF")
-	if s := strings.TrimLeft(src, " \t\r\n"); s != "" && s[0] != '{' {
-		return nil, fmt.Errorf("openapi: %s: YAML documents are not implemented yet: %w", uri, errors.ErrUnsupported)
-	}
-	t, err := parseTree(ctx, src, uri)
+	t, err := readTree(ld.ctx, content, uri, nil)
 	if err != nil {
 		return nil, err
 	}
-	d := &document{tree: t, uri: uri, base: base, pages: make([]atomic.Pointer[[factsPage]facts], len(t.nodes)/factsPage+1)}
+	d := &document{tree: t, schemes: ld.SchemeLookup}
 	root := d.root()
 	d.version = root.str("openapi")
 	switch {
@@ -360,13 +450,16 @@ func newDocument(ctx context.Context, content, uri string) (*document, error) {
 		return nil, fmt.Errorf("openapi: %s: no paths, components or webhooks", uri)
 	}
 	d.dialect = root.str("jsonSchemaDialect")
-	if err := d.index(ctx); err != nil {
+	if err := d.discover(ld); err != nil {
+		return nil, err
+	}
+	if err := d.index(ld.ctx); err != nil {
 		return nil, err
 	}
 	return d, nil
 }
 
-func (d *document) root() value { return value{d.tree, 0} }
+func (t *tree) root() value { return value{t, 0} }
 
 // isPatchOf reports whether version is a patch of minor, as "3.1.2" is of
 // "3.1".
@@ -392,8 +485,8 @@ func contentURN(content string) string {
 // percent-encoded as a fragment as RFC 6901 section 6 says, every byte but
 // those RFC 3986 allows in a fragment. So a child's is its parent's followed
 // by its token (see token).
-func (d *document) source(ptr string) string {
-	n := len(d.uri) + 1 + len(ptr)
+func (t *tree) source(ptr string) string {
+	n := len(t.uri) + 1 + len(ptr)
 	for i := range len(ptr) {
 		if fragmentSet[ptr[i]] == 0 {
 			n += 2
@@ -401,7 +494,7 @@ func (d *document) source(ptr string) string {
 	}
 	var b strings.Builder
 	b.Grow(n)
-	b.WriteString(d.uri)
+	b.WriteString(t.uri)
 	b.WriteByte('#')
 	escapeTo(&b, ptr, fragmentSet)
 	return b.String()
@@ -414,11 +507,7 @@ func token(name string) string { return escape(escapeToken(name), fragmentSet) }
 func (d *document) index(ctx context.Context) error {
 	d.byID, d.byRoute, d.broken = map[string]*entry{}, map[route]*entry{}, map[string]*entry{}
 	var targets map[int32]link
-	type groupKey struct {
-		sum *summary
-		m   int
-	}
-	var groups map[groupKey]*group
+	var groups map[*summary]int // first contiguous entries sharing a summary
 	for path, item := range d.root().get("paths").members() {
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("openapi: %w", err)
@@ -437,20 +526,28 @@ func (d *document) index(ctx context.Context) error {
 			d.broken[path] = e
 			continue
 		}
+		first, shared := 0, false
+		if sum != nil && levels.next != nil {
+			first, shared = groups[sum]
+			if !shared {
+				if groups == nil {
+					groups = map[*summary]int{}
+				}
+				groups[sum] = len(d.entries)
+			}
+		}
 		for m := range methods {
 			if sum == nil || sum.at[m] == nil {
 				continue
 			}
 			e := d.addOperation(path, m, levels, sum)
-			if levels.next != nil { // a $ref: other Paths entries may reach the same
-				k := groupKey{sum, m}
-				if groups[k] == nil {
-					if groups == nil {
-						groups = map[groupKey]*group{}
-					}
-					groups[k] = new(group)
+			if shared {
+				original := d.entries[first]
+				if original.group == nil {
+					original.group = new(group)
 				}
-				e.group = groups[k]
+				e.group = original.group
+				first++
 			}
 		}
 	}
@@ -536,11 +633,11 @@ func (d *document) chain(v value, ptr string, targets *map[int32]link) (*level, 
 		if ref.kind() != '"' {
 			break
 		}
-		next, at, e := d.target(ref.text())
+		next, at, e := d.target(ref)
 		if err = e; err != nil {
 			break
 		}
-		if k, ok := (*targets)[next.i]; ok {
+		if k, ok := (*targets)[next.id()]; ok {
 			if l.next, rest, err = k.l, k.sum, k.err; !k.done {
 				err = fmt.Errorf("%w %q: a reference cycle", ErrUnresolved, ref.text())
 			}
@@ -549,7 +646,7 @@ func (d *document) chain(v value, ptr string, targets *map[int32]link) (*level, 
 		if *targets == nil {
 			*targets = map[int32]link{}
 		}
-		(*targets)[next.i] = link{}
+		(*targets)[next.id()] = link{}
 		l.next = &level{v: next, ptr: at}
 		l = l.next
 		walked = append(walked, l)
@@ -558,7 +655,7 @@ func (d *document) chain(v value, ptr string, targets *map[int32]link) (*level, 
 		if err == nil {
 			rest = rest.add(walked[i])
 		}
-		(*targets)[walked[i].v.i] = link{walked[i], rest, err, true}
+		(*targets)[walked[i].v.id()] = link{walked[i], rest, err, true}
 	}
 	if err != nil {
 		return nil, nil, err
@@ -579,55 +676,54 @@ type resolution struct {
 // returning the target, its Source, and the description of the nearest
 // level that gives one: in OpenAPI 3.1 a Reference Object's description
 // replaces its target's. Each Reference Object's resolution is published
-// once per document, and a chain stops at one already published.
+// once per document, and a chain stops at one already published. A cycle is
+// named by the reference of its first Reference Object in node order, so
+// that every chain into it names it alike.
 func (d *document) follow(v value, src string) (value, string, string, error) {
-	ref, desc, described := reference(v)
+	ref, desc, _ := reference(v)
 	if !ref.ok() {
 		return v, src, desc, nil
 	}
-	type step struct {
-		i         int32
-		desc      string
-		described bool
-	}
-	var walked []step     // the Reference Objects followed, not yet published
-	var on map[int32]bool // walked, once a scan of it would be long
+	var walked []value    // the Reference Objects followed, not yet published
+	var on map[int32]bool // their ids (see value.id), once a scan of walked would be long
 	var r resolution
-	for at, last := "", ""; ; {
-		if k, ok := d.refs.Load(v.i); ok {
+	for at := ""; ; {
+		i := v.id()
+		if k, ok := d.refs.Load(i); ok {
 			r = *k.(*resolution)
 			break
 		}
 		if !ref.ok() {
-			r = resolution{v: v, src: d.source(at), desc: desc}
+			r = resolution{v: v, src: v.t.source(at), desc: desc}
 			break
 		}
-		if on[v.i] || on == nil && slices.ContainsFunc(walked, func(s step) bool { return s.i == v.i }) {
-			r = resolution{err: fmt.Errorf("%w %q: a reference cycle", ErrUnresolved, last)}
+		if on[i] || on == nil && slices.ContainsFunc(walked, func(w value) bool { return w.id() == i }) {
+			cycle := walked[slices.IndexFunc(walked, func(w value) bool { return w.id() == i }):]
+			first, _, _ := reference(slices.MinFunc(cycle, func(a, b value) int { return cmp.Compare(a.id(), b.id()) }))
+			r = resolution{err: fmt.Errorf("%w %q: a reference cycle", ErrUnresolved, first.text())}
 			break
 		}
-		if walked = append(walked, step{v.i, desc, described}); len(walked) == 16 {
+		if walked = append(walked, v); len(walked) == 16 {
 			on = map[int32]bool{}
-			for _, s := range walked {
-				on[s.i] = true
+			for _, w := range walked {
+				on[w.id()] = true
 			}
 		} else if on != nil {
-			on[v.i] = true
+			on[i] = true
 		}
-		last = ref.text()
-		next, nextAt, err := d.target(last)
+		next, nextAt, err := d.target(ref)
 		if err != nil {
 			r = resolution{err: err}
 			break
 		}
 		v, at = next, nextAt
-		ref, desc, described = reference(v)
+		ref, desc, _ = reference(v)
 	}
 	for k := len(walked) - 1; k >= 0; k-- {
-		if s := walked[k]; s.described && r.err == nil {
-			r.desc = s.desc
+		if _, desc, described := reference(walked[k]); described && r.err == nil {
+			r.desc = desc
 		}
-		kept, _ := d.refs.LoadOrStore(walked[k].i, &resolution{r.v, r.src, r.desc, r.err})
+		kept, _ := d.refs.LoadOrStore(walked[k].id(), &resolution{r.v, r.src, r.desc, r.err})
 		r = *kept.(*resolution)
 	}
 	return r.v, r.src, r.desc, r.err
@@ -660,44 +756,6 @@ func reference(v value) (ref value, desc string, described bool) {
 	return ref, desc, described
 }
 
-// target returns the node a local reference names, and its pointer.
-func (d *document) target(ref string) (value, string, error) {
-	ptr, err := d.resolve(ref)
-	if err != nil {
-		return value{}, "", err
-	}
-	target := d.root().at(ptr)
-	if !target.ok() {
-		return value{}, "", fmt.Errorf("%w %q: no such node", ErrUnresolved, ref)
-	}
-	return target, ptr, nil
-}
-
-// resolve returns the JSON Pointer a local reference names.
-func (d *document) resolve(ref string) (string, error) {
-	frag, local := strings.CutPrefix(ref, "#")
-	if !local {
-		u, err := url.Parse(ref)
-		if err != nil {
-			return "", fmt.Errorf("%w %q: not a URI reference", ErrUnresolved, ref)
-		}
-		doc := d.base.ResolveReference(u)
-		doc.Fragment, doc.RawFragment = "", ""
-		if doc.String() != d.base.String() {
-			return "", fmt.Errorf("%w %q: references to other documents are not followed yet", ErrUnresolved, ref)
-		}
-		frag = u.EscapedFragment()
-	}
-	ptr, err := frag, error(nil)
-	if strings.IndexByte(frag, '%') >= 0 {
-		ptr, err = url.PathUnescape(frag)
-	}
-	if err != nil || ptr != "" && ptr[0] != '/' {
-		return "", fmt.Errorf("%w %q: not a JSON Pointer", ErrUnresolved, ref)
-	}
-	return ptr, nil
-}
-
 // checkNames refuses, as Load does, the names in cfg that no server,
 // request body or security requirement of the document uses, and
 // credentials their schemes cannot use, without compiling operations,
@@ -728,10 +786,10 @@ func (d *document) checkNames(ctx context.Context, cfg *config, re *RequestError
 	free := sec.list(d.root().get("security")) // an operation that inherits it takes no credentials
 	seen := map[int32]bool{}                   // the nodes checked: Path Items, operations and request bodies
 	first := func(v value) bool {
-		if seen[v.i] {
+		if seen[v.id()] {
 			return false
 		}
-		seen[v.i] = true
+		seen[v.id()] = true
 		return true
 	}
 	for _, e := range d.entries {
