@@ -295,8 +295,10 @@ type reader struct {
 	claimed []string          // the identifiers the discovery has not taken
 	refs    []need            // the references to other documents the discovery has not taken
 	located map[int32]location
-	seen    map[visit]uint8 // 1 queued, 2 entered recursively
-	dialect string          // the document default for schema resources
+	// Two bits per kind and node: queued, entered recursively. The 15
+	// kinds through schemaIDsKind occupy 30 bits; new kinds must still fit.
+	seen    []uint32
+	dialect string // the document default for schema resources
 	queue   []item
 	at      *documentPath // shared physical path to the node being read
 	busy    bool
@@ -316,11 +318,6 @@ type item struct {
 	base    *url.URL
 	ptr     *documentPath
 	dialect string
-}
-
-type visit struct {
-	v value
-	k kind
 }
 
 // A fetch is a URI to retrieve, the wants that need it, the referrers to ask
@@ -430,7 +427,7 @@ func (dc *discovery) getAll(wave []fetch) []fetch {
 		go func() {
 			defer wg.Done()
 			var buf *[32 << 10]byte
-			var scratch reader // its queue and path, reused
+			var scratch reader // its queue, reused
 			mu.Lock()
 			defer func() {
 				if mu.Unlock(); buf != nil {
@@ -492,7 +489,7 @@ var buffers = sync.Pool{New: func() any { return new([32 << 10]byte) }}
 
 // read retrieves the document f names, as the first of its referrers that
 // may retrieve it, and reads it for what f's wants need, copying its content
-// through buf and reading with scratch's queue and path.
+// through buf and reading with scratch's queue.
 func (dc *discovery) read(f fetch, buf []byte, scratch *reader) (*reader, error) {
 	t, err := dc.ld.get(f.uri, f.froms, buf)
 	if err != nil {
@@ -712,20 +709,25 @@ func (r *reader) open(n value, k kind, base *url.URL, ptr *documentPath, uri, di
 		return
 	case frag != "" && frag[0] == '/':
 		n, base, dialect = descend(n, k, frag, base, dialect)
-		ptr = &documentPath{parent: ptr, part: frag}
+		if r.t.declares {
+			ptr = &documentPath{parent: ptr, part: frag}
+		}
 	case frag != "":
 		c := r.ids[uri+"#"+frag]
 		if c == nil {
-			r.refs = append(r.refs, need{uri + "#" + frag, want{"", w.k, w.t, w.rank}})
+			r.need(need{uri + "#" + frag, want{"", w.k, w.t, w.rank}})
 			return
 		}
 		n, base, ptr, dialect = c.v, c.base, c.ptr, c.dialect
 	}
-	if n.ok() && r.seen[visit{n, w.k}] == 0 {
-		if r.seen == nil {
-			r.seen = map[visit]uint8{}
-		}
-		r.seen[visit{n, w.k}] = 1
+	if !n.ok() {
+		return
+	}
+	if r.seen == nil {
+		r.seen = make([]uint32, len(r.t.nodes))
+	}
+	if r.seen[n.i]&(3<<(2*w.k)) == 0 {
+		r.seen[n.i] |= 1 << (2 * w.k)
 		r.queue = append(r.queue, item{n, w.k, base, ptr, dialect})
 	}
 }
@@ -743,10 +745,10 @@ func (r *reader) drain() {
 // visit reads v as a k node whose base outside it is base: its identifiers,
 // its references, and the nodes it holds.
 func (r *reader) visit(v value, k kind, base *url.URL, effective string) {
-	if r.seen[visit{v, k}] == 2 || k == anyKind && r.seen[visit{v, schemaKind}] != 0 {
+	if r.seen[v.i]&(2<<(2*k)) != 0 || k == anyKind && r.seen[v.i]&(3<<(2*schemaKind)) != 0 {
 		return
 	}
-	r.seen[visit{v, k}] = 2
+	r.seen[v.i] |= 2 << (2 * k)
 	switch {
 	case k == anyKind && v.kind() == '[':
 		i := 0
@@ -840,7 +842,10 @@ func (r *reader) visit(v value, k kind, base *url.URL, effective string) {
 // an array or map of them, as how says.
 func (r *reader) into(name string, m value, k kind, how byte, base *url.URL, dialect string) {
 	parent := r.at
-	r.at = &documentPath{parent: parent, part: name, token: true}
+	// Only identifier claims retain physical paths during discovery.
+	if r.t.declares {
+		r.at = &documentPath{parent: parent, part: name, token: true}
+	}
 	switch {
 	case how == '1':
 		r.visit(m, k, base, dialect)
@@ -937,8 +942,19 @@ func (r *reader) reference(ref value, k kind, base *url.URL) {
 	case uri == t.uri:
 		r.open(t.root(), t.kind(), t.base, nil, uri, r.dialect, w)
 	default:
-		r.refs = append(r.refs, need{uri, w})
+		r.need(need{uri, w})
 	}
+}
+
+// need coalesces nearby repeated references without allocating a second index.
+// The fixed window bounds work independently of the number of references.
+func (r *reader) need(n need) {
+	for _, old := range r.refs[max(0, len(r.refs)-4):] {
+		if old == n {
+			return
+		}
+	}
+	r.refs = append(r.refs, n)
 }
 
 // descend returns the node the JSON Pointer ptr names under v, a k node
