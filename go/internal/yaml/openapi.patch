@@ -1,0 +1,92 @@
+--- a/yamlprivateh.go
++++ b/yamlprivateh.go
+@@ -123,10 +123,7 @@
+ // Check if the character at the specified position is a line break.
+ func is_break(b []byte, i int) bool {
+ 	return (b[i] == '\r' || // CR (#xD)
+-		b[i] == '\n' || // LF (#xA)
+-		b[i] == 0xC2 && b[i+1] == 0x85 || // NEL (#x85)
+-		b[i] == 0xE2 && b[i+1] == 0x80 && b[i+2] == 0xA8 || // LS (#x2028)
+-		b[i] == 0xE2 && b[i+1] == 0x80 && b[i+2] == 0xA9) // PS (#x2029)
++		b[i] == '\n') // LF (#xA)
+ }
+ 
+ func is_crlf(b []byte, i int) bool {
+@@ -140,9 +137,6 @@
+ 	// is_break:
+ 	b[i] == '\r' || // CR (#xD)
+ 		b[i] == '\n' || // LF (#xA)
+-		b[i] == 0xC2 && b[i+1] == 0x85 || // NEL (#x85)
+-		b[i] == 0xE2 && b[i+1] == 0x80 && b[i+2] == 0xA8 || // LS (#x2028)
+-		b[i] == 0xE2 && b[i+1] == 0x80 && b[i+2] == 0xA9 || // PS (#x2029)
+ 		// is_z:
+ 		b[i] == 0)
+ }
+@@ -156,9 +150,6 @@
+ 		// is_breakz:
+ 		b[i] == '\r' || // CR (#xD)
+ 		b[i] == '\n' || // LF (#xA)
+-		b[i] == 0xC2 && b[i+1] == 0x85 || // NEL (#x85)
+-		b[i] == 0xE2 && b[i+1] == 0x80 && b[i+2] == 0xA8 || // LS (#x2028)
+-		b[i] == 0xE2 && b[i+1] == 0x80 && b[i+2] == 0xA9 || // PS (#x2029)
+ 		b[i] == 0)
+ }
+ 
+@@ -171,9 +162,6 @@
+ 		// is_breakz:
+ 		b[i] == '\r' || // CR (#xD)
+ 		b[i] == '\n' || // LF (#xA)
+-		b[i] == 0xC2 && b[i+1] == 0x85 || // NEL (#x85)
+-		b[i] == 0xE2 && b[i+1] == 0x80 && b[i+2] == 0xA8 || // LS (#x2028)
+-		b[i] == 0xE2 && b[i+1] == 0x80 && b[i+2] == 0xA9 || // PS (#x2029)
+ 		b[i] == 0)
+ }
+ 
+--- a/scannerc.go
++++ b/scannerc.go
+@@ -579,14 +579,6 @@
+ 		// CR|LF . LF
+ 		s = append(s, '\n')
+ 		parser.buffer_pos += 1
+-	case buf[pos] == '\xC2' && buf[pos+1] == '\x85':
+-		// NEL . LF
+-		s = append(s, '\n')
+-		parser.buffer_pos += 2
+-	case buf[pos] == '\xE2' && buf[pos+1] == '\x80' && (buf[pos+2] == '\xA8' || buf[pos+2] == '\xA9'):
+-		// LS|PS . LS|PS
+-		s = append(s, buf[parser.buffer_pos:pos+3]...)
+-		parser.buffer_pos += 3
+ 	default:
+ 		return s
+ 	}
+--- a/decode.go
++++ b/decode.go
+@@ -169,7 +169,7 @@
+ 
+ func (p *parser) node(kind Kind, defaultTag, tag, value string) *Node {
+ 	var style Style
+-	if tag != "" && tag != "!" {
++	if tag != "" {
+ 		tag = shortTag(tag)
+ 		style = TaggedStyle
+ 	} else if defaultTag != "" {
+--- /dev/null
++++ b/position.go
+@@ -0,0 +1,17 @@
++package yaml
++
++// ErrorPosition returns the last decoding error's byte offset when the
++// reader rejected input, or -1 and a one-based line and character column
++// for scanner, parser and alias errors. It reads the same marks used by
++// the decoder, before its public error discards the column information.
++func (dec *Decoder) ErrorPosition() (offset, line, column int) {
++	p := dec.parser
++	if p.parser.error == yaml_READER_ERROR {
++		return p.parser.problem_offset, 0, 0
++	}
++	mark := p.parser.problem_mark
++	if p.parser.error == yaml_NO_ERROR {
++		mark = p.event.start_mark
++	}
++	return -1, mark.line + 1, mark.column + 1
++}
