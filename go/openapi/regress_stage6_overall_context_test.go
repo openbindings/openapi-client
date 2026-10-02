@@ -89,6 +89,9 @@ func TestStage6PositionalEncodingContext(t *testing.T) {
 				for _, value := range []any{"hello", []string{"a b", "c"}, []byte("hi")} {
 					part := value
 					want, _ := json.Marshal(value)
+					if raw, ok := value.([]byte); ok {
+						want = raw // Input.Body: exact bytes remain raw without an applicable Encoding style.
+					}
 					if media == "multipart/form-data" {
 						part = map[string]any{"p": value}
 						want = []byte("hello")
