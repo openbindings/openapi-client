@@ -32,7 +32,7 @@ func entry31(paths string, extra ...string) string {
 	return strings.ReplaceAll(doc31(paths, extra...), "@BASE@", "@SELF@")
 }
 
-// A description split over eight documents on one origin, JSON and YAML,
+// A description split over nine documents on one origin, JSON and YAML,
 // in two directories: every part each Operation describes is written in
 // another document, and every Source names the document the part is
 // written in, with a JSON Pointer from that document's root, percent-encoded
@@ -829,7 +829,8 @@ func TestErrUnresolvedWrapsTheCause(t *testing.T) {
 // every Reference Object, Path Item $ref and Schema Object $ref is
 // followed, in webhooks, callbacks, links, examples, headers and unused
 // components, and in every schema keyword whose value is a schema (JSON
-// Schema 2020-12 core section 10, validation section 6 and 8); a "$ref" in
+// Schema 2020-12 core sections 8.2.4, $defs, 10, the applicators, and 11,
+// unevaluated locations; validation section 8.5, contentSchema); a "$ref" in
 // data (an example's value, an extension, a schema's default, const, enum,
 // examples or extension keyword) is not a reference, nor are operationRef,
 // externalValue and other URLs.
