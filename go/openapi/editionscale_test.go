@@ -133,3 +133,31 @@ func TestEditionsSecurityURIScale(t *testing.T) {
 		}
 	})
 }
+
+// Duplicate additionalOperations fields across Path Item reference chains
+// may be ambiguous under the frozen merge rule. Regardless of disposition,
+// inspecting this input must have bounded cost rather than copying each
+// predecessor's accumulated methods at every level. No validity/merge oracle
+// for those duplicate fields is imposed by this scaling test.
+func TestEditionsAdditionalOperationsReferenceChainScale(t *testing.T) {
+	wantLinearAllocs(t, "additionalOperations chain", 200, func(n int) func() {
+		var items []string
+		for i := range n {
+			ref := ""
+			if i+1 < n {
+				ref = fmt.Sprintf(`"$ref":"#/components/pathItems/P%d",`, i+1)
+			}
+			items = append(items, fmt.Sprintf(`"P%d":{%s"additionalOperations":{"M%d":{}}}`, i, ref, i))
+		}
+		doc := []byte(editionDoc("3.2.1", `"/x":{"$ref":"#/components/pathItems/P0"}`, `"components":{"pathItems":{`+strings.Join(items, ",")+`}}`))
+		o := &once{t: t}
+		return func() {
+			c, err := openapi.Parse(context.Background(), doc, testDocURI, nil)
+			if err != nil {
+				o.fail("Parse: %v", err)
+				return
+			}
+			c.Operations()
+		}
+	})
+}

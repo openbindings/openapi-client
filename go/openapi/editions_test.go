@@ -213,7 +213,7 @@ func TestEditionsReferenceSiblings(t *testing.T) {
 
 // Stage 5 reference ownership with 3.2 $self (load.go Loader and Document):
 // retrieval/request aliases identify unchanged bytes, whereas API URLs still
-// resolve against retrieval. Versionless fragments inherit the referring model.
+// resolve against retrieval. Versionless fragments use the entry edition.
 func TestEditionsSelfAndRetrievalBases(t *testing.T) {
 	const requestURI = "https://api.example.test/start.json"
 	const finalURI = "https://api.example.test/retrieved/root.json"

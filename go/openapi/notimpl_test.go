@@ -20,20 +20,21 @@ import (
 // form, multipart, text, XML and sequential bodies with bodytext_test.go,
 // bodyform_test.go, bodymultipart_test.go, bodyseq_test.go and
 // bodyiter_test.go. Stage 5 replaced the refusal of YAML with
-// docyaml_test.go.
+// docyaml_test.go. Stage 6 replaces the edition refusals with the edition
+// test files, including querystring; only unsupported versions remain here.
 
-// Stage brief, Loading: "Any other edition ... is a refusal with a clear
-// error (... other editions stage 6)."
-func TestStage1RefusesOtherDocuments(t *testing.T) {
+// load.go Load accepts only Swagger 2.0 and OpenAPI 3.0.x, 3.1.x and 3.2.x.
+func TestRefusesUnsupportedDocumentVersions(t *testing.T) {
 	docs := map[string]string{
-		"Swagger 2.0": `{"swagger":"2.0","info":{"title":"t","version":"1"},"paths":{}}`,
-		"OpenAPI 3.0": `{"openapi":"3.0.4","info":{"title":"t","version":"1"},"paths":{}}`,
-		"OpenAPI 3.2": `{"openapi":"3.2.0","info":{"title":"t","version":"1"},"paths":{}}`,
+		"Swagger 1.2": `{"swagger":"1.2","info":{"title":"t","version":"1"},"paths":{}}`,
+		"Swagger 2.1": `{"swagger":"2.1","info":{"title":"t","version":"1"},"paths":{}}`,
+		"OpenAPI 3.3": `{"openapi":"3.3.0","info":{"title":"t","version":"1"},"paths":{}}`,
+		"OpenAPI 4.0": `{"openapi":"4.0.0","info":{"title":"t","version":"1"},"paths":{}}`,
 	}
 	for name, doc := range docs {
 		c, err := openapi.Parse(t.Context(), []byte(doc), testDocURI, nil)
 		if err == nil || c != nil {
-			t.Errorf("%s: Parse = %v, %v; want a refusal in stage 1", name, c, err)
+			t.Errorf("%s: Parse = %v, %v; want an unsupported-version refusal", name, c, err)
 		}
 	}
 }

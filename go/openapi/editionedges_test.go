@@ -103,7 +103,7 @@ func TestEditionsSwaggerExternalFragments(t *testing.T) {
 
 // Schema.Dialect and Schema's handle semantics name the schema's document.
 // An explicitly versioned referenced document therefore keeps its own schema
-// edition, while a versionless fragment inherits the referring model.
+// edition, while a versionless fragment uses the entry edition.
 func TestEditionsMixedDocumentSchema(t *testing.T) {
 	l := openapi.Loader{Fetch: func(_ context.Context, u string) (io.ReadCloser, string, error) {
 		if u != "https://api.example.test/legacy.json" {
