@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"errors"
 	"fmt"
+	"hash/maphash"
 	"net/textproto"
 	"slices"
 	"strconv"
@@ -37,17 +38,13 @@ type param struct {
 	*style
 	set      *charset // how its values are percent-encoded, or nil to write them as given
 	required bool
+	dotted   bool          // whether its Key is its location and name joined by a dot
+	idHash   uint32        // a hash of its identity, by location and name (see find)
+	nameHash uint32        // and of its name alone
 	field    string        // a header parameter's canonical field name
 	name     string        // the name, percent-encoded
 	media    *parsedMedia  // a content parameter's ContentType, parsed
 	form     *formEncoding // the fields of a form-urlencoded content parameter
-
-	// Its identity, numbered (see document.number): by location and name,
-	// and by name alone; whether its Key is always the location and name
-	// joined by a dot, and that Key.
-	id, nameID int32
-	dotted     bool
-	dottedKey  string
 }
 
 // A pathPart is literal text of the path template, percent-encoded, or one
@@ -125,7 +122,7 @@ func (e *entry) shape() *operation {
 	}
 	errs := []error{e.err}
 
-	ids := map[int32]int{}
+	ids := map[uint32]int{}
 	list, at, err := e.field(parametersField)
 	errs = append(errs, err)
 	errs = o.addParams(list, at, ids, errs)
@@ -170,13 +167,11 @@ func (e *entry) shape() *operation {
 	}
 	op.Security, o.security, errs = sec.reqs, sec.alts, append(errs, sec.err)
 	for dest := range sec.dests { // keep the parameters where a credential goes
-		if n, ok := d.numbers.Load(dest); ok {
-			if i, ok := ids[n.(int32)]; ok {
-				if o.dests == nil {
-					o.dests = map[paramID]int{}
-				}
-				o.dests[dest] = i
+		if k, ok := find(ids, paramHash(dest.in, dest.name), func(j int) bool { return o.params[j].identity() == dest }); ok {
+			if o.dests == nil {
+				o.dests = map[paramID]int{}
 			}
+			o.dests[dest] = ids[k]
 		}
 	}
 	op.Err = errors.Join(errs...)
@@ -203,12 +198,12 @@ func (e *entry) field(f int) (value, string, error) {
 }
 
 // A paramID identifies a parameter by location and name, a header's name
-// compared without regard to case.
+// compared without regard to case (see param.identity).
 type paramID struct{ in, name string }
 
 // addParams adds the parameters of list, each taking the place of an
 // earlier one it identifies.
-func (o *operation) addParams(list value, src string, ids map[int32]int, errs []error) []error {
+func (o *operation) addParams(list value, src string, ids map[uint32]int, errs []error) []error {
 	if list.kind() != '[' {
 		return errs
 	}
@@ -225,10 +220,10 @@ func (o *operation) addParams(list value, src string, ids map[int32]int, errs []
 			o.params = append(o.params, pp)
 			continue
 		}
-		if j, ok := ids[pp.id]; ok {
-			o.params[j] = pp
+		if k, ok := find(ids, pp.idHash, func(j int) bool { return o.params[j].identity() == pp.identity() }); ok {
+			o.params[ids[k]] = pp
 		} else {
-			ids[pp.id] = len(o.params)
+			ids[k] = len(o.params)
 			o.params = append(o.params, pp)
 		}
 	}
@@ -238,9 +233,13 @@ func (o *operation) addParams(list value, src string, ids map[int32]int, errs []
 // assignKeys sets each parameter's Key and lists the parameters in
 // Operation.Params.
 func (o *operation) assignKeys() {
-	names := make(map[int32]int, len(o.params))
-	for _, p := range o.params {
-		names[p.nameID]++
+	names := make(map[uint32]int, len(o.params)) // the first parameter of each name
+	for i, pp := range o.params {
+		if k, ok := find(names, pp.nameHash, func(j int) bool { return o.params[j].Name == pp.Name }); ok {
+			o.params[names[k]].dotted, o.params[i].dotted = true, true
+		} else {
+			names[k] = i
+		}
 	}
 	for i, pp := range o.params {
 		p := pp.Param
@@ -252,21 +251,40 @@ func (o *operation) assignKeys() {
 			continue
 		}
 		p.Key = p.Name
-		if pp.dotted || names[pp.nameID] > 1 {
-			p.Key = pp.dottedKey
+		if pp.dotted {
+			p.Key = p.In + "." + p.Name
 		}
 	}
 }
 
-// number returns the number standing for id among the document's
-// parameters, the same for equal ones, so that a parameter's identity is
-// read once per node.
-func (d *document) number(id paramID) int32 {
-	if n, ok := d.numbers.Load(id); ok {
-		return n.(int32)
+// identity returns the location and name that identify the parameter, its
+// header field name for a header, compared without regard to case.
+func (pp *param) identity() paramID {
+	if pp.In == "header" {
+		return paramID{pp.In, pp.field}
 	}
-	n, _ := d.numbers.LoadOrStore(id, d.numbered.Add(1))
-	return n.(int32)
+	return paramID{pp.In, pp.Name}
+}
+
+// paramSeed seeds the hashes of parameter identities and names.
+var paramSeed = maphash.MakeSeed()
+
+// paramHash hashes the parameter identity in and name.
+func paramHash(in, name string) uint32 {
+	return uint32(maphash.String(paramSeed, name) ^ maphash.String(paramSeed, in)<<1)
+}
+
+// find returns the key of m, from h on, that holds the index of a
+// parameter same reports equal, or the first free one, where such a
+// parameter goes. A parameter's key hashes what same compares, computed once
+// per node, and those that hash alike take the keys that follow.
+func find(m map[uint32]int, h uint32, same func(int) bool) (uint32, bool) {
+	for {
+		if i, ok := m[h]; !ok || same(i) {
+			return h, ok
+		}
+		h++
+	}
 }
 
 // param describes and compiles the Parameter Object v, item i of the list
@@ -365,16 +383,14 @@ func (d *document) newParam(t value, at string) param {
 		pp = compileStyle(p, p.In, explode)
 	}
 	pp.required = p.Required || p.In == "path"
-	id := paramID{p.In, p.Name}
 	switch {
 	case p.In == "cookie" && p.Style == "form":
 		pp.style = &cookieForm
 	case p.In == "header":
 		pp.field, pp.set = textproto.CanonicalMIMEHeaderKey(p.Name), nil
-		id.name = pp.field // compared without regard to case
 	}
 	loc, _, dotted := strings.Cut(p.Name, ".")
-	pp.id, pp.nameID, pp.dottedKey = d.number(id), d.number(paramID{name: p.Name}), p.In+"."+p.Name
+	pp.idHash, pp.nameHash = paramHash(p.In, pp.identity().name), uint32(maphash.String(paramSeed, p.Name))
 	pp.dotted = p.Name == "" || strings.HasPrefix(p.Name, "/") || strings.HasPrefix(p.Name, "Input.Body") ||
 		dotted && slices.Contains([]string{"path", "query", "header", "cookie", "querystring"}, loc)
 	return pp
