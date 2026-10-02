@@ -39,10 +39,10 @@ func readTree(ctx context.Context, content, uri string, base *url.URL) (*tree, e
 		t, err = parseTree(ctx, src, uri, unit)
 	}
 	if t == nil && ctx.Err() == nil {
-		var yamlErr error
-		if t, yamlErr = parseYAML(ctx, src, uri, unit, len(content)); err == nil || !errors.Is(yamlErr, errors.ErrUnsupported) {
-			err = yamlErr
-		}
+		t, err = parseYAML(ctx, src, uri, unit, len(content))
+	}
+	if ctx.Err() != nil {
+		return nil, fmt.Errorf("openapi: %s: %w", uri, ctx.Err())
 	}
 	if t == nil {
 		return nil, err
@@ -132,7 +132,16 @@ func decode(content string) (text string, unit, bad int) {
 // the document took as retrieved: unit bytes per UTF-16 code unit or UTF-32
 // character, and each byte of UTF-8.
 func rejection(uri, src string, i, unit int, msg string) error {
-	line := src[strings.LastIndexByte(src[:i], '\n')+1 : i]
+	row, start := 1, 0
+	for j := 0; j < i; j++ {
+		if src[j] == '\r' || src[j] == '\n' {
+			if src[j] == '\r' && j+1 < i && src[j+1] == '\n' {
+				j++
+			}
+			row, start = row+1, j+1
+		}
+	}
+	line := src[start:i]
 	col := len(line)
 	if unit > 1 {
 		col = 0
@@ -143,5 +152,5 @@ func rejection(uri, src string, i, unit int, msg string) error {
 			}
 		}
 	}
-	return fmt.Errorf("openapi: %s:%d:%d: %s", uri, 1+strings.Count(src[:i], "\n"), col+1, msg)
+	return fmt.Errorf("openapi: %s:%d:%d: %s", uri, row, col+1, msg)
 }

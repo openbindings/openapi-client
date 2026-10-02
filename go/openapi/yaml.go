@@ -4,81 +4,82 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
+	"io"
 	"math/big"
+	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"unicode/utf8"
+
+	"go.yaml.in/yaml/v3"
 )
 
-// The YAML step. A YAML stream's document becomes the client's JSON text and
-// tree, as the Loader says: a YAML 1.2 parser reads the stream into nodes
-// (see yamlNode), and yamlTree reads plain scalars under the Core schema,
-// checks keys and tags, and expands aliases within the bounds, recording
-// where each value starts in the stream for a rejection.
-
-// parseYAML reads src, a YAML stream in UTF-8 that took unit bytes per code
-// unit, and size bytes in all, as retrieved, as the document at uri. A %YAML
-// directive for a major version other than 1 rejects it (YAML 1.2.2 section
-// 6.8.1), and one for 1.x becomes a comment, so the stream is read as YAML
-// 1.2. The parser that reads the stream into the nodes yamlTree takes, with
-// the stream's second document if it has one, which rejects it, awaits its
-// approval.
+// parseYAML reads the UTF-8 text of a document whose original encoding used
+// unit bytes per code unit. Only syntax is delegated to the parser: Core
+// scalar resolution, JSON conversion and resource limits belong to yamlTree.
 func parseYAML(ctx context.Context, src, uri string, unit, size int) (*tree, error) {
+	input, directive := src, false
 	for i := 0; i < len(src); {
-		line, _, _ := strings.Cut(src[i:], "\n")
+		end := strings.IndexAny(src[i:], "\r\n")
+		if end < 0 {
+			end = len(src) - i
+		}
+		line := src[i : i+end]
 		if v, ok := strings.CutPrefix(line, "%YAML"); ok && v != "" && (v[0] == ' ' || v[0] == '\t') {
 			v, _, _ = strings.Cut(v, "#")
-			if major, _, _ := strings.Cut(strings.TrimSpace(v), "."); major != "1" {
-				return nil, rejection(uri, src, i, unit, "a %YAML directive for a version other than 1.x")
+			v = strings.TrimSpace(v)
+			major, minor, dot := strings.Cut(v, ".")
+			if directive || !dot || strings.TrimLeft(major, "0") != "1" || minor == "" || strings.ContainsFunc(minor, func(r rune) bool { return r < '0' || r > '9' }) {
+				return nil, rejection(uri, src, i, unit, "invalid %YAML directive or version other than 1.x")
 			}
-			src = src[:i] + "#" + src[i+1:]
+			// The parser supports the 1.1 directive. Preserve its syntax and
+			// offsets while our own scalar resolver applies 1.2 to every 1.x.
+			directive = true
+			at := i + strings.Index(line, v)
+			input = input[:at] + "1." + strings.Repeat("0", len(v)-3) + "1" + input[at+len(v):]
 		} else if s := strings.TrimLeft(line, " \t\r"); line != "" && line[0] != '%' && s != "" && s[0] != '#' {
-			break // the directives end where the document begins
+			break
 		}
 		i += len(line) + 1
 	}
-	return nil, fmt.Errorf("openapi: %s: YAML documents are not implemented yet: %w", uri, errors.ErrUnsupported)
+	dec := yaml.NewDecoder(&yamlReader{ctx, strings.NewReader(input)})
+	var document yaml.Node
+	if err := dec.Decode(&document); err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, yamlParseError(dec, uri, src, unit, err)
+	}
+	var next yaml.Node
+	if err := dec.Decode(&next); err != io.EOF {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		w := yamlWriter{uri: uri, src: src, unit: unit}
+		if err != nil {
+			return nil, yamlParseError(dec, uri, src, unit, err)
+		}
+		return nil, w.reject(&next, "a second document in the YAML stream")
+	}
+	return yamlTree(ctx, document.Content[0], src, uri, unit, size)
 }
 
-// A yamlNode is a node of a YAML document as a parser gives it, with the
-// fields of go.yaml.in/yaml/v3's Node: its kind; its style, which says
-// whether its tag was written; its tag; a scalar's value; the node an alias
-// names; a collection's content, a mapping's keys and values alternating;
-// and where it starts, by line and column counted from 1, the column in
-// characters.
-type yamlNode struct {
-	Kind         yamlKind
-	Style        yamlStyle
-	Tag, Value   string
-	Alias        *yamlNode
-	Content      []*yamlNode
-	Line, Column int
+// yamlReader makes each parser refill obey the whole-load context.
+type yamlReader struct {
+	ctx context.Context
+	*strings.Reader
 }
 
-type yamlKind uint32
-
-const (
-	yamlDocumentNode yamlKind = 1 << iota
-	yamlSequenceNode
-	yamlMappingNode
-	yamlScalarNode
-	yamlAliasNode
-)
-
-type yamlStyle uint32
-
-const (
-	yamlTagged yamlStyle = 1 << iota
-	yamlDoubleQuoted
-	yamlSingleQuoted
-	yamlLiteral
-	yamlFolded
-)
+func (r *yamlReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.Reader.Read(p)
+}
 
 // A yamlWriter writes a YAML document's nodes as the client's JSON text and
 // tree.
@@ -86,13 +87,14 @@ type yamlWriter struct {
 	ctx                context.Context
 	uri, src           string
 	unit               int
+	positions          *yamlPositions
 	b                  strings.Builder
 	nodes              []node
 	escapes            []uint32
 	names              []string // the keys of the mappings being written
-	named              map[*yamlNode]*written
-	added, addedBytes  int // what aliases added
-	maxAdded, maxBytes int
+	named              map[*yaml.Node]*written
+	added, addedBytes  int64 // what aliases added
+	maxAdded, maxBytes int64
 	reaches, declares  bool // see tree
 }
 
@@ -107,10 +109,16 @@ type written struct {
 
 // yamlTree writes root, the root node of the YAML document read from src (see
 // parseYAML), as the client's JSON text and tree.
-func yamlTree(ctx context.Context, root *yamlNode, src, uri string, unit, size int) (*tree, error) {
-	w := &yamlWriter{ctx: ctx, uri: uri, src: src, unit: unit, named: map[*yamlNode]*written{}}
+func yamlTree(ctx context.Context, root *yaml.Node, src, uri string, unit, size int) (*tree, error) {
+	w := &yamlWriter{ctx: ctx, uri: uri, src: src, unit: unit, named: map[*yaml.Node]*written{}}
+	// Most documents have no explicit tag to recover. Build the source
+	// index only when a tag is possible, or on a rejection.
+	if strings.Contains(src, "!") {
+		w.positions = newYAMLPositions(src)
+	}
 	own := w.count(root)
-	w.maxAdded, w.maxBytes = min(1_000_000, 100*own), 100*size
+	w.maxAdded = min(1_000_000, 100*int64(own))
+	w.maxBytes = 100 * int64(size)
 	if _, err := w.value(root, 1, 0); err != nil {
 		return nil, err
 	}
@@ -120,8 +128,8 @@ func yamlTree(ctx context.Context, root *yamlNode, src, uri string, unit, size i
 
 // count returns the nodes of n, each alias one, noting the nodes aliases
 // name.
-func (w *yamlWriter) count(n *yamlNode) int {
-	if n.Kind == yamlAliasNode && n.Alias != nil {
+func (w *yamlWriter) count(n *yaml.Node) int {
+	if n.Kind == yaml.AliasNode && n.Alias != nil && w.named[n.Alias] == nil {
 		w.named[n.Alias] = &written{}
 	}
 	c := 1
@@ -133,13 +141,13 @@ func (w *yamlWriter) count(n *yamlNode) int {
 
 // value writes n, a value at level depth, the member whose name's opening
 // quote is at offset name if not 0, and returns how many levels it nests.
-func (w *yamlWriter) value(n *yamlNode, depth int, name uint32) (int, error) {
+func (w *yamlWriter) value(n *yaml.Node, depth int, name uint32) (int, error) {
 	switch {
 	case depth > maxDepth:
 		return 0, w.reject(n, "nesting deeper than 1,000 levels")
-	case len(w.nodes)&0xffff == 0xffff && w.ctx.Err() != nil:
+	case w.ctx.Err() != nil:
 		return 0, fmt.Errorf("openapi: %s: %w", w.uri, w.ctx.Err())
-	case n.Kind == yamlAliasNode:
+	case n.Kind == yaml.AliasNode:
 		return w.alias(n, depth, name)
 	}
 	at, levels := len(w.nodes), 1
@@ -149,8 +157,11 @@ func (w *yamlWriter) value(n *yamlNode, depth int, name uint32) (int, error) {
 	}
 	w.nodes = append(w.nodes, node{start: uint32(w.b.Len()), name: name})
 	switch n.Kind {
-	case yamlScalarNode:
+	case yaml.ScalarNode:
 		s, quoted, err := yamlScalar(n)
+		if n.Style == 0 && w.positions != nil && w.stringTag(n) {
+			s, quoted, err = n.Value, true, nil
+		}
 		switch {
 		case err != nil:
 			return 0, w.reject(n, err.Error())
@@ -159,12 +170,12 @@ func (w *yamlWriter) value(n *yamlNode, depth int, name uint32) (int, error) {
 		default:
 			w.b.WriteString(s)
 		}
-	case yamlMappingNode, yamlSequenceNode:
+	case yaml.MappingNode, yaml.SequenceNode:
 		tag, write := "!!seq", w.sequence
-		if n.Kind == yamlMappingNode {
+		if n.Kind == yaml.MappingNode {
 			tag, write = "!!map", w.mapping
 		}
-		if n.Style&yamlTagged != 0 && n.Tag != tag {
+		if n.Style&yaml.TaggedStyle != 0 && n.Tag != tag {
 			return 0, w.reject(n, "the tag "+n.Tag+" is outside the Core schema")
 		}
 		var err error
@@ -183,7 +194,7 @@ func (w *yamlWriter) value(n *yamlNode, depth int, name uint32) (int, error) {
 
 // sequence writes the sequence n, at level depth, returning how many levels
 // it nests.
-func (w *yamlWriter) sequence(n *yamlNode, depth int) (int, error) {
+func (w *yamlWriter) sequence(n *yaml.Node, depth int) (int, error) {
 	levels := 1
 	w.b.WriteByte('[')
 	for i, m := range n.Content {
@@ -202,7 +213,7 @@ func (w *yamlWriter) sequence(n *yamlNode, depth int) (int, error) {
 
 // mapping writes the mapping n, at level depth, each key as the string it
 // spells, returning how many levels it nests.
-func (w *yamlWriter) mapping(n *yamlNode, depth int) (int, error) {
+func (w *yamlWriter) mapping(n *yaml.Node, depth int) (int, error) {
 	levels, base := 1, len(w.names)
 	defer func() { w.names = w.names[:base] }()
 	var seen map[string]bool // the keys of a mapping with many
@@ -210,14 +221,10 @@ func (w *yamlWriter) mapping(n *yamlNode, depth int) (int, error) {
 	for i := 0; i+1 < len(n.Content); i += 2 {
 		k, v := n.Content[i], n.Content[i+1]
 		key := k
-		if key.Kind == yamlAliasNode && key.Alias != nil {
-			if key = key.Alias; key.Kind == yamlScalarNode {
-				if err := w.add(k, 0, len(key.Value)); err != nil {
-					return 0, err
-				}
-			}
+		if key.Kind == yaml.AliasNode && key.Alias != nil {
+			key = key.Alias
 		}
-		if key.Kind != yamlScalarNode {
+		if key.Kind != yaml.ScalarNode {
 			return 0, w.reject(k, "a key that is not a scalar")
 		}
 		if seen == nil && len(w.names)-base == many {
@@ -239,6 +246,11 @@ func (w *yamlWriter) mapping(n *yamlNode, depth int) (int, error) {
 		}
 		at := w.b.Len()
 		w.quote(key.Value)
+		if key != k {
+			if err := w.add(k, 1, w.b.Len()-at); err != nil {
+				return 0, err
+			}
+		}
 		w.b.WriteByte(':')
 		start := w.b.Len()
 		l, err := w.value(v, depth+1, uint32(at))
@@ -257,9 +269,9 @@ func (w *yamlWriter) mapping(n *yamlNode, depth int) (int, error) {
 // level depth, the member whose name is at name if not 0, unless the alias
 // is inside that node, or the aliases would add more than the bounds allow.
 // A scalar named only as a key is written first.
-func (w *yamlWriter) alias(n *yamlNode, depth int, name uint32) (int, error) {
+func (w *yamlWriter) alias(n *yaml.Node, depth int, name uint32) (int, error) {
 	a := w.named[n.Alias]
-	key := a != nil && !a.done && n.Alias.Kind == yamlScalarNode
+	key := a != nil && !a.done && n.Alias.Kind == yaml.ScalarNode
 	switch {
 	case key:
 		if _, err := w.value(n.Alias, depth, name); err != nil {
@@ -274,6 +286,7 @@ func (w *yamlWriter) alias(n *yamlNode, depth int, name uint32) (int, error) {
 		return 1, err
 	}
 	text, shift, at := w.b.String(), uint32(w.b.Len()-a.start), int32(len(w.nodes))
+	w.b.Grow(a.end - a.start)
 	w.b.WriteString(text[a.start:a.end])
 	for _, m := range w.nodes[a.first:a.next] {
 		if m.start += shift; m.name != 0 {
@@ -293,9 +306,9 @@ func (w *yamlWriter) alias(n *yamlNode, depth int, name uint32) (int, error) {
 
 // add counts what the alias n adds, rejecting it when the aliases would add
 // more than the bounds allow.
-func (w *yamlWriter) add(n *yamlNode, nodes, bytes int) error {
-	w.added += nodes
-	if w.addedBytes += bytes; w.added > w.maxAdded || w.addedBytes > w.maxBytes {
+func (w *yamlWriter) add(n *yaml.Node, nodes, bytes int) error {
+	w.added += int64(nodes)
+	if w.addedBytes += int64(bytes); w.added > w.maxAdded || w.addedBytes > w.maxBytes {
 		return w.reject(n, "aliases that add more than 1,000,000 nodes, or 100 times the document's own nodes or bytes")
 	}
 	return nil
@@ -324,38 +337,145 @@ func (w *yamlWriter) quote(s string) {
 
 // reject reports a defect of the node n, at the line and column where it
 // starts.
-func (w *yamlWriter) reject(n *yamlNode, msg string) error {
-	i := 0
-	for line := 1; line < n.Line && i < len(w.src); line++ {
-		j := strings.IndexByte(w.src[i:], '\n')
-		if j < 0 {
-			i = len(w.src)
-			break
+func (w *yamlWriter) reject(n *yaml.Node, msg string) error {
+	if w.positions == nil {
+		w.positions = newYAMLPositions(w.src)
+	}
+	return rejection(w.uri, w.src, w.positions.offset(n.Line, n.Column), w.unit, msg)
+}
+
+// yamlParseError reads only the error position in the pinned v3.0.5 parser.
+// Its public error drops the column and can report a context line instead
+// of the problem line. Safe reflection keeps this compatibility shim small
+// without copying the parser or modifying its state. Validate the layout
+// so a dependency update can never panic on a malformed document.
+func yamlParseError(dec *yaml.Decoder, uri, src string, unit int, err error) error {
+	field := func(v reflect.Value, name string) reflect.Value {
+		if v.Kind() == reflect.Pointer && !v.IsNil() {
+			v = v.Elem()
 		}
-		i += j + 1
+		if v.Kind() == reflect.Struct {
+			return v.FieldByName(name)
+		}
+		return reflect.Value{}
 	}
-	for col := 1; col < n.Column && i < len(w.src) && w.src[i] != '\n'; col++ {
-		_, size := utf8.DecodeRuneInString(w.src[i:])
-		i += size
+	p := field(reflect.ValueOf(dec), "parser")
+	state := field(p, "parser")
+	mark := field(state, "problem_mark")
+	// Semantic parser errors such as an unknown alias have no scanner
+	// error: the current event is the offending node.
+	if e := field(state, "error"); e.IsValid() && e.Kind() == reflect.Int {
+		switch e.Int() {
+		case 0:
+			mark = field(field(p, "event"), "start_mark")
+		case 2: // yaml_READER_ERROR reports a UTF-8 byte offset, no mark.
+			if at := field(state, "problem_offset"); at.IsValid() && at.Kind() == reflect.Int {
+				return rejection(uri, src, min(max(0, int(at.Int())), len(src)), unit, err.Error())
+			}
+		}
 	}
-	return rejection(w.uri, w.src, i, w.unit, msg)
+	line, col := field(mark, "line"), field(mark, "column")
+	if line.IsValid() && col.IsValid() && line.Kind() == reflect.Int && col.Kind() == reflect.Int {
+		pos := newYAMLPositions(src)
+		return rejection(uri, src, pos.offset(int(line.Int())+1, int(col.Int())+1), unit, err.Error())
+	}
+	return fmt.Errorf("openapi: %s: YAML parser did not expose the rejection position: %w", uri, err)
+}
+
+// yamlPositions translates the parser's character columns into UTF-8
+// offsets. An ASCII line needs no column index; a non-ASCII line gets one
+// only if used, once, so a long flow collection stays linear to inspect.
+type yamlPositions struct {
+	src     string
+	lines   []int
+	columns map[int][]int
+}
+
+func newYAMLPositions(src string) *yamlPositions {
+	p := &yamlPositions{src: src, lines: []int{0}, columns: map[int][]int{}}
+	ascii := true
+	for i := 0; i < len(src); i++ {
+		if src[i] >= utf8.RuneSelf {
+			ascii = false
+		}
+		if src[i] == '\r' || src[i] == '\n' {
+			if !ascii {
+				p.columns[len(p.lines)-1] = nil
+			}
+			if src[i] == '\r' && i+1 < len(src) && src[i+1] == '\n' {
+				i++
+			}
+			p.lines = append(p.lines, i+1)
+			ascii = true
+		}
+	}
+	if !ascii {
+		p.columns[len(p.lines)-1] = nil
+	}
+	return p
+}
+
+func (p *yamlPositions) offset(line, col int) int {
+	line = max(0, line-1)
+	if line >= len(p.lines) {
+		return len(p.src)
+	}
+	start, end := p.lines[line], len(p.src)
+	if line+1 < len(p.lines) {
+		end = p.lines[line+1]
+	}
+	col = max(0, col-1)
+	if columns, unicode := p.columns[line]; unicode {
+		if columns == nil {
+			for i := range p.src[start:end] {
+				columns = append(columns, i)
+			}
+			columns = append(columns, end-start)
+			p.columns[line] = columns
+		}
+		return start + columns[min(col, len(columns)-1)]
+	}
+	return min(start+col, end)
+}
+
+// stringTag restores the non-specific ! tag that the parser omits from
+// Node.Style and Node.Tag. It applies to a scalar whether an anchor comes
+// before or after it. A node starts at its first property.
+func (w *yamlWriter) stringTag(n *yaml.Node) bool {
+	i := w.positions.offset(n.Line, n.Column)
+	if i < len(w.src) && w.src[i] == '&' {
+		i += 1 + len(n.Anchor)
+		for i < len(w.src) {
+			switch w.src[i] {
+			case ' ', '\t', '\r', '\n':
+				i++
+			case '#':
+				for i < len(w.src) && w.src[i] != '\r' && w.src[i] != '\n' {
+					i++
+				}
+			default:
+				return w.src[i] == '!' && (i+1 == len(w.src) || strings.ContainsRune(" \t\r\n,[]{}", rune(w.src[i+1])))
+			}
+		}
+	}
+	return i < len(w.src) && w.src[i] == '!' && (i+1 == len(w.src) || strings.ContainsRune(" \t\r\n,[]{}", rune(w.src[i+1])))
 }
 
 // yamlFloat matches the integers and floats of YAML 1.2's Core schema
 // written in base 10 (section 10.3.2).
 var yamlFloat = regexp.MustCompile(`^[-+]?(\.[0-9]+|[0-9]+(\.[0-9]*)?)([eE][-+]?[0-9]+)?$`)
 
-// yamlScalarNode returns the JSON text of the scalar n as YAML 1.2's Core schema
+// yamlScalar returns the JSON text of the scalar n as YAML 1.2's Core schema
 // reads it (section 10.3.2), or, when it is a string, the string: a plain
 // scalar is resolved by its spelling, a quoted or block scalar is a string,
 // and one with a Core tag is what the tag says; anything else, and a value
 // JSON cannot hold, is an error.
-func yamlScalar(n *yamlNode) (text string, quoted bool, err error) {
+func yamlScalar(n *yaml.Node) (text string, quoted bool, err error) {
 	s, tag := n.Value, ""
 	switch {
-	case n.Style&yamlTagged != 0:
+	case n.Style&yaml.TaggedStyle != 0:
 		tag = n.Tag
-	case n.Style&(yamlDoubleQuoted|yamlSingleQuoted|yamlLiteral|yamlFolded) != 0:
+	case n.Style&(yaml.DoubleQuotedStyle|yaml.SingleQuotedStyle|yaml.LiteralStyle|yaml.FoldedStyle) != 0:
 		tag = "!!str"
 	}
 	number, numeric, err := yamlNumber(s)
