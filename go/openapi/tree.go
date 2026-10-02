@@ -169,13 +169,8 @@ func jsonString(s string) string {
 	return v
 }
 
-// text returns a string's value, or any other value as written.
-func (v value) text() string {
-	if v.kind() != '"' {
-		return v.raw()
-	}
-	return v.t.str(v.t.nodes[v.i].start)
-}
+// text returns a string's value.
+func (v value) text() string { return v.t.str(v.t.nodes[v.i].start) }
 
 // str returns the string member named key, or "".
 func (v value) str(key string) string { return v.get(key).string() }
@@ -191,11 +186,8 @@ func (v value) string() string {
 // flag reports whether the member named key is true.
 func (v value) flag(key string) bool { return v.get(key).kind() == 't' }
 
-// strs returns the strings of an array, or nil.
+// strs returns the strings of an array.
 func (v value) strs() []string {
-	if v.kind() != '[' {
-		return nil
-	}
 	var s []string
 	for _, item := range v.members() {
 		if item.kind() == '"' {

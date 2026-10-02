@@ -528,18 +528,15 @@ func equalFoldASCII(a, b string) bool {
 	return true
 }
 
+// defaultPorts are the default ports of the schemes requests go to.
+var defaultPorts = map[string]string{"http": "80", "ws": "80", "https": "443", "wss": "443"}
+
 // port returns u's port, or its scheme's default.
 func port(u *url.URL) string {
 	if p := u.Port(); p != "" {
 		return p
 	}
-	switch strings.ToLower(u.Scheme) {
-	case "http", "ws":
-		return "80"
-	case "https", "wss":
-		return "443"
-	}
-	return ""
+	return defaultPorts[strings.ToLower(u.Scheme)]
 }
 
 // sign returns req as it is sent: with the cookies the HTTPClient's jar
@@ -732,10 +729,8 @@ func withCookies(list string, drop func(string) bool, add []string) string {
 // replaced by u, the request's URL without the credentials the client
 // placed, redacted as net/http does.
 func redact(err error, u *url.URL) error {
-	if ue, ok := err.(*url.Error); ok {
-		return &url.Error{Op: ue.Op, URL: u.Redacted(), Err: ue.Err}
-	}
-	return err
+	ue := err.(*url.Error) // as http.Client.Do returns every error
+	return &url.Error{Op: ue.Op, URL: u.Redacted(), Err: ue.Err}
 }
 
 // A securityCheck is Load's check of the security settings: what it has not
