@@ -21,9 +21,15 @@ import (
 // styledParams is a document with one operation of n parameters that cycle
 // through every serialization stage 2 adds: each style and location, explode
 // both ways, allowReserved, and content parameters of several media types.
+// Each is declared under components/parameters and referenced by the
+// operation, so that its Param.Source names its component, a fixed length,
+// while the path, with n/6 path parameters, grows with n (stage 4 ledger,
+// "Verification: performance", PN1: an inline parameter's Source embeds the
+// path, which made the Sources quadratic, "the escalation's case, not a
+// test, until Matt rules").
 func styledParams(n int) []byte {
 	var path strings.Builder
-	var params []string
+	var params, refs []string
 	path.WriteString("/x")
 	for i := range n {
 		var p string
@@ -55,17 +61,22 @@ func styledParams(n int) []byte {
 		default:
 			p = `{"name":"p%d","in":"query","content":{"application/x-custom":{}}}`
 		}
-		params = append(params, fmt.Sprintf(p, i))
+		params = append(params, fmt.Sprintf(`"p%d":`+p, i, i))
+		refs = append(refs, fmt.Sprintf(`{"$ref":"#/components/parameters/p%d"}`, i))
 	}
 	return []byte(`{"openapi":"3.1.0","info":{"title":"t","version":"1"},"servers":[{"url":"https://api.example.test"}],"paths":{"` +
-		path.String() + `":{"get":{"operationId":"op","parameters":[` + strings.Join(params, ",") + `]}}}}`)
+		path.String() + `":{"get":{"operationId":"op","parameters":[` + strings.Join(refs, ",") + `]}}},` +
+		`"components":{"parameters":{` + strings.Join(params, ",") + `}}}`)
 }
 
 // Compiling an operation's parameters is linear in their number: at first
-// use (Operations), and at a first Prepare that gives every path parameter.
-// The sizes are where a quadratic dominates: stage 1's path template
-// compile, quadratic in the number of path parameters, took 16x as long
-// for 960 to 3,840 parameters (160 to 640 of them in the path).
+// use (Operations), and at a first Prepare that gives every path parameter,
+// in time and in bytes allocated (stage 4 ledger, IP4F-9 and PN1: "compile,
+// path template included, must be linear in time and bytes, and any byte
+// growth left ... is fixed under P1"). The sizes are where a quadratic
+// dominates: stage 1's path template compile, quadratic in the number of
+// path parameters, took 16x as long for 960 to 3,840 parameters (160 to 640
+// of them in the path).
 func TestStyledParamsCompileScale(t *testing.T) {
 	wantLinear(t, "Operations()", 960, func(n int) func() { return timedOperations(t, styledParams(n)) })
 	wantLinear(t, "first Prepare", 960, func(n int) func() {
