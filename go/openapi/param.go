@@ -76,6 +76,14 @@ func (c *Client) writeParam(b *strings.Builder, lead string, p *param, v any, re
 	if _, raw := v.([]byte); !raw && c.cfg.codecsErr != nil {
 		re.setting("Options.Codecs", c.cfg.codecsErr)
 	}
+	if p.In == "querystring" && p.Err == nil && isForm(*p.media) && len(c.cfg.codecs) == 0 {
+		if written, ok := simpleForm(b, lead, p.form, v); ok {
+			if b.Len() > maxLength {
+				re.input(p.Key, errTooLong)
+			}
+			return written, written
+		}
+	}
 	var s string
 	err := p.Err
 	if err == nil {
@@ -288,8 +296,8 @@ func (e *emitter) item(s string) error {
 
 // member writes an object's member named k, whose value is s.
 func (e *emitter) member(k, s string) error {
-	if e.cookie32 && e.set == nil && (badCookieText(k) || badCookieText(s)) {
-		return errors.New("a cookie name or value cannot hold a semicolon or control character")
+	if e.cookie32 && e.set == nil && (!isToken(k) || badCookieText(s)) {
+		return errors.New("a cookie name must be a token and its value cannot hold a semicolon or control character")
 	}
 	if err := e.next(len(k)+len(s), false); err != nil { // not exploded, it holds a delimiter
 		return err

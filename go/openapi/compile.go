@@ -34,13 +34,13 @@ type plan struct {
 
 // A param is a parameter with its serialization compiled.
 type param struct {
-	legacy   value
-	cookie32 bool
+	legacy value
 	*Param
 	*style
 	set      *charset // how its values are percent-encoded, or nil to write them as given
 	required bool
-	dotted   bool          // whether its Key is its location and name joined by a dot
+	dotted   bool // whether its Key is its location and name joined by a dot
+	cookie32 bool
 	idHash   uint32        // a hash of its identity, by location and name (see find)
 	nameHash uint32        // and of its name alone
 	field    string        // a header parameter's canonical field name
@@ -117,7 +117,9 @@ func (e *entry) shape() *operation {
 		case "parameters":
 			params = m
 		case "requestBody":
-			body = m
+			if n.t.edition != 20 {
+				body = m
+			}
 		case "responses":
 			responses = m
 		case "servers":
@@ -135,6 +137,11 @@ func (e *entry) shape() *operation {
 	errs = o.addParams(params, src+"/parameters", ids, errs)
 	if n.t.edition == 20 {
 		errs = append(errs, o.swaggerBody(n))
+		clear(ids)
+		for i, p := range o.params {
+			k, _ := find(ids, p.idHash, func(j int) bool { return o.params[j].identity() == p.identity() })
+			ids[k] = i
+		}
 	}
 	o.assignKeys()
 	queries, wholes := 0, 0
@@ -240,6 +247,11 @@ func (o *operation) addParams(list value, src string, ids map[uint32]int, errs [
 	if list.kind() != '[' {
 		return errs
 	}
+	n := 0
+	for range list.members() {
+		n++
+	}
+	o.params = slices.Grow(o.params, n)
 	i := 0
 	for _, v := range list.members() {
 		pp := o.doc.param(v, src, i)
@@ -266,6 +278,9 @@ func (o *operation) addParams(list value, src string, ids map[uint32]int, errs [
 // assignKeys sets each parameter's Key and lists the parameters in
 // Operation.Params.
 func (o *operation) assignKeys() {
+	if len(o.params) > 0 {
+		o.Params = make([]*Param, 0, len(o.params))
+	}
 	names := make(map[uint32]int, len(o.params)) // the first parameter of each name
 	for i, pp := range o.params {
 		if k, ok := find(names, pp.nameHash, func(j int) bool { return o.params[j].Name == pp.Name }); ok {
@@ -433,6 +448,9 @@ func (d *document) newParam(t value, at string) param {
 				p.Err = errors.New("cookie style requires OpenAPI 3.2 cookie location")
 			} else {
 				pp.style, pp.set, pp.name = &cookieForm, nil, p.Name
+				if !isToken(p.Name) {
+					p.Err = errors.New("a cookie name must be a token (RFC 6265 section 4.1.1)")
+				}
 				p.Explode = explode.kind() != 'f'
 			}
 		}

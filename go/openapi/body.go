@@ -413,6 +413,73 @@ func appendForm[T string | []byte](b []byte, s T) []byte {
 	return b
 }
 
+// simpleForm writes only exact string fields and string slices, whose normal
+// field encoder writes bytes as given. Every other value, styled/JSON field
+// or required-field plan falls back before this writes anything.
+func simpleForm(b *strings.Builder, lead string, enc *formEncoding, v any) (written, ok bool) {
+	m, ok := v.(map[string]any)
+	if !ok || m == nil || enc.required || enc.swagger {
+		return false, false
+	}
+	var local [8]string
+	names := local[:0]
+	for name, v := range m {
+		switch x := v.(type) {
+		case nil:
+			continue
+		case []string:
+			if len(x) == 0 {
+				continue
+			}
+		case string:
+		default:
+			return false, false
+		}
+		if f := enc.field(name); !f.plain || f.class == jsonClass {
+			return false, false
+		}
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	write := func(name, value string) {
+		if written {
+			b.WriteByte('&')
+		} else {
+			b.WriteString(lead)
+			written = true
+		}
+		formString(b, name)
+		b.WriteByte('=')
+		formString(b, value)
+	}
+	for _, name := range names {
+		switch x := m[name].(type) {
+		case string:
+			write(name, x)
+		case []string:
+			for _, s := range x {
+				write(name, s)
+			}
+		}
+	}
+	return written, true
+}
+
+func formString(b *strings.Builder, s string) {
+	for i := range len(s) {
+		switch c := s[i]; {
+		case formSet[c] == 1:
+			b.WriteByte(c)
+		case c == ' ':
+			b.WriteByte('+')
+		default:
+			b.WriteByte('%')
+			b.WriteByte(upperHex[c>>4])
+			b.WriteByte(upperHex[c&15])
+		}
+	}
+}
+
 // formContent encodes v as application/x-www-form-urlencoded content of a
 // field or parameter, whose fields enc describes.
 func (c *Client) formContent(enc *formEncoding, v any) (string, error) {

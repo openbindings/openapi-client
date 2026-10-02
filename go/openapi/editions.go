@@ -12,12 +12,16 @@ import (
 )
 
 // swaggerSchema keeps the Schema subset of a Parameter or Items Object.
+func swaggerSchemaField(name string) bool {
+	return slices.Contains([]string{"type", "format", "items", "default", "enum", "maximum", "exclusiveMaximum", "minimum", "exclusiveMinimum", "maxLength", "minLength", "pattern", "maxItems", "minItems", "uniqueItems", "multipleOf"}, name)
+}
+
 func swaggerSchema(v value) json.RawMessage {
 	var b strings.Builder
 	b.WriteByte('{')
 	first := true
 	for name, m := range v.members() {
-		if !slices.Contains([]string{"type", "format", "items", "default", "enum", "maximum", "exclusiveMaximum", "minimum", "exclusiveMinimum", "maxLength", "minLength", "pattern", "maxItems", "minItems", "uniqueItems", "multipleOf"}, name) {
+		if !swaggerSchemaField(name) {
 			continue
 		}
 		if !first {
@@ -34,9 +38,11 @@ func swaggerSchema(v value) json.RawMessage {
 
 func (d *document) swaggerParam(t value, at string, p *Param) param {
 	p.Style, p.AllowReserved, p.Explode, p.ExplodeSet = "", false, false, false
-	p.Schema = &Schema{doc: d, v: t, src: at, legacy: true}
-	if string(swaggerSchema(t)) == "{}" {
-		p.Schema = nil
+	for name := range t.members() {
+		if swaggerSchemaField(name) {
+			p.Schema = &Schema{doc: d, v: t, src: at, legacy: true}
+			break
+		}
 	}
 	st := styles["simple"]
 	if p.In == "query" || p.In == "formData" {
@@ -122,6 +128,39 @@ func legacyValues(r *jsonReader, schema value, set *charset) ([]string, error) {
 }
 
 func (c *Client) writeLegacy(b *strings.Builder, lead string, p *param, v any, form bool) (bool, error) {
+	// Exact []string has no custom marshaling or undefined members. jsonText
+	// applies encoding/json's invalid-UTF-8 rule without an intermediate JSON
+	// document, as the ordinary parameter emitter does.
+	if values, ok := v.([]string); ok && !form && p.CollectionFormat != "" {
+		if len(values) == 0 {
+			return false, nil
+		}
+		if p.Err != nil {
+			return false, p.Err
+		}
+		delim := map[string]string{"csv": ",", "ssv": " ", "tsv": "\t", "pipes": "|"}[p.CollectionFormat]
+		if p.set != nil && delim != "," {
+			delim = escape(delim, p.set)
+		}
+		for i, v := range values {
+			if i == 0 {
+				b.WriteString(lead)
+			} else if p.CollectionFormat == "multi" {
+				b.WriteByte('&')
+			} else {
+				b.WriteString(delim)
+			}
+			if p.In == "query" && (i == 0 || p.CollectionFormat == "multi") {
+				b.WriteString(p.name)
+				b.WriteByte('=')
+			}
+			escapeTo(b, jsonText(v), p.set)
+			if b.Len() > maxLength {
+				return false, errTooLong
+			}
+		}
+		return true, nil
+	}
 	s, _, err := encodeJSON(c.doc, v, marshal)
 	if err != nil {
 		return false, err
@@ -208,8 +247,6 @@ func (o *operation) swaggerBody(n value) error {
 		src, desc, required = body.Source, body.Description, body.Required
 	} else {
 		encoding = &formEncoding{byName: map[string]*field{}, swagger: true}
-		properties := map[string]json.RawMessage{}
-		var req []string
 		for _, p := range fields {
 			f := &field{param: p, roots: []value{p.legacy}, types: textField.types, parsed: textField.parsed, class: textClass}
 			f.ContentType = "text/plain"
@@ -219,19 +256,12 @@ func (o *operation) swaggerBody(n value) error {
 			}
 			encoding.byName[p.Name] = f
 			params = append(params, f.Param)
-			properties[p.Name] = swaggerSchema(p.legacy)
 			if p.Required {
 				encoding.required = true
-				req = append(req, p.Name)
 				required = true
 			}
 		}
-		raw, _ := json.Marshal(struct {
-			Type       string                     `json:"type"`
-			Properties map[string]json.RawMessage `json:"properties"`
-			Required   []string                   `json:"required,omitempty"`
-		}{"object", properties, req})
-		schema = &Schema{doc: o.doc, v: n, synthetic: raw}
+		schema = &Schema{doc: o.doc, v: n, synthetic: params}
 		for _, typ := range list {
 			m, ok := parseMedia(typ)
 			if ok && (isForm(m) || strings.EqualFold(m.full, "multipart/form-data")) {
@@ -326,15 +356,17 @@ func (c *Client) membersChecked(v any, enc *formEncoding, body string, re *Reque
 func (d *document) positionalEncoding(enc *formEncoding, v value, roots []value, src string, named ...*Param) []*Param {
 	enc.ordered = true
 	var schemas []value
-	var rest value
-	d.closure(roots, src+"/schema", func(s value, _ string) {
+	var sources []string
+	rest, restSource := v.get("itemSchema"), src+"/itemSchema"
+	d.closure(roots, src+"/schema", func(s value, at string) {
 		if schemas == nil {
 			for _, p := range s.get("prefixItems").members() {
+				sources = append(sources, at+"/prefixItems/"+fmt.Sprint(len(schemas)))
 				schemas = append(schemas, p)
 			}
 		}
 		if !rest.ok() {
-			rest = s.get("items")
+			rest, restSource = s.get("items"), at+"/items"
 		}
 	})
 	var prefix []value
@@ -348,8 +380,10 @@ func (d *document) positionalEncoding(enc *formEncoding, v value, roots []value,
 	}
 	for i := range max(len(prefix), len(schemas)) {
 		var schema, e value
+		schemaSource := restSource
 		if i < len(schemas) {
 			schema = schemas[i]
+			schemaSource = sources[i]
 		} else {
 			schema = rest
 		}
@@ -359,13 +393,13 @@ func (d *document) positionalEncoding(enc *formEncoding, v value, roots []value,
 			e = v.get("itemEncoding")
 		}
 		name := fmt.Sprint(i)
-		f, p := d.newField(name, d.schema(schema, src, "/schema/prefixItems/"+name), schemaRoots(schema), e, src+"/prefixEncoding/"+name, parsedMedia{})
+		f, p := d.newField(name, d.schema(schema, schemaSource, ""), schemaRoots(schema), e, src+"/prefixEncoding/"+name, parsedMedia{})
 		enc.positional = append(enc.positional, f)
 		if i < len(prefix) {
 			named = append(named, p)
 		}
 	}
-	f, p := d.newField("*", d.schema(rest, src, "/schema/items"), schemaRoots(rest), v.get("itemEncoding"), src+"/itemEncoding", parsedMedia{})
+	f, p := d.newField("*", d.schema(rest, restSource, ""), schemaRoots(rest), v.get("itemEncoding"), src+"/itemEncoding", parsedMedia{})
 	enc.rest = f
 	if v.get("itemEncoding").ok() {
 		named = append(named, p)

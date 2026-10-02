@@ -487,8 +487,11 @@ func (t *tree) root() value { return value{t, 0} }
 // "3.1".
 func isPatchOf(version, minor string) bool {
 	patch, ok := strings.CutPrefix(version, minor+".")
+	if !ok {
+		return false
+	}
 	_, err := strconv.ParseUint(patch, 10, 32)
-	return ok && err == nil
+	return err == nil
 }
 
 // contentURN names content by a version 5 UUID (RFC 9562) derived from it,
@@ -586,6 +589,14 @@ func (d *document) index(ctx context.Context) error {
 					e.err = errors.New("the Path Item and its $ref target both define additionalOperations")
 				}
 				d.recordOperation(e)
+				if shared {
+					original := d.entries[first]
+					if original.group == nil {
+						original.group = new(group)
+					}
+					e.group = original.group
+					first++
+				}
 			}
 		}
 	}

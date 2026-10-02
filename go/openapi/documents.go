@@ -942,7 +942,9 @@ func (r *reader) visit(v value, k kind, base *url.URL, effective string) {
 			}
 			r.reference(dynamicRef, k, base)
 			if r.t.edition == 32 {
-				r.reference(disc.get("defaultMapping"), k, base)
+				if m := disc.get("defaultMapping"); m.kind() == '"' && !componentName.MatchString(m.text()) {
+					r.reference(m, k, base)
+				}
 			}
 			for _, m := range disc.get("mapping").members() {
 				if r.t.edition == 20 {

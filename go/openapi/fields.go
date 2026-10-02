@@ -225,6 +225,9 @@ func (d *document) own(v value) (shape, []kid) {
 	if v.t.edition <= 30 && ref.ok() {
 		t, enc, props, all, s.items = value{}, value{}, value{}, value{}, value{}
 	}
+	if v.t.edition <= 30 {
+		enc = value{}
+	}
 	if v.t.edition <= 30 && !ref.ok() && (v.str("format") == "binary" || v.str("format") == "byte" || t.string() == "file") {
 		enc = v
 		if t.string() == "file" {
@@ -240,7 +243,7 @@ func (d *document) own(v value) (shape, []kid) {
 			s.types |= 4 // a number may be an integer (JSON Schema 2020-12 Validation section 6.1.1)
 		}
 	}
-	s.encoded, s.declares = enc.ok(), props.ok() || s.items.ok()
+	s.encoded, s.declares = enc.ok(), props.ok() || s.items.ok() || v.t.edition == 32 && v.get("prefixItems").ok()
 	var kids []kid
 	if ref.kind() == '"' {
 		if t, ptr, err := d.target(ref); err == nil {
@@ -411,7 +414,9 @@ func (d *document) closure(s []value, src string, f func(s value, at string)) {
 			continue
 		}
 		seen[top.v.id()] = true
-		f(top.v, top.at)
+		if top.v.t.edition >= 31 || top.v.get("$ref").kind() != '"' {
+			f(top.v, top.at)
+		}
 		kids := d.shapeOf(top.v).kids
 		for i := len(kids) - 1; i >= 0; i-- { // the first in document order on top
 			k, at := kids[i], ""

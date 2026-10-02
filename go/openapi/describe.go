@@ -490,7 +490,7 @@ type Flow struct {
 // resource, and References returns an error.
 type Schema struct {
 	legacy    bool
-	synthetic json.RawMessage
+	synthetic []*Param
 	doc       *document
 	v         value  // where the schema is used; handles are made at Schema Objects outside other schemas
 	src, sub  string // its Source: that of the object it belongs to, and the rest
@@ -557,7 +557,24 @@ func (s *Schema) References() ([]SchemaReference, error) {
 // Param.Schema).
 func (s *Schema) Raw() json.RawMessage {
 	if s.synthetic != nil {
-		return append(json.RawMessage(nil), s.synthetic...)
+		properties := make(map[string]json.RawMessage, len(s.synthetic))
+		var required []string
+		for _, p := range s.synthetic {
+			raw := json.RawMessage(`{}`)
+			if p.Schema != nil {
+				raw = p.Schema.Raw()
+			}
+			properties[p.Name] = raw
+			if p.Required {
+				required = append(required, p.Name)
+			}
+		}
+		raw, _ := json.Marshal(struct {
+			Type       string                     `json:"type"`
+			Properties map[string]json.RawMessage `json:"properties"`
+			Required   []string                   `json:"required,omitempty"`
+		}{"object", properties, required})
+		return raw
 	}
 	if s.legacy {
 		return swaggerSchema(s.v)

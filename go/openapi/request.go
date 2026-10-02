@@ -59,7 +59,7 @@ func (e *RequestError) refused() error {
 func (e *RequestError) sent() error {
 	errs := []error{e.Err}
 	for _, k := range slices.Sorted(maps.Keys(e.Settings)) {
-		errs = append(errs, fmt.Errorf("%s: %w", label(k), e.Settings[k]))
+		errs = append(errs, fmt.Errorf("%s: %w", settingLabel(k, e.Settings[k]), e.Settings[k]))
 	}
 	return errors.Join(errs...)
 }
@@ -327,9 +327,11 @@ func setter(in, opts http.Header, field string) string {
 // "." or ".." segment.
 func (c *Client) writePath(b *strings.Builder, o *operation, in *Input, re *RequestError) {
 	segment, valued := b.Len(), -1 // where the segment begins, and a parameter in it
-	endSegment := func() {
-		if s := b.String()[segment:]; valued >= 0 && (s == "." || s == "..") {
-			re.input(o.params[valued].Key, errDotSegment)
+	endSegment := func(end int) {
+		if valued >= 0 {
+			if s := dotUnescaper.Replace(b.String()[segment:end]); s == "." || s == ".." {
+				re.input(o.params[valued].Key, errDotSegment)
+			}
 		}
 	}
 	for _, part := range o.path {
@@ -341,7 +343,7 @@ func (c *Client) writePath(b *strings.Builder, o *operation, in *Input, re *Requ
 					break
 				}
 				b.WriteString(text[:i])
-				endSegment()
+				endSegment(b.Len())
 				b.WriteByte('/')
 				segment, valued, text = b.Len(), -1, text[i+1:]
 			}
@@ -363,12 +365,20 @@ func (c *Client) writePath(b *strings.Builder, o *operation, in *Input, re *Requ
 		}
 		if wrote {
 			valued = part.param
+			for {
+				i := strings.IndexByte(b.String()[segment:], '/')
+				if i < 0 {
+					break
+				}
+				endSegment(segment + i)
+				segment += i + 1
+			}
 		}
 		if !given {
 			re.input(p.Key, errMissing) // unless refused already
 		}
 	}
-	endSegment()
+	endSegment(b.Len())
 }
 
 // applyFields applies header fields over h, as the Header settings are: a

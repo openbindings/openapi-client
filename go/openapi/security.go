@@ -20,6 +20,7 @@ import (
 type scheme struct {
 	desc    SecurityScheme // without the Name and Scopes of a use
 	kind    schemeKind
+	uri     bool    // this use names a URI, not a component
 	dest    paramID // the header field, query name or cookie name a credential sets
 	written string  // a query or cookie credential's name as written
 	auth    string  // the auth-scheme and space before a credential in the Authorization field
@@ -49,16 +50,18 @@ func (d *document) securityScheme(name string, from *tree) *scheme {
 		if from.edition == 32 {
 			t, ptr, err := d.targetName(from, name)
 			if err != nil {
-				return &scheme{desc: SecurityScheme{Err: err}}
+				return &scheme{desc: SecurityScheme{Err: err}, uri: true}
 			}
 			v = t
-			return d.schemeForms.get(v.id(), func() *scheme {
+			sc := *d.schemeForms.get(v.id(), func() *scheme {
 				t, at, _, err := d.follow(v, v.t.source(ptr))
 				if err != nil {
 					return &scheme{desc: SecurityScheme{Err: err}}
 				}
 				return newScheme(t, at)
 			})
+			sc.uri = true
+			return &sc
 		}
 		return &scheme{desc: SecurityScheme{Err: fmt.Errorf("the document declares no security scheme %q", name)}}
 	}
@@ -464,7 +467,7 @@ func (c *Client) checkCredentials(o *operation, a *alternative, in *Input, ep en
 		name := a.Schemes[i].Name
 		cred := cfg.Credentials[name]
 		if err := sc.callError(cred); err != nil {
-			re.setting(credentialKey(name), err)
+			re.setting(credentialKey(name), sc.settingError(name, err))
 			continue
 		}
 		if !cred.places() {
@@ -483,7 +486,7 @@ func (c *Client) checkCredentials(o *operation, a *alternative, in *Input, ep en
 				field = "Cookie"
 			}
 			if s := setter(in.Header, cfg.Header, field); s != "" {
-				re.setting(s, fmt.Errorf("sets %s, which the credential for %q sets", field, name))
+				re.setting(s, fmt.Errorf("sets %s, which the credential for %q sets", field, sc.shownName(name)))
 			}
 		}
 		if j, ok := o.dests[sc.dest]; ok {
@@ -496,7 +499,7 @@ func (c *Client) checkCredentials(o *operation, a *alternative, in *Input, ep en
 	if a.clash {
 		if i, j := clash(a.schemes, func(i int) bool { return !cfg.Credentials[a.Schemes[i].Name].places() }); j > 0 {
 			dest := a.schemes[i].dest
-			re.fail(fmt.Errorf("the security schemes %q and %q both set %s %q", a.Schemes[i].Name, a.Schemes[j].Name, dest.in, dest.name))
+			re.fail(fmt.Errorf("the security schemes %q and %q both set %s %q", a.schemes[i].shownName(a.Schemes[i].Name), a.schemes[j].shownName(a.Schemes[j].Name), dest.in, dest.name))
 		}
 	}
 	return places, supplied
@@ -563,6 +566,20 @@ func (sc *scheme) checkValue(secret string) error {
 
 // credentialKey is the Settings key of the credential for name.
 func credentialKey(name string) string { return "Options.Credentials[" + strconv.Quote(name) + "]" }
+
+func (sc *scheme) shownName(name string) string {
+	if sc.uri {
+		return safeURI(name)
+	}
+	return name
+}
+
+func (sc *scheme) settingError(name string, err error) error {
+	if shown := sc.shownName(name); shown != name {
+		return &settingLabelError{err, credentialKey(shown)}
+	}
+	return err
+}
 
 // secured returns why a bearer token or Basic credential cannot be sent to
 // u, or nil: it goes over https or wss, or plain http or ws to a loopback
@@ -679,7 +696,7 @@ func (x *exchange) sign(req *http.Request, src context.Context, creds bool, re *
 		secret, err := c.source(src)
 		switch {
 		case err != nil:
-			re.fail(withContext(src, fmt.Errorf("the credential source for %q: %w", name, err)))
+			re.fail(withContext(src, fmt.Errorf("the credential source for %q: %w", sc.shownName(name), err)))
 			continue
 		case c.kind != sourceCredential: // checked when the call was prepared
 		case secret == "":
@@ -688,7 +705,7 @@ func (x *exchange) sign(req *http.Request, src context.Context, creds bool, re *
 			err = sc.checkValue(secret)
 		}
 		if err != nil {
-			re.setting(credentialKey(name), err)
+			re.setting(credentialKey(name), sc.settingError(name, err))
 			continue
 		}
 		switch sc.kind {
@@ -844,13 +861,14 @@ func (s *securityCheck) list(list value) (none bool) {
 		for name, scopes := range r.members() {
 			n++
 			if c, ok := s.creds[name]; ok { // the scheme a name selects may differ between documents (see SchemeLookup)
-				if err := s.d.securityScheme(name, list.t).loadError(c); err == nil {
+				sc := s.d.securityScheme(name, list.t)
+				if err := sc.loadError(c); err == nil {
 					delete(s.creds, name)
 				} else if _, seen := s.refused[name]; !seen {
 					if s.refused == nil {
 						s.refused = map[string]error{}
 					}
-					s.refused[name] = err
+					s.refused[name] = sc.settingError(name, err)
 				}
 			}
 			if s.names[name] {
