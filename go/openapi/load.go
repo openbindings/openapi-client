@@ -185,7 +185,7 @@ func (l *Loader) Load(ctx context.Context, uri string, opts *Options) (*Client, 
 	if err != nil {
 		return nil, err
 	}
-	content, final, err := ld.retrieve(uri, "")
+	content, final, _, err := ld.retrieve(uri, "", nil)
 	if err != nil {
 		return nil, err
 	}

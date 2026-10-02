@@ -1,6 +1,7 @@
 package openapi
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -67,12 +68,15 @@ func (ld *loading) bound(uri, final string) {
 }
 
 // admit reports whether the document retrieved from from may retrieve the
-// one at to.
-func (ld *loading) admit(from, to string) bool {
+// one at to, which u is parsed, if not nil.
+func (ld *loading) admit(from, to string, u *url.URL) bool {
 	if ld.AllowReference != nil {
 		return ld.AllowReference(from, to)
 	}
-	u, err := url.Parse(to)
+	var err error
+	if u == nil {
+		u, err = url.Parse(to)
+	}
 	switch {
 	case err != nil:
 	case u.Scheme == "http" || u.Scheme == "https":
@@ -111,14 +115,14 @@ func (c counted) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// get retrieves and reads the document at uri, which the document retrieved
-// from from references.
-func (ld *loading) get(uri, from string) (*tree, error) {
-	content, final, err := ld.retrieve(uri, from)
+// get retrieves and parses the document at uri, which the document retrieved
+// from from references, copying its content through buf.
+func (ld *loading) get(uri, from string, buf []byte) (*tree, error) {
+	content, final, base, err := ld.retrieve(uri, from, buf)
 	if err != nil {
 		return nil, err
 	}
-	return readTree(ld.ctx, content, final)
+	return readTree(ld.ctx, content, final, base)
 }
 
 // A kind is what discovery reads a node as: an OpenAPI object, which says
@@ -202,20 +206,60 @@ type claim struct {
 
 func (c *claim) source() string { return c.v.t.source(c.ptr) }
 
-// A discovery reads the documents a load reaches: what it has yet to read,
-// and the references to URIs that nothing read identifies yet.
+// A discovery reads the documents a load reaches: a reader for each, the
+// references to URIs nothing read identifies yet, those that something now
+// identifies, and the URIs to retrieve, by how likely an $id is to identify
+// them (see want).
 type discovery struct {
 	*document
-	ld    *loading
-	queue []item
-	seen  map[visit]bool
-	wants map[string][]want // by the URI they need, without its fragment, or a plain name's
-	ready []string          // the URIs of wants that something now identifies
-	at    string            // the JSON Pointer of the item being read
-	path  []string          // and the reference tokens from it to the node being read
+	ld      *loading
+	readers map[*tree]*reader
+	busy    []*reader         // the readers with items to read
+	wants   map[string][]want // by the URI they need, without its fragment, or a plain name's
+	ready   []string
+	fresh   [3][]string     // the URIs of wants, by rank, that may need retrieving
+	asked   map[string]bool // the URIs retrieved or being retrieved
 }
 
-// An item is a k node to read, whose base is base, at ptr in its document.
+// A want is a reference that needs the node a URI and the fragment frag
+// name, read as a k node, from the document t, and how likely an $id is to
+// identify the URI: 0 for a reference to an object other than a schema,
+// which an $id cannot identify for it, 1 for a schema reference written as a
+// relative reference, 2 for one written as an absolute URI.
+type want struct {
+	frag string
+	k    kind
+	t    *tree
+	rank int
+}
+
+// A reader reads one document for discovery: the nodes it is to read, and
+// what it has read: the identifiers the document declares, where its
+// references lead, and those to other documents, which, with its new
+// identifiers, the discovery takes. A worker reads a document it retrieved;
+// the discovery reads the rest one reader at a time.
+type reader struct {
+	d       *document
+	t       *tree
+	ids     map[string]*claim // by identifier
+	claimed []string          // the identifiers the discovery has not taken
+	refs    []need            // the references to other documents the discovery has not taken
+	located map[int32]location
+	seen    map[visit]bool
+	queue   []item
+	at      string   // the JSON Pointer of the item being read
+	path    []string // and the reference tokens from it to the node being read
+	busy    bool
+}
+
+// A need is a want and the URI it needs.
+type need struct {
+	uri string
+	w   want
+}
+
+// An item is a k node to read, whose base outside it is base, at ptr in its
+// document.
 type item struct {
 	v    value
 	k    kind
@@ -228,65 +272,65 @@ type visit struct {
 	k kind
 }
 
-// A want is a reference that needs the node a URI and the fragment frag
-// name, read as a k node, from the document t, and how likely an $id is to
-// identify the URI: 0 for a reference to an object other than a schema, 1
-// for a schema reference written as a relative reference, 2 for one written
-// as an absolute URI.
-type want struct {
-	frag string
-	k    kind
-	t    *tree
-	rank int
+// A fetch is a URI to retrieve, the wants that need it, and its document,
+// read for them, or why it could not be.
+type fetch struct {
+	uri   string
+	wants []want
+	r     *reader
+	err   error
 }
 
 // discover reads the entry document for its references and identifiers,
 // retrieves the documents its references reach, in parallel within the
-// load's bounds, and reads those in turn. A reference resolves first to
-// what a document read identifies; when nothing more can be read, the URIs
-// still unidentified are retrieved, those least likely to be an $id first
-// (see want), each rank once no URI of a lower one is left. Every node of
-// every document is then numbered: the entry's first, then the others' by
-// URI.
+// load's bounds, each worker reading the document it retrieved, and reads
+// those in turn. A reference resolves first to what a document read
+// identifies; when nothing more can be read, the URIs still unidentified are
+// retrieved, those least likely to be an $id first (see want), each rank once
+// no URI of a lower one is left, and with them, as they are found, the URIs
+// that only references to objects other than schemas need and nothing
+// identifies. Every node of every document is then numbered: the entry's
+// first, then the others' by URI.
 func (d *document) discover(ld *loading) error {
-	dc := &discovery{document: d, ld: ld, seen: map[visit]bool{}, wants: map[string][]want{}}
+	dc := &discovery{document: d, ld: ld, readers: map[*tree]*reader{}, wants: map[string][]want{}, asked: map[string]bool{}}
 	d.named = map[string]*tree{}
-	dc.add(d.tree, "")
+	dc.add(d.tree, "", d.newReader(d.tree, rootKind))
 	for {
 		dc.drain()
-		var waves [3][]string
-		for uri, ws := range dc.wants {
-			if !strings.Contains(uri, "#") { // not a plain name no schema declares
-				r := slices.MinFunc(ws, func(a, b want) int { return a.rank - b.rank }).rank
-				waves[r] = append(waves[r], uri)
+		var wave []fetch
+		for rank := range dc.fresh {
+			for _, uri := range dc.fresh[rank] {
+				if ws := dc.wants[uri]; ws != nil && !dc.asked[uri] && !strings.Contains(uri, "#") {
+					dc.asked[uri] = true
+					wave = append(wave, fetch{uri: uri, wants: ws})
+					delete(dc.wants, uri)
+				}
+			}
+			if dc.fresh[rank] = dc.fresh[rank][:0]; len(wave) > 0 {
+				break
 			}
 		}
-		i := 0
-		for i < len(waves)-1 && len(waves[i]) == 0 {
-			i++
-		}
-		wave, froms := waves[i], []string(nil)
 		if len(wave) == 0 {
 			break
 		}
-		slices.Sort(wave)
-		for _, uri := range wave {
-			froms = append(froms, dc.wants[uri][0].t.uri)
-		}
-		got, errs := ld.getAll(wave, froms)
+		wave = dc.getAll(wave)
 		if err := ld.ctx.Err(); err != nil {
 			return fmt.Errorf("openapi: %w", err)
 		}
-		for i, uri := range wave {
-			if errs[i] == nil {
-				dc.add(got[i], uri)
-				continue
+		slices.SortFunc(wave, func(a, b fetch) int { return strings.Compare(a.uri, b.uri) })
+		for _, f := range wave {
+			switch {
+			case f.err != nil:
+				if d.failed == nil {
+					d.failed = map[string]error{}
+				}
+				d.failed[f.uri] = f.err
+				delete(dc.wants, f.uri)
+			case !dc.add(f.r.t, f.uri, f.r): // its document was read already
+				for _, w := range f.wants {
+					dc.follow(f.uri, w)
+				}
 			}
-			if d.failed == nil {
-				d.failed = map[string]error{}
-			}
-			d.failed[uri] = errs[i]
-			delete(dc.wants, uri)
 		}
 	}
 	slices.SortFunc(d.trees[1:], func(a, b *tree) int { return strings.Compare(a.uri, b.uri) })
@@ -296,27 +340,69 @@ func (d *document) discover(ld *loading) error {
 			return fmt.Errorf("openapi: %s: the documents together hold too many values", d.uri)
 		}
 		n += len(t.nodes)
+		t.located = dc.readers[t].located
 	}
 	d.pages = make([]atomic.Pointer[[factsPage]facts], n/factsPage+1)
 	return nil
 }
 
-// getAll retrieves and reads the document at each of uris, each of which
-// the document retrieved from the same of froms references, in parallel,
-// returning when they are read or ctx is done.
-func (ld *loading) getAll(uris, froms []string) ([]*tree, []error) {
-	got, errs := make([]*tree, len(uris)), make([]error, len(uris))
+// getAll retrieves in parallel the document of each of wave, the first of
+// its wants' documents referencing it, and reads it for what they need,
+// adding to the wave each URI that only references to objects other than
+// schemas in the documents read need, and that nothing read before
+// identifies, the wave holding it already. It returns the wave when no more
+// is to be retrieved, or when ctx is done.
+func (dc *discovery) getAll(wave []fetch) []fetch {
+	var mu sync.Mutex
+	more := sync.NewCond(&mu)
+	next, busy := 0, 0
 	var wg sync.WaitGroup
-	sem := make(chan struct{}, fetches)
-	for i := range uris {
+	for range fetches {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			select {
-			case sem <- struct{}{}:
-				got[i], errs[i] = ld.get(uris[i], froms[i])
-				<-sem
-			case <-ld.ctx.Done():
+			var buf *[32 << 10]byte
+			var scratch reader // its queue and path, reused
+			mu.Lock()
+			defer func() {
+				if mu.Unlock(); buf != nil {
+					buffers.Put(buf)
+				}
+			}()
+			for {
+				for next == len(wave) && busy > 0 && dc.ld.ctx.Err() == nil {
+					more.Wait()
+				}
+				if next == len(wave) || dc.ld.ctx.Err() != nil {
+					more.Broadcast()
+					return
+				}
+				i := next
+				next, busy = next+1, busy+1
+				uri, wants := wave[i].uri, wave[i].wants
+				mu.Unlock()
+				if buf == nil {
+					buf = buffers.Get().(*[32 << 10]byte)
+				}
+				r, err := dc.read(uri, wants, buf[:], &scratch)
+				mu.Lock()
+				wave[i].r, wave[i].err, busy = r, err, busy-1
+				for j := 0; r != nil && j < len(r.refs); { // a run of references to one URI at a time
+					uri, k, need := r.refs[j].uri, j+1, r.refs[j].w.rank == 0
+					for ; k < len(r.refs) && r.refs[k].uri == uri; k++ {
+						need = need || r.refs[k].w.rank == 0
+					}
+					if need && !dc.asked[uri] && dc.named[uri] == nil && dc.ids[uri] == nil && dc.failed[uri] == nil && !strings.Contains(uri, "#") {
+						dc.asked[uri] = true
+						ws := make([]want, 0, k-j)
+						for _, n := range r.refs[j:k] {
+							ws = append(ws, n.w)
+						}
+						wave = append(wave, fetch{uri: uri, wants: ws})
+					}
+					j = k
+				}
+				more.Broadcast()
 			}
 		}()
 	}
@@ -324,29 +410,60 @@ func (ld *loading) getAll(uris, froms []string) ([]*tree, []error) {
 	go func() { wg.Wait(); close(done) }()
 	select {
 	case <-done:
-	case <-ld.ctx.Done():
+		return wave
+	case <-dc.ld.ctx.Done():
+		return nil
 	}
-	return got, errs
 }
 
-// add records t, retrieved when uri was requested ("" for the entry), unless
-// a document retrieved from the same URI is recorded, and reads it if it
-// holds what discovery needs.
-func (dc *discovery) add(t *tree, uri string) {
-	if prev := dc.named[t.uri]; prev != nil {
-		t = prev
-	} else {
-		dc.named[t.uri], dc.trees = t, append(dc.trees, t)
+// buffers holds the buffers documents are copied through.
+var buffers = sync.Pool{New: func() any { return new([32 << 10]byte) }}
+
+// read retrieves the document at uri, which the document of the first of
+// wants references, and reads it for what they need, copying its content
+// through buf and reading with scratch's queue and path.
+func (dc *discovery) read(uri string, wants []want, buf []byte, scratch *reader) (*reader, error) {
+	t, err := dc.ld.get(uri, wants[0].t.uri, buf)
+	if err != nil {
+		return nil, err
+	}
+	k := t.kind()
+	r := dc.newReader(t, k)
+	r.queue, r.path = append(scratch.queue[:0], r.queue...), scratch.path[:0]
+	for _, w := range wants {
+		r.open(t.root(), k, t.base, "", t.uri, w)
+	}
+	r.drain()
+	scratch.queue, scratch.path, r.queue, r.path = r.queue, r.path, nil, nil
+	return r, nil
+}
+
+// newReader returns a reader of t, whose root is a k node, with the root to
+// read when t holds what discovery needs throughout: an identifier, or, in
+// an OpenAPI document, a reference that may reach another document.
+func (d *document) newReader(t *tree, k kind) *reader {
+	r := &reader{d: d, t: t}
+	if t.declares || t.reaches && k == rootKind {
+		r.open(t.root(), k, t.base, "", t.uri, want{k: k})
+	}
+	return r
+}
+
+// add records t, retrieved when uri was requested ("" for the entry), and r,
+// its reader, and takes what r read, unless a document retrieved from the
+// same URI is recorded, reporting whether it was not.
+func (dc *discovery) add(t *tree, uri string, r *reader) bool {
+	prev := dc.named[t.uri]
+	if prev == nil {
+		dc.named[t.uri], dc.trees, dc.readers[t] = t, append(dc.trees, t), r
 		dc.identify(t.uri)
-		if k := t.kind(); t.declares || t.reaches && k == rootKind {
-			dc.seen[visit{t.root(), k}] = true
-			dc.queue = append(dc.queue, item{t.root(), k, t.base, ""})
-		}
+		dc.take(r)
 	}
 	if uri != "" && dc.named[uri] == nil {
-		dc.named[uri] = t
+		dc.named[uri] = cmp.Or(prev, t)
 		dc.identify(uri)
 	}
+	return prev == nil
 }
 
 // identify notes that something now identifies uri.
@@ -356,20 +473,109 @@ func (dc *discovery) identify(uri string) {
 	}
 }
 
-// drain reads every item, and every want something identifies, until none
-// is left.
+// take takes the identifiers and references r has read: each identifier
+// claims its node, and each reference is followed, or waits for its URI.
+func (dc *discovery) take(r *reader) {
+	claimed, refs := r.claimed, r.refs
+	r.claimed, r.refs = nil, nil
+	for _, key := range claimed {
+		dc.claim(key, r.ids[key])
+	}
+	for i := 0; i < len(refs); { // a run of references to one URI at a time
+		uri, j := refs[i].uri, i+1
+		for j < len(refs) && refs[j].uri == uri {
+			j++
+		}
+		switch {
+		case dc.named[uri] != nil || dc.ids[uri] != nil:
+			for _, n := range refs[i:j] {
+				dc.follow(uri, n.w)
+			}
+		case dc.failed[uri] == nil:
+			ws, rank := dc.wants[uri], len(dc.fresh)-1
+			for _, n := range refs[i:j] {
+				ws, rank = append(ws, n.w), min(rank, n.w.rank)
+			}
+			dc.wants[uri], dc.fresh[rank] = ws, append(dc.fresh[rank], uri)
+		}
+		i = j
+	}
+	dc.wake(r)
+}
+
+// claim records that key identifies the node of rc and that of rc.other,
+// if any: the identifier claims the first of the nodes recorded for it, in
+// the order of their documents' URIs and their place in them, and, when
+// there are several, the second, whichever document is read first.
+func (dc *discovery) claim(key string, rc *claim) {
+	c := dc.ids[key]
+	if c == nil {
+		if dc.ids == nil {
+			dc.ids = map[string]*claim{}
+		}
+		if dc.identify(key); rc.other == nil {
+			dc.ids[key] = rc
+			return
+		}
+	}
+	var all []claim
+	for _, x := range [...]*claim{c, rc, c.otherOf(), rc.other} {
+		if x != nil && !slices.ContainsFunc(all, func(y claim) bool { return y.v == x.v }) {
+			all = append(all, *x)
+		}
+	}
+	slices.SortFunc(all, func(a, b claim) int { return cmp.Or(strings.Compare(a.v.t.uri, b.v.t.uri), cmp.Compare(a.v.i, b.v.i)) })
+	first := all[0]
+	if first.other = nil; len(all) > 1 {
+		all[1].other = nil
+		first.other = &all[1]
+	}
+	dc.ids[key] = &first
+}
+
+func (c *claim) otherOf() *claim {
+	if c == nil {
+		return nil
+	}
+	return c.other
+}
+
+// wake marks r busy when it has something to read or for the discovery to
+// take.
+func (dc *discovery) wake(r *reader) {
+	if !r.busy && len(r.queue)+len(r.claimed)+len(r.refs) > 0 {
+		r.busy, dc.busy = true, append(dc.busy, r)
+	}
+}
+
+// follow queues the node w needs of what uri identifies, a document or a
+// schema, to be read by the reader of its document.
+func (dc *discovery) follow(uri string, w want) {
+	if t := dc.named[uri]; t != nil {
+		dc.readers[t].open(t.root(), t.kind(), t.base, "", t.uri, w)
+		dc.wake(dc.readers[t])
+	} else if c := dc.ids[uri]; c != nil {
+		dc.readers[c.v.t].open(c.v, schemaKind, c.base, c.ptr, uri, w)
+		dc.wake(dc.readers[c.v.t])
+	}
+}
+
+// drain reads every item, and follows every want something identifies,
+// until none is left.
 func (dc *discovery) drain() {
 	for {
-		if n := len(dc.queue); n > 0 {
-			it := dc.queue[n-1]
-			dc.queue = dc.queue[:n-1]
-			dc.at, dc.path = it.ptr, dc.path[:0]
-			dc.visit(it.v, it.k, it.base)
+		if n := len(dc.busy); n > 0 {
+			r := dc.busy[n-1]
+			dc.busy, r.busy = dc.busy[:n-1], false
+			r.drain()
+			dc.take(r)
 		} else if len(dc.ready) > 0 {
 			uri := dc.ready[0]
 			dc.ready = dc.ready[1:]
-			for _, w := range dc.wants[uri] {
-				dc.follow(uri, w)
+			if t := dc.named[uri]; t == nil || t.reaches || t.declares { // else nothing in it is read
+				for _, w := range dc.wants[uri] {
+					dc.follow(uri, w)
+				}
 			}
 			delete(dc.wants, uri)
 		} else {
@@ -378,19 +584,80 @@ func (dc *discovery) drain() {
 	}
 }
 
-// visit reads v as a k node whose base outside it is base: its identifiers,
-// its references, and the nodes it holds.
-func (dc *discovery) visit(v value, k kind, base *url.URL) {
-	if k == anyKind && v.kind() == '[' {
-		i := 0
-		for _, m := range v.members() {
-			dc.into(strconv.Itoa(i), m, anyKind, '1', base)
-			i++
-		}
-	}
-	if v.kind() != '{' || k == dataKind {
+// open queues the node w needs under n, a k node whose base outside it is
+// base, at ptr, which uri identifies, to be read, unless it is read already
+// or its document holds nothing discovery needs; one a plain name names that
+// r has not read is needed of the discovery.
+func (r *reader) open(n value, k kind, base *url.URL, ptr, uri string, w want) {
+	if !r.t.reaches && !r.t.declares {
 		return
 	}
+	frag, err := url.PathUnescape(w.frag)
+	switch {
+	case err != nil:
+		return
+	case frag != "" && frag[0] == '/':
+		n, base = descend(n, k, frag, base)
+		ptr += frag
+	case frag != "":
+		c := r.ids[uri+"#"+frag]
+		if c == nil {
+			r.refs = append(r.refs, need{uri + "#" + frag, want{"", w.k, w.t, w.rank}})
+			return
+		}
+		n, base, ptr = c.v, c.base, c.ptr
+	}
+	if n.ok() && !r.seen[visit{n, w.k}] {
+		if r.seen == nil {
+			r.seen = map[visit]bool{}
+		}
+		r.seen[visit{n, w.k}] = true
+		r.queue = append(r.queue, item{n, w.k, base, ptr})
+	}
+}
+
+// drain reads every item queued.
+func (r *reader) drain() {
+	for n := len(r.queue); n > 0; n = len(r.queue) {
+		it := r.queue[n-1]
+		r.queue = r.queue[:n-1]
+		r.at, r.path = it.ptr, r.path[:0]
+		r.visit(it.v, it.k, it.base)
+	}
+}
+
+// visit reads v as a k node whose base outside it is base: its identifiers,
+// its references, and the nodes it holds, its members read once while it
+// holds few nodes to read.
+func (r *reader) visit(v value, k kind, base *url.URL) {
+	switch {
+	case k == anyKind && v.kind() == '[':
+		i := 0
+		for _, m := range v.members() {
+			r.into(strconv.Itoa(i), m, anyKind, '1', base)
+			i++
+		}
+		return
+	case v.kind() != '{' || k == dataKind:
+		return
+	}
+	slotOf := func(name string) (slot, bool) {
+		switch k {
+		case anyKind:
+			return slot{anyKind, '1'}, true
+		case callbackKind:
+			return slot{pathItemKind, '1'}, !strings.HasPrefix(name, "x-")
+		}
+		s, ok := model[k][name]
+		return s, ok
+	}
+	type child struct {
+		name string
+		m    value
+		s    slot
+	}
+	var kids [12]child
+	n := 0 // the members that hold nodes to read, those past len(kids) read again
 	var ref, dynamicRef, id, anchor, dynamicAnchor, disc, dialect value
 	for name, m := range v.members() {
 		switch name {
@@ -409,6 +676,12 @@ func (dc *discovery) visit(v value, k kind, base *url.URL) {
 		case "$schema":
 			dialect = m
 		}
+		if s, ok := slotOf(name); ok {
+			if n < len(kids) {
+				kids[n] = child{name, m, s}
+			}
+			n++
+		}
 	}
 	switch {
 	case (k == schemaKind || k == anyKind) && dialect.ok() && !ownDialect(dialect.string()):
@@ -419,54 +692,51 @@ func (dc *discovery) visit(v value, k kind, base *url.URL) {
 			if u, err := base.Parse(id.text()); err == nil {
 				u.Fragment, u.RawFragment = "", ""
 				base = u
-				dc.claim(u.String(), v, outer)
+				r.claim(u.String(), v, outer)
 			}
 		}
 		for _, a := range [...]value{anchor, dynamicAnchor} {
 			if a.kind() == '"' {
-				dc.claim(base.String()+"#"+a.text(), v, outer)
+				r.claim(base.String()+"#"+a.text(), v, outer)
 			}
 		}
-		if k == anyKind {
-			for name, m := range v.members() {
-				dc.into(name, m, anyKind, '1', base)
-			}
-			return
-		}
-		dc.reference(ref, k, base)
-		dc.reference(dynamicRef, k, base)
-		for _, m := range disc.get("mapping").members() {
-			if m.kind() == '"' && !componentName.MatchString(m.text()) {
-				dc.reference(m, k, base)
+		if k == schemaKind {
+			r.reference(ref, k, base)
+			r.reference(dynamicRef, k, base)
+			for _, m := range disc.get("mapping").members() {
+				if m.kind() == '"' && !componentName.MatchString(m.text()) {
+					r.reference(m, k, base)
+				}
 			}
 		}
 	case k == pathItemKind:
-		dc.reference(ref, k, base)
+		r.reference(ref, k, base)
 	case k >= parameterKind && ref.kind() == '"': // a Reference Object
-		dc.reference(ref, k, base)
-		return
-	case k == callbackKind:
-		for name, m := range v.members() {
-			if !strings.HasPrefix(name, "x-") {
-				dc.into(name, m, pathItemKind, '1', base)
-			}
-		}
+		r.reference(ref, k, base)
 		return
 	}
-	for name, m := range v.members() {
-		if s, ok := model[k][name]; ok {
-			dc.into(name, m, s.k, s.how, base)
+	for _, c := range kids[:min(n, len(kids))] {
+		r.into(c.name, c.m, c.s.k, c.s.how, base)
+	}
+	if n > len(kids) {
+		i := 0
+		for name, m := range v.members() {
+			if s, ok := slotOf(name); ok {
+				if i++; i > len(kids) {
+					r.into(name, m, s.k, s.how, base)
+				}
+			}
 		}
 	}
 }
 
 // into visits m, the member name of the node being read, as a k node, or as
 // an array or map of them, as how says.
-func (dc *discovery) into(name string, m value, k kind, how byte, base *url.URL) {
-	dc.path = append(dc.path, name)
+func (r *reader) into(name string, m value, k kind, how byte, base *url.URL) {
+	r.path = append(r.path, name)
 	switch {
 	case how == '1':
-		dc.visit(m, k, base)
+		r.visit(m, k, base)
 	case m.kind() == how:
 		i := 0
 		for key, c := range m.members() {
@@ -476,32 +746,31 @@ func (dc *discovery) into(name string, m value, k kind, how byte, base *url.URL)
 			} else if (k == pathItemKind || k == responseKind) && strings.HasPrefix(key, "x-") {
 				continue // an extension of a Paths, Responses or Callback Object
 			}
-			dc.into(key, c, k, '1', base)
+			r.into(key, c, k, '1', base)
 		}
 	}
-	dc.path = dc.path[:len(dc.path)-1]
+	r.path = r.path[:len(r.path)-1]
 }
 
 // claim records that key, an absolute URI, identifies v, whose base outside
 // it is base.
-func (dc *discovery) claim(key string, v value, base *url.URL) {
-	switch c := dc.ids[key]; {
+func (r *reader) claim(key string, v value, base *url.URL) {
+	switch c := r.ids[key]; {
 	case c == nil:
-		if dc.ids == nil {
-			dc.ids = map[string]*claim{}
+		if r.ids == nil {
+			r.ids = map[string]*claim{}
 		}
-		dc.ids[key] = &claim{v: v, ptr: dc.pointer(), base: base}
-		dc.identify(key)
+		r.ids[key], r.claimed = &claim{v: v, ptr: r.pointer(), base: base}, append(r.claimed, key)
 	case c.v != v && c.other == nil:
-		c.other = &claim{v: v, ptr: dc.pointer()}
+		c.other, r.claimed = &claim{v: v, ptr: r.pointer()}, append(r.claimed, key)
 	}
 }
 
 // pointer returns the JSON Pointer of the node being read.
-func (dc *discovery) pointer() string {
+func (r *reader) pointer() string {
 	var b strings.Builder
-	b.WriteString(dc.at)
-	for _, tok := range dc.path {
+	b.WriteString(r.at)
+	for _, tok := range r.path {
 		b.WriteByte('/')
 		b.WriteString(escapeToken(tok))
 	}
@@ -509,11 +778,12 @@ func (dc *discovery) pointer() string {
 }
 
 // reference records ref, if it is a string, a reference of a k node whose
-// base is base: the node it names is read as a k node, and its document
-// retrieved unless something read identifies its URI. A reference that
-// never retrieves (a relative one with no base, one with userinfo, one to a
-// file URL that names a host) is left for its use to report.
-func (dc *discovery) reference(ref value, k kind, base *url.URL) {
+// base is base, and where it leads: the node it names is read as a k node,
+// by r when r identifies its URI, and otherwise once something does or its
+// document is retrieved. A reference that never retrieves (a relative one
+// with no base, one with userinfo, one to a file URL that names a host) is
+// left for its use to report.
+func (r *reader) reference(ref value, k kind, base *url.URL) {
 	if ref.kind() != '"' {
 		return
 	}
@@ -522,70 +792,30 @@ func (dc *discovery) reference(ref value, k kind, base *url.URL) {
 	if f, local := strings.CutPrefix(text, "#"); local && base == t.base {
 		frag = f
 	} else {
-		u, err := url.Parse(text)
-		if err != nil || !u.IsAbs() && base.Opaque != "" {
+		doc, f, _ := strings.Cut(text, "#")
+		res := r.d.resolve(t, base, doc)
+		if res.err != nil {
 			return
+		}
+		if uri, frag = res.uri, f; base != t.base { // at compile, only t's base is known
+			if r.located == nil {
+				r.located = map[int32]location{}
+			}
+			r.located[ref.i] = location{uri, frag}
 		}
 		if k == schemaKind {
-			rank = 1
-			if u.IsAbs() {
-				rank = 2
-			}
+			rank = 1 + res.abs
 		}
-		if u = base.ResolveReference(u); base != t.base {
-			if dc.under == nil {
-				dc.under = map[value]string{}
-			}
-			dc.under[ref] = u.String()
-		}
-		if u.User != nil || u.Scheme == "file" && u.Host != "" && u.Host != "localhost" {
-			return
-		}
-		frag, u.Fragment, u.RawFragment = u.EscapedFragment(), "", ""
-		uri = u.String()
 	}
 	w := want{frag, k, t, rank}
-	switch {
-	case dc.named[uri] != nil || dc.ids[uri] != nil:
-		dc.follow(uri, w)
-	case dc.failed[uri] == nil:
-		dc.wants[uri] = append(dc.wants[uri], w)
+	switch c := r.ids[uri]; {
+	case c != nil:
+		r.open(c.v, schemaKind, c.base, c.ptr, uri, w)
+	case uri == t.uri:
+		r.open(t.root(), t.kind(), t.base, "", uri, w)
+	default:
+		r.refs = append(r.refs, need{uri, w})
 	}
-}
-
-// follow queues the node w needs of what uri identifies to be read, unless
-// it is read already or its document needs no reading, or waits for the
-// plain name it needs to be declared.
-func (dc *discovery) follow(uri string, w want) {
-	var n value
-	k, base, ptr := schemaKind, (*url.URL)(nil), ""
-	if c := dc.ids[uri]; c != nil {
-		n, base, ptr = c.v, c.base, c.ptr
-	}
-	if t := dc.named[uri]; t != nil {
-		n, k, base, ptr = t.root(), t.kind(), t.base, ""
-	}
-	frag, err := url.PathUnescape(w.frag)
-	switch {
-	case err != nil:
-		return
-	case frag != "" && frag[0] == '/':
-		n, base = descend(n, k, frag, base)
-		ptr += frag
-	case frag != "":
-		name := uri + "#" + frag
-		c := dc.ids[name]
-		if c == nil {
-			dc.wants[name] = append(dc.wants[name], want{"", w.k, w.t, w.rank})
-			return
-		}
-		n, base, ptr = c.v, c.base, c.ptr
-	}
-	if !n.ok() || !n.t.reaches && !n.t.declares || dc.seen[visit{n, w.k}] {
-		return
-	}
-	dc.seen[visit{n, w.k}] = true
-	dc.queue = append(dc.queue, item{n, w.k, base, ptr})
 }
 
 // descend returns the node the JSON Pointer ptr names under v, a k node
@@ -594,7 +824,7 @@ func (dc *discovery) follow(uri string, w want) {
 func descend(v value, k kind, ptr string, base *url.URL) (value, *url.URL) {
 	how := byte('1')
 	for ptr != "" && v.ok() {
-		if how == '1' && (k == schemaKind || k == anyKind) {
+		if how == '1' && (k == schemaKind || k == anyKind) && v.t.declares {
 			if id := v.get("$id"); id.kind() == '"' {
 				if u, err := base.Parse(id.text()); err == nil {
 					u.Fragment, u.RawFragment = "", ""
@@ -638,31 +868,17 @@ func ownDialect(d string) bool {
 func (d *document) target(ref value) (value, string, error) {
 	t, text := ref.t, ref.text()
 	uri, frag := t.uri, ""
-	abs, under := d.under[ref]
-	if f, local := strings.CutPrefix(text, "#"); local && !under {
+	if l, ok := t.located[ref.i]; ok {
+		uri, frag = l.uri, l.frag
+	} else if f, local := strings.CutPrefix(text, "#"); local {
 		frag = f
 	} else {
-		if !under {
-			abs = text
+		doc, f, _ := strings.Cut(text, "#")
+		r := d.resolve(t, t.base, doc)
+		if r.err != nil {
+			return value{}, "", fmt.Errorf("%w %q: %w", ErrUnresolved, cmp.Or(r.shown, text), r.err)
 		}
-		u, err := url.Parse(abs)
-		switch {
-		case err != nil:
-			return value{}, "", fmt.Errorf("%w %q: not a URI reference", ErrUnresolved, text)
-		case !u.IsAbs() && t.base.Opaque != "":
-			return value{}, "", fmt.Errorf("%w %q: a relative reference in a document with no base URI", ErrUnresolved, text)
-		case !under:
-			u = t.base.ResolveReference(u)
-		}
-		switch {
-		case u.User != nil: // not shown
-			u.User = nil
-			return value{}, "", fmt.Errorf("%w %q: a URI with userinfo is never retrieved (RFC 9110 section 4.2.4)", ErrUnresolved, u)
-		case u.Scheme == "file" && u.Host != "" && u.Host != "localhost":
-			return value{}, "", fmt.Errorf("%w %q: a file URL cannot name a host other than localhost (RFC 8089)", ErrUnresolved, text)
-		}
-		frag, u.Fragment, u.RawFragment = u.EscapedFragment(), "", ""
-		uri = u.String()
+		uri, frag = r.uri, f
 	}
 	n, ptr := t.root(), ""
 	if uri != t.uri || d.ids[uri] != nil {
@@ -689,6 +905,106 @@ func (d *document) target(ref value) (value, string, error) {
 		}
 	}
 	return n, ptr, nil
+}
+
+// A location is where a reference leads: the absolute URI it names, without
+// its fragment, and the fragment as written.
+type location struct{ uri, frag string }
+
+// A resolved is what the part of a reference before its fragment resolves
+// to against a base: an absolute URI, and whether it was written as one
+// (1), or why it names nothing to retrieve, with the reference as it may be
+// shown.
+type resolved struct {
+	uri   string
+	abs   int
+	err   error
+	shown string
+}
+
+// A resolving is a reference's part before its fragment and a base,
+// resolved once: a document's directory URI, against which a relative path
+// resolves as against any URI in it, or else the base itself.
+type resolving struct {
+	base     *url.URL
+	dir, doc string
+}
+
+// resolve returns what doc, the part of a reference before its fragment in
+// the document t, resolves to against base. Against t's own base, a relative
+// path of unreserved characters and slashes with no dot segment resolves, as
+// RFC 3986 section 5.2 resolves it, to t's directory URI followed by it, and
+// any other relative path once for each directory; the rest resolve once for
+// each base.
+func (d *document) resolve(t *tree, base *url.URL, doc string) *resolved {
+	k := resolving{base: base, doc: doc}
+	if i := strings.IndexAny(doc, ":/?"); base == t.base && t.dir != "" && doc != "" && (i < 0 || i > 0 && doc[i] == '/') {
+		if plainPath(doc) {
+			return &resolved{uri: t.canonicalDir() + doc}
+		}
+		k = resolving{dir: t.dir, doc: doc}
+	}
+	if r, ok := d.resolutions.Load(k); ok {
+		return r.(*resolved)
+	}
+	r, _ := d.resolutions.LoadOrStore(k, resolve(base, doc))
+	return r.(*resolved)
+}
+
+// canonicalDir returns the URI of t's directory as net/url writes it,
+// resolving it once.
+func (t *tree) canonicalDir() string {
+	if dir := t.canonical.Load(); dir != nil {
+		return *dir
+	}
+	dir := t.base.ResolveReference(&url.URL{Path: "."}).String()
+	t.canonical.CompareAndSwap(nil, &dir)
+	return *t.canonical.Load()
+}
+
+// plainPath reports whether doc, a relative path, has only unreserved
+// characters and slashes (RFC 3986 section 2.3) and no segment that is "."
+// or "..".
+func plainPath(doc string) bool {
+	for i, seg := 0, 0; i <= len(doc); i++ {
+		if i == len(doc) || doc[i] == '/' {
+			if s := doc[seg:i]; s == "." || s == ".." {
+				return false
+			}
+			seg = i + 1
+		} else if c := doc[i]; unreservedSet[c] != 1 {
+			return false
+		}
+	}
+	return true
+}
+
+// resolve returns what doc, the part of a reference before its fragment,
+// resolves to against base.
+func resolve(base *url.URL, doc string) *resolved {
+	r := &resolved{}
+	u, err := url.Parse(doc)
+	switch {
+	case err != nil:
+		r.err = errors.New("not a URI reference")
+	case !u.IsAbs() && base.Opaque != "":
+		r.err = errors.New("a relative reference in a document with no base URI")
+	default:
+		if u.IsAbs() {
+			r.abs = 1
+		}
+		switch u = base.ResolveReference(u); {
+		case u.User != nil: // not shown
+			u.User = nil
+			r.err, r.shown = errors.New("a URI with userinfo is never retrieved (RFC 9110 section 4.2.4)"), u.String()
+		case u.Scheme == "file" && u.Host != "" && u.Host != "localhost":
+			r.err = errors.New("a file URL cannot name a host other than localhost (RFC 8089)")
+		default:
+			u.Fragment, u.RawFragment = "", ""
+			r.uri = u.String()
+		}
+	}
+	return r
 }
 
 // node returns the node an absolute URI identifies, a document's root or a

@@ -32,7 +32,8 @@ type document struct {
 	named  map[string]*tree  // by the URI each was retrieved from, and the URI requested when a redirect led there
 	ids    map[string]*claim // by each $id, and each base and plain name, the schemas declare
 	failed map[string]error  // why each document that could not be loaded was not, by the URI requested
-	under  map[value]string  // the absolute URI of each reference inside a schema whose base is an $id
+
+	resolutions sync.Map // resolving to *resolved (see resolve)
 
 	entries []*entry          // in document order
 	byID    map[string]*entry // by operationId; nil for one several operations share
@@ -195,39 +196,38 @@ func checkURI(u *url.URL, raw string) error {
 	return nil
 }
 
-// retrieve returns the content of the document at uri and the URI it was
-// finally retrieved from. from is "" for the entry document; otherwise it
+// retrieve returns the content of the document at uri, the URI it was
+// finally retrieved from, and that URI parsed, or nil, copying the content
+// through buf, if not nil. from is "" for the entry document; otherwise it
 // names the document whose references reach uri, which must admit it, and
 // every redirect hop and the final URI.
-func (ld *loading) retrieve(uri, from string) (string, string, error) {
+func (ld *loading) retrieve(uri, from string, buf []byte) (string, string, *url.URL, error) {
 	var (
 		r     io.ReadCloser
 		final = uri
 		size  = int64(-1)
 		ctx   = ld.ctx
 	)
-	shown := uri
 	u, err := url.Parse(uri)
 	switch {
 	case strings.TrimSpace(uri) != uri: // not shown: it may be a URI with userinfo
-		return "", "", errors.New("openapi: load: the URI has leading or trailing whitespace")
+		return "", "", nil, errors.New("openapi: load: the URI has leading or trailing whitespace")
 	case err != nil && hasScheme(uri): // shown neither, as its userinfo cannot be found
-		return "", "", errors.New("openapi: load: the URI cannot be parsed (RFC 3986)")
+		return "", "", nil, errors.New("openapi: load: the URI cannot be parsed (RFC 3986)")
 	case err != nil || len(u.Scheme) <= 1: // not a URL: a file path, perhaps with a drive letter
 		u, err = &url.URL{}, nil
 	default:
-		shown = u.Redacted()
 		err = checkURI(u, uri)
 	}
+	base := u // final, parsed
 	switch {
 	case err != nil:
-	case from != "" && !ld.admit(from, uri):
+	case from != "" && !ld.admit(from, uri, u):
 		err = notAdmitted(uri)
 	case ld.Fetch != nil:
-		if r, final, err = ld.Fetch(ctx, uri); final == "" {
+		if r, final, err = ld.Fetch(ctx, uri); final == "" || final == uri {
 			final = uri
-		}
-		if err == nil && from != "" && final != uri && !ld.admit(from, final) {
+		} else if base = nil; err == nil && from != "" && !ld.admit(from, final, nil) {
 			err = notAdmitted(final)
 		}
 	case u.Scheme == "http" || u.Scheme == "https":
@@ -239,7 +239,7 @@ func (ld *loading) retrieve(uri, from string) (string, string, error) {
 			}
 			c.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 				to := *req.URL
-				if to.Fragment, to.RawFragment = "", ""; !ld.admit(from, to.String()) {
+				if to.Fragment, to.RawFragment = "", ""; !ld.admit(from, to.String(), &to) {
 					return notAdmitted(to.String())
 				}
 				return next(req, via)
@@ -252,7 +252,9 @@ func (ld *loading) retrieve(uri, from string) (string, string, error) {
 			if resp, err = hc.Do(req); err == nil {
 				r, size = resp.Body, resp.ContentLength
 				if resp.Request != nil {
-					final = resp.Request.URL.String()
+					to := *resp.Request.URL
+					to.Fragment, to.RawFragment = "", ""
+					final, base = to.String(), &to
 				}
 				if resp.StatusCode/100 != 2 {
 					err = errors.New(status(resp.StatusCode))
@@ -266,7 +268,8 @@ func (ld *loading) retrieve(uri, from string) (string, string, error) {
 	case u.Scheme == "":
 		var abs string
 		if abs, err = filepath.Abs(uri); err == nil {
-			final = (&url.URL{Scheme: "file", Path: filepath.ToSlash(abs)}).String()
+			base = &url.URL{Scheme: "file", Path: filepath.ToSlash(abs)}
+			final = base.String()
 			r, size, err = open(ctx, abs)
 		}
 	default:
@@ -278,11 +281,15 @@ func (ld *loading) retrieve(uri, from string) (string, string, error) {
 	if err == nil {
 		var b strings.Builder
 		b.Grow(int(min(max(size, 0), max(ld.left.Load(), 0), 1<<20)))
-		if _, err = io.Copy(&b, counted{ld, ctxReader{ctx, r}}); err == nil {
-			return b.String(), final, nil
+		if _, err = io.CopyBuffer(&b, counted{ld, ctxReader{ctx, r}}, buf); err == nil {
+			return b.String(), final, base, nil
 		}
 	}
-	return "", "", fmt.Errorf("openapi: load %s: %w", shown, withContext(ctx, err))
+	shown := uri
+	if u.Scheme != "" {
+		shown = u.Redacted()
+	}
+	return "", "", nil, fmt.Errorf("openapi: load %s: %w", shown, withContext(ctx, err))
 }
 
 // hasScheme reports whether s begins with a URI scheme longer than a drive
@@ -355,7 +362,7 @@ func newDocument(ld *loading, content, uri string) (*document, error) {
 	if uri == "" {
 		uri = contentURN(content)
 	}
-	t, err := readTree(ld.ctx, content, uri)
+	t, err := readTree(ld.ctx, content, uri, nil)
 	if err != nil {
 		return nil, err
 	}

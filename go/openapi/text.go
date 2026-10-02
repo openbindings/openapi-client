@@ -10,12 +10,15 @@ import (
 	"unicode/utf8"
 )
 
-// readTree reads content, the document retrieved from uri, in the encoding
-// its byte order mark names or YAML 1.2.2 section 5.2 deduces: as JSON when
-// its first significant character is '{' and it is JSON, and otherwise as
-// YAML.
-func readTree(ctx context.Context, content, uri string) (*tree, error) {
-	base, err := url.Parse(uri)
+// readTree reads content, the document retrieved from uri, which base is
+// parsed, if not nil, in the encoding its byte order mark names or YAML
+// 1.2.2 section 5.2 deduces: as JSON when its first significant character is
+// '{' and it is JSON, and otherwise as YAML.
+func readTree(ctx context.Context, content, uri string, base *url.URL) (*tree, error) {
+	var err error
+	if base == nil {
+		base, err = url.Parse(uri)
+	}
 	switch {
 	case err != nil: // not shown, as its userinfo cannot be found
 		err = errors.New("the document URI cannot be parsed (RFC 3986)")
@@ -45,6 +48,9 @@ func readTree(ctx context.Context, content, uri string) (*tree, error) {
 		return nil, err
 	}
 	t.uri, t.base = uri, base
+	if t.reaches && base.Opaque == "" && base.Path != "" && base.RawQuery == "" && !base.ForceQuery {
+		t.dir = uri[:strings.LastIndexByte(uri, '/')+1]
+	}
 	return t, nil
 }
 

@@ -29,17 +29,22 @@ const many = 16
 // each fact once: the index of a container with many members, and the value
 // of an escaped string.
 type tree struct {
-	uri     string   // the URI the document was retrieved from
-	base    *url.URL // uri, parsed
-	src     string
-	nodes   []node
-	escapes []uint32 // the offsets of the strings written with an escape, in order
-	off     int32    // the number of its first node among the nodes of every document loaded
+	uri       string                 // the URI the document was retrieved from
+	base      *url.URL               // uri, parsed
+	dir       string                 // uri up to its last slash, when it reaches others and has a path and no query
+	canonical atomic.Pointer[string] // the URI of its directory, as net/url writes it (see canonicalDir)
+	src       string
+	nodes     []node
+	escapes   []uint32 // the offsets of the strings written with an escape, in order
+	off       int32    // the number of its first node among the nodes of every document loaded
 
 	// What discovery reads it for: a reference that may reach another
 	// document (one not to a fragment of itself, or a discriminator mapping
-	// value); an identifier ($id, $anchor or $dynamicAnchor).
+	// value); an identifier ($id, $anchor or $dynamicAnchor). And where each
+	// reference discovery read leads, by node, but one to a fragment of the
+	// document itself.
 	reaches, declares bool
+	located           map[int32]location
 
 	// Read without a lock, each computed unlocked and kept as first stored.
 	indexes sync.Map                 // container to []int32: an object's members sorted by name, an array's items
