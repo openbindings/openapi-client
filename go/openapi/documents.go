@@ -193,6 +193,7 @@ const (
 	callbackKind
 	refKind // an Example, Link or Security Scheme Object: only a Reference Object holds a reference
 	schemaKind
+	schemaIDsKind // schema locations inspected for identifiers, without following references
 )
 
 // A slot is what a member of an object holds: a k node ('1'), or an array
@@ -777,13 +778,16 @@ func (r *reader) visit(v value, k kind, base *url.URL, effective string) {
 			dialect = m
 		}
 	}
+	if k == anyKind && (dialect.ok() || id.ok() || anchor.ok() || dynamicAnchor.ok()) {
+		k = schemaIDsKind
+	}
 	if dialect.kind() == '"' {
 		effective = dialect.string()
 	}
 	switch {
-	case (k == schemaKind || k == anyKind) && effective != "" && !ownDialect(effective):
+	case (k == schemaKind || k == schemaIDsKind || k == anyKind) && effective != "" && !ownDialect(effective):
 		return // another dialect: its identifiers and references are not read
-	case k == schemaKind || k == anyKind:
+	case k == schemaKind || k == schemaIDsKind || k == anyKind:
 		outer := base
 		if id.kind() == '"' {
 			if u, err := base.Parse(id.text()); err == nil {
@@ -813,17 +817,17 @@ func (r *reader) visit(v value, k kind, base *url.URL, effective string) {
 		return
 	}
 	for name, m := range v.members() {
-		s, ok := model[k][name]
+		lookup := k
+		if lookup == schemaIDsKind {
+			lookup = schemaKind
+		}
+		s, ok := model[lookup][name]
 		switch k {
 		case anyKind:
-			if dialect.ok() || id.ok() || anchor.ok() || dynamicAnchor.ok() {
-				s, ok = model[schemaKind][name]
-				if ok {
-					s.k = anyKind // identify schema locations without following unused references
-				}
-			} else {
-				s, ok = slot{anyKind, '1'}, true
-			}
+			s, ok = slot{anyKind, '1'}, true
+		case schemaIDsKind:
+			s.k = schemaIDsKind
+
 		case callbackKind:
 			s, ok = slot{pathItemKind, '1'}, !strings.HasPrefix(name, "x-")
 		}
