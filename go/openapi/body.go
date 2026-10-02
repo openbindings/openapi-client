@@ -231,7 +231,11 @@ func (c *Client) formBody(b *builder, enc *formEncoding, v any, body string, rea
 	if b.buf == nil {
 		b.buf = make([]byte, 0, 128)
 	}
+	plain := len(c.cfg.codecs) == 0
 	err := c.doc.members(v, enc, func(name string, f *field, v any) {
+		if plain && f.plain && b.scalar(f, name, v) {
+			return
+		}
 		at := key{body, name, -1}
 		if f.styled {
 			lead := ""
@@ -296,6 +300,37 @@ func (c *Client) formBody(b *builder, enc *formEncoding, v any, body string, rea
 	if err != nil {
 		re.input(body, err)
 	}
+}
+
+// scalar writes v, a value of exactly string, int or bool of the plain field
+// f named name, as formBody does, reporting false, having written nothing,
+// for any other value, and one its type does not write as text.
+func (b *builder) scalar(f *field, name string, v any) bool {
+	switch v.(type) {
+	case string:
+		if f.class == jsonClass {
+			return false
+		}
+	case int, bool:
+		if f.class != textClass {
+			return false
+		}
+	default:
+		return false
+	}
+	if len(b.buf) > 0 || b.parts != nil {
+		b.buf = append(b.buf, '&')
+	}
+	b.buf = append(appendForm(b.buf, name), '=')
+	switch x := v.(type) {
+	case string:
+		b.buf = appendForm(b.buf, x)
+	case int:
+		b.buf = strconv.AppendInt(b.buf, int64(x), 10)
+	case bool:
+		b.buf = strconv.AppendBool(b.buf, x)
+	}
+	return true
 }
 
 var errFormReader = errors.New("form content inside a field or parameter cannot hold a reader")

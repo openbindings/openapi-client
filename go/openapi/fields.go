@@ -37,6 +37,7 @@ type field struct {
 	class  class                           // the class of a sole type
 	listed bool                            // its Encoding lists them, so a Part's MediaType must match one
 	err    error                           // why its contentType cannot type a value
+	plain  bool                            // a value takes its sole concrete type, not the form type, with no style or Err
 	roots  []value                         // its declarations, whose properties a nested part's fields are
 	nested [2]atomic.Pointer[formEncoding] // the fields of its nested part, and of an item's
 }
@@ -44,7 +45,7 @@ type field struct {
 // untyped is a field no schema or Encoding describes, whose type is absent
 // (OpenAPI 3.1.2 section 4.8.15.1.1).
 var untyped = &field{param: param{Param: &Param{ContentType: octetStream.full}},
-	types: []string{octetStream.full}, parsed: []parsedMedia{octetStream}, class: otherClass}
+	types: []string{octetStream.full}, parsed: []parsedMedia{octetStream}, class: otherClass, plain: true}
 
 func (e *formEncoding) field(name string) *field {
 	if f := e.byName[name]; f != nil {
@@ -641,6 +642,7 @@ func (d *document) newField(name string, schema *Schema, roots []value, e value,
 			}
 		}
 		p.ContentType, f.class = strings.Join(f.types, ", "), f.parsed[0].class()
+		f.plain = len(f.parsed) == 1 && !f.styled && !isForm(f.parsed[0])
 		return f, p
 	}
 	p.ContentType = ctype.string()
@@ -652,6 +654,7 @@ func (d *document) newField(name string, schema *Schema, roots []value, e value,
 		}
 		f.types, f.parsed, f.class = append(f.types, t), append(f.parsed, m), m.class()
 	}
+	f.plain = len(f.parsed) == 1 && f.parsed[0].concrete() && !f.styled && f.err == nil && !isForm(f.parsed[0])
 	if p.Err == nil {
 		if p.Err = f.err; f.styled && f.err != nil { // a range, whose style applies to form-data calls, which ignore contentType
 			sp := *p
