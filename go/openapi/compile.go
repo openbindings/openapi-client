@@ -41,6 +41,13 @@ type param struct {
 	name     string        // the name, percent-encoded
 	media    *parsedMedia  // a content parameter's ContentType, parsed
 	form     *formEncoding // the fields of a form-urlencoded content parameter
+
+	// Its identity, numbered (see document.number): by location and name,
+	// and by name alone; whether its Key is always the location and name
+	// joined by a dot, and that Key.
+	id, nameID int32
+	dotted     bool
+	dottedKey  string
 }
 
 // A pathPart is literal text of the path template, percent-encoded, or one
@@ -118,7 +125,7 @@ func (e *entry) shape() *operation {
 	}
 	errs := []error{e.err}
 
-	ids := map[paramID]int{}
+	ids := map[int32]int{}
 	list, at, err := e.field(parametersField)
 	errs = append(errs, err)
 	errs = o.addParams(list, at, ids, errs)
@@ -162,15 +169,14 @@ func (e *entry) shape() *operation {
 		sec = d.compileSecurity(security)
 	}
 	op.Security, o.security, errs = sec.reqs, sec.alts, append(errs, sec.err)
-	if len(sec.dests) > 0 { // keep the parameters where a credential goes
-		for id, i := range ids {
-			if !sec.dests[id] {
-				continue
+	for dest := range sec.dests { // keep the parameters where a credential goes
+		if n, ok := d.numbers.Load(dest); ok {
+			if i, ok := ids[n.(int32)]; ok {
+				if o.dests == nil {
+					o.dests = map[paramID]int{}
+				}
+				o.dests[dest] = i
 			}
-			if o.dests == nil {
-				o.dests = map[paramID]int{}
-			}
-			o.dests[id] = i
 		}
 	}
 	op.Err = errors.Join(errs...)
@@ -202,7 +208,7 @@ type paramID struct{ in, name string }
 
 // addParams adds the parameters of list, each taking the place of an
 // earlier one it identifies.
-func (o *operation) addParams(list value, src string, ids map[paramID]int, errs []error) []error {
+func (o *operation) addParams(list value, src string, ids map[int32]int, errs []error) []error {
 	if list.kind() != '[' {
 		return errs
 	}
@@ -214,19 +220,15 @@ func (o *operation) addParams(list value, src string, ids map[paramID]int, errs 
 		if p.In == "header" && (strings.EqualFold(p.Name, "Accept") || strings.EqualFold(p.Name, "Content-Type") || strings.EqualFold(p.Name, "Authorization")) {
 			continue
 		}
-		id := paramID{p.In, p.Name}
-		switch p.In {
-		case "":
+		if p.In == "" {
 			errs = append(errs, p.Err) // its identity cannot be known
 			o.params = append(o.params, pp)
 			continue
-		case "header":
-			id.name = pp.field // canonical, so compared without regard to case
 		}
-		if j, ok := ids[id]; ok {
+		if j, ok := ids[pp.id]; ok {
 			o.params[j] = pp
 		} else {
-			ids[id] = len(o.params)
+			ids[pp.id] = len(o.params)
 			o.params = append(o.params, pp)
 		}
 	}
@@ -236,9 +238,9 @@ func (o *operation) addParams(list value, src string, ids map[paramID]int, errs 
 // assignKeys sets each parameter's Key and lists the parameters in
 // Operation.Params.
 func (o *operation) assignKeys() {
-	names := make(map[string]int, len(o.params))
+	names := make(map[int32]int, len(o.params))
 	for _, p := range o.params {
-		names[p.Name]++
+		names[p.nameID]++
 	}
 	for i, pp := range o.params {
 		p := pp.Param
@@ -249,13 +251,22 @@ func (o *operation) assignKeys() {
 		if p.In == "" {
 			continue
 		}
-		loc, _, dotted := strings.Cut(p.Name, ".")
 		p.Key = p.Name
-		if names[p.Name] > 1 || p.Name == "" || strings.HasPrefix(p.Name, "/") || strings.HasPrefix(p.Name, "Input.Body") ||
-			dotted && slices.Contains([]string{"path", "query", "header", "cookie", "querystring"}, loc) {
-			p.Key = p.In + "." + p.Name
+		if pp.dotted || names[pp.nameID] > 1 {
+			p.Key = pp.dottedKey
 		}
 	}
+}
+
+// number returns the number standing for id among the document's
+// parameters, the same for equal ones, so that a parameter's identity is
+// read once per node.
+func (d *document) number(id paramID) int32 {
+	if n, ok := d.numbers.Load(id); ok {
+		return n.(int32)
+	}
+	n, _ := d.numbers.LoadOrStore(id, d.numbered.Add(1))
+	return n.(int32)
 }
 
 // param describes and compiles the Parameter Object v, item i of the list
@@ -354,12 +365,18 @@ func (d *document) newParam(t value, at string) param {
 		pp = compileStyle(p, p.In, explode)
 	}
 	pp.required = p.Required || p.In == "path"
+	id := paramID{p.In, p.Name}
 	switch {
 	case p.In == "cookie" && p.Style == "form":
 		pp.style = &cookieForm
 	case p.In == "header":
 		pp.field, pp.set = textproto.CanonicalMIMEHeaderKey(p.Name), nil
+		id.name = pp.field // compared without regard to case
 	}
+	loc, _, dotted := strings.Cut(p.Name, ".")
+	pp.id, pp.nameID, pp.dottedKey = d.number(id), d.number(paramID{name: p.Name}), p.In+"."+p.Name
+	pp.dotted = p.Name == "" || strings.HasPrefix(p.Name, "/") || strings.HasPrefix(p.Name, "Input.Body") ||
+		dotted && slices.Contains([]string{"path", "query", "header", "cookie", "querystring"}, loc)
 	return pp
 }
 

@@ -49,6 +49,9 @@ type document struct {
 	serverLists memo[*serverList]
 	schemeNames memo[*scheme] // by the securitySchemes member a name selects
 	schemeForms memo[*scheme] // by the Security Scheme Object a reference reaches
+
+	numbers  sync.Map // paramID to the number standing for it (see number)
+	numbered atomic.Int32
 }
 
 // A memo keeps what each node of a document compiles to.
