@@ -40,24 +40,36 @@ const (
 
 var authorization = paramID{"header", "Authorization"}
 
-// securityScheme returns the scheme a security requirement names, compiled
-// once for each declaration: the component of that name, following
-// references.
-func (d *document) securityScheme(name string) *scheme {
-	v := d.root().get("components").get("securitySchemes").get(name)
+// securityScheme returns the scheme a security requirement in the document
+// from names, compiled once for each declaration: the component of that name
+// where the Loader's SchemeLookup looks, following references.
+func (d *document) securityScheme(name string, from *tree) *scheme {
+	in := [...]*tree{d.tree, from} // SchemesInEntryFirst
+	switch d.schemes {
+	case SchemesInEntry:
+		in[1] = d.tree
+	case SchemesInReferrer:
+		in[0] = from
+	}
+	var v value
+	for _, t := range in {
+		if v = t.root().get("components").get("securitySchemes").get(name); v.ok() {
+			break
+		}
+	}
 	if !v.ok() {
 		return &scheme{desc: SecurityScheme{Err: fmt.Errorf("the document declares no security scheme %q", name)}}
 	}
-	return d.schemeNames.get(v.i, func() *scheme {
-		src := d.source("/components/securitySchemes/" + escapeToken(name))
+	return d.schemeNames.get(v.id(), func() *scheme {
+		src := v.t.source("/components/securitySchemes/" + escapeToken(name))
 		t, at, desc, err := d.follow(v, src)
 		switch {
 		case err != nil:
 			return &scheme{desc: SecurityScheme{Source: src, Err: err}}
-		case t.i == v.i: // only this name reaches it
+		case t == v: // only this name reaches it
 			return newScheme(t, at)
 		}
-		sc := d.schemeForms.get(t.i, func() *scheme { return newScheme(t, at) })
+		sc := d.schemeForms.get(t.id(), func() *scheme { return newScheme(t, at) })
 		if desc != sc.desc.Description {
 			c := *sc
 			c.desc.Description = desc
@@ -207,7 +219,7 @@ func (d *document) compileSecurity(list value) securityPlan {
 			if !ok {
 				return securityPlan{err: errSecurityValue}
 			}
-			sc := d.securityScheme(name)
+			sc := d.securityScheme(name, list.t)
 			s := sc.desc
 			s.Name, s.Scopes = name, roles
 			req.Schemes, a.schemes = append(req.Schemes, s), append(a.schemes, sc)
@@ -760,7 +772,7 @@ func (s *securityCheck) list(list value) (none bool) {
 			n++
 			if c, ok := s.creds[name]; ok {
 				delete(s.creds, name)
-				if err := s.d.securityScheme(name).loadError(c); err != nil {
+				if err := s.d.securityScheme(name, list.t).loadError(c); err != nil {
 					s.re.setting(credentialKey(name), err)
 				}
 			}

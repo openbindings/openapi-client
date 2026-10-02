@@ -4,7 +4,6 @@ import (
 	"context"
 	"io"
 	"maps"
-	"net/http"
 	"net/url"
 	"strings"
 )
@@ -182,15 +181,16 @@ const (
 // Load reads a document as the package's Load function does, with l's
 // settings.
 func (l *Loader) Load(ctx context.Context, uri string, opts *Options) (*Client, error) {
-	hc := http.DefaultClient
-	if opts != nil && opts.HTTPClient != nil {
-		hc = opts.HTTPClient
-	}
-	content, final, err := l.fetch(ctx, uri, hc)
+	ld, err := l.start(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
-	return newClient(ctx, content, final, opts)
+	content, final, err := ld.retrieve(uri, "")
+	if err != nil {
+		return nil, err
+	}
+	ld.bound(uri, final)
+	return newClient(ld, content, final, opts)
 }
 
 // Parse returns a Client for content as the package's Parse function does,
@@ -199,7 +199,12 @@ func (l *Loader) Load(ctx context.Context, uri string, opts *Options) (*Client, 
 // AllowReference admits them; relative external references have no base
 // unless an OpenAPI 3.2 absolute $self supplies one.
 func (l *Loader) Parse(ctx context.Context, content []byte, uri string, opts *Options) (*Client, error) {
-	return newClient(ctx, string(content), uri, opts)
+	ld, err := l.start(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+	ld.bound(uri, uri)
+	return newClient(ld, string(content), uri, opts)
 }
 
 // Version reports the version the entry document declares: its swagger
@@ -223,7 +228,11 @@ func (c *Client) DocumentURIs() []string {
 	if c.doc == nil {
 		return nil
 	}
-	return []string{c.doc.uri}
+	uris := make([]string, len(c.doc.trees))
+	for i, t := range c.doc.trees {
+		uris[i] = t.uri
+	}
+	return uris
 }
 
 // Document returns a copy of the document loaded from uri, as JSON (a YAML
@@ -260,10 +269,13 @@ func (c *Client) Document(uri string) []byte {
 		return nil
 	}
 	base, frag, hasFrag := strings.Cut(uri, "#")
-	if base != "" && base != d.uri {
-		return nil
+	t := d.tree
+	if base != "" {
+		if t = d.named[base]; t == nil || t.uri != base {
+			return nil
+		}
 	}
-	v := d.root()
+	v := t.root()
 	if hasFrag {
 		ptr, err := url.PathUnescape(frag)
 		if err != nil {
@@ -277,8 +289,8 @@ func (c *Client) Document(uri string) []byte {
 }
 
 // newClient returns a Client for content, retrieved from uri, with opts.
-func newClient(ctx context.Context, content, uri string, opts *Options) (*Client, error) {
-	d, err := newDocument(ctx, content, uri)
+func newClient(ld *loading, content, uri string, opts *Options) (*Client, error) {
+	d, err := newDocument(ld, content, uri)
 	if err != nil {
 		return nil, err
 	}
@@ -294,7 +306,7 @@ func newClient(ctx context.Context, content, uri string, opts *Options) (*Client
 	if c.cfg.codecsErr != nil {
 		re.setting("Options.Codecs", c.cfg.codecsErr)
 	}
-	if err := d.checkNames(ctx, c.cfg, &re); err != nil {
+	if err := d.checkNames(ld.ctx, c.cfg, &re); err != nil {
 		return nil, err
 	}
 	if err := re.refused(); err != nil {

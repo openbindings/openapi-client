@@ -72,7 +72,7 @@ func (e *entry) build() *operation {
 	d := e.doc
 	if e.m < 0 {
 		o := &operation{doc: d}
-		o.Path, o.Source, o.Err = e.path, d.source(e.levels.ptr), e.err
+		o.Path, o.Source, o.Err = e.path, e.levels.v.t.source(e.levels.ptr), e.err
 		return o
 	}
 	var o *operation
@@ -96,7 +96,7 @@ func (e *entry) build() *operation {
 // path its Path Item chain reaches it from: all but the Key and what the
 // path template decides.
 func (e *entry) shape() *operation {
-	d, n, src := e.doc, e.node, e.doc.source(e.ptr())
+	d, n, src := e.doc, e.node, e.source()
 	o := &operation{doc: d}
 	op := &o.Operation
 	op.ID, op.Method, op.Source = e.id, methods[e.m].upper, src
@@ -158,7 +158,7 @@ func (e *entry) shape() *operation {
 		sl = d.parseServers(servers, src+"/servers")
 	case s.ok():
 		errs = append(errs, err)
-		sl = d.serverLists.get(s.i, func() *serverList { return d.parseServers(s, at) })
+		sl = d.serverLists.get(s.id(), func() *serverList { return d.parseServers(s, at) })
 	default:
 		sl = d.inherited().servers
 	}
@@ -199,7 +199,7 @@ func (e *entry) field(f int) (value, string, error) {
 	if e.sum.dup&(1<<f) != 0 {
 		err = fmt.Errorf("the Path Item and its $ref target both define %s", name)
 	}
-	return l.v.get(name), e.doc.source(l.ptr + "/" + name), err
+	return l.v.get(name), l.v.t.source(l.ptr + "/" + name), err
 }
 
 // A paramID identifies a parameter by location and name, a header's name
@@ -285,7 +285,7 @@ func (d *document) param(v value, list string, i int) param {
 	if err != nil {
 		return param{Param: &Param{Source: src(), Err: err}}
 	}
-	pp := d.paramForms.get(t.i, func() param { return d.newParam(t, at) })
+	pp := d.paramForms.get(t.id(), func() param { return d.newParam(t, at) })
 	c := *pp.Param
 	pp.Param, c.Description = &c, desc
 	return pp
@@ -442,10 +442,10 @@ func (d *document) message(v value, src string, request bool) (*Message, value, 
 		memo = &d.bodies
 	}
 	var c *content
-	if t.i == v.i { // only this place reaches it
+	if t == v { // only this place reaches it
 		c = d.content(t, at, request)
 	} else {
-		c = memo.get(t.i, func() *content { return d.content(t, at, request) })
+		c = memo.get(t.id(), func() *content { return d.content(t, at, request) })
 	}
 	return &Message{Description: desc, Source: c.source, Headers: c.headers, Media: c.media}, t, c
 }
@@ -599,6 +599,7 @@ func canonicalString(b *strings.Builder, s string) {
 // literal text and variables alternating.
 type server struct {
 	*Server
+	t     *tree     // the document that holds it, against whose URI a relative URL resolves
 	text  []string  // the literal text around the variables
 	vars  []urlVar  // each variable of the template, in order
 	fixed *endpoint // the URL with every variable at its default, if usable
@@ -650,7 +651,7 @@ func (d *document) inherited() *inheritance {
 		if s := d.root().get("servers"); s.hasMembers() {
 			r.servers = d.parseServers(s, d.source("/servers"))
 		} else {
-			sv := d.newServer(&Server{ID: "default", URL: "/"}, value{})
+			sv := newServer(&Server{ID: "default", URL: "/"}, value{}, d.tree)
 			r.servers = &serverList{[]*server{sv}, []*Server{sv.Server}}
 		}
 		if sec := d.root().get("security"); sec.ok() {
@@ -666,20 +667,21 @@ func (d *document) parseServers(list value, src string) *serverList {
 	for _, v := range list.members() {
 		at := src + "/" + strconv.Itoa(len(sl.servers))
 		s := &Server{ID: idOf(v), URL: v.str("url"), Description: v.str("description"), Source: at}
-		sl.servers, sl.desc = append(sl.servers, d.newServer(s, v.get("variables"))), append(sl.desc, s)
+		sl.servers, sl.desc = append(sl.servers, newServer(s, v.get("variables"), list.t)), append(sl.desc, s)
 	}
 	return sl
 }
 
-// idOf returns the Server.ID of the Server Object v: its node's index, which
-// no other declaration in the document has, and which every operation that
-// inherits it shares.
-func idOf(v value) string { return strconv.Itoa(int(v.i)) }
+// idOf returns the Server.ID of the Server Object v: its node's number,
+// which no other declaration in the documents loaded has, and which every
+// operation that inherits it shares.
+func idOf(v value) string { return strconv.Itoa(int(v.id())) }
 
-// newServer completes s from its URL template and declared variables.
-func (d *document) newServer(s *Server, declared value) *server {
+// newServer completes s, written in the document t, from its URL template
+// and declared variables.
+func newServer(s *Server, declared value, t *tree) *server {
 	text, names, _ := splitTemplate(s.URL)
-	sv := &server{Server: s, text: text}
+	sv := &server{Server: s, t: t, text: text}
 	var index map[string]int
 	for _, name := range names {
 		j, seen := index[name]
@@ -722,15 +724,15 @@ func (d *document) newServer(s *Server, declared value) *server {
 	literal := sv.substitute(func(int, int) string { return "x" })
 	_, authority, path = urlParts(literal)
 	if len(sv.vars) == 0 {
-		if _, err := d.resolveServerURL(literal); err != nil {
+		if _, err := t.resolveServerURL(literal); err != nil {
 			s.Err = fmt.Errorf("server URL %q cannot be used: %w", s.URL, err)
 		}
 	} else if strings.ContainsAny(literal, "?#") || authority >= 0 && strings.Contains(literal[authority:path], "@") ||
-		strings.HasPrefix(sv.text[0], "/") && !d.httpBase() {
+		strings.HasPrefix(sv.text[0], "/") && !t.httpBase() {
 		s.Err = fmt.Errorf("server URL %q cannot be used whatever its variables' values", s.URL)
 	}
 	if s.Err == nil && !slices.ContainsFunc(s.Variables, func(v Variable) bool { return !v.DefaultSet }) {
-		if ep, err := d.resolveServerURL(defaults); err == nil {
+		if ep, err := t.resolveServerURL(defaults); err == nil {
 			sv.fixed = &ep
 		}
 	}
