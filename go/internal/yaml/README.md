@@ -29,11 +29,16 @@ this third-party footprint is recorded separately from client-owned code.
    is_break, is_breakz, is_spacez, is_blankz, and read_line. CR, LF, and
    CRLF retain their upstream behavior. Both the scalar bytes and source
    marks now follow YAML 1.2 without rewriting the source text.
-2. Preserve an explicitly written non-specific `!` tag in Node.Tag and
+2. Scan anchor and alias names using YAML 1.2.2 sections 6.9.2 and 7.1:
+   non-space characters other than the flow indicators comma, square
+   brackets, and braces. This removes the upstream ASCII
+   alphabetic/numeric restriction while retaining nonempty-name and
+   surrounding separator checks.
+3. Preserve an explicitly written non-specific `!` tag in Node.Tag and
    Node.Style, using the same representation as other explicit tags.
    This allows the client's Core resolver to recognize scalar strings
    directly, including anchored scalars, without rescanning source text.
-3. Add Decoder.ErrorPosition in position.go. It reads the existing
+4. Add Decoder.ErrorPosition in position.go. It reads the existing
    reader byte offset or scanner/parser/alias mark without changing
    parser state. The client uses these typed positions to report the
    original encoding's byte column instead of reflecting private fields.

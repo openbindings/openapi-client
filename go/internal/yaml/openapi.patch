@@ -35,6 +35,9 @@
 -		// LS|PS . LS|PS
 -		s = append(s, buf[parser.buffer_pos:pos+3]...)
 -		parser.buffer_pos += 3
+@@ -1912 +1906 @@
+-	for is_alpha(parser.buffer, parser.buffer_pos) {
++	for !is_blankz(parser.buffer, parser.buffer_pos) && bytes.IndexByte([]byte("[]{},"), parser.buffer[parser.buffer_pos]) < 0 {
 --- a/decode.go
 +++ b/decode.go
 @@ -14,0 +15,2 @@
