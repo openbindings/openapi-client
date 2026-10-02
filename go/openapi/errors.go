@@ -250,11 +250,12 @@ func label(s string) string {
 // settingLabelError keeps a generated URI label separate from the exact
 // programmatic key and preserves the original cause and its presentation.
 type settingLabelError struct {
-	error
+	cause error
 	shown string
 }
 
-func (e *settingLabelError) Unwrap() error { return e.error }
+func (e *settingLabelError) Error() string { return e.cause.Error() }
+func (e *settingLabelError) Unwrap() error { return e.cause }
 
 func settingLabel(key string, err error) string {
 	if e, ok := err.(*settingLabelError); ok {
