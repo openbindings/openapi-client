@@ -171,6 +171,10 @@ post:
 	source("getPet", get.Source, at("paths/pet.json#/item/get"))
 	source("id", get.Params[0].Source, at("paths/pet.json#/item/parameters/0"))
 	source("id schema", get.Params[0].Schema.Source(), at("paths/pet.json#/item/parameters/0/schema"))
+	// describe.go, Schema.Base: "that of Source's document".
+	if b := get.Params[0].Schema.Base(); b != at("paths/pet.json") {
+		t.Errorf("id schema Base = %q, want %q", b, at("paths/pet.json"))
+	}
 
 	// load.go, Client.Document: with a fragment, "a copy of only that
 	// node"; each Source names one.
@@ -516,6 +520,7 @@ func TestIdentifiedURIsResolveFirst(t *testing.T) {
 		body("byURN", "urn:example:pet"),
 		body("byLaterID", "https://ids.example.test/thing"),
 		body("byAnchor", "defs.json#Pet"),
+		body("byEncodedAnchor", "defs.json#P%65t"),
 		body("byDynamicAnchor", "defs.json#node"),
 		body("byRelativeID", "#/components/schemas/Bar"),
 		`"/p":{"get":{"operationId":"p","parameters":[{"$ref":"defs.json#/P"}]}}`,
@@ -539,10 +544,13 @@ func TestIdentifiedURIsResolveFirst(t *testing.T) {
 	c := mustLoad(t, l, s.uri("/openapi.json"), nil)
 	entry, defs := s.uri("/openapi.json"), s.uri("/defs.json")
 	for key, want := range map[string][]string{
-		"byID":            {"n=text/plain@" + entry + "#/components/schemas/Up/properties/n"},
-		"byURN":           {"o=application/json@" + entry + "#/components/schemas/Pet/properties/o"},
-		"byLaterID":       {"t=text/plain@" + defs + "#/Thing/properties/t"},
-		"byAnchor":        {"a=text/plain@" + defs + "#/PetDef/properties/a"},
+		"byID":      {"n=text/plain@" + entry + "#/components/schemas/Up/properties/n"},
+		"byURN":     {"o=application/json@" + entry + "#/components/schemas/Pet/properties/o"},
+		"byLaterID": {"t=text/plain@" + defs + "#/Thing/properties/t"},
+		"byAnchor":  {"a=text/plain@" + defs + "#/PetDef/properties/a"},
+		// load.go, Loader: "A fragment is percent-decoded as UTF-8 before it
+		// is read as a JSON Pointer or a plain name."
+		"byEncodedAnchor": {"a=text/plain@" + defs + "#/PetDef/properties/a"},
 		"byDynamicAnchor": {"d=application/json@" + defs + "#/Node/properties/d"},
 		// "foo" resolves against Bar's $id to Foo's $id (an object).
 		"byRelativeID": {"f=application/json@" + entry + "#/components/schemas/Bar/properties/f"},
@@ -1301,4 +1309,88 @@ func TestTrustedDocumentsSuppliedByTheCaller(t *testing.T) {
 	if got := s.lastCall(t).RequestURI; got != "/p/7" {
 		t.Errorf("sent %s", got)
 	}
+}
+
+// Load's checks of Options against the document (client.go, Options:
+// "A value that matches no server of the document is refused by Load"; "A
+// name that appears in no server URL of the document is refused by Load";
+// "A type no operation declares is refused by Load"; SecurityKey: "A key
+// that names no alternative ... is refused by Load"; doc.go, Credentials:
+// "Load refuses a Credentials name the document never uses") cover every
+// operation the Client describes, those written in referenced documents
+// included. A misspelling is still refused.
+func TestLoadChecksReachReferencedDocuments(t *testing.T) {
+	s := newSite(t)
+	s.put("/openapi.json", entry31(`"/a":{"$ref":"a.json"}`,
+		`"components":{"securitySchemes":{"akey":{"type":"apiKey","in":"header","name":"X-A"}}}`))
+	s.put("/a.json", `{"servers":[{"url":"https://{region}.example.test","variables":{"region":{"default":"us"}}}],
+		"post":{"operationId":"a","security":[{"akey":[]}],"requestBody":{"content":{"application/vnd.a+json":{}}}}}`)
+	opts := func() *openapi.Options {
+		return &openapi.Options{
+			Server:      "https://{region}.example.test",
+			Variables:   map[string]string{"region": "eu"},
+			MediaType:   "application/vnd.a+json",
+			SecurityKey: `{"akey":[]}`,
+			Credentials: map[string]openapi.Credential{"akey": openapi.Secret("k")},
+		}
+	}
+	c := mustLoad(t, nil, s.uri("/openapi.json"), opts())
+	req, err := c.Prepare("a", &openapi.Input{Body: map[string]any{"x": 1}})
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	if got := req.HTTP.URL.String(); got != "https://eu.example.test/a" {
+		t.Errorf("prepared %s", got)
+	}
+	o := opts()
+	o.Variables = map[string]string{"regoin": "eu"}
+	_, err = openapi.Load(t.Context(), s.uri("/openapi.json"), o)
+	wantKeys(t, "Settings", asRequestError(t, err).Settings, true, `Options.Variables["regoin"]`)
+}
+
+// describe.go, Operation: "A Path Item's $ref and the Path Item's own fields
+// are read together: a field on one side only is used, and a field on both
+// sides ... sets Err on each operation whose request it affects"; "where a
+// parameter ... is a Reference Object that gives a description, that
+// description replaces the target's, the Reference Object nearest the use
+// site winning, while Source still names the target": across documents as
+// within one.
+func TestPathItemsAndDescriptionsAcrossDocuments(t *testing.T) {
+	s := newSite(t)
+	s.put("/openapi.json", entry31(`"/both":{"$ref":"item.json","post":{"operationId":"localPost"},"get":{"operationId":"localGet"},
+			"parameters":[{"$ref":"params.json#/Mid","description":"use site"}]}`))
+	s.put("/item.json", `{"get":{"operationId":"targetGet"},"put":{"operationId":"targetPut","parameters":[{"$ref":"params.json#/Mid"}]}}`)
+	s.put("/params.json", `{"Mid":{"$ref":"more.json#/Target","description":"middle"}}`)
+	s.put("/more.json", `{"Target":{"name":"t","in":"query","description":"target"}}`)
+	c := mustLoad(t, nil, s.uri("/openapi.json"), nil)
+	if op := mustOp(t, c, "GET /both"); op.Err == nil {
+		t.Errorf("GET /both, defined on both sides, has no Err")
+	}
+	post := mustOp(t, c, "localPost")
+	if post.Err != nil || len(post.Params) != 1 || post.Params[0].Description != "use site" || post.Params[0].Source != s.uri("/more.json#/Target") {
+		t.Errorf("localPost = Err %v, Params %+v", post.Err, post.Params)
+	}
+	put := mustOp(t, c, "targetPut")
+	if put.Err != nil || put.Source != s.uri("/item.json#/put") {
+		t.Errorf("targetPut = Err %v, Source %q", put.Err, put.Source)
+	}
+	// The path-level parameter, from the use site, then the operation's own,
+	// the same parameter, which overrides it (doc.go, Fixed rules, Order).
+	if len(put.Params) != 1 || put.Params[0].Description != "middle" {
+		t.Errorf("targetPut Params = %+v, want the operation's parameter, described by the nearest Reference Object", put.Params)
+	}
+}
+
+// load.go, Loader: "A reference that ... reaches a schema by a JSON
+// Pointer crossing a nearer $id, still resolves; it stays visible as
+// written where it is written, in a Schema's Raw". JSON Schema 2020-12 core
+// section 9.2.1 leaves such pointers to the implementation.
+func TestPointerCrossingANearerID(t *testing.T) {
+	s := newSite(t)
+	s.put("/openapi.json", entry31(`"/u":{"post":{"operationId":"u","requestBody":{"content":{"multipart/form-data":{"schema":
+		{"$ref":"defs.json#/Outer/properties/inner"}}}}}}`))
+	s.put("/defs.json", `{"Outer":{"$id":"https://ids.example.test/outer","properties":{"inner":{"properties":{"n":{"type":"integer"}}}}}}`)
+	c := mustLoad(t, nil, s.uri("/openapi.json"), nil)
+	wantStrings(t, "fields", encodingOf(t, c, "u"), []string{"n=text/plain@" + s.uri("/defs.json#/Outer/properties/inner/properties/n")})
+	sameJSON(t, "Raw", reqMedia(t, mustOp(t, c, "u"), 0).Schema.Raw(), []byte(`{"$ref":"defs.json#/Outer/properties/inner"}`))
 }

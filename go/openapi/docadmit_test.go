@@ -409,6 +409,22 @@ func TestMaxBytesAcrossDocuments(t *testing.T) {
 			}
 		})
 	}
+
+	// "Content passed to Parse is not counted": only what the references
+	// retrieve is.
+	for _, tt := range []struct {
+		max  int64
+		near bool
+	}{{int64(len(b) + len(cDoc)), true}, {int64(len(b)) - 1, false}} {
+		l := &openapi.Loader{MaxBytes: tt.max, Fetch: newMemFetch(docs).fetch}
+		c, err := l.Parse(t.Context(), []byte(entry), base+"openapi.json", nil)
+		if err != nil {
+			t.Fatalf("Parse with MaxBytes %d: %v", tt.max, err)
+		}
+		if near := mustOp(t, c, "near"); (near.Err == nil) != tt.near {
+			t.Errorf("Parse with MaxBytes %d: near Err = %v", tt.max, near.Err)
+		}
+	}
 }
 
 // load.go, Load: "ctx bounds the whole load, reading and parsing included":
