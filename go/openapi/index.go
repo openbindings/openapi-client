@@ -195,10 +195,11 @@ func checkURI(u *url.URL, raw string) error {
 
 // retrieve returns the content of the document at uri, the URI it was
 // finally retrieved from, and that URI parsed, or nil, copying the content
-// through buf, if not nil. from is "" for the entry document; otherwise it
-// names the document whose references reach uri, which must admit it, and
-// every redirect hop and the final URI.
-func (ld *loading) retrieve(uri, from string, buf []byte) (string, string, *url.URL, error) {
+// through buf, if not nil. froms is nil for the entry document; otherwise it
+// lists, in order, the documents whose references reach uri: the first that
+// may retrieve it must also admit every redirect hop and the final URI, and
+// errRefused says none may.
+func (ld *loading) retrieve(uri string, froms []string, buf []byte) (string, string, *url.URL, error) {
 	var (
 		r     io.ReadCloser
 		final = uri
@@ -216,11 +217,14 @@ func (ld *loading) retrieve(uri, from string, buf []byte) (string, string, *url.
 	default:
 		err = checkURI(u, uri)
 	}
-	base := u // final, parsed
+	base, from := u, "" // final, parsed, and the referrer retrieving it
+	if i := slices.IndexFunc(froms, func(f string) bool { return err == nil && ld.admit(f, uri, u) }); i >= 0 {
+		from = froms[i]
+	} else if err == nil && froms != nil {
+		err = errRefused
+	}
 	switch {
 	case err != nil:
-	case from != "" && !ld.admit(from, uri, u):
-		err = notAdmitted(uri)
 	case ld.Fetch != nil:
 		if r, final, err = ld.Fetch(ctx, uri); final == "" || final == uri {
 			final = uri

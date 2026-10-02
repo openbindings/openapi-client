@@ -90,6 +90,10 @@ func (ld *loading) admit(from, to string, u *url.URL) bool {
 	return false
 }
 
+// errRefused is why a URI is not retrieved when no referrer asked may
+// retrieve it: another may yet (see discovery.refuse).
+var errRefused = errors.New("no referrer may retrieve it")
+
 // notAdmitted is why uri, which admission refused, is not retrieved.
 func notAdmitted(uri string) error {
 	u, err := url.Parse(uri)
@@ -116,10 +120,10 @@ func (c counted) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// get retrieves and parses the document at uri, which the document retrieved
-// from from references, copying its content through buf.
-func (ld *loading) get(uri, from string, buf []byte) (*tree, error) {
-	content, final, base, err := ld.retrieve(uri, from, buf)
+// get retrieves and parses the document at uri, which the documents
+// retrieved from froms reference, copying its content through buf.
+func (ld *loading) get(uri string, froms []string, buf []byte) (*tree, error) {
+	content, final, base, err := ld.retrieve(uri, froms, buf)
 	if err != nil {
 		return nil, err
 	}
@@ -218,8 +222,9 @@ type discovery struct {
 	busy    []*reader         // the readers with items to read
 	wants   map[string][]want // by the URI they need, without its fragment, or a plain name's
 	ready   []string
-	fresh   [3][]string     // the URIs of wants, by rank, that may need retrieving
-	asked   map[string]bool // the URIs retrieved or being retrieved
+	fresh   [3][]string        // the URIs of wants, by rank, that may need retrieving
+	asked   map[string]bool    // the URIs retrieved or being retrieved
+	refused map[[2]string]bool // the URIs, each with a referrer that may not retrieve it
 }
 
 // A want is a reference that needs the node a URI and the fragment frag
@@ -273,11 +278,12 @@ type visit struct {
 	k kind
 }
 
-// A fetch is a URI to retrieve, the wants that need it, and its document,
-// read for them, or why it could not be.
+// A fetch is a URI to retrieve, the wants that need it, the referrers to ask
+// (see retrieve), and its document, read for them, or why it could not be.
 type fetch struct {
 	uri   string
 	wants []want
+	froms []string
 	r     *reader
 	err   error
 }
@@ -290,8 +296,9 @@ type fetch struct {
 // retrieved, those least likely to be an $id first (see want), each rank once
 // no URI of a lower one is left, and with them, as they are found, the URIs
 // that only references to objects other than schemas need and nothing
-// identifies. Every node of every document is then numbered: the entry's
-// first, then the others' by URI.
+// identifies. A URI no referrer asked may retrieve waits for one not yet
+// asked, and is refused once none is left. Every node of every document is
+// then numbered: the entry's first, then the others' by URI.
 func (d *document) discover(ld *loading) error {
 	if !d.reaches && !d.declares { // the entry alone
 		d.trees, d.named = []*tree{d.tree}, map[string]*tree{d.uri: d.tree}
@@ -305,12 +312,16 @@ func (d *document) discover(ld *loading) error {
 	for {
 		dc.drain()
 		var wave []fetch
+		var froms []string // the referrers of each fetch of the wave, end to end
 		for rank := range dc.fresh {
 			for _, uri := range dc.fresh[rank] {
 				if ws := dc.wants[uri]; ws != nil && !dc.asked[uri] && !strings.Contains(uri, "#") {
-					dc.asked[uri] = true
-					wave = append(wave, fetch{uri: uri, wants: ws})
-					delete(dc.wants, uri)
+					n := len(froms)
+					if froms = dc.referrers(froms, uri, ws); len(froms) > n {
+						dc.asked[uri] = true
+						wave = append(wave, fetch{uri: uri, wants: ws, froms: froms[n:len(froms):len(froms)]})
+						delete(dc.wants, uri)
+					}
 				}
 			}
 			if dc.fresh[rank] = dc.fresh[rank][:0]; len(wave) > 0 {
@@ -327,17 +338,20 @@ func (d *document) discover(ld *loading) error {
 		slices.SortFunc(wave, func(a, b fetch) int { return strings.Compare(a.uri, b.uri) })
 		for _, f := range wave {
 			switch {
+			case errors.Is(f.err, errRefused):
+				dc.refuse(f)
 			case f.err != nil:
-				if d.failed == nil {
-					d.failed = map[string]error{}
-				}
-				d.failed[f.uri] = f.err
-				delete(dc.wants, f.uri)
+				dc.fail(f.uri, f.err)
 			case !dc.add(f.r.t, f.uri, f.r): // its document was read already
 				for _, w := range f.wants {
 					dc.follow(f.uri, w)
 				}
 			}
+		}
+	}
+	for k := range dc.refused {
+		if dc.wants[k[0]] != nil { // no referrer may retrieve it
+			dc.fail(k[0], notAdmitted(k[0]))
 		}
 	}
 	slices.SortFunc(d.trees[1:], func(a, b *tree) int { return strings.Compare(a.uri, b.uri) })
@@ -353,8 +367,8 @@ func (d *document) discover(ld *loading) error {
 	return nil
 }
 
-// getAll retrieves in parallel the document of each of wave, the first of
-// its wants' documents referencing it, and reads it for what they need,
+// getAll retrieves in parallel the document of each of wave, as the first of
+// its referrers that may retrieve it, and reads it for what they need,
 // adding to the wave each URI that only references to objects other than
 // schemas in the documents read need, and that nothing read before
 // identifies, the wave holding it already. It returns the wave when no more
@@ -363,6 +377,7 @@ func (dc *discovery) getAll(wave []fetch) []fetch {
 	var mu sync.Mutex
 	more := sync.NewCond(&mu)
 	next, busy := 0, 0
+	var froms []string // the referrers of the fetches added, end to end
 	var wg sync.WaitGroup
 	for range fetches {
 		wg.Add(1)
@@ -386,12 +401,12 @@ func (dc *discovery) getAll(wave []fetch) []fetch {
 				}
 				i := next
 				next, busy = next+1, busy+1
-				uri, wants := wave[i].uri, wave[i].wants
+				f := wave[i]
 				mu.Unlock()
 				if buf == nil {
 					buf = buffers.Get().(*[32 << 10]byte)
 				}
-				r, err := dc.read(uri, wants, buf[:], &scratch)
+				r, err := dc.read(f, buf[:], &scratch)
 				mu.Lock()
 				wave[i].r, wave[i].err, busy = r, err, busy-1
 				for j := 0; r != nil && j < len(r.refs); { // a run of references to one URI at a time
@@ -399,13 +414,15 @@ func (dc *discovery) getAll(wave []fetch) []fetch {
 					for ; k < len(r.refs) && r.refs[k].uri == uri; k++ {
 						need = need || r.refs[k].w.rank == 0
 					}
-					if need && !dc.asked[uri] && dc.named[uri] == nil && dc.ids[uri] == nil && dc.failed[uri] == nil && !strings.Contains(uri, "#") {
+					if need && !dc.asked[uri] && dc.named[uri] == nil && dc.ids[uri] == nil && dc.failed[uri] == nil && !strings.Contains(uri, "#") &&
+						!dc.refused[[2]string{uri, r.t.uri}] {
 						dc.asked[uri] = true
 						ws := make([]want, 0, k-j)
 						for _, n := range r.refs[j:k] {
 							ws = append(ws, n.w)
 						}
-						wave = append(wave, fetch{uri: uri, wants: ws})
+						froms = append(froms, r.t.uri)
+						wave = append(wave, fetch{uri: uri, wants: ws, froms: froms[len(froms)-1 : len(froms) : len(froms)]})
 					}
 					j = k
 				}
@@ -426,18 +443,18 @@ func (dc *discovery) getAll(wave []fetch) []fetch {
 // buffers holds the buffers documents are copied through.
 var buffers = sync.Pool{New: func() any { return new([32 << 10]byte) }}
 
-// read retrieves the document at uri, which the document of the first of
-// wants references, and reads it for what they need, copying its content
+// read retrieves the document f names, as the first of its referrers that
+// may retrieve it, and reads it for what f's wants need, copying its content
 // through buf and reading with scratch's queue and path.
-func (dc *discovery) read(uri string, wants []want, buf []byte, scratch *reader) (*reader, error) {
-	t, err := dc.ld.get(uri, wants[0].t.uri, buf)
+func (dc *discovery) read(f fetch, buf []byte, scratch *reader) (*reader, error) {
+	t, err := dc.ld.get(f.uri, f.froms, buf)
 	if err != nil {
 		return nil, err
 	}
 	k := t.kind()
 	r := dc.newReader(t, k)
 	r.queue, r.path = append(scratch.queue[:0], r.queue...), scratch.path[:0]
-	for _, w := range wants {
+	for _, w := range f.wants {
 		r.open(t.root(), k, t.base, "", t.uri, w)
 	}
 	r.drain()
@@ -471,6 +488,46 @@ func (dc *discovery) add(t *tree, uri string, r *reader) bool {
 		dc.identify(uri)
 	}
 	return prev == nil
+}
+
+// referrers appends to froms, in order, the URIs of the documents that
+// wants, the references to uri, are in, but those that may not retrieve it.
+func (dc *discovery) referrers(froms []string, uri string, wants []want) []string {
+	n := len(froms)
+	for _, w := range wants {
+		if from := w.t.uri; !dc.refused[[2]string{uri, from}] && (len(froms) == n || froms[len(froms)-1] != from) {
+			froms = append(froms, from)
+		}
+	}
+	slices.Sort(froms[n:])
+	return froms[:n+len(slices.Compact(froms[n:]))]
+}
+
+// refuse records that none of f's referrers may retrieve f's URI, which
+// waits, with f's wants, for a referrer not yet asked; the default boundary
+// refuses every referrer alike.
+func (dc *discovery) refuse(f fetch) {
+	if dc.ld.AllowReference == nil {
+		dc.fail(f.uri, notAdmitted(f.uri))
+		return
+	}
+	if dc.refused == nil {
+		dc.refused = map[[2]string]bool{}
+	}
+	for _, from := range f.froms {
+		dc.refused[[2]string{f.uri, from}] = true
+	}
+	delete(dc.asked, f.uri)
+	dc.wants[f.uri] = append(dc.wants[f.uri], f.wants...)
+}
+
+// fail records why uri cannot be retrieved: nothing reaches its document.
+func (dc *discovery) fail(uri string, err error) {
+	if dc.failed == nil {
+		dc.failed = map[string]error{}
+	}
+	dc.failed[uri] = err
+	delete(dc.wants, uri)
 }
 
 // identify notes that something now identifies uri.
