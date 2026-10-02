@@ -3,7 +3,6 @@ package openapi_test
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -417,10 +416,8 @@ func TestK4FramingHeaders(t *testing.T) {
 
 // K5 (#5, #8; doc.go, Values: "a []byte is the encoded content; a reader,
 // and a multipart or sequential media type, cannot serialize a parameter
-// and are refused at its key"; stage 2 ledger, review round: form-urlencoded
-// content "stays not-implemented until stage 4 encodes forms"). The bytes
-// are then percent-encoded by location, or written as given in a header or
-// cookie.
+// and are refused at its key"). The bytes are then percent-encoded by
+// location, or written as given in a header or cookie.
 func TestK5ContentBytesReadersAndMedia(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, doc31(contentDoc+`,
@@ -487,13 +484,18 @@ func TestK5ContentBytesReadersAndMedia(t *testing.T) {
 		}
 		wantKeys(t, fmt.Sprintf("%s %T Inputs", tt.key, tt.v), re.Inputs, true, tt.param)
 	}
-	_, re := callOne(t, w, c, "form", "p", map[string]string{"a": "1 2", "b": "x"})
-	if re == nil {
-		t.Fatal("form-urlencoded content sent; want not implemented until stage 4")
+	// Stage 4: form-urlencoded content is encoded as a form body is (WHATWG,
+	// a space as +: doc.go, Fixed rules, Form bodies), then percent-encoded
+	// as a query value (doc.go, Fixed rules, Percent-encoding: "path and
+	// query values (content-serialized ones included,
+	// application/x-www-form-urlencoded too)"; stage 2 ledger, review
+	// round: re-encoding it in a named query parameter is kept).
+	got, re := callOne(t, w, c, "form", "p", map[string]string{"a": "1 2", "b": "x"})
+	if re != nil {
+		t.Fatalf("form-urlencoded content refused: %v", re)
 	}
-	wantKeys(t, "form Inputs", re.Inputs, true, "p")
-	if !errors.Is(re, errors.ErrUnsupported) {
-		t.Errorf("form-urlencoded content refusal %v does not wrap errors.ErrUnsupported", re)
+	if want := "/fu?p=" + pctName("a=1+2&b=x"); got.RequestURI != want {
+		t.Errorf("request target %q, want %q", got.RequestURI, want)
 	}
 }
 

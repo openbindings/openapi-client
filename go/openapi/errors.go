@@ -170,7 +170,7 @@ func (e *StatusError) Decode(v any) error {
 	if x := exchangeOf(e.Response.Response); x != nil {
 		cfg = x.cfg
 	}
-	if head, _, err := cfg.read(r.Response, r.Declaration, v); err != nil {
+	if head, _, err := cfg.read(r.Response, mediaOf(r.Header), r.Declaration, v); err != nil {
 		return decodeError(&r, head, err)
 	}
 	return nil

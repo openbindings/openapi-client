@@ -90,7 +90,7 @@ type upload struct {
 	checking atomic.Bool                   // CheckRedirect runs: a copy it takes is not handed over
 
 	mu       sync.Mutex
-	last     *sentBody // the last generation handed to the transport
+	last     *sentBody // the last generation handed to the transport, the others before it
 	open     int       // the generations handed over that have not ended
 	returned bool      // the chain has returned, so that no generation follows
 	done     bool      // the result is published
@@ -107,7 +107,7 @@ func (u *upload) hand(b *sentBody) {
 	if b.handed || u.checking.Load() {
 		return
 	}
-	b.handed, u.last = true, b
+	b.handed, b.prev, u.last = true, u.last, b
 	if !b.ended {
 		u.open++
 	}
@@ -163,15 +163,48 @@ func (u *upload) waitUpload(ctx context.Context) error {
 	}
 }
 
+// settle waits for the upload before Call returns: for its result, or, once
+// the call's context is done, until every generation the transport was
+// handed has ended, the client closing those the transport has not, so that
+// Call never returns while its body is read or its iterator runs. A
+// generation closed during a Read ends as the Read returns, so settle waits
+// for it whether or not it is closed; the upload's error, else the
+// context's, is kept.
+func (x *exchange) settle() error {
+	x.mu.Lock()
+	if x.done {
+		defer x.mu.Unlock()
+		return x.err
+	}
+	x.mu.Unlock()
+	err := x.waitUpload(x)
+	x.mu.Lock()
+	done := x.done
+	var open []*sentBody
+	for b := x.last; b != nil && !done; b = b.prev {
+		if !b.closed {
+			open = append(open, b)
+		}
+	}
+	x.mu.Unlock()
+	if done {
+		return err
+	}
+	for _, b := range open {
+		b.Close()
+	}
+	return cmp.Or(x.waitUpload(context.Background()), err)
+}
+
 // attach sets req's body to one that reports its reading of p.
 func (x *exchange) attach(req *http.Request, p payload) {
 	x.payload = p
 	if p.size == 0 {
 		return
 	}
-	x.first = sentBody{x: x, p: &x.payload}
+	x.first = sentBody{x: x, p: &x.payload, rc: x.payload.reader()}
 	req.Body = &x.first
-	if p.once == nil {
+	if p.size >= 0 {
 		req.GetBody = x.replay
 	}
 }
@@ -189,7 +222,7 @@ func (x *exchange) replay() (io.ReadCloser, error) {
 
 // newBody returns a new generation of the body, not yet handed over.
 func (x *exchange) newBody() (*sentBody, error) {
-	b := &sentBody{x: x, p: &x.payload}
+	b := newSent(x, &x.payload)
 	if x.getBody != nil {
 		rc, err := x.getBody()
 		if err != nil {
@@ -238,21 +271,23 @@ func (r *Request) newExchange(ctx context.Context) (*exchange, *http.Request, er
 }
 
 // send sends req as sign makes it, following redirects as
-// Options.Redirects says, and describes the last response. A response that
-// arrived comes with any error that ended the chain.
-func (x *exchange) send(req *http.Request) (*Response, error) {
+// Options.Redirects says, and describes the last response, returning its
+// Content-Type too, parsed, or application/octet-stream when it has none
+// that parses. A response that arrived comes with any error that ended the
+// chain.
+func (x *exchange) send(req *http.Request) (*Response, parsedMedia, error) {
 	var re RequestError
 	signed := x.sign(req, x.Context, true, &re)
 	if err := re.refused(); err != nil {
-		return nil, err
+		return nil, parsedMedia{}, err
 	}
 	if x.claim != nil && x.claim.Swap(true) { // HTTP.Body went with an earlier send
 		if x.getBody == nil {
-			return nil, &RequestError{Err: errors.New("the request body can be read only once, and was sent")}
+			return nil, parsedMedia{}, &RequestError{Err: errors.New("the request body can be read only once, and was sent")}
 		}
 		rc, err := x.getBody()
 		if err != nil {
-			return nil, &RequestError{Err: fmt.Errorf("the request body's GetBody: %w", err)}
+			return nil, parsedMedia{}, &RequestError{Err: fmt.Errorf("the request body's GetBody: %w", err)}
 		}
 		x.first.rc = rc
 	}
@@ -265,38 +300,42 @@ func (x *exchange) send(req *http.Request) (*Response, error) {
 	x.publish()
 	x.mu.Unlock()
 	if resp == nil {
-		return nil, withContext(x, err)
+		return nil, parsedMedia{}, withContext(x, err)
 	}
 	r := &x.resp
 	r.Response, r.Security = resp, x.key()
+	ct, ok := contentType(resp.Header["Content-Type"])
 	if d := x.op.declaration(resp.StatusCode); d != nil {
 		r.Declaration = d.Message
-		if ct, ok := contentType(resp.Header["Content-Type"]); ok {
-			r.Media = match(d.media, d.Message.Media, ct)
+		if ok {
+			r.Media = match(d.media, d.Message.Media, ct, false)
 		}
 	}
-	return r, withContext(x, err)
+	if !ok {
+		ct = octetStream
+	}
+	return r, ct, withContext(x, err)
 }
 
 // call sends req as send does and applies Call's policy to the response.
 // Once the request has gone to the transport, an error waits for the
 // upload too, so that the body is not read after Call returns.
 func (x *exchange) call(req *http.Request, out any) (*Response, error) {
-	resp, err := x.send(req)
+	resp, ct, err := x.send(req)
 	if err != nil {
 		if x.returned {
-			x.waitUpload(x)
+			x.settle()
 		}
 		return resp, err
 	}
-	return resp, x.finish(resp, out)
+	return resp, x.finish(resp, ct, out)
 }
 
-// finish applies Call's policy to r: a StatusError for a final status other
-// than 2xx, else the body decoded into out.
-func (x *exchange) finish(r *Response, out any) error {
+// finish applies Call's policy to r, of the media type ct: a StatusError
+// for a final status other than 2xx, else the body decoded into out.
+func (x *exchange) finish(r *Response, ct parsedMedia, out any) error {
 	if r.StatusCode/100 == 2 {
-		return x.decode(r, out)
+		return x.decode(r, ct, out)
 	}
 	se := &StatusError{Response: r}
 	if !bodiless(r.Response) {
@@ -305,7 +344,7 @@ func (x *exchange) finish(r *Response, out any) error {
 	}
 	r.Body.Close()
 	se.Response = r.keep(se.Content, se.Err != nil)
-	return join(se, x.waitUpload(x))
+	return join(se, x.settle())
 }
 
 // keep makes r's Body read content, in place of the body it has read, and
@@ -322,29 +361,28 @@ func (r *Response) keep(content []byte, cut bool) *Response {
 	return &c
 }
 
-// decode reads r's body into out by Call's rules and closes it, waiting
+// decode reads r's body, of the media type ct, into out by Call's rules and closes it, waiting
 // for the upload to end: before closing, after a read to the end, since a
 // finite duplex peer may read the rest of the request only then, and after
 // closing when the read stopped short, since closing ends the upload.
-func (x *exchange) decode(r *Response, out any) error {
+func (x *exchange) decode(r *Response, ct parsedMedia, out any) error {
 	var (
 		cfg *config
 		ctx context.Context
-		u   *upload
 	)
 	if x != nil {
-		cfg, ctx, u = x.cfg, x, &x.upload
+		cfg, ctx = x.cfg, x
 	} else {
-		cfg, ctx, u = &config{}, context.Background(), &upload{done: true}
+		cfg, ctx = &config{}, context.Background()
 	}
-	head, eof, err := cfg.read(r.Response, r.Declaration, out)
+	head, eof, err := cfg.read(r.Response, ct, r.Declaration, out)
 	var upload error
-	if eof {
-		upload = u.waitUpload(ctx)
+	if eof && x != nil {
+		upload = x.settle()
 	}
 	r.Body.Close()
-	if !eof {
-		upload = u.waitUpload(ctx)
+	if !eof && x != nil {
+		upload = x.settle()
 	}
 	if err != nil {
 		return join(decodeError(r, head, withContext(ctx, err)), upload)
@@ -386,10 +424,20 @@ func bodiless(r *http.Response) bool {
 	return s/100 == 1 || s == 204 || s == 205 || s == 304 || m == "HEAD" || m == "CONNECT" && s/100 == 2
 }
 
-// read reads the body of r, governed by decl, into out by Call's rules. It
-// returns the bytes read, for a DecodeError, whether the read reached the
-// end of the body, and why it failed.
-func (cfg *config) read(r *http.Response, decl *Message, out any) ([]byte, bool, error) {
+// mediaOf returns the Content-Type h gives, or application/octet-stream
+// when it gives none that parses.
+func mediaOf(h http.Header) parsedMedia {
+	ct, ok := contentType(h["Content-Type"])
+	if !ok {
+		ct = octetStream
+	}
+	return ct
+}
+
+// read reads the body of r, of the media type ct and governed by decl, into
+// out by Call's rules. It returns the bytes read, for a DecodeError, whether
+// the read reached the end of the body, and why it failed.
+func (cfg *config) read(r *http.Response, ct parsedMedia, decl *Message, out any) ([]byte, bool, error) {
 	if bodiless(r) {
 		return nil, true, nil
 	}
@@ -409,23 +457,19 @@ func (cfg *config) read(r *http.Response, decl *Message, out any) ([]byte, bool,
 		_, err := io.Copy(p, r.Body)
 		return nil, err == nil, err
 	}
-	if coding := r.Header.Get("Content-Encoding"); coding != "" && !strings.EqualFold(coding, "identity") {
-		return nil, false, fmt.Errorf("cannot decode a body with Content-Encoding %q", coding)
+	if coding := r.Header["Content-Encoding"]; len(coding) > 0 && coding[0] != "" && !strings.EqualFold(coding[0], "identity") {
+		return nil, false, fmt.Errorf("cannot decode a body with Content-Encoding %q", coding[0])
 	}
 	data, err := readAll(nil, r.Body, r.ContentLength, n)
 	if err != nil {
 		return data, false, err
 	}
-	return data, true, cfg.decodeData(r.Header, decl, data, out)
+	return data, true, cfg.decodeData(ct, decl, data, out)
 }
 
-// decodeData decodes a response body, read whole, into out: a typed
-// pointer or a *any.
-func (cfg *config) decodeData(h http.Header, decl *Message, data []byte, out any) error {
-	ct, ok := contentType(h["Content-Type"])
-	if !ok {
-		ct = octetStream
-	}
+// decodeData decodes a response body of the media type ct, read whole, into
+// out: a typed pointer or a *any.
+func (cfg *config) decodeData(ct parsedMedia, decl *Message, data []byte, out any) error {
 	cls := ct.class()
 	if len(data) == 0 && (cls == jsonClass || cls == xmlClass) {
 		if decl != nil && len(decl.Media) > 0 {
@@ -617,15 +661,43 @@ func (e *contextError) Error() string   { return e.err.Error() }
 func (e *contextError) Unwrap() []error { return append([]error{e.err}, e.also...) }
 
 // A payload is the content of a request body: bytes, a reader that can be
-// read again from where it stood, or a reader that can be read once; and
-// the Content-Type the client wrote for it.
+// read again from where it stood, a reader read once, an iterator's items,
+// or the parts of a body of several sources; and the Content-Type the client
+// wrote for it.
 type payload struct {
 	data  []byte
 	ra    io.ReaderAt
 	off   int64
-	size  int64 // the length, or -1 for a reader read once
-	once  io.Reader
+	size  int64     // the length, or -1 when the body can be read only once
+	once  io.Reader // a reader read once, or an iterator's *items
 	ctype string
+	parts []source // read in order instead, when set
+}
+
+// reader returns what a generation of p reads instead of p's one source:
+// its parts, or its iterator's items, which the generation's Close stops.
+func (p *payload) reader() io.ReadCloser {
+	switch it, ok := p.once.(*items); {
+	case ok:
+		return it
+	case p.parts != nil:
+		return newCursor(p.parts)
+	}
+	return nil
+}
+
+// readAt reads p's one source from pos: its bytes, its reader at p.off+pos,
+// or its reader read once.
+func (p *payload) readAt(buf []byte, pos int64) (int, error) {
+	switch {
+	case p.once != nil:
+		return p.once.Read(buf)
+	case pos >= p.size:
+		return 0, io.EOF
+	case p.ra != nil:
+		return p.ra.ReadAt(buf[:min(int64(len(buf)), p.size-pos)], p.off+pos)
+	}
+	return copy(buf, p.data[pos:p.size]), nil
 }
 
 // A sentBody is one generation of a request body: a payload, or a body the
@@ -633,17 +705,22 @@ type payload struct {
 // tracks reports to the upload: the first Read that returns an error, io.EOF
 // included, says how its reading finished, and no later Read reaches the
 // reader; it ends at the transport's Close, or, when a Read is then in
-// flight, as that Read returns.
+// flight, as that Read returns. A Read once the call's context is done
+// fails without reaching it.
 type sentBody struct {
 	x   *exchange // tracks the upload, or nil
 	p   *payload
 	pos int64
-	rc  io.ReadCloser // read instead of p when set, p.size being its declared length or -1
+	rc  io.ReadCloser // read instead of p when set: a body the caller set, of length p.size or -1, or p's reader
 
 	// Guarded by x.mu.
+	prev                                     *sentBody // the generation handed over before it
 	handed, reading, finished, closed, ended bool
 	result                                   error // how its reading finished: nil at io.EOF
 }
+
+// newSent returns a generation of p, tracked by x if not nil.
+func newSent(x *exchange, p *payload) *sentBody { return &sentBody{x: x, p: p, rc: p.reader()} }
 
 func (b *sentBody) Read(buf []byte) (int, error) {
 	if b.x == nil {
@@ -651,6 +728,9 @@ func (b *sentBody) Read(buf []byte) (int, error) {
 	}
 	u := &b.x.upload
 	u.mu.Lock()
+	if err := b.x.Err(); err != nil && !b.closed && !b.finished {
+		b.finished, b.result = true, withContext(b.x, err)
+	}
 	if b.closed || b.finished {
 		err := b.result
 		if b.closed {
@@ -680,17 +760,10 @@ func (b *sentBody) Read(buf []byte) (int, error) {
 // ending at its length and failing short of it.
 func (b *sentBody) read(buf []byte) (n int, err error) {
 	p := b.p
-	switch {
-	case b.rc != nil:
+	if b.rc != nil {
 		n, err = b.rc.Read(buf)
-	case p.once != nil:
-		n, err = p.once.Read(buf)
-	case b.pos >= p.size:
-		err = io.EOF
-	case p.ra != nil:
-		n, err = p.ra.ReadAt(buf[:min(int64(len(buf)), p.size-b.pos)], p.off+b.pos)
-	default:
-		n = copy(buf, p.data[b.pos:])
+	} else {
+		n, err = p.readAt(buf, b.pos)
 	}
 	b.pos += int64(n)
 	if p.size >= 0 {
@@ -704,6 +777,8 @@ func (b *sentBody) read(buf []byte) (n int, err error) {
 	return n, err
 }
 
+// Close closes the caller's body, or stops an iterator once no Read of it
+// is in flight, and ends the generation.
 func (b *sentBody) Close() error {
 	var err error
 	if b.rc != nil {

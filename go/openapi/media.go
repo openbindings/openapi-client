@@ -16,7 +16,7 @@ var octetStream = parsedMedia{"application/octet-stream", "application", "octet-
 // parseMedia parses s, reporting whether it is a media type or range.
 func parseMedia(s string) (parsedMedia, bool) {
 	full, params, _ := strings.Cut(s, ";")
-	full = strings.Trim(full, " \t")
+	full = trimOWS(full)
 	typ, sub, ok := strings.Cut(full, "/")
 	m := parsedMedia{full, typ, sub, params}
 	return m, ok && isToken(typ) && isToken(sub) && (typ != "*" || sub == "*") && m.eachParam(nil)
@@ -30,7 +30,9 @@ func (m parsedMedia) concrete() bool { return m.typ != "*" && m.sub != "*" }
 func (m parsedMedia) eachParam(f func(name, value string) bool) bool {
 	s := m.params
 	for {
-		s = strings.TrimLeft(s, " \t")
+		for s != "" && (s[0] == ' ' || s[0] == '\t') {
+			s = s[1:]
+		}
 		if s == "" {
 			return true
 		}
@@ -56,10 +58,43 @@ func (m parsedMedia) eachParam(f func(name, value string) bool) bool {
 		if f != nil && !f(name, value) {
 			return false
 		}
-		if s = strings.TrimLeft(s, " \t"); s != "" && s[0] != ';' {
+		for s != "" && (s[0] == ' ' || s[0] == '\t') {
+			s = s[1:]
+		}
+		if s != "" && s[0] != ';' {
 			return false
 		}
 	}
+}
+
+// trimOWS trims spaces and tabs from both ends of s.
+func trimOWS(s string) string {
+	for s != "" && (s[0] == ' ' || s[0] == '\t') {
+		s = s[1:]
+	}
+	for s != "" && (s[len(s)-1] == ' ' || s[len(s)-1] == '\t') {
+		s = s[:len(s)-1]
+	}
+	return s
+}
+
+// boundary returns the boundary parameter of a multipart type, reporting
+// whether it is given, and refusing an invalid one or two.
+func (m parsedMedia) boundary() (b string, given bool, err error) {
+	m.eachParam(func(name, value string) bool {
+		if strings.EqualFold(name, "boundary") {
+			if given {
+				err = errBoundary2
+				return false
+			}
+			b, given = value, true
+		}
+		return true
+	})
+	if err == nil && given && !validBoundary(b) {
+		err = errBoundary
+	}
+	return b, given, err
 }
 
 // param returns the value of the parameter name, compared without regard
@@ -132,16 +167,17 @@ func (m parsedMedia) covers(t parsedMedia) (specificity [2]int, ok bool) {
 	return specificity, ok
 }
 
-// match returns the Media of ms, parsed as declared, that t matches, or nil
-// when none does or several tie.
-func match(declared []parsedMedia, ms []*Media, t parsedMedia) *Media {
+// match returns the Media of ms, parsed as declared, that t matches most
+// specifically, or nil when none does or several tie; with errs, one whose
+// Err is set may be it.
+func match(declared []parsedMedia, ms []*Media, t parsedMedia, errs bool) *Media {
 	var best *Media
 	var bestSpec [2]int
 	tie := false
 	for i, m := range declared {
 		spec, ok := m.covers(t)
 		switch {
-		case !ok || ms[i].Err != nil:
+		case !ok || !errs && ms[i].Err != nil:
 		case best == nil || spec[0] > bestSpec[0] || spec[0] == bestSpec[0] && spec[1] > bestSpec[1]:
 			best, bestSpec, tie = ms[i], spec, false
 		case spec == bestSpec:
@@ -178,6 +214,9 @@ const (
 )
 
 func (m parsedMedia) class() class {
+	if m.full == "application/json" {
+		return jsonClass
+	}
 	app, text := strings.EqualFold(m.typ, "application"), strings.EqualFold(m.typ, "text")
 	is := func(sub string) bool { return strings.EqualFold(m.sub, sub) }
 	switch {

@@ -106,6 +106,8 @@ func newConfig(o Options, parent *config) *config {
 			cfg.codecsErr = fmt.Errorf("key %q is neither a media type without parameters nor a +suffix", k)
 		case key == "+json-seq" || !suffix && (m.class() == sequentialClass || m.typ == "multipart"):
 			cfg.codecsErr = fmt.Errorf("key %q names a sequential or multipart type, whose framing is the client's", k)
+		case !suffix && isForm(m):
+			cfg.codecsErr = fmt.Errorf("key %q names the form type, whose fields OpenAPI's Encoding rules encode", k)
 		default:
 			if cfg.codecs == nil {
 				cfg.codecs = make(map[string]Codec, len(o.Codecs))
@@ -124,8 +126,19 @@ var derivedFields = []string{"Host", "Content-Length", "Transfer-Encoding", "Tra
 // token, a value HTTP cannot carry, a field the client generates or net/http
 // derives, or two spellings of one field.
 func checkHeader(fields http.Header) error {
+	var spelled map[string]bool // the canonical names of the names not in canonical form
 	for k, vs := range fields {
 		ck := textproto.CanonicalMIMEHeaderKey(k)
+		if ck != k { // another spelling of one field
+			_, both := fields[ck]
+			if both = both || spelled[ck]; both {
+				return fmt.Errorf("holds two spellings of field %s", ck)
+			}
+			if spelled == nil {
+				spelled = map[string]bool{}
+			}
+			spelled[ck] = true
+		}
 		switch {
 		case !isToken(k):
 			return fmt.Errorf("field name %q is not a token", k)
@@ -135,11 +148,6 @@ func checkHeader(fields http.Header) error {
 			return fmt.Errorf("sets %s, which net/http derives or HTTP forbids", ck)
 		case slices.ContainsFunc(vs, func(v string) bool { return !validFieldValue(v) }):
 			return fmt.Errorf("field %s has a value HTTP cannot carry", ck)
-		}
-		for other := range fields {
-			if other != k && strings.EqualFold(other, k) {
-				return fmt.Errorf("holds two spellings of field %s", ck)
-			}
 		}
 	}
 	return nil

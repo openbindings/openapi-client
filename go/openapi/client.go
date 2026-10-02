@@ -134,8 +134,10 @@ type Options struct {
 	// encoding/json everywhere, *any included, and decide how numbers are
 	// represented. A *[]byte or io.Writer target, and a []byte or io.Reader
 	// body, bypass codecs. Load refuses any other key, and one that names a
-	// sequential or multipart type, whose framing stays the client's; their
-	// items and parts use the codec for their own type. An Encode error
+	// sequential, multipart or application/x-www-form-urlencoded type, whose
+	// framing and field encoding stay the client's, as OpenAPI's Encoding
+	// Object governs them; their items and parts use the codec for their own
+	// type. An Encode error
 	// refuses the call at the body's or parameter's Inputs key, or aborts
 	// the body for an iterator's item; a Decode error is a *DecodeError, or
 	// an ErrItem for one item.
@@ -302,9 +304,16 @@ type Input struct {
 	//     type, a named byte-slice type included, is a value for the codec.
 	//   - For form and multipart media, Body is an object (a map or a
 	//     struct) whose properties are the fields. A property may be a
-	//     []byte, an io.Reader or a [Part]; an array property sends one field
-	//     or part per item under the property's name, unless its
-	//     collectionFormat or Encoding style says otherwise.
+	//     []byte, an io.Reader or a [Part] (or a non-nil *Part); a property
+	//     whose value is an array sends one field or part per item under the
+	//     property's name, unless its collectionFormat or Encoding style says
+	//     otherwise, each item taking the property's content type (an array
+	//     schema's items type by default); any other value is one field or
+	//     part. A field an Encoding style serializes takes JSON data, so a
+	//     []byte there is a base64 string and a Part or reader is refused. A
+	//     typed nil is a value, never a reader, so a property or item holding
+	//     one is omitted as null. A multipart object with no fields sends the
+	//     close delimiter alone ("--" boundary "--" CRLF), as browsers do.
 	//   - For OpenAPI 3.2 multipart/form-data, Body may instead be a slice,
 	//     one part per element, in order: each a one-property object, whose
 	//     property names the part and whose value is its content, encoded as
@@ -321,24 +330,35 @@ type Input struct {
 	//     prefixEncoding or itemEncoding; a []byte or io.Reader supplies it
 	//     pre-encoded, with its boundary in Part.MediaType.
 	//   - For a sequential media type (JSON Lines, JSON text sequences,
-	//     server-sent events), in any edition, Body is a slice, an iter.Seq,
-	//     or an iter.Seq2 whose second value is an error, of any element
-	//     type; each element is one item. Under text/event-stream an item is
-	//     an object with no members but data, event and id, as strings, and
-	//     retry, as a non-negative integer, or an [Event], of which only the
-	//     fields it sets are used. It is written as those fields, data as one
-	//     data line per line, then a blank line; any other member or type, or
-	//     a line break in event or id, is an item that cannot be encoded.
-	//     An iterator is written one item at a time as it
-	//     yields, so a large body is never held. It runs on a goroutine of the
-	//     transport; its yield returns false once the body is no longer
-	//     wanted. Call waits for the iterator to return; Send and Stream may
-	//     return at response headers while it is still running. An error
-	//     from an iter.Seq2, an item that cannot be encoded, or the context
-	//     ending before the iterator returns aborts the body and is reported
-	//     by Call or Response.WaitRequest. An iter.Seq[any], an
-	//     iter.Seq2[any, error], or
-	//     an io.Reader the caller frames avoids per-item reflection.
+	//     server-sent events), in any edition, Body is a slice, an iter.Seq, or
+	//     an iter.Seq2 whose second value is an error, of any element type;
+	//     each element is one item, encoded as that value on its own would be,
+	//     so a slice and an iterator yielding the same values send the same
+	//     bytes. Under text/event-stream an item is an object with no members
+	//     but data, event and id, as strings, and retry, as a non-negative
+	//     integer, or an [Event] (or a non-nil *Event), of which only the
+	//     fields it sets are used. It is written as those fields, each as a
+	//     "field: value" line ending in LF, data as one data line per line
+	//     (split at CRLF, LF or CR), then a blank line; any other member or
+	//     type, a line break in event or id, a NUL in id, or a retry that is
+	//     not whole milliseconds, is an item that cannot be encoded; invalid
+	//     UTF-8 is written as U+FFFD, as an event stream is UTF-8. Under JSON
+	//     Lines and JSON text sequences, a []byte or io.Reader item is the
+	//     item's JSON text, written as given and framed (a JSON Lines item is
+	//     followed by LF; a sequence item has RS before it and LF after); one
+	//     holding the framing's separator (LF or CR, or RS) cannot be encoded,
+	//     and a codec's output is framed after its trailing JSON whitespace is
+	//     trimmed. An iterator is written one item at a time as it yields, so a
+	//     large body is never held, and each item reaches the connection on its
+	//     own; for many small items a slice, or a reader the caller frames, is
+	//     faster. It runs on a goroutine of the transport; its yield returns
+	//     false once the body is no longer wanted. Call waits for the iterator
+	//     to return; Send and Stream may return at response headers while it is
+	//     still running. An error from an iter.Seq2, an item that cannot be
+	//     encoded, or the context ending before the iterator returns aborts the
+	//     body and is reported by Call or Response.WaitRequest. An
+	//     iter.Seq[any], an iter.Seq2[any, error], or an io.Reader the caller
+	//     frames avoids per-item reflection.
 	//   - Any other value is written by the media type's codec (see Values in
 	//     the package documentation). Under a JSON type,
 	//     json.RawMessage("null") sends null, and bytes go as a base64
@@ -374,7 +394,11 @@ type Input struct {
 	// governing Media descriptor or structured encoder. A range is refused.
 	// MediaType may carry parameters, which are sent as given: a pre-encoded
 	// multipart body requires its boundary here, and a boundary given for a
-	// multipart body the client encodes is used. Empty means
+	// multipart body the client encodes is used, a part whose content holds
+	// its delimiter, or "--" and the boundary after a CR or LF, being an
+	// input that cannot be encoded (RFC 2046 section 5.1.1). A boundary in
+	// the declared content key is used and checked the same way; an invalid
+	// one is the Media's Err. Two boundary parameters are refused. Empty means
 	// Options.MediaType, else the declared type where one selects itself
 	// (see the package documentation); otherwise a body requires MediaType
 	// before dispatch.
@@ -399,8 +423,10 @@ type Input struct {
 // positional multipart body, given where its media type, filename or part
 // header fields matter. An empty field means its default. A part's name and
 // filename are written in its Content-Disposition as given, each as a
-// quoted-string with \ and " escaped, never as filename*; a CR or LF in
-// either is refused.
+// quoted-string with \ and " escaped, never as filename*; a control
+// character other than a tab in either is refused, as a quoted-string cannot
+// carry it. In an application/x-www-form-urlencoded body only Content and
+// MediaType apply, and Filename, NoFilename or Header is refused.
 type Part struct {
 	// Content is the part's value: a []byte or an io.Reader for raw
 	// content, a string, or any other value, encoded by MediaType.
@@ -415,10 +441,10 @@ type Part struct {
 	MediaType string
 
 	// Filename is sent in the part's Content-Disposition. Empty means the
-	// default: the part's name for a []byte or io.Reader Content, and none
-	// otherwise. A part without a name, as in positional multipart, takes
-	// its Content-Disposition only from Header, and Filename is refused on
-	// it.
+	// default: the part's name for a []byte or io.Reader Content whose media
+	// type is not multipart, and none otherwise. A part without a name, as in
+	// positional multipart, takes its Content-Disposition only from Header, and
+	// Filename is refused on it.
 	Filename string
 
 	// NoFilename sends no filename, whatever the Content. Setting it with
@@ -426,8 +452,9 @@ type Part struct {
 	NoFilename bool
 
 	// Header holds other header fields of the part, such as those its
-	// Encoding declares. A Content-Disposition field replaces the one the
-	// client writes; Content-Type is refused (set MediaType).
+	// Encoding declares, under the rules for Options.Header's field names
+	// and values. A Content-Disposition field replaces the one the client
+	// writes; Content-Type, in any spelling, is refused (set MediaType).
 	Header http.Header
 }
 
@@ -609,7 +636,8 @@ func (r *Request) Send(ctx context.Context) (*Response, error) {
 	if err != nil {
 		return nil, err
 	}
-	return x.send(req)
+	resp, _, err := x.send(req)
+	return resp, err
 }
 
 // Call sends r with ctx, adding credentials, and returns as [Client.Call]
@@ -700,7 +728,7 @@ func (r *Response) Decode(out any) error {
 	if err := checkOut(out); err != nil {
 		return &DecodeError{Response: r, Err: err}
 	}
-	return exchangeOf(r.Response).decode(r, out)
+	return exchangeOf(r.Response).decode(r, mediaOf(r.Header), out)
 }
 
 // WaitRequest waits until the HTTP transport has consumed the complete

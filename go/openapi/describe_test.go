@@ -280,7 +280,7 @@ func TestOperationDescriptor(t *testing.T) {
 }
 
 // describe.go, Param.AllowReserved: "the effective allowReserved: false
-// where the edition ignores it"; doc.go, Fixed rules, Percent-encoding:
+// where the edition or the media type ignores it"; doc.go, Fixed rules, Percent-encoding:
 // in 3.1 it applies to query parameters only (OAS 3.1.2 section
 // 4.8.12.2.2: "This field only applies to parameters with an in value of
 // query").

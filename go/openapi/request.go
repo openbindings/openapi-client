@@ -3,7 +3,6 @@ package openapi
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -167,8 +166,7 @@ func (c *Client) newRequest(ctx context.Context, o *operation, in *Input, re *Re
 	if sec.alt = c.selectSecurity(o, in, re); sec.alt != nil {
 		sec.places, byCredential = c.checkCredentials(o, sec.alt, in, ep, re)
 	}
-	req, _ := http.NewRequestWithContext(ctx, o.Method, "", nil)
-	h := req.Header
+	h := http.Header{}
 	applyFields(h, cfg.Header)
 	applyFields(h, in.Header)
 
@@ -274,14 +272,14 @@ func (c *Client) newRequest(ctx context.Context, o *operation, in *Input, re *Re
 		}
 	}
 	p, media := c.body(o, in, h, re)
+	// The request, made as http.NewRequestWithContext makes one, its URL
+	// written rather than parsed.
+	s := b.String()
+	u := &url.URL{Scheme: ep.scheme, Host: ep.host, Path: s[:query], RawPath: s[:query]} // as written: net/http would otherwise escape sub-delimiters
+	req := (&http.Request{Method: o.Method, URL: u, Proto: "HTTP/1.1", ProtoMajor: 1, ProtoMinor: 1, Header: h, Host: ep.host}).WithContext(ctx)
 	if re.Err != nil || len(re.Settings) > 0 || len(re.Inputs) > 0 {
 		return req, payload{}, nil, selection{}
 	}
-
-	s := b.String()
-	u := req.URL
-	u.Scheme, u.Host, req.Host = ep.scheme, ep.host, ep.host
-	u.RawPath, u.Path = s[:query], s[:query] // as written: net/http would otherwise escape sub-delimiters
 	if query < len(s) {
 		u.RawQuery = s[query+1:]
 	}
@@ -506,7 +504,7 @@ func (c *Client) resolve(s *server, setting string, re *RequestError) (endpoint,
 		}
 		return endpoint{}, false
 	}
-	cfg.endpoints.Store(s, ep)
+	cfg.endpoints.LoadOrStore(s, ep)
 	return ep, true
 }
 
@@ -572,59 +570,70 @@ func (c *Client) body(o *operation, in *Input, h http.Header, re *RequestError) 
 	typ, m, md := c.mediaType(o, in, re)
 	var p payload
 	raw := true // pre-encoded
+	r, reader := in.Body.(io.Reader)
 	switch v := in.Body.(type) {
 	case []byte:
 		p = payload{data: v, size: int64(len(v))}
-	case io.Reader:
-		p = readerPayload(v)
 	default:
-		if raw = false; c.cfg.codecsErr != nil {
+		if reader && !null(v) { // a typed nil is a value
+			p = readerPayload(r)
+			break
+		}
+		raw = false
+		if c.cfg.codecsErr != nil {
 			re.setting("Options.Codecs", c.cfg.codecsErr)
+		}
+		if typ == "" {
+			return payload{}, nil
+		}
+		if md == nil {
+			re.input("Input.Body", errors.New("an empty content map takes only a []byte or io.Reader body"))
+			return payload{}, nil
+		}
+		_, isPart := v.(Part)
+		if pt, ok := v.(*Part); ok && pt != nil {
+			isPart = true
+		}
+		switch k := m.class(); {
+		case isPart && (isForm(m) || isMultipart(m)):
+			re.input("Input.Body", errors.New("a form or multipart body is an object of fields, not a Part"))
+			return payload{}, nil
+		case isForm(m):
+			var b builder
+			c.formBody(&b, o.encoding(md), v, "Input.Body", true, re)
+			p = b.payload()
+		case isMultipart(m):
+			p, typ = c.multipartBody(o.encoding(md), typ, m, v, re)
+		case k == sequentialClass:
+			p = c.sequentialBody(m, v, re)
+		default:
+			b, at, _, err := c.appendContent(nil, m, k, v)
+			if err != nil {
+				re.input("Input.Body"+at, err)
+				return payload{}, nil
+			}
+			p = payload{data: b, size: int64(len(b))}
 		}
 	}
 	if typ == "" {
 		return payload{}, nil
 	}
-	if raw {
-		h["Content-Type"] = []string{typ}
-		p.ctype = typ
-		return p, md
+	if raw && isMultipart(m) {
+		switch _, given, err := m.boundary(); {
+		case err != nil:
+			re.setting("Input.MediaType", err)
+		case !given:
+			re.setting("Input.MediaType", errors.New("a pre-encoded multipart body needs its boundary in Input.MediaType"))
+		}
 	}
-	if md == nil {
-		re.input("Input.Body", errors.New("an empty content map takes only a []byte or io.Reader body"))
-		return payload{}, nil
-	}
-	h["Content-Type"] = []string{typ}
-	b, at, ok, err := c.encodeValue(m, m.class(), in.Body)
-	switch {
-	case !ok:
-		re.fail(notYet("encoding a " + m.full + " body"))
-		return payload{}, nil
-	case err != nil:
-		re.input("Input.Body"+at, err)
-		return payload{}, nil
-	}
-	return payload{data: b, size: int64(len(b)), ctype: typ}, md
+	h["Content-Type"], p.ctype = []string{typ}, typ
+	return p, md
 }
 
-// encodeValue encodes v by the caller's codec for m, or, for a JSON type, as
-// encoding/json writes it, refusing an io.Reader or Part that json reaches,
-// at the JSON Pointer it returns, and nesting deeper than 1,000 levels. ok is
-// false for any other type.
-func (c *Client) encodeValue(m parsedMedia, k class, v any) (b []byte, at string, ok bool, err error) {
-	if codec, _ := c.cfg.codec(m); codec != nil {
-		var buf bytes.Buffer
-		err = codec.Encode(&buf, v)
-		return buf.Bytes(), "", true, err
-	}
-	if k != jsonClass {
-		return nil, "", false, nil
-	}
-	if b, err = json.Marshal(v); err != nil { // first, as it refuses a cycle, which the walk would follow
-		return nil, "", true, &encodingError{err}
-	}
-	at, err = checkJSON(c.doc, v, b)
-	return b, at, true, err
+// encoding returns the compiled Encoding of the request body's form or
+// multipart Media md.
+func (o *operation) encoding(md *Media) *formEncoding {
+	return o.encodings[slices.Index(o.Body.Media, md)]
 }
 
 // mediaType selects the request body's media type: as sent, parsed, and
@@ -635,38 +644,52 @@ func (c *Client) mediaType(o *operation, in *Input, re *RequestError) (string, p
 		re.setting("Options.MediaType", cfg.mediaTypeErr)
 	}
 	typ := in.MediaType
-	if typ == "" && cfg.MediaType != "" && cfg.mediaTypeErr == nil && match(o.body, declared, cfg.mediaType) != nil {
+	if typ == "" && cfg.MediaType != "" && cfg.mediaTypeErr == nil && match(o.body, declared, cfg.mediaType, true) != nil {
 		typ = cfg.MediaType
 	}
 	if typ == "" {
-		if len(declared) == 1 && declared[0].Err == nil && o.body[0].concrete() {
+		switch {
+		case len(declared) == 1 && declared[0].Err != nil:
+			re.setting("Input.MediaType", mediaErr(declared[0]))
+		case len(declared) == 1 && o.body[0].concrete():
 			return declared[0].Type, o.body[0], declared[0]
+		default:
+			re.setting("Input.MediaType", errors.New("the operation offers no single concrete media type; select one with Input.MediaType or Options.MediaType"))
 		}
-		re.setting("Input.MediaType", errors.New("the operation offers no single concrete media type; select one with Input.MediaType or Options.MediaType"))
 		return "", parsedMedia{}, nil
 	}
 	m, ok := parseMedia(typ)
-	var md *Media
-	switch {
-	case !ok || !m.concrete():
+	if !ok || !m.concrete() {
 		re.setting("Input.MediaType", errors.New("not a concrete media type"))
 		return "", parsedMedia{}, nil
-	case len(declared) > 0:
-		if md = match(o.body, declared, m); md == nil {
-			re.setting("Input.MediaType", fmt.Errorf("the operation does not declare %s", m.full))
+	}
+	var md *Media
+	if len(declared) > 0 {
+		switch md = match(o.body, declared, m, true); {
+		case md == nil:
+			re.setting("Input.MediaType", fmt.Errorf("the operation does not declare %s", typ))
+			return "", parsedMedia{}, nil
+		case md.Err != nil:
+			re.setting("Input.MediaType", mediaErr(md))
 			return "", parsedMedia{}, nil
 		}
 	}
 	return typ, m, md
 }
 
+// mediaErr is the refusal of a call that the declared media type md, whose
+// Err is set, would govern.
+func mediaErr(md *Media) error {
+	return fmt.Errorf("the media type declared at %s: %w", md.Source, md.Err)
+}
+
 // setBody gives req the body p, read again from the start by GetBody when p
 // can be.
 func setBody(req *http.Request, p *payload) {
 	if p.size != 0 {
-		req.Body = &sentBody{p: p}
-		if p.once == nil {
-			req.GetBody = func() (io.ReadCloser, error) { return &sentBody{p: p}, nil }
+		req.Body = newSent(nil, p)
+		if p.size > 0 {
+			req.GetBody = func() (io.ReadCloser, error) { return newSent(nil, p), nil }
 		}
 	}
 }

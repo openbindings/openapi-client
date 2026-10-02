@@ -11,9 +11,11 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 // A document is a loaded OpenAPI document: its tree, and the index of its
@@ -30,46 +32,35 @@ type document struct {
 	byRoute map[route]*entry
 	broken  map[string]*entry // Paths entries that cannot be read, by path
 
-	rootOnce sync.Once
-	inherits inheritance // what operations inherit from the root
-	walks    sync.Map    // reflect.Type to *walk, for finding readers in bodies
-
-	refsMu sync.Mutex
-	refs   map[int32]resolution // Reference Objects followed, by node
+	// What the document compiles to, each read without a lock and computed
+	// unlocked, the first result published being the one every reader sees:
+	// concurrent first uses may compute one twice, but none waits on another.
+	inherits atomic.Pointer[inheritance]        // what operations inherit from the root
+	walks    sync.Map                           // reflect.Type to *walk, for finding readers in bodies
+	refs     sync.Map                           // node to the *resolution of the Reference Object there
+	pages    []atomic.Pointer[[factsPage]facts] // what schema nodes compile to, a page made as first used
+	types    sync.Map                           // a list of schemas to the mediaSet of a field they type
+	forms    sync.Map                           // schemas' state to the formEncoding of a nested part they type
 
 	// What nodes shared by several places compile to, by node.
 	paramForms  memo[param]
-	contents    memo[*content]
+	bodies      memo[*content] // a Request Body Object's
+	contents    memo[*content] // a Response Object's
 	serverLists memo[*serverList]
 	schemeNames memo[*scheme] // by the securitySchemes member a name selects
 	schemeForms memo[*scheme] // by the Security Scheme Object a reference reaches
 }
 
 // A memo keeps what each node of a document compiles to.
-type memo[T any] struct {
-	mu    sync.Mutex
-	cells map[int32]*cell[T]
-}
+type memo[T any] struct{ m sync.Map }
 
-type cell[T any] struct {
-	once sync.Once
-	v    T
-}
-
-// get returns what compile makes of node i, compiling it once.
+// get returns what compile makes of node i: the first result published.
 func (m *memo[T]) get(i int32, compile func() T) T {
-	m.mu.Lock()
-	c := m.cells[i]
-	if c == nil {
-		if m.cells == nil {
-			m.cells = map[int32]*cell[T]{}
-		}
-		c = new(cell[T])
-		m.cells[i] = c
+	if v, ok := m.m.Load(i); ok {
+		return v.(T)
 	}
-	m.mu.Unlock()
-	c.once.Do(func() { c.v = compile() })
-	return c.v
+	v, _ := m.m.LoadOrStore(i, compile())
+	return v.(T)
 }
 
 type route struct{ method, path string }
@@ -93,16 +84,14 @@ type entry struct {
 	sum    *summary // what its levels define, shared with every chain that defines the same
 	err    error    // why the entry cannot be read, or its method is defined twice
 	group  *group   // the entries sharing its Operation Object and inherited fields, or nil
-	once   sync.Once
-	op     *operation
+	op     atomic.Pointer[operation]
 }
 
 // A group is the entries of several Paths entries that reach one Operation
 // Object through one Path Item chain, and what it compiles to for all of
 // them.
 type group struct {
-	once sync.Once
-	op   *operation
+	op atomic.Pointer[operation]
 }
 
 // A level is one Path Item of a chain: the Paths entry, then each $ref
@@ -163,10 +152,19 @@ func (s *summary) add(l *level) *summary {
 	return sum
 }
 
-// compile completes the entry's descriptor and plan once.
+// compile completes the entry's descriptor and plan: the first published.
 func (e *entry) compile() *operation {
-	e.once.Do(func() { e.op = e.build() })
-	return e.op
+	return loadOrMake(&e.op, e.build)
+}
+
+// loadOrMake returns p's value, made by build and stored if p has none yet,
+// the first value stored being kept.
+func loadOrMake[T any](p *atomic.Pointer[T], build func() *T) *T {
+	if v := p.Load(); v != nil {
+		return v
+	}
+	p.CompareAndSwap(nil, build())
+	return p.Load()
 }
 
 // ptr returns the Operation Object's JSON Pointer.
@@ -346,7 +344,7 @@ func newDocument(ctx context.Context, content, uri string) (*document, error) {
 	if err != nil {
 		return nil, err
 	}
-	d := &document{tree: t, uri: uri, base: base}
+	d := &document{tree: t, uri: uri, base: base, pages: make([]atomic.Pointer[[factsPage]facts], len(t.nodes)/factsPage+1)}
 	root := d.root()
 	d.version = root.str("openapi")
 	switch {
@@ -570,50 +568,52 @@ func (d *document) chain(v value, ptr string, targets *map[int32]link) (*level, 
 
 // A resolution is where a Reference Object leads: the target, its Source
 // and the description of the nearest level that gives one, or why it
-// cannot be followed. It is not done while the chain through it is being
-// followed.
+// cannot be followed.
 type resolution struct {
 	v         value
 	src, desc string
 	err       error
-	done      bool
 }
 
 // follow resolves the Reference Objects from v, whose Source is src,
 // returning the target, its Source, and the description of the nearest
 // level that gives one: in OpenAPI 3.1 a Reference Object's description
-// replaces its target's. Each Reference Object is followed once per
-// document.
+// replaces its target's. Each Reference Object's resolution is published
+// once per document, and a chain stops at one already published.
 func (d *document) follow(v value, src string) (value, string, string, error) {
 	ref, desc, described := reference(v)
 	if !ref.ok() {
 		return v, src, desc, nil
 	}
-	d.refsMu.Lock()
-	defer d.refsMu.Unlock()
 	type step struct {
 		i         int32
 		desc      string
 		described bool
 	}
-	var walked []step // the Reference Objects followed, not yet kept
+	var walked []step     // the Reference Objects followed, not yet published
+	var on map[int32]bool // walked, once a scan of it would be long
 	var r resolution
 	for at, last := "", ""; ; {
-		if k, ok := d.refs[v.i]; ok {
-			if r = k; !k.done {
-				r = resolution{err: fmt.Errorf("%w %q: a reference cycle", ErrUnresolved, last)}
-			}
+		if k, ok := d.refs.Load(v.i); ok {
+			r = *k.(*resolution)
 			break
 		}
 		if !ref.ok() {
 			r = resolution{v: v, src: d.source(at), desc: desc}
 			break
 		}
-		if d.refs == nil {
-			d.refs = map[int32]resolution{}
+		if on[v.i] || on == nil && slices.ContainsFunc(walked, func(s step) bool { return s.i == v.i }) {
+			r = resolution{err: fmt.Errorf("%w %q: a reference cycle", ErrUnresolved, last)}
+			break
 		}
-		d.refs[v.i] = resolution{}
-		walked = append(walked, step{v.i, desc, described})
+		if walked = append(walked, step{v.i, desc, described}); len(walked) == 16 {
+			on = map[int32]bool{}
+			for _, s := range walked {
+				on[s.i] = true
+			}
+		} else if on != nil {
+			on[v.i] = true
+		}
 		last = ref.text()
 		next, nextAt, err := d.target(last)
 		if err != nil {
@@ -623,26 +623,39 @@ func (d *document) follow(v value, src string) (value, string, string, error) {
 		v, at = next, nextAt
 		ref, desc, described = reference(v)
 	}
-	r.done = true
 	for k := len(walked) - 1; k >= 0; k-- {
 		if s := walked[k]; s.described && r.err == nil {
 			r.desc = s.desc
 		}
-		d.refs[walked[k].i] = r
+		kept, _ := d.refs.LoadOrStore(walked[k].i, &resolution{r.v, r.src, r.desc, r.err})
+		r = *kept.(*resolution)
 	}
 	return r.v, r.src, r.desc, r.err
 }
 
 // reference returns v's $ref, if it is a string, and its description, if
-// it gives one.
+// it gives one, read in one pass while v has few members and looked up
+// otherwise.
 func reference(v value) (ref value, desc string, described bool) {
+	var d value
+	n := 0
 	for name, m := range v.members() {
-		switch {
-		case name == "$ref" && m.kind() == '"':
-			ref = m
-		case name == "description" && m.kind() == '"':
-			desc, described = m.text(), true
+		if n++; n > many {
+			ref, d = v.get("$ref"), v.get("description")
+			break
 		}
+		switch name {
+		case "$ref":
+			ref = m
+		case "description":
+			d = m
+		}
+	}
+	if ref.kind() != '"' {
+		ref = value{}
+	}
+	if d.kind() == '"' {
+		desc, described = d.text(), true
 	}
 	return ref, desc, described
 }

@@ -1,6 +1,7 @@
 package openapi
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"net/textproto"
@@ -23,8 +24,9 @@ type plan struct {
 	pathParams []int           // the path parameters, indexes into params
 	path       []pathPart
 	servers    []*server
-	security   []alternative // Operation.Security, compiled
-	body       []parsedMedia // the request body's Media, parsed
+	security   []alternative   // Operation.Security, compiled
+	body       []parsedMedia   // the request body's Media, parsed
+	encodings  []*formEncoding // and the fields of each, under a form or multipart type it covers
 	responses  []responsePlan
 	success    [][]parsedMedia // each 2xx response's concrete media types
 }
@@ -35,9 +37,10 @@ type param struct {
 	*style
 	set      *charset // how its values are percent-encoded, or nil to write them as given
 	required bool
-	field    string       // a header parameter's canonical field name
-	name     string       // the name, percent-encoded
-	media    *parsedMedia // a content parameter's ContentType, parsed
+	field    string        // a header parameter's canonical field name
+	name     string        // the name, percent-encoded
+	media    *parsedMedia  // a content parameter's ContentType, parsed
+	form     *formEncoding // the fields of a form-urlencoded content parameter
 }
 
 // A pathPart is literal text of the path template, percent-encoded, or one
@@ -67,8 +70,7 @@ func (e *entry) build() *operation {
 	}
 	var o *operation
 	if g := e.group; g != nil {
-		g.once.Do(func() { g.op = e.shape() })
-		c := *g.op
+		c := *loadOrMake(&g.op, e.shape)
 		o = &c
 	} else {
 		o = e.shape()
@@ -126,17 +128,17 @@ func (e *entry) shape() *operation {
 	if body.ok() && op.Method != "TRACE" {
 		var target value
 		var c *content
-		op.Body, target, c = d.message(body, src+"/requestBody")
+		op.Body, target, c = d.message(body, src+"/requestBody", true)
 		if !target.ok() {
 			errs = append(errs, op.Body.Err)
 		}
 		op.Body.Required = target.flag("required")
-		o.body = c.parsed
+		o.body, o.encodings = c.parsed, c.encodings
 	}
 	if responses.kind() == '{' {
 		for key, r := range responses.members() {
 			if !strings.HasPrefix(key, "x-") {
-				m, _, c := d.message(r, src+"/responses/"+token(key))
+				m, _, c := d.message(r, src+"/responses/"+token(key), false)
 				m.Key = key
 				o.addResponse(m, c)
 			}
@@ -206,7 +208,7 @@ func (o *operation) addParams(list value, src string, ids map[paramID]int, errs 
 	}
 	i := 0
 	for _, v := range list.members() {
-		pp := o.doc.param(v, src+"/"+strconv.Itoa(i))
+		pp := o.doc.param(v, src, i)
 		i++
 		p := pp.Param
 		if p.In == "header" && (strings.EqualFold(p.Name, "Accept") || strings.EqualFold(p.Name, "Content-Type") || strings.EqualFold(p.Name, "Authorization")) {
@@ -256,23 +258,25 @@ func (o *operation) assignKeys() {
 	}
 }
 
-// param describes and compiles the Parameter Object v, whose Source is src,
-// following references. A target that references reach is compiled once,
-// its descriptor copied for each.
-func (d *document) param(v value, src string) param {
-	t, at, desc, err := d.follow(v, src)
+// param describes and compiles the Parameter Object v, item i of the list
+// whose Source is list, following references. A target that references
+// reach is compiled once, its descriptor copied for each; only a parameter
+// written in the list, or one whose reference cannot be followed, has a
+// Source in the list, made only then.
+func (d *document) param(v value, list string, i int) param {
+	src := func() string { return list + "/" + strconv.Itoa(i) }
+	if ref, desc, _ := reference(v); !ref.ok() { // only this place reaches it
+		pp := d.newParam(v, src())
+		pp.Description = desc
+		return pp
+	}
+	t, at, desc, err := d.follow(v, "")
 	if err != nil {
-		return param{Param: &Param{Source: src, Err: err}}
+		return param{Param: &Param{Source: src(), Err: err}}
 	}
-	var pp param
-	if t.i == v.i { // only this place reaches it
-		pp = d.newParam(t, at)
-	} else {
-		pp = d.paramForms.get(t.i, func() param { return d.newParam(t, at) })
-		c := *pp.Param
-		pp.Param = &c
-	}
-	pp.Description = desc
+	pp := d.paramForms.get(t.i, func() param { return d.newParam(t, at) })
+	c := *pp.Param
+	pp.Param, c.Description = &c, desc
 	return pp
 }
 
@@ -280,8 +284,8 @@ func (d *document) param(v value, src string) param {
 // at.
 func (d *document) newParam(t value, at string) param {
 	p := &Param{Source: at}
-	var explode, schema, content value
-	entries, media := 0, true
+	var explode, schema, content, media value
+	entries, valid := 0, true
 	for name, m := range t.members() { // one pass: a member's name is read from the source
 		switch name {
 		case "name":
@@ -306,40 +310,25 @@ func (d *document) newParam(t value, at string) param {
 			content = m
 		}
 	}
-	p.ExplodeSet = explode.ok()
 	if content.ok() {
 		for typ, m := range content.members() {
 			if entries++; entries == 1 {
-				p.ContentType = typ
+				p.ContentType, media = typ, m
 				p.Schema = d.schema(m.get("schema"), at, "/content/"+token(typ)+"/schema")
 			}
 		}
-		_, media = parseMedia(p.ContentType)
-		p.Style, p.AllowReserved = "", false
-	} else {
-		if p.Style == "" {
-			p.Style = "simple"
-			if p.In == "query" || p.In == "cookie" {
-				p.Style = "form"
-			}
-		}
-		if schema.ok() {
-			p.Schema = d.schema(schema, at, "/schema")
-		}
-		p.Explode = explode.kind() == 't' || !explode.ok() && p.Style == "form" || p.Style == "deepObject"
-		p.AllowReserved = p.AllowReserved && p.In == "query"
+		_, valid = parseMedia(p.ContentType)
+		p.Style, p.AllowReserved, p.ExplodeSet = "", false, explode.ok()
+	} else if schema.ok() {
+		p.Schema = d.schema(schema, at, "/schema")
 	}
 	switch {
 	case !slices.Contains([]string{"path", "query", "header", "cookie"}, p.In):
 		p.Err = fmt.Errorf("parameter location %q is not path, query, header or cookie", p.In)
 	case content.ok() && (content.kind() != '{' || entries != 1 || schema.ok()):
 		p.Err = errors.New("a parameter needs a content map of exactly one entry, and then no schema")
-	case !media:
+	case !valid:
 		p.Err = fmt.Errorf("invalid media type %q", p.ContentType)
-	case !content.ok() && !styleAllowed(p.In, p.Style):
-		p.Err = fmt.Errorf("style %q is not allowed for a %s parameter", p.Style, p.In)
-	case p.Explode && (p.Style == "spaceDelimited" || p.Style == "pipeDelimited"):
-		p.Err = fmt.Errorf("OpenAPI does not define the %s style with explode true", p.Style)
 	case p.In == "header" && !isToken(p.Name):
 		p.Err = fmt.Errorf("header parameter name %q is not a field name", p.Name)
 	case p.In == "header" && slices.ContainsFunc(derivedFields, func(f string) bool { return strings.EqualFold(f, p.Name) }):
@@ -347,24 +336,50 @@ func (d *document) newParam(t value, at string) param {
 	case p.In == "header" && strings.EqualFold(p.Name, "Cookie"):
 		p.Err = errors.New("OpenAPI leaves the effect of a header parameter named Cookie undefined")
 	}
-	pp := param{Param: p, style: styles[p.Style], set: unreservedSet, required: p.Required || p.In == "path", name: escape(p.Name, unreservedSet)}
+	var pp param
+	if content.ok() {
+		m, _ := parseMedia(p.ContentType)
+		pp = param{Param: p, style: &noStyle, set: unreservedSet, name: escape(p.Name, unreservedSet), media: &m}
+		if isForm(m) { // its fields, of their default types: Encoding applies to bodies only
+			pp.form, _ = d.encodingOf([]value{media.get("schema")}, at+"/content/"+token(p.ContentType)+"/schema", value{}, "", m)
+		}
+	} else {
+		if p.Style == "" {
+			p.Style = "simple"
+			if p.In == "query" || p.In == "cookie" {
+				p.Style = "form"
+			}
+		}
+		p.AllowReserved = p.AllowReserved && p.In == "query"
+		pp = compileStyle(p, p.In, explode)
+	}
+	pp.required = p.Required || p.In == "path"
 	switch {
 	case p.In == "cookie" && p.Style == "form":
 		pp.style = &cookieForm
-	case pp.style == nil:
-		pp.style = &noStyle // serialized by content, or with p.Err set
-	}
-	if content.ok() {
-		m, _ := parseMedia(p.ContentType)
-		pp.media = &m
-	}
-	switch p.In {
-	case "header":
+	case p.In == "header":
 		pp.field, pp.set = textproto.CanonicalMIMEHeaderKey(p.Name), nil
-	case "query":
-		if p.AllowReserved {
-			pp.set = reservedSet
-		}
+	}
+	return pp
+}
+
+// compileStyle compiles the RFC 6570 serialization of p, whose Style is set,
+// as a parameter in in: its effective explode, true for deepObject, which
+// ignores it; an Err, unless p has one, for a style in does not allow or a
+// delimited style exploded; and its style, name and percent-encoding.
+func compileStyle(p *Param, in string, explode value) param {
+	p.ExplodeSet = explode.ok()
+	p.Explode = explode.kind() == 't' || !explode.ok() && p.Style == "form" || p.Style == "deepObject"
+	switch {
+	case p.Err != nil:
+	case !styleAllowed(in, p.Style):
+		p.Err = fmt.Errorf("style %q is not allowed for a %s value", p.Style, in)
+	case p.Explode && (p.Style == "spaceDelimited" || p.Style == "pipeDelimited"):
+		p.Err = fmt.Errorf("OpenAPI does not define the %s style with explode true", p.Style)
+	}
+	pp := param{Param: p, style: cmp.Or(styles[p.Style], &noStyle), set: unreservedSet, name: escape(p.Name, unreservedSet)}
+	if p.AllowReserved {
+		pp.set = reservedSet
 	}
 	return pp
 }
@@ -385,34 +400,41 @@ func styleAllowed(in, style string) bool {
 // A content is the content map of a Request Body or Response Object,
 // compiled once for every reference to it.
 type content struct {
-	source  string // the object's Source
-	media   []*Media
-	parsed  []parsedMedia // media, parsed
-	success []parsedMedia // the concrete media types among them, for a 2xx response
+	source    string // the object's Source
+	media     []*Media
+	parsed    []parsedMedia   // media, parsed
+	encodings []*formEncoding // the fields of each Media, under a form or multipart type it covers
+	success   []parsedMedia   // the concrete media types among them, for a 2xx response
 }
 
 // noContent is the content of an object a reference cannot reach.
 var noContent content
 
-// message describes the Request Body or Response Object v, whose Source is
-// src, following references, with its content. The target is absent when a
-// reference cannot be resolved; the Message then reports it in Err.
-func (d *document) message(v value, src string) (*Message, value, *content) {
+// message describes the Request Body, when request, or Response Object v,
+// whose Source is src, following references, with its content. The target
+// is absent when a reference cannot be resolved; the Message then reports it
+// in Err.
+func (d *document) message(v value, src string, request bool) (*Message, value, *content) {
 	t, at, desc, err := d.follow(v, src)
 	if err != nil {
 		return &Message{Source: src, Err: err}, value{}, &noContent
 	}
+	memo := &d.contents
+	if request {
+		memo = &d.bodies
+	}
 	var c *content
 	if t.i == v.i { // only this place reaches it
-		c = d.content(t, at)
+		c = d.content(t, at, request)
 	} else {
-		c = d.contents.get(t.i, func() *content { return d.content(t, at) })
+		c = memo.get(t.i, func() *content { return d.content(t, at, request) })
 	}
 	return &Message{Description: desc, Source: c.source, Media: c.media}, t, c
 }
 
-// content compiles the content map of the object t, whose Source is at.
-func (d *document) content(t value, at string) *content {
+// content compiles the content map of the object t, whose Source is at, a
+// Request Body Object when request.
+func (d *document) content(t value, at string, request bool) *content {
 	c := &content{source: at}
 	if m := t.get("content"); m.kind() == '{' {
 		for typ, mv := range m.members() {
@@ -426,9 +448,27 @@ func (d *document) content(t value, at string) *content {
 				c.success = append(c.success, pm)
 				fallthrough
 			default:
-				md.Sequential = pm.class() == sequentialClass || strings.EqualFold(pm.typ, "multipart")
+				md.Sequential = pm.class() == sequentialClass || isMultipart(pm)
 			}
-			c.media, c.parsed = append(c.media, md), append(c.parsed, pm)
+			// A request's form or multipart type, or range of multipart
+			// types, has the fields its schema and Encoding give; */* and
+			// application/*, which cover such types, those of its schema alone
+			// (OpenAPI 3.1.2 section 4.8.14: Encoding applies to form and
+			// multipart types, and to Request Body Objects only). A response's
+			// boundary is the response's.
+			var enc *formEncoding
+			schema := []value{mv.get("schema")}
+			switch {
+			case !ok || !request:
+			case isForm(pm) || isMultipart(pm):
+				if _, _, err := pm.boundary(); err != nil {
+					md.Err = err
+				}
+				enc, md.Encoding = d.encodingOf(schema, mat+"/schema", mv.get("encoding"), mat+"/encoding", pm)
+			case pm.typ == "*" || pm.sub == "*" && strings.EqualFold(pm.typ, "application"):
+				enc, _ = d.encodingOf(schema, mat+"/schema", value{}, "", pm)
+			}
+			c.media, c.parsed, c.encodings = append(c.media, md), append(c.parsed, pm), append(c.encodings, enc)
 		}
 	}
 	return c
@@ -584,8 +624,8 @@ type inheritance struct {
 // inherited returns what an operation inherits from the root, compiled
 // once.
 func (d *document) inherited() *inheritance {
-	d.rootOnce.Do(func() {
-		r := &d.inherits
+	return loadOrMake(&d.inherits, func() *inheritance {
+		r := &inheritance{}
 		if s := d.root().get("servers"); s.hasMembers() {
 			r.servers = d.parseServers(s, d.source("/servers"))
 		} else {
@@ -595,8 +635,8 @@ func (d *document) inherited() *inheritance {
 		if sec := d.root().get("security"); sec.ok() {
 			r.security = d.compileSecurity(sec)
 		}
+		return r
 	})
-	return &d.inherits
 }
 
 // parseServers compiles the Server Objects of list, whose Source is src.

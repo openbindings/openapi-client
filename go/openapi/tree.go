@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"unicode/utf8"
 )
 
@@ -31,11 +32,9 @@ type tree struct {
 	nodes   []node
 	escapes []uint32 // the offsets of the strings written with an escape, in order
 
-	mu      sync.Mutex
-	indexes map[int32][]int32 // by container: an object's members sorted by name, an array's items
-
-	decodedMu sync.Mutex
-	decoded   []string // the value of each string of escapes, once read
+	// Read without a lock, each computed unlocked and kept as first stored.
+	indexes sync.Map                 // container to []int32: an object's members sorted by name, an array's items
+	decoded []atomic.Pointer[string] // the value of each string of escapes, once read
 }
 
 // A node is one JSON value: the offset of its first byte, the index of the
@@ -137,15 +136,12 @@ func (t *tree) str(q uint32) string {
 		s := t.src[q+1:]
 		return s[:strings.IndexByte(s, '"')]
 	}
-	t.decodedMu.Lock()
-	defer t.decodedMu.Unlock()
-	if t.decoded == nil {
-		t.decoded = make([]string, len(t.escapes))
+	if s := t.decoded[i].Load(); s != nil {
+		return *s
 	}
-	if t.decoded[i] == "" { // an escape decodes to at least one byte
-		t.decoded[i] = jsonString(t.src[q : closingQuote(t.src, int(q))+1])
-	}
-	return t.decoded[i]
+	s := jsonString(t.src[q : closingQuote(t.src, int(q))+1])
+	t.decoded[i].CompareAndSwap(nil, &s)
+	return s
 }
 
 // compareName compares the name of member c with key, reading an unescaped
@@ -173,13 +169,8 @@ func jsonString(s string) string {
 	return v
 }
 
-// text returns a string's value, or any other value as written.
-func (v value) text() string {
-	if v.kind() != '"' {
-		return v.raw()
-	}
-	return v.t.str(v.t.nodes[v.i].start)
-}
+// text returns a string's value.
+func (v value) text() string { return v.t.str(v.t.nodes[v.i].start) }
 
 // str returns the string member named key, or "".
 func (v value) str(key string) string { return v.get(key).string() }
@@ -275,10 +266,8 @@ func (v value) item(n int) value {
 // index returns the members of container i, an object's sorted by name and
 // an array's in order, building the index once.
 func (t *tree) index(i int32) []int32 {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if s, ok := t.indexes[i]; ok {
-		return s
+	if s, ok := t.indexes.Load(i); ok {
+		return s.([]int32)
 	}
 	var s []int32
 	for c := i + 1; uint32(c) < t.nodes[i].next; c = int32(t.nodes[c].next) {
@@ -298,11 +287,8 @@ func (t *tree) index(i int32) []int32 {
 			s[j] = m[j].c
 		}
 	}
-	if t.indexes == nil {
-		t.indexes = map[int32][]int32{}
-	}
-	t.indexes[i] = s
-	return s
+	kept, _ := t.indexes.LoadOrStore(i, s)
+	return kept.([]int32)
 }
 
 // at returns the value a JSON Pointer names under v, or an absent value.
@@ -325,7 +311,7 @@ func (v value) at(ptr string) value {
 			v = v.get(tok)
 		case v.kind() == '[':
 			n, err := strconv.Atoi(tok)
-			if err != nil || n < 0 || strconv.Itoa(n) != tok {
+			if err != nil || tok[0] < '0' || tok[0] > '9' || tok[0] == '0' && len(tok) > 1 { // digits, without a leading zero
 				return value{}
 			}
 			v = v.item(n)
@@ -383,7 +369,7 @@ func parseTree(ctx context.Context, src, uri string) (*tree, error) {
 	if cap(p.nodes)-len(p.nodes) > len(p.nodes)/8 {
 		p.nodes = slices.Clone(p.nodes)
 	}
-	return &tree{src: src, nodes: p.nodes, escapes: p.escapes}, nil
+	return &tree{src: src, nodes: p.nodes, escapes: p.escapes, decoded: make([]atomic.Pointer[string], len(p.escapes))}, nil
 }
 
 // A scanner reads a JSON text into a tree's nodes.

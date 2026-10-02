@@ -93,7 +93,8 @@
 // own MarshalJSON or MarshalText encodes it. A JSON body
 // or JSON part is exactly what its codec writes, null members, [] and {}
 // included. A value the client encodes that is nested deeper than 1,000 levels,
-// counted in the JSON encoding/json writes (a MarshalJSON's output included),
+// counted in the JSON encoding/json writes (a MarshalJSON's output included)
+// from the root of that value (a body, a field or part, a sequential item),
 // is refused at its key; a caller's codec receives the value as given. A
 // parameter that would take the request target or a header field past 1 MiB,
 // far beyond the 8,000 octets RFC 9110 section 4.1 asks servers to accept,
@@ -292,8 +293,11 @@
 //     every other byte as %XX), except that a property whose Encoding sets
 //     style, explode or allowReserved is written by RFC 6570, as OpenAPI
 //     says, and a Swagger 2.0 formData array by its collectionFormat.
-//     Multipart/form-data fields are never URI percent-encoded. A body is
-//     encoded once, so HTTP.Body and every GetBody give the same bytes.
+//     Multipart/form-data fields are never URI percent-encoded. A body whose
+//     every source can be sent again is encoded once, when the call is
+//     prepared, so HTTP.Body and every GetBody give the same bytes; a file in
+//     a field is read into memory then. A body holding a reader that can be
+//     read only once is encoded as the transport reads it.
 //   - Swagger 2.0 arrays and empty values: an array's items are encoded
 //     first, then joined by its collectionFormat's delimiter (csv unless
 //     declared), a nested items array by its own first; multi repeats the

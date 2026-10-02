@@ -16,10 +16,13 @@ import (
 // scaling test uses: four times the input must cost well under the sixteen
 // times a quadratic cost takes. Hardened against CI noise (stage 2 ledger,
 // "Test maintenance": "prefer allocation or work counts; for time, best of 5
-// and a 12x bound"): a cost whose quadratic shows in the heap allocation
-// count, or in the bytes allocated, is checked on that, which noise does not
-// move; any other is timed, the best of 5 runs of each size, interleaved so
-// both see the same machine load, against a 12x bound.
+// and a 12x bound"): every scaling test is checked on the bytes it
+// allocates, which noise does not move, against an 8x bound, and on its
+// time, the best of 5 runs of each size, interleaved so both see the same
+// machine load, against a 12x bound (stage 4 ledger, IP4F-9: "the scaling
+// harness checks bytes as well as time for every scaling test", whatever
+// measure it names); a cost whose quadratic shows in the heap allocation
+// count is checked on that too.
 
 // scaleRuns is how many times the harness runs the work of each size.
 const scaleRuns = 5
@@ -77,30 +80,60 @@ func bestCosts(a, b func()) (ca, cb scaleCost) {
 	return ca, cb
 }
 
-// wantLinear checks, by time, that run(4*small) costs at most 12 times
-// run(small), where run builds its input and returns the work to measure;
-// the work is run scaleRuns times for each size, so work that must start
-// fresh each time (a first use) prepares scaleRuns fresh inputs.
+// wantLinear checks that run(4*small) costs at most 12 times the time and 8
+// times the bytes allocated of run(small), where run builds its input and
+// returns the work to measure; the work is run scaleRuns times for each
+// size, so work that must start fresh each time (a first use) prepares
+// scaleRuns fresh inputs.
 func wantLinear(t *testing.T, name string, small int, run func(n int) func()) {
 	t.Helper()
 	scaleCheck(t, name, small, run, byTime)
 }
 
-// wantLinearAllocs is wantLinear checked on the heap allocation count, for a
-// cost whose quadratic shows in allocations, against an 8x bound.
+// wantLinearAllocs is wantLinear checked on the heap allocation count too,
+// for a cost whose quadratic shows in allocations, against an 8x bound. It
+// runs under -short, which skips only its time check.
 func wantLinearAllocs(t *testing.T, name string, small int, run func(n int) func()) {
 	t.Helper()
 	scaleCheck(t, name, small, run, byAllocs)
 }
 
-// wantLinearBytes is wantLinear checked on the bytes allocated, for a cost
-// whose quadratic would show in copying (as in building a string by
-// repeated concatenation), against an 8x bound.
+// wantLinearBytes is wantLinear for a cost whose quadratic would show in
+// copying (as in building a string by repeated concatenation), which the
+// bytes check every scaling test has finds; it runs under -short, which
+// skips only its time check.
 func wantLinearBytes(t *testing.T, name string, small int, run func(n int) func()) {
 	t.Helper()
 	scaleCheck(t, name, small, run, byBytes)
 }
 
+// flatBound bounds the cost of work that must not grow with its input, at
+// 16 times the input, where a cost proportional to it takes about 16 times.
+const flatBound = 3
+
+// wantFlat checks that run(large) costs at most 3 times the time and bytes
+// allocated of run(small), large being 16 times small, for work whose cost
+// must not depend on the size that grows (as a cost per field must not
+// depend on what the field reaches); time is not checked under -short.
+func wantFlat(t *testing.T, name string, small int, run func(n int) func()) {
+	t.Helper()
+	t.Run(name, func(t *testing.T) {
+		ca, cb := bestCosts(run(small), run(16*small))
+		timeRatio := float64(cb.d) / float64(max(ca.d, 100*time.Microsecond))
+		byteRatio := float64(cb.bytes) / float64(max(ca.bytes, 1))
+		t.Logf("%d: %v, %d bytes; %d: %v, %d bytes (time %.1fx, bytes %.1fx)", small, ca.d, ca.bytes, 16*small, cb.d, cb.bytes, timeRatio, byteRatio)
+		if byteRatio > flatBound {
+			t.Errorf("sixteen times the input allocated %.1f times the bytes; want a cost independent of it", byteRatio)
+		}
+		if !testing.Short() && timeRatio > flatBound {
+			t.Errorf("sixteen times the input took %.1f times as long; want a cost independent of it", timeRatio)
+		}
+	})
+}
+
+// scaleCheck runs the scaling check: bytes allocated and time always (time
+// but under -short), and the allocation count when m names it. A test that
+// names time alone is skipped under -short.
 func scaleCheck(t *testing.T, name string, small int, run func(n int) func(), m scaleMeasure) {
 	t.Helper()
 	t.Run(name, func(t *testing.T) {
@@ -113,12 +146,13 @@ func scaleCheck(t *testing.T, name string, small int, run func(n int) func(), m 
 		byteRatio := float64(cb.bytes) / float64(max(ca.bytes, 1))
 		t.Logf("%d: %v, %d allocations, %d bytes; %d: %v, %d allocations, %d bytes (time %.1fx, allocations %.1fx, bytes %.1fx)",
 			small, ca.d, ca.mallocs, ca.bytes, 4*small, cb.d, cb.mallocs, cb.bytes, timeRatio, allocRatio, byteRatio)
-		switch {
-		case m == byAllocs && allocRatio > scaleAllocBound:
+		if m == byAllocs && allocRatio > scaleAllocBound {
 			t.Errorf("four times the input made %.1f times the allocations; want linear", allocRatio)
-		case m == byBytes && byteRatio > scaleAllocBound:
+		}
+		if byteRatio > scaleAllocBound {
 			t.Errorf("four times the input allocated %.1f times the bytes; want linear", byteRatio)
-		case m == byTime && timeRatio > scaleTimeBound:
+		}
+		if !testing.Short() && timeRatio > scaleTimeBound {
 			t.Errorf("four times the input took %.1f times as long; want linear", timeRatio)
 		}
 	})
