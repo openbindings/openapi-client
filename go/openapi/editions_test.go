@@ -340,7 +340,7 @@ func TestEditionsDiscoveryBoundaries(t *testing.T) {
 				mu.Unlock()
 				return io.NopCloser(strings.NewReader(`{"type":"object"}`)), "", nil
 			}}
-			doc := editionDoc(version, `"/x":{"get":{}}`, `"$self":"https://api.example.test/model/root.json","components":{"schemas":{"S":{"discriminator":{"propertyName":"kind","defaultMapping":"other.json"},"example":{"$ref":"never.json"}}}}`)
+			doc := editionDoc(version, `"/x":{"get":{}}`, `"$self":"https://api.example.test/model/root.json","components":{"schemas":{"S":{"discriminator":{"propertyName":"kind","defaultMapping":"./other.json"},"example":{"$ref":"never.json"}}}}`)
 			c, err := l.Parse(t.Context(), []byte(doc), testDocURI, nil)
 			if err != nil {
 				t.Fatal(err)
