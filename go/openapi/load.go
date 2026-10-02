@@ -131,14 +131,16 @@ type Loader struct {
 	Origins []string
 
 	// AllowReference, when set, decides whether one document may retrieve
-	// another. from is the absolute retrieval URI of the referring document;
-	// to is the resolved absolute URI requested, or a redirect hop/final
-	// URI. It is called before the fetch or hop, may run concurrently, and
-	// must be safe for concurrent use. Returning false disables only the
-	// reference that needs to cross that boundary; the rest of the document
-	// remains usable. A callback replaces the default boundary: it can
-	// admit an arbitrary trusted source graph, or restrict one further.
-	// It does not apply to fragment-only references within a document.
+	// another. from is the absolute retrieval URI of the referring document; to
+	// is the resolved absolute URI requested, or a redirect hop/final URI. It
+	// is called before the fetch or hop, may run concurrently, and must be safe
+	// for concurrent use. Returning false disables only the reference that
+	// needs to cross that boundary; the rest of the document remains usable. A
+	// document several documents refer to is retrieved when any of them may
+	// retrieve it, whatever order they are read in, and every reference to it
+	// then resolves, as to any loaded document. A callback replaces the default
+	// boundary: it can admit an arbitrary trusted source graph, or restrict one
+	// further. It does not apply to fragment-only references within a document.
 	//
 	// With nil, http and https references may reach the entry document's
 	// original origin and Origins. For a file entry, file references may reach
