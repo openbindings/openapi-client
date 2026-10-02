@@ -92,6 +92,49 @@ func TestEditionsNestedCollectionAndUndefined(t *testing.T) {
 	}
 }
 
+// Stage 2's final [null] ruling: a nonempty list counts as given, but an
+// exploded serialization writes only defined members. Swagger multi repeats
+// name/value pairs, so [null] emits none while satisfying required presence.
+func TestEditionsSwaggerMultiAllNullPresence(t *testing.T) {
+	for _, tc := range []struct{ loc, media string }{
+		{"query", ""},
+		{"formData", "application/x-www-form-urlencoded"},
+		{"formData", "multipart/form-data"},
+	} {
+		t.Run(tc.loc+"/"+tc.media, func(t *testing.T) {
+			consumes := ""
+			if tc.media != "" {
+				consumes = `"consumes":["` + tc.media + `"],`
+			}
+			c := editionClient(t, editionDoc("2.0", `"/x":{"post":{`+consumes+`"parameters":[{"name":"p","in":"`+tc.loc+`","required":true,"type":"array","collectionFormat":"multi","items":{"type":"string"}}]}}`), nil)
+			in := &openapi.Input{Params: map[string]any{"p": []any{nil}}}
+			if tc.loc == "formData" {
+				in = &openapi.Input{Body: map[string]any{"p": []any{nil}}}
+			}
+			req := mustPrepare(t, c, "POST /x", in)
+			if tc.loc == "query" {
+				if got := req.HTTP.URL.RawQuery; got != "" {
+					t.Errorf("[null] query %q want no pairs", got)
+				}
+				return
+			}
+			body := editionBody(t, req)
+			if tc.media == "application/x-www-form-urlencoded" {
+				if len(body) != 0 {
+					t.Errorf("[null] form %q want no fields", body)
+				}
+			} else {
+				_, _, parts := readMultipart(t, req.HTTP.Header.Get("Content-Type"), body)
+				if len(parts) != 0 {
+					t.Errorf("[null] multipart has %d parts", len(parts))
+				}
+			}
+			_, err := c.Prepare("POST /x", &openapi.Input{Body: map[string]any{}})
+			wantKeys(t, "Inputs", asRequestError(t, err).Inputs, false, "Input.Body/p")
+		})
+	}
+}
+
 // doc.go NameOnlyEmpty is limited to allowEmptyValue query/formData in 2.0.
 func TestEditionsNameOnlyEmpty(t *testing.T) {
 	for _, loc := range []string{"query", "formData"} {
