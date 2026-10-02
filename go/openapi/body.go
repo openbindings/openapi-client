@@ -307,14 +307,14 @@ func (p *payload) appendForm(b []byte) ([]byte, error) {
 	if p.ra == nil {
 		return appendForm(b, p.data[:p.size]), nil
 	}
+	b = slices.Grow(b, int(p.size)) // its encoded length at least
 	chunk := make([]byte, min(p.size, 32<<10))
 	for pos := int64(0); pos < p.size; {
 		n, err := p.ra.ReadAt(chunk[:min(int64(len(chunk)), p.size-pos)], p.off+pos)
-		b, pos = appendForm(b, chunk[:n]), pos+int64(n)
-		switch {
-		case err == io.EOF:
-			return b, nil
-		case err != nil:
+		if b, pos = appendForm(b, chunk[:n]), pos+int64(n); err == io.EOF && pos < p.size {
+			err = io.ErrUnexpectedEOF // shorter than its size, as when it is a file cut short
+		}
+		if err != nil && err != io.EOF {
 			return b, fmt.Errorf("reading the field's reader: %w", err)
 		}
 	}

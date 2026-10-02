@@ -663,7 +663,7 @@ func mediaList(s string) []string {
 		switch {
 		case i == len(s) || s[i] == ',' && !quoted:
 			list, start = append(list, trimOWS(s[start:i])), i+1
-		case s[i] == '\\' && quoted:
+		case s[i] == '\\' && quoted && i+1 < len(s): // one at the end is left for the parser to refuse
 			i++
 		case s[i] == '"':
 			quoted = !quoted

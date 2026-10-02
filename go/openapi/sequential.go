@@ -43,6 +43,8 @@ var (
 	errSeparator = errors.New("a pre-encoded item holds its framing's separator")
 	errCodecSep  = errors.New("the codec's output for the item holds its framing's separator")
 	errEvent     = errors.New("an event stream item is an Event, or an object of data, event and id strings and a retry integer")
+	errEventLine = errors.New("an event's event and id cannot hold a line break")
+	errEventNUL  = errors.New("an event's id cannot hold a NUL")
 	errorType    = reflect.TypeFor[error]()
 	boolType     = reflect.TypeFor[bool]()
 )
@@ -167,10 +169,13 @@ func (d *document) appendEvent(b []byte, v any) ([]byte, error) {
 		v = *e
 	}
 	if e, ok := v.(Event); ok {
-		switch {
-		case strings.ContainsAny(e.Event, "\r\n") || e.IDSet && strings.ContainsAny(e.ID, "\r\n\x00"):
-			return b, errEvent
-		case e.RetrySet && (e.Retry < 0 || e.Retry%time.Millisecond != 0):
+		if err := eventField("event", e.Event); err != nil {
+			return b, err
+		}
+		if err := eventField("id", e.ID); e.IDSet && err != nil {
+			return b, err
+		}
+		if e.RetrySet && (e.Retry < 0 || e.Retry%time.Millisecond != 0) {
 			return b, errors.New("an event's Retry is a non-negative whole number of milliseconds")
 		}
 		switch {
@@ -191,8 +196,11 @@ func (d *document) appendEvent(b []byte, v any) ([]byte, error) {
 		}
 		return append(b, '\n'), nil
 	}
-	s, _, err := encodeJSON(d, v, marshal) // refusing a reader
-	if err != nil || s[0] != '{' {
+	s, _, err := encodeJSON(d, v, marshal) // refusing a reader and nesting past 1,000 levels
+	switch {
+	case err != nil:
+		return b, err
+	case s[0] != '{':
 		return b, errEvent
 	}
 	r := &jsonReader{s: s}
@@ -205,9 +213,12 @@ func (d *document) appendEvent(b []byte, v any) ([]byte, error) {
 		switch {
 		case name == "data" && quoted:
 			b = appendData(b, val)
-		case name == "event" && quoted && !strings.ContainsAny(val, "\r\n"),
-			name == "id" && quoted && !strings.ContainsAny(val, "\r\n\x00"),
-			name == "retry" && !quoted && strings.Trim(val, "0123456789") == "":
+		case (name == "event" || name == "id") && quoted:
+			if err := eventField(name, val); err != nil {
+				return err
+			}
+			fallthrough
+		case name == "retry" && !quoted && strings.Trim(val, "0123456789") == "":
 			b = append(append(append(append(b, name...), ": "...), val...), '\n')
 		default:
 			return errEvent
@@ -215,6 +226,19 @@ func (d *document) appendEvent(b []byte, v any) ([]byte, error) {
 		return nil
 	})
 	return append(b, '\n'), err
+}
+
+// eventField returns why an event's event or id field cannot hold s: a line
+// break, at which a receiver would split it, or, in id, a NUL, for which a
+// receiver ignores the field.
+func eventField(name, s string) error {
+	switch {
+	case strings.ContainsAny(s, "\r\n"):
+		return errEventLine
+	case name == "id" && strings.IndexByte(s, 0) >= 0:
+		return errEventNUL
+	}
+	return nil
 }
 
 // appendData appends a data line for each line of s, split at CRLF, LF or
