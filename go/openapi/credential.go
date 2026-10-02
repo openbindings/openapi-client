@@ -87,7 +87,7 @@ func Secret(secret string) Credential {
 // redirect hop the first request has already been sent, so an error or an
 // empty secret ends the call with a *url.Error wrapping f's error, along
 // with the last response, its body closed. An error from f is passed on as
-// it is.
+// it is. A nil f, like an empty secret, is no credential.
 //
 // For a golang.org/x/oauth2 TokenSource ts:
 //
