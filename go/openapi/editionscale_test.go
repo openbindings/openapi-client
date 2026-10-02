@@ -134,11 +134,10 @@ func TestEditionsSecurityURIScale(t *testing.T) {
 	})
 }
 
-// Duplicate additionalOperations fields across Path Item reference chains
-// may be ambiguous under the frozen merge rule. Regardless of disposition,
-// inspecting this input must have bounded cost rather than copying each
-// predecessor's accumulated methods at every level. No validity/merge oracle
-// for those duplicate fields is imposed by this scaling test.
+// Owner stage 6 interpretation of the frozen Path Item merge rule: the nearest
+// whole additionalOperations map is selected, and duplicate maps set Err on
+// its operations. Farther maps are not unioned. Inspecting this input must have
+// bounded cost rather than copying accumulated methods at every chain level.
 func TestEditionsAdditionalOperationsReferenceChainScale(t *testing.T) {
 	wantLinearAllocs(t, "additionalOperations chain", 200, func(n int) func() {
 		var items []string
@@ -157,7 +156,10 @@ func TestEditionsAdditionalOperationsReferenceChainScale(t *testing.T) {
 				o.fail("Parse: %v", err)
 				return
 			}
-			c.Operations()
+			ops := c.Operations()
+			if len(ops) != 1 || ops[0].Method != "M0" || ops[0].Err == nil {
+				o.fail("nearest map must yield one defective M0 operation, got %+v", ops)
+			}
 		}
 	})
 }

@@ -114,6 +114,75 @@ func TestEditionsOperationMethods(t *testing.T) {
 	}
 }
 
+// Owner stage 6 interpretation of J2: additionalOperations is one Path Item
+// field, like parameters/servers. Keep the nearest whole map; duplicate maps
+// affect its additional operations, without unioning farther methods or
+// disabling unrelated fixed operations. Forbidden fixed-name entries retain
+// the empty-Key defect required by describe.go Operations.
+func TestEditionsAdditionalOperationsMapConflicts(t *testing.T) {
+	for _, tc := range []struct {
+		name, own, middle, far string
+		methods                []string
+		duplicate              bool
+		source                 string
+	}{
+		{"own map", `,"additionalOperations":{"OWN":{},"GET":{}}`, `,"additionalOperations":{"MID":{}}`, `,"additionalOperations":{"FAR":{}}`, []string{"GET", "POST", "OWN", "GET"}, true, "#/paths/~1x/additionalOperations/OWN"},
+		{"middle map", "", `,"additionalOperations":{"MID":{}}`, `,"additionalOperations":{"FAR":{}}`, []string{"GET", "POST", "MID"}, true, "#/components/pathItems/Mid/additionalOperations/MID"},
+		{"empty nearest map", `,"additionalOperations":{}`, `,"additionalOperations":{"MID":{}}`, `,"additionalOperations":{"FAR":{}}`, []string{"GET", "POST"}, true, ""},
+		{"one inherited map", "", "", `,"additionalOperations":{"FAR":{}}`, []string{"GET", "POST", "FAR"}, false, "#/components/pathItems/Base/additionalOperations/FAR"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			doc := editionDoc("3.2.1", `"/x":{"$ref":"#/components/pathItems/Mid"`+tc.own+`}`, `"components":{"pathItems":{"Mid":{"$ref":"#/components/pathItems/Base","post":{}`+tc.middle+`},"Base":{"get":{}`+tc.far+`}}}`)
+			c := editionClient(t, doc, nil)
+			ops := c.Operations()
+			var methods []string
+			for _, op := range ops {
+				methods = append(methods, op.Method)
+			}
+			if !slices.Equal(methods, tc.methods) {
+				t.Fatalf("methods %q want %q", methods, tc.methods)
+			}
+			for _, method := range []string{"GET", "POST"} {
+				op := mustOp(t, c, method+" /x")
+				if op.Err != nil {
+					t.Errorf("unrelated fixed %s Err %v", method, op.Err)
+				}
+				mustPrepare(t, c, op.Key, nil)
+			}
+			for i, op := range ops[2:] {
+				if op.Method == "GET" {
+					if op.Key != "" || op.Err == nil {
+						t.Errorf("forbidden additional GET %+v", op)
+					}
+					continue
+				}
+				if (op.Err != nil) != tc.duplicate {
+					t.Errorf("additional %+v duplicate=%v", op, tc.duplicate)
+				}
+				if i == 0 && op.Source != testDocURI+tc.source {
+					t.Errorf("Source %s want %s", op.Source, testDocURI+tc.source)
+				}
+				if tc.duplicate {
+					req, err := c.Prepare(op.Key, nil)
+					if req != nil || !errors.Is(err, op.Err) {
+						t.Errorf("duplicate-map Prepare %v %v", req, err)
+					}
+				} else {
+					mustPrepare(t, c, op.Key, nil)
+				}
+			}
+			for _, method := range []string{"MID", "FAR"} {
+				if slices.Contains(tc.methods, method) {
+					continue
+				}
+				if _, err := c.Operation(method + " /x"); !errors.Is(err, openapi.ErrNoOperation) {
+					t.Errorf("farther method %s was unioned: %v", method, err)
+				}
+			}
+		})
+	}
+}
+
 // doc.go Bodies by method; OAS 3.0.4 Operation requestBody excludes methods
 // without defined body semantics. TRACE and CONNECT are always ignored.
 func TestEditionsBodiesByMethod(t *testing.T) {

@@ -80,7 +80,9 @@ func TestEditionsNestedCollectionAndUndefined(t *testing.T) {
 		want string
 	}{
 		{[][]string{{"a b", "c"}, {"d", "e/f"}}, "p=a%20b%20c%7Cd%20e%2Ff"},
-		{[]any{nil, []string{"a", "b"}, []any{}, []any{nil}}, "p=a%20b"},
+		// Stage 2 final RFC 6570 2.3 ruling: [null] is a defined list,
+		// serialized empty here, so its outer collection delimiter remains.
+		{[]any{nil, []string{"a", "b"}, []any{}, []any{nil}}, "p=a%20b%7C"},
 		{[]any{}, ""},
 	} {
 		req := mustPrepare(t, c, "GET /x", &openapi.Input{Params: map[string]any{"p": tc.v}})

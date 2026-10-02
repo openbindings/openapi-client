@@ -154,11 +154,17 @@ func TestEditionsCookieMembersAndUndefined(t *testing.T) {
 		_, err := c.Prepare("GET /x", &openapi.Input{Params: map[string]any{"c": v}})
 		wantKeys(t, "Inputs", asRequestError(t, err).Inputs, false, "c")
 	}
-	for _, v := range []any{nil, []any{nil, []any{}, map[string]any{}}, map[string]any{"a": nil, "b": []any{}}} {
+	for _, v := range []any{nil, []any{}, map[string]any{"a": nil, "b": []any{}}} {
 		req := mustPrepare(t, c, "POST /x", &openapi.Input{Params: map[string]any{"c": v}})
 		if got := req.HTTP.Header.Get("Cookie"); got != "" {
 			t.Errorf("undefined cookie %q", got)
 		}
+	}
+	// Stage 2's final [null] ruling: a nonempty list remains defined even
+	// when every member is undefined, so explode:false's refusal still applies.
+	for _, v := range []any{[]any{nil}, []any{nil, []any{}, map[string]any{}}} {
+		_, err := c.Prepare("POST /x", &openapi.Input{Params: map[string]any{"c": v}})
+		wantKeys(t, "Inputs", asRequestError(t, err).Inputs, false, "c")
 	}
 	req := mustPrepare(t, c, "GET /x", &openapi.Input{Params: map[string]any{"c": map[string]any{"bad;name": nil, "good": "value"}}})
 	if got := req.HTTP.Header.Get("Cookie"); got != "good=value" {
