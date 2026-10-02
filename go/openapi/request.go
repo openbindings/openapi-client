@@ -504,7 +504,7 @@ func (c *Client) resolve(s *server, setting string, re *RequestError) (endpoint,
 		}
 		return endpoint{}, false
 	}
-	cfg.endpoints.Store(s, ep)
+	cfg.endpoints.LoadOrStore(s, ep)
 	return ep, true
 }
 

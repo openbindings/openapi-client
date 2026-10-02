@@ -186,8 +186,8 @@ func (d *document) walkOf(t reflect.Type, open map[reflect.Type]bool) *walk {
 		w.levels = 1
 	}
 	w.ptrRead = byValue && !t.Implements(readerType) && reflect.PointerTo(t).Implements(readerType)
-	d.walks.Store(t, w)
-	return w
+	got, _ := d.walks.LoadOrStore(t, w)
+	return got.(*walk)
 }
 
 // inline reports whether the field of struct type t at index lies in a

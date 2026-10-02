@@ -140,7 +140,7 @@ func (t *tree) str(q uint32) string {
 		return *s
 	}
 	s := jsonString(t.src[q : closingQuote(t.src, int(q))+1])
-	t.decoded[i].Store(&s)
+	t.decoded[i].CompareAndSwap(nil, &s)
 	return s
 }
 
