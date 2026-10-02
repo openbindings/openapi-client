@@ -40,7 +40,7 @@ func readTree(ctx context.Context, content, uri string, base *url.URL) (*tree, e
 	}
 	if t == nil && ctx.Err() == nil {
 		var yamlErr error
-		if t, yamlErr = parseYAML(ctx, src, uri, unit); err == nil || !errors.Is(yamlErr, errors.ErrUnsupported) {
+		if t, yamlErr = parseYAML(ctx, src, uri, unit, len(content)); err == nil || !errors.Is(yamlErr, errors.ErrUnsupported) {
 			err = yamlErr
 		}
 	}
@@ -144,25 +144,4 @@ func rejection(uri, src string, i, unit int, msg string) error {
 		}
 	}
 	return fmt.Errorf("openapi: %s:%d:%d: %s", uri, 1+strings.Count(src[:i], "\n"), col+1, msg)
-}
-
-// parseYAML reads src, a YAML stream in UTF-8 that took unit bytes per code
-// unit as retrieved, as the document at uri. A %YAML directive for a major
-// version other than 1 rejects it (YAML 1.2.2 section 6.8.1), and one for
-// 1.x becomes a comment, so the stream is read as YAML 1.2.
-func parseYAML(ctx context.Context, src, uri string, unit int) (*tree, error) {
-	for i := 0; i < len(src); {
-		line, _, _ := strings.Cut(src[i:], "\n")
-		if v, ok := strings.CutPrefix(line, "%YAML"); ok && v != "" && (v[0] == ' ' || v[0] == '\t') {
-			v, _, _ = strings.Cut(v, "#")
-			if major, _, _ := strings.Cut(strings.TrimSpace(v), "."); major != "1" {
-				return nil, rejection(uri, src, i, unit, "a %YAML directive for a version other than 1.x")
-			}
-			src = src[:i] + "#" + src[i+1:]
-		} else if s := strings.TrimLeft(line, " \t\r"); line != "" && line[0] != '%' && s != "" && s[0] != '#' {
-			break // the directives end where the document begins
-		}
-		i += len(line) + 1
-	}
-	return nil, fmt.Errorf("openapi: %s: YAML documents are not implemented yet: %w", uri, errors.ErrUnsupported)
 }
