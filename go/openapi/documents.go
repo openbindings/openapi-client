@@ -34,16 +34,18 @@ type loading struct {
 	hc      *http.Client
 	limit   int64
 	left    atomic.Int64 // the bytes MaxBytes leaves, below zero once passed
+	entry   string       // the URI the entry was requested as
 	origins []*url.URL   // Origins, then the entry's original origin if it is http or https
 	dir     string       // a file entry's directory, cleaned and its symlinks resolved, or ""
 }
 
-// start begins a load with l's settings and the HTTPClient of opts.
-func (l *Loader) start(ctx context.Context, opts *Options) (*loading, error) {
+// start begins a load of the entry requested as uri, with l's settings and
+// the HTTPClient of opts.
+func (l *Loader) start(ctx context.Context, uri string, opts *Options) (*loading, error) {
 	if len(l.Origins) > 0 && l.AllowReference != nil {
 		return nil, errors.New("openapi: a Loader cannot set both Origins and AllowReference")
 	}
-	ld := &loading{Loader: l, ctx: ctx, hc: http.DefaultClient, limit: limit(l.MaxBytes, 64<<20)}
+	ld := &loading{Loader: l, ctx: ctx, hc: http.DefaultClient, limit: limit(l.MaxBytes, 64<<20), entry: uri}
 	if opts != nil && opts.HTTPClient != nil {
 		ld.hc = opts.HTTPClient
 	}
@@ -56,11 +58,10 @@ func (l *Loader) start(ctx context.Context, opts *Options) (*loading, error) {
 	return ld, nil
 }
 
-// bound sets the default boundary of an entry requested as uri and
-// retrieved from final: an http or https entry's origin as requested, or a
-// file entry's directory.
-func (ld *loading) bound(uri, final string) {
-	if u, err := url.Parse(uri); err == nil && (u.Scheme == "http" || u.Scheme == "https") {
+// bound sets the default boundary of the entry, retrieved from final: an
+// http or https entry's origin as requested, or a file entry's directory.
+func (ld *loading) bound(final string) {
+	if u, err := url.Parse(ld.entry); err == nil && (u.Scheme == "http" || u.Scheme == "https") {
 		ld.origins = append(ld.origins, u)
 	} else if u, err := url.Parse(final); err == nil && u.Scheme == "file" {
 		ld.dir, _ = filepath.EvalSymlinks(filepath.Dir(filepath.FromSlash(u.Path)))
@@ -292,6 +293,12 @@ type fetch struct {
 // identifies. Every node of every document is then numbered: the entry's
 // first, then the others' by URI.
 func (d *document) discover(ld *loading) error {
+	if !d.reaches && !d.declares { // the entry alone
+		d.trees, d.named = []*tree{d.tree}, map[string]*tree{d.uri: d.tree}
+		d.pages = make([]atomic.Pointer[[factsPage]facts], len(d.nodes)/factsPage+1)
+		return nil
+	}
+	ld.bound(d.uri)
 	dc := &discovery{document: d, ld: ld, readers: map[*tree]*reader{}, wants: map[string][]want{}, asked: map[string]bool{}}
 	d.named = map[string]*tree{}
 	dc.add(d.tree, "", d.newReader(d.tree, rootKind))

@@ -181,7 +181,7 @@ const (
 // Load reads a document as the package's Load function does, with l's
 // settings.
 func (l *Loader) Load(ctx context.Context, uri string, opts *Options) (*Client, error) {
-	ld, err := l.start(ctx, opts)
+	ld, err := l.start(ctx, uri, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -189,7 +189,6 @@ func (l *Loader) Load(ctx context.Context, uri string, opts *Options) (*Client, 
 	if err != nil {
 		return nil, err
 	}
-	ld.bound(uri, final)
 	return newClient(ld, content, final, opts)
 }
 
@@ -199,11 +198,10 @@ func (l *Loader) Load(ctx context.Context, uri string, opts *Options) (*Client, 
 // AllowReference admits them; relative external references have no base
 // unless an OpenAPI 3.2 absolute $self supplies one.
 func (l *Loader) Parse(ctx context.Context, content []byte, uri string, opts *Options) (*Client, error) {
-	ld, err := l.start(ctx, opts)
+	ld, err := l.start(ctx, uri, opts)
 	if err != nil {
 		return nil, err
 	}
-	ld.bound(uri, uri)
 	return newClient(ld, string(content), uri, opts)
 }
 
