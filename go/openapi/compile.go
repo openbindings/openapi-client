@@ -208,7 +208,7 @@ func (o *operation) addParams(list value, src string, ids map[paramID]int, errs 
 	}
 	i := 0
 	for _, v := range list.members() {
-		pp := o.doc.param(v, src+"/"+strconv.Itoa(i))
+		pp := o.doc.param(v, src, i)
 		i++
 		p := pp.Param
 		if p.In == "header" && (strings.EqualFold(p.Name, "Accept") || strings.EqualFold(p.Name, "Content-Type") || strings.EqualFold(p.Name, "Authorization")) {
@@ -258,13 +258,20 @@ func (o *operation) assignKeys() {
 	}
 }
 
-// param describes and compiles the Parameter Object v, whose Source is src,
-// following references. A target that references reach is compiled once,
-// its descriptor copied for each.
-func (d *document) param(v value, src string) param {
-	t, at, desc, err := d.follow(v, src)
+// param describes and compiles the Parameter Object v, item i of the list
+// whose Source is list, following references. A target that references
+// reach is compiled once, its descriptor copied for each; only a parameter
+// written in the list, or one whose reference cannot be followed, has a
+// Source in the list, made only then.
+func (d *document) param(v value, list string, i int) param {
+	src := func() string { return list + "/" + strconv.Itoa(i) }
+	at := ""
+	if ref, _, _ := reference(v); !ref.ok() {
+		at = src()
+	}
+	t, at, desc, err := d.follow(v, at)
 	if err != nil {
-		return param{Param: &Param{Source: src, Err: err}}
+		return param{Param: &Param{Source: src(), Err: err}}
 	}
 	var pp param
 	if t.i == v.i { // only this place reaches it
