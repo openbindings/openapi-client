@@ -97,16 +97,16 @@ func Parse(ctx context.Context, content []byte, uri string, opts *Options) (*Cli
 // $self, a schema by $id, a plain name by $anchor or $dynamicAnchor. This is
 // decided once every document reached is parsed. Only a URI no loaded document
 // identifies is admitted and fetched, and the fetched document is then searched
-// the same way. A reference to a URI with userinfo, or to a file URL naming a
-// host other than localhost, is unresolvable and never fetched, as Load refuses
-// such a uri. A URI claimed by two different documents or schemas is
-// unresolvable, and the error names both; a document's URI and the $id of the
-// schema at its root claim one schema. A reference that names a 3.2 document by
-// the URI it was retrieved from rather than its $self, or that reaches a schema
-// by a JSON Pointer crossing a nearer $id, still resolves; it stays visible as
-// written where it is written, in a Schema's Raw or in Document at the Source
-// of the object holding it. Security requirement names resolve as
-// [SchemeLookup] says.
+// the same way. A reference to a URI with userinfo or with leading or trailing
+// whitespace, or to a file URL naming a host other than localhost, is
+// unresolvable and never fetched, as Load refuses such a uri. A URI claimed by
+// two different documents or schemas is unresolvable, and the error names both;
+// a document's URI and the $id of the schema at its root claim one schema. A
+// reference that names a 3.2 document by the URI it was retrieved from rather
+// than its $self, or that reaches a schema by a JSON Pointer crossing a nearer
+// $id, still resolves; it stays visible as written where it is written, in a
+// Schema's Raw or in Document at the Source of the object holding it. Security
+// requirement names resolve as [SchemeLookup] says.
 type Loader struct {
 	// Fetch, if set, retrieves each document the loader needs in place of
 	// the default (http and https with the Options' HTTPClient, file URLs
