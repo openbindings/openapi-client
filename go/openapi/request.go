@@ -329,7 +329,7 @@ func (c *Client) writePath(b *strings.Builder, o *operation, in *Input, re *Requ
 	segment, valued := b.Len(), -1 // where the segment begins, and a parameter in it
 	endSegment := func(end int) {
 		if valued >= 0 {
-			if s := dotUnescaper.Replace(b.String()[segment:end]); s == "." || s == ".." {
+			if isDotSegment(b.String()[segment:end]) {
 				re.input(o.params[valued].Key, errDotSegment)
 			}
 		}
@@ -521,9 +521,24 @@ func (c *Client) resolve(s *server, setting string, re *RequestError) (endpoint,
 	return ep, true
 }
 
-// dotUnescaper decodes percent-encoded dots, equivalent to "." (RFC 3986
-// section 6.2.2.2).
-var dotUnescaper = strings.NewReplacer("%2e", ".", "%2E", ".")
+// isDotSegment recognizes one or two dot atoms without copying the segment.
+// Percent-encoded dots are equivalent to "." (RFC 3986 section 6.2.2.2).
+func isDotSegment(s string) bool {
+	for range 2 {
+		switch {
+		case strings.HasPrefix(s, "."):
+			s = s[1:]
+		case len(s) >= 3 && s[0] == '%' && s[1] == '2' && (s[2] == 'e' || s[2] == 'E'):
+			s = s[3:]
+		default:
+			return false
+		}
+		if s == "" {
+			return true
+		}
+	}
+	return false
+}
 
 // dotSegment reports whether one of the path segments of u from start,
 // where one begins, to end is "." or "..", percent-encoded or not.
@@ -533,7 +548,7 @@ func dotSegment(u string, start, end int) bool {
 		if n < 0 {
 			n = len(u) - start
 		}
-		if s := dotUnescaper.Replace(u[start : start+n]); s == "." || s == ".." {
+		if isDotSegment(u[start : start+n]) {
 			return true
 		}
 		if start += n; start == len(u) || u[start] != '/' {
