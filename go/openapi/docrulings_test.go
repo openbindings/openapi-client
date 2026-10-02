@@ -73,30 +73,40 @@ func TestColumnsInUTF16AndUTF32(t *testing.T) {
 // aliased 8,000 times adds 8,000 nodes, within the node bounds, and 240 MB,
 // beyond the byte bound, so it is rejected without its expansion being
 // built; aliased 50 times, it adds 1.5 MB, under the bound of about 3 MB,
-// and loads. A loader that expanded the first would use hundreds of
-// megabytes, so the test runs in a child process.
+// and loads. The same holds for the document written in UTF-16, whose own
+// size counts its own bytes (SQ13), with the same margins. A loader that
+// expanded the first would use hundreds of megabytes, so the test runs in a
+// child process.
 func TestYAMLAliasByteBound(t *testing.T) {
 	if !inChild(t) {
 		return
 	}
-	doc := func(aliases int) []byte {
-		return []byte(yamlHead + "x-s: &s \"" + strings.Repeat("a", 30000) + "\"\nx-a: [" + strings.TrimSuffix(strings.Repeat("*s, ", aliases), ", ") + "]\n")
-	}
-	c := parsed(t, doc(50))
-	sameJSON(t, "the last alias", c.Document(testDocURI+"#/x-a/49"), []byte(`"`+strings.Repeat("a", 30000)+`"`))
+	for _, enc := range []struct {
+		name string
+		text func(string) []byte
+	}{
+		{"UTF-8", func(s string) []byte { return []byte(s) }},
+		{"UTF-16LE with a BOM", func(s string) []byte { return utf16Text(s, false, true) }},
+	} {
+		doc := func(aliases int) []byte {
+			return enc.text(yamlHead + "x-s: &s \"" + strings.Repeat("a", 30000) + "\"\nx-a: [" + strings.TrimSuffix(strings.Repeat("*s, ", aliases), ", ") + "]\n")
+		}
+		c := parsed(t, doc(50))
+		sameJSON(t, enc.name+": the last alias", c.Document(testDocURI+"#/x-a/49"), []byte(`"`+strings.Repeat("a", 30000)+`"`))
 
-	big := doc(8000)
-	var err error
-	cost := measureRun(func() { _, err = openapi.Parse(context.Background(), big, testDocURI, nil) })
-	if err == nil {
-		t.Fatalf("a %d-byte document whose aliases add 240 MB loaded", len(big))
-	}
-	if !strings.Contains(err.Error(), testDocURI) {
-		t.Errorf("rejection %q does not name the document", err)
-	}
-	t.Logf("rejected in %v, %d bytes allocated: %v", cost.d, cost.bytes, err)
-	if cost.bytes > 64<<20 {
-		t.Errorf("rejecting it allocated %d bytes; the bound stops it at about %d added", cost.bytes, 100*len(big))
+		big := doc(8000)
+		var err error
+		cost := measureRun(func() { _, err = openapi.Parse(context.Background(), big, testDocURI, nil) })
+		if err == nil {
+			t.Fatalf("%s: a %d-byte document whose aliases add 240 MB loaded", enc.name, len(big))
+		}
+		if !strings.Contains(err.Error(), testDocURI) {
+			t.Errorf("%s: rejection %q does not name the document", enc.name, err)
+		}
+		t.Logf("%s: rejected in %v, %d bytes allocated: %v", enc.name, cost.d, cost.bytes, err)
+		if cost.bytes > 64<<20 {
+			t.Errorf("%s: rejecting it allocated %d bytes; the bound stops it at about %d added", enc.name, cost.bytes, 100*len(big))
+		}
 	}
 }
 
@@ -370,9 +380,10 @@ func jsonNoHTML(t testing.TB, s string) string {
 // whitespace, its members in the order written and its strings as
 // encoding/json writes them without HTML escaping. A number keeps its
 // spelling where JSON's grammar allows it; otherwise only what the grammar
-// requires changes: a leading + is dropped, a 0 is written before a leading
-// point, a point with no digit after it is dropped, and a hexadecimal or
-// octal integer is written in decimal" (SQ10). Exact bytes, for the whole
+// requires changes: a leading + is dropped, as are zeros leading a whole part
+// of more than one digit, a 0 is written before a leading point, a point
+// with no digit after it is dropped, and a hexadecimal or octal integer is
+// written in decimal" (SQ10, SQ12). Exact bytes, for the whole
 // document, a node, and a Schema's Raw ("as the Loader converts it").
 func TestYAMLDocumentBytes(t *testing.T) {
 	str := "tab\there \"q\" back\\slash \u2028 \x01 \x7f é 😀 </script> & <b>"
@@ -387,7 +398,7 @@ paths:
           in: query
           schema: {type: integer, maximum: +12, minimum: .5, multipleOf: 5., x-hex: 0x1F}
 x-s: "tab\there \"q\" back\\slash \u2028 \x01 \x7f é 😀 </script> & <b>"
-x-n: [+12, .5, -.5, 5., +1.5e3, 1E-2, 0x1F, 0o17, 0xFF, 1e400, -0, 1.50, 0.000, 5.e3, +.5, -5., 1E+2, 123456789012345678901234567890]
+x-n: [+12, .5, -.5, 5., +1.5e3, 1E-2, 0x1F, 0o17, 0xFF, 1e400, -0, 1.50, 0.000, 5.e3, +.5, -5., 1E+2, 123456789012345678901234567890, 007, 0777, -007, 00.5, -00.5]
 x-b: [true, True, FALSE, null, ~, Null, '']
 x-o: {z: 1, a: 2}
 x-keys: {200: a, 1.0: b, "q\"k": c, "<k>": d, ü: e}
@@ -396,7 +407,7 @@ x-block: |
   line two
 `
 	schema := `{"type":"integer","maximum":12,"minimum":0.5,"multipleOf":5,"x-hex":31}`
-	numbers := `[12,0.5,-0.5,5,1.5e3,1E-2,31,15,255,1e400,-0,1.50,0.000,5e3,0.5,-5,1E+2,123456789012345678901234567890]`
+	numbers := `[12,0.5,-0.5,5,1.5e3,1E-2,31,15,255,1e400,-0,1.50,0.000,5e3,0.5,-5,1E+2,123456789012345678901234567890,7,777,-7,0.5,-0.5]`
 	want := `{"openapi":"3.1.0","info":{"title":"<a & b>","version":"1"},"paths":{"/p":{"get":{"operationId":"p","parameters":[{"name":"q","in":"query","schema":` + schema + `}]}}},` +
 		`"x-s":` + jsonNoHTML(t, str) + `,"x-n":` + numbers + `,"x-b":[true,true,false,null,null,null,""],"x-o":{"z":1,"a":2},` +
 		`"x-keys":{"200":"a","1.0":"b",` + jsonNoHTML(t, `q"k`) + `:"c","<k>":"d","ü":"e"},"x-block":"line one\nline two\n"}`
