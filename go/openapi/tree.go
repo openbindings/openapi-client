@@ -316,7 +316,7 @@ func (v value) at(ptr string) value {
 			v = v.get(tok)
 		case v.kind() == '[':
 			n, err := strconv.Atoi(tok)
-			if err != nil || n < 0 || strconv.Itoa(n) != tok {
+			if err != nil || tok[0] < '0' || tok[0] > '9' || tok[0] == '0' && len(tok) > 1 { // digits, without a leading zero
 				return value{}
 			}
 			v = v.item(n)

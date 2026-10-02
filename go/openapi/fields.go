@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 // A formEncoding is the Encoding of a form or multipart Media, or the fields
@@ -30,12 +31,13 @@ var noFields = &formEncoding{}
 // multipart/form-data; and the media types it otherwise takes.
 type field struct {
 	param
-	styled bool          // its Encoding sets style, explode or allowReserved, where they apply
-	types  []string      // the media types it takes, as written
-	parsed []parsedMedia // types, parsed
-	class  class         // the class of a sole type
-	listed bool          // its Encoding lists them, so a Part's MediaType must match one
-	roots  []value       // its declarations, whose properties a nested part's fields are
+	styled bool                            // its Encoding sets style, explode or allowReserved, where they apply
+	types  []string                        // the media types it takes, as written
+	parsed []parsedMedia                   // types, parsed
+	class  class                           // the class of a sole type
+	listed bool                            // its Encoding lists them, so a Part's MediaType must match one
+	roots  []value                         // its declarations, whose properties a nested part's fields are
+	nested [2]atomic.Pointer[formEncoding] // the fields of its nested part, and of an item's
 }
 
 // untyped is a field no schema or Encoding describes, whose type is absent
@@ -106,86 +108,315 @@ func (d *document) encodingOf(s []value, src string, encodings value, esrc strin
 // nested returns the fields of a nested part f writes from an object: in
 // OpenAPI 3.1 those its schemas declare, each of its default type, or, for an
 // item or a field whose schemas allow an array but no object, those its items
-// declare; compiled once per schema.
+// declare; compiled once per schema, and found once per field.
 func (d *document) nested(f *field, item bool) *formEncoding {
-	roots := f.roots
-	if sh := d.shapeOf(roots); sh.array && (item || !sh.object) {
-		roots = sh.items
+	p := &f.nested[0]
+	if item {
+		p = &f.nested[1]
 	}
-	if len(roots) == 0 {
-		return noFields
+	if enc := p.Load(); enc != nil {
+		return enc
 	}
-	k := stateKey(roots)
-	if enc, ok := d.forms.Load(k); ok {
-		return enc.(*formEncoding)
+	roots, enc := f.roots, noFields
+	if l := d.typing(roots); l.array && (item || !l.object) {
+		if roots = l.items; l.item.ok() {
+			roots = []value{l.item}
+		}
 	}
-	enc, _ := d.encodingOf(roots, "", value{}, "", parsedMedia{})
-	got, _ := d.forms.LoadOrStore(k, enc)
-	return got.(*formEncoding)
+	if len(roots) > 0 {
+		k := stateOf(roots)
+		e, ok := d.forms.Load(k)
+		if !ok {
+			e, _ = d.encodingOf(roots, "", value{}, "", parsedMedia{})
+			e, _ = d.forms.LoadOrStore(k, e)
+		}
+		enc = e.(*formEncoding)
+	}
+	p.CompareAndSwap(nil, enc)
+	return p.Load()
 }
 
-// closure calls f with each schema of s, at src, and every schema they reach
-// by $ref and allOf, depth first in document order, each once and at most
-// maxDepth of them. It reports false when there were more. A $ref is a
-// keyword of its schema (JSON Schema 2020-12 section 8.2.3.1), its target
-// another schema reached, whose own keywords and $ref apply too.
-func (d *document) closure(s []value, src string, f func(s value, at string)) bool {
+// A shape is what a schema and the schemas its $ref and allOf reach say of
+// a value, computed once per schema: the JSON types all of them allow,
+// whether one has a type or a contentEncoding, the items schema when just
+// one of them declares items, and, so that their properties and items are
+// found walking only the schemas that declare some, which of the schemas it
+// names reach a declaration. A $ref is a keyword of its schema (JSON Schema
+// 2020-12 section 8.2.3.1), its target another schema reached, whose own
+// keywords and $ref apply too.
+type shape struct {
+	types          uint8 // jsonTypes' bits
+	typed, encoded bool
+	declares       bool  // it or a schema it reaches declares properties or items
+	items          value // the schemas declaring items declare it, if one does
+	several        bool  // and several do
+	kids           []kid // the schemas it names that declare, in document order
+}
+
+// A kid is a schema another names: its $ref target, at ptr, or its allOf
+// member n.
+type kid struct {
+	v   value
+	ptr string
+	n   int // -1 for the $ref target
+}
+
+// JSON Schema's types, as bits.
+var jsonTypes = map[string]uint8{"string": 1, "number": 2, "integer": 4, "boolean": 8, "object": 16, "array": 32, "null": 64}
+
+// meet makes s what s and t say together.
+func (s *shape) meet(t *shape) {
+	s.types &= t.types
+	s.typed, s.encoded, s.declares = s.typed || t.typed, s.encoded || t.encoded, s.declares || t.declares
+	if !s.items.ok() {
+		s.items, s.several = t.items, t.several
+	} else if t.items.ok() && (t.items != s.items || t.several) {
+		s.several = true
+	}
+}
+
+// own returns what the schema v says itself, and the schemas it names, its
+// keywords read in one pass while it has few, and looked up otherwise.
+func (d *document) own(v value) (shape, []kid) {
+	var t, enc, props, ref, all value
+	s, n := shape{types: 127}, 0
+	for name, m := range v.members() {
+		if n++; n > many {
+			t, enc, props, s.items, ref, all = v.get("type"), v.get("contentEncoding"), v.get("properties"), v.get("items"), v.get("$ref"), v.get("allOf")
+			break
+		}
+		switch name {
+		case "type":
+			t = m
+		case "contentEncoding":
+			enc = m
+		case "properties":
+			props = m
+		case "items":
+			s.items = m
+		case "$ref":
+			ref = m
+		case "allOf":
+			all = m
+		}
+	}
+	if t.ok() {
+		s.typed, s.types = true, jsonTypes[t.string()]
+		for _, n := range t.members() {
+			s.types |= jsonTypes[n.string()]
+		}
+		if s.types&2 != 0 {
+			s.types |= 4 // a number may be an integer (JSON Schema 2020-12 Validation section 6.1.1)
+		}
+	}
+	s.encoded, s.declares = enc.ok(), props.ok() || s.items.ok()
+	var kids []kid
+	if ref.kind() == '"' {
+		if t, ptr, err := d.target(ref.text()); err == nil {
+			kids = append(kids, kid{t, ptr, -1})
+		}
+	}
+	n = 0
+	for _, e := range all.members() {
+		kids, n = append(kids, kid{e, "", n}), n+1
+	}
+	if len(kids) > 1 && kids[0].n < 0 && all.i < ref.i { // allOf first in document order
+		kids = append(kids[1:], kids[0])
+	}
+	return s, kids
+}
+
+// The facts of a schema node are what it compiles to, each once: its shape,
+// and the default media types of a field it alone types.
+type facts struct {
+	shape atomic.Pointer[shape]
+	set   atomic.Uint32 // the mediaSet, with bit 8 set once known
+}
+
+// factsPage is how many nodes' facts are made at a time.
+const factsPage = 128
+
+// facts returns node i's facts, its page of them made on first use.
+func (d *document) facts(i int32) *facts {
+	p := &d.pages[i/factsPage]
+	if p.Load() == nil {
+		p.CompareAndSwap(nil, new([factsPage]facts))
+	}
+	return &p.Load()[i%factsPage]
+}
+
+// shapeOf returns the shape of the schema v, computing it, and that of each
+// schema it reaches by $ref and allOf, once: at once when each of those it
+// names is known or names none, as most do, and otherwise in one walk without
+// recursion that finds the schemas of each cycle, which reach each other and
+// so share what they say (Tarjan's strongly connected components).
+func (d *document) shapeOf(v value) *shape {
+	f := d.facts(v.i)
+	if s := f.shape.Load(); s != nil {
+		return s
+	}
+	s, kids := d.own(v)
+	kept := kids[:0] // filtered in place
+	for _, k := range kids {
+		ks := d.facts(k.v.i).shape.Load()
+		if ks == nil {
+			if s, kids := d.own(k.v); len(kids) == 0 {
+				ks = d.keep(k.v, s)
+			}
+		}
+		if ks == nil {
+			return d.walk(v)
+		}
+		if s.meet(ks); ks.declares {
+			kept = append(kept, k)
+		}
+	}
+	s.kids = kept
+	return d.keep(v, s)
+}
+
+// keep publishes s as the shape of v, unless one is, returning the one
+// published.
+func (d *document) keep(v value, s shape) *shape {
+	f := d.facts(v.i)
+	f.shape.CompareAndSwap(nil, &s)
+	return f.shape.Load()
+}
+
+// walk computes the shape of v and of each schema it reaches without one.
+func (d *document) walk(v value) *shape {
+	s, kids := d.own(v)
+	type node struct {
+		v          value
+		s          shape
+		kids, kept []kid // all it names, and those that declare or are of its cycle
+		next, low  int
+	}
+	var buf [4]node
+	var pbuf, obuf [4]int
+	nodes, path, open := buf[:0], pbuf[:0], obuf[:0] // nodes in the order entered, which is each one's index
+	var byNode map[int32]int                         // once there are many
+	for next := v; ; {
+		if next.ok() { // enter it
+			nodes, path, open = append(nodes, node{v: next, s: s, kids: kids, kept: kids[:0], low: len(nodes)}), append(path, len(nodes)), append(open, len(nodes))
+			if byNode == nil && len(nodes) > many {
+				byNode = map[int32]int{}
+				for n := range nodes {
+					byNode[nodes[n].v.i] = n
+				}
+			} else if byNode != nil {
+				byNode[next.i] = len(nodes) - 1
+			}
+			next = value{}
+		}
+		top := path[len(path)-1]
+		n := &nodes[top]
+		if n.next < len(n.kids) {
+			k := n.kids[n.next]
+			n.next++
+			m, ok := byNode[k.v.i]
+			for j := 0; byNode == nil && j < len(nodes) && !ok; j++ {
+				m, ok = j, nodes[j].v.i == k.v.i
+			}
+			switch ks := d.facts(k.v.i).shape.Load(); {
+			case ks != nil:
+				n.s.meet(ks)
+				if ks.declares {
+					n.kept = append(n.kept, k)
+				}
+			case ok: // open, as one done is kept: of n's cycle
+				n.low, n.kept = min(n.low, m), append(n.kept, k)
+			default:
+				if s, kids = d.own(k.v); len(kids) > 0 {
+					next = k.v
+				} else {
+					ks := d.keep(k.v, s)
+					if n.s.meet(ks); ks.declares {
+						n.kept = append(n.kept, k)
+					}
+				}
+			}
+			continue
+		}
+		path = path[:len(path)-1]
+		var p *node
+		if len(path) > 0 {
+			p = &nodes[path[len(path)-1]]
+		}
+		if n.low < top { // of a cycle with p
+			p.low, p.kept = min(p.low, n.low), append(p.kept, p.kids[p.next-1])
+			continue
+		}
+		i := slices.Index(open, top) // n and the nodes opened after it are a cycle, or n alone
+		s := n.s
+		for _, m := range open[i:] {
+			s.meet(&nodes[m].s)
+		}
+		var done *shape
+		for _, m := range open[i:] {
+			ms := s
+			if ms.kids = nodes[m].kept; !s.declares {
+				ms.kids = nil
+			}
+			if ks := d.keep(nodes[m].v, ms); m == top {
+				done = ks
+			}
+		}
+		if open = open[:i]; p == nil {
+			return done
+		}
+		if p.s.meet(done); done.declares {
+			p.kept = append(p.kept, p.kids[p.next-1])
+		}
+	}
+}
+
+// closure calls f with each schema of s, at src, and each schema they reach
+// by $ref and allOf that declares properties or items, depth first in
+// document order, each once.
+func (d *document) closure(s []value, src string, f func(s value, at string)) {
 	type schema struct {
 		v  value
 		at string
 	}
-	var stack []schema
+	var sbuf [8]schema
+	var vbuf [many]int32
+	stack, visited := sbuf[:0], vbuf[:0] // the schemas visited, scanned while few
+	var seen map[int32]bool              // and then looked up
 	for i := len(s) - 1; i >= 0; i-- {
 		stack = append(stack, schema{s[i], src})
 	}
-	var seen map[int32]bool // made once a schema can be reached twice
-	if len(s) > 1 {
-		seen = map[int32]bool{}
-	}
-	for n := 0; len(stack) > 0; {
+	for len(stack) > 0 {
 		top := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
-		if !top.v.ok() || seen[top.v.i] {
+		if !top.v.ok() || seen[top.v.i] || seen == nil && slices.Contains(visited, top.v.i) {
 			continue
 		}
-		if n++; n > maxDepth {
-			return false
+		if seen == nil && len(visited) == many {
+			seen = map[int32]bool{}
+			for _, i := range visited {
+				seen[i] = true
+			}
+		}
+		if seen != nil {
+			seen[top.v.i] = true
+		} else {
+			visited = append(visited, top.v.i)
 		}
 		f(top.v, top.at)
-		mark := len(stack)
-		for name, m := range top.v.members() {
-			switch name {
-			case "$ref":
-				if m.kind() != '"' {
-					break
-				}
-				if t, ptr, err := d.target(m.text()); err == nil {
-					at := ""
-					if top.at != "" {
-						at = d.source(ptr)
-					}
-					stack = append(stack, schema{t, at})
-				}
-			case "allOf":
-				i := 0
-				for _, e := range m.members() {
-					at := ""
-					if top.at != "" {
-						at = top.at + "/allOf/" + strconv.Itoa(i)
-					}
-					stack, i = append(stack, schema{e, at}), i+1
-				}
+		kids := d.shapeOf(top.v).kids
+		for i := len(kids) - 1; i >= 0; i-- { // the first in document order on top
+			k, at := kids[i], ""
+			switch {
+			case top.at == "":
+			case k.n < 0:
+				at = d.source(k.ptr)
+			default:
+				at = top.at + "/allOf/" + strconv.Itoa(k.n)
 			}
-		}
-		if len(stack) > mark || seen != nil {
-			if seen == nil {
-				seen = map[int32]bool{}
-			}
-			seen[top.v.i] = true
-			slices.Reverse(stack[mark:]) // the first in document order on top
+			stack = append(stack, schema{k.v, at})
 		}
 	}
-	return true
 }
 
 // A mediaSet is a set of the default media types a field may take.
@@ -206,76 +437,76 @@ var defaultMedia = [...]struct {
 	{textDefault, parsedMedia{"text/plain", "text", "plain", ""}},
 }
 
-// A shape is what a field's schemas say of its values' types: the defaults
-// of the types they allow other than array (OpenAPI 3.1.2 section
-// 4.8.15.1.1), whether they allow an object or an array, and the schemas of
-// an array's items.
-type shape struct {
+// A typing is what the schemas of a value and those their $ref and allOf
+// reach say of its type together: the defaults of the types they allow other
+// than array (OpenAPI 3.1.2 section 4.8.15.1.1), whether they allow an
+// object or an array, and the schema of an array's items, or the schemas
+// when several declare items. A string with a contentEncoding is
+// application/octet-stream, as is a value whose type no schema constrains,
+// or nothing can be.
+type typing struct {
 	own           mediaSet
 	object, array bool
+	item          value
 	items         []value
 }
 
-// JSON Schema's types, as bits.
-var jsonTypes = map[string]uint8{"string": 1, "number": 2, "integer": 4, "boolean": 8, "object": 16, "array": 32, "null": 64}
-
-// shapeOf returns the shape of the values the schemas s and those their $ref
-// and allOf reach allow: the types they allow, intersected, a schema without
-// type allowing all. A string with a contentEncoding is
-// application/octet-stream, as is a value whose type no schema constrains,
-// or nothing can be.
-func (d *document) shapeOf(s []value) shape {
-	allowed, constrained, encoded := uint8(127), false, false
-	var items []value
-	all := d.closure(s, "", func(s value, _ string) {
-		if t := s.get("type"); t.ok() {
-			set := uint8(0)
-			if t.kind() == '"' {
-				set = jsonTypes[t.text()]
-			}
-			for _, n := range t.members() {
-				set |= jsonTypes[n.string()]
-			}
-			allowed, constrained = allowed&set, true
+// typing returns the typing of a value whose schemas are s.
+func (d *document) typing(s []value) typing {
+	sh := shape{types: 127}
+	for _, r := range s {
+		if r.ok() {
+			sh.meet(d.shapeOf(r))
 		}
-		encoded = encoded || s.get("contentEncoding").ok()
-		if it := s.get("items"); it.ok() {
-			items = append(items, it)
-		}
-	})
-	var sh shape
-	switch {
-	case !all || !constrained || allowed&^64 == 0:
-		return shape{own: octetDefault}
-	case allowed&1 != 0 && encoded:
-		sh.own = octetDefault
-	case allowed&1 != 0:
-		sh.own = textDefault
 	}
-	if allowed&(2|4|8) != 0 {
-		sh.own |= textDefault
+	var l typing
+	switch t := sh.types; {
+	case !sh.typed || t&^64 == 0:
+		return typing{own: octetDefault}
+	case t&1 != 0 && sh.encoded:
+		l.own = octetDefault
+	case t&1 != 0:
+		l.own = textDefault
 	}
-	if sh.object = allowed&16 != 0; sh.object {
-		sh.own |= jsonDefault
+	if sh.types&(2|4|8) != 0 {
+		l.own |= textDefault
 	}
-	if sh.array = allowed&32 != 0; sh.array && len(items) == 0 {
-		sh.own |= octetDefault // items allowing anything have no type
+	if l.object = sh.types&16 != 0; l.object {
+		l.own |= jsonDefault
 	}
-	sh.items = items
-	return sh
+	switch l.array = sh.types&32 != 0; {
+	case !l.array:
+	case !sh.items.ok():
+		l.own |= octetDefault // items allowing anything have no type
+	case !sh.several:
+		l.item = sh.items
+	default:
+		d.closure(s, "", func(s value, _ string) {
+			if it := s.get("items"); it.ok() {
+				l.items = append(l.items, it)
+			}
+		})
+	}
+	return l
 }
 
-// stateKey identifies the schemas s for the document's caches.
-func stateKey(s []value) any {
+// A state identifies the schemas of a value for the document's caches: a
+// node, or, for several, a list of them.
+type state struct {
+	i    int32
+	list string
+}
+
+func stateOf(s []value) state {
 	if len(s) == 1 {
-		return s[0].i
+		return state{i: s[0].i}
 	}
 	var b strings.Builder
 	for _, v := range s {
 		b.WriteString(strconv.Itoa(int(v.i)))
 		b.WriteByte(',')
 	}
-	return b.String()
+	return state{i: -1, list: b.String()}
 }
 
 // defaults returns the default media types of a field whose schemas are s:
@@ -286,36 +517,36 @@ func stateKey(s []value) any {
 // computed once.
 func (d *document) defaults(s []value) mediaSet {
 	type step struct {
-		key any
+		key state
 		own mediaSet
 	}
 	var path []step
-	var on map[any]int // where each key is on the path, once it goes on
 	var acc mediaSet
-	cycle := -1
+	var one [1]value
+	cycle, mark, lap := -1, -1, 1 // Brent's cycle detection: the step at the last power of two
 	for len(s) > 0 {
-		if len(path) > maxDepth { // the absent type, past the bound on links
-			acc = octetDefault
+		k := stateOf(s)
+		if set, ok := d.setOf(k); ok {
+			acc = set
 			break
 		}
-		k := stateKey(s)
-		if set, ok := d.types.Load(k); ok {
-			acc = set.(mediaSet)
+		if mark >= 0 && path[mark].key == k { // a cycle of len(path)-mark steps, entered at the first that recurs as far on
+			n := len(path) - mark
+			for cycle = 0; cycle+n < len(path) && path[cycle].key != path[cycle+n].key; cycle++ {
+			}
 			break
 		}
-		if i, ok := on[k]; ok {
-			cycle = i
+		l := d.typing(s)
+		if path = append(path, step{k, l.own}); !l.array {
 			break
 		}
-		sh := d.shapeOf(s)
-		path = append(path, step{k, sh.own})
-		if !sh.array {
-			break
+		if len(path)-1-mark == lap || mark < 0 {
+			mark, lap = len(path)-1, 2*lap
 		}
-		if on == nil {
-			on = map[any]int{}
+		if s = l.items; l.item.ok() {
+			one[0] = l.item
+			s = one[:]
 		}
-		on[k], s = len(path)-1, sh.items
 	}
 	if cycle >= 0 {
 		acc = octetDefault
@@ -323,15 +554,39 @@ func (d *document) defaults(s []value) mediaSet {
 			acc |= st.own
 		}
 		for _, st := range path[cycle:] {
-			d.types.Store(st.key, acc)
+			d.keepSet(st.key, acc)
 		}
 		path = path[:cycle]
 	}
 	for i := len(path) - 1; i >= 0; i-- {
 		acc |= path[i].own
-		d.types.Store(path[i].key, acc)
+		d.keepSet(path[i].key, acc)
 	}
 	return acc
+}
+
+// setOf returns the default media types of a field whose schemas are k,
+// if known.
+func (d *document) setOf(k state) (mediaSet, bool) {
+	if k.i >= 0 {
+		set := d.facts(k.i).set.Load()
+		return mediaSet(set), set != 0
+	}
+	set, ok := d.types.Load(k.list)
+	if !ok {
+		return 0, false
+	}
+	return set.(mediaSet), true
+}
+
+// keepSet publishes set as the default media types of a field whose schemas
+// are k, unless some are published.
+func (d *document) keepSet(k state, set mediaSet) {
+	if k.i >= 0 {
+		d.facts(k.i).set.CompareAndSwap(0, uint32(set)|1<<8)
+	} else {
+		d.types.LoadOrStore(k.list, set)
+	}
 }
 
 // newField compiles the field name, whose first declaration is schema and

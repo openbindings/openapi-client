@@ -35,11 +35,12 @@ type document struct {
 	// What the document compiles to, each read without a lock and computed
 	// unlocked, the first result published being the one every reader sees:
 	// concurrent first uses may compute one twice, but none waits on another.
-	inherits atomic.Pointer[inheritance] // what operations inherit from the root
-	walks    sync.Map                    // reflect.Type to *walk, for finding readers in bodies
-	refs     sync.Map                    // node to the *resolution of the Reference Object there
-	types    sync.Map                    // schemas' state key to the mediaSet of a field they type
-	forms    sync.Map                    // schemas' state key to the formEncoding of a nested part they type
+	inherits atomic.Pointer[inheritance]        // what operations inherit from the root
+	walks    sync.Map                           // reflect.Type to *walk, for finding readers in bodies
+	refs     sync.Map                           // node to the *resolution of the Reference Object there
+	pages    []atomic.Pointer[[factsPage]facts] // what schema nodes compile to, a page made as first used
+	types    sync.Map                           // a list of schemas to the mediaSet of a field they type
+	forms    sync.Map                           // schemas' state to the formEncoding of a nested part they type
 
 	// What nodes shared by several places compile to, by node.
 	paramForms  memo[param]
@@ -342,7 +343,7 @@ func newDocument(ctx context.Context, content, uri string) (*document, error) {
 	if err != nil {
 		return nil, err
 	}
-	d := &document{tree: t, uri: uri, base: base}
+	d := &document{tree: t, uri: uri, base: base, pages: make([]atomic.Pointer[[factsPage]facts], len(t.nodes)/factsPage+1)}
 	root := d.root()
 	d.version = root.str("openapi")
 	switch {
@@ -634,13 +635,11 @@ func (d *document) follow(v value, src string) (value, string, string, error) {
 // reference returns v's $ref, if it is a string, and its description, if
 // it gives one.
 func reference(v value) (ref value, desc string, described bool) {
-	for name, m := range v.members() {
-		switch {
-		case name == "$ref" && m.kind() == '"':
-			ref = m
-		case name == "description" && m.kind() == '"':
-			desc, described = m.text(), true
-		}
+	if ref = v.get("$ref"); ref.kind() != '"' {
+		ref = value{}
+	}
+	if d := v.get("description"); d.kind() == '"' {
+		desc, described = d.text(), true
 	}
 	return ref, desc, described
 }
