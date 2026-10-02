@@ -405,12 +405,12 @@ func safeURI(raw string) string {
 // retrievalError changes presentation only: the original typed error and
 // every cause remain reachable through errors.Is and errors.As.
 type retrievalError struct {
-	error
+	cause error
 	shown string
 }
 
 func (e *retrievalError) Error() string { return e.shown }
-func (e *retrievalError) Unwrap() error { return e.error }
+func (e *retrievalError) Unwrap() error { return e.cause }
 func safeRetrievalError(err error) error {
 	var u *url.Error
 	if errors.As(err, &u) {
