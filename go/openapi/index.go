@@ -1,6 +1,7 @@
 package openapi
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha1"
 	"errors"
@@ -596,7 +597,9 @@ type resolution struct {
 // returning the target, its Source, and the description of the nearest
 // level that gives one: in OpenAPI 3.1 a Reference Object's description
 // replaces its target's. Each Reference Object's resolution is published
-// once per document, and a chain stops at one already published.
+// once per document, and a chain stops at one already published. A cycle is
+// named by the reference of its first Reference Object in node order, so
+// that every chain into it names it alike.
 func (d *document) follow(v value, src string) (value, string, string, error) {
 	ref, desc, described := reference(v)
 	if !ref.ok() {
@@ -604,13 +607,13 @@ func (d *document) follow(v value, src string) (value, string, string, error) {
 	}
 	type step struct {
 		i         int32 // the Reference Object (see value.id)
+		ref       value
 		desc      string
 		described bool
 	}
 	var walked []step     // the Reference Objects followed, not yet published
 	var on map[int32]bool // walked, once a scan of it would be long
 	var r resolution
-	var last value // the last reference followed
 	for at := ""; ; {
 		i := v.id()
 		if k, ok := d.refs.Load(i); ok {
@@ -622,10 +625,12 @@ func (d *document) follow(v value, src string) (value, string, string, error) {
 			break
 		}
 		if on[i] || on == nil && slices.ContainsFunc(walked, func(s step) bool { return s.i == i }) {
-			r = resolution{err: fmt.Errorf("%w %q: a reference cycle", ErrUnresolved, last.text())}
+			cycle := walked[slices.IndexFunc(walked, func(s step) bool { return s.i == i }):]
+			first := slices.MinFunc(cycle, func(a, b step) int { return cmp.Compare(a.i, b.i) })
+			r = resolution{err: fmt.Errorf("%w %q: a reference cycle", ErrUnresolved, first.ref.text())}
 			break
 		}
-		if walked = append(walked, step{i, desc, described}); len(walked) == 16 {
+		if walked = append(walked, step{i, ref, desc, described}); len(walked) == 16 {
 			on = map[int32]bool{}
 			for _, s := range walked {
 				on[s.i] = true
@@ -633,7 +638,6 @@ func (d *document) follow(v value, src string) (value, string, string, error) {
 		} else if on != nil {
 			on[i] = true
 		}
-		last = ref
 		next, nextAt, err := d.target(ref)
 		if err != nil {
 			r = resolution{err: err}
