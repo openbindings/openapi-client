@@ -185,6 +185,10 @@ func (e *entry) source() string {
 // checkURI refuses a document URI with userinfo or a fragment.
 func checkURI(u *url.URL, raw string) error {
 	switch {
+	case strings.TrimSpace(raw) != raw:
+		return errors.New("a document URI cannot hold leading or trailing whitespace")
+	case u.Scheme == "file" && u.Host != "" && u.Host != "localhost":
+		return errors.New("a file URL cannot name a host other than localhost (RFC 8089)")
 	case u.User != nil:
 		return errors.New("a document URI cannot hold userinfo (RFC 9110 section 4.2.4)")
 	case u.Fragment != "" || strings.Contains(raw, "#"):
@@ -226,27 +230,34 @@ func (ld *loading) retrieve(uri string, froms []string, buf []byte) (string, str
 	switch {
 	case err != nil:
 	case ld.Fetch != nil:
-		if r, final, err = ld.Fetch(ctx, uri); final == "" || final == uri {
+		if r, final, err = ld.Fetch(ctx, uri); final == "" {
 			final = uri
-		} else if base = nil; err == nil && from != "" && !ld.admit(from, final, nil) {
-			err = notAdmitted(final)
+		}
+		if err == nil {
+			base, err = url.Parse(final)
+			if err != nil || !base.IsAbs() {
+				err = errors.New("the final document URI must be an absolute URI")
+			} else if err = checkURI(base, final); err == nil && from != "" && !ld.admit(from, final, base) {
+				err = notAdmitted(final)
+			}
 		}
 	case u.Scheme == "http" || u.Scheme == "https":
-		hc := ld.hc
-		if from != "" { // a copy that checks each hop
-			c, next := *hc, hc.CheckRedirect
-			if next == nil {
-				next = tenRedirects
-			}
-			c.CheckRedirect = func(req *http.Request, via []*http.Request) error {
-				to := *req.URL
-				if to.Fragment, to.RawFragment = "", ""; !ld.admit(from, to.String(), &to) {
-					return notAdmitted(to.String())
-				}
-				return next(req, via)
-			}
-			hc = &c
+		c, next := *ld.hc, ld.hc.CheckRedirect
+		if next == nil {
+			next = tenRedirects
 		}
+		c.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+			to := *req.URL
+			to.Fragment, to.RawFragment = "", ""
+			if err := checkURI(&to, to.String()); err != nil {
+				return err
+			}
+			if from != "" && !ld.admit(from, to.String(), &to) {
+				return notAdmitted(to.String())
+			}
+			return next(req, via)
+		}
+		hc := &c
 		var req *http.Request
 		var resp *http.Response
 		if req, err = http.NewRequestWithContext(ctx, "GET", uri, nil); err == nil {
@@ -265,13 +276,20 @@ func (ld *loading) retrieve(uri string, froms []string, buf []byte) (string, str
 	case u.Scheme == "file" && u.Host != "" && u.Host != "localhost":
 		err = errors.New("a file URL cannot name a host other than localhost (RFC 8089)")
 	case u.Scheme == "file":
-		r, size, err = open(ctx, filepath.FromSlash(u.Path))
+		path := filepath.FromSlash(u.Path)
+		if from != "" && ld.AllowReference == nil && ld.root != nil {
+			if path, err = ld.filePath(path); err == nil {
+				r, size, err = open(ctx, path, ld.root)
+			}
+		} else {
+			r, size, err = open(ctx, path, nil)
+		}
 	case u.Scheme == "":
 		var abs string
 		if abs, err = filepath.Abs(uri); err == nil {
 			base = &url.URL{Scheme: "file", Path: filepath.ToSlash(abs)}
 			final = base.String()
-			r, size, err = open(ctx, abs)
+			r, size, err = open(ctx, abs, nil)
 		}
 	default:
 		err = fmt.Errorf("unsupported URI scheme %q", u.Scheme)
@@ -286,11 +304,7 @@ func (ld *loading) retrieve(uri string, froms []string, buf []byte) (string, str
 			return b.String(), final, base, nil
 		}
 	}
-	shown := uri
-	if u.Scheme != "" {
-		shown = u.Redacted()
-	}
-	return "", "", nil, fmt.Errorf("openapi: load %s: %w", shown, withContext(ctx, err))
+	return "", "", nil, fmt.Errorf("openapi: load %s: %w", safeURI(uri), safeRetrievalError(withContext(ctx, err)))
 }
 
 // hasScheme reports whether s begins with a URI scheme longer than a drive
@@ -327,31 +341,82 @@ func (c ctxReader) Read(p []byte) (int, error) {
 // regular file. Opening or reading such a file, a FIFO or a device, may
 // block: a goroutine does both, writing to a pipe that the end of ctx
 // closes with the context's error, and closing the file.
-func open(ctx context.Context, path string) (io.ReadCloser, int64, error) {
-	fi, err := os.Stat(path)
+func open(ctx context.Context, path string, root *os.Root) (io.ReadCloser, int64, error) {
+	type result struct {
+		f   *os.File
+		err error
+	}
+	ready := make(chan result)
+	go func() {
+		var f *os.File
+		var err error
+		if root != nil {
+			f, err = root.Open(path)
+		} else {
+			f, err = os.Open(path)
+		}
+		select {
+		case ready <- result{f, err}:
+		case <-ctx.Done():
+			if f != nil {
+				f.Close()
+			}
+		}
+	}()
+	var f *os.File
+	select {
+	case r := <-ready:
+		if r.err != nil {
+			return nil, 0, r.err
+		}
+		f = r.f
+	case <-ctx.Done():
+		return nil, 0, ctx.Err()
+	}
+	fi, err := f.Stat()
 	if err != nil {
+		f.Close()
 		return nil, 0, err
 	}
 	if fi.Mode().IsRegular() {
-		f, err := os.Open(path)
-		if err != nil {
-			return nil, 0, err
-		}
 		return f, fi.Size(), nil
 	}
 	pr, pw := io.Pipe()
-	stop := context.AfterFunc(ctx, func() { pw.CloseWithError(ctx.Err()) })
+	stop := context.AfterFunc(ctx, func() { pw.CloseWithError(ctx.Err()); f.Close() })
 	go func() {
 		defer stop()
-		f, err := os.Open(path)
-		if err == nil {
-			defer f.Close()
-			defer context.AfterFunc(ctx, func() { f.Close() })()
-			_, err = io.Copy(pw, f)
-		}
+		defer f.Close()
+		_, err := io.Copy(pw, f)
 		pw.CloseWithError(err)
 	}()
 	return pr, -1, nil
+}
+
+// safeURI never renders userinfo, even when malformed text cannot be parsed.
+func safeURI(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "(invalid URI)"
+	}
+	u.User = nil
+	return u.String()
+}
+
+// retrievalError changes presentation only: the original typed error and
+// every cause remain reachable through errors.Is and errors.As.
+type retrievalError struct {
+	error
+	shown string
+}
+
+func (e *retrievalError) Error() string { return e.shown }
+func (e *retrievalError) Unwrap() error { return e.error }
+func safeRetrievalError(err error) error {
+	var u *url.Error
+	if errors.As(err, &u) {
+		return &retrievalError{err, fmt.Sprintf("%s %q: %v", u.Op, safeURI(u.URL), safeRetrievalError(u.Err))}
+	}
+	return err
 }
 
 // newDocument reads content, retrieved from uri, and every document its

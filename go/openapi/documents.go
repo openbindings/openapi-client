@@ -9,6 +9,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -37,6 +38,9 @@ type loading struct {
 	entry   string       // the URI the entry was requested as
 	origins []*url.URL   // Origins, then the entry's original origin if it is http or https
 	dir     string       // a file entry's directory, cleaned and its symlinks resolved, or ""
+	root    *os.Root
+	rootErr error
+	pending <-chan struct{} // completion of the last retrieval wave
 }
 
 // start begins a load of the entry requested as uri, with l's settings and
@@ -64,28 +68,66 @@ func (ld *loading) bound(final string) {
 	if u, err := url.Parse(ld.entry); err == nil && (u.Scheme == "http" || u.Scheme == "https") {
 		ld.origins = append(ld.origins, u)
 	} else if u, err := url.Parse(final); err == nil && u.Scheme == "file" {
-		ld.dir, _ = filepath.EvalSymlinks(filepath.Dir(filepath.FromSlash(u.Path)))
+		ld.dir, ld.rootErr = filepath.EvalSymlinks(filepath.Dir(filepath.FromSlash(u.Path)))
+		if ld.rootErr == nil && ld.AllowReference == nil && ld.Fetch == nil {
+			ld.root, ld.rootErr = os.OpenRoot(ld.dir)
+		}
 	}
+}
+
+// close keeps the anchored directory alive until a canceled retrieval wave
+// has actually left its workers; an uncooperative Fetch cannot delay Load.
+func (ld *loading) close() {
+	if ld.root == nil {
+		return
+	}
+	if ld.pending != nil {
+		select {
+		case <-ld.pending:
+		default:
+			go func() { <-ld.pending; ld.root.Close() }()
+			return
+		}
+	}
+	ld.root.Close()
+}
+
+// filePath resolves absolute symlinks before the rooted open, which then
+// prevents replacement of any remaining component from escaping the root.
+func (ld *loading) filePath(path string) (string, error) {
+	if ld.rootErr != nil {
+		return "", ld.rootErr
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", err
+	}
+	rel, err := filepath.Rel(ld.dir, resolved)
+	if err != nil || !filepath.IsLocal(rel) {
+		return "", errors.New("file is outside the entry directory")
+	}
+	return rel, nil
 }
 
 // admit reports whether the document retrieved from from may retrieve the
 // one at to, which u is parsed, if not nil.
 func (ld *loading) admit(from, to string, u *url.URL) bool {
-	if ld.AllowReference != nil {
-		return ld.AllowReference(from, to)
-	}
 	var err error
 	if u == nil {
 		u, err = url.Parse(to)
 	}
+	if err != nil || !u.IsAbs() || checkURI(u, to) != nil {
+		return false
+	}
+	if ld.AllowReference != nil {
+		return ld.AllowReference(from, to)
+	}
 	switch {
-	case err != nil:
 	case u.Scheme == "http" || u.Scheme == "https":
 		return slices.ContainsFunc(ld.origins, func(o *url.URL) bool { return sameOrigin(o, u) })
 	case u.Scheme == "file" && ld.dir != "":
-		path, err := filepath.EvalSymlinks(filepath.FromSlash(u.Path))
-		rel, err2 := filepath.Rel(ld.dir, path)
-		return err == nil && err2 == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+		_, err := ld.filePath(filepath.FromSlash(u.Path))
+		return err == nil
 	}
 	return false
 }
@@ -100,7 +142,7 @@ func notAdmitted(uri string) error {
 	if err != nil { // not shown, as its userinfo cannot be found
 		return errors.New("a URI that cannot be parsed is outside the documents the Loader admits")
 	}
-	return fmt.Errorf("%s is outside the documents the Loader admits", u.Redacted())
+	return fmt.Errorf("%s is outside the documents the Loader admits", safeURI(u.String()))
 }
 
 // A counted reads a document within the bytes MaxBytes leaves its load.
@@ -309,9 +351,10 @@ func (d *document) discover(ld *loading) error {
 		return nil
 	}
 	ld.bound(d.uri)
+	defer ld.close()
 	dc := &discovery{document: d, ld: ld, readers: map[*tree]*reader{}, wants: map[string][]want{}, asked: map[string]bool{}}
 	d.named = map[string]*tree{}
-	dc.add(d.tree, "", d.newReader(d.tree, rootKind))
+	dc.add(d.tree, ld.entry, d.newReader(d.tree, rootKind))
 	for {
 		dc.drain()
 		var wave []fetch
@@ -434,6 +477,7 @@ func (dc *discovery) getAll(wave []fetch) []fetch {
 		}()
 	}
 	done := make(chan struct{})
+	dc.ld.pending = done
 	go func() { wg.Wait(); close(done) }()
 	select {
 	case <-done:
@@ -938,7 +982,7 @@ func (d *document) target(ref value) (value, string, error) {
 		doc, f, _ := strings.Cut(text, "#")
 		r := d.resolve(t, t.base, doc)
 		if r.err != nil {
-			return value{}, "", fmt.Errorf("%w %q: %w", ErrUnresolved, cmp.Or(r.shown, text), r.err)
+			return value{}, "", fmt.Errorf("%w %q: %w", ErrUnresolved, cmp.Or(r.shown, safeURI(text)), r.err)
 		}
 		uri, frag = r.uri, f
 	}
@@ -946,24 +990,24 @@ func (d *document) target(ref value) (value, string, error) {
 	if uri != t.uri || d.ids[uri] != nil {
 		var err error
 		if n, ptr, err = d.node(uri); err != nil {
-			return value{}, "", fmt.Errorf("%w %q: %w", ErrUnresolved, text, err)
+			return value{}, "", fmt.Errorf("%w %q: %w", ErrUnresolved, safeURI(text), err)
 		}
 	}
 	var err error
 	if strings.IndexByte(frag, '%') >= 0 {
 		if frag, err = url.PathUnescape(frag); err != nil {
-			return value{}, "", fmt.Errorf("%w %q: the fragment cannot be percent-decoded", ErrUnresolved, text)
+			return value{}, "", fmt.Errorf("%w %q: the fragment cannot be percent-decoded", ErrUnresolved, safeURI(text))
 		}
 	}
 	switch {
 	case frag == "":
 	case frag[0] == '/':
 		if n, ptr = n.at(frag), ptr+frag; !n.ok() {
-			return value{}, "", fmt.Errorf("%w %q: no such node", ErrUnresolved, text)
+			return value{}, "", fmt.Errorf("%w %q: no such node", ErrUnresolved, safeURI(text))
 		}
 	default:
 		if n, ptr, err = d.node(uri + "#" + frag); err != nil {
-			return value{}, "", fmt.Errorf("%w %q: %w", ErrUnresolved, text, err)
+			return value{}, "", fmt.Errorf("%w %q: %w", ErrUnresolved, safeURI(text), err)
 		}
 	}
 	return n, ptr, nil
@@ -1044,7 +1088,7 @@ func plainPath(doc string) bool {
 // resolve returns what doc, the part of a reference before its fragment,
 // resolves to against base.
 func resolve(base *url.URL, doc string) *resolved {
-	r := &resolved{}
+	r := &resolved{shown: safeURI(doc)}
 	u, err := url.Parse(doc)
 	switch {
 	case err != nil:
