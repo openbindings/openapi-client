@@ -22,8 +22,6 @@ import (
 // operations. Derived Clients share it.
 type document struct {
 	*tree
-	uri     string   // the URI the document was retrieved from
-	base    *url.URL // uri, parsed
 	version string
 	dialect string // jsonSchemaDialect
 
@@ -326,28 +324,11 @@ func newDocument(ctx context.Context, content, uri string) (*document, error) {
 	if uri == "" {
 		uri = contentURN(content)
 	}
-	base, err := url.Parse(uri)
-	switch {
-	case err != nil: // not shown, as its userinfo cannot be found
-		err = errors.New("the document URI cannot be parsed (RFC 3986)")
-	case !base.IsAbs():
-		err = errors.New("the document URI is not absolute")
-	}
-	if err == nil {
-		err = checkURI(base, uri)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("openapi: %w", err)
-	}
-	src := strings.TrimPrefix(content, "\xEF\xBB\xBF")
-	if s := strings.TrimLeft(src, " \t\r\n"); s != "" && s[0] != '{' {
-		return nil, fmt.Errorf("openapi: %s: YAML documents are not implemented yet: %w", uri, errors.ErrUnsupported)
-	}
-	t, err := parseTree(ctx, src, uri)
+	t, err := readTree(ctx, content, uri)
 	if err != nil {
 		return nil, err
 	}
-	d := &document{tree: t, uri: uri, base: base, pages: make([]atomic.Pointer[[factsPage]facts], len(t.nodes)/factsPage+1)}
+	d := &document{tree: t, pages: make([]atomic.Pointer[[factsPage]facts], len(t.nodes)/factsPage+1)}
 	root := d.root()
 	d.version = root.str("openapi")
 	switch {

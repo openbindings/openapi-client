@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"iter"
 	"math"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
-	"unicode/utf8"
 )
 
 // maxDepth is how deeply a document may nest, the outermost value being
@@ -22,12 +22,15 @@ const maxDepth = 1000
 // index rather than a walk.
 const many = 16
 
-// A tree is a parsed JSON text: its source, and one node per value in
-// document order, each container followed by its members. Nodes hold only
-// offsets; names, strings and numbers are read from the source when used.
-// What lookups derive is kept, each fact once: the index of a container
-// with many members, and the value of an escaped string.
+// A tree is a loaded document, parsed: the URI it was retrieved from, its
+// JSON text, and one node per value in document order, each container
+// followed by its members. Nodes hold only offsets; names, strings and
+// numbers are read from the text when used. What lookups derive is kept,
+// each fact once: the index of a container with many members, and the value
+// of an escaped string.
 type tree struct {
+	uri     string   // the URI the document was retrieved from
+	base    *url.URL // uri, parsed
 	src     string
 	nodes   []node
 	escapes []uint32 // the offsets of the strings written with an escape, in order
@@ -339,19 +342,13 @@ func unescapeToken(s string) (string, bool) {
 	return tokenUnescaper.Replace(s), strings.Count(s, "~") == strings.Count(s, "~0")+strings.Count(s, "~1")
 }
 
-// parseTree reads src, a JSON text (RFC 8259), as the document at uri,
-// stopping when ctx is done.
-func parseTree(ctx context.Context, src, uri string) (*tree, error) {
-	p := scanner{ctx: ctx, src: src, uri: uri}
+// parseTree reads src, a JSON text (RFC 8259) in UTF-8 that took unit bytes
+// per code unit as retrieved, as the document at uri, stopping when ctx is
+// done.
+func parseTree(ctx context.Context, src, uri string, unit int) (*tree, error) {
+	p := scanner{ctx: ctx, src: src, uri: uri, unit: unit}
 	if uint64(len(src)) >= math.MaxUint32 {
 		return nil, p.errorAt(0, "the document is 4 GiB or larger")
-	}
-	if !utf8.ValidString(src) {
-		i := 0
-		for r, n := utf8.DecodeRuneInString(src); r != utf8.RuneError || n != 1; r, n = utf8.DecodeRuneInString(src[i:]) {
-			i += n
-		}
-		return nil, p.errorAt(i, "invalid UTF-8")
 	}
 	// Each value but the outermost follows a "{", "[" or "," in its
 	// container, and takes two bytes with its separator, so both bound the
@@ -376,6 +373,7 @@ func parseTree(ctx context.Context, src, uri string) (*tree, error) {
 type scanner struct {
 	ctx      context.Context
 	src, uri string
+	unit     int      // the bytes a code unit took as retrieved
 	i        int      // the read position
 	nodes    []node   // the nodes read
 	escapes  []uint32 // the offsets of the strings read with an escape
@@ -539,10 +537,4 @@ func (p *scanner) number() error {
 	return nil
 }
 
-// errorAt reports a rejection at byte offset i, by line and column, both
-// counted from 1, the column in bytes.
-func (p *scanner) errorAt(i int, msg string) error {
-	line := 1 + strings.Count(p.src[:i], "\n")
-	col := i - strings.LastIndexByte(p.src[:i], '\n')
-	return fmt.Errorf("openapi: %s:%d:%d: %s", p.uri, line, col, msg)
-}
+func (p *scanner) errorAt(i int, msg string) error { return rejection(p.uri, p.src, i, p.unit, msg) }
