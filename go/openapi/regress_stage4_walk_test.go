@@ -370,6 +370,19 @@ type (
 	}
 )
 
+// More of typeFields' choices: a type embedded at two depths, whose
+// shallower fields dominate, and at one depth twice, whose fields cancel.
+type (
+	JwBase  struct{ K, L int }
+	JwLeft  struct{ JwBase }
+	JwRight struct{ JwBase }
+)
+
+// jwZeroer is an interface type with IsZero, which omitzero calls on what
+// it holds (encoding/json: "If the field type has an IsZero() bool method,
+// that will be used").
+type jwZeroer interface{ IsZero() bool }
+
 // Map keys of every kind encoding/json accepts: a string kind (whose
 // MarshalText json does not use), integers, and TextMarshalers by value and
 // by pointer.
@@ -441,6 +454,34 @@ func walkShapes() []struct {
 			jwEmbedded2
 			B string
 		}{JwEmbedded{1, 2, 3}, jwEmbedded2{4, 5, 6}, "b"}},
+		{"embedded at two depths", struct {
+			JwBase
+			JwLeft
+		}{JwBase{1, 2}, JwLeft{JwBase{3, 4}}}},
+		{"embedded twice at one depth", struct {
+			JwLeft
+			JwRight
+			M int
+		}{JwLeft{JwBase{1, 2}}, JwRight{JwBase{3, 4}}, 5}},
+		{"a tag naming another field, after it", struct {
+			X int
+			Y int `json:"X"`
+		}{1, 2}},
+		{"a tag naming another field, before it", struct {
+			Y int `json:"X"`
+			X int
+		}{1, 2}},
+		{"a tag json does not take", struct {
+			A int `json:"a'b"`
+			B int `json:"a\\b"`
+		}{1, 2}},
+		{"omitzero on an interface with IsZero", struct {
+			A jwZeroer `json:"a,omitzero"`
+			B jwZeroer `json:"b,omitzero"`
+			C jwZeroer `json:"c,omitzero"`
+			D jwZeroer `json:"d,omitzero"`
+			E jwZeroer `json:"e,omitzero"`
+		}{B: (*jwZeroPtr)(nil), C: jwZeroVal{7}, D: jwZeroVal{1}, E: &jwZeroPtr{7}}},
 		{"embedded nil pointer", struct {
 			*JwEmbedded
 			X int `json:"x"`

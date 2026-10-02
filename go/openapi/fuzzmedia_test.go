@@ -264,7 +264,7 @@ func FuzzMediaTypes(f *testing.F) {
 		"text/plain", "application/json; charset=utf-8", "TEXT/Plain; Charset=UTF-8", "image/*", "*/*",
 		`text/plain; profile="a,b", application/json`, "image/png, image/jpeg", "text/plain ;a=b", " text/plain ",
 		"text/plain;a=b;", `text/plain; a=""`, `text/plain; a="\""`, `text/plain; a="\\"`, `application/vnd.x+json;v="1"`,
-		"multipart/form-data; boundary=xyz", "text/plain,", ",", "", "text/plain; a=b c",
+		"multipart/form-data; boundary=xyz", "text/plain,", ",", "", "text/plain; a=b c", "text/plain; charset", "text/plain; =x",
 		`text/plain; a="x\`, `text/plain, application/json; a="\`, `text/plain; a="x`, `text/plain; a="\\\`,
 		"text/plain;;a=b", `text/plain; a="x\y"`, "text/plain; a*=utf-8''%41", "text/plain; a=1; A=2",
 	} {
