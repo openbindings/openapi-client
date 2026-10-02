@@ -48,11 +48,12 @@ func marshal(v any) (string, error) {
 // why v cannot be sent: an io.Reader or Part that json reaches, at the JSON
 // Pointer it returns, or nesting deeper than 1,000 levels. Nesting the walk
 // proves is refused before anything is encoded; otherwise it is counted in
-// the JSON, unless the walk bounds it. A value whose walk may have found a
-// cycle is left for json, which refuses a cycle, to encode.
+// the JSON. A value the walk finds json refuses, a cycle or a map whose keys
+// it cannot write, json refuses as it does.
 func encodeJSON[T string | []byte](d *document, v any, encode func(any) (T, error)) (T, string, error) {
 	var b T
-	at, found, levels, _ := d.findReader(v, 1, 0)
+	w := walker{d: d}
+	at, found, levels, _ := w.any(v, 1, 0)
 	switch {
 	case found:
 		return b, at, errReader
@@ -117,6 +118,8 @@ type walk struct {
 	json, ptrJSON bool        // json calls its MarshalJSON, or its pointer's on an addressable value
 	text, ptrText bool        // likewise MarshalText
 	holds         bool        // a value json looks inside can hold a reader, or nests as only it tells
+	addr          bool        // json writes an addressable value otherwise than a copy
+	ptrRead       bool        // its pointer is an io.Reader, which it is not
 	fields        []jsonField // a struct's fields json writes
 	levels        int         // at most as many levels as a value's JSON takes, or 0 when only its JSON tells
 }
@@ -151,6 +154,10 @@ func (d *document) walkOf(t reflect.Type, open map[reflect.Type]bool) *walk {
 		text: t.Implements(textMarshalerType), ptrText: byValue && reflect.PointerTo(t).Implements(textMarshalerType),
 		levels: 1,
 	}
+	// An addressable value is written by its pointer's MarshalJSON, else by
+	// its pointer's MarshalText, else by reflection, its fields and elements
+	// addressable too; a copy by its own methods, else by reflection.
+	w.addr = w.ptrJSON && !w.json || !w.ptrJSON && w.ptrText && !w.text
 	switch k := t.Kind(); {
 	case w.json || w.text: // json writes it by a method, never looking inside
 	case k != reflect.Interface && (t == partType || t.Implements(readerType)):
@@ -160,17 +167,16 @@ func (d *document) walkOf(t reflect.Type, open map[reflect.Type]bool) *walk {
 	case k == reflect.Pointer:
 		e := d.walkOf(t.Elem(), open)
 		w.holds, w.levels = e.holds, e.levels
-	case k == reflect.Slice && t.Elem().Kind() == reflect.Uint8 &&
-		!reflect.PointerTo(t.Elem()).Implements(marshalerType) && !reflect.PointerTo(t.Elem()).Implements(textMarshalerType):
+	case k == reflect.Slice && bytesKind(t):
 		// bytes, which json writes as a base64 string
 	case k == reflect.Map || k == reflect.Array || k == reflect.Slice:
 		e := d.walkOf(t.Elem(), open)
-		w.holds, w.levels = e.holds, nest(e.levels)
+		w.holds, w.levels, w.addr = e.holds, nest(e.levels), w.addr || k == reflect.Array && e.addr
 	case k == reflect.Struct:
 		w.fields = jsonFields(t)
 		for _, f := range w.fields {
 			e := d.walkOf(t.FieldByIndex(f.index).Type, open)
-			w.holds, w.levels = w.holds || e.holds, deepest(w.levels, nest(e.levels))
+			w.holds, w.levels, w.addr = w.holds || e.holds, deepest(w.levels, nest(e.levels)), w.addr || e.addr && inline(t, f.index)
 		}
 	}
 	switch {
@@ -179,8 +185,21 @@ func (d *document) walkOf(t reflect.Type, open map[reflect.Type]bool) *walk {
 	case w.text:
 		w.levels = 1
 	}
+	w.ptrRead = byValue && !t.Implements(readerType) && reflect.PointerTo(t).Implements(readerType)
 	d.walks.Store(t, w)
 	return w
+}
+
+// inline reports whether the field of struct type t at index lies in a
+// value of t, not behind an embedded pointer, so that it can be addressed
+// where the value can.
+func inline(t reflect.Type, index []int) bool {
+	for _, i := range index[:len(index)-1] {
+		if t = t.Field(i).Type; t.Kind() == reflect.Pointer {
+			return false
+		}
+	}
+	return true
 }
 
 // deepest returns the greater of two level counts, or 0, unknown, when
@@ -204,17 +223,32 @@ func nest(l int) int {
 const (
 	unknown = 0  // only its JSON tells, as with a MarshalJSON
 	deeper  = -1 // it nests deeper than maxDepth: the walk reached a value json writes past it
-	cyclic  = -2 // and that value is one around it, so that the value may be a cycle
+	refused = -2 // json refuses it: a cycle, or a map whose keys json cannot write
 )
 
-// findReader walks x, at level, after derefs pointer and interface
-// dereferences, as encoding/json writes it, returning the JSON Pointer, from
-// x, of an io.Reader or Part that json reaches, and at most as many levels as
-// its JSON reaches, or what else it tells. It stops at a value past
-// maxDepth, returning where that value is held, and past maxDepth
-// dereferences leaves the value to json, which detects a cycle. It walks the
-// values json itself creates without reflection.
-func (d *document) findReader(x any, level, derefs int) (at string, found bool, levels int, deep uintptr) {
+// A walker walks a value as encoding/json writes it, finding the JSON
+// Pointer of an io.Reader or Part that json reaches, and at most as many
+// levels as its JSON reaches, or what else it tells. Pointers and interfaces
+// add no level; past maxDepth dereferences on a path it keeps the pointers on
+// it, as json does past its own 1,000, and a repeat is a cycle. It stops at
+// the first value that decides, past maxDepth levels, a cycle or a reader,
+// returning where a value past maxDepth is held. It walks the values json
+// itself creates without reflection.
+type walker struct {
+	d    *document
+	path map[ptrKey]bool // past maxDepth dereferences, the pointers on the path
+	on   []ptrKey        // and in the order they went on
+}
+
+// A ptrKey identifies a pointer as json's cycle detection does: by its type
+// and address.
+type ptrKey struct {
+	t reflect.Type
+	p uintptr
+}
+
+// any walks x, at level, after derefs dereferences.
+func (w *walker) any(x any, level, derefs int) (at string, found bool, levels int, deep uintptr) {
 	if level > maxDepth {
 		return "", false, deeper, identity(reflect.ValueOf(x))
 	}
@@ -223,7 +257,7 @@ func (d *document) findReader(x any, level, derefs int) (at string, found bool, 
 	case nil, string, bool, float64, json.Number:
 	case map[string]any:
 		for k, v := range x {
-			at, found, l, deep := d.findReader(v, level+1, derefs)
+			at, found, l, deep := w.any(v, level+1, derefs)
 			switch {
 			case found:
 				return "/" + escapeToken(k) + at, true, 0, 0
@@ -235,7 +269,7 @@ func (d *document) findReader(x any, level, derefs int) (at string, found bool, 
 		}
 	case []any:
 		for i, v := range x {
-			at, found, l, deep := d.findReader(v, level+1, derefs)
+			at, found, l, deep := w.any(v, level+1, derefs)
 			switch {
 			case found:
 				return "/" + strconv.Itoa(i) + at, true, 0, 0
@@ -246,7 +280,7 @@ func (d *document) findReader(x any, level, derefs int) (at string, found bool, 
 			levels = deepest(levels, l)
 		}
 	default:
-		return d.findValue(reflect.ValueOf(x), level, derefs)
+		return w.value(reflect.ValueOf(x), level, derefs)
 	}
 	return "", false, levels, 0
 }
@@ -265,51 +299,77 @@ func identity(v reflect.Value) uintptr {
 }
 
 // around returns what a walk found beneath the container v, and where it
-// was found past maxDepth: cyclic when that is v itself, and v when it was a
-// value held nowhere else, so that a container around v can tell.
+// was found past maxDepth: a cycle when that is v itself, and v when it was
+// a value held nowhere else, so that a container around v can tell.
 func around(l int, deep uintptr, v reflect.Value) (int, uintptr) {
 	switch id := identity(v); {
 	case l != deeper:
 	case deep == 0:
 		return deeper, id
 	case deep == id:
-		return cyclic, deep
+		return refused, deep
 	}
 	return l, deep
 }
 
-// findValue is findReader for a value of any type, as json reaches it: its
-// pointer's methods apply only where it is addressable.
-func (d *document) findValue(v reflect.Value, level, derefs int) (string, bool, int, uintptr) {
-	switch {
-	case level > maxDepth:
+// value walks v as json reaches it, its pointer's methods applying only
+// where it is addressable: through the pointers and interfaces it holds,
+// without recursion, to a value json writes by a method or by reflection.
+func (w *walker) value(v reflect.Value, level, derefs int) (string, bool, int, uintptr) {
+	if level > maxDepth {
 		return "", false, deeper, identity(v)
-	case derefs > maxDepth:
-		return "", false, unknown, 0
 	}
-	switch v.Kind() {
-	case reflect.Interface, reflect.Pointer, reflect.Map, reflect.Slice:
-		if v.IsNil() {
-			return "", false, level, 0 // null
+	mark := len(w.on)
+	defer w.leave(mark)
+	for (v.Kind() == reflect.Pointer || v.Kind() == reflect.Interface) && !v.IsNil() {
+		if wk := w.d.walkOf(v.Type(), nil); wk.json || wk.text || wk.reader {
+			break // json writes it by a method, or it is a reader
 		}
+		if v.Kind() == reflect.Interface {
+			x := v.Interface()
+			switch x.(type) {
+			case map[string]any, []any:
+				return w.any(x, level, derefs+1)
+			}
+			v, derefs = reflect.ValueOf(x), derefs+1
+			continue
+		}
+		if derefs++; derefs > maxDepth {
+			k := ptrKey{v.Type(), v.Pointer()}
+			if w.path[k] {
+				return "", false, refused, 0 // a cycle
+			}
+			if w.path == nil {
+				w.path = map[ptrKey]bool{}
+			}
+			w.path[k], w.on = true, append(w.on, k)
+		}
+		v = v.Elem()
 	}
-	w := d.walkOf(v.Type(), nil)
+	if (v.Kind() == reflect.Pointer || v.Kind() == reflect.Interface) && v.IsNil() || !v.IsValid() {
+		return "", false, level, 0 // null
+	}
+	wk := w.d.walkOf(v.Type(), nil)
 	addr := v.CanAddr()
 	switch {
-	case w.json || w.ptrJSON && addr:
+	case wk.json || wk.ptrJSON && addr:
 		return "", false, unknown, 0
-	case w.text || w.ptrText && addr:
+	case wk.text || wk.ptrText && addr:
 		return "", false, level, 0
-	case w.reader:
+	case v.Kind() == reflect.Map && !jsonKeys(v.Type()):
+		return "", false, refused, 0 // never walked: its keys have no names
+	case (v.Kind() == reflect.Map || v.Kind() == reflect.Slice) && v.IsNil():
+		return "", false, level, 0 // null
+	case wk.reader:
 		return "", true, 0, 0
-	case !w.holds && w.levels > 0:
-		return "", false, level - 1 + w.levels, 0
-	case !w.holds:
+	case !wk.holds && wk.levels > 0:
+		return "", false, level - 1 + wk.levels, 0
+	case !wk.holds:
 		return "", false, unknown, 0
 	}
 	levels := level
 	step := func(fv reflect.Value, token func() string) (string, bool, int, uintptr, bool) {
-		at, found, l, deep := d.findValue(fv, level+1, derefs)
+		at, found, l, deep := w.value(fv, level+1, derefs)
 		switch {
 		case found:
 			return "/" + token() + at, true, 0, 0, true
@@ -321,15 +381,8 @@ func (d *document) findValue(v reflect.Value, level, derefs int) (string, bool, 
 		return "", false, 0, 0, false
 	}
 	switch v.Kind() {
-	case reflect.Interface:
-		if v.CanInterface() {
-			return d.findReader(v.Interface(), level, derefs+1)
-		}
-		return d.findValue(v.Elem(), level, derefs+1)
-	case reflect.Pointer:
-		return d.findValue(v.Elem(), level, derefs+1)
 	case reflect.Struct:
-		for _, f := range w.fields {
+		for _, f := range wk.fields {
 			fv, err := v.FieldByIndexErr(f.index)
 			if err != nil || f.omitZero && omitsZero(fv) || f.omitEmpty && omitsEmpty(fv) {
 				continue // json writes no such field
@@ -352,6 +405,14 @@ func (d *document) findValue(v reflect.Value, level, derefs int) (string, bool, 
 		}
 	}
 	return "", false, levels, 0
+}
+
+// leave takes off the path the pointers put on it after the first mark.
+func (w *walker) leave(mark int) {
+	for _, k := range w.on[mark:] {
+		delete(w.path, k)
+	}
+	w.on = w.on[:mark]
 }
 
 // omitsZero reports whether json's omitzero omits v by its IsZero method; a

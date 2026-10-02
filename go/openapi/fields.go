@@ -493,10 +493,11 @@ var errNotObject = errors.New("the body is an object, a map or a struct, whose p
 
 // members calls f with each member of v, an object, as encoding/json writes
 // them, and the field of enc it is, returning nil, or why v is no object, or
-// encoding/json's error for it. It walks a map, its keys as json takes them, sorted; a struct's fields
-// as json chooses and omits them; and pointers and interfaces. A value json
-// writes by its own method, and one past maxDepth dereferences, json writes,
-// and its members are those of that JSON, json refusing a cycle.
+// encoding/json's error for it. It walks a map, its keys as json takes them,
+// sorted; a struct's fields as json chooses and omits them; and pointers and
+// interfaces. The members of a value json writes by its own method, a map
+// whose keys json refuses and a cycle of pointers are those of the JSON json
+// writes for it, or json's refusal.
 func (d *document) members(v any, enc *formEncoding, f func(name string, fd *field, v any)) error {
 	if m, ok := v.(map[string]any); ok && m != nil {
 		for _, k := range slices.Sorted(maps.Keys(m)) {
@@ -504,63 +505,55 @@ func (d *document) members(v any, enc *formEncoding, f func(name string, fd *fie
 		}
 		return nil
 	}
-	rv := reflect.ValueOf(v)
-	for derefs := 0; rv.IsValid(); derefs++ {
-		w := d.walkOf(rv.Type(), nil)
-		switch {
-		case derefs > maxDepth || w.json || w.text || rv.CanAddr() && (w.ptrJSON || w.ptrText):
-			return jsonMembers(rv.Interface(), enc, f)
-		case w.reader:
-			return errNotObject
+	rv, ok := d.deref(reflect.ValueOf(v))
+	if !ok {
+		return jsonMembers(v, enc, f)
+	}
+	if (rv.Kind() == reflect.Pointer || rv.Kind() == reflect.Interface) && rv.IsNil() || !rv.IsValid() {
+		return errNotObject
+	}
+	w := d.walkOf(rv.Type(), nil)
+	switch {
+	case w.json || w.text || rv.CanAddr() && (w.ptrJSON || w.ptrText) || rv.Kind() == reflect.Map && !jsonKeys(rv.Type()):
+		return jsonMembers(d.elem(rv), enc, f)
+	case w.reader || rv.Kind() == reflect.Map && rv.IsNil():
+		return errNotObject
+	case rv.Kind() == reflect.Map:
+		type member struct {
+			name string
+			v    reflect.Value
 		}
-		switch rv.Kind() {
-		case reflect.Pointer, reflect.Interface:
-			if rv.IsNil() {
-				return errNotObject
+		ms := make([]member, 0, rv.Len())
+		for it := rv.MapRange(); it.Next(); {
+			name, err := mapKey(it.Key())
+			if err != nil {
+				return &encodingError{err}
 			}
-			rv = rv.Elem()
-			continue
-		case reflect.Map:
-			if rv.IsNil() || !jsonKeys(rv.Type()) {
-				return jsonMembers(rv.Interface(), enc, f) // null, or json's error for the keys
+			ms = append(ms, member{name, it.Value()})
+		}
+		slices.SortFunc(ms, func(a, b member) int { return strings.Compare(a.name, b.name) })
+		for _, m := range ms {
+			f(m.name, enc.field(m.name), d.elem(m.v))
+		}
+		return nil
+	case rv.Kind() == reflect.Struct:
+		fds := enc.fieldsOf(rv.Type(), w.fields)
+		for i, jf := range w.fields {
+			fv, err := rv.FieldByIndexErr(jf.index)
+			if err != nil || jf.omitZero && omitsZero(fv) || jf.omitEmpty && omitsEmpty(fv) {
+				continue // json writes no such field
 			}
-			type member struct {
-				name string
-				v    reflect.Value
-			}
-			ms := make([]member, 0, rv.Len())
-			for it := rv.MapRange(); it.Next(); {
-				name, err := mapKey(it.Key())
-				if err != nil {
-					return &encodingError{err}
-				}
-				ms = append(ms, member{name, it.Value()})
-			}
-			slices.SortFunc(ms, func(a, b member) int { return strings.Compare(a.name, b.name) })
-			for _, m := range ms {
-				f(m.name, enc.field(m.name), d.elem(m.v))
-			}
-			return nil
-		case reflect.Struct:
-			fds := enc.fieldsOf(rv.Type(), w.fields)
-			for i, jf := range w.fields {
-				fv, err := rv.FieldByIndexErr(jf.index)
-				if err != nil || !fv.CanInterface() || jf.omitZero && omitsZero(fv) || jf.omitEmpty && omitsEmpty(fv) {
-					continue // json writes no such field
-				}
-				x := d.elem(fv)
-				if jf.quoted && !null(x) {
-					if w := d.walkOf(reflect.TypeOf(x), nil); !w.json && !w.text {
-						if s, err := marshal(x); err == nil {
-							x = s // the string option: a JSON string holding the scalar's JSON, unless a method writes it
-						}
+			x := d.elem(fv)
+			if jf.quoted && !null(x) {
+				if w := d.walkOf(reflect.TypeOf(x), nil); !w.json && !w.text {
+					if s, err := marshal(x); err == nil {
+						x = s // the string option: a JSON string holding the scalar's JSON, unless a method writes it
 					}
 				}
-				f(jf.name, fds[i], x)
 			}
-			return nil
+			f(jf.name, fds[i], x)
 		}
-		break
+		return nil
 	}
 	return errNotObject
 }
@@ -585,11 +578,38 @@ func jsonMembers(v any, enc *formEncoding, f func(name string, fd *field, v any)
 	return nil
 }
 
+// deref returns v past the pointers and interfaces encoding/json follows to
+// write it, to a value it writes by its own method or by reflection, or to
+// a nil one, which it writes as null. It reports false for a cycle, which
+// json refuses: a pointer met again past maxDepth dereferences.
+func (d *document) deref(v reflect.Value) (reflect.Value, bool) {
+	var seen map[ptrKey]bool
+	for n := 0; (v.Kind() == reflect.Pointer || v.Kind() == reflect.Interface) && !v.IsNil(); n++ {
+		if w := d.walkOf(v.Type(), nil); w.json || w.text || w.reader {
+			break
+		}
+		if n > maxDepth && v.Kind() == reflect.Pointer {
+			k := ptrKey{v.Type(), v.Pointer()}
+			if seen[k] {
+				return v, false
+			}
+			if seen == nil {
+				seen = map[ptrKey]bool{}
+			}
+			seen[k] = true
+		}
+		v = v.Elem()
+	}
+	return v, true
+}
+
 // elem returns the value v holds as encoding/json reaches it: a pointer to
-// it where v can be addressed and that pointer's method writes it.
+// it where v can be addressed and json writes it otherwise than a copy, by
+// a pointer's method at it or inside it, unless that pointer would be read
+// as a reader.
 func (d *document) elem(v reflect.Value) any {
 	if v.CanAddr() {
-		if w := d.walkOf(v.Type(), nil); !w.json && !w.text && (w.ptrJSON || w.ptrText) {
+		if w := d.walkOf(v.Type(), nil); w.addr && !w.ptrRead {
 			return v.Addr().Interface()
 		}
 	}
@@ -627,12 +647,12 @@ func (d *document) values(v any, at key, f func(v any, at key)) {
 		}
 		return
 	default:
-		rv := reflect.ValueOf(v)
-		for derefs := 0; rv.Kind() == reflect.Pointer && !rv.IsNil() && derefs <= maxDepth && !d.walkOf(rv.Type(), nil).json; derefs++ {
-			rv = rv.Elem()
+		rv, ok := d.deref(reflect.ValueOf(v))
+		if !ok || !rv.IsValid() {
+			break // a cycle, which json refuses as it encodes the value
 		}
 		w := d.walkOf(rv.Type(), nil)
-		switch {
+		switch k := rv.Kind(); {
 		case w.json || rv.CanAddr() && w.ptrJSON:
 			if s, err := marshal(d.elem(rv)); err == nil && s[0] == '[' {
 				r, i := &jsonReader{s: s}, 0
@@ -647,7 +667,7 @@ func (d *document) values(v any, at key, f func(v any, at key)) {
 				})
 				return
 			}
-		case w.text || rv.Kind() != reflect.Slice && rv.Kind() != reflect.Array || rv.Kind() == reflect.Slice && bytesKind(rv.Type()):
+		case w.text || rv.CanAddr() && w.ptrText || k != reflect.Slice && k != reflect.Array || k == reflect.Slice && bytesKind(rv.Type()):
 		default:
 			for i := range rv.Len() {
 				if v := d.elem(rv.Index(i)); !null(v) {
@@ -669,13 +689,16 @@ func bytesKind(t reflect.Type) bool {
 }
 
 // null reports whether encoding/json writes v as null by its Go value: a nil
-// interface, pointer, map or slice.
+// interface or pointer, or a nil map or slice that it writes by reflection.
 func null(v any) bool {
 	switch rv := reflect.ValueOf(v); rv.Kind() {
 	case reflect.Invalid:
 		return true
-	case reflect.Pointer, reflect.Map, reflect.Slice, reflect.Interface:
+	case reflect.Pointer, reflect.Interface:
 		return rv.IsNil()
+	case reflect.Map, reflect.Slice:
+		t := rv.Type()
+		return rv.IsNil() && !t.Implements(marshalerType) && !t.Implements(textMarshalerType) && (rv.Kind() == reflect.Slice || jsonKeys(t))
 	}
 	return false
 }
