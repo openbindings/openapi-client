@@ -748,11 +748,12 @@ func redact(err error, u *url.URL) error {
 // A securityCheck is Load's check of the security settings: what it has not
 // yet found among the requirements of the document.
 type securityCheck struct {
-	d     *document
-	re    *RequestError
-	creds map[string]Credential // those whose name no requirement has used
-	names map[string]bool       // Options.Security, until an alternative has these schemes
-	key   string                // Options.SecurityKey, until an alternative has it
+	d       *document
+	re      *RequestError
+	creds   map[string]Credential // those no scheme their name selects has yet taken
+	refused map[string]error      // why the first scheme their name selects, if any, refuses each of creds
+	names   map[string]bool       // Options.Security, until an alternative has these schemes
+	key     string                // Options.SecurityKey, until an alternative has it
 }
 
 func (s *securityCheck) done() bool { return len(s.creds) == 0 && s.names == nil && s.key == "" }
@@ -770,10 +771,14 @@ func (s *securityCheck) list(list value) (none bool) {
 		n, named := 0, 0             // the schemes, and those Options.Security names
 		for name, scopes := range r.members() {
 			n++
-			if c, ok := s.creds[name]; ok {
-				delete(s.creds, name)
-				if err := s.d.securityScheme(name, list.t).loadError(c); err != nil {
-					s.re.setting(credentialKey(name), err)
+			if c, ok := s.creds[name]; ok { // the scheme a name selects may differ between documents (see SchemeLookup)
+				if err := s.d.securityScheme(name, list.t).loadError(c); err == nil {
+					delete(s.creds, name)
+				} else if _, seen := s.refused[name]; !seen {
+					if s.refused == nil {
+						s.refused = map[string]error{}
+					}
+					s.refused[name] = err
 				}
 			}
 			if s.names[name] {
@@ -796,7 +801,11 @@ func (s *securityCheck) list(list value) (none bool) {
 // refuse records the settings no requirement of the document can use.
 func (s *securityCheck) refuse() {
 	for name := range s.creds {
-		s.re.setting(credentialKey(name), errors.New("no security requirement of the document uses this name"))
+		err := s.refused[name]
+		if err == nil {
+			err = errors.New("no security requirement of the document uses this name")
+		}
+		s.re.setting(credentialKey(name), err)
 	}
 	if s.names != nil {
 		s.re.setting("Options.Security", errors.New("no security alternative of the document has exactly these schemes"))
