@@ -3,6 +3,7 @@ package openapi_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/url"
 	"strings"
@@ -135,14 +136,21 @@ var rfc3986Examples = []string{
 // is requested and an AllowReference admitting everything: the one URI
 // requested beside the entry is base.ResolveReference(ref) without its
 // fragment, exactly as net/url writes it, and nothing is requested when that
-// is the entry's own URI. References net/url cannot parse, or whose result
-// another rule decides (a scheme other than http, https and file, an http
-// URI without a host, userinfo, a file URL naming a host: load.go, Loader,
-// SQ9), are left out.
+// is the entry's own URI. A result with leading or trailing whitespace is
+// requested not at all, and the operation's Err wraps ErrUnresolved (SQ14;
+// load.go, Loader: "A reference to a URI with userinfo or with leading or
+// trailing whitespace ... is unresolvable and never fetched"). References
+// net/url cannot parse, or whose result another rule decides (a scheme
+// other than http, https and file, an http URI without a host, userinfo, a
+// file URL naming a host: SQ9), are left out.
 func FuzzRelativeReferences(f *testing.F) {
 	for _, ref := range rfc3986Examples {
 		f.Add(uint8(0), ref)
 	}
+	// The input that found SQ14's case, and others like it.
+	f.Add(uint8(8), "? ")
+	f.Add(uint8(3), "x.json?a ")
+	f.Add(uint8(0), "g? y")
 	for i := range fuzzBases {
 		for _, ref := range []string{"g", "../x.json", "./a//b/../c.json", "%2e%2e/x", "a%2Fb/c", "g%20h", "..//g", "/a/b/../../..",
 			"g?#s", "?", "//other.example.test/x.json", "x.json?v=2#/P", "../../../../../x", "é.json", "a b.json", ";p/../q"} {
@@ -170,9 +178,7 @@ func FuzzRelativeReferences(f *testing.F) {
 			return
 		}
 		wantURI := want.String()
-		if strings.TrimSpace(wantURI) != wantURI {
-			return // a result net/url leaves with surrounding whitespace: asked of the loop owner
-		}
+		blank := strings.TrimSpace(wantURI) != wantURI // SQ14: unresolvable, never fetched
 
 		var mu sync.Mutex
 		var requested []string
@@ -196,6 +202,14 @@ func FuzzRelativeReferences(f *testing.F) {
 		}
 		mu.Lock()
 		defer mu.Unlock()
+		if blank {
+			op, err := c.Operation("x")
+			if len(requested) != 0 || err != nil || !errors.Is(op.Err, openapi.ErrUnresolved) {
+				t.Fatalf("base %q, $ref %q resolves to %q, with surrounding whitespace: requested %q, Operation %v; want nothing requested and an Err wrapping ErrUnresolved",
+					baseURI, ref, wantURI, requested, err)
+			}
+			return
+		}
 		if wantURI == baseURI {
 			if len(requested) != 0 {
 				t.Fatalf("base %q, $ref %q: requested %q; the reference names the entry itself", baseURI, ref, requested)
