@@ -186,8 +186,11 @@ func (v value) string() string {
 // flag reports whether the member named key is true.
 func (v value) flag(key string) bool { return v.get(key).kind() == 't' }
 
-// strs returns the strings of an array.
+// strs returns the strings of an array, or nil.
 func (v value) strs() []string {
+	if v.kind() != '[' {
+		return nil
+	}
 	var s []string
 	for _, item := range v.members() {
 		if item.kind() == '"' {
