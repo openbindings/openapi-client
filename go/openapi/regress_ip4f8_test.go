@@ -978,3 +978,66 @@ func TestIP4F8SecretFuncOfNil(t *testing.T) {
 		t.Errorf("Settings %q, want %q, as with no credential", got, wantKeys)
 	}
 }
+
+// IFP9 (IP4F-8, sequential.go:291 kept): client.go, Input.Body: an
+// iterator "runs on a goroutine of the transport; its yield returns false
+// once the body is no longer wanted". A prepared iterator body that is
+// closed and then read never starts the iterator: the read fails. Its
+// GetBody is nil, an iterator being read once.
+func TestIFP9ClosedIteratorBodyNeverStarts(t *testing.T) {
+	c := parseAt(t, seqDoc(), "https://api.example.test", testDocURI, nil)
+	started := make(chan struct{}, 1)
+	it := func(yield func(any) bool) {
+		started <- struct{}{}
+		yield(1)
+	}
+	req := mustPrepare(t, c, "jsonl", &openapi.Input{Body: iter.Seq[any](it)})
+	if req.HTTP.GetBody != nil {
+		t.Errorf("an iterator body has a GetBody")
+	}
+	if err := req.HTTP.Body.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	n, err := req.HTTP.Body.Read(make([]byte, 64))
+	if n != 0 || err == nil {
+		t.Errorf("Read after Close = %d, %v; want an error", n, err)
+	}
+	select {
+	case <-started:
+		t.Errorf("the iterator started after its body was closed")
+	default:
+	}
+}
+
+// IFP10 (IP4F-8, tree.go:196 restored): load.go, Load: "Any other defect
+// ... is reported on the part it reaches, in its Err, or ignored where
+// nothing depends on it". A tags value or a server variable's enum that is
+// an object instead of an array lists nothing (describe.go: Variable.Enum
+// "is nil when none is declared"); a security requirement whose scopes are
+// an object is a defect of each operation it reaches (Operation.Err, with
+// no alternative listed), and Load does not take an Options.SecurityKey
+// naming the scopes that object holds as an alternative (client.go,
+// Options.SecurityKey: "A key that names no alternative ... is refused by
+// Load"). At 201f6af the object's string values were listed.
+func TestIFP10ObjectsWhereArraysBelong(t *testing.T) {
+	doc := func(scopes string) string {
+		return `{"openapi":"3.1.0","info":{"title":"t","version":"1"},
+		"servers":[{"url":"https://{h}.example.test","variables":{"h":{"default":"a","enum":{"x":"a","y":"b"}}}}],
+		"paths":{"/x":{"get":{"operationId":"x","tags":{"t":"pets"},"security":[{"oauth":` + scopes + `}]}}},
+		"components":{"securitySchemes":{"oauth":{"type":"oauth2","flows":{"clientCredentials":{"tokenUrl":"https://auth.example.test/token","scopes":{"read":""}}}}}}}`
+	}
+	c := parseAt(t, doc(`{"s":"read"}`), "", testDocURI, nil)
+	op := mustOp(t, c, "x")
+	if len(op.Tags) != 0 {
+		t.Errorf("Tags %q, want none", op.Tags)
+	}
+	if enum := server(t, op, 0).Variables[0].Enum; enum != nil {
+		t.Errorf("Enum %q, want nil", enum)
+	}
+	if op.Err == nil || len(op.Security) != 0 {
+		t.Errorf("Err %v, Security %+v; want an Err and no alternative", op.Err, op.Security)
+	}
+	key := mustOp(t, parseAt(t, doc(`["read"]`), "", testDocURI, nil), "x").Security[0].Key
+	err := parseErr(t, doc(`{"s":"read"}`), "https://api.example.test", &openapi.Options{SecurityKey: key})
+	wantKeys(t, "Settings", asRequestError(t, err).Settings, false, "Options.SecurityKey")
+}
