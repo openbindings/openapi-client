@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"runtime/debug"
 	"slices"
 	"strings"
 	"testing"
@@ -216,19 +217,29 @@ func chainDoc(n int) []byte {
 	return []byte(b.String())
 }
 
-// C4-2 (F2): "No compile path recurses once per $ref or items link". A
-// 900,000-link chain (40 MB, under the default document bound) is
-// described without a crash, at a cost linear in the chain from 225,000
-// links: parse and Operations(), which describes the field, text/plain as
-// the string at the chain's end gives it (C4-8, which withdraws the
-// 1,000-link cut: "a long chain gets its true default"; at b4872f9 the cut
-// gave application/octet-stream). At 6917b84 it ended the process with a
-// fatal stack overflow, so it runs in a child process.
+// chainStack is the most stack TestC42LongItemsChain lets a goroutine
+// grow: a walk that recursed once per link would need a frame per link,
+// which at 12,500 links passes 128 KiB for any frame over 10 bytes, where a
+// minimal recursive Go function takes 24 on amd64 (frame and return
+// address); 6917b84's recursive walk overflows it at that length.
+const chainStack = 128 << 10
+
+// C4-2 (F2): "No compile path recurses once per $ref or items link". Chains
+// of 12,500 and 50,000 links are described, parse and Operations(), with
+// every goroutine's stack held to 128 KiB (runtime/debug.SetMaxStack), at a
+// cost linear in the chain, the field text/plain as the string at the
+// chain's end gives it (C4-8, which withdraws the 1,000-link cut: "a long
+// chain gets its true default"; at b4872f9 the cut gave
+// application/octet-stream). A walk recursing per link exceeds that stack
+// and ends the process, as 6917b84's did, so the test runs in a child
+// process. It used 900,000 links with the default stack, about 73 s under
+// -race against the child's 2-minute limit (stage 4 ledger, IFP7).
 func TestC42LongItemsChain(t *testing.T) {
 	if !inChild(t) {
 		return
 	}
-	wantLinear(t, "parse and Operations()", 225000, func(n int) func() {
+	defer debug.SetMaxStack(debug.SetMaxStack(chainStack))
+	wantLinear(t, "parse and Operations()", 12500, func(n int) func() {
 		doc := chainDoc(n)
 		return func() {
 			c, err := openapi.Parse(context.Background(), doc, testDocURI, nil)

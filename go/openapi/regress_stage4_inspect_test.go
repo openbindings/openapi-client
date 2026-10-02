@@ -1,9 +1,11 @@
 package openapi_test
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math/rand/v2"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -328,15 +330,38 @@ func describeRace(t *testing.T, c *openapi.Client, keys []string) string {
 			fmt.Fprintf(&b, " refused: %v\n", err)
 			continue
 		}
-		fmt.Fprintf(&b, " sent %q\n", preparedBody(t, req))
+		fmt.Fprintf(&b, " sent %q\n", generatedBoundaries(t, preparedBody(t, req), "B"))
 	}
 	return b.String()
+}
+
+var boundaryParam = regexp.MustCompile(`boundary="?([^";\r\n]+)`)
+
+// generatedBoundaries returns body with every boundary the client generated
+// (each one not among given) written as <generated>, as a generated boundary
+// is random (client.go, Input.MediaType; stage 4 ledger, Q13: "Generated
+// boundaries are random and not scanned"; IP4-4; IFP1). Each must still be
+// one RFC 2046 section 5.1.1 allows.
+func generatedBoundaries(t *testing.T, body []byte, given ...string) []byte {
+	t.Helper()
+	for _, m := range boundaryParam.FindAllSubmatch(body, -1) {
+		b := string(m[1])
+		if slices.Contains(given, b) {
+			continue
+		}
+		if !validBoundary(b) {
+			t.Errorf("generated boundary %q is not one RFC 2046 section 5.1.1 allows", b)
+		}
+		body = bytes.ReplaceAll(body, []byte(b), []byte("<generated>"))
+	}
+	return body
 }
 
 // C4-8, IP4F-1: concurrent first uses in random order give what a serial
 // first use gives, and a serial first use gives the same whichever order
 // it takes (C4-2: "Results do not depend on which operation compiles
-// first"), for descriptors and the bytes sent; run under -race. At b4872f9
+// first"), for descriptors and the bytes sent, every boundary the client
+// generated for a nested part normalized (IFP1); run under -race. At b4872f9
 // the serial orders differ on the long chain (VP4), a first using a's
 // 1,200-link walk and storing application/octet-stream.
 func TestC48ConcurrentFirstUseMatchesSerial(t *testing.T) {
@@ -354,6 +379,9 @@ func TestC48ConcurrentFirstUseMatchesSerial(t *testing.T) {
 		return c
 	}
 	want := describeRace(t, fresh(), keys)
+	if !strings.Contains(want, "<generated>") {
+		t.Fatalf("no nested part was sent with a generated boundary:\n%s", want)
+	}
 	reversed := slices.Clone(keys)
 	slices.Reverse(reversed)
 	c := fresh()
