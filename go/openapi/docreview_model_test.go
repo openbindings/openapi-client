@@ -33,6 +33,29 @@ func TestDocumentSchemaDataCannotClaimIdentifiers(t *testing.T) {
 	}
 }
 
+// C5-1 verification: known schema locations remain schemas through $defs,
+// even when a child has no identifier of its own. JSON Schema 2020-12
+// Core sections 4.3.1, 8.2.4 and 9.4.2 do not make a sibling schema's
+// instance data an identifier claimant. The reference names a schema,
+// never a pointer into the data. This is the saved 165ca53 reproduction.
+func TestDocumentNestedSchemaDataCannotClaimIdentifiers(t *testing.T) {
+	const base = "https://docs.example.test/"
+	const entry = `{"openapi":"3.1.2","paths":{"/u":{"post":{"operationId":"u","requestBody":{"content":{"multipart/form-data":{"schema":{"$ref":"schema.json#/$defs/Used"}}}}}}}}`
+	for _, annotation := range []string{"default", "const"} {
+		t.Run(annotation, func(t *testing.T) {
+			schema := fmt.Sprintf(`{"$schema":"https://json-schema.org/draft/2020-12/schema","$id":"schema.json","$defs":{"Used":{"properties":{"p":{"type":"string"}}},"Other":{"type":"object",%q:{"$id":"schema.json"}}}}`, annotation)
+			m := newMemFetch(map[string]string{base + "schema.json": schema})
+			c, err := (&openapi.Loader{Fetch: m.fetch}).Parse(t.Context(), []byte(entry), base+"openapi.json", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := encodingOf(t, c, "u"); len(got) != 1 || !strings.HasPrefix(got[0], "p=") {
+				t.Errorf("encoding = %v, want field p; sibling data must not claim the schema's URI", got)
+			}
+		})
+	}
+}
+
 // C5-2: OAS 3.1.2 section 4.8.24.5 makes jsonSchemaDialect the document
 // default; an explicit resource $schema overrides it. Schema's contract
 // does not interpret identifiers in a foreign dialect. These are the
