@@ -241,9 +241,10 @@ func (c *Client) DocumentURIs() []string {
 // A YAML document's JSON has no insignificant whitespace, its members in the
 // order written and its strings as encoding/json writes them without HTML
 // escaping. A number keeps its spelling where JSON's grammar allows it;
-// otherwise only what the grammar requires changes: a leading + is dropped, a
-// 0 is written before a leading point, a point with no digit after it is
-// dropped, and a hexadecimal or octal integer is written in decimal.
+// otherwise only what the grammar requires changes: a leading + is dropped, as
+// are zeros leading a whole part of more than one digit, a 0 is written before
+// a leading point, a point with no digit after it is dropped, and a
+// hexadecimal or octal integer is written in decimal.
 //
 // A Source's fragment, like a SchemaReference.URI's, is a JSON Pointer
 // percent-encoded as RFC 6901 section 6 says, as in
