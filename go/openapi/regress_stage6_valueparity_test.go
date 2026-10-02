@@ -143,3 +143,22 @@ func TestStage6WholeQueryStopsAtTargetLimit(t *testing.T) {
 		t.Errorf("refusal allocated %d bytes; existing request-limit ceiling is 16 MiB", allocated)
 	}
 }
+
+// The same Values stop rule applies within a collection element, not only
+// between elements. Build the 32 MiB scalar before measuring Prepare and
+// reuse TestRequestSizeLimit's 16 MiB refusal allocation ceiling.
+func TestStage6CollectionStopsWithinOversizedElement(t *testing.T) {
+	c := editionClient(t, editionDoc("2.0", `"/x":{"get":{"parameters":[{"name":"p","in":"query","type":"array","items":{"type":"string"},"collectionFormat":"csv"}]}}`), nil)
+	mustOp(t, c, "GET /x")
+	in := &openapi.Input{Params: map[string]any{"p": []string{strings.Repeat("x", 32<<20)}}}
+	var req *openapi.Request
+	var err error
+	allocated := allocatedBy(func() { req, err = c.Prepare("GET /x", in) })
+	if req != nil || err == nil {
+		t.Fatal("prepared a request beyond the target limit")
+	}
+	wantKeys(t, "Inputs", asRequestError(t, err).Inputs, true, "p")
+	if allocated > 16<<20 {
+		t.Errorf("refusal allocated %d bytes; existing request-limit ceiling is 16 MiB", allocated)
+	}
+}
