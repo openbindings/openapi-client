@@ -48,6 +48,9 @@ type tree struct {
 	reaches, declares bool
 	editionRefs       bool
 	located           map[int32]location
+	schemaSeeds       []item // object contexts reached in a versionless fragment
+	schemasOnce       sync.Once
+	schemas           *schemaGraph
 
 	// Read without a lock, each computed unlocked and kept as first stored.
 	indexes sync.Map                 // container to []int32: an object's members sorted by name, an array's items

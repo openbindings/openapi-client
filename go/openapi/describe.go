@@ -504,7 +504,7 @@ type Schema struct {
 // follow authored references without reimplementing document retrieval and
 // URI resolution. It is safe to call concurrently.
 func (c *Client) Schema(uri string) (*Schema, error) {
-	panic("unimplemented")
+	return c.doc.schemaURI(uri)
 }
 
 // A SchemaReference is one reference in a Schema's Raw tree: a standard
@@ -548,7 +548,7 @@ type SchemaReference struct {
 // rather than silently omitting references in its unknown vocabulary. The
 // caller can always inspect Raw and the loaded documents.
 func (s *Schema) References() ([]SchemaReference, error) {
-	panic("unimplemented")
+	return s.references()
 }
 
 // Raw returns a copy of the Schema Object exactly as written, as JSON (from
@@ -598,11 +598,8 @@ func (s *Schema) Source() string {
 // above the schema, its own $id included, resolved against the base outside
 // it (see Schema for other dialects).
 func (s *Schema) Base() string {
-	d := s.Dialect()
-	if id := s.v.get("$id"); id.kind() == '"' && ownDialect(d) {
-		if u, err := s.v.t.refbase.Parse(id.text()); err == nil {
-			return u.String()
-		}
+	if n := s.schemaNode(); n != nil {
+		return n.base.String()
 	}
 	return s.v.t.refbase.String()
 }
@@ -617,19 +614,10 @@ func (s *Schema) Base() string {
 // and OpenAPI 3.0, whose schemas are those editions' own subset of JSON
 // Schema (see Client.Version).
 func (s *Schema) Dialect() string {
-	if s.v.t.edition <= 30 {
-		return ""
+	if n := s.schemaNode(); n != nil {
+		return n.dialect
 	}
-	if d := s.v.str("$schema"); d != "" {
-		return d
-	}
-	if d := s.v.t.root().str("jsonSchemaDialect"); d != "" {
-		return d
-	}
-	if s.v.t.edition == 32 {
-		return "https://spec.openapis.org/oas/3.2/dialect/2025-09-17"
-	}
-	return "https://spec.openapis.org/oas/3.1/dialect/base"
+	return schemaDialect(s.v.t)
 }
 
 // schema returns a handle to the Schema Object v, whose Source is src

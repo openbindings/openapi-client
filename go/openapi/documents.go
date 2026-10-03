@@ -421,6 +421,7 @@ type reader struct {
 	queue   []item
 	at      *documentPath // shared physical path to the node being read
 	busy    bool
+	seeded  map[[2]int32]bool // retained fragment entrypoints, once per node and kind
 }
 
 // A need is a want and the URI it needs.
@@ -830,7 +831,8 @@ func (dc *discovery) drain() {
 // or its document holds nothing discovery needs; one a plain name names that
 // r has not read is needed of the discovery.
 func (r *reader) open(n value, k kind, base *url.URL, ptr *documentPath, uri, dialect string, w want) {
-	if !r.t.reaches && !r.t.declares {
+	fragment := r.t.kind() == anyKind && w.k != anyKind
+	if !r.t.reaches && !r.t.declares && !fragment {
 		return
 	}
 	frag, err := url.PathUnescape(w.frag)
@@ -839,7 +841,7 @@ func (r *reader) open(n value, k kind, base *url.URL, ptr *documentPath, uri, di
 		return
 	case frag != "" && frag[0] == '/':
 		n, base, dialect = descend(n, k, frag, base, dialect)
-		if r.t.declares {
+		if r.t.declares || fragment {
 			ptr = &documentPath{parent: ptr, part: frag}
 		}
 	case frag != "":
@@ -851,6 +853,19 @@ func (r *reader) open(n value, k kind, base *url.URL, ptr *documentPath, uri, di
 		n, base, ptr, dialect = c.v, c.base, c.ptr, c.dialect
 	}
 	if !n.ok() {
+		return
+	}
+	if fragment {
+		key := [2]int32{n.i, int32(w.k)}
+		if r.seeded == nil {
+			r.seeded = map[[2]int32]bool{}
+		}
+		if !r.seeded[key] {
+			r.seeded[key] = true
+			r.t.schemaSeeds = append(r.t.schemaSeeds, item{n, w.k, base, ptr, dialect})
+		}
+	}
+	if !r.t.reaches && !r.t.declares {
 		return
 	}
 	if r.seen == nil {
