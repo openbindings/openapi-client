@@ -130,7 +130,7 @@ func (w *yamlWriter) value(n *yaml.Node, depth int, name uint32) (int, error) {
 	case depth > maxDepth:
 		return 0, w.reject(n, "nesting deeper than 1,000 levels")
 	case w.ctx.Err() != nil:
-		return 0, fmt.Errorf("openapi: %s: %w", w.uri, w.ctx.Err())
+		return 0, fmt.Errorf("openapi: %s: %w", safeURI(w.uri), w.ctx.Err())
 	case n.Kind == yaml.AliasNode:
 		return w.alias(n, depth, name)
 	}

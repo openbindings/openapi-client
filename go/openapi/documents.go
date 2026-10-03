@@ -521,7 +521,7 @@ func (d *document) discover(ld *loading) error {
 	n := 0
 	for _, t := range d.trees {
 		if t.off = int32(n); n+len(t.nodes) > math.MaxInt32 {
-			return fmt.Errorf("openapi: %s: the documents together hold too many values", d.uri)
+			return fmt.Errorf("openapi: %s: the documents together hold too many values", safeURI(d.uri))
 		}
 		n += len(t.nodes)
 		t.located = dc.readers[t].located
@@ -865,9 +865,6 @@ func (r *reader) open(n value, k kind, base *url.URL, ptr *documentPath, uri, di
 			r.t.schemaSeeds = append(r.t.schemaSeeds, item{n, w.k, base, ptr, dialect})
 		}
 	}
-	if !r.t.reaches && !r.t.declares {
-		return
-	}
 	if r.seen == nil {
 		r.seen = make([]uint32, len(r.t.nodes))
 	}
@@ -939,10 +936,9 @@ func (r *reader) visit(v value, k kind, base *url.URL, effective string) {
 	case k == schemaKind || k == schemaIDsKind || k == anyKind:
 		outer := base
 		if id.kind() == '"' {
-			if u, err := base.Parse(id.text()); err == nil {
-				u.Fragment, u.RawFragment = "", ""
-				base = u
-				r.claim(u.String(), v, outer, effective)
+			base = v.resourceBase(base, id)
+			if r.t.resourceBases[v.i] != nil {
+				r.claim(base.String(), v, outer, effective)
 			}
 		}
 		for _, a := range [...]value{anchor, dynamicAnchor} {
@@ -1137,10 +1133,7 @@ func descend(v value, k kind, ptr string, base *url.URL, dialect string) (value,
 				dialect = local.string()
 			}
 			if id := v.get("$id"); id.kind() == '"' && (dialect == "" || ownDialect(dialect)) {
-				if u, err := base.Parse(id.text()); err == nil {
-					u.Fragment, u.RawFragment = "", ""
-					base = u
-				}
+				base = v.resourceBase(base, id)
 			}
 		}
 		tok, rest, ok := nextToken(ptr)
@@ -1168,8 +1161,34 @@ func descend(v value, k kind, ptr string, base *url.URL, dialect string) (value,
 // ownDialect reports whether the schema dialect d reads identifiers as JSON
 // Schema 2020-12 does: 2020-12's own, or one of OpenAPI's.
 func ownDialect(d string) bool {
-	return d == "https://json-schema.org/draft/2020-12/schema" ||
-		strings.HasPrefix(d, "https://spec.openapis.org/oas/3.1/dialect/") || strings.HasPrefix(d, "https://spec.openapis.org/oas/3.2/dialect/")
+	switch d {
+	case "https://json-schema.org/draft/2020-12/schema",
+		"https://spec.openapis.org/oas/3.1/dialect/base",
+		"https://spec.openapis.org/oas/3.1/dialect/2024-10-25",
+		"https://spec.openapis.org/oas/3.1/dialect/2024-11-10",
+		"https://spec.openapis.org/oas/3.2/dialect/2025-09-17",
+		"https://spec.openapis.org/oas/3.2/dialect/2026-02-26":
+		return true
+	}
+	return false
+}
+
+// resourceBase retains the URL discovery already computes for an identifier.
+// Only discovery or the once-per-tree schema builder writes this node fact;
+// loaded resolution never mutates it. A failed identifier keeps the outer base.
+func (v value) resourceBase(base *url.URL, id value) *url.URL {
+	if u := v.t.resourceBases[v.i]; u != nil {
+		return u
+	}
+	if u, err := base.Parse(id.text()); err == nil {
+		u.Fragment, u.RawFragment = "", ""
+		if v.t.resourceBases == nil {
+			v.t.resourceBases = map[int32]*url.URL{}
+		}
+		v.t.resourceBases[v.i] = u
+		return u
+	}
+	return base
 }
 
 // target returns the node the reference ref, a string, names, and its JSON
@@ -1205,31 +1224,49 @@ func (d *document) targetName(t *tree, text string) (value, string, error) {
 }
 
 func (d *document) targetLocation(t *tree, text, uri, frag string) (value, string, error) {
-	n, ptr := t.root(), ""
+	n, err := d.targetNode(t, text, uri, frag)
+	return n.v, n.pointer(), err
+}
+
+// locatedNode leaves an identifier's physical ancestry linked and a requested
+// pointer suffix as written. Returning either needs no path allocation.
+type locatedNode struct {
+	v      value
+	path   *documentPath
+	suffix string
+}
+
+func (n locatedNode) pointer() string { return n.path.pointer() + n.suffix }
+
+// targetNode preserves the physical location as a linked path. Callers that
+// only need the node do not construct a physical pointer as a side effect.
+func (d *document) targetNode(t *tree, text, uri, frag string) (locatedNode, error) {
+	n := locatedNode{v: t.root()}
 	if uri != t.uri || d.ids[uri] != nil {
 		var err error
-		if n, ptr, err = d.node(uri); err != nil {
-			return value{}, "", fmt.Errorf("%w %q: %w", ErrUnresolved, safeURI(text), err)
+		if n, err = d.namedNode(uri); err != nil {
+			return locatedNode{}, fmt.Errorf("%w %q: %w", ErrUnresolved, safeURI(text), err)
 		}
 	}
 	var err error
 	if strings.IndexByte(frag, '%') >= 0 {
 		if frag, err = url.PathUnescape(frag); err != nil {
-			return value{}, "", fmt.Errorf("%w %q: the fragment cannot be percent-decoded", ErrUnresolved, safeURI(text))
+			return locatedNode{}, fmt.Errorf("%w %q: the fragment cannot be percent-decoded", ErrUnresolved, safeURI(text))
 		}
 	}
 	switch {
 	case frag == "":
 	case frag[0] == '/':
-		if n, ptr = n.at(frag), ptr+frag; !n.ok() {
-			return value{}, "", fmt.Errorf("%w %q: no such node", ErrUnresolved, safeURI(text))
+		if n.v = n.v.at(frag); !n.v.ok() {
+			return locatedNode{}, fmt.Errorf("%w %q: no such node", ErrUnresolved, safeURI(text))
 		}
+		n.suffix = frag
 	default:
-		if n, ptr, err = d.node(uri + "#" + frag); err != nil {
-			return value{}, "", fmt.Errorf("%w %q: %w", ErrUnresolved, safeURI(text), err)
+		if n, err = d.namedNode(uri + "#" + frag); err != nil {
+			return locatedNode{}, fmt.Errorf("%w %q: %w", ErrUnresolved, safeURI(text), err)
 		}
 	}
-	return n, ptr, nil
+	return n, nil
 }
 
 // A location is where a reference leads: the absolute URI it names, without
@@ -1312,7 +1349,7 @@ func resolve(base *url.URL, doc string) *resolved {
 	switch {
 	case err != nil:
 		r.err = errors.New("not a URI reference")
-	case !u.IsAbs() && base.Opaque != "":
+	case !u.IsAbs() && base.Opaque != "" && doc != "":
 		r.err = errors.New("a relative reference in a document with no base URI")
 	default:
 		if u.IsAbs() {
@@ -1321,7 +1358,7 @@ func resolve(base *url.URL, doc string) *resolved {
 		switch u = base.ResolveReference(u); {
 		case u.User != nil: // not shown
 			u.User = nil
-			r.err, r.shown = errors.New("a URI with userinfo is never retrieved (RFC 9110 section 4.2.4)"), u.String()
+			r.err, r.shown = errors.New("a URI with userinfo is never retrieved (RFC 9110 section 4.2.4)"), safeURI(u.String())
 		case u.Scheme == "file" && u.Host != "" && u.Host != "localhost":
 			r.err = errors.New("a file URL cannot name a host other than localhost (RFC 8089)")
 		default:
@@ -1335,18 +1372,23 @@ func resolve(base *url.URL, doc string) *resolved {
 // node returns the node an absolute URI identifies, a document's root or a
 // schema, and its JSON Pointer in its document, or why it identifies none.
 func (d *document) node(uri string) (value, string, error) {
+	n, err := d.namedNode(uri)
+	return n.v, n.pointer(), err
+}
+
+func (d *document) namedNode(uri string) (locatedNode, error) {
 	t, c := d.named[uri], d.ids[uri]
 	switch {
 	case c != nil && c.other != nil:
-		return value{}, "", fmt.Errorf("%s names both %s and %s", uri, c.source(), c.other.source())
+		return locatedNode{}, fmt.Errorf("%s names both %s and %s", safeURI(uri), safeURI(c.source()), safeURI(c.other.source()))
 	case c != nil && t != nil && c.v != t.root():
-		return value{}, "", fmt.Errorf("%s names both the document %s and %s", uri, t.uri, c.source())
+		return locatedNode{}, fmt.Errorf("%s names both the document %s and %s", safeURI(uri), safeURI(t.uri), safeURI(c.source()))
 	case c != nil:
-		return c.v, c.ptr.pointer(), nil
+		return locatedNode{v: c.v, path: c.ptr}, nil
 	case t != nil:
-		return t.root(), "", nil
+		return locatedNode{v: t.root()}, nil
 	case d.failed[uri] != nil:
-		return value{}, "", d.failed[uri]
+		return locatedNode{}, d.failed[uri]
 	}
-	return value{}, "", fmt.Errorf("no document loaded or schema declared has the URI %s", uri)
+	return locatedNode{}, fmt.Errorf("no document loaded or schema declared has the URI %s", safeURI(uri))
 }

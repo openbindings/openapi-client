@@ -12,10 +12,9 @@ import (
 
 // schemaGraph is built only by schema inspection. It records schema positions
 // and reference events, not complete pointer strings or copies of subtrees.
-// Events in a Raw subtree occupy one interval in the document's node order.
+// Events are grouped by schema-vocabulary ancestry, then by document order.
 type schemaGraph struct {
 	nodes map[int32]*schemaNode
-	edges []*schemaEdge
 }
 
 type schemaNode struct {
@@ -24,6 +23,9 @@ type schemaNode struct {
 	depth   int
 	base    *url.URL
 	dialect string
+	parent  *schemaNode   // only a schema-bearing keyword establishes this link
+	group   *schemaNode   // root of that semantic component, settled after indexing
+	edges   []*schemaEdge // stored only on the component root
 	once    sync.Once
 	handle  *Schema
 	err     error // a legacy root reference failed to reach a schema
@@ -43,8 +45,10 @@ func schemaDialect(t *tree) string {
 	if t.edition <= 30 {
 		return ""
 	}
-	if d := t.root().str("jsonSchemaDialect"); d != "" {
-		return d
+	if t.kind() == rootKind {
+		if d := t.root().str("jsonSchemaDialect"); d != "" {
+			return d
+		}
 	}
 	if t.edition == 32 {
 		return "https://spec.openapis.org/oas/3.2/dialect/2025-09-17"
@@ -62,10 +66,7 @@ func schemaScope(v value, base *url.URL, dialect string) (*url.URL, string) {
 		dialect = local.text()
 	}
 	if id := v.get("$id"); id.kind() == '"' && (dialect == "" || ownDialect(dialect)) {
-		if u, err := base.Parse(id.text()); err == nil {
-			u.Fragment, u.RawFragment = "", ""
-			base = u
-		}
+		base = v.resourceBase(base, id)
 	}
 	return base, dialect
 }
@@ -77,7 +78,7 @@ func (d *document) schemaGraph(t *tree) *schemaGraph {
 		for _, it := range t.schemaSeeds {
 			b.seeds[it.v.i] = append(b.seeds[it.v.i], it)
 		}
-		b.visit(t.root(), t.kind(), t.refbase, schemaDialect(t), nil, 0)
+		b.visit(t.root(), t.kind(), t.refbase, schemaDialect(t), nil, 0, nil)
 		// A referenced fragment can lie outside the root's known vocabulary.
 		// Its context was established while loading, never by an accessor.
 		for _, it := range t.schemaSeeds {
@@ -89,9 +90,9 @@ func (d *document) schemaGraph(t *tree) *schemaGraph {
 			if dialect == "" {
 				dialect = schemaDialect(t)
 			}
-			b.visit(it.v, it.k, it.base, dialect, p, depth)
+			b.visit(it.v, it.k, it.base, dialect, p, depth, nil)
 		}
-		slices.SortFunc(g.edges, func(a, b *schemaEdge) int {
+		slices.SortFunc(b.edges, func(a, b *schemaEdge) int {
 			if a.v.i < b.v.i {
 				return -1
 			}
@@ -100,9 +101,28 @@ func (d *document) schemaGraph(t *tree) *schemaGraph {
 			}
 			return 0
 		})
+		for _, n := range g.nodes {
+			n.component()
+		}
+		for _, e := range b.edges {
+			root := e.owner.group
+			root.edges = append(root.edges, e)
+		}
 		t.schemas = g
 	})
 	return t.schemas
+}
+
+// component is settled after every context has been visited, so independently
+// seeded children attach to their vocabulary parent regardless of visit order.
+func (n *schemaNode) component() *schemaNode {
+	if n.group == nil {
+		n.group = n
+		if n.parent != nil {
+			n.group = n.parent.component()
+		}
+	}
+	return n.group
 }
 
 // schemaPath turns a discovery path's occasional pointer suffix into linked
@@ -127,18 +147,24 @@ type schemaBuilder struct {
 	g     *schemaGraph
 	seen  []uint32
 	seeds map[int32][]item
+	edges []*schemaEdge
 }
 
-func (b *schemaBuilder) visit(v value, k kind, base *url.URL, dialect string, path *documentPath, depth int) {
+func (b *schemaBuilder) visit(v value, k kind, base *url.URL, dialect string, path *documentPath, depth int, parent *schemaNode) {
 	if k == anyKind {
 		if seeds := b.seeds[v.i]; len(seeds) > 0 {
 			for _, it := range seeds {
-				b.visit(v, it.k, base, dialect, path, depth)
+				b.visit(v, it.k, base, dialect, path, depth, nil)
 			}
 			return
 		}
 		if v.get("$schema").ok() || v.get("$id").ok() || v.get("$anchor").ok() || v.get("$dynamicAnchor").ok() {
 			k = schemaKind
+		}
+	}
+	if k == schemaKind && parent != nil {
+		if n := b.g.nodes[v.i]; n != nil {
+			n.parent = parent
 		}
 	}
 	if b.seen[v.i]&(1<<k) != 0 {
@@ -154,10 +180,10 @@ func (b *schemaBuilder) visit(v value, k kind, base *url.URL, dialect string, pa
 			return
 		}
 		base, dialect = schemaScope(v, base, dialect)
-		n = &schemaNode{v: v, path: path, depth: depth, base: base, dialect: dialect}
+		n = &schemaNode{v: v, path: path, depth: depth, base: base, dialect: dialect, parent: parent}
 		b.g.nodes[v.i] = n
 		if dialect != "" && !ownDialect(dialect) {
-			b.g.edges = append(b.g.edges, &schemaEdge{v: v, owner: n, path: path, depth: depth})
+			b.edges = append(b.edges, &schemaEdge{v: v, owner: n, path: path, depth: depth})
 			return
 		}
 	}
@@ -200,16 +226,16 @@ func (b *schemaBuilder) visit(v value, k kind, base *url.URL, dialect string, pa
 			s, ok = slot{pathItemKind, '1'}, !strings.HasPrefix(name, "x-")
 		}
 		if ok {
-			b.into(name, m, s, base, dialect, path, depth)
+			b.into(name, m, s, base, dialect, path, depth, n)
 		}
 	}
 }
 
-func (b *schemaBuilder) into(name string, v value, s slot, base *url.URL, dialect string, path *documentPath, depth int) {
+func (b *schemaBuilder) into(name string, v value, s slot, base *url.URL, dialect string, path *documentPath, depth int, parent *schemaNode) {
 	path = &documentPath{parent: path, part: name, token: true}
 	depth++
 	if s.how == '1' {
-		b.visit(v, s.k, base, dialect, path, depth)
+		b.visit(v, s.k, base, dialect, path, depth, parent)
 		return
 	}
 	if v.kind() != s.how && !(s.how == 'x' && v.kind() == '{') {
@@ -223,13 +249,13 @@ func (b *schemaBuilder) into(name string, v value, s slot, base *url.URL, dialec
 		} else if s.how == 'x' && strings.HasPrefix(key, "x-") {
 			continue
 		}
-		b.into(key, c, slot{s.k, '1'}, base, dialect, path, depth)
+		b.into(key, c, slot{s.k, '1'}, base, dialect, path, depth, parent)
 	}
 }
 
 func (b *schemaBuilder) edge(v value, n *schemaNode, path *documentPath, depth int, keyword string) {
 	if v.kind() == '"' {
-		b.g.edges = append(b.g.edges, &schemaEdge{v: v, owner: n,
+		b.edges = append(b.edges, &schemaEdge{v: v, owner: n,
 			path: &documentPath{parent: path, part: v.t.name(v.i), token: true}, depth: depth + 1, keyword: keyword})
 	}
 }
@@ -273,11 +299,11 @@ func (d *document) schemaURI(uri string) (*Schema, error) {
 	if d == nil {
 		return nil, fmt.Errorf("%w: no document loaded", ErrUnresolved)
 	}
-	v, _, err := d.targetLocation(d.tree, uri, resource, frag)
+	location, err := d.targetNode(d.tree, uri, resource, frag)
 	if err != nil {
 		return nil, err
 	}
-	n := d.schemaGraph(v.t).nodes[v.i]
+	n := d.schemaGraph(location.v.t).nodes[location.v.i]
 	if n == nil {
 		return nil, fmt.Errorf("%w %q: not a Schema Object", ErrUnresolved, safeURI(uri))
 	}
@@ -314,7 +340,8 @@ func (s *Schema) references() ([]SchemaReference, error) {
 	if n == nil {
 		return nil, fmt.Errorf("%w: not a Schema Object", ErrUnresolved)
 	}
-	first, _ := slices.BinarySearchFunc(g.edges, s.v.i, func(e *schemaEdge, i int32) int {
+	edges := n.group.edges
+	first, _ := slices.BinarySearchFunc(edges, s.v.i, func(e *schemaEdge, i int32) int {
 		if e.v.i < i {
 			return -1
 		}
@@ -324,7 +351,7 @@ func (s *Schema) references() ([]SchemaReference, error) {
 		return 0
 	})
 	var refs []SchemaReference
-	for _, e := range g.edges[first:] {
+	for _, e := range edges[first:] {
 		if uint32(e.v.i) >= s.v.t.nodes[s.v.i].next {
 			break
 		}

@@ -51,6 +51,7 @@ type tree struct {
 	schemaSeeds       []item // object contexts reached in a versionless fragment
 	schemasOnce       sync.Once
 	schemas           *schemaGraph
+	resourceBases     map[int32]*url.URL // $id resolutions shared by discovery and inspection
 
 	// Read without a lock, each computed unlocked and kept as first stored.
 	indexes sync.Map                 // container to []int32: an object's members sorted by name, an array's items
@@ -436,7 +437,7 @@ func (p *scanner) value(depth int, name uint32) error {
 		return p.errorAt(p.i, "nesting deeper than 1,000 levels")
 	}
 	if len(p.nodes)&0xffff == 0xffff && p.ctx.Err() != nil {
-		return fmt.Errorf("openapi: %s: %w", p.uri, p.ctx.Err())
+		return fmt.Errorf("openapi: %s: %w", safeURI(p.uri), p.ctx.Err())
 	}
 	if p.i == len(p.src) {
 		return p.errorAt(p.i, "unexpected end of the document")
