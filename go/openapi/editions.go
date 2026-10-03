@@ -79,8 +79,8 @@ func (d *document) swaggerParam(t value, at string, p *Param) param {
 }
 
 // legacyValues serializes nested arrays from the inside out; undefined
-// members contribute nothing. Delimiters are escaped at their own level.
-func legacyValues(r *jsonReader, schema value, set *charset) ([]string, error) {
+// members contribute nothing. Body fields have no request-target bound.
+func legacyValues(r *jsonReader, schema value) ([]string, error) {
 	switch r.s[r.i] {
 	case 'n':
 		r.skip()
@@ -97,7 +97,7 @@ func legacyValues(r *jsonReader, schema value, set *charset) ([]string, error) {
 		}
 		var items []string
 		err := r.each(func(string) error {
-			xs, err := legacyValues(r, schema.get("items"), set)
+			xs, err := legacyValues(r, schema.get("items"))
 			if err == nil {
 				items = append(items, xs...)
 			}
@@ -114,16 +114,9 @@ func legacyValues(r *jsonReader, schema value, set *charset) ([]string, error) {
 		if delim == "" {
 			return nil, fmt.Errorf("unsupported collectionFormat %q", cf)
 		}
-		if set != nil && delim != "," {
-			delim = escape(delim, set)
-		}
 		return []string{strings.Join(items, delim)}, nil
 	default:
-		s := r.scalar()
-		if set != nil {
-			s = escape(s, set)
-		}
-		return []string{s}, nil
+		return []string{r.scalar()}, nil
 	}
 }
 
@@ -171,15 +164,39 @@ func (c *Client) writeLegacy(b *strings.Builder, lead string, p *param, v any, f
 		}
 		return true, nil
 	}
+	if !form {
+		w := collectionWriter{c: c, b: b, p: p}
+		start := func() error {
+			if p.Err != nil {
+				return p.Err
+			}
+			n := len(lead)
+			if p.In == "query" {
+				n += len(p.name) + 1
+			}
+			if b.Len()+n > maxLength {
+				return errTooLong
+			}
+			b.WriteString(lead)
+			if p.In == "query" {
+				b.WriteString(p.name)
+				if !(w.empty && c.cfg.NameOnlyEmpty && p.AllowEmptyValue) {
+					b.WriteByte('=')
+				}
+			}
+			return nil
+		}
+		given, err := w.value(v, p.legacy, 1, start)
+		if given && err == nil {
+			err = p.Err
+		}
+		return given, err
+	}
 	s, _, err := encodeJSON(c.doc, v, marshal)
 	if err != nil {
 		return false, err
 	}
-	set := p.set
-	if form {
-		set = nil
-	}
-	vals, err := legacyValues(&jsonReader{s: s}, p.legacy, set)
+	vals, err := legacyValues(&jsonReader{s: s}, p.legacy)
 	given := len(vals) > 0 || s[0] == '[' && s[1] != ']'
 	if err != nil || !given {
 		return false, err
@@ -193,24 +210,11 @@ func (c *Client) writeLegacy(b *strings.Builder, lead string, p *param, v any, f
 		} else {
 			b.WriteByte('&')
 		}
-		if p.In == "query" || form {
-			name := p.name
-			if form {
-				name = string(appendForm(nil, p.Name))
-			}
-			b.WriteString(name)
-			if !(s == `""` && v == "" && c.cfg.NameOnlyEmpty && p.AllowEmptyValue) {
-				b.WriteByte('=')
-			}
+		b.Write(appendForm(nil, p.Name))
+		if !(s == `""` && v == "" && c.cfg.NameOnlyEmpty && p.AllowEmptyValue) {
+			b.WriteByte('=')
 		}
-		if form {
-			b.Write(appendForm(nil, v))
-		} else {
-			b.WriteString(v)
-		}
-		if !form && b.Len() > maxLength {
-			return false, errTooLong
-		}
+		b.Write(appendForm(nil, v))
 	}
 	return true, nil
 }
@@ -272,13 +276,10 @@ func (o *operation) swaggerBody(n value) error {
 			}
 		}
 		schema = &Schema{doc: o.doc, v: n, synthetic: params}
-		for _, typ := range list {
+		list = slices.DeleteFunc(list, func(typ string) bool {
 			m, ok := parseMedia(typ)
-			if ok && (isForm(m) || strings.EqualFold(m.full, "multipart/form-data")) {
-				continue
-			}
-			list = slices.DeleteFunc(list, func(s string) bool { return s == typ })
-		}
+			return !ok || !(isForm(m) || strings.EqualFold(m.full, "multipart/form-data"))
+		})
 	}
 	if len(list) == 0 {
 		list = []string{""}
@@ -313,7 +314,7 @@ func (d *document) swaggerContent(schema *Schema, types []string, src string) *c
 		md.Sequential = pm.class() == sequentialClass || isMultipart(pm)
 		var enc *formEncoding
 		if schema != nil && (isForm(pm) || isMultipart(pm) || pm.typ == "*" || pm.sub == "*" && strings.EqualFold(pm.typ, "application")) {
-			enc, md.Encoding = d.encodingOf([]value{schema.v}, schema.Source(), value{}, "", pm)
+			enc, md.Encoding = d.encodingOf([]value{schema.v}, schema.Source(), value{}, "", pm, schema.v.t.edition)
 		} else {
 			enc = noFields
 		}
@@ -363,7 +364,7 @@ func (c *Client) membersChecked(v any, enc *formEncoding, body string, re *Reque
 
 // positionalEncoding compiles all positional schema/Encoding combinations
 // once; looking up an item does no document traversal.
-func (d *document) positionalEncoding(enc *formEncoding, v value, roots []value, src string, named ...*Param) []*Param {
+func (d *document) positionalEncoding(enc *formEncoding, v value, roots []value, src string, m parsedMedia, named ...*Param) []*Param {
 	enc.ordered = true
 	var schemas []value
 	var sources []string
@@ -403,13 +404,13 @@ func (d *document) positionalEncoding(enc *formEncoding, v value, roots []value,
 			e = v.get("itemEncoding")
 		}
 		name := fmt.Sprint(i)
-		f, p := d.newField(name, d.schema(schema, schemaSource, ""), schemaRoots(schema), e, src+"/prefixEncoding/"+name, parsedMedia{})
+		f, p := d.newField(name, d.schema(schema, schemaSource, ""), schemaRoots(schema), e, src+"/prefixEncoding/"+name, m, true)
 		enc.positional = append(enc.positional, f)
 		if i < len(prefix) {
 			named = append(named, p)
 		}
 	}
-	f, p := d.newField("*", d.schema(rest, restSource, ""), schemaRoots(rest), v.get("itemEncoding"), src+"/itemEncoding", parsedMedia{})
+	f, p := d.newField("*", d.schema(rest, restSource, ""), schemaRoots(rest), v.get("itemEncoding"), src+"/itemEncoding", m, true)
 	enc.rest = f
 	if v.get("itemEncoding").ok() {
 		named = append(named, p)
@@ -451,7 +452,13 @@ func (w *partWriter) position(enc *formEncoding, v any, body string, i int) {
 		w.re.input(at.String(), errors.New("a form-data array item requires a one-property object or Part with Content-Disposition"))
 		return
 	}
-	w.write(f, name, content, at)
+	if !null(content) {
+		if f.styled {
+			w.styled(f, name, content, at)
+		} else {
+			w.write(f, name, content, at)
+		}
+	}
 }
 
 func schemaRoots(v value) []value {

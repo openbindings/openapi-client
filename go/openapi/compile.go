@@ -432,7 +432,7 @@ func (d *document) newParam(t value, at string) param {
 			if p.In == "querystring" {
 				enc = media.get("encoding")
 			}
-			pp.form, _ = d.encodingOf([]value{media.get("schema")}, at+"/content/"+token(p.ContentType)+"/schema", enc, at+"/content/"+token(p.ContentType)+"/encoding", m)
+			pp.form, _ = d.encodingOf([]value{media.get("schema")}, at+"/content/"+token(p.ContentType)+"/schema", enc, at+"/content/"+token(p.ContentType)+"/encoding", m, media.t.edition)
 		}
 	} else {
 		if p.Style == "" {
@@ -614,15 +614,12 @@ func (d *document) newMedia(v value, src, typ string, request bool) *mediaPlan {
 		if _, _, err := pm.boundary(); err != nil {
 			md.Err = err
 		}
-		p.encoding, md.Encoding = d.encodingOf(schema, src+"/schema", v.get("encoding"), src+"/encoding", pm)
+		p.encoding, md.Encoding = d.encodingOf(schema, src+"/schema", v.get("encoding"), src+"/encoding", pm, v.t.edition)
 	case pm.typ == "*" || pm.sub == "*" && strings.EqualFold(pm.typ, "application"):
-		p.encoding, _ = d.encodingOf(schema, src+"/schema", value{}, "", pm)
-	}
-	if p.encoding != nil && v.t.edition <= 30 {
-		p.encoding.fallback = textField
+		p.encoding, _ = d.encodingOf(schema, src+"/schema", value{}, "", pm, v.t.edition)
 	}
 	if isMultipart(pm) && v.t.edition == 32 {
-		md.Encoding = d.positionalEncoding(p.encoding, v, schema, src, md.Encoding...)
+		md.Encoding = d.positionalEncoding(p.encoding, v, schema, src, pm, md.Encoding...)
 	}
 	return p
 }

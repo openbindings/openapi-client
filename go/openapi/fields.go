@@ -38,6 +38,7 @@ var noFields = &formEncoding{}
 type field struct {
 	encoding value
 	param
+	whole  bool
 	styled bool                            // its Encoding sets style, explode or allowReserved, where they apply
 	types  []string                        // the media types it takes, as written
 	parsed []parsedMedia                   // types, parsed
@@ -89,7 +90,7 @@ func stylesApply(m parsedMedia) bool {
 // s, at src, with the Encoding Objects of encodings, at esrc, under the media
 // type or range m, and describes them: the properties s and the schemas its
 // $ref and allOf reach declare, then the names only encodings has.
-func (d *document) encodingOf(s []value, src string, encodings value, esrc string, m parsedMedia) (*formEncoding, []*Param) {
+func (d *document) encodingOf(s []value, src string, encodings value, esrc string, m parsedMedia, edition int) (*formEncoding, []*Param) {
 	fields := map[string]*field{}
 	var names []string
 	var first []*Schema
@@ -105,17 +106,17 @@ func (d *document) encodingOf(s []value, src string, encodings value, esrc strin
 	})
 	list := make([]*Param, 0, len(names))
 	for i, name := range names {
-		f, p := d.newField(name, first[i], fields[name].roots, encodings.get(name), esrc+"/"+token(name), m)
+		f, p := d.newField(name, first[i], fields[name].roots, encodings.get(name), esrc+"/"+token(name), m, false)
 		fields[name], list = f, append(list, p)
 	}
 	for name, e := range encodings.members() {
 		if fields[name] == nil {
-			f, p := d.newField(name, nil, nil, e, esrc+"/"+token(name), m)
+			f, p := d.newField(name, nil, nil, e, esrc+"/"+token(name), m, false)
 			fields[name], list = f, append(list, p)
 		}
 	}
 	enc := &formEncoding{byName: fields}
-	if d.tree.edition <= 30 {
+	if edition <= 30 {
 		enc.fallback = textField
 	}
 	return enc, list
@@ -125,7 +126,34 @@ func (d *document) encodingOf(s []value, src string, encodings value, esrc strin
 // OpenAPI 3.1 those its schemas declare, each of its default type, or, for an
 // item or a field whose schemas allow an array but no object, those its items
 // declare; compiled once per schema, and found once per field.
-func (d *document) nested(f *field, item bool) *formEncoding {
+func (d *document) nested(f *field, item bool, m parsedMedia) *formEncoding {
+	if f.encoding.ok() && f.encoding.t.edition == 32 {
+		mode := 0
+		if isForm(m) {
+			mode = 1
+		} else if stylesApply(m) {
+			mode = 2
+		}
+		k := struct {
+			field *field
+			item  bool
+			mode  int
+		}{f, item, mode}
+		if got, ok := d.forms.Load(k); ok {
+			return got.(*formEncoding)
+		}
+		roots := f.roots
+		if l := d.typing(roots, false); !f.whole && l.array && (item || !l.object) {
+			roots = l.items
+			if l.item.ok() {
+				roots = []value{l.item}
+			}
+		}
+		enc, _ := d.encodingOf(roots, "", f.encoding.get("encoding"), f.Source+"/encoding", m, f.encoding.t.edition)
+		d.positionalEncoding(enc, f.encoding, roots, f.Source, m)
+		got, _ := d.forms.LoadOrStore(k, enc)
+		return got.(*formEncoding)
+	}
 	p := &f.nested[0]
 	if item {
 		p = &f.nested[1]
@@ -133,14 +161,8 @@ func (d *document) nested(f *field, item bool) *formEncoding {
 	if enc := p.Load(); enc != nil {
 		return enc
 	}
-	if f.encoding.ok() && f.encoding.t.edition == 32 {
-		enc, _ := d.encodingOf(f.roots, "", f.encoding.get("encoding"), f.Source+"/encoding", parsedMedia{})
-		d.positionalEncoding(enc, f.encoding, f.roots, f.Source)
-		p.CompareAndSwap(nil, enc)
-		return p.Load()
-	}
 	roots, enc := f.roots, noFields
-	if l := d.typing(roots); l.array && (item || !l.object) {
+	if l := d.typing(roots, false); !f.whole && l.array && (item || !l.object) {
 		if roots = l.items; l.item.ok() {
 			roots = []value{l.item}
 		}
@@ -149,7 +171,7 @@ func (d *document) nested(f *field, item bool) *formEncoding {
 		k := stateOf(roots)
 		e, ok := d.forms.Load(k)
 		if !ok {
-			e, _ = d.encodingOf(roots, "", value{}, "", parsedMedia{})
+			e, _ = d.encodingOf(roots, "", value{}, "", parsedMedia{}, roots[0].t.edition)
 			e, _ = d.forms.LoadOrStore(k, e)
 		}
 		enc = e.(*formEncoding)
@@ -465,7 +487,7 @@ type typing struct {
 }
 
 // typing returns the typing of a value whose schemas are s.
-func (d *document) typing(s []value) typing {
+func (d *document) typing(s []value, whole bool) typing {
 	sh := shape{types: 127}
 	for _, r := range s {
 		if r.ok() {
@@ -492,6 +514,8 @@ func (d *document) typing(s []value) typing {
 	}
 	switch l.array = sh.types&32 != 0; {
 	case !l.array:
+	case whole:
+		l.own |= jsonDefault
 	case !sh.items.ok():
 		l.own |= octetDefault // items allowing anything have no type
 	case !sh.several:
@@ -552,7 +576,7 @@ func (d *document) defaults(s []value) mediaSet {
 			}
 			break
 		}
-		l := d.typing(s)
+		l := d.typing(s, false)
 		if path = append(path, step{k, l.own}); !l.array {
 			break
 		}
@@ -607,8 +631,8 @@ func (d *document) keepSet(k state, set mediaSet) {
 
 // newField compiles the field name, whose first declaration is schema and
 // all of them roots, and whose Encoding Object is e, at src, under m.
-func (d *document) newField(name string, schema *Schema, roots []value, e value, src string, m parsedMedia) (*field, *Param) {
-	f := &field{encoding: e, param: param{Param: &Param{Name: name, Schema: schema}}, roots: roots}
+func (d *document) newField(name string, schema *Schema, roots []value, e value, src string, m parsedMedia, whole bool) (*field, *Param) {
+	f := &field{whole: whole, encoding: e, param: param{Param: &Param{Name: name, Schema: schema}}, roots: roots}
 	p := f.Param
 	if schema != nil {
 		p.Source = schema.Source()
@@ -652,7 +676,12 @@ func (d *document) newField(name string, schema *Schema, roots []value, e value,
 		}
 	}
 	if f.listed = ctype.ok(); !f.listed {
-		set := d.defaults(roots)
+		var set mediaSet
+		if whole {
+			set = d.typing(roots, true).own
+		} else {
+			set = d.defaults(roots)
+		}
 		for _, dm := range defaultMedia {
 			if set&dm.set != 0 || set == 0 && dm.set == octetDefault {
 				f.types, f.parsed = append(f.types, dm.parsed.full), append(f.parsed, dm.parsed)
