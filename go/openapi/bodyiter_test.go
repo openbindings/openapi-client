@@ -511,6 +511,14 @@ func TestIteratorContextEnds(t *testing.T) {
 			t.Fatalf("Send: %v", err)
 		}
 		defer resp.Body.Close()
+		// Send promises response headers, not iterator entry. Establish an
+		// active source; IFP9 permits a body stopped before entry never to run.
+		select {
+		case <-srv.seen(itemMark(0)):
+		case <-time.After(10 * time.Second):
+			close(resume)
+			t.Fatal("the server received no item within 10s")
+		}
 		cancel()
 		close(resume)
 		awaitStopped(t, stopped, "after cancellation")
