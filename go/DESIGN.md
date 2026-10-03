@@ -1,12 +1,15 @@
 # Go OpenAPI client: design
 
-This directory holds the public API of the Go client: the exported
-declarations with their documentation, and `Example` functions for every
-caller scenario in `design/scenarios.md`. Nothing beneath the API is
-implemented yet: the method bodies are stubs, and the examples compile but
-do not run. `design/requirements.md` records source material
-and candidate rules. Where it differs from the public package documentation,
-the package documentation is the current design.
+This directory holds the Go invocation client, its public contract and tests.
+The nine-stage implementation covers loading, calls, prepared requests,
+streaming, descriptors and the lazy authored-schema graph. `Example` functions
+document caller scenarios in `design/scenarios.md`; executable tests exercise
+the corresponding flows. The optional `schema2020.Project` helper remains
+unimplemented and is outside the invocation engine.
+
+`design/requirements.md` records source material and candidate rules. Where
+it differs from the public package documentation, the package documentation
+is the current design.
 `design/interface-boundary-2026-09-26.md` records the product boundary and
 the invocation fallback boundary.
 
@@ -36,8 +39,9 @@ net/http's errors, `*StatusError` (non-2xx), `*DecodeError` (2xx unusable),
 and success. `Send` leaves classification to its caller. `Operations` describes
 the document, with `Err` and `Source` on its parts. `DocumentURIs` and lazy
 `Schema` handles expose authored source and resolved references. The
-optional `openapi/schema2020` package offers a directional 2020-12 view
-only when conversion is faithful; invocation does not depend on it.
+optional `openapi/schema2020` contract reserves a directional 2020-12 view
+only when conversion is faithful; its implementation is a separate pass,
+and invocation does not depend on it.
 
 ## Where each rule lives
 
@@ -78,10 +82,11 @@ caller, a code generator, or another library can apply its own conventions.
 
 ## Implementation order
 
-Each stage lands a user-visible capability with its tests and is reviewed
-as code before the next begins.
+These nine stages build the invocation engine. Each capability has independent
+contract tests and a code review before landing. The optional schema projection
+pass remains separate.
 
-1. **Vertical slice** (landed): `Load` and `Parse` of 3.1 JSON documents
+1. **Vertical slice**: `Load` and `Parse` of 3.1 JSON documents
    with local references, the operation index and descriptors, servers and
    the URL rule, path, query and header parameters in their default
    styles, JSON and pre-encoded bodies, caller codecs, `Call`, `Prepare`,
@@ -112,5 +117,5 @@ as code before the next begins.
    schema graph. A separate optional pass can implement the `schema2020`
    projection helper after the invocation contract is settled.
 
-Stage 1 measures the implementation cost and performance before the rest of
-the engine is built.
+Stage 1 established the initial cost and performance measurements. Later
+stages retain those workloads and add coverage for their new capabilities.

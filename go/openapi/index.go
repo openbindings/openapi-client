@@ -411,13 +411,15 @@ func open(ctx context.Context, path string, root *os.Root) (io.ReadCloser, int64
 	return pr, -1, nil
 }
 
-// safeURI never renders userinfo, even when malformed text cannot be parsed.
+// safeURI omits userinfo and queries from generated diagnostics. Explicit
+// document and schema metadata retains the original URI unchanged.
 func safeURI(raw string) string {
 	u, err := url.Parse(raw)
 	if err != nil {
 		return "(invalid URI)"
 	}
 	u.User = nil
+	u.RawQuery, u.ForceQuery = "", false
 	return u.String()
 }
 
@@ -456,19 +458,19 @@ func newDocument(ld *loading, content, uri string) (*document, error) {
 	d.version = root.str("openapi")
 	switch {
 	case !root.get("openapi").ok() && !root.get("swagger").ok():
-		return nil, fmt.Errorf("openapi: %s: no openapi or swagger field", uri)
+		return nil, fmt.Errorf("openapi: %s: no openapi or swagger field", safeURI(uri))
 	case root.str("swagger") == "2.0":
 		d.version = "2.0"
 	case isPatchOf(d.version, "3.0"), isPatchOf(d.version, "3.1"), isPatchOf(d.version, "3.2"):
 	default:
-		return nil, fmt.Errorf("openapi: %s: unsupported version", uri)
+		return nil, fmt.Errorf("openapi: %s: unsupported version", safeURI(uri))
 	}
 	t.setEdition(31)
 	if t.edition <= 30 && !root.get("paths").ok() {
-		return nil, fmt.Errorf("openapi: %s: no paths", uri)
+		return nil, fmt.Errorf("openapi: %s: no paths", safeURI(uri))
 	}
 	if !root.get("paths").ok() && !root.get("components").ok() && !root.get("webhooks").ok() {
-		return nil, fmt.Errorf("openapi: %s: no paths, components or webhooks", uri)
+		return nil, fmt.Errorf("openapi: %s: no paths, components or webhooks", safeURI(uri))
 	}
 	d.dialect = root.str("jsonSchemaDialect")
 	if err := d.discover(ld); err != nil {
@@ -694,7 +696,7 @@ func (d *document) chain(v value, ptr string, targets *map[int32]link) (*level, 
 		}
 		if k, ok := (*targets)[next.id()]; ok {
 			if l.next, rest, err = k.l, k.sum, k.err; !k.done {
-				err = fmt.Errorf("%w %q: a reference cycle", ErrUnresolved, ref.text())
+				err = fmt.Errorf("%w %q: a reference cycle", ErrUnresolved, safeURI(ref.text()))
 			}
 			break
 		}
@@ -755,7 +757,7 @@ func (d *document) follow(v value, src string) (value, string, string, error) {
 		if on[i] || on == nil && slices.ContainsFunc(walked, func(w value) bool { return w.id() == i }) {
 			cycle := walked[slices.IndexFunc(walked, func(w value) bool { return w.id() == i }):]
 			first, _, _ := reference(slices.MinFunc(cycle, func(a, b value) int { return cmp.Compare(a.id(), b.id()) }))
-			r = resolution{err: fmt.Errorf("%w %q: a reference cycle", ErrUnresolved, first.text())}
+			r = resolution{err: fmt.Errorf("%w %q: a reference cycle", ErrUnresolved, safeURI(first.text()))}
 			break
 		}
 		if walked = append(walked, v); len(walked) == 16 {

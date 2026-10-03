@@ -2,12 +2,14 @@
 
 Document-driven OpenAPI clients for TypeScript/JavaScript and Go.
 
-**The Go client has restarted from its public API.** It is a general-purpose,
+**The Go invocation client is implemented.** It is a general-purpose,
 highly configurable dynamic client for Swagger 2.0 and OpenAPI 3.0, 3.1 and
 3.2 whose only authorities are the OpenAPI specifications and the RFCs they
 rely on. It depends on no OpenBindings code or concepts; binding-specification
-conformance belongs to adapters built on it. Its public API is designed and
-reviewed; the method bodies are not implemented yet. See
+conformance belongs to adapters built on it. It loads JSON and YAML documents,
+calls operations, exposes editable prepared requests and streaming responses,
+and provides descriptors and a lazy authored-schema graph. The optional
+`schema2020.Project` helper remains unimplemented. See
 [go/README.md](go/README.md) and [go/DESIGN.md](go/DESIGN.md). This is the
 direction for the repository: the TypeScript client will follow the Go design
 once it settles.

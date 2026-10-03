@@ -19,11 +19,19 @@ available in the authored documents.
   within that scope, with the smallest surface and the least code that
   achieve it.
 
-Optional schema conversion lives under `openapi/schema2020`; the invocation
-package exposes authored schemas and does not depend on that conversion.
+The invocation package exposes authored schemas and resolved references.
+Optional schema conversion is reserved under `openapi/schema2020`; invocation
+does not depend on it.
 
 ## Status
 
-This branch starts the library over from its public API. The package holds
-the exported declarations, their documentation, and compiling examples;
-the method bodies are stubs. See `DESIGN.md`.
+The invocation engine and authored-schema graph are implemented for all four
+editions, including JSON/YAML loading, parameters, credentials, redirects,
+request bodies, response decoding, streaming, prepared requests, descriptors
+and loaded-document inventory. The examples document caller flows; executable
+tests exercise those flows with synthetic documents and test transports.
+
+The optional `schema2020.Project` function is still a stub and must not be
+called. Schema validation and projection are separate from invocation.
+See [DESIGN.md](DESIGN.md) for the model and implementation scope, and
+[DEVELOPMENT.md](DEVELOPMENT.md) for the contract and qualification rules.
