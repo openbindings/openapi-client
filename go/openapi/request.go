@@ -118,6 +118,11 @@ func (cfg *config) checkAccept(o *operation, h http.Header, out any, re *Request
 	if _, dynamic := out.(*any); dynamic || !decodes(out) || few || len(h["Accept"]) > 0 {
 		return
 	}
+	for name, values := range h {
+		if len(values) > 0 && strings.EqualFold(name, "Accept") {
+			return
+		}
+	}
 	classOf := func(m parsedMedia) string {
 		if _, key := cfg.codec(m); key != "" {
 			return key
@@ -672,7 +677,7 @@ func (o *operation) encoding(md *Media) *formEncoding {
 // the Media governing it.
 func (c *Client) mediaType(o *operation, in *Input, re *RequestError) (string, parsedMedia, *Media) {
 	cfg, declared := c.cfg, o.Body.Media
-	if cfg.mediaTypeErr != nil {
+	if in.MediaType == "" && cfg.mediaTypeErr != nil {
 		re.setting("Options.MediaType", cfg.mediaTypeErr)
 	}
 	typ := in.MediaType

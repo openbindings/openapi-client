@@ -588,7 +588,6 @@ func (c *Client) Prepare(key string, in *Input) (*Request, error) {
 	}
 	pr.selection, pr.payload = sec, p
 	setBody(req, &pr.payload)
-	pr.body, _ = req.Body.(*sentBody)
 	if sec.places {
 		pr.origin = &url.URL{Scheme: req.URL.Scheme, Host: req.URL.Host}
 	}
@@ -744,7 +743,7 @@ type Response struct {
 // Stream followed by Decode, its target chosen for the response, is Call.
 func (r *Response) Decode(out any) error {
 	if err := checkOut(out); err != nil {
-		return &DecodeError{Response: r, Err: err}
+		return invalidDecodeError(r, err)
 	}
 	return exchangeOf(r.Response).decode(r, mediaOf(r.Header), out)
 }

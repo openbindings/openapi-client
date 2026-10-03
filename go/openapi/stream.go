@@ -3,7 +3,6 @@ package openapi
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"iter"
 	"mime/multipart"
@@ -283,7 +282,7 @@ func readFailed(err error) error {
 
 func contentCoding(h http.Header) error {
 	if coding := h["Content-Encoding"]; len(coding) > 0 && coding[0] != "" && !strings.EqualFold(coding[0], "identity") {
-		return fmt.Errorf("cannot decode a body with Content-Encoding %q", coding[0])
+		return errors.New("cannot decode a body with non-identity Content-Encoding")
 	}
 	return nil
 }

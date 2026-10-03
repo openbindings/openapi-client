@@ -155,7 +155,7 @@ func (e *StatusError) Error() string {
 // which receives the bytes read along with Err.
 func (e *StatusError) Decode(v any) error {
 	if err := checkOut(v); err != nil {
-		return &DecodeError{Response: e.Response, Err: err}
+		return invalidDecodeError(e.Response, err)
 	}
 	if e.Err != nil {
 		if p, ok := v.(*[]byte); ok {
@@ -205,11 +205,6 @@ type DecodeError struct {
 // text; errors.As finds it through Unwrap. Header remains available for inspection.
 func (e *DecodeError) Error() string {
 	msg := "openapi: " + describeResponse(e.Response)
-	if e.Response != nil && e.Response.Response != nil {
-		if ct := e.Header.Get("Content-Type"); ct != "" {
-			msg += ": " + ct
-		}
-	}
 	if e.Err != nil {
 		msg += ": " + e.Err.Error()
 	}
