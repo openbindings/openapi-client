@@ -52,6 +52,7 @@ optimizing, and profile at the end of every stage.
 
 ## Code
 
-The standard library only, until YAML support adds one parser. No dead
-code and nothing the tests do not justify. One package unless an internal
-package clearly earns its place.
+The engine uses the standard library and the copied YAML parser under
+`internal/yaml`, whose provenance and maintained changes are recorded there.
+Additional dependencies require a project-owner decision. No dead code and
+nothing the tests do not justify. An internal package must earn its place.
