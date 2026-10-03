@@ -237,7 +237,7 @@ var componentName = regexp.MustCompile(`^[a-zA-Z0-9.\-_]+$`)
 // kind returns what discovery reads the root of t as: the OpenAPI Object of
 // an OpenAPI document, or a node of another document.
 func (t *tree) kind() kind {
-	if r := t.root(); r.get("openapi").ok() || r.get("swagger").ok() {
+	if t.openAPI {
 		return rootKind
 	}
 	return anyKind
@@ -247,6 +247,7 @@ func (t *tree) kind() kind {
 func (t *tree) setEdition(inherit int) {
 	t.edition = inherit
 	r := t.root()
+	t.openAPI = r.get("openapi").ok() || r.get("swagger").ok()
 	switch {
 	case r.str("swagger") == "2.0":
 		t.edition = 20
@@ -416,12 +417,13 @@ type reader struct {
 	located map[int32]location
 	// Two bits per kind and node: queued, entered recursively. The sixteen
 	// kinds through itemsKind occupy all 32 bits; new kinds require widening.
-	seen    []uint32
-	dialect string // the document default for schema resources
-	queue   []item
-	at      *documentPath // shared physical path to the node being read
-	busy    bool
-	seeded  map[[2]int32]bool // retained fragment entrypoints, once per node and kind
+	seen     []uint32
+	dialect  string // the document default for schema resources
+	queue    []item
+	first    [1]item       // the usual one-node worklist needs no separate allocation
+	at       *documentPath // shared physical path to the node being read
+	busy     bool
+	complete bool // finish a pure-local tree's contexts inside its schema Once
 }
 
 // A need is a want and the URI it needs.
@@ -618,7 +620,9 @@ func (dc *discovery) read(f fetch, buf []byte, scratch *reader) (*reader, error)
 	t.setEdition(dc.tree.edition)
 	k := t.kind()
 	r := dc.newReader(t, k)
-	r.queue = append(scratch.queue[:0], r.queue...)
+	if cap(scratch.queue) > 0 {
+		r.queue = append(scratch.queue[:0], r.queue...)
+	}
 	for _, w := range f.wants {
 		r.open(t.root(), k, t.refbase, nil, t.uri, r.dialect, w)
 	}
@@ -814,10 +818,8 @@ func (dc *discovery) drain() {
 		} else if len(dc.ready) > 0 {
 			uri := dc.ready[0]
 			dc.ready = dc.ready[1:]
-			if t := dc.named[uri]; t == nil || t.reaches || t.declares { // else nothing in it is read
-				for _, w := range dc.wants[uri] {
-					dc.follow(uri, w)
-				}
+			for _, w := range dc.wants[uri] {
+				dc.follow(uri, w)
 			}
 			delete(dc.wants, uri)
 		} else {
@@ -835,15 +837,25 @@ func (r *reader) open(n value, k kind, base *url.URL, ptr *documentPath, uri, di
 	if !r.t.reaches && !r.t.declares && !fragment {
 		return
 	}
+	if fragment && !r.complete && !r.t.reaches && !r.t.declares {
+		if w.frag == "" {
+			r.t.schemaRoots |= 1 << w.k
+		} else {
+			if r.t.schemaIntents == nil {
+				// Bound the initial reservation even for a large bundle
+				// reached at only one fragment; smaller documents need less.
+				r.t.schemaIntents = make(map[string]uint16, min(512, len(r.t.nodes)/16))
+			}
+			r.t.schemaIntents[w.frag] |= 1 << w.k
+		}
+		return
+	}
 	frag, err := url.PathUnescape(w.frag)
 	switch {
 	case err != nil:
 		return
 	case frag != "" && frag[0] == '/':
 		n, base, dialect = descend(n, k, frag, base, dialect)
-		if r.t.declares || fragment {
-			ptr = &documentPath{parent: ptr, part: frag}
-		}
 	case frag != "":
 		c := r.ids[uri+"#"+frag]
 		if c == nil {
@@ -855,23 +867,31 @@ func (r *reader) open(n value, k kind, base *url.URL, ptr *documentPath, uri, di
 	if !n.ok() {
 		return
 	}
-	if fragment {
-		key := [2]int32{n.i, int32(w.k)}
-		if r.seeded == nil {
-			r.seeded = map[[2]int32]bool{}
-		}
-		if !r.seeded[key] {
-			r.seeded[key] = true
-			r.t.schemaSeeds = append(r.t.schemaSeeds, item{n, w.k, base, ptr, dialect})
-		}
-	}
 	if r.seen == nil {
 		r.seen = make([]uint32, len(r.t.nodes))
 	}
-	if r.seen[n.i]&(3<<(2*w.k)) == 0 {
-		r.seen[n.i] |= 1 << (2 * w.k)
-		r.queue = append(r.queue, item{n, w.k, base, ptr, dialect})
+	if r.seen[n.i]&(3<<(2*w.k)) != 0 {
+		return
 	}
+	r.seen[n.i] |= 1 << (2 * w.k)
+	if r.t.declares && frag != "" && frag[0] == '/' {
+		ptr = &documentPath{parent: ptr, part: frag}
+	}
+	it := item{n, w.k, base, ptr, dialect}
+	if fragment {
+		switch {
+		case r.t.declares:
+			r.t.schemaSeeds = append(r.t.schemaSeeds, it)
+		case n.i == 0:
+			r.t.schemaRoots |= 1 << w.k
+		default:
+			r.t.schemaContexts = r.seen
+		}
+	}
+	if r.queue == nil {
+		r.queue = r.first[:0]
+	}
+	r.queue = append(r.queue, it)
 }
 
 // drain reads every item queued.
@@ -1126,36 +1146,57 @@ func (r *reader) referenceValue(ref value, text string, k kind, base *url.URL) {
 // whose base outside it is base, and the base outside that node: the $id of
 // each schema on the way sets it.
 func descend(v value, k kind, ptr string, base *url.URL, dialect string) (value, *url.URL, string) {
-	how := byte('1')
+	scope := documentScope{k, '1', base, dialect}
 	for ptr != "" && v.ok() {
-		if how == '1' && (k == schemaKind || k == anyKind) && v.t.declares && v.t.edition >= 31 {
-			if local := v.get("$schema"); local.kind() == '"' {
-				dialect = local.string()
-			}
-			if id := v.get("$id"); id.kind() == '"' && (dialect == "" || ownDialect(dialect)) {
-				base = v.resourceBase(base, id)
-			}
-		}
+		scope = scope.enter(v)
 		tok, rest, ok := nextToken(ptr)
 		if !ok {
-			return value{}, base, dialect
+			return value{}, scope.base, scope.dialect
 		}
-		edition := v.t.edition
+		name, _ := unescapeToken(tok)
+		scope = scope.child(name, v.t.edition)
 		v, ptr = v.step(tok), rest
-		switch name, _ := unescapeToken(tok); {
-		case how != '1':
-			how = '1'
-		case k == callbackKind:
-			k = pathItemKind
-		case k != anyKind:
-			s, ok := modelSlot(k, name, edition)
-			if !ok {
-				s = slot{dataKind, '1'}
-			}
-			k, how = s.k, s.how
-		}
 	}
-	return v, base, dialect
+	return v, scope.base, scope.dialect
+}
+
+// documentScope follows physical ancestry through the same object model used
+// by discovery. A resource changes scope; annotation data does not. The state
+// can advance along a pointer or be shared by a traversal of sibling seeds.
+type documentScope struct {
+	k       kind
+	how     byte
+	base    *url.URL
+	dialect string
+}
+
+func (s documentScope) enter(v value) documentScope {
+	if s.how != '1' || !v.t.declares && !v.t.dialects {
+		return s
+	}
+	if s.k == anyKind && schemaResource(v) {
+		s.k = schemaKind
+	}
+	if (s.k == schemaKind || s.k == anyKind) && v.t.edition >= 31 {
+		s.base, s.dialect = schemaScope(v, s.base, s.dialect)
+	}
+	return s
+}
+
+func (s documentScope) child(name string, edition int) documentScope {
+	switch {
+	case s.how != '1':
+		s.how = '1'
+	case s.k == callbackKind:
+		s.k = pathItemKind
+	case s.k != anyKind:
+		child, ok := modelSlot(s.k, name, edition)
+		if !ok {
+			child = slot{dataKind, '1'}
+		}
+		s.k, s.how = child.k, child.how
+	}
+	return s
 }
 
 // ownDialect reports whether the schema dialect d reads identifiers as JSON

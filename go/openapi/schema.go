@@ -73,15 +73,38 @@ func schemaScope(v value, base *url.URL, dialect string) (*url.URL, string) {
 
 func (d *document) schemaGraph(t *tree) *schemaGraph {
 	t.schemasOnce.Do(func() {
+		// Loading a pure-local tree only marks the contexts that reach it.
+		// Complete those with discovery's own object model before any generic
+		// graph scan can interpret the same nodes. No retrieval is possible:
+		// this tree has neither nonlocal references nor identifier declarations.
+		if !t.reaches && !t.declares && t.kind() == anyKind {
+			r := reader{d: d, t: t, complete: true}
+			open := func(frag string, kinds uint16) {
+				for k := kind(1); k <= itemsKind; k++ {
+					if kinds&(1<<k) != 0 {
+						r.open(t.root(), anyKind, t.refbase, nil, t.uri, "", want{frag, k, t, 0})
+						r.drain()
+					}
+				}
+			}
+			open("", t.schemaRoots)
+			for frag, kinds := range t.schemaIntents {
+				open(frag, kinds)
+			}
+		}
 		g := &schemaGraph{nodes: map[int32]*schemaNode{}}
 		b := schemaBuilder{g: g, seen: make([]uint32, len(t.nodes)), seeds: map[int32][]item{}}
-		for _, it := range t.schemaSeeds {
+		seeds := t.schemaSeeds
+		if t.schemaRoots != 0 || t.schemaContexts != nil {
+			seeds = unscopedSeeds(t)
+		}
+		for _, it := range seeds {
 			b.seeds[it.v.i] = append(b.seeds[it.v.i], it)
 		}
 		b.visit(t.root(), t.kind(), t.refbase, schemaDialect(t), nil, 0, nil)
 		// A referenced fragment can lie outside the root's known vocabulary.
-		// Its context was established while loading, never by an accessor.
-		for _, it := range t.schemaSeeds {
+		// Its authored reference context takes precedence over generic scanning.
+		for _, it := range seeds {
 			if b.seen[it.v.i]&(1<<it.k) != 0 {
 				continue
 			}
@@ -109,8 +132,75 @@ func (d *document) schemaGraph(t *tree) *schemaGraph {
 			root.edges = append(root.edges, e)
 		}
 		t.schemas = g
+		t.schemaIntents = nil
 	})
 	return t.schemas
+}
+
+// unscopedSeeds derives physical paths only when the graph is requested.
+// Without identifiers, discovery retains queued context bits. Walk toward
+// the next seeded node in document order, sharing ancestors and resource
+// dialect scope while skipping unrelated subtrees.
+func unscopedSeeds(t *tree) []item {
+	var seeds []item
+	add := func(v value, kinds uint16, path *documentPath, scope documentScope) {
+		for k := kind(1); k <= itemsKind; k++ {
+			if kinds&(1<<k) != 0 {
+				seeds = append(seeds, item{v, k, scope.base, path, scope.dialect})
+			}
+		}
+	}
+	scope := documentScope{t.kind(), '1', t.refbase, ""}
+	add(t.root(), t.schemaRoots, nil, scope)
+	next := int32(0)
+	advance := func() {
+		for next++; int(next) < len(t.schemaContexts); next++ {
+			if t.schemaContexts[next]&0x55555554 != 0 { // queued bits, excluding anyKind
+				return
+			}
+		}
+	}
+	advance()
+	var walk func(value, *documentPath, documentScope)
+	walk = func(v value, path *documentPath, scope documentScope) {
+		scope = scope.enter(v)
+		i := 0
+		for name, m := range v.members() {
+			if int(next) >= len(t.schemaContexts) || uint32(next) >= t.nodes[v.i].next {
+				return
+			}
+			if v.kind() == '[' {
+				name = strconv.Itoa(i)
+				i++
+			}
+			if uint32(next) >= t.nodes[m.i].next {
+				continue
+			}
+			p := &documentPath{parent: path, part: name, token: true}
+			child := scope.child(name, t.edition)
+			if next == m.i {
+				var kinds uint16
+				for k := kind(1); k <= itemsKind; k++ {
+					if t.schemaContexts[next]&(1<<(2*k)) != 0 {
+						kinds |= 1 << k
+					}
+				}
+				add(m, kinds, p, child)
+				advance()
+			}
+			if int(next) < len(t.schemaContexts) && uint32(next) < t.nodes[m.i].next {
+				walk(m, p, child)
+			}
+		}
+	}
+	walk(t.root(), nil, scope)
+	return seeds
+}
+
+// schemaResource recognizes a schema location in an otherwise unclassified
+// document. Once recognized, only the schema vocabulary supplies descendants.
+func schemaResource(v value) bool {
+	return (v.t.declares || v.t.dialects) && (v.get("$schema").ok() || v.get("$id").ok() || v.get("$anchor").ok() || v.get("$dynamicAnchor").ok())
 }
 
 // component is settled after every context has been visited, so independently
@@ -158,7 +248,7 @@ func (b *schemaBuilder) visit(v value, k kind, base *url.URL, dialect string, pa
 			}
 			return
 		}
-		if v.get("$schema").ok() || v.get("$id").ok() || v.get("$anchor").ok() || v.get("$dynamicAnchor").ok() {
+		if schemaResource(v) {
 			k = schemaKind
 		}
 	}

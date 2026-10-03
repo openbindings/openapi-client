@@ -47,8 +47,13 @@ type tree struct {
 	// document itself.
 	reaches, declares bool
 	editionRefs       bool
+	dialects          bool // a $schema occurs; distinct from identifier declarations
+	openAPI           bool // the root carries an OpenAPI or Swagger version field
 	located           map[int32]location
-	schemaSeeds       []item // object contexts reached in a versionless fragment
+	schemaRoots       uint16            // root object contexts reached in a versionless fragment
+	schemaContexts    []uint32          // discovery bitmap, retained only for unscoped non-root contexts
+	schemaSeeds       []item            // fragment contexts whose identifier scope needs a physical path
+	schemaIntents     map[string]uint16 // authored fragments whose pure-local context is deferred
 	schemasOnce       sync.Once
 	schemas           *schemaGraph
 	resourceBases     map[int32]*url.URL // $id resolutions shared by discovery and inspection
@@ -400,7 +405,7 @@ func parseTree(ctx context.Context, src, uri string, unit int) (*tree, error) {
 	if cap(p.nodes)-len(p.nodes) > len(p.nodes)/8 {
 		p.nodes = slices.Clone(p.nodes)
 	}
-	return &tree{src: src, nodes: p.nodes, escapes: p.escapes, decoded: make([]atomic.Pointer[string], len(p.escapes)), reaches: p.reaches, declares: p.declares, editionRefs: p.editionRefs}, nil
+	return &tree{src: src, nodes: p.nodes, escapes: p.escapes, decoded: make([]atomic.Pointer[string], len(p.escapes)), reaches: p.reaches, declares: p.declares, editionRefs: p.editionRefs, dialects: p.dialects}, nil
 }
 
 // A scanner reads a JSON text into a tree's nodes.
@@ -414,11 +419,12 @@ type scanner struct {
 	names             []string // the member names of the objects being read
 	reaches, declares bool     // see tree
 	editionRefs       bool
+	dialects          bool // a $schema occurs; distinct from identifier declarations
 }
 
 // note records what a member named name, whose value's text begins v, tells
 // discovery (see tree).
-func note(name, v string, reaches, declares, editionRefs *bool) {
+func note(name, v string, reaches, declares, editionRefs, dialects *bool) {
 	switch name {
 	case "$ref", "$dynamicRef":
 		*reaches = *reaches || !strings.HasPrefix(v, `"#`)
@@ -428,6 +434,8 @@ func note(name, v string, reaches, declares, editionRefs *bool) {
 		*editionRefs = true
 	case "$id", "$anchor", "$dynamicAnchor", "$self":
 		*declares = true
+	case "$schema":
+		*dialects = true
 	}
 }
 
@@ -503,7 +511,7 @@ func (p *scanner) container(depth int) error {
 			}
 			p.i++
 			if p.space(); len(name) > 1 && (name[0] == '$' || name[0] == 'm' || name[0] == 'd' || name[0] == 's') {
-				note(name, p.src[p.i:], &p.reaches, &p.declares, &p.editionRefs)
+				note(name, p.src[p.i:], &p.reaches, &p.declares, &p.editionRefs, &p.dialects)
 			}
 		}
 		if err := p.value(depth+1, uint32(at)); err != nil {
