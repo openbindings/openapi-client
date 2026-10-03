@@ -15,15 +15,16 @@ type collectionWriter struct {
 	b     *strings.Builder
 	p     *param
 	empty bool
+	lead  string
 }
 
-func (w *collectionWriter) scalar(s string, depth int, start func() error) (bool, error) {
+func (w *collectionWriter) scalar(s string, depth int, parent *collectionLevel) (bool, error) {
 	if len(s) > maxLength-w.b.Len() {
 		return false, errTooLong
 	}
 	s = jsonText(s)
 	w.empty = depth == 1 && s == ""
-	if err := start(); err != nil {
+	if err := w.next(parent); err != nil {
 		return false, err
 	}
 	if len(s) > maxLength-w.b.Len() || w.p.set != nil && escapedSize(s, w.p.set, false) > maxLength-w.b.Len() {
@@ -33,42 +34,74 @@ func (w *collectionWriter) scalar(s string, depth int, start func() error) (bool
 	return true, nil
 }
 
-func (w *collectionWriter) array(schema value, n int, each func(func() error) error, start func() error) (bool, error) {
-	if n == 0 {
-		return false, nil
-	}
+// collectionLevel holds one array's separator state locally. Child traversal
+// invokes next directly, so no indirect callback can retain the writer.
+type collectionLevel struct {
+	parent               *collectionLevel
+	delim                string
+	multi, begun, object bool
+}
+
+func (w *collectionWriter) level(schema value, parent *collectionLevel) (collectionLevel, error) {
 	cf := schema.str("collectionFormat")
 	delim := map[string]string{"": ",", "csv": ",", "ssv": " ", "tsv": "\t", "pipes": "|", "multi": "&"}[cf]
 	if delim == "" {
-		return false, errors.New("unsupported collectionFormat")
+		return collectionLevel{}, errors.New("unsupported collectionFormat")
 	}
 	if w.p.set != nil && cf != "multi" && delim != "," {
 		delim = escape(delim, w.p.set)
 	}
-	begun := false
-	next := func() error {
-		if !begun {
-			begun = true
-			return start()
-		}
-		s := delim
-		if cf == "multi" && w.p.In == "query" {
-			s += w.p.name + "="
-		}
-		if len(s) > maxLength-w.b.Len() {
-			return errTooLong
-		}
-		w.b.WriteString(s)
-		return nil
-	}
-	err := each(next)
-	if err == nil && !begun && cf != "multi" {
-		err = next()
-	}
-	return true, err
+	return collectionLevel{parent: parent, delim: delim, multi: cf == "multi"}, nil
 }
 
-func (w *collectionWriter) value(v any, schema value, depth int, start func() error) (bool, error) {
+func (w *collectionWriter) next(l *collectionLevel) error {
+	if l == nil {
+		p := w.p
+		if p.Err != nil {
+			return p.Err
+		}
+		n := len(w.lead)
+		if p.In == "query" {
+			n += len(p.name) + 1
+		}
+		if w.b.Len()+n > maxLength {
+			return errTooLong
+		}
+		w.b.WriteString(w.lead)
+		if p.In == "query" {
+			w.b.WriteString(p.name)
+			if !(w.empty && w.c.cfg.NameOnlyEmpty && p.AllowEmptyValue) {
+				w.b.WriteByte('=')
+			}
+		}
+		return nil
+	}
+	if l.object {
+		return errors.New("Swagger parameters cannot serialize objects")
+	}
+	if !l.begun {
+		l.begun = true
+		return w.next(l.parent)
+	}
+	s := l.delim
+	if l.multi && w.p.In == "query" {
+		s += w.p.name + "="
+	}
+	if len(s) > maxLength-w.b.Len() {
+		return errTooLong
+	}
+	w.b.WriteString(s)
+	return nil
+}
+
+func (w *collectionWriter) finish(l *collectionLevel) error {
+	if !l.begun && !l.multi {
+		return w.next(l)
+	}
+	return nil
+}
+
+func (w *collectionWriter) value(v any, schema value, depth int, parent *collectionLevel) (bool, error) {
 	if depth > maxDepth {
 		return false, errDepth
 	}
@@ -98,18 +131,23 @@ func (w *collectionWriter) value(v any, schema value, depth int, start func() er
 				return false, errTooLong
 			}
 			if rv.Type() != reflect.TypeFor[json.Number]() {
-				return w.scalar(rv.String(), depth, start)
+				return w.scalar(rv.String(), depth, parent)
 			}
 		case reflect.Array, reflect.Slice:
 			if rv.Kind() != reflect.Slice || !bytesKind(rv.Type()) {
-				return w.array(schema, rv.Len(), func(next func() error) error {
-					for i := range rv.Len() {
-						if _, err := w.value(w.c.doc.elem(rv.Index(i)), schema.get("items"), depth+1, next); err != nil {
-							return err
-						}
+				if rv.Len() == 0 {
+					return false, nil
+				}
+				level, err := w.level(schema, parent)
+				if err != nil {
+					return false, err
+				}
+				for i := range rv.Len() {
+					if _, err := w.value(w.c.doc.elem(rv.Index(i)), schema.get("items"), depth+1, &level); err != nil {
+						return true, err
 					}
-					return nil
-				}, start)
+				}
+				return true, w.finish(&level)
 			}
 			if rv.Len() > (maxLength-w.b.Len())/4*3 {
 				return false, errTooLong
@@ -130,7 +168,7 @@ func (w *collectionWriter) value(v any, schema value, depth int, start func() er
 			return false, &encodingError{&json.MarshalerError{Type: rv.Type(), Err: err}}
 		}
 		i := 0
-		return collectionJSON(w, data, &i, schema, depth, start)
+		return collectionJSON(w, data, &i, schema, depth, parent)
 	}
 	if m, ok := method.(encoding.TextMarshaler); ok && walk.text {
 		data, err := m.MarshalText()
@@ -142,19 +180,19 @@ func (w *collectionWriter) value(v any, schema value, depth int, start func() er
 		if len(data) > maxLength-w.b.Len() {
 			return false, errTooLong
 		}
-		return w.scalar(string(data), depth, start)
+		return w.scalar(string(data), depth, parent)
 	}
 	s, _, err := encodeJSON(w.c.doc, v, marshal)
 	if err != nil {
 		return false, err
 	}
 	i := 0
-	return collectionJSON(w, s, &i, schema, depth, start)
+	return collectionJSON(w, s, &i, schema, depth, parent)
 }
 
 // collectionJSON reads valid JSON, including whitespace from MarshalJSON,
 // consuming scalars only after their maximum decoded size has been checked.
-func collectionJSON[T string | []byte](w *collectionWriter, s T, i *int, schema value, depth int, start func() error) (bool, error) {
+func collectionJSON[T string | []byte](w *collectionWriter, s T, i *int, schema value, depth int, parent *collectionLevel) (bool, error) {
 	if depth > maxDepth {
 		return false, errDepth
 	}
@@ -175,19 +213,21 @@ func collectionJSON[T string | []byte](w *collectionWriter, s T, i *int, schema 
 			*i++
 			return false, nil
 		}
-		return w.array(schema, 1, func(next func() error) error {
-			for {
-				if _, err := collectionJSON(w, s, i, schema.get("items"), depth+1, next); err != nil {
-					return err
-				}
-				space()
-				ch := s[*i]
-				*i++
-				if ch == ']' {
-					return nil
-				}
+		level, err := w.level(schema, parent)
+		if err != nil {
+			return false, err
+		}
+		for {
+			if _, err := collectionJSON(w, s, i, schema.get("items"), depth+1, &level); err != nil {
+				return true, err
 			}
-		}, start)
+			space()
+			ch := s[*i]
+			*i++
+			if ch == ']' {
+				return true, w.finish(&level)
+			}
+		}
 	case '{':
 		*i++
 		space()
@@ -195,7 +235,7 @@ func collectionJSON[T string | []byte](w *collectionWriter, s T, i *int, schema 
 			collectionSkipString(s, i)
 			space()
 			*i++
-			defined, err := collectionJSON(w, s, i, value{}, depth+1, func() error { return errors.New("Swagger parameters cannot serialize objects") })
+			defined, err := collectionJSON(w, s, i, value{}, depth+1, &collectionLevel{object: true})
 			if err != nil {
 				return false, err
 			}
@@ -230,7 +270,7 @@ func collectionJSON[T string | []byte](w *collectionWriter, s T, i *int, schema 
 			}
 			value = string(s[begin:*i])
 		}
-		return w.scalar(value, depth, start)
+		return w.scalar(value, depth, parent)
 	}
 }
 

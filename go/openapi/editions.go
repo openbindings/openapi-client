@@ -165,28 +165,8 @@ func (c *Client) writeLegacy(b *strings.Builder, lead string, p *param, v any, f
 		return true, nil
 	}
 	if !form {
-		w := collectionWriter{c: c, b: b, p: p}
-		start := func() error {
-			if p.Err != nil {
-				return p.Err
-			}
-			n := len(lead)
-			if p.In == "query" {
-				n += len(p.name) + 1
-			}
-			if b.Len()+n > maxLength {
-				return errTooLong
-			}
-			b.WriteString(lead)
-			if p.In == "query" {
-				b.WriteString(p.name)
-				if !(w.empty && c.cfg.NameOnlyEmpty && p.AllowEmptyValue) {
-					b.WriteByte('=')
-				}
-			}
-			return nil
-		}
-		given, err := w.value(v, p.legacy, 1, start)
+		w := collectionWriter{c: c, b: b, p: p, lead: lead}
+		given, err := w.value(v, p.legacy, 1, nil)
 		if given && err == nil {
 			err = p.Err
 		}
