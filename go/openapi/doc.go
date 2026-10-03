@@ -341,8 +341,9 @@
 //     and every bound counts decoded bytes. A header field that sets
 //     Accept-Encoding turns that off. A body whose Content-Encoding, other
 //     than identity, remains passes through unchanged to a *[]byte or
-//     io.Writer; any other target, Items and Events report an error naming
-//     the coding.
+//     io.Writer; any other target, Items and Events report a non-identity
+//     Content-Encoding error. The coding remains available in Header; generated
+//     diagnostics omit response-controlled values.
 //
 // # Credentials
 //
