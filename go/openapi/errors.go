@@ -199,9 +199,10 @@ type DecodeError struct {
 	Err error
 }
 
-// Error returns the operation, the status, the media type and the reason,
-// never the body. A decoder's own error, whose message can quote the body,
-// is not in the text; errors.As finds it through Unwrap.
+// Error returns the operation, the status and the reason, never the body
+// or response-controlled media and encoding text, which may reflect credentials.
+// A decoder's own error, whose message can quote the body, is not in the
+// text; errors.As finds it through Unwrap. Header remains available for inspection.
 func (e *DecodeError) Error() string {
 	msg := "openapi: " + describeResponse(e.Response)
 	if e.Response != nil && e.Response.Response != nil {
