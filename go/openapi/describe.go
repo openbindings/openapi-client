@@ -608,12 +608,14 @@ func (s *Schema) Base() string {
 }
 
 // Dialect is the JSON Schema dialect the schema is written in, in OpenAPI
-// 3.1 and 3.2: the URI named by the $schema of the nearest schema resource
-// root at or above it, or else by its document's jsonSchemaDialect, or else
-// OpenAPI's default dialect, https://spec.openapis.org/oas/3.1/dialect/base
-// in 3.1 and https://spec.openapis.org/oas/3.2/dialect/2025-09-17 in 3.2. It
-// is empty in Swagger 2.0 and OpenAPI 3.0, whose schemas are those
-// editions' own subset of JSON Schema (see Client.Version).
+// 3.1 and 3.2: the URI named by an explicit $schema at its schema resource
+// root, or the enclosing resource's dialect if that root has no $schema.
+// Without an enclosing resource, it uses its document's jsonSchemaDialect,
+// or else OpenAPI's default dialect, https://spec.openapis.org/oas/3.1/dialect/base
+// in 3.1 and https://spec.openapis.org/oas/3.2/dialect/2025-09-17 in 3.2.
+// Subschemas inherit their resource's dialect. It is empty in Swagger 2.0
+// and OpenAPI 3.0, whose schemas are those editions' own subset of JSON
+// Schema (see Client.Version).
 func (s *Schema) Dialect() string {
 	if s.v.t.edition <= 30 {
 		return ""
