@@ -543,10 +543,10 @@ type SchemaReference struct {
 // document order.
 // It follows schema-bearing keywords of the declared dialect, accounting
 // for nested $id bases, but does not traverse a reference's target; each
-// target is its own Schema. The slice is new. A schema in another dialect
-// (see Schema) returns an error rather than silently omitting references in
-// its unknown vocabulary. The caller can always inspect Raw and the loaded
-// documents.
+// target is its own Schema. The slice is new. If the tree includes a schema
+// resource in another dialect (see Schema), References returns an error
+// rather than silently omitting references in its unknown vocabulary. The
+// caller can always inspect Raw and the loaded documents.
 func (s *Schema) References() ([]SchemaReference, error) {
 	panic("unimplemented")
 }
