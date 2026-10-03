@@ -486,7 +486,7 @@ func (p *scanner) container(depth int) error {
 					seen[n] = true
 				}
 			}
-			if seen[name] || seen == nil && slices.Contains(p.names[base:], name) {
+			if seen != nil && seen[name] || seen == nil && slices.Contains(p.names[base:], name) {
 				return p.errorAt(at, "duplicate key "+strconv.Quote(name))
 			}
 			if seen != nil {
