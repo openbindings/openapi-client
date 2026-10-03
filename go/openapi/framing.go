@@ -58,7 +58,9 @@ func (r *frameReader) until(sep byte, cr bool, bound int64) ([]byte, byte, error
 		}
 		p := r.buf[r.lo:r.hi]
 		i := -1
-		if cr {
+		if p[0] == sep || cr && p[0] == '\r' {
+			i = 0
+		} else if cr {
 			// Cache the next CR; search LF only up to it. Neither a long
 			// LF-only suffix nor a CR-only suffix is repeatedly scanned.
 			if r.crAt < r.lo {
@@ -244,7 +246,10 @@ func (f *sequenceReader) event(e *eventFields) error {
 		if used > f.bound {
 			return &http.MaxBytesError{Limit: f.bound}
 		}
-		name, value, _ := bytes.Cut(line, []byte{':'})
+		name, value := line, []byte(nil)
+		if i := bytes.IndexByte(line, ':'); i >= 0 {
+			name, value = line[:i], line[i+1:]
+		}
 		if len(value) > 0 && value[0] == ' ' {
 			value = value[1:]
 		}

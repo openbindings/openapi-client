@@ -146,8 +146,11 @@ func Items[T any](r *Response) iter.Seq2[T, error] {
 				if err == nil {
 					err = decodeItem(x.cfg, f.sq.item, data, &value)
 				}
-				err = withContext(x, err)
-				terminal := itemTerminal(x, err)
+				terminal := false
+				if err != nil {
+					err = withContext(x, err)
+					terminal = itemTerminal(x, err)
+				}
 				if !yield(value, err) || terminal {
 					return
 				}
@@ -209,8 +212,11 @@ func Events(r *Response) iter.Seq2[Event, error] {
 			if err == nil {
 				err = e.value(&value)
 			}
-			err = withContext(x, err)
-			terminal := itemTerminal(x, err)
+			terminal := false
+			if err != nil {
+				err = withContext(x, err)
+				terminal = itemTerminal(x, err)
+			}
 			if !yield(value, err) || terminal {
 				return
 			}

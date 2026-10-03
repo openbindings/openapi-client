@@ -174,8 +174,11 @@ func multipartItems[T any](x *exchange, r *Response, ct parsedMedia, bound int64
 				}
 			}
 		}
-		err = withContext(x, err)
-		terminal := itemTerminal(x, err)
+		terminal := false
+		if err != nil {
+			err = withContext(x, err)
+			terminal = itemTerminal(x, err)
+		}
 		if !yield(value, err) || terminal {
 			return
 		}
