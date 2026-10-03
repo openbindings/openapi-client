@@ -102,6 +102,15 @@ func claimResponse(r *Response) (*exchange, error) {
 	return nil, errors.New("openapi: iteration requires an unconsumed response from Stream or Send")
 }
 
+// closeStream also stops uploads when an iterator owns an unwrapped tunnel
+// body; a caller closing that raw body directly is governed by its transport.
+func closeStream(x *exchange, r *Response) {
+	if r.Body != x.stream {
+		x.stopUpload()
+	}
+	r.Body.Close()
+}
+
 // multipartItems follows NextPart for raw parts; decoded parts use
 // NextRawPart so transfer errors can be separated from wire-read errors.
 func multipartItems[T any](x *exchange, r *Response, ct parsedMedia, bound int64, yield func(T, error) bool) {

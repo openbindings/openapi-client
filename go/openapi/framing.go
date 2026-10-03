@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 	"unicode/utf8"
 )
@@ -234,17 +235,17 @@ func (f *sequenceReader) event() (eventFields, error) {
 			if utf8.Valid(value) {
 				f.data = append(f.data, value...)
 			} else {
-				f.data = append(f.data, jsonText(string(value))...)
+				f.data = append(f.data, eventText(string(value))...)
 			}
 			if f.data == nil {
 				f.data = []byte{}
 			}
 			e.data = f.data
 		case "event":
-			e.typ, e.typeSet = jsonText(string(value)), true
+			e.typ, e.typeSet = eventText(string(value)), true
 		case "id":
 			if bytes.IndexByte(value, 0) < 0 {
-				e.id, e.idSet = jsonText(string(value)), true
+				e.id, e.idSet = eventText(string(value)), true
 			}
 		case "retry":
 			if len(value) > 0 && len(bytes.Trim(value, "0123456789")) == 0 {
@@ -297,4 +298,47 @@ func (e eventFields) appendJSON(b []byte) []byte {
 		b = append(append(b, `"retry":`...), e.retry...)
 	}
 	return append(b, '}')
+}
+
+// eventText applies the HTML UTF-8 decoder's replacement rule: a malformed
+// sequence consumes its valid prefix, leaving the first invalid continuation
+// for the next decoding step. JSON's per-byte replacement differs here.
+func eventText(s string) string {
+	if utf8.ValidString(s) {
+		return s
+	}
+	var b strings.Builder
+	for len(s) > 0 {
+		r, n := utf8.DecodeRuneInString(s)
+		if r == utf8.RuneError && n == 1 {
+			need, low, high := 0, byte(0x80), byte(0xbf)
+			switch c := s[0]; {
+			case c >= 0xc2 && c <= 0xdf:
+				need = 2
+			case c >= 0xe0 && c <= 0xef:
+				need = 3
+				if c == 0xe0 {
+					low = 0xa0
+				} else if c == 0xed {
+					high = 0x9f
+				}
+			case c >= 0xf0 && c <= 0xf4:
+				need = 4
+				if c == 0xf0 {
+					low = 0x90
+				} else if c == 0xf4 {
+					high = 0x8f
+				}
+			}
+			if need > 0 && len(s) > 1 && s[1] >= low && s[1] <= high {
+				n = 2
+				for n < need && n < len(s) && s[n]&0xc0 == 0x80 {
+					n++
+				}
+			}
+		}
+		b.WriteRune(r)
+		s = s[n:]
+	}
+	return b.String()
 }

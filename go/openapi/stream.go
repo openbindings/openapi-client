@@ -116,7 +116,7 @@ func Items[T any](r *Response) iter.Seq2[T, error] {
 			yield(zero, err)
 			return
 		}
-		defer r.Body.Close()
+		defer closeStream(x, r)
 		if bodiless(r.Response) {
 			return
 		}
@@ -180,7 +180,7 @@ func Events(r *Response) iter.Seq2[Event, error] {
 			yield(Event{}, err)
 			return
 		}
-		defer r.Body.Close()
+		defer closeStream(x, r)
 		ct := mediaOf(r.Header)
 		if !strings.EqualFold(ct.typ, "text") || !strings.EqualFold(ct.sub, "event-stream") {
 			yield(Event{}, errors.New("openapi: Events requires text/event-stream"))
