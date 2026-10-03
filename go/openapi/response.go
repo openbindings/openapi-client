@@ -618,7 +618,10 @@ func readAll(dst []byte, r io.Reader, size, bound int64) ([]byte, error) {
 		dst = slices.Grow(dst, int(min(size, bound, 1<<20))+1)
 	}
 	for {
-		left := bound + 1 - int64(len(dst)-start) // what may still be read
+		left := bound - int64(len(dst)-start) // what may still be read
+		if left < 1<<63-1 {
+			left++ // one sentinel byte, unless the bound is already MaxInt64
+		}
 		if len(dst) == cap(dst) {
 			dst = slices.Grow(dst, int(min(max(512, int64(len(dst)-start)), left)))
 		}

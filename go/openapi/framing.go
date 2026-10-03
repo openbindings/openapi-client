@@ -119,7 +119,7 @@ func (f *sequenceReader) next() ([]byte, error) {
 		sep, bound := "\n", f.bound
 		if f.sq.rs {
 			sep = "\x1e"
-		} else {
+		} else if bound < 1<<63-1 {
 			bound++ // a possible CR in the terminating CRLF
 		}
 		data, end, err := f.wire.until(sep, bound)
