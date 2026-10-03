@@ -525,9 +525,9 @@ func (p *scanner) space() {
 
 // string reads the string at p.i, checking its escapes.
 func (p *scanner) string() error {
-	escaped := false
-	for i := p.i + 1; i < len(p.src); i++ {
-		switch c := p.src[i]; {
+	src, escaped := p.src, false
+	for i := p.i + 1; i < len(src); i++ {
+		switch c := src[i]; {
 		case c == '"':
 			if escaped {
 				p.escapes = append(p.escapes, uint32(p.i))
@@ -538,16 +538,16 @@ func (p *scanner) string() error {
 			return p.errorAt(i, "control character in a string")
 		case c != '\\':
 			continue
-		case i+1 < len(p.src) && strings.IndexByte(`"\/bfnrt`, p.src[i+1]) >= 0:
+		case i+1 < len(src) && strings.IndexByte(`"\/bfnrt`, src[i+1]) >= 0:
 			i++
-		case i+5 < len(p.src) && p.src[i+1] == 'u' && hexDigit(p.src[i+2]) && hexDigit(p.src[i+3]) && hexDigit(p.src[i+4]) && hexDigit(p.src[i+5]):
+		case i+5 < len(src) && src[i+1] == 'u' && hexDigit(src[i+2]) && hexDigit(src[i+3]) && hexDigit(src[i+4]) && hexDigit(src[i+5]):
 			i += 5
 		default:
 			return p.errorAt(i, "invalid escape in a string")
 		}
 		escaped = true
 	}
-	return p.errorAt(len(p.src), "unexpected end of the document")
+	return p.errorAt(len(src), "unexpected end of the document")
 }
 
 // number reads the number at p.i.
