@@ -197,15 +197,18 @@ func (f *sequenceReader) event() (eventFields, error) {
 			left = min(left, 1<<63-4) + 3 // one leading BOM is outside the bound
 		}
 		line, end, err := f.wire.until("\r\n", left)
+		if !f.started {
+			line = bytes.TrimPrefix(line, []byte("\xef\xbb\xbf"))
+			f.started = true
+			if int64(len(line)) > f.bound-used {
+				return eventFields{}, &http.MaxBytesError{Limit: f.bound}
+			}
+		}
 		if err != nil {
 			if _, ok := err.(*http.MaxBytesError); ok {
 				err = &http.MaxBytesError{Limit: f.bound}
 			}
 			return eventFields{}, err // even EOF drops an unterminated block
-		}
-		if !f.started {
-			line = bytes.TrimPrefix(line, []byte("\xef\xbb\xbf"))
-			f.started = true
 		}
 		f.afterCR, f.chargeLF = end == '\r', len(line) > 0
 		if len(line) == 0 {
