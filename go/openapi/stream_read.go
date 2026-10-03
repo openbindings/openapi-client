@@ -162,7 +162,9 @@ func multipartItems[T any](x *exchange, r *Response, ct parsedMedia, bound int64
 				}
 			}
 		}
-		if !yield(value, withContext(x, err)) || err != nil && !errors.Is(err, ErrItem) {
+		err = withContext(x, err)
+		terminal := itemTerminal(x, err)
+		if !yield(value, err) || terminal {
 			return
 		}
 	}

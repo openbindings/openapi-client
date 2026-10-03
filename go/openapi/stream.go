@@ -146,7 +146,9 @@ func Items[T any](r *Response) iter.Seq2[T, error] {
 				if err == nil {
 					err = decodeItem(x.cfg, f.sq.item, data, &value)
 				}
-				if !yield(value, withContext(x, err)) || err != nil && !errors.Is(err, ErrItem) {
+				err = withContext(x, err)
+				terminal := itemTerminal(x, err)
+				if !yield(value, err) || terminal {
 					return
 				}
 			}
@@ -206,7 +208,9 @@ func Events(r *Response) iter.Seq2[Event, error] {
 			if err == nil {
 				value, err = e.value()
 			}
-			if !yield(value, withContext(x, err)) || err != nil && !errors.Is(err, ErrItem) {
+			err = withContext(x, err)
+			terminal := itemTerminal(x, err)
+			if !yield(value, err) || terminal {
 				return
 			}
 		}
@@ -261,4 +265,15 @@ func contentCoding(h http.Header) error {
 		return fmt.Errorf("cannot decode a body with Content-Encoding %q", coding[0])
 	}
 	return nil
+}
+
+// itemTerminal classifies the error actually yielded, before yield can
+// change the context. A call-context error ends iteration even when an item
+// decoder failed at the same time; a decoder's own context stays local.
+func itemTerminal(ctx context.Context, err error) bool {
+	if err == nil {
+		return false
+	}
+	cause := ctx.Err()
+	return !errors.Is(err, ErrItem) || cause != nil && errors.Is(err, cause)
 }
