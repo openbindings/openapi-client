@@ -17,7 +17,7 @@ import (
 // the read that supplied it also failed; unfinished data retains that error.
 type frameReader struct {
 	r       io.Reader
-	buf     [4096]byte
+	buf     [2048]byte
 	lo, hi  int
 	err     error
 	scratch []byte
@@ -44,17 +44,27 @@ func (r *frameReader) fill() error {
 	return r.err
 }
 
-// until returns bytes preceding one of the separator bytes, and consumes
+// until returns bytes preceding sep, or CR when cr is true, and consumes
 // the separator. Its bytes remain valid until the next call. bound excludes
 // the separator; callers account for the format's delimiters separately.
-func (r *frameReader) until(seps string, bound int64) ([]byte, byte, error) {
+func (r *frameReader) until(sep byte, cr bool, bound int64) ([]byte, byte, error) {
 	r.scratch = r.scratch[:0]
 	for {
 		if err := r.fill(); err != nil {
 			return r.scratch, 0, err
 		}
 		p := r.buf[r.lo:r.hi]
-		i := bytes.IndexAny(p, seps)
+		i := -1
+		if cr {
+			for j, c := range p {
+				if c == sep || c == '\r' {
+					i = j
+					break
+				}
+			}
+		} else {
+			i = bytes.IndexByte(p, sep)
+		}
 		n := len(p)
 		if i >= 0 {
 			n = i
@@ -116,13 +126,13 @@ func (f *sequenceReader) next() ([]byte, error) {
 		return f.object, nil
 	}
 	for {
-		sep, bound := "\n", f.bound
+		sep, bound := byte('\n'), f.bound
 		if f.sq.rs {
-			sep = "\x1e"
+			sep = '\x1e'
 		} else if bound < 1<<63-1 {
 			bound++ // a possible CR in the terminating CRLF
 		}
-		data, end, err := f.wire.until(sep, bound)
+		data, end, err := f.wire.until(sep, false, bound)
 		if err != nil && err != io.EOF {
 			if _, ok := err.(*http.MaxBytesError); ok {
 				err = &http.MaxBytesError{Limit: f.bound}
@@ -197,7 +207,7 @@ func (f *sequenceReader) event() (eventFields, error) {
 		if !f.started {
 			left = min(left, 1<<63-4) + 3 // one leading BOM is outside the bound
 		}
-		line, end, err := f.wire.until("\r\n", left)
+		line, end, err := f.wire.until('\n', true, left)
 		if !f.started {
 			line = bytes.TrimPrefix(line, []byte("\xef\xbb\xbf"))
 			f.started = true
