@@ -1,0 +1,297 @@
+package openapi
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"strconv"
+	"time"
+	"unicode/utf8"
+)
+
+// frameReader scans each input byte once, retaining at most the current
+// record plus a fixed read buffer. A delimiter can finish a frame even when
+// the read that supplied it also failed; unfinished data retains that error.
+type frameReader struct {
+	r       io.Reader
+	buf     [4096]byte
+	lo, hi  int
+	err     error
+	scratch []byte
+}
+
+func (r *frameReader) fill() error {
+	if r.lo < r.hi {
+		return nil
+	}
+	if r.err != nil {
+		return r.err
+	}
+	for range 100 {
+		r.lo = 0
+		r.hi, r.err = r.r.Read(r.buf[:])
+		if r.hi > 0 {
+			return nil
+		}
+		if r.err != nil {
+			return r.err
+		}
+	}
+	r.err = io.ErrNoProgress
+	return r.err
+}
+
+// until returns bytes preceding one of the separator bytes, and consumes
+// the separator. Its bytes remain valid until the next call. bound excludes
+// the separator; callers account for the format's delimiters separately.
+func (r *frameReader) until(seps string, bound int64) ([]byte, byte, error) {
+	r.scratch = r.scratch[:0]
+	for {
+		if err := r.fill(); err != nil {
+			return r.scratch, 0, err
+		}
+		p := r.buf[r.lo:r.hi]
+		i := bytes.IndexAny(p, seps)
+		n := len(p)
+		if i >= 0 {
+			n = i
+		}
+		if int64(len(r.scratch))+int64(n) > bound {
+			return nil, 0, &http.MaxBytesError{Limit: bound}
+		}
+		r.lo += n
+		if i >= 0 {
+			r.lo++
+			if len(r.scratch) == 0 {
+				return p[:i], p[i], nil
+			}
+			r.scratch = append(r.scratch, p[:i]...)
+			return r.scratch, p[i], nil
+		}
+		r.scratch = append(r.scratch, p...)
+	}
+}
+
+func (r *frameReader) optionalLF() (bool, error) {
+	if err := r.fill(); err != nil {
+		return false, err
+	}
+	if r.buf[r.lo] != '\n' {
+		return false, nil
+	}
+	r.lo++
+	return true, nil
+}
+
+// sequenceReader owns only one record's framing and an SSE block's fields.
+// Consumers choose recovery: Items continues after ErrItem, aggregate decode
+// fails, and Events alone imposes time.Duration's range on the retry field.
+type sequenceReader struct {
+	wire         frameReader
+	sq           sequence
+	bound        int64
+	started      bool
+	afterCR      bool
+	chargeLF     bool
+	data, object []byte
+}
+
+func newSequenceReader(r io.Reader, sq sequence, bound int64) *sequenceReader {
+	if sq.events {
+		sq.item = defaultMedia[0].parsed
+	}
+	return &sequenceReader{wire: frameReader{r: r}, sq: sq, bound: bound}
+}
+
+func (f *sequenceReader) next() ([]byte, error) {
+	if f.sq.events {
+		e, err := f.event()
+		if err != nil {
+			return nil, err
+		}
+		f.object = e.appendJSON(f.object[:0])
+		return f.object, nil
+	}
+	for {
+		sep, bound := "\n", f.bound
+		if f.sq.rs {
+			sep = "\x1e"
+		} else {
+			bound++ // a possible CR in the terminating CRLF
+		}
+		data, end, err := f.wire.until(sep, bound)
+		if err != nil && err != io.EOF {
+			if _, ok := err.(*http.MaxBytesError); ok {
+				err = &http.MaxBytesError{Limit: f.bound}
+			}
+			return nil, err
+		}
+		if !f.sq.rs && end == '\n' && len(data) > 0 && data[len(data)-1] == '\r' {
+			data = data[:len(data)-1]
+		}
+		if int64(len(data)) > f.bound {
+			return nil, &http.MaxBytesError{Limit: f.bound}
+		}
+		if f.sq.rs && !f.started {
+			f.started = true
+			if len(data) > 0 {
+				return nil, badItem(errors.New("JSON sequence data precedes its first record separator"))
+			}
+		} else if f.sq.rs && len(data) > 0 {
+			if scalarTruncated(data) {
+				return nil, badItem(errors.New("JSON sequence scalar lacks trailing whitespace"))
+			}
+			return data, nil
+		} else if !f.sq.rs && len(bytes.Trim(data, " \t\r\n")) > 0 {
+			return data, nil
+		}
+		if err == io.EOF {
+			return nil, io.EOF
+		}
+	}
+}
+
+func scalarTruncated(data []byte) bool {
+	t := bytes.TrimLeft(data, " \t\r\n")
+	if len(t) == 0 {
+		return false
+	}
+	switch t[0] {
+	case '-', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 't', 'f', 'n':
+		last := data[len(data)-1]
+		return last != ' ' && last != '\t' && last != '\r' && last != '\n' && json.Valid(t)
+	}
+	return false
+}
+
+// eventFields retains field presence independently of empty values. Retry
+// remains decimal text until a consumer chooses its representation.
+type eventFields struct {
+	data           []byte
+	typ, id, retry string
+	typeSet, idSet bool
+}
+
+func (f *sequenceReader) event() (eventFields, error) {
+	var e eventFields
+	f.data = f.data[:0]
+	var used int64
+	for {
+		if f.afterCR {
+			lf, err := f.wire.optionalLF()
+			f.afterCR = false
+			if err != nil {
+				return eventFields{}, err
+			}
+			if lf && f.chargeLF {
+				used++
+			}
+		}
+		if used > f.bound {
+			return eventFields{}, &http.MaxBytesError{Limit: f.bound}
+		}
+		left := f.bound - used
+		if !f.started {
+			left = min(left, 1<<63-4) + 3 // one leading BOM is outside the bound
+		}
+		line, end, err := f.wire.until("\r\n", left)
+		if err != nil {
+			if _, ok := err.(*http.MaxBytesError); ok {
+				err = &http.MaxBytesError{Limit: f.bound}
+			}
+			return eventFields{}, err // even EOF drops an unterminated block
+		}
+		if !f.started {
+			line = bytes.TrimPrefix(line, []byte("\xef\xbb\xbf"))
+			f.started = true
+		}
+		f.afterCR, f.chargeLF = end == '\r', len(line) > 0
+		if len(line) == 0 {
+			used = 0
+			if e.data != nil || e.typeSet || e.idSet || e.retry != "" {
+				return e, nil
+			}
+			continue
+		}
+		used += int64(len(line)) + 1
+		if used > f.bound {
+			return eventFields{}, &http.MaxBytesError{Limit: f.bound}
+		}
+		name, value, _ := bytes.Cut(line, []byte{':'})
+		if len(value) > 0 && value[0] == ' ' {
+			value = value[1:]
+		}
+		switch string(name) {
+		case "data":
+			if e.data != nil {
+				f.data = append(f.data, '\n')
+			}
+			if utf8.Valid(value) {
+				f.data = append(f.data, value...)
+			} else {
+				f.data = append(f.data, jsonText(string(value))...)
+			}
+			if f.data == nil {
+				f.data = []byte{}
+			}
+			e.data = f.data
+		case "event":
+			e.typ, e.typeSet = jsonText(string(value)), true
+		case "id":
+			if bytes.IndexByte(value, 0) < 0 {
+				e.id, e.idSet = jsonText(string(value)), true
+			}
+		case "retry":
+			if len(value) > 0 && len(bytes.Trim(value, "0123456789")) == 0 {
+				value = bytes.TrimLeft(value, "0")
+				if len(value) == 0 {
+					e.retry = "0"
+				} else {
+					e.retry = string(value)
+				}
+			}
+		}
+	}
+}
+
+func (e eventFields) value() (Event, error) {
+	v := Event{Data: e.data, Event: e.typ, ID: e.id, IDSet: e.idSet, RetrySet: e.retry != ""}
+	if v.RetrySet {
+		n, err := strconv.ParseUint(e.retry, 10, 64)
+		if err != nil || n > uint64((1<<63-1)/time.Millisecond) {
+			return Event{}, badItem(errors.New("event retry exceeds time.Duration's millisecond range"))
+		}
+		v.Retry = time.Duration(n) * time.Millisecond
+	}
+	return v, nil
+}
+
+func (e eventFields) appendJSON(b []byte) []byte {
+	b = append(b, '{')
+	field := func(name, value string) {
+		if b[len(b)-1] != '{' {
+			b = append(b, ',')
+		}
+		b = append(append(b, name...), ':')
+		quoted, _ := json.Marshal(value)
+		b = append(b, quoted...)
+	}
+	if e.data != nil {
+		field(`"data"`, string(e.data))
+	}
+	if e.typeSet {
+		field(`"event"`, e.typ)
+	}
+	if e.idSet {
+		field(`"id"`, e.id)
+	}
+	if e.retry != "" {
+		if b[len(b)-1] != '{' {
+			b = append(b, ',')
+		}
+		b = append(append(b, `"retry":`...), e.retry...)
+	}
+	return append(b, '}')
+}

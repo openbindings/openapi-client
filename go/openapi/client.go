@@ -652,8 +652,7 @@ func (r *Request) Send(ctx context.Context) (*Response, error) {
 	if err != nil {
 		return nil, err
 	}
-	resp, _, err := x.send(req)
-	return resp, err
+	return x.streamResponse(req, false)
 }
 
 // Call sends r with ctx, adding credentials, and returns as [Client.Call]
