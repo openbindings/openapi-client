@@ -391,7 +391,8 @@ type xmlPet struct {
 // remove it ... A header field that sets Accept-Encoding turns that off. A
 // body whose Content-Encoding, other than identity, remains passes through
 // unchanged to a *[]byte or io.Writer; any other target ... report[s] an
-// error naming the coding."
+// error". Stage 8 class 5/Tier 2: generated text identifies Content-Encoding;
+// its response-controlled value remains available through Header.
 func TestContentCodings(t *testing.T) {
 	var gz bytes.Buffer
 	zw := gzip.NewWriter(&gz)
@@ -418,8 +419,22 @@ func TestContentCodings(t *testing.T) {
 	asked := &openapi.Input{Header: http.Header{"Accept-Encoding": {"gzip"}}}
 	_, err := c.Call(t.Context(), "getPet", asked, &pet)
 	var de *openapi.DecodeError
-	if !errors.As(err, &de) || !strings.Contains(err.Error(), "gzip") {
-		t.Errorf("coded body into a struct: %v, want a *DecodeError naming gzip", err)
+	if !errors.As(err, &de) {
+		t.Fatalf("coded body into a struct: %v, want a *DecodeError", err)
+	}
+	for _, want := range []string{"getPet", "200", "Content-Encoding"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("coded body diagnostic %q does not identify %s", err, want)
+		}
+	}
+	if strings.Contains(err.Error(), "gzip") || strings.Contains(err.Error(), "application/json") {
+		t.Errorf("coded body diagnostic contains response-controlled metadata: %v", err)
+	}
+	if de.Header.Get("Content-Encoding") != "gzip" || de.Header.Get("Content-Type") != "application/json" {
+		t.Errorf("coded response metadata was not preserved: %v", de.Header)
+	}
+	if de.Err == nil || !errors.Is(err, de.Err) {
+		t.Errorf("coded body error lost its cause: %v", err)
 	}
 	var raw []byte
 	mustCall(t, c, "getPet", asked, &raw)
@@ -553,8 +568,9 @@ func TestMaxErrorBytes(t *testing.T) {
 // errors.go, DecodeError: "a response whose body could not be used by Call
 // ... it did not decode into the value given"; "Content is the start of the
 // body, at most 4 KiB"; "The promoted Body reads Content again, and
-// ContentLength is len(Content)"; "Error returns the operation, the status,
-// the media type and the reason, never the body." doc.go, Outcomes: "A 2xx
+// ContentLength is len(Content)". Stage 8 class 5/Tier 2: Error returns the
+// operation, status and static reason, with response-controlled media text
+// available only through Header. doc.go, Outcomes: "A 2xx
 // whose body could not be read or decoded: a *DecodeError."
 func TestDecodeError(t *testing.T) {
 	bad := `{"name": 5, "detail":"SECRET-BODY"}`
@@ -575,13 +591,20 @@ func TestDecodeError(t *testing.T) {
 		t.Errorf("Body reads %q, ContentLength %d", b, de.ContentLength)
 	}
 	msg := de.Error()
-	for _, want := range []string{"getPet", "200", "application/json"} {
+	for _, want := range []string{"getPet", "200", "decode"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("Error() = %q, want %s in it", msg, want)
 		}
 	}
 	if strings.Contains(msg, "SECRET-BODY") {
 		t.Errorf("Error() = %q holds the body", msg)
+	}
+	if strings.Contains(msg, "application/json") || de.Header.Get("Content-Type") != "application/json" {
+		t.Errorf("media belongs in explicit Header, not generated text: %q, Header %v", msg, de.Header)
+	}
+	var cause *json.UnmarshalTypeError
+	if !errors.As(err, &cause) || !errors.Is(err, de.Err) {
+		t.Errorf("DecodeError lost the JSON type-error cause: %v", err)
 	}
 	var se *openapi.StatusError
 	if errors.As(err, &se) {

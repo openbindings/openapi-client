@@ -32,8 +32,7 @@ type prepared struct {
 	selection
 	origin  *url.URL // the scheme and host of the server, when the call places credentials
 	payload payload
-	body    *sentBody   // the body Prepare set in the request
-	taken   atomic.Bool // a send has handed over a body that can be read once
+	taken   atomic.Bool // a send has handed over HTTP.Body
 }
 
 func (p *prepared) Value(key any) any {
@@ -253,16 +252,9 @@ func (r *Request) newExchange(ctx context.Context) (*exchange, *http.Request, er
 		return nil, nil, &RequestError{Err: errOtherOrigin}
 	}
 	body := req.Body
-	if body != nil && body != http.NoBody && (body != pr.body || req.GetBody == nil) {
-		x.claim = &pr.taken // HTTP.Body goes once; a body the caller set and GetBody give later sends theirs
-	}
-	x.payload = pr.payload
-	switch {
-	case body == nil || body == http.NoBody:
-	case body == pr.body:
-		x.attach(req, pr.payload)
-	default: // a body the caller set, of the length it declares, if any
-		x.getBody, x.payload = req.GetBody, payload{size: -1, ctype: pr.payload.ctype}
+	x.payload = payload{size: -1, ctype: pr.payload.ctype}
+	if body != nil && body != http.NoBody {
+		x.claim, x.getBody = &pr.taken, req.GetBody
 		if req.ContentLength > 0 {
 			x.payload.size = req.ContentLength
 		}
@@ -406,6 +398,21 @@ func decodeError(r *Response, head []byte, err error) *DecodeError {
 	return &DecodeError{Response: r.keep(head, true), Content: head, Err: err}
 }
 
+// invalidDecodeError retains metadata and an empty capture without touching
+// the live response, which remains available for a valid decoding attempt.
+func invalidDecodeError(r *Response, err error) *DecodeError {
+	if r != nil {
+		c := *r
+		if r.Response != nil {
+			hr := *r.Response
+			hr.Body, hr.ContentLength = http.NoBody, 0
+			c.Response = &hr
+		}
+		r = &c
+	}
+	return &DecodeError{Response: r, Err: err}
+}
+
 func join(err, also error) error {
 	if also == nil {
 		return err
@@ -467,6 +474,9 @@ func (cfg *config) read(r *http.Response, ct parsedMedia, decl *Message, out any
 		_, err := io.Copy(p, r.Body)
 		return nil, err == nil, err
 	}
+	if cfg.codecsErr != nil {
+		return nil, false, fmt.Errorf("Options.Codecs: %w", cfg.codecsErr)
+	}
 	if err := contentCoding(r.Header); err != nil {
 		return nil, false, err
 	}
@@ -523,7 +533,7 @@ func (cfg *config) decodeData(ct parsedMedia, decl *Message, data []byte, out an
 	case len(data) == 0:
 		return nil
 	}
-	return fmt.Errorf("cannot decode %s into %T", ct.full, out)
+	return fmt.Errorf("cannot decode the response media type into %T", out)
 }
 
 // decodeJSON decodes data, a JSON value followed only by whitespace, into
@@ -560,7 +570,7 @@ func decodeXML(data []byte, ct parsedMedia, out any) error {
 		return latin1(label) || strings.EqualFold(label, "utf-8") || strings.EqualFold(label, "us-ascii")
 	}
 	if given && !supported(charset) {
-		return fmt.Errorf("unsupported charset %q", charset)
+		return errors.New("unsupported XML charset")
 	}
 	if given && latin1(charset) {
 		data = fromLatin1(data)
@@ -571,7 +581,7 @@ func decodeXML(data []byte, ct parsedMedia, out any) error {
 		case given: // the byte order mark or the Content-Type decided
 			return r, nil
 		case !supported(label):
-			return nil, fmt.Errorf("unsupported charset %q", label)
+			return nil, errors.New("unsupported XML charset")
 		case latin1(label):
 			b, err := io.ReadAll(r)
 			return bytes.NewReader(fromLatin1(b)), err

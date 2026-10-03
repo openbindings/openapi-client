@@ -20,11 +20,6 @@ import (
 // noInput is the empty Input a nil *Input stands for.
 var noInput Input
 
-// notYet reports a feature a later stage of this package implements.
-func notYet(feature string) error {
-	return fmt.Errorf("%s is not implemented yet: %w", feature, errors.ErrUnsupported)
-}
-
 var (
 	errMissing    = errors.New("a required parameter is missing")
 	errDotSegment = errors.New(`the value forms a "." or ".." path segment, which URI resolution removes`)
@@ -122,6 +117,11 @@ func (cfg *config) checkAccept(o *operation, h http.Header, out any, re *Request
 	few := len(o.success) == 0 || len(o.success) == 1 && len(o.success[0]) < 2
 	if _, dynamic := out.(*any); dynamic || !decodes(out) || few || len(h["Accept"]) > 0 {
 		return
+	}
+	for name, values := range h {
+		if len(values) > 0 && strings.EqualFold(name, "Accept") {
+			return
+		}
 	}
 	classOf := func(m parsedMedia) string {
 		if _, key := cfg.codec(m); key != "" {
@@ -677,7 +677,7 @@ func (o *operation) encoding(md *Media) *formEncoding {
 // the Media governing it.
 func (c *Client) mediaType(o *operation, in *Input, re *RequestError) (string, parsedMedia, *Media) {
 	cfg, declared := c.cfg, o.Body.Media
-	if cfg.mediaTypeErr != nil {
+	if in.MediaType == "" && cfg.mediaTypeErr != nil {
 		re.setting("Options.MediaType", cfg.mediaTypeErr)
 	}
 	typ := in.MediaType
