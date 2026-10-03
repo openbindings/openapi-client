@@ -53,8 +53,10 @@ func (r *frameReader) fill() error {
 func (r *frameReader) until(sep byte, cr bool, bound int64) ([]byte, byte, error) {
 	r.scratch = r.scratch[:0]
 	for {
-		if err := r.fill(); err != nil {
-			return r.scratch, 0, err
+		if r.lo == r.hi {
+			if err := r.fill(); err != nil {
+				return r.scratch, 0, err
+			}
 		}
 		p := r.buf[r.lo:r.hi]
 		i := -1
@@ -247,8 +249,11 @@ func (f *sequenceReader) event(e *eventFields) error {
 			return &http.MaxBytesError{Limit: f.bound}
 		}
 		name, value := line, []byte(nil)
-		if i := bytes.IndexByte(line, ':'); i >= 0 {
-			name, value = line[:i], line[i+1:]
+		for i, c := range line {
+			if c == ':' {
+				name, value = line[:i], line[i+1:]
+				break
+			}
 		}
 		if len(value) > 0 && value[0] == ' ' {
 			value = value[1:]
