@@ -1,6 +1,7 @@
 package openapi
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"slices"
@@ -328,7 +329,7 @@ func (s *Schema) references() ([]SchemaReference, error) {
 			break
 		}
 		if e.keyword == "" {
-			return nil, fmt.Errorf("openapi: unsupported schema dialect %q", e.owner.dialect)
+			return nil, errors.New("openapi: unsupported schema dialect")
 		}
 		e.once.Do(func() { e.resolve(s.doc) })
 		r := e.ref
