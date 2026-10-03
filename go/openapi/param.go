@@ -52,6 +52,15 @@ var (
 // given, a defined value, and whether it wrote anything. In a path, lead is
 // the style's first.
 func (c *Client) writeParam(b *strings.Builder, lead string, p *param, v any, re *RequestError) (given, written bool) {
+	if p.legacy.ok() {
+		before := b.Len()
+		given, err := c.writeLegacy(b, lead, p, v, false)
+		if err != nil {
+			re.input(p.Key, err)
+			return false, false
+		}
+		return given, b.Len() != before
+	}
 	if p.ContentType == "" {
 		e := emitter{param: p, b: b, lead: lead, limit: maxLength}
 		given, err := e.write(c.doc, v)
@@ -66,6 +75,14 @@ func (c *Client) writeParam(b *strings.Builder, lead string, p *param, v any, re
 	}
 	if _, raw := v.([]byte); !raw && c.cfg.codecsErr != nil {
 		re.setting("Options.Codecs", c.cfg.codecsErr)
+	}
+	if p.In == "querystring" && p.Err == nil && isForm(*p.media) && len(c.cfg.codecs) == 0 {
+		if written, ok, err := simpleForm(b, lead, p.form, v); ok {
+			if err != nil {
+				re.input(p.Key, err)
+			}
+			return written, written
+		}
 	}
 	var s string
 	err := p.Err
@@ -82,12 +99,15 @@ func (c *Client) writeParam(b *strings.Builder, lead string, p *param, v any, re
 		re.input(p.Key, err)
 		return false, false
 	}
+	if p.In == "querystring" && s == "" {
+		return false, false
+	}
 	b.WriteString(lead)
 	if p.In == "query" || p.In == "cookie" {
 		b.WriteString(p.name)
 		b.WriteByte('=')
 	}
-	if p.In == "header" || p.In == "cookie" {
+	if p.In == "header" || p.In == "cookie" || p.In == "querystring" && isForm(*p.media) {
 		b.WriteString(s) // as given
 	} else {
 		escapeTo(b, s, unreservedSet)
@@ -147,6 +167,7 @@ type emitter struct {
 // write writes v, reporting whether it is defined. A value it gives
 // encoding/json is checked as d checks JSON it encodes.
 func (e *emitter) write(d *document, v any) (bool, error) {
+
 	switch v := v.(type) {
 	case string:
 		return e.primitive(jsonText(v))
@@ -255,6 +276,9 @@ func (e *emitter) next(n int, empty bool) error {
 
 // item writes an array's item s.
 func (e *emitter) item(s string) error {
+	if e.cookie32 && e.set == nil && strings.ContainsFunc(s, func(r rune) bool { return r == ';' || r < 32 || r == 127 }) {
+		return errors.New("a cookie value cannot hold a semicolon or control character")
+	}
 	if err := e.next(len(s), s == ""); err != nil {
 		return err
 	}
@@ -272,6 +296,9 @@ func (e *emitter) item(s string) error {
 
 // member writes an object's member named k, whose value is s.
 func (e *emitter) member(k, s string) error {
+	if e.cookie32 && e.set == nil && (!isToken(k) || badCookieText(s)) {
+		return errors.New("a cookie name must be a token and its value cannot hold a semicolon or control character")
+	}
 	if err := e.next(len(k)+len(s), false); err != nil { // not exploded, it holds a delimiter
 		return err
 	}
@@ -293,6 +320,9 @@ func (e *emitter) member(k, s string) error {
 // members is, though none of them be (RFC 6570 section 2.3); then, not
 // exploded, it is written as "" is, and exploded, nothing is written.
 func (e *emitter) end(items int) (bool, error) {
+	if e.cookie32 && !e.Explode && (e.n > 0 || items > 0) {
+		return false, errors.New("a cookie array or object requires explode")
+	}
 	var err error
 	switch {
 	case e.n > 0 || items == 0:
@@ -463,4 +493,8 @@ func (o *operation) runWriters(req *http.Request, writers map[string]func(*http.
 			re.input(p.Key, errors.New("the writer left its {name} token, or a RawPath that is not an encoding of Path"))
 		}
 	}
+}
+
+func badCookieText(s string) bool {
+	return strings.ContainsFunc(s, func(r rune) bool { return r == ';' || r < 32 || r == 127 })
 }

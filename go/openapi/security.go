@@ -20,6 +20,7 @@ import (
 type scheme struct {
 	desc    SecurityScheme // without the Name and Scopes of a use
 	kind    schemeKind
+	uri     bool    // this use names a URI, not a component
 	dest    paramID // the header field, query name or cookie name a credential sets
 	written string  // a query or cookie credential's name as written
 	auth    string  // the auth-scheme and space before a credential in the Authorization field
@@ -44,24 +45,32 @@ var authorization = paramID{"header", "Authorization"}
 // from names, compiled once for each declaration: the component of that name
 // where the Loader's SchemeLookup looks, following references.
 func (d *document) securityScheme(name string, from *tree) *scheme {
-	in := [...]*tree{d.tree, from} // SchemesInEntryFirst
-	switch d.schemes {
-	case SchemesInEntry:
-		in[1] = d.tree
-	case SchemesInReferrer:
-		in[0] = from
-	}
-	var v value
-	for _, t := range in {
-		if v = t.root().get("components").get("securitySchemes").get(name); v.ok() {
-			break
-		}
-	}
+	v := d.schemeComponent(name, from)
 	if !v.ok() {
+		if from.edition == 32 {
+			t, ptr, err := d.targetName(from, name)
+			if err != nil {
+				return &scheme{desc: SecurityScheme{Err: err}, uri: true}
+			}
+			v = t
+			sc := *d.schemeForms.get(v.id(), func() *scheme {
+				t, at, _, err := d.follow(v, v.t.source(ptr))
+				if err != nil {
+					return &scheme{desc: SecurityScheme{Err: err}}
+				}
+				return newScheme(t, at)
+			})
+			sc.uri = true
+			return &sc
+		}
 		return &scheme{desc: SecurityScheme{Err: fmt.Errorf("the document declares no security scheme %q", name)}}
 	}
 	return d.schemeNames.get(v.id(), func() *scheme {
-		src := v.t.source("/components/securitySchemes/" + escapeToken(name))
+		prefix := "/components/securitySchemes/"
+		if v.t.edition == 20 {
+			prefix = "/securityDefinitions/"
+		}
+		src := v.t.source(prefix + escapeToken(name))
 		t, at, desc, err := d.follow(v, src)
 		switch {
 		case err != nil:
@@ -79,6 +88,26 @@ func (d *document) securityScheme(name string, from *tree) *scheme {
 	})
 }
 
+func (d *document) schemeComponent(name string, from *tree) value {
+	in := [...]*tree{d.tree, from}
+	switch d.schemes {
+	case SchemesInEntry:
+		in[1] = d.tree
+	case SchemesInReferrer:
+		in[0] = from
+	}
+	for _, t := range in {
+		v := t.root().get("components").get("securitySchemes").get(name)
+		if t.edition == 20 {
+			v = t.root().get("securityDefinitions").get(name)
+		}
+		if v.ok() {
+			return v
+		}
+	}
+	return value{}
+}
+
 // newScheme compiles the Security Scheme Object t, whose Source is at.
 func newScheme(t value, at string) *scheme {
 	sc := &scheme{desc: SecurityScheme{Source: at}}
@@ -88,7 +117,14 @@ func newScheme(t value, at string) *scheme {
 		return sc
 	}
 	s.Type, s.Description = t.str("type"), t.str("description")
+	if t.t.edition == 32 {
+		s.Deprecated, s.OAuth2MetadataURL = t.flag("deprecated"), t.str("oauth2MetadataUrl")
+	}
 	var err error
+	if t.t.edition == 20 && !slices.Contains([]string{"basic", "apiKey", "oauth2"}, s.Type) || t.t.edition == 30 && s.Type == "mutualTLS" {
+		s.Err = fmt.Errorf("security type %q is not defined in this edition", s.Type)
+		return sc
+	}
 	switch s.Type {
 	case "apiKey":
 		s.In, s.ParamName = t.str("in"), t.str("name")
@@ -102,12 +138,20 @@ func newScheme(t value, at string) *scheme {
 			sc.kind, sc.dest = apiKeyHeader, paramID{"header", field}
 		case s.In == "query":
 			sc.kind, sc.dest, sc.written = apiKeyQuery, paramID{"query", name}, escape(name, unreservedSet)
+		case s.In == "cookie" && t.t.edition == 20:
+			err = errors.New("Swagger apiKey location must be header or query")
 		case s.In == "cookie" && isToken(name): // RFC 6265 section 4.1.1
 			sc.kind, sc.dest, sc.written = apiKeyCookie, paramID{"cookie", name}, name
 		case s.In == "cookie":
 			err = fmt.Errorf("cookie name %q is not a token (RFC 6265 section 4.1.1)", name)
 		default:
 			err = fmt.Errorf("apiKey location %q is not query, header or cookie", s.In)
+		}
+	case "basic":
+		if t.t.edition == 20 {
+			s.Type, s.Scheme, sc.kind, sc.dest, sc.auth = "http", "basic", httpBasic, authorization, "Basic "
+		} else {
+			err = errors.New("basic is a Swagger security type")
 		}
 	case "http":
 		s.Scheme, s.BearerFormat = t.str("scheme"), t.str("bearerFormat")
@@ -123,7 +167,21 @@ func newScheme(t value, at string) *scheme {
 			sc.kind, sc.auth = httpOther, s.Scheme+" "
 		}
 	case "oauth2":
-		s.Flows, err = oauthFlows(t.get("flows"))
+		if t.t.edition == 20 {
+			typ := t.str("flow")
+			switch typ {
+			case "application":
+				typ = "clientCredentials"
+			case "accessCode":
+				typ = "authorizationCode"
+			}
+			s.Flows, err = appendFlow(nil, typ, t)
+			if len(s.Flows) == 0 {
+				err = fmt.Errorf("unknown Swagger OAuth flow %q", typ)
+			}
+		} else {
+			s.Flows, err = oauthFlows(t.get("flows"))
+		}
 		sc.kind, sc.dest, sc.auth = httpBearer, authorization, "Bearer "
 	case "openIdConnect":
 		u := t.get("openIdConnectUrl")
@@ -154,34 +212,51 @@ func oauthFlows(v value) (flows []Flow, err error) {
 		return nil, errors.New("an oauth2 scheme needs flows")
 	}
 	for typ, f := range v.members() {
-		var needs []string // the URLs the flow requires
-		switch typ {
-		case "implicit":
-			needs = []string{"authorizationUrl"}
-		case "password", "clientCredentials":
-			needs = []string{"tokenUrl"}
-		case "authorizationCode":
-			needs = []string{"authorizationUrl", "tokenUrl"}
-		default:
+		if typ == "deviceAuthorization" && v.t.edition != 32 {
 			continue
 		}
-		scopes := f.get("scopes")
-		if err == nil && (f.kind() != '{' || scopes.kind() != '{' || slices.ContainsFunc(needs, func(n string) bool { return f.get(n).kind() != '"' })) {
-			err = fmt.Errorf("the %s flow needs %s and scopes", typ, strings.Join(needs, " and "))
+		var e error
+		flows, e = appendFlow(flows, typ, f)
+		if err == nil {
+			err = e
 		}
-		if f.kind() != '{' {
-			continue
-		}
-		flow := Flow{Type: typ, AuthorizationURL: f.str("authorizationUrl"), TokenURL: f.str("tokenUrl"), RefreshURL: f.str("refreshUrl")}
-		if scopes.kind() == '{' {
-			flow.Scopes = map[string]string{}
-			for name, desc := range scopes.members() {
-				flow.Scopes[name] = desc.string()
-			}
-		}
-		flows = append(flows, flow)
 	}
 	return flows, err
+}
+
+func appendFlow(flows []Flow, typ string, f value) ([]Flow, error) {
+	var needs []string
+	switch typ {
+	case "implicit":
+		needs = []string{"authorizationUrl"}
+	case "password", "clientCredentials":
+		needs = []string{"tokenUrl"}
+	case "authorizationCode":
+		needs = []string{"authorizationUrl", "tokenUrl"}
+	case "deviceAuthorization":
+		needs = []string{"deviceAuthorizationUrl", "tokenUrl"}
+	default:
+		return flows, nil
+	}
+	var err error
+	scopes := f.get("scopes")
+	if f.kind() != '{' || scopes.kind() != '{' || slices.ContainsFunc(needs, func(n string) bool { return f.get(n).kind() != '"' }) {
+		err = fmt.Errorf("the %s flow needs %s and scopes", typ, strings.Join(needs, " and "))
+	}
+	if f.kind() != '{' {
+		return flows, err
+	}
+	flow := Flow{Type: typ, AuthorizationURL: f.str("authorizationUrl"), TokenURL: f.str("tokenUrl"), RefreshURL: f.str("refreshUrl")}
+	if f.t.edition == 32 {
+		flow.DeviceAuthorizationURL = f.str("deviceAuthorizationUrl")
+	}
+	if scopes.kind() == '{' {
+		flow.Scopes = map[string]string{}
+		for name, desc := range scopes.members() {
+			flow.Scopes[name] = desc.string()
+		}
+	}
+	return append(flows, flow), err
 }
 
 // An alternative is a security alternative with its schemes compiled.
@@ -392,7 +467,7 @@ func (c *Client) checkCredentials(o *operation, a *alternative, in *Input, ep en
 		name := a.Schemes[i].Name
 		cred := cfg.Credentials[name]
 		if err := sc.callError(cred); err != nil {
-			re.setting(credentialKey(name), err)
+			re.setting(credentialKey(name), sc.settingError(name, err))
 			continue
 		}
 		if !cred.places() {
@@ -411,7 +486,7 @@ func (c *Client) checkCredentials(o *operation, a *alternative, in *Input, ep en
 				field = "Cookie"
 			}
 			if s := setter(in.Header, cfg.Header, field); s != "" {
-				re.setting(s, fmt.Errorf("sets %s, which the credential for %q sets", field, name))
+				re.setting(s, fmt.Errorf("sets %s, which the credential for %q sets", field, sc.shownName(name)))
 			}
 		}
 		if j, ok := o.dests[sc.dest]; ok {
@@ -424,7 +499,7 @@ func (c *Client) checkCredentials(o *operation, a *alternative, in *Input, ep en
 	if a.clash {
 		if i, j := clash(a.schemes, func(i int) bool { return !cfg.Credentials[a.Schemes[i].Name].places() }); j > 0 {
 			dest := a.schemes[i].dest
-			re.fail(fmt.Errorf("the security schemes %q and %q both set %s %q", a.Schemes[i].Name, a.Schemes[j].Name, dest.in, dest.name))
+			re.fail(fmt.Errorf("the security schemes %q and %q both set %s %q", a.schemes[i].shownName(a.Schemes[i].Name), a.schemes[j].shownName(a.Schemes[j].Name), dest.in, dest.name))
 		}
 	}
 	return places, supplied
@@ -491,6 +566,20 @@ func (sc *scheme) checkValue(secret string) error {
 
 // credentialKey is the Settings key of the credential for name.
 func credentialKey(name string) string { return "Options.Credentials[" + strconv.Quote(name) + "]" }
+
+func (sc *scheme) shownName(name string) string {
+	if sc.uri {
+		return safeURI(name)
+	}
+	return name
+}
+
+func (sc *scheme) settingError(name string, err error) error {
+	if shown := sc.shownName(name); shown != name {
+		return &settingLabelError{err, credentialKey(shown)}
+	}
+	return err
+}
 
 // secured returns why a bearer token or Basic credential cannot be sent to
 // u, or nil: it goes over https or wss, or plain http or ws to a loopback
@@ -607,7 +696,7 @@ func (x *exchange) sign(req *http.Request, src context.Context, creds bool, re *
 		secret, err := c.source(src)
 		switch {
 		case err != nil:
-			re.fail(withContext(src, fmt.Errorf("the credential source for %q: %w", name, err)))
+			re.fail(withContext(src, fmt.Errorf("the credential source for %q: %w", sc.shownName(name), err)))
 			continue
 		case c.kind != sourceCredential: // checked when the call was prepared
 		case secret == "":
@@ -616,7 +705,7 @@ func (x *exchange) sign(req *http.Request, src context.Context, creds bool, re *
 			err = sc.checkValue(secret)
 		}
 		if err != nil {
-			re.setting(credentialKey(name), err)
+			re.setting(credentialKey(name), sc.settingError(name, err))
 			continue
 		}
 		switch sc.kind {
@@ -772,13 +861,14 @@ func (s *securityCheck) list(list value) (none bool) {
 		for name, scopes := range r.members() {
 			n++
 			if c, ok := s.creds[name]; ok { // the scheme a name selects may differ between documents (see SchemeLookup)
-				if err := s.d.securityScheme(name, list.t).loadError(c); err == nil {
+				sc := s.d.securityScheme(name, list.t)
+				if err := sc.loadError(c); err == nil {
 					delete(s.creds, name)
 				} else if _, seen := s.refused[name]; !seen {
 					if s.refused == nil {
 						s.refused = map[string]error{}
 					}
-					s.refused[name] = err
+					s.refused[name] = sc.settingError(name, err)
 				}
 			}
 			if s.names[name] {

@@ -194,6 +194,7 @@ const (
 	refKind // an Example, Link or Security Scheme Object: only a Reference Object holds a reference
 	schemaKind
 	schemaIDsKind // schema locations inspected for identifiers, without following references
+	itemsKind     // Swagger Items Object, not a schema or Reference Object
 )
 
 // A slot is what a member of an object holds: a k node ('1'), or an array
@@ -240,6 +241,124 @@ func (t *tree) kind() kind {
 		return rootKind
 	}
 	return anyKind
+}
+
+// setEdition settles a document's model before discovery or compilation.
+func (t *tree) setEdition(inherit int) {
+	t.edition = inherit
+	r := t.root()
+	switch {
+	case r.str("swagger") == "2.0":
+		t.edition = 20
+	case isPatchOf(r.str("openapi"), "3.0"):
+		t.edition = 30
+	case isPatchOf(r.str("openapi"), "3.1"):
+		t.edition = 31
+	case isPatchOf(r.str("openapi"), "3.2"):
+		t.edition = 32
+	}
+	t.reaches = t.reaches || t.edition == 32 && t.editionRefs
+	t.refbase = t.base
+	if t.edition == 32 && r.get("$self").kind() == '"' {
+		if u, err := t.base.Parse(r.str("$self")); err == nil && u.IsAbs() && checkURI(u, r.str("$self")) == nil {
+			t.refbase = u
+		}
+	}
+}
+
+// modelSlot applies the object's edition, excluding later feature-shaped data.
+func modelSlot(k kind, name string, edition int) (slot, bool) {
+	if edition == 20 {
+		switch k {
+		case rootKind:
+			switch name {
+			case "paths":
+				return slot{pathItemKind, 'x'}, true
+			case "definitions":
+				return slot{schemaKind, '{'}, true
+			case "parameters":
+				return slot{parameterKind, '{'}, true
+			case "responses":
+				return slot{responseKind, '{'}, true
+			case "securityDefinitions":
+				return slot{refKind, '{'}, true
+			}
+			return slot{}, false
+		case operationKind:
+			if name != "parameters" && name != "responses" {
+				return slot{}, false
+			}
+		case pathItemKind:
+			if name == "trace" {
+				return slot{}, false
+			}
+		case parameterKind:
+			if name == "items" {
+				return slot{itemsKind, '1'}, true
+			}
+			return slot{schemaKind, '1'}, name == "schema"
+		case itemsKind:
+			return slot{itemsKind, '1'}, name == "items"
+		case schemaKind:
+			if !slices.Contains([]string{"items", "allOf", "properties", "additionalProperties"}, name) {
+				return slot{}, false
+			}
+		case responseKind:
+			if name == "schema" {
+				return slot{schemaKind, '1'}, true
+			}
+			if name != "headers" {
+				return slot{}, false
+			}
+		}
+	}
+	if edition <= 30 {
+		if k == rootKind && name == "webhooks" || k == componentsKind && name == "pathItems" {
+			return slot{}, false
+		}
+		if k == schemaKind && !slices.Contains([]string{"items", "not", "additionalProperties", "allOf", "anyOf", "oneOf", "properties"}, name) {
+			return slot{}, false
+		}
+	}
+	if edition == 32 {
+		switch k {
+		case pathItemKind:
+			if name == "query" {
+				return slot{operationKind, '1'}, true
+			}
+			if name == "additionalOperations" {
+				return slot{operationKind, '{'}, true
+			}
+		case componentsKind:
+			if name == "mediaTypes" {
+				return slot{mediaKind, '{'}, true
+			}
+		case encodingKind:
+			switch name {
+			case "encoding":
+				return slot{encodingKind, '{'}, true
+			case "prefixEncoding":
+				return slot{encodingKind, '['}, true
+			case "itemEncoding":
+				return slot{encodingKind, '1'}, true
+			}
+		case mediaKind:
+			if name == "itemSchema" {
+				return slot{schemaKind, '1'}, true
+			}
+			if name == "prefixEncoding" {
+				return slot{encodingKind, '['}, true
+			}
+			if name == "itemEncoding" {
+				return slot{encodingKind, '1'}, true
+			}
+		}
+	}
+	if int(k) >= len(model) {
+		return slot{}, false
+	}
+	s, ok := model[k][name]
+	return s, ok
 }
 
 // A claim is the node an identifier names, its JSON Pointer in its
@@ -295,8 +414,8 @@ type reader struct {
 	claimed []string          // the identifiers the discovery has not taken
 	refs    []need            // the references to other documents the discovery has not taken
 	located map[int32]location
-	// Two bits per kind and node: queued, entered recursively. The 15
-	// kinds through schemaIDsKind occupy 30 bits; new kinds must still fit.
+	// Two bits per kind and node: queued, entered recursively. The sixteen
+	// kinds through itemsKind occupy all 32 bits; new kinds require widening.
 	seen    []uint32
 	dialect string // the document default for schema resources
 	queue   []item
@@ -495,11 +614,12 @@ func (dc *discovery) read(f fetch, buf []byte, scratch *reader) (*reader, error)
 	if err != nil {
 		return nil, err
 	}
+	t.setEdition(dc.tree.edition)
 	k := t.kind()
 	r := dc.newReader(t, k)
 	r.queue = append(scratch.queue[:0], r.queue...)
 	for _, w := range f.wants {
-		r.open(t.root(), k, t.base, nil, t.uri, r.dialect, w)
+		r.open(t.root(), k, t.refbase, nil, t.uri, r.dialect, w)
 	}
 	r.drain()
 	scratch.queue, r.queue = r.queue, nil
@@ -510,12 +630,18 @@ func (dc *discovery) read(f fetch, buf []byte, scratch *reader) (*reader, error)
 // read when t holds what discovery needs throughout: an identifier, or, in
 // an OpenAPI document, a reference that may reach another document.
 func (d *document) newReader(t *tree, k kind) *reader {
+	if t.edition == 0 {
+		t.setEdition(d.tree.edition)
+	}
 	r := &reader{d: d, t: t}
-	if k == rootKind {
+	if k == rootKind && t.edition >= 31 {
 		r.dialect = t.root().get("jsonSchemaDialect").string()
 	}
+	if t.refbase != t.base {
+		r.claim(t.refbase.String(), t.root(), t.base, r.dialect)
+	}
 	if t.declares || t.reaches && k == rootKind {
-		r.open(t.root(), k, t.base, nil, t.uri, r.dialect, want{k: k})
+		r.open(t.root(), k, t.refbase, nil, t.uri, r.dialect, want{k: k})
 	}
 	return r
 }
@@ -663,10 +789,14 @@ func (dc *discovery) wake(r *reader) {
 // schema, to be read by the reader of its document.
 func (dc *discovery) follow(uri string, w want) {
 	if t := dc.named[uri]; t != nil {
-		dc.readers[t].open(t.root(), t.kind(), t.base, nil, t.uri, dc.readers[t].dialect, w)
+		dc.readers[t].open(t.root(), t.kind(), t.refbase, nil, t.uri, dc.readers[t].dialect, w)
 		dc.wake(dc.readers[t])
 	} else if c := dc.ids[uri]; c != nil {
-		dc.readers[c.v.t].open(c.v, schemaKind, c.base, c.ptr, uri, c.dialect, w)
+		k, base := schemaKind, c.base
+		if c.v.i == 0 && c.v.t.refbase.String() == uri {
+			k, base = c.v.t.kind(), c.v.t.refbase
+		}
+		dc.readers[c.v.t].open(c.v, k, base, c.ptr, uri, c.dialect, w)
 		dc.wake(dc.readers[c.v.t])
 	}
 }
@@ -782,6 +912,9 @@ func (r *reader) visit(v value, k kind, base *url.URL, effective string) {
 	if k == anyKind && (dialect.ok() || id.ok() || anchor.ok() || dynamicAnchor.ok()) {
 		k = schemaIDsKind
 	}
+	if r.t.edition <= 30 {
+		id, anchor, dynamicAnchor, dynamicRef, dialect = value{}, value{}, value{}, value{}, value{}
+	}
 	if dialect.kind() == '"' {
 		effective = dialect.string()
 	}
@@ -804,8 +937,19 @@ func (r *reader) visit(v value, k kind, base *url.URL, effective string) {
 		}
 		if k == schemaKind {
 			r.reference(ref, k, base)
+			if r.t.edition <= 30 && ref.kind() == '"' {
+				return
+			}
 			r.reference(dynamicRef, k, base)
+			if r.t.edition == 32 {
+				if m := disc.get("defaultMapping"); m.kind() == '"' && !componentName.MatchString(m.text()) {
+					r.reference(m, k, base)
+				}
+			}
 			for _, m := range disc.get("mapping").members() {
+				if r.t.edition == 20 {
+					break
+				}
 				if m.kind() == '"' && !componentName.MatchString(m.text()) {
 					r.reference(m, k, base)
 				}
@@ -813,16 +957,25 @@ func (r *reader) visit(v value, k kind, base *url.URL, effective string) {
 		}
 	case k == pathItemKind:
 		r.reference(ref, k, base)
-	case k >= parameterKind && ref.kind() == '"': // a Reference Object
+	case (k >= parameterKind && k <= refKind || k == mediaKind && r.t.edition == 32) && ref.kind() == '"': // a Reference Object
 		r.reference(ref, k, base)
 		return
+	}
+	if r.t.edition == 32 && (k == rootKind || k == operationKind) {
+		for _, req := range v.get("security").members() {
+			for name := range req.members() {
+				if !r.d.schemeComponent(name, r.t).ok() {
+					r.referenceText(name, refKind, base)
+				}
+			}
+		}
 	}
 	for name, m := range v.members() {
 		lookup := k
 		if lookup == schemaIDsKind {
 			lookup = schemaKind
 		}
-		s, ok := model[lookup][name]
+		s, ok := modelSlot(lookup, name, r.t.edition)
 		switch k {
 		case anyKind:
 			s, ok = slot{anyKind, '1'}, true
@@ -915,7 +1068,15 @@ func (r *reader) reference(ref value, k kind, base *url.URL) {
 	if ref.kind() != '"' {
 		return
 	}
-	t, text := ref.t, ref.text()
+	r.referenceValue(ref, ref.text(), k, base)
+}
+
+func (r *reader) referenceText(text string, k kind, base *url.URL) {
+	r.referenceValue(value{}, text, k, base)
+}
+
+func (r *reader) referenceValue(ref value, text string, k kind, base *url.URL) {
+	t := r.t
 	uri, frag, rank := t.uri, "", 0
 	if f, local := strings.CutPrefix(text, "#"); local && base == t.base {
 		frag = f
@@ -925,7 +1086,7 @@ func (r *reader) reference(ref value, k kind, base *url.URL) {
 		if res.err != nil {
 			return
 		}
-		if uri, frag = res.uri, f; base != t.base { // at compile, only t's base is known
+		if uri, frag = res.uri, f; ref.ok() && base != t.base { // at compile, only t's base is known
 			if r.located == nil {
 				r.located = map[int32]location{}
 			}
@@ -938,9 +1099,13 @@ func (r *reader) reference(ref value, k kind, base *url.URL) {
 	w := want{frag, k, t, rank}
 	switch c := r.ids[uri]; {
 	case c != nil:
-		r.open(c.v, schemaKind, c.base, c.ptr, uri, c.dialect, w)
+		kind, base := schemaKind, c.base
+		if c.v.i == 0 && c.v.t.refbase.String() == uri {
+			kind, base = c.v.t.kind(), c.v.t.refbase
+		}
+		r.open(c.v, kind, base, c.ptr, uri, c.dialect, w)
 	case uri == t.uri:
-		r.open(t.root(), t.kind(), t.base, nil, uri, r.dialect, w)
+		r.open(t.root(), t.kind(), t.refbase, nil, uri, r.dialect, w)
 	default:
 		r.refs = append(r.refs, need{uri, w})
 	}
@@ -952,7 +1117,7 @@ func (r *reader) reference(ref value, k kind, base *url.URL) {
 func descend(v value, k kind, ptr string, base *url.URL, dialect string) (value, *url.URL, string) {
 	how := byte('1')
 	for ptr != "" && v.ok() {
-		if how == '1' && (k == schemaKind || k == anyKind) && v.t.declares {
+		if how == '1' && (k == schemaKind || k == anyKind) && v.t.declares && v.t.edition >= 31 {
 			if local := v.get("$schema"); local.kind() == '"' {
 				dialect = local.string()
 			}
@@ -967,6 +1132,7 @@ func descend(v value, k kind, ptr string, base *url.URL, dialect string) (value,
 		if !ok {
 			return value{}, base, dialect
 		}
+		edition := v.t.edition
 		v, ptr = v.step(tok), rest
 		switch name, _ := unescapeToken(tok); {
 		case how != '1':
@@ -974,7 +1140,7 @@ func descend(v value, k kind, ptr string, base *url.URL, dialect string) (value,
 		case k == callbackKind:
 			k = pathItemKind
 		case k != anyKind:
-			s, ok := model[k][name]
+			s, ok := modelSlot(k, name, edition)
 			if !ok {
 				s = slot{dataKind, '1'}
 			}
@@ -1005,12 +1171,25 @@ func (d *document) target(ref value) (value, string, error) {
 		frag = f
 	} else {
 		doc, f, _ := strings.Cut(text, "#")
-		r := d.resolve(t, t.base, doc)
+		r := d.resolve(t, t.refbase, doc)
 		if r.err != nil {
 			return value{}, "", fmt.Errorf("%w %q: %w", ErrUnresolved, cmp.Or(r.shown, safeURI(text)), r.err)
 		}
 		uri, frag = r.uri, f
 	}
+	return d.targetLocation(t, text, uri, frag)
+}
+
+func (d *document) targetName(t *tree, text string) (value, string, error) {
+	doc, frag, _ := strings.Cut(text, "#")
+	r := d.resolve(t, t.refbase, doc)
+	if r.err != nil {
+		return value{}, "", fmt.Errorf("%w: %w", ErrUnresolved, r.err)
+	}
+	return d.targetLocation(t, text, r.uri, frag)
+}
+
+func (d *document) targetLocation(t *tree, text, uri, frag string) (value, string, error) {
 	n, ptr := t.root(), ""
 	if uri != t.uri || d.ids[uri] != nil {
 		var err error

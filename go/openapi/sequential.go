@@ -78,12 +78,15 @@ func (c *Client) sequentialBody(m parsedMedia, v any, re *RequestError) payload 
 // JSON item by the caller's codec for its type, if any, or by one
 // encoding/json Encoder, whose LF after each value ends it.
 type itemWriter struct {
-	c      *Client
-	sq     sequence
-	b      builder
-	codec  Codec
-	enc    *json.Encoder
-	static bool // the items' type holds no reader and nests at most 1,000 levels
+	multipart *partWriter
+	fields    *formEncoding
+	position  int
+	c         *Client
+	sq        sequence
+	b         builder
+	codec     Codec
+	enc       *json.Encoder
+	static    bool // the items' type holds no reader and nests at most 1,000 levels
 }
 
 func (c *Client) itemWriter(sq sequence) *itemWriter {
@@ -96,6 +99,14 @@ func (c *Client) itemWriter(sq sequence) *itemWriter {
 // refuses: an event, or the JSON text v is or encodes, a reader's read as
 // the body is. A typed nil is the value null, never a reader.
 func (w *itemWriter) write(v any) (string, error) {
+	if w.multipart != nil {
+		w.multipart.position(w.fields, v, "", w.position)
+		w.position++
+		if err := w.multipart.re.refused(); err != nil {
+			return "", err
+		}
+		return "", nil
+	}
 	b, start := &w.b, len(w.b.buf)
 	if w.sq.events {
 		var err error
@@ -305,7 +316,8 @@ type items struct {
 	once            sync.Once // stops the iterator
 	next            func() (any, error, bool)
 	stop            func()
-	n               int       // the items yielded
+	n               int // the items yielded
+	done            bool
 	cur             cursor    // the item being read
 	one             [1]source // its bytes, when it has no reader
 }
@@ -334,13 +346,32 @@ func (it *items) read(buf []byte) (int, error) {
 		if n, err := it.cur.Read(buf); n > 0 || err != io.EOF {
 			return n, err
 		}
+		if it.done {
+			return 0, io.EOF
+		}
 		if it.next == nil {
 			it.next, it.stop = iter.Pull2(it.seq)
 		}
 		v, err, ok := it.next()
 		switch {
 		case !ok:
-			return 0, io.EOF
+			it.done = true
+			if it.w.multipart == nil {
+				return 0, io.EOF
+			}
+			it.w.b.buf, it.w.b.parts = it.w.b.buf[:0], it.w.b.parts[:0]
+			if !it.w.multipart.delimiter("--") {
+				return 0, errDelimiter
+			}
+			p := it.w.b.payload()
+			it.cur.parts = p.parts
+			if p.parts == nil {
+				it.one[0] = source{payload: p}
+				it.cur.parts = it.one[:]
+			}
+			it.cur.pos = 0
+			it.cur.begin()
+			continue
 		case err != nil:
 			return 0, err
 		}

@@ -59,7 +59,7 @@ func (e *RequestError) refused() error {
 func (e *RequestError) sent() error {
 	errs := []error{e.Err}
 	for _, k := range slices.Sorted(maps.Keys(e.Settings)) {
-		errs = append(errs, fmt.Errorf("%s: %w", label(k), e.Settings[k]))
+		errs = append(errs, fmt.Errorf("%s: %w", settingLabel(k, e.Settings[k]), e.Settings[k]))
 	}
 	return errors.Join(errs...)
 }
@@ -205,6 +205,9 @@ func (c *Client) newRequest(ctx context.Context, o *operation, in *Input, re *Re
 			}
 			continue
 		}
+		if p.legacy.ok() && p.field == "Content-Type" && o.Body != nil && in.Body != nil {
+			continue
+		}
 		if p.In == "path" && p.Err == nil {
 			continue // serialized in the path
 		}
@@ -212,7 +215,7 @@ func (c *Client) newRequest(ctx context.Context, o *operation, in *Input, re *Re
 		supplied, wrote := hasWriter, hasWriter // a writer supplies it
 		switch {
 		case hasWriter || v == nil:
-		case p.In == "query":
+		case p.In == "query" || p.In == "querystring":
 			lead := "&"
 			if b.Len() == query {
 				lead = "?"
@@ -324,9 +327,11 @@ func setter(in, opts http.Header, field string) string {
 // "." or ".." segment.
 func (c *Client) writePath(b *strings.Builder, o *operation, in *Input, re *RequestError) {
 	segment, valued := b.Len(), -1 // where the segment begins, and a parameter in it
-	endSegment := func() {
-		if s := b.String()[segment:]; valued >= 0 && (s == "." || s == "..") {
-			re.input(o.params[valued].Key, errDotSegment)
+	endSegment := func(end int) {
+		if valued >= 0 {
+			if isDotSegment(b.String()[segment:end]) {
+				re.input(o.params[valued].Key, errDotSegment)
+			}
 		}
 	}
 	for _, part := range o.path {
@@ -338,7 +343,7 @@ func (c *Client) writePath(b *strings.Builder, o *operation, in *Input, re *Requ
 					break
 				}
 				b.WriteString(text[:i])
-				endSegment()
+				endSegment(b.Len())
 				b.WriteByte('/')
 				segment, valued, text = b.Len(), -1, text[i+1:]
 			}
@@ -360,12 +365,20 @@ func (c *Client) writePath(b *strings.Builder, o *operation, in *Input, re *Requ
 		}
 		if wrote {
 			valued = part.param
+			for {
+				i := strings.IndexByte(b.String()[segment:], '/')
+				if i < 0 {
+					break
+				}
+				endSegment(segment + i)
+				segment += i + 1
+			}
 		}
 		if !given {
 			re.input(p.Key, errMissing) // unless refused already
 		}
 	}
-	endSegment()
+	endSegment(b.Len())
 }
 
 // applyFields applies header fields over h, as the Header settings are: a
@@ -397,10 +410,10 @@ func (c *Client) selectServer(o *operation, re *RequestError) endpoint {
 	case cfg.Server != "":
 		setting = "Options.Server"
 		for _, sv := range o.servers {
-			if sv.URL == cfg.Server && s != nil {
+			if (sv.URL == cfg.Server || sv.Name == cfg.Server) && s != nil {
 				re.setting(setting, fmt.Errorf("%q names several servers; use Options.ServerID", cfg.Server))
 				return endpoint{}
-			} else if sv.URL == cfg.Server {
+			} else if sv.URL == cfg.Server || sv.Name == cfg.Server {
 				s = sv
 			}
 		}
@@ -508,9 +521,24 @@ func (c *Client) resolve(s *server, setting string, re *RequestError) (endpoint,
 	return ep, true
 }
 
-// dotUnescaper decodes percent-encoded dots, equivalent to "." (RFC 3986
-// section 6.2.2.2).
-var dotUnescaper = strings.NewReplacer("%2e", ".", "%2E", ".")
+// isDotSegment recognizes one or two dot atoms without copying the segment.
+// Percent-encoded dots are equivalent to "." (RFC 3986 section 6.2.2.2).
+func isDotSegment(s string) bool {
+	for range 2 {
+		switch {
+		case strings.HasPrefix(s, "."):
+			s = s[1:]
+		case len(s) >= 3 && s[0] == '%' && s[1] == '2' && (s[2] == 'e' || s[2] == 'E'):
+			s = s[3:]
+		default:
+			return false
+		}
+		if s == "" {
+			return true
+		}
+	}
+	return false
+}
 
 // dotSegment reports whether one of the path segments of u from start,
 // where one begins, to end is "." or "..", percent-encoded or not.
@@ -520,7 +548,7 @@ func dotSegment(u string, start, end int) bool {
 		if n < 0 {
 			n = len(u) - start
 		}
-		if s := dotUnescaper.Replace(u[start : start+n]); s == "." || s == ".." {
+		if isDotSegment(u[start : start+n]) {
 			return true
 		}
 		if start += n; start == len(u) || u[start] != '/' {
@@ -591,6 +619,14 @@ func (c *Client) body(o *operation, in *Input, h http.Header, re *RequestError) 
 			re.input("Input.Body", errors.New("an empty content map takes only a []byte or io.Reader body"))
 			return payload{}, nil
 		}
+		if md.Err != nil {
+			re.input("Input.Body", mediaErr(md))
+			return payload{}, md
+		}
+		if enc := o.encoding(md); enc != nil && enc.swagger && !isForm(m) && !strings.EqualFold(m.full, "multipart/form-data") {
+			re.input("Input.Body", errors.New("Swagger formData requires a form media type"))
+			return payload{}, md
+		}
 		_, isPart := v.(Part)
 		if pt, ok := v.(*Part); ok && pt != nil {
 			isPart = true
@@ -650,7 +686,7 @@ func (c *Client) mediaType(o *operation, in *Input, re *RequestError) (string, p
 	}
 	if typ == "" {
 		switch {
-		case len(declared) == 1 && declared[0].Err != nil:
+		case len(declared) == 1 && declared[0].Err != nil && !errors.Is(declared[0].Err, ErrUnresolved):
 			re.setting("Input.MediaType", mediaErr(declared[0]))
 		case len(declared) == 1 && o.body[0].concrete():
 			return declared[0].Type, o.body[0], declared[0]
@@ -670,7 +706,7 @@ func (c *Client) mediaType(o *operation, in *Input, re *RequestError) (string, p
 		case md == nil:
 			re.setting("Input.MediaType", fmt.Errorf("the operation does not declare %s", typ))
 			return "", parsedMedia{}, nil
-		case md.Err != nil:
+		case md.Err != nil && !errors.Is(md.Err, ErrUnresolved):
 			re.setting("Input.MediaType", mediaErr(md))
 			return "", parsedMedia{}, nil
 		}

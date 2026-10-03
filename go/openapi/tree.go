@@ -29,6 +29,8 @@ const many = 16
 // each fact once: the index of a container with many members, and the value
 // of an escaped string.
 type tree struct {
+	edition   int                    // 20, 30, 31 or 32; versionless fragments inherit the entry model
+	refbase   *url.URL               // reference base, including a 3.2 $self
 	uri       string                 // the URI the document was retrieved from
 	base      *url.URL               // uri, parsed
 	dir       string                 // uri up to its last slash, when it reaches others and has a path and no query
@@ -44,6 +46,7 @@ type tree struct {
 	// reference discovery read leads, by node, but one to a fragment of the
 	// document itself.
 	reaches, declares bool
+	editionRefs       bool
 	located           map[int32]location
 
 	// Read without a lock, each computed unlocked and kept as first stored.
@@ -393,7 +396,7 @@ func parseTree(ctx context.Context, src, uri string, unit int) (*tree, error) {
 	if cap(p.nodes)-len(p.nodes) > len(p.nodes)/8 {
 		p.nodes = slices.Clone(p.nodes)
 	}
-	return &tree{src: src, nodes: p.nodes, escapes: p.escapes, decoded: make([]atomic.Pointer[string], len(p.escapes)), reaches: p.reaches, declares: p.declares}, nil
+	return &tree{src: src, nodes: p.nodes, escapes: p.escapes, decoded: make([]atomic.Pointer[string], len(p.escapes)), reaches: p.reaches, declares: p.declares, editionRefs: p.editionRefs}, nil
 }
 
 // A scanner reads a JSON text into a tree's nodes.
@@ -406,17 +409,20 @@ type scanner struct {
 	escapes           []uint32 // the offsets of the strings read with an escape
 	names             []string // the member names of the objects being read
 	reaches, declares bool     // see tree
+	editionRefs       bool
 }
 
 // note records what a member named name, whose value's text begins v, tells
 // discovery (see tree).
-func note(name, v string, reaches, declares *bool) {
+func note(name, v string, reaches, declares, editionRefs *bool) {
 	switch name {
 	case "$ref", "$dynamicRef":
 		*reaches = *reaches || !strings.HasPrefix(v, `"#`)
 	case "mapping":
 		*reaches = true
-	case "$id", "$anchor", "$dynamicAnchor":
+	case "defaultMapping", "security":
+		*editionRefs = true
+	case "$id", "$anchor", "$dynamicAnchor", "$self":
 		*declares = true
 	}
 }
@@ -480,7 +486,7 @@ func (p *scanner) container(depth int) error {
 					seen[n] = true
 				}
 			}
-			if seen[name] || seen == nil && slices.Contains(p.names[base:], name) {
+			if seen != nil && seen[name] || seen == nil && slices.Contains(p.names[base:], name) {
 				return p.errorAt(at, "duplicate key "+strconv.Quote(name))
 			}
 			if seen != nil {
@@ -492,8 +498,8 @@ func (p *scanner) container(depth int) error {
 				return p.errorAt(p.i, "expected a colon")
 			}
 			p.i++
-			if p.space(); len(name) > 1 && (name[0] == '$' || name[0] == 'm') {
-				note(name, p.src[p.i:], &p.reaches, &p.declares)
+			if p.space(); len(name) > 1 && (name[0] == '$' || name[0] == 'm' || name[0] == 'd' || name[0] == 's') {
+				note(name, p.src[p.i:], &p.reaches, &p.declares, &p.editionRefs)
 			}
 		}
 		if err := p.value(depth+1, uint32(at)); err != nil {
@@ -519,9 +525,9 @@ func (p *scanner) space() {
 
 // string reads the string at p.i, checking its escapes.
 func (p *scanner) string() error {
-	escaped := false
-	for i := p.i + 1; i < len(p.src); i++ {
-		switch c := p.src[i]; {
+	src, escaped := p.src, false
+	for i := p.i + 1; i < len(src); i++ {
+		switch c := src[i]; {
 		case c == '"':
 			if escaped {
 				p.escapes = append(p.escapes, uint32(p.i))
@@ -532,16 +538,16 @@ func (p *scanner) string() error {
 			return p.errorAt(i, "control character in a string")
 		case c != '\\':
 			continue
-		case i+1 < len(p.src) && strings.IndexByte(`"\/bfnrt`, p.src[i+1]) >= 0:
+		case i+1 < len(src) && strings.IndexByte(`"\/bfnrt`, src[i+1]) >= 0:
 			i++
-		case i+5 < len(p.src) && p.src[i+1] == 'u' && hexDigit(p.src[i+2]) && hexDigit(p.src[i+3]) && hexDigit(p.src[i+4]) && hexDigit(p.src[i+5]):
+		case i+5 < len(src) && src[i+1] == 'u' && hexDigit(src[i+2]) && hexDigit(src[i+3]) && hexDigit(src[i+4]) && hexDigit(src[i+5]):
 			i += 5
 		default:
 			return p.errorAt(i, "invalid escape in a string")
 		}
 		escaped = true
 	}
-	return p.errorAt(len(p.src), "unexpected end of the document")
+	return p.errorAt(len(src), "unexpected end of the document")
 }
 
 // number reads the number at p.i.

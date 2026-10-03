@@ -100,7 +100,7 @@ func (e *RequestError) Error() string {
 		parts = append(parts, strings.TrimPrefix(e.Err.Error(), "openapi: "))
 	}
 	for _, k := range slices.Sorted(maps.Keys(e.Settings)) {
-		parts = append(parts, label(k)+": "+e.Settings[k].Error())
+		parts = append(parts, settingLabel(k, e.Settings[k])+": "+e.Settings[k].Error())
 	}
 	for _, k := range slices.Sorted(maps.Keys(e.Inputs)) {
 		parts = append(parts, label(k)+": "+e.Inputs[k].Error())
@@ -245,4 +245,21 @@ func label(s string) string {
 		return s
 	}
 	return strconv.Quote(s)
+}
+
+// settingLabelError keeps a generated URI label separate from the exact
+// programmatic key and preserves the original cause and its presentation.
+type settingLabelError struct {
+	cause error
+	shown string
+}
+
+func (e *settingLabelError) Error() string { return e.cause.Error() }
+func (e *settingLabelError) Unwrap() error { return e.cause }
+
+func settingLabel(key string, err error) string {
+	if e, ok := err.(*settingLabelError); ok {
+		key = e.shown
+	}
+	return label(key)
 }

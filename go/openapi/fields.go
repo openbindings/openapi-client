@@ -19,8 +19,14 @@ import (
 // each struct type a body of it has been, that type's fields in the order
 // encoding/json writes them.
 type formEncoding struct {
-	byName map[string]*field
-	lists  sync.Map // reflect.Type to []*field
+	positional []*field
+	rest       *field
+	ordered    bool
+	required   bool
+	swagger    bool
+	fallback   *field
+	byName     map[string]*field
+	lists      sync.Map // reflect.Type to []*field
 }
 
 // noFields is the encoding of a nested part no schema describes.
@@ -30,7 +36,9 @@ var noFields = &formEncoding{}
 // 6570 style its Encoding sets, which applies under form-urlencoded and
 // multipart/form-data; and the media types it otherwise takes.
 type field struct {
+	encoding value
 	param
+	whole  bool
 	styled bool                            // its Encoding sets style, explode or allowReserved, where they apply
 	types  []string                        // the media types it takes, as written
 	parsed []parsedMedia                   // types, parsed
@@ -50,6 +58,9 @@ var untyped = &field{param: param{Param: &Param{ContentType: octetStream.full}},
 func (e *formEncoding) field(name string) *field {
 	if f := e.byName[name]; f != nil {
 		return f
+	}
+	if e.fallback != nil {
+		return e.fallback
 	}
 	return untyped
 }
@@ -79,7 +90,7 @@ func stylesApply(m parsedMedia) bool {
 // s, at src, with the Encoding Objects of encodings, at esrc, under the media
 // type or range m, and describes them: the properties s and the schemas its
 // $ref and allOf reach declare, then the names only encodings has.
-func (d *document) encodingOf(s []value, src string, encodings value, esrc string, m parsedMedia) (*formEncoding, []*Param) {
+func (d *document) encodingOf(s []value, src string, encodings value, esrc string, m parsedMedia, edition int) (*formEncoding, []*Param) {
 	fields := map[string]*field{}
 	var names []string
 	var first []*Schema
@@ -95,23 +106,54 @@ func (d *document) encodingOf(s []value, src string, encodings value, esrc strin
 	})
 	list := make([]*Param, 0, len(names))
 	for i, name := range names {
-		f, p := d.newField(name, first[i], fields[name].roots, encodings.get(name), esrc+"/"+token(name), m)
+		f, p := d.newField(name, first[i], fields[name].roots, encodings.get(name), esrc+"/"+token(name), m, false)
 		fields[name], list = f, append(list, p)
 	}
 	for name, e := range encodings.members() {
 		if fields[name] == nil {
-			f, p := d.newField(name, nil, nil, e, esrc+"/"+token(name), m)
+			f, p := d.newField(name, nil, nil, e, esrc+"/"+token(name), m, false)
 			fields[name], list = f, append(list, p)
 		}
 	}
-	return &formEncoding{byName: fields}, list
+	enc := &formEncoding{byName: fields}
+	if edition <= 30 {
+		enc.fallback = textField
+	}
+	return enc, list
 }
 
 // nested returns the fields of a nested part f writes from an object: in
 // OpenAPI 3.1 those its schemas declare, each of its default type, or, for an
 // item or a field whose schemas allow an array but no object, those its items
 // declare; compiled once per schema, and found once per field.
-func (d *document) nested(f *field, item bool) *formEncoding {
+func (d *document) nested(f *field, item bool, m parsedMedia) *formEncoding {
+	if f.encoding.ok() && f.encoding.t.edition == 32 {
+		mode := 0
+		if isForm(m) {
+			mode = 1
+		} else if stylesApply(m) {
+			mode = 2
+		}
+		k := struct {
+			field *field
+			item  bool
+			mode  int
+		}{f, item, mode}
+		if got, ok := d.forms.Load(k); ok {
+			return got.(*formEncoding)
+		}
+		roots := f.roots
+		if l := d.typing(roots, false); !f.whole && l.array && (item || !l.object) {
+			roots = l.items
+			if l.item.ok() {
+				roots = []value{l.item}
+			}
+		}
+		enc, _ := d.encodingOf(roots, "", f.encoding.get("encoding"), f.Source+"/encoding", m, f.encoding.t.edition)
+		d.positionalEncoding(enc, f.encoding, roots, f.Source, m)
+		got, _ := d.forms.LoadOrStore(k, enc)
+		return got.(*formEncoding)
+	}
 	p := &f.nested[0]
 	if item {
 		p = &f.nested[1]
@@ -120,7 +162,7 @@ func (d *document) nested(f *field, item bool) *formEncoding {
 		return enc
 	}
 	roots, enc := f.roots, noFields
-	if l := d.typing(roots); l.array && (item || !l.object) {
+	if l := d.typing(roots, false); !f.whole && l.array && (item || !l.object) {
 		if roots = l.items; l.item.ok() {
 			roots = []value{l.item}
 		}
@@ -129,7 +171,7 @@ func (d *document) nested(f *field, item bool) *formEncoding {
 		k := stateOf(roots)
 		e, ok := d.forms.Load(k)
 		if !ok {
-			e, _ = d.encodingOf(roots, "", value{}, "", parsedMedia{})
+			e, _ = d.encodingOf(roots, "", value{}, "", parsedMedia{}, roots[0].t.edition)
 			e, _ = d.forms.LoadOrStore(k, e)
 		}
 		enc = e.(*formEncoding)
@@ -164,7 +206,7 @@ type kid struct {
 }
 
 // JSON Schema's types, as bits.
-var jsonTypes = map[string]uint8{"string": 1, "number": 2, "integer": 4, "boolean": 8, "object": 16, "array": 32, "null": 64}
+var jsonTypes = map[string]uint8{"string": 1, "number": 2, "integer": 4, "boolean": 8, "object": 16, "array": 32, "null": 64, "file": 1}
 
 // meet makes s what s and t say together.
 func (s *shape) meet(t *shape) {
@@ -202,6 +244,18 @@ func (d *document) own(v value) (shape, []kid) {
 			all = m
 		}
 	}
+	if v.t.edition <= 30 && ref.ok() {
+		t, enc, props, all, s.items = value{}, value{}, value{}, value{}, value{}
+	}
+	if v.t.edition <= 30 {
+		enc = value{}
+	}
+	if v.t.edition <= 30 && !ref.ok() && (v.str("format") == "binary" || v.str("format") == "byte" || t.string() == "file") {
+		enc = v
+		if t.string() == "file" {
+			s.encoded = true
+		}
+	}
 	if t.ok() {
 		s.typed, s.types = true, jsonTypes[t.string()]
 		for _, n := range t.members() {
@@ -211,7 +265,7 @@ func (d *document) own(v value) (shape, []kid) {
 			s.types |= 4 // a number may be an integer (JSON Schema 2020-12 Validation section 6.1.1)
 		}
 	}
-	s.encoded, s.declares = enc.ok(), props.ok() || s.items.ok()
+	s.encoded, s.declares = enc.ok(), props.ok() || s.items.ok() || v.t.edition == 32 && v.get("prefixItems").ok()
 	var kids []kid
 	if ref.kind() == '"' {
 		if t, ptr, err := d.target(ref); err == nil {
@@ -382,7 +436,9 @@ func (d *document) closure(s []value, src string, f func(s value, at string)) {
 			continue
 		}
 		seen[top.v.id()] = true
-		f(top.v, top.at)
+		if top.v.t.edition >= 31 || top.v.get("$ref").kind() != '"' {
+			f(top.v, top.at)
+		}
 		kids := d.shapeOf(top.v).kids
 		for i := len(kids) - 1; i >= 0; i-- { // the first in document order on top
 			k, at := kids[i], ""
@@ -431,7 +487,7 @@ type typing struct {
 }
 
 // typing returns the typing of a value whose schemas are s.
-func (d *document) typing(s []value) typing {
+func (d *document) typing(s []value, whole bool) typing {
 	sh := shape{types: 127}
 	for _, r := range s {
 		if r.ok() {
@@ -441,6 +497,9 @@ func (d *document) typing(s []value) typing {
 	var l typing
 	switch t := sh.types; {
 	case !sh.typed || t&^64 == 0:
+		if len(s) > 0 && s[0].ok() && s[0].t.edition <= 30 {
+			return typing{own: textDefault}
+		}
 		return typing{own: octetDefault}
 	case t&1 != 0 && sh.encoded:
 		l.own = octetDefault
@@ -455,6 +514,8 @@ func (d *document) typing(s []value) typing {
 	}
 	switch l.array = sh.types&32 != 0; {
 	case !l.array:
+	case whole:
+		l.own |= jsonDefault
 	case !sh.items.ok():
 		l.own |= octetDefault // items allowing anything have no type
 	case !sh.several:
@@ -515,7 +576,7 @@ func (d *document) defaults(s []value) mediaSet {
 			}
 			break
 		}
-		l := d.typing(s)
+		l := d.typing(s, false)
 		if path = append(path, step{k, l.own}); !l.array {
 			break
 		}
@@ -570,8 +631,8 @@ func (d *document) keepSet(k state, set mediaSet) {
 
 // newField compiles the field name, whose first declaration is schema and
 // all of them roots, and whose Encoding Object is e, at src, under m.
-func (d *document) newField(name string, schema *Schema, roots []value, e value, src string, m parsedMedia) (*field, *Param) {
-	f := &field{param: param{Param: &Param{Name: name, Schema: schema}}, roots: roots}
+func (d *document) newField(name string, schema *Schema, roots []value, e value, src string, m parsedMedia, whole bool) (*field, *Param) {
+	f := &field{whole: whole, encoding: e, param: param{Param: &Param{Name: name, Schema: schema}}, roots: roots}
 	p := f.Param
 	if schema != nil {
 		p.Source = schema.Source()
@@ -601,6 +662,9 @@ func (d *document) newField(name string, schema *Schema, roots []value, e value,
 	// then contentType is ignored; a range of multipart types may be either
 	// (OpenAPI 3.1.2 section 4.8.15.1.2).
 	f.style = &noStyle
+	if e.ok() && e.t.edition == 30 && multipart {
+		style, explode, reserved = value{}, value{}, value{}
+	}
 	if f.styled = (style.ok() || explode.ok() || reserved.ok()) && (stylesApply(m) || multipart && m.sub == "*"); f.styled {
 		p.Style, p.AllowReserved = style.string(), reserved.kind() == 't' && !multipart
 		if p.Style == "" {
@@ -612,7 +676,12 @@ func (d *document) newField(name string, schema *Schema, roots []value, e value,
 		}
 	}
 	if f.listed = ctype.ok(); !f.listed {
-		set := d.defaults(roots)
+		var set mediaSet
+		if whole {
+			set = d.typing(roots, true).own
+		} else {
+			set = d.defaults(roots)
+		}
 		for _, dm := range defaultMedia {
 			if set&dm.set != 0 || set == 0 && dm.set == octetDefault {
 				f.types, f.parsed = append(f.types, dm.parsed.full), append(f.parsed, dm.parsed)
@@ -665,13 +734,32 @@ func mediaList(s string) []string {
 func (d *document) headers(h value, src string) []*Param {
 	var list []*Param
 	for name, v := range h.members() {
-		if strings.EqualFold(name, "Content-Type") {
+		if strings.EqualFold(name, "Content-Type") && h.t.edition != 20 {
 			continue
 		}
 		t, at, desc, err := d.follow(v, src+"/"+token(name))
 		p := &Param{Name: name, In: "header", Description: desc, Source: at, Err: err}
 		if err == nil {
 			p.Required, p.Deprecated, p.Schema = t.flag("required"), t.flag("deprecated"), d.schema(t.get("schema"), at, "/schema")
+			if content := t.get("content"); content.ok() {
+				n := 0
+				for typ, m := range content.members() {
+					n++
+					p.ContentType = typ
+					mat := at + "/content/" + token(typ)
+					if m.t.edition == 32 {
+						m, mat, _, p.Err = d.follow(m, mat)
+					}
+					p.Schema = d.schema(m.get("schema"), mat, "/schema")
+				}
+				if n != 1 || t.get("schema").ok() {
+					p.Err = errors.New("a Header content map requires exactly one entry and no schema")
+				}
+			}
+			if t.t.edition == 20 {
+				pp := d.swaggerParam(t, at, p)
+				p = pp.Param
+			}
 		}
 		list = append(list, p)
 	}
@@ -891,8 +979,9 @@ func (k key) String() string {
 
 // values calls f with v, a field's value, at at, or, when encoding/json
 // writes v as an array and v is no []byte, with each item, at its index. A
-// value or item whose JSON data is null is left out.
-func (d *document) values(v any, at key, f func(v any, at key)) {
+// value or item whose JSON data is null is left out. It reports whether v
+// is a nonempty array, which counts as given even if no items are written.
+func (d *document) values(v any, at key, f func(v any, at key)) bool {
 	item := func(i int) key { at.item = i; return at }
 	switch x := v.(type) {
 	case nil, string, int, bool, float64, json.Number, []byte, Part, *Part, io.Reader:
@@ -902,7 +991,7 @@ func (d *document) values(v any, at key, f func(v any, at key)) {
 				f(v, item(i))
 			}
 		}
-		return
+		return len(x) > 0
 	default:
 		rv := reflect.ValueOf(v)
 		if h, ok := v.(held); ok {
@@ -926,7 +1015,7 @@ func (d *document) values(v any, at key, f func(v any, at key)) {
 					i++
 					return nil
 				})
-				return
+				return s[1] != ']'
 			}
 		case w.text || rv.CanAddr() && w.ptrText || k != reflect.Slice && k != reflect.Array || k == reflect.Slice && bytesKind(rv.Type()):
 		default:
@@ -935,12 +1024,13 @@ func (d *document) values(v any, at key, f func(v any, at key)) {
 					f(v, item(i))
 				}
 			}
-			return
+			return rv.Len() > 0
 		}
 	}
 	if !null(v) {
 		f(v, at)
 	}
+	return false
 }
 
 // bytesKind reports whether encoding/json writes the slice type t as base64.

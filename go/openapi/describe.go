@@ -55,7 +55,9 @@ func (c *Client) Operation(key string) (*Operation, error) {
 // and a field on both sides, which OpenAPI leaves undefined, sets Err on
 // each operation whose request it affects (that method's operation, or
 // every operation that uses the parameters or servers), except that the
-// Path Item's own summary and description win. In OpenAPI 3.1 and 3.2,
+// Path Item's own summary and description win. For additionalOperations,
+// the nearest map supplies the operations and a duplicate field sets Err
+// on each of them. In OpenAPI 3.1 and 3.2,
 // where a parameter, request body, response, media type, header or
 // security scheme is a Reference Object that gives a description, that
 // description replaces the target's, the Reference Object nearest the use
@@ -179,7 +181,8 @@ type Param struct {
 	// client uses (see the package documentation). Under
 	// application/x-www-form-urlencoded and multipart/form-data it is empty
 	// for a field whose Encoding sets style, explode or allowReserved, which
-	// OpenAPI says makes contentType ignored there.
+	// OpenAPI says makes contentType ignored there. In OpenAPI 3.0, these
+	// Encoding fields apply only under application/x-www-form-urlencoded.
 	ContentType string
 
 	// CollectionFormat is, in Swagger 2.0, the collectionFormat of an array
@@ -486,9 +489,11 @@ type Flow struct {
 // dialect, identifiers are not interpreted, Base is the base outside the
 // resource, and References returns an error.
 type Schema struct {
-	doc      *document
-	v        value  // where the schema is used; handles are made at Schema Objects outside other schemas
-	src, sub string // its Source: that of the object it belongs to, and the rest
+	legacy    bool
+	synthetic []*Param
+	doc       *document
+	v         value  // where the schema is used; handles are made at Schema Objects outside other schemas
+	src, sub  string // its Source: that of the object it belongs to, and the rest
 }
 
 // Schema returns the Schema Object identified by an absolute URI in the
@@ -551,6 +556,29 @@ func (s *Schema) References() ([]SchemaReference, error) {
 // For a Swagger 2.0 parameter, it holds the parameter's schema fields (see
 // Param.Schema).
 func (s *Schema) Raw() json.RawMessage {
+	if s.synthetic != nil {
+		properties := make(map[string]json.RawMessage, len(s.synthetic))
+		var required []string
+		for _, p := range s.synthetic {
+			raw := json.RawMessage(`{}`)
+			if p.Schema != nil {
+				raw = p.Schema.Raw()
+			}
+			properties[p.Name] = raw
+			if p.Required {
+				required = append(required, p.Name)
+			}
+		}
+		raw, _ := json.Marshal(struct {
+			Type       string                     `json:"type"`
+			Properties map[string]json.RawMessage `json:"properties"`
+			Required   []string                   `json:"required,omitempty"`
+		}{"object", properties, required})
+		return raw
+	}
+	if s.legacy {
+		return swaggerSchema(s.v)
+	}
 	return json.RawMessage(s.v.raw())
 }
 
@@ -569,11 +597,11 @@ func (s *Schema) Source() string {
 func (s *Schema) Base() string {
 	d := s.Dialect()
 	if id := s.v.get("$id"); id.kind() == '"' && ownDialect(d) {
-		if u, err := s.v.t.base.Parse(id.text()); err == nil {
+		if u, err := s.v.t.refbase.Parse(id.text()); err == nil {
 			return u.String()
 		}
 	}
-	return s.v.t.uri
+	return s.v.t.refbase.String()
 }
 
 // Dialect is the JSON Schema dialect the schema is written in, in OpenAPI
@@ -584,11 +612,17 @@ func (s *Schema) Base() string {
 // is empty in Swagger 2.0 and OpenAPI 3.0, whose schemas are those
 // editions' own subset of JSON Schema (see Client.Version).
 func (s *Schema) Dialect() string {
+	if s.v.t.edition <= 30 {
+		return ""
+	}
 	if d := s.v.str("$schema"); d != "" {
 		return d
 	}
-	if s.doc.dialect != "" {
-		return s.doc.dialect
+	if d := s.v.t.root().str("jsonSchemaDialect"); d != "" {
+		return d
+	}
+	if s.v.t.edition == 32 {
+		return "https://spec.openapis.org/oas/3.2/dialect/2025-09-17"
 	}
 	return "https://spec.openapis.org/oas/3.1/dialect/base"
 }
@@ -598,6 +632,11 @@ func (s *Schema) Dialect() string {
 func (d *document) schema(v value, src, sub string) *Schema {
 	if !v.ok() {
 		return nil
+	}
+	if v.t.edition <= 30 {
+		if t, at, _, err := d.follow(v, src+sub); err == nil {
+			v, src, sub = t, at, ""
+		}
 	}
 	return &Schema{doc: d, v: v, src: src, sub: sub}
 }

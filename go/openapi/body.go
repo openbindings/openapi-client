@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/textproto"
 	"net/url"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -232,7 +233,28 @@ func (c *Client) formBody(b *builder, enc *formEncoding, v any, body string, rea
 		b.buf = make([]byte, 0, 128)
 	}
 	plain := len(c.cfg.codecs) == 0
-	err := c.doc.members(v, enc, func(name string, f *field, v any) {
+	err := c.membersChecked(v, enc, body, re, b, func(name string, f *field, v any) (given bool) {
+		if f.legacy.ok() {
+			at := key{body, name, -1}
+			if f.legacy.str("type") == "file" {
+				re.input(at.String(), errors.New("a Swagger file requires multipart/form-data"))
+				return
+			}
+		}
+		if f.legacy.ok() && f.CollectionFormat != "" && !rawField(v) || f.legacy.ok() && c.cfg.NameOnlyEmpty && f.AllowEmptyValue && emptyString(v) {
+			at := key{body, name, -1}
+			var out strings.Builder
+			lead := ""
+			if len(b.buf) > 0 || b.parts != nil {
+				lead = "&"
+			}
+			var err error
+			if given, err = c.writeLegacy(&out, lead, &f.param, v, true); err != nil {
+				re.input(at.String(), err)
+			}
+			b.buf = append(b.buf, out.String()...)
+			return
+		}
 		if plain && f.plain && b.scalar(f, name, v) {
 			return
 		}
@@ -249,7 +271,7 @@ func (c *Client) formBody(b *builder, enc *formEncoding, v any, body string, rea
 			b.buf = append(b.buf, s...)
 			return
 		}
-		c.doc.values(v, at, func(v any, at key) {
+		given = c.doc.values(v, at, func(v any, at key) {
 			fv, ok := f.value(v, name, at, true, re)
 			if !ok {
 				return
@@ -275,7 +297,7 @@ func (c *Client) formBody(b *builder, enc *formEncoding, v any, body string, rea
 			default:
 				if isForm(fv.m) {
 					var s string
-					s, err = c.formContent(c.doc.nested(f, at.item >= 0), x)
+					s, err = c.formContent(c.doc.nested(f, at.item >= 0, fv.m), x)
 					b.buf = appendForm(b.buf, s)
 					break
 				}
@@ -296,6 +318,7 @@ func (c *Client) formBody(b *builder, enc *formEncoding, v any, body string, rea
 				re.input(at.String()+inner, err)
 			}
 		})
+		return
 	})
 	if err != nil {
 		re.input(body, err)
@@ -390,6 +413,87 @@ func appendForm[T string | []byte](b []byte, s T) []byte {
 	return b
 }
 
+// simpleForm writes only exact string fields and string slices, whose normal
+// field encoder writes bytes as given. Every other value, styled/JSON field
+// or required-field plan falls back before this writes anything.
+func simpleForm(b *strings.Builder, lead string, enc *formEncoding, v any) (written, ok bool, err error) {
+	m, ok := v.(map[string]any)
+	if !ok || m == nil || enc.required || enc.swagger {
+		return false, false, nil
+	}
+	var local [8]string
+	names := local[:0]
+	for name, v := range m {
+		switch x := v.(type) {
+		case nil:
+			continue
+		case []string:
+			if len(x) == 0 {
+				continue
+			}
+		case string:
+		default:
+			return false, false, nil
+		}
+		if f := enc.field(name); !f.plain || f.class == jsonClass {
+			return false, false, nil
+		}
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	write := func(name, value string) bool {
+		sep := lead
+		if written {
+			sep = "&"
+		}
+		room := maxLength - b.Len() - len(sep) - 1
+		if len(name) > room || len(value) > room-len(name) ||
+			len(name)+len(value) > room/3 && escapedSize(name, formSet, true)+escapedSize(value, formSet, true) > room {
+			return false
+		}
+		if written {
+			b.WriteByte('&')
+		} else {
+			b.WriteString(lead)
+			written = true
+		}
+		formString(b, name)
+		b.WriteByte('=')
+		formString(b, value)
+		return true
+	}
+	for _, name := range names {
+		switch x := m[name].(type) {
+		case string:
+			if !write(name, x) {
+				return written, true, errTooLong
+			}
+		case []string:
+			for _, s := range x {
+				if !write(name, s) {
+					return written, true, errTooLong
+				}
+			}
+		}
+	}
+	return written, true, nil
+}
+
+func formString(b *strings.Builder, s string) {
+	for i := range len(s) {
+		switch c := s[i]; {
+		case formSet[c] == 1:
+			b.WriteByte(c)
+		case c == ' ':
+			b.WriteByte('+')
+		default:
+			b.WriteByte('%')
+			b.WriteByte(upperHex[c>>4])
+			b.WriteByte(upperHex[c&15])
+		}
+	}
+}
+
 // formContent encodes v as application/x-www-form-urlencoded content of a
 // field or parameter, whose fields enc describes.
 func (c *Client) formContent(enc *formEncoding, v any) (string, error) {
@@ -416,6 +520,17 @@ func (c *Client) multipartBody(enc *formEncoding, typ string, m parsedMedia, v a
 	}
 	var b builder
 	w := partWriter{c: c, b: &b, re: new(RequestError), styles: stylesApply(m)} // its own: the writers' recursion takes it to the heap
+	if enc != nil && enc.ordered {
+		if seq := iterator(v); seq != nil && !strings.EqualFold(m.full, "multipart/form-data") {
+			w.boundary, w.own, w.positional = boundary, nil, true
+			if given {
+				w.own = delimiters(boundary)
+			}
+			iw := &itemWriter{c: c, multipart: &w, fields: enc}
+			w.b = &iw.b
+			return payload{once: &items{w: iw, seq: seq}, size: -1}, typ
+		}
+	}
 	w.parts(enc, v, "Input.Body", boundary, given)
 	for k, err := range w.re.Settings {
 		re.setting(k, err)
@@ -429,15 +544,16 @@ func (c *Client) multipartBody(enc *formEncoding, typ string, m parsedMedia, v a
 // A partWriter writes the parts of one multipart body, or of one nested in
 // a part of another.
 type partWriter struct {
-	c        *Client
-	b        *builder
-	re       *RequestError
-	boundary string
-	styles   bool     // RFC 6570 fields apply, as under multipart/form-data
-	written  bool     // a part, after which a delimiter begins with CRLF
-	outer    [][]byte // the delimiters of the body around, which its parts and delimiters cannot hold
-	own      [][]byte // and those the parts cannot hold: outer, and a given boundary's
-	nested   bool     // the body is a part's, whose parts cannot be multipart
+	c          *Client
+	b          *builder
+	re         *RequestError
+	boundary   string
+	styles     bool     // RFC 6570 fields apply, as under multipart/form-data
+	written    bool     // a part, after which a delimiter begins with CRLF
+	outer      [][]byte // the delimiters of the body around, which its parts and delimiters cannot hold
+	own        [][]byte // and those the parts cannot hold: outer, and a given boundary's
+	positional bool
+	nested     bool // the body is a part's, whose parts cannot be multipart
 }
 
 // parts writes the object v as parts with boundary, given or generated, by
@@ -447,35 +563,67 @@ func (w *partWriter) parts(enc *formEncoding, v any, body, boundary string, give
 	if given {
 		w.own = append(slices.Clip(w.outer), delimiters(boundary)...)
 	}
-	err := w.c.doc.members(v, enc, func(name string, f *field, v any) {
-		at := key{body, name, -1}
-		if !f.styled || !w.styles {
-			w.c.doc.values(v, at, func(v any, at key) { w.write(f, name, v, at) })
-			return
-		}
-		// RFC 6570 names and values, without URI percent-encoding (OpenAPI
-		// 3.1.2 Appendix C), each a text/plain part (RFC 7578 section 4.4).
-		p := f.param
-		p.set = unreservedSet
-		s, err := w.c.styled(&p, v, "")
-		if err != nil {
-			w.re.input(at.String(), err)
-			return
-		}
-		for pair := range strings.SplitSeq(s, "&") {
-			if pair != "" {
-				n, v, _ := strings.Cut(pair, "=")
-				n, _ = url.PathUnescape(n)
-				v, _ = url.PathUnescape(v)
-				w.write(textField, n, v, at)
+	if enc.ordered {
+		if rv := reflect.ValueOf(v); rv.IsValid() && (rv.Kind() == reflect.Slice || rv.Kind() == reflect.Array) {
+			w.positional = !w.styles
+			for i := range rv.Len() {
+				w.position(enc, rv.Index(i).Interface(), body, i)
 			}
+			if !w.delimiter("--") {
+				w.re.input(body, errDelimiter)
+			}
+			return
 		}
+	}
+	err := w.c.membersChecked(v, enc, body, w.re, w.b, func(name string, f *field, v any) (given bool) {
+		at := key{body, name, -1}
+		if !rawField(v) && f.legacy.ok() && f.CollectionFormat != "" && f.CollectionFormat != "multi" {
+			s, _, err := encodeJSON(w.c.doc, v, marshal)
+			if err == nil {
+				var xs []string
+				xs, err = legacyValues(&jsonReader{s: s}, f.legacy)
+				for _, x := range xs {
+					w.write(textField, name, x, at)
+				}
+			}
+			if err != nil {
+				w.re.input(at.String(), err)
+			}
+			return
+		}
+		if !f.styled || !w.styles {
+			given = w.c.doc.values(v, at, func(v any, at key) { w.write(f, name, v, at) })
+			return
+		}
+		w.styled(f, name, v, at)
+		return
 	})
 	if err != nil {
 		w.re.input(body, err)
 	}
 	if !w.delimiter("--") {
 		w.re.input(body, errDelimiter)
+	}
+}
+
+func (w *partWriter) styled(f *field, name string, v any, at key) {
+	// RFC 6570 names and values, without URI percent-encoding (OpenAPI
+	// 3.1.2 Appendix C), each a text/plain part (RFC 7578 section 4.4).
+	p := f.param
+	p.name = escape(name, unreservedSet)
+	p.set = unreservedSet
+	s, err := w.c.styled(&p, v, "")
+	if err != nil {
+		w.re.input(at.String(), err)
+		return
+	}
+	for pair := range strings.SplitSeq(s, "&") {
+		if pair != "" {
+			n, v, _ := strings.Cut(pair, "=")
+			n, _ = url.PathUnescape(n)
+			v, _ = url.PathUnescape(v)
+			w.write(textField, n, v, at)
+		}
 	}
 }
 
@@ -519,7 +667,7 @@ func (w *partWriter) write(f *field, name string, v any, at key) {
 		case multipart:
 		case isForm(fv.m):
 			var s string
-			if s, err = c.formContent(c.doc.nested(f, at.item >= 0), x); err == nil {
+			if s, err = c.formContent(c.doc.nested(f, at.item >= 0, fv.m), x); err == nil {
 				content = []byte(s)
 			}
 		default:
@@ -564,7 +712,7 @@ func (w *partWriter) write(f *field, name string, v any, at key) {
 		}
 		slices.SortFunc(fields, func(a, b headerField) int { return strings.Compare(a.name, b.name) })
 	}
-	if !disposition {
+	if !disposition && !w.positional {
 		b.buf = appendQuoted(append(b.buf, "Content-Disposition: form-data; name="...), name)
 		switch {
 		case fv.pt != nil && fv.pt.Filename != "":
@@ -587,8 +735,8 @@ func (w *partWriter) write(f *field, name string, v any, at key) {
 	case r != nil:
 		b.add(source{payload: readerPayload(r), check: w.own, delimiter: true})
 	case multipart && !raw:
-		nw := partWriter{c: c, b: b, re: re, outer: w.own, nested: true}
-		nw.parts(c.doc.nested(f, at.item >= 0), fv.v, at.String(), boundary, given)
+		nw := partWriter{c: c, b: b, re: re, outer: w.own, nested: true, styles: stylesApply(fv.m)}
+		nw.parts(c.doc.nested(f, at.item >= 0, fv.m), fv.v, at.String(), boundary, given)
 	case raw && len(content) > 0:
 		b.add(source{payload: payload{data: content, size: int64(len(content))}}) // not copied
 	default:
