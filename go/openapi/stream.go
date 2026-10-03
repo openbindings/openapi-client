@@ -269,9 +269,10 @@ func badItem(err error) error { return &itemError{err} }
 
 // readError preserves source error text and identity while marking its origin.
 // In particular, a source's ErrItem must not turn a read failure into recovery.
-type readError struct{ error }
+type readError struct{ err error }
 
-func (e *readError) Unwrap() error { return e.error }
+func (e *readError) Error() string { return e.err.Error() }
+func (e *readError) Unwrap() error { return e.err }
 
 func readFailed(err error) error {
 	if err == nil || err == io.EOF {
