@@ -2,6 +2,7 @@ package openapi_test
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -97,10 +98,10 @@ func stream7HandRead(kind string, body io.ReadCloser) (result stream7BenchResult
 	for sc.Scan() {
 		line := sc.Bytes()
 		if kind == "Events" {
-			if strings.HasPrefix(string(line), "data: ") {
+			if bytes.HasPrefix(line, []byte("data: ")) {
 				event.Data = append(event.Data[:0], line[6:]...)
 			}
-			if strings.HasPrefix(string(line), "id: ") {
+			if bytes.HasPrefix(line, []byte("id: ")) {
 				event.ID = string(line[4:])
 				event.IDSet = true
 			}
