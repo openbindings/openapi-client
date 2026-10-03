@@ -260,6 +260,19 @@ func (e *itemError) Is(target error) bool { return target == ErrItem }
 
 func badItem(err error) error { return &itemError{err} }
 
+// readError preserves source error text and identity while marking its origin.
+// In particular, a source's ErrItem must not turn a read failure into recovery.
+type readError struct{ error }
+
+func (e *readError) Unwrap() error { return e.error }
+
+func readFailed(err error) error {
+	if err == nil || err == io.EOF {
+		return err
+	}
+	return &readError{err}
+}
+
 func contentCoding(h http.Header) error {
 	if coding := h["Content-Encoding"]; len(coding) > 0 && coding[0] != "" && !strings.EqualFold(coding[0], "identity") {
 		return fmt.Errorf("cannot decode a body with Content-Encoding %q", coding[0])
@@ -275,5 +288,12 @@ func itemTerminal(ctx context.Context, err error) bool {
 		return false
 	}
 	cause := ctx.Err()
-	return !errors.Is(err, ErrItem) || cause != nil && errors.Is(err, cause)
+	if cause != nil && errors.Is(err, cause) {
+		return true
+	}
+	if e, ok := err.(*contextError); ok {
+		err = e.err
+	}
+	_, local := err.(*itemError)
+	return !local
 }

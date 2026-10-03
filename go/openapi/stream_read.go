@@ -116,7 +116,8 @@ func closeStream(x *exchange, r *Response) {
 func multipartItems[T any](x *exchange, r *Response, ct parsedMedia, bound int64, yield func(T, error) bool) {
 	var zero T
 	boundary, _ := ct.param("boundary")
-	mr := multipart.NewReader(r.Body, boundary)
+	wire := &partSource{Reader: r.Body}
+	mr := multipart.NewReader(wire, boundary)
 	_, raw := any(&zero).(**multipart.Part)
 	for {
 		var part *multipart.Part
@@ -130,6 +131,14 @@ func multipartItems[T any](x *exchange, r *Response, ct parsedMedia, bound int64
 			return
 		}
 		if err != nil {
+			if !wire.seen && wire.err == io.EOF && errors.Is(err, io.EOF) {
+				return
+			}
+			if wire.err != nil && wire.err != io.EOF && errors.Is(err, wire.err) {
+				err = wire.err
+			} else {
+				err = decoded(err)
+			}
 			yield(zero, withContext(x, err))
 			return
 		}
@@ -144,7 +153,7 @@ func multipartItems[T any](x *exchange, r *Response, ct parsedMedia, bound int64
 				if _, bytesTarget := any(&value).(*[]byte); !bytesTarget {
 					err = contentCoding(http.Header(part.Header))
 					if err != nil {
-						err = badItem(err)
+						err = badItem(decoded(err))
 					}
 				}
 				if err == nil {
@@ -159,6 +168,9 @@ func multipartItems[T any](x *exchange, r *Response, ct parsedMedia, bound int64
 						pt = octetStream
 					}
 					err = decodeItem(x.cfg, pt, data, &value)
+					if err != nil {
+						err = badItem(decoded(err))
+					}
 				}
 			}
 		}
@@ -170,18 +182,21 @@ func multipartItems[T any](x *exchange, r *Response, ct parsedMedia, bound int64
 	}
 }
 
-// partSource remembers underlying read errors, distinguishing them from a
-// transfer decoder's local syntax error, even when both return UnexpectedEOF.
+// partSource remembers wire bytes and read errors, distinguishing them from
+// MIME parser and transfer decoder failures without inspecting error text.
 type partSource struct {
 	io.Reader
-	err error
+	err  error
+	seen bool
 }
 
 func (r *partSource) Read(p []byte) (int, error) {
-	n, err := r.Reader.Read(p)
-	if err != nil && err != io.EOF {
-		r.err = err
+	if r.err != nil {
+		return 0, r.err
 	}
+	n, err := r.Reader.Read(p)
+	r.seen = r.seen || n > 0
+	r.err = err
 	return n, err
 }
 
@@ -191,7 +206,7 @@ func readPart(p *multipart.Part, bound int64) ([]byte, bool, error) {
 	var opaque bool
 	switch strings.ToLower(strings.TrimSpace(p.Header.Get("Content-Transfer-Encoding"))) {
 	case "base64":
-		r = base64.NewDecoder(base64.StdEncoding, source)
+		r = base64.NewDecoder(base64.StdEncoding, mimeBase64{source})
 	case "quoted-printable":
 		r = quotedprintable.NewReader(source)
 	case "", "7bit", "8bit", "binary":
@@ -199,14 +214,37 @@ func readPart(p *multipart.Part, bound int64) ([]byte, bool, error) {
 		opaque = true
 	}
 	data, err := readAll(nil, r, -1, bound)
-	if source.err != nil {
-		return nil, opaque, source.err
-	}
 	var size *http.MaxBytesError
 	if err != nil && !errors.As(err, &size) {
+		// Recovery requires the complete part boundary. A source failure
+		// before it takes precedence over the saved transfer syntax error.
+		io.Copy(io.Discard, source)
 		err = badItem(decoded(err))
 	}
+	if source.err != nil && source.err != io.EOF {
+		return nil, opaque, readFailed(source.err)
+	}
 	return data, opaque, err
+}
+
+// MIME base64 ignores SP and HTAB in addition to the standard decoder's
+// CR/LF handling. Filter in place before decoding and decoded-byte limiting.
+type mimeBase64 struct{ io.Reader }
+
+func (r mimeBase64) Read(p []byte) (int, error) {
+	for {
+		n, err := r.Reader.Read(p)
+		used := 0
+		for _, c := range p[:n] {
+			if c != ' ' && c != '\t' {
+				p[used] = c
+				used++
+			}
+		}
+		if used > 0 || n == 0 || err != nil {
+			return used, err
+		}
+	}
 }
 
 // decodeSequence assembles syntax, not decoded values. The one final decode

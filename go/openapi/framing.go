@@ -33,6 +33,7 @@ func (r *frameReader) fill() error {
 	for range 100 {
 		r.lo = 0
 		r.hi, r.err = r.r.Read(r.buf[:])
+		r.err = readFailed(r.err)
 		if r.hi > 0 {
 			return nil
 		}
@@ -40,7 +41,7 @@ func (r *frameReader) fill() error {
 			return r.err
 		}
 	}
-	r.err = io.ErrNoProgress
+	r.err = readFailed(io.ErrNoProgress)
 	return r.err
 }
 
