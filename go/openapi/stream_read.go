@@ -69,8 +69,8 @@ func (s *responseStream) Read(p []byte) (int, error) {
 func (s *responseStream) Close() error {
 	s.once.Do(func() {
 		s.closed.Store(true)
-		s.err = s.ReadCloser.Close()
 		s.x.stopUpload()
+		s.err = s.ReadCloser.Close()
 	})
 	return s.err
 }
@@ -129,7 +129,8 @@ func multipartItems[T any](x *exchange, r *Response, ct parsedMedia, bound int64
 			*any(&value).(**multipart.Part) = part
 		} else {
 			var data []byte
-			data, err = readPart(part, bound)
+			var opaque bool
+			data, opaque, err = readPart(part, bound)
 			if err == nil {
 				if _, bytesTarget := any(&value).(*[]byte); !bytesTarget {
 					err = contentCoding(http.Header(part.Header))
@@ -144,6 +145,9 @@ func multipartItems[T any](x *exchange, r *Response, ct parsedMedia, bound int64
 						if strings.EqualFold(ct.sub, "digest") {
 							pt = parsedMedia{full: "message/rfc822", typ: "message", sub: "rfc822"}
 						}
+					}
+					if opaque { // RFC 2045 section 6.4: unknown transfer encoding
+						pt = octetStream
 					}
 					err = decodeItem(x.cfg, pt, data, &value)
 				}
@@ -170,9 +174,10 @@ func (r *partSource) Read(p []byte) (int, error) {
 	return n, err
 }
 
-func readPart(p *multipart.Part, bound int64) ([]byte, error) {
+func readPart(p *multipart.Part, bound int64) ([]byte, bool, error) {
 	source := &partSource{Reader: p}
 	var r io.Reader = source
+	var opaque bool
 	switch strings.ToLower(strings.TrimSpace(p.Header.Get("Content-Transfer-Encoding"))) {
 	case "base64":
 		r = base64.NewDecoder(base64.StdEncoding, source)
@@ -180,17 +185,17 @@ func readPart(p *multipart.Part, bound int64) ([]byte, error) {
 		r = quotedprintable.NewReader(source)
 	case "", "7bit", "8bit", "binary":
 	default:
-		return nil, badItem(errors.New("unsupported part Content-Transfer-Encoding"))
+		opaque = true
 	}
 	data, err := readAll(nil, r, -1, bound)
 	if source.err != nil {
-		return nil, source.err
+		return nil, opaque, source.err
 	}
 	var size *http.MaxBytesError
 	if err != nil && !errors.As(err, &size) {
 		err = badItem(decoded(err))
 	}
-	return data, err
+	return data, opaque, err
 }
 
 // decodeSequence assembles syntax, not decoded values. The one final decode
