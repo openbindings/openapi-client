@@ -1089,9 +1089,13 @@ func (r *reader) visit(v value, k kind, base *url.URL, effective string) {
 	case v.kind() != '{' || k == dataKind:
 		return
 	}
-	priorInference := r.inferred
-	defer func() { r.inferred = priorInference }()
-	if k == schemaKind && r.inferred && v.independentScope() {
+	promote := k == anyKind && schemaResource(v)
+	reset := k == schemaKind && r.inferred && v.independentScope()
+	if reset || promote && !r.inferred {
+		prior := r.inferred
+		defer func() { r.inferred = prior }()
+	}
+	if reset {
 		r.inferred = false
 	}
 	var ref, dynamicRef, id, anchor, dynamicAnchor, disc, dialect value
@@ -1113,7 +1117,7 @@ func (r *reader) visit(v value, k kind, base *url.URL, effective string) {
 			dialect = m
 		}
 	}
-	if k == anyKind && schemaResource(v) {
+	if promote {
 		r.inferred = true
 		if !r.t.scopeReady {
 			p := r.provisional()
