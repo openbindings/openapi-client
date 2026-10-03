@@ -40,7 +40,7 @@ $defs:
 	const annotationEscaped = `{"\u0024\u0073chema":"` + schema9OAS32 + `","default":{"\u0024\u0073chema":"https://dialects.example.test/data","$id":"ignored.json","properties":{"decoy":{"$ref":"never.json"}},"payload":` + raw + `},"$defs":{"Leaf":{"type":"string"}}}`
 	for _, tt := range []struct {
 		name, version, doc, pointer, dialect string
-		annotation                          bool
+		annotation                           bool
 	}{
 		{"yaml-root", "3.1.2", rootYAML, "/properties/child", schema9JSON, false},
 		{"yaml-annotation", "3.2.1", annotationYAML, "/default/payload", schema9OAS32, true},
