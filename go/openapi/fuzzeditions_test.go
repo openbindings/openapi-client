@@ -2,6 +2,7 @@ package openapi_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 
@@ -26,17 +27,24 @@ func FuzzEditionCollectionFormat(f *testing.F) {
 	}
 	f.Fuzz(func(t *testing.T, a, b string) {
 		a, b = asJSON(a), asJSON(b)
+		encoded, err := json.Marshal([]string{a, b})
+		if err != nil {
+			t.Fatal(err)
+		}
+		values := []any{[]string{a, b}, stage6Strings{a, b}, stage6ReturnedJSON{data: append(append([]byte(" \n"), encoded...), '\t')}}
 		for i, delimiter := range []string{",", "%20", "%09", "%7C", ""} {
 			want := "p=" + pctName(a) + delimiter + pctName(b)
 			if i == 4 {
 				want = "p=" + pctName(a) + "&p=" + pctName(b)
 			}
-			req, err := clients[i].Prepare("GET /x", &openapi.Input{Params: map[string]any{"p": []string{a, b}}})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got := req.HTTP.URL.RawQuery; got != want {
-				t.Fatalf("format %d: %q want %q", i, got, want)
+			for _, value := range values {
+				req, err := clients[i].Prepare("GET /x", &openapi.Input{Params: map[string]any{"p": value}})
+				if err != nil {
+					t.Fatalf("format %d, %T: %v", i, value, err)
+				}
+				if got := req.HTTP.URL.RawQuery; got != want {
+					t.Fatalf("format %d, %T: %q want %q", i, value, got, want)
+				}
 			}
 		}
 	})
