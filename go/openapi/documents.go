@@ -366,11 +366,12 @@ func modelSlot(k kind, name string, edition int) (slot, bool) {
 // document, and the base outside it, with another node that the same
 // identifier names, if one does.
 type claim struct {
-	v       value
-	ptr     *documentPath
-	base    *url.URL
-	dialect string
-	other   *claim
+	v        value
+	ptr      *documentPath
+	base     *url.URL
+	dialect  string
+	other    *claim
+	inferred bool // historical inference on the route into this resource
 }
 
 func (c *claim) source() string { return c.v.t.source(c.ptr.pointer()) }
@@ -381,14 +382,16 @@ func (c *claim) source() string { return c.v.t.source(c.ptr.pointer()) }
 // them (see want).
 type discovery struct {
 	*document
-	ld      *loading
-	readers map[*tree]*reader
-	busy    []*reader         // the readers with items to read
-	wants   map[string][]want // by the URI they need, without its fragment, or a plain name's
-	ready   []string
-	fresh   [3][]string        // the URIs of wants, by rank, that may need retrieving
-	asked   map[string]bool    // the URIs retrieved or being retrieved
-	refused map[[2]string]bool // the URIs, each with a referrer that may not retrieve it
+	ld         *loading
+	readers    map[*tree]*reader
+	busy       []*reader         // the readers with items to read
+	wants      map[string][]want // by the URI they need, without its fragment, or a plain name's
+	ready      []string
+	fresh      [3][]string        // the URIs of wants, by rank, that may need retrieving
+	asked      map[string]bool    // the URIs retrieved or being retrieved
+	refused    map[[2]string]bool // the URIs, each with a referrer that may not retrieve it
+	candidates map[string]int     // provisional identifier keys, by pending tree count
+	pending    []*reader          // each tree settles once, between independent frontiers
 }
 
 // A want is a reference that needs the node a URI and the fragment frag
@@ -417,13 +420,43 @@ type reader struct {
 	located map[int32]location
 	// Two bits per kind and node: queued, entered recursively. The sixteen
 	// kinds through itemsKind occupy all 32 bits; new kinds require widening.
-	seen     []uint32
-	dialect  string // the document default for schema resources
-	queue    []item
-	first    [1]item       // the usual one-node worklist needs no separate allocation
-	at       *documentPath // shared physical path to the node being read
-	busy     bool
-	complete bool // finish a pure-local tree's contexts inside its schema Once
+	seen      []uint32
+	dialect   string // the document default for schema resources
+	queue     []item
+	first     [1]item       // the usual one-node worklist needs no separate allocation
+	at        *documentPath // shared physical path to the node being read
+	busy      bool
+	complete  bool // finish a pure-local tree's contexts inside its schema Once
+	pending   *pendingScope
+	audit     bool           // new context arrived after inferred scope settled
+	inferred  bool           // scope inherited by the current recursive visit
+	dependent map[int32]bool // executed entries that inherited inferred scope
+}
+
+// pendingScope separates inferred resource scope from independently admitted
+// object contexts until discovery has exhausted its independent frontier.
+// Each physical tree has one candidate scan and at most one settlement scan.
+type pendingScope struct {
+	keys       map[string]bool
+	fresh      []string
+	requests   []scopeRequest
+	collecting bool
+	scheduled  bool
+}
+
+type scopeRequest struct {
+	entry    item
+	uri      string
+	w        want
+	node     int32
+	inferred bool
+}
+
+func (r *reader) provisional() *pendingScope {
+	if r.pending == nil {
+		r.pending = &pendingScope{}
+	}
+	return r.pending
 }
 
 // A need is a want and the URI it needs.
@@ -480,7 +513,7 @@ func (d *document) discover(ld *loading) error {
 		var froms []string // the referrers of each fetch of the wave, end to end
 		for rank := range dc.fresh {
 			for _, uri := range dc.fresh[rank] {
-				if ws := dc.wants[uri]; ws != nil && !dc.asked[uri] && !strings.Contains(uri, "#") {
+				if ws := dc.wants[uri]; ws != nil && !dc.asked[uri] && dc.candidates[uri] == 0 && !strings.Contains(uri, "#") {
 					n := len(froms)
 					if froms = dc.referrers(froms, uri, ws); len(froms) > n {
 						dc.asked[uri] = true
@@ -494,6 +527,9 @@ func (d *document) discover(ld *loading) error {
 			}
 		}
 		if len(wave) == 0 {
+			if dc.settle() {
+				continue
+			}
 			break
 		}
 		wave = dc.getAll(wave)
@@ -526,6 +562,7 @@ func (d *document) discover(ld *loading) error {
 			return fmt.Errorf("openapi: %s: the documents together hold too many values", safeURI(d.uri))
 		}
 		n += len(t.nodes)
+		dc.readers[t].auditScope()
 		t.located = dc.readers[t].located
 	}
 	d.pages = make([]atomic.Pointer[[factsPage]facts], n/factsPage+1)
@@ -579,7 +616,7 @@ func (dc *discovery) getAll(wave []fetch) []fetch {
 					for ; k < len(r.refs) && r.refs[k].uri == uri; k++ {
 						need = need || r.refs[k].w.rank == 0
 					}
-					if need && !dc.asked[uri] && dc.named[uri] == nil && dc.ids[uri] == nil && dc.failed[uri] == nil && !strings.Contains(uri, "#") &&
+					if need && !dc.asked[uri] && dc.candidates[uri] == 0 && dc.named[uri] == nil && dc.ids[uri] == nil && dc.failed[uri] == nil && !strings.Contains(uri, "#") &&
 						!dc.refused[[2]string{uri, r.t.uri}] {
 						dc.asked[uri] = true
 						ws := make([]want, 0, k-j)
@@ -623,8 +660,13 @@ func (dc *discovery) read(f fetch, buf []byte, scratch *reader) (*reader, error)
 	if cap(scratch.queue) > 0 {
 		r.queue = append(scratch.queue[:0], r.queue...)
 	}
+	if t.declares || t.dialects {
+		for _, w := range f.wants {
+			r.admit(t.root(), t.uri, w)
+		}
+	}
 	for _, w := range f.wants {
-		r.open(t.root(), k, t.refbase, nil, t.uri, r.dialect, w)
+		r.open(t.root(), k, t.refbase, nil, t.uri, r.dialect, false, w)
 	}
 	r.drain()
 	scratch.queue, r.queue = r.queue, nil
@@ -646,7 +688,7 @@ func (d *document) newReader(t *tree, k kind) *reader {
 		r.claim(t.refbase.String(), t.root(), t.base, r.dialect)
 	}
 	if t.declares || t.reaches && k == rootKind {
-		r.open(t.root(), k, t.refbase, nil, t.uri, r.dialect, want{k: k})
+		r.open(t.root(), k, t.refbase, nil, t.uri, r.dialect, false, want{k: k})
 	}
 	return r
 }
@@ -718,6 +760,18 @@ func (dc *discovery) identify(uri string) {
 // take takes the identifiers and references r has read: each identifier
 // claims its node, and each reference is followed, or waits for its URI.
 func (dc *discovery) take(r *reader) {
+	if p := r.pending; p != nil && !r.t.scopeReady {
+		if !p.scheduled {
+			p.scheduled, dc.pending = true, append(dc.pending, r)
+		}
+		for _, key := range p.fresh {
+			if dc.candidates == nil {
+				dc.candidates = map[string]int{}
+			}
+			dc.candidates[key]++
+		}
+		p.fresh = nil
+	}
 	claimed, refs := r.claimed, r.refs
 	r.claimed, r.refs = nil, nil
 	for _, key := range claimed {
@@ -730,6 +784,11 @@ func (dc *discovery) take(r *reader) {
 		}
 		switch {
 		case dc.named[uri] != nil || dc.ids[uri] != nil:
+			if reader, root, named := dc.scopeEntry(uri); reader != nil {
+				for _, n := range refs[i:j] {
+					reader.admit(root, named, n.w)
+				}
+			}
 			for _, n := range refs[i:j] {
 				dc.follow(uri, n.w)
 			}
@@ -743,6 +802,45 @@ func (dc *discovery) take(r *reader) {
 		i = j
 	}
 	dc.wake(r)
+}
+
+// settle consumes one pending physical tree, then yields to discovery. No
+// pending list is rescanned when another retrieval wave admits more contexts.
+func (dc *discovery) settle() bool {
+	if len(dc.pending) == 0 {
+		return false
+	}
+	r := dc.pending[0]
+	dc.pending = dc.pending[1:]
+	p := r.pending
+	r.t.scopeReady = true
+	for i := range r.seen {
+		r.seen[i] &^= 3<<(2*anyKind) | 3<<(2*schemaIDsKind)
+	}
+	r.at, r.inferred = nil, false
+	r.visit(r.t.root(), r.t.kind(), r.t.refbase, r.dialect)
+	for _, request := range p.requests {
+		r.seen[request.node] &^= 1 << (2 * request.w.k)
+		i := request.entry
+		r.open(i.v, i.k, i.base, i.ptr, request.uri, i.dialect, request.inferred, request.w)
+	}
+	r.drain()
+	dc.take(r)
+	for key := range p.keys {
+		dc.candidates[key]--
+		if dc.candidates[key] == 0 {
+			delete(dc.candidates, key)
+			if ws := dc.wants[key]; len(ws) != 0 && dc.ids[key] == nil {
+				rank := len(dc.fresh) - 1
+				for _, w := range ws {
+					rank = min(rank, w.rank)
+				}
+				dc.fresh[rank] = append(dc.fresh[rank], key)
+			}
+		}
+	}
+	r.pending = nil
+	return true
 }
 
 // claim records that key identifies the node of rc and that of rc.other,
@@ -794,15 +892,59 @@ func (dc *discovery) wake(r *reader) {
 // schema, to be read by the reader of its document.
 func (dc *discovery) follow(uri string, w want) {
 	if t := dc.named[uri]; t != nil {
-		dc.readers[t].open(t.root(), t.kind(), t.refbase, nil, t.uri, dc.readers[t].dialect, w)
+		dc.readers[t].open(t.root(), t.kind(), t.refbase, nil, t.uri, dc.readers[t].dialect, false, w)
 		dc.wake(dc.readers[t])
 	} else if c := dc.ids[uri]; c != nil {
 		k, base := schemaKind, c.base
 		if c.v.i == 0 && c.v.t.refbase.String() == uri {
 			k, base = c.v.t.kind(), c.v.t.refbase
 		}
-		dc.readers[c.v.t].open(c.v, k, base, c.ptr, uri, c.dialect, w)
+		dc.readers[c.v.t].open(c.v, k, base, c.ptr, uri, c.dialect, c.inferred, w)
 		dc.wake(dc.readers[c.v.t])
+	}
+}
+
+// scopeEntry identifies the same physical entry as follow, when incoming
+// contexts can affect resource scope. Retrieval aliases use the adopted tree.
+func (dc *discovery) scopeEntry(uri string) (*reader, value, string) {
+	if t := dc.named[uri]; t != nil {
+		if t.declares || t.dialects {
+			return dc.readers[t], t.root(), t.uri
+		}
+	} else if c := dc.ids[uri]; c != nil {
+		return dc.readers[c.v.t], c.v, uri
+	}
+	return nil, value{}, ""
+}
+
+// admit records incoming object contexts before their scope is interpreted.
+// It has no identifier or reference effects; execution has its own seen bits.
+func (r *reader) admit(n value, uri string, w want) {
+	if r.t.kind() != anyKind || w.k == anyKind || !r.t.declares && !r.t.dialects {
+		return
+	}
+	frag, err := url.PathUnescape(w.frag)
+	if err != nil {
+		return
+	}
+	if frag != "" {
+		if frag[0] == '/' {
+			n = n.at(frag)
+		} else if c := r.ids[uri+"#"+frag]; c != nil {
+			n = c.v
+		} else {
+			return
+		}
+	}
+	if n.ok() {
+		if r.t.schemaContexts == nil {
+			r.t.schemaContexts = make([]uint32, len(r.t.nodes))
+		}
+		bit := uint32(1) << (2 * w.k)
+		if r.t.schemaContexts[n.i]&bit == 0 && r.t.scopeReady {
+			r.audit = true
+		}
+		r.t.schemaContexts[n.i] |= bit
 	}
 }
 
@@ -818,6 +960,11 @@ func (dc *discovery) drain() {
 		} else if len(dc.ready) > 0 {
 			uri := dc.ready[0]
 			dc.ready = dc.ready[1:]
+			if reader, root, named := dc.scopeEntry(uri); reader != nil {
+				for _, w := range dc.wants[uri] {
+					reader.admit(root, named, w)
+				}
+			}
 			for _, w := range dc.wants[uri] {
 				dc.follow(uri, w)
 			}
@@ -832,7 +979,7 @@ func (dc *discovery) drain() {
 // base, at ptr, which uri identifies, to be read, unless it is read already
 // or its document holds nothing discovery needs; one a plain name names that
 // r has not read is needed of the discovery.
-func (r *reader) open(n value, k kind, base *url.URL, ptr *documentPath, uri, dialect string, w want) {
+func (r *reader) open(n value, k kind, base *url.URL, ptr *documentPath, uri, dialect string, inferred bool, w want) {
 	fragment := r.t.kind() == anyKind && w.k != anyKind
 	if !r.t.reaches && !r.t.declares && !fragment {
 		return
@@ -850,19 +997,23 @@ func (r *reader) open(n value, k kind, base *url.URL, ptr *documentPath, uri, di
 		}
 		return
 	}
+	r.admit(n, uri, w)
+	entry := item{n, k, base, ptr, dialect}
+	entryInferred := inferred
+	provisional := false
 	frag, err := url.PathUnescape(w.frag)
 	switch {
 	case err != nil:
 		return
 	case frag != "" && frag[0] == '/':
-		n, base, dialect = descend(n, k, frag, base, dialect)
+		n, base, dialect, provisional, inferred = descend(n, k, frag, base, dialect, inferred)
 	case frag != "":
 		c := r.ids[uri+"#"+frag]
 		if c == nil {
 			r.refs = append(r.refs, need{uri + "#" + frag, want{"", w.k, w.t, w.rank}})
 			return
 		}
-		n, base, ptr, dialect = c.v, c.base, c.ptr, c.dialect
+		n, base, ptr, dialect, inferred = c.v, c.base, c.ptr, c.dialect, c.inferred
 	}
 	if !n.ok() {
 		return
@@ -874,6 +1025,20 @@ func (r *reader) open(n value, k kind, base *url.URL, ptr *documentPath, uri, di
 		return
 	}
 	r.seen[n.i] |= 1 << (2 * w.k)
+	if (provisional || inferred) && w.k == schemaKind && n.independentScope() {
+		provisional, inferred = false, false // visit applies this resource's own complete scope
+	}
+	if provisional {
+		p := r.provisional()
+		p.requests = append(p.requests, scopeRequest{entry, uri, w, n.i, entryInferred})
+		return
+	}
+	if inferred && w.k != anyKind {
+		if r.dependent == nil {
+			r.dependent = map[int32]bool{}
+		}
+		r.dependent[n.i] = true
+	}
 	if r.t.declares && frag != "" && frag[0] == '/' {
 		ptr = &documentPath{parent: ptr, part: frag}
 	}
@@ -885,7 +1050,9 @@ func (r *reader) open(n value, k kind, base *url.URL, ptr *documentPath, uri, di
 		case n.i == 0:
 			r.t.schemaRoots |= 1 << w.k
 		default:
-			r.t.schemaContexts = r.seen
+			if !r.t.dialects {
+				r.t.schemaContexts = r.seen
+			}
 		}
 	}
 	if r.queue == nil {
@@ -899,7 +1066,7 @@ func (r *reader) drain() {
 	for n := len(r.queue); n > 0; n = len(r.queue) {
 		it := r.queue[n-1]
 		r.queue = r.queue[:n-1]
-		r.at = it.ptr
+		r.at, r.inferred = it.ptr, r.dependent[it.v.i]
 		r.visit(it.v, it.k, it.base, it.dialect)
 	}
 }
@@ -907,7 +1074,7 @@ func (r *reader) drain() {
 // visit reads v as a k node whose base outside it is base: its identifiers,
 // its references, and the nodes it holds.
 func (r *reader) visit(v value, k kind, base *url.URL, effective string) {
-	if r.seen[v.i]&(2<<(2*k)) != 0 || k == anyKind && r.seen[v.i]&(3<<(2*schemaKind)) != 0 {
+	if r.seen[v.i]&(2<<(2*k)) != 0 || k == anyKind && (v.contextKinds() != 0 || r.seen[v.i]&(3<<(2*schemaKind)) != 0) {
 		return
 	}
 	r.seen[v.i] |= 2 << (2 * k)
@@ -921,6 +1088,11 @@ func (r *reader) visit(v value, k kind, base *url.URL, effective string) {
 		return
 	case v.kind() != '{' || k == dataKind:
 		return
+	}
+	priorInference := r.inferred
+	defer func() { r.inferred = priorInference }()
+	if k == schemaKind && r.inferred && v.independentScope() {
+		r.inferred = false
 	}
 	var ref, dynamicRef, id, anchor, dynamicAnchor, disc, dialect value
 	for name, m := range v.members() {
@@ -941,13 +1113,20 @@ func (r *reader) visit(v value, k kind, base *url.URL, effective string) {
 			dialect = m
 		}
 	}
-	if k == anyKind && (dialect.ok() || id.ok() || anchor.ok() || dynamicAnchor.ok()) {
+	if k == anyKind && schemaResource(v) {
+		r.inferred = true
+		if !r.t.scopeReady {
+			p := r.provisional()
+			prior := p.collecting
+			p.collecting = true
+			defer func() { p.collecting = prior }()
+		}
 		k = schemaIDsKind
 	}
 	if r.t.edition <= 30 {
 		id, anchor, dynamicAnchor, dynamicRef, dialect = value{}, value{}, value{}, value{}, value{}
 	}
-	if dialect.kind() == '"' {
+	if (k == schemaKind || k == schemaIDsKind) && dialect.kind() == '"' {
 		effective = dialect.string()
 	}
 	switch {
@@ -956,8 +1135,17 @@ func (r *reader) visit(v value, k kind, base *url.URL, effective string) {
 	case k == schemaKind || k == schemaIDsKind || k == anyKind:
 		outer := base
 		if id.kind() == '"' {
-			base = v.resourceBase(base, id)
-			if r.t.resourceBases[v.i] != nil {
+			valid := false
+			if p := r.pending; p != nil && p.collecting {
+				if u, err := base.Parse(id.text()); err == nil {
+					u.Fragment, u.RawFragment = "", ""
+					base, valid = u, true
+				}
+			} else {
+				base = v.resourceBase(base, id)
+				valid = r.t.resourceBases[v.i] != nil
+			}
+			if valid {
 				r.claim(base.String(), v, outer, effective)
 			}
 		}
@@ -988,7 +1176,7 @@ func (r *reader) visit(v value, k kind, base *url.URL, effective string) {
 		}
 	case k == pathItemKind:
 		r.reference(ref, k, base)
-	case (k >= parameterKind && k <= refKind || k == mediaKind && r.t.edition == 32) && ref.kind() == '"': // a Reference Object
+	case referenceObject(k, r.t.edition) && ref.kind() == '"': // a Reference Object
 		r.reference(ref, k, base)
 		return
 	}
@@ -1051,12 +1239,21 @@ func (r *reader) into(name string, m value, k kind, how byte, base *url.URL, dia
 // claim records that key, an absolute URI, identifies v, whose base outside
 // it is base.
 func (r *reader) claim(key string, v value, base *url.URL, dialect string) {
+	if p := r.pending; p != nil && p.collecting {
+		if p.keys == nil {
+			p.keys = map[string]bool{}
+		}
+		if !p.keys[key] {
+			p.keys[key], p.fresh = true, append(p.fresh, key)
+		}
+		return
+	}
 	switch c := r.ids[key]; {
 	case c == nil:
 		if r.ids == nil {
 			r.ids = map[string]*claim{}
 		}
-		r.ids[key], r.claimed = &claim{v: v, ptr: r.at, base: base, dialect: dialect}, append(r.claimed, key)
+		r.ids[key], r.claimed = &claim{v: v, ptr: r.at, base: base, dialect: dialect, inferred: r.inferred}, append(r.claimed, key)
 	case c.v != v && c.other == nil:
 		c.other, r.claimed = &claim{v: v, ptr: r.at}, append(r.claimed, key)
 	}
@@ -1130,13 +1327,13 @@ func (r *reader) referenceValue(ref value, text string, k kind, base *url.URL) {
 	w := want{frag, k, t, rank}
 	switch c := r.ids[uri]; {
 	case c != nil:
-		kind, base := schemaKind, c.base
+		kind, base, inferred := schemaKind, c.base, c.inferred
 		if c.v.i == 0 && c.v.t.refbase.String() == uri {
-			kind, base = c.v.t.kind(), c.v.t.refbase
+			kind, base, inferred = c.v.t.kind(), c.v.t.refbase, false
 		}
-		r.open(c.v, kind, base, c.ptr, uri, c.dialect, w)
+		r.open(c.v, kind, base, c.ptr, uri, c.dialect, inferred, w)
 	case uri == t.uri:
-		r.open(t.root(), t.kind(), t.refbase, nil, uri, r.dialect, w)
+		r.open(t.root(), t.kind(), t.refbase, nil, uri, r.dialect, false, w)
 	default:
 		r.refs = append(r.refs, need{uri, w})
 	}
@@ -1145,58 +1342,242 @@ func (r *reader) referenceValue(ref value, text string, k kind, base *url.URL) {
 // descend returns the node the JSON Pointer ptr names under v, a k node
 // whose base outside it is base, and the base outside that node: the $id of
 // each schema on the way sets it.
-func descend(v value, k kind, ptr string, base *url.URL, dialect string) (value, *url.URL, string) {
-	scope := documentScope{k, '1', base, dialect}
+func descend(v value, k kind, ptr string, base *url.URL, dialect string, inferred bool) (value, *url.URL, string, bool, bool) {
+	scope := documentScope{kinds: 1 << k, base: base, dialect: dialect, inferred: inferred}
 	for ptr != "" && v.ok() {
 		scope = scope.enter(v)
 		tok, rest, ok := nextToken(ptr)
 		if !ok {
-			return value{}, scope.base, scope.dialect
+			return value{}, scope.base, scope.dialect, scope.provisional, scope.inferred
 		}
 		name, _ := unescapeToken(tok)
 		scope = scope.child(name, v.t.edition)
 		v, ptr = v.step(tok), rest
 	}
-	return v, scope.base, scope.dialect
+	return v, scope.base, scope.dialect, scope.provisional, scope.inferred
 }
 
 // documentScope follows physical ancestry through the same object model used
 // by discovery. A resource changes scope; annotation data does not. The state
 // can advance along a pointer or be shared by a traversal of sibling seeds.
 type documentScope struct {
-	k       kind
-	how     byte
-	base    *url.URL
-	dialect string
+	// Each sixteen-bit group holds the kinds of an object, map, array, or
+	// extension-excluding map. Keep all independently admitted interpretations.
+	kinds       uint64
+	base        *url.URL
+	dialect     string
+	provisional bool
+	inferred    bool
+	refObjects  uint16 // kinds whose Reference Object early return suppresses fields
+}
+
+func (v value) contextKinds() uint16 {
+	var kinds uint16
+	if v.i == 0 {
+		kinds = v.t.schemaRoots
+	}
+	if int(v.i) < len(v.t.schemaContexts) {
+		bits := v.t.schemaContexts[v.i]
+		for k := kind(1); k <= itemsKind; k++ {
+			if bits&(1<<(2*k)) != 0 {
+				kinds |= 1 << k
+			}
+		}
+	}
+	return kinds
 }
 
 func (s documentScope) enter(v value) documentScope {
-	if s.how != '1' || !v.t.declares && !v.t.dialects {
-		return s
+	s = s.classify(v)
+	if (s.provisional || s.inferred) && v.independentScope() {
+		s.provisional, s.inferred = false, false
 	}
-	if s.k == anyKind && schemaResource(v) {
-		s.k = schemaKind
-	}
-	if (s.k == schemaKind || s.k == anyKind) && v.t.edition >= 31 {
+	if !s.provisional && s.kinds&(1<<schemaKind) != 0 && v.t.edition >= 31 {
 		s.base, s.dialect = schemaScope(v, s.base, s.dialect)
 	}
 	return s
 }
 
-func (s documentScope) child(name string, edition int) documentScope {
-	switch {
-	case s.how != '1':
-		s.how = '1'
-	case s.k == callbackKind:
-		s.k = pathItemKind
-	case s.k != anyKind:
-		child, ok := modelSlot(s.k, name, edition)
-		if !ok {
-			child = slot{dataKind, '1'}
+// classify changes only object context; the final audit must not apply a
+// resource base that the final context may have disproved.
+func (s documentScope) classify(v value) documentScope {
+	if !v.t.declares && !v.t.dialects {
+		return s
+	}
+	if kinds := v.contextKinds(); kinds != 0 {
+		s.kinds &^= 1<<anyKind | 1<<dataKind
+		s.kinds |= uint64(kinds)
+	}
+	if s.kinds&(1<<anyKind) != 0 && schemaResource(v) {
+		s.provisional = s.provisional || !v.t.scopeReady
+		s.inferred = true
+		s.kinds = s.kinds&^(1<<anyKind) | 1<<schemaKind
+	}
+	s.refObjects = 0
+	if v.get("$ref").kind() == '"' {
+		for k := anyKind; k <= itemsKind; k++ {
+			if s.kinds&(1<<k) != 0 && referenceObject(k, v.t.edition) {
+				s.refObjects |= 1 << k
+			}
 		}
-		s.k, s.how = child.k, child.how
+	}
+	if v.kind() != '{' {
+		s.kinds &^= uint64(0xffff)<<16 | uint64(0xffff)<<48
+	}
+	if v.kind() != '[' {
+		s.kinds &^= uint64(0xffff) << 32
 	}
 	return s
+}
+
+func (s documentScope) child(name string, edition int) documentScope {
+	next := s.kinds>>16&0xffff | s.kinds>>32&0xffff
+	if !strings.HasPrefix(name, "x-") {
+		next |= s.kinds >> 48
+	}
+	for k := anyKind; k <= itemsKind; k++ {
+		if s.kinds&(1<<k) == 0 || s.refObjects&(1<<k) != 0 {
+			continue
+		}
+		if k == anyKind {
+			next |= 1 << anyKind
+			continue
+		}
+		child, ok := modelSlot(k, name, edition)
+		if k == callbackKind {
+			child, ok = slot{pathItemKind, '1'}, !strings.HasPrefix(name, "x-")
+		}
+		if !ok {
+			continue
+		}
+		shift := 0
+		switch child.how {
+		case '{':
+			shift = 16
+		case '[':
+			shift = 32
+		case 'x':
+			shift = 48
+		}
+		next |= uint64(1) << (shift + int(child.k))
+	}
+	if next == 0 {
+		next = 1 << dataKind
+	}
+	s.kinds, s.refObjects = next, 0
+	return s
+}
+
+// independentScope recognizes an explicitly reached complete scope reset.
+// The otherwise unused anyKind pair in the admission bitmap caches this test;
+// it is separate from execution bits. Identifier parsing occurs once per node.
+func (v value) independentScope() bool {
+	if v.t.edition < 31 || int(v.i) >= len(v.t.schemaContexts) || v.t.schemaContexts[v.i]&(1<<(2*schemaKind)) == 0 {
+		return false
+	}
+	bits := &v.t.schemaContexts[v.i]
+	if *bits&1 == 0 {
+		*bits |= 1
+		if ownDialect(v.get("$schema").string()) {
+			if id := v.get("$id"); id.kind() == '"' {
+				if u, err := url.Parse(id.text()); err == nil && u.IsAbs() && u.Fragment == "" {
+					*bits |= 2
+				}
+			}
+		}
+	}
+	return *bits&2 != 0
+}
+
+// scopeRefusal separates invalid declaration routes from physically affected
+// parts. A model object may remain usable after its own inferred ID is rejected.
+type scopeRefusal struct {
+	declarations []int32
+	ranges       []scopeInterval
+}
+
+type scopeInterval struct{ first, last int32 }
+
+var errContextScope = fmt.Errorf("%w: schema scope depends on an inferred resource later identified as instance data", ErrUnresolved)
+
+func (v value) scopeError() error {
+	if !v.ok() || v.t.scopeErrors == nil {
+		return nil
+	}
+	ranges := v.t.scopeErrors.ranges
+	i, _ := slices.BinarySearchFunc(ranges, v.i, func(r scopeInterval, at int32) int {
+		if r.last <= at {
+			return -1
+		}
+		if r.first > at {
+			return 1
+		}
+		return 0
+	})
+	if i < len(ranges) && ranges[i].first <= v.i {
+		return errContextScope
+	}
+	return nil
+}
+
+func (v value) declarationError() error {
+	if v.t.scopeErrors != nil {
+		if _, found := slices.BinarySearch(v.t.scopeErrors.declarations, v.i); found {
+			return errContextScope
+		}
+	}
+	return v.scopeError()
+}
+
+func referenceObject(k kind, edition int) bool {
+	return k >= parameterKind && k <= refKind || k == mediaKind && edition == 32
+}
+
+// auditScope runs once after all retrieval. Model fields survive a node's own
+// rejected inference, but not inherited invalidity or prior dependent execution.
+func (r *reader) auditScope() {
+	if !r.audit {
+		return
+	}
+	refusal := func() *scopeRefusal {
+		if r.t.scopeErrors == nil {
+			r.t.scopeErrors = &scopeRefusal{}
+		}
+		return r.t.scopeErrors
+	}
+	var walk func(value, documentScope, bool, bool)
+	walk = func(v value, scope documentScope, invalid, disproved bool) {
+		scope = scope.classify(v)
+		rejected := r.seen[v.i]&(2<<(2*anyKind)) != 0 && schemaResource(v) && scope.kinds&(1<<schemaKind) == 0
+		if rejected {
+			refusal().declarations = append(refusal().declarations, v.i)
+		}
+		if (invalid || disproved) && v.independentScope() {
+			invalid, disproved = false, false
+		}
+		if disproved && r.dependent[v.i] {
+			invalid = true
+		}
+		known := scope.kinds&(0xffff&^(1<<anyKind|1<<dataKind|1<<schemaKind|1<<schemaIDsKind)) != 0
+		if rejected && !known {
+			invalid = true
+		}
+		if invalid {
+			f := refusal()
+			n := len(f.ranges)
+			if n > 0 && f.ranges[n-1].last == v.i {
+				f.ranges[n-1].last++
+			} else {
+				f.ranges = append(f.ranges, scopeInterval{v.i, v.i + 1})
+			}
+		}
+		for name, child := range v.members() {
+			next := scope.child(name, r.t.edition)
+			field := next.kinds != 1<<dataKind || name == "$ref" && (scope.refObjects != 0 || scope.kinds&(1<<pathItemKind) != 0)
+			walk(child, next, invalid || rejected && !field, disproved || rejected)
+		}
+	}
+	walk(r.t.root(), documentScope{kinds: 1 << r.t.kind()}, false, false)
 }
 
 // ownDialect reports whether the schema dialect d reads identifiers as JSON
@@ -1238,6 +1619,9 @@ func (v value) resourceBase(base *url.URL, id value) *url.URL {
 // document read identifies, by its retrieval URI, a schema's $id, or a plain
 // name a schema declares.
 func (d *document) target(ref value) (value, string, error) {
+	if err := ref.scopeError(); err != nil {
+		return value{}, "", err
+	}
 	t, text := ref.t, ref.text()
 	uri, frag := t.uri, ""
 	if l, ok := t.located[ref.i]; ok {
@@ -1306,6 +1690,9 @@ func (d *document) targetNode(t *tree, text, uri, frag string) (locatedNode, err
 		if n, err = d.namedNode(uri + "#" + frag); err != nil {
 			return locatedNode{}, fmt.Errorf("%w %q: %w", ErrUnresolved, safeURI(text), err)
 		}
+	}
+	if err := n.v.scopeError(); err != nil {
+		return locatedNode{}, err
 	}
 	return n, nil
 }
@@ -1425,6 +1812,12 @@ func (d *document) namedNode(uri string) (locatedNode, error) {
 	case c != nil && t != nil && c.v != t.root():
 		return locatedNode{}, fmt.Errorf("%s names both the document %s and %s", safeURI(uri), safeURI(t.uri), safeURI(c.source()))
 	case c != nil:
+		if err := c.v.declarationError(); err != nil {
+			if t != nil && c.v == t.root() {
+				return locatedNode{v: t.root()}, nil
+			}
+			return locatedNode{}, err
+		}
 		return locatedNode{v: c.v, path: c.ptr}, nil
 	case t != nil:
 		return locatedNode{v: t.root()}, nil

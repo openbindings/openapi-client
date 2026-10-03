@@ -47,11 +47,13 @@ type tree struct {
 	// document itself.
 	reaches, declares bool
 	editionRefs       bool
-	dialects          bool // a $schema occurs; distinct from identifier declarations
-	openAPI           bool // the root carries an OpenAPI or Swagger version field
+	dialects          bool          // a $schema occurs; distinct from identifier declarations
+	openAPI           bool          // the root carries an OpenAPI or Swagger version field
+	scopeReady        bool          // generic inferred resource scope has settled
+	scopeErrors       *scopeRefusal // final refusal intervals, with independent-resource holes
 	located           map[int32]location
 	schemaRoots       uint16            // root object contexts reached in a versionless fragment
-	schemaContexts    []uint32          // discovery bitmap, retained only for unscoped non-root contexts
+	schemaContexts    []uint32          // admitted kinds; separate from execution when scope matters
 	schemaSeeds       []item            // fragment contexts whose identifier scope needs a physical path
 	schemaIntents     map[string]uint16 // authored fragments whose pure-local context is deferred
 	schemasOnce       sync.Once

@@ -84,6 +84,11 @@ func Parse(ctx context.Context, content []byte, uri string, opts *Options) (*Cli
 // document with neither an openapi nor a swagger field uses the entry
 // document's edition; its object type comes from the reference's context.
 //
+// If retrieval based on an inferred schema resource later reveals that the
+// resource is instance data, references whose scope depends on that inference
+// are unresolvable. The documents already retrieved remain available, and parts
+// independent of that inference remain usable.
+//
 // The references followed are $ref in Reference Objects, Path Items and Schema
 // Objects, $dynamicRef, Discriminator mapping and defaultMapping values that
 // are not component names (a value that could be a component name is read as

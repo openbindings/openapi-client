@@ -78,12 +78,21 @@ func (d *document) schemaGraph(t *tree) *schemaGraph {
 		// graph scan can interpret the same nodes. No retrieval is possible:
 		// this tree has neither nonlocal references nor identifier declarations.
 		if !t.reaches && !t.declares && t.kind() == anyKind {
+			t.scopeReady = true
 			r := reader{d: d, t: t, complete: true}
+			if t.dialects {
+				for frag, kinds := range t.schemaIntents {
+					for k := kind(1); k <= itemsKind; k++ {
+						if kinds&(1<<k) != 0 {
+							r.admit(t.root(), t.uri, want{frag, k, t, 0})
+						}
+					}
+				}
+			}
 			open := func(frag string, kinds uint16) {
 				for k := kind(1); k <= itemsKind; k++ {
 					if kinds&(1<<k) != 0 {
-						r.open(t.root(), anyKind, t.refbase, nil, t.uri, "", want{frag, k, t, 0})
-						r.drain()
+						r.open(t.root(), anyKind, t.refbase, nil, t.uri, "", false, want{frag, k, t, 0})
 					}
 				}
 			}
@@ -91,14 +100,18 @@ func (d *document) schemaGraph(t *tree) *schemaGraph {
 			for frag, kinds := range t.schemaIntents {
 				open(frag, kinds)
 			}
+			r.drain()
 		}
 		g := &schemaGraph{nodes: map[int32]*schemaNode{}}
 		b := schemaBuilder{g: g, seen: make([]uint32, len(t.nodes)), seeds: map[int32][]item{}}
 		seeds := t.schemaSeeds
-		if t.schemaRoots != 0 || t.schemaContexts != nil {
+		if !t.declares && (t.schemaRoots != 0 || t.schemaContexts != nil) {
 			seeds = unscopedSeeds(t)
 		}
 		for _, it := range seeds {
+			if it.v.scopeError() != nil {
+				continue
+			}
 			b.seeds[it.v.i] = append(b.seeds[it.v.i], it)
 		}
 		b.visit(t.root(), t.kind(), t.refbase, schemaDialect(t), nil, 0, nil)
@@ -150,7 +163,7 @@ func unscopedSeeds(t *tree) []item {
 			}
 		}
 	}
-	scope := documentScope{t.kind(), '1', t.refbase, ""}
+	scope := documentScope{kinds: 1 << t.kind(), base: t.refbase}
 	add(t.root(), t.schemaRoots, nil, scope)
 	next := int32(0)
 	advance := func() {
@@ -200,7 +213,8 @@ func unscopedSeeds(t *tree) []item {
 // schemaResource recognizes a schema location in an otherwise unclassified
 // document. Once recognized, only the schema vocabulary supplies descendants.
 func schemaResource(v value) bool {
-	return (v.t.declares || v.t.dialects) && (v.get("$schema").ok() || v.get("$id").ok() || v.get("$anchor").ok() || v.get("$dynamicAnchor").ok())
+	return v.i == 0 && v.t.dialects && v.get("$schema").ok() ||
+		v.t.declares && (v.get("$id").ok() || v.get("$anchor").ok() || v.get("$dynamicAnchor").ok())
 }
 
 // component is settled after every context has been visited, so independently
@@ -241,6 +255,12 @@ type schemaBuilder struct {
 }
 
 func (b *schemaBuilder) visit(v value, k kind, base *url.URL, dialect string, path *documentPath, depth int, parent *schemaNode) {
+	if v.scopeError() != nil {
+		if parent != nil {
+			b.edges = append(b.edges, &schemaEdge{v: v, owner: parent, path: path, depth: depth})
+		}
+		return
+	}
 	if k == anyKind {
 		if seeds := b.seeds[v.i]; len(seeds) > 0 {
 			for _, it := range seeds {
@@ -286,7 +306,7 @@ func (b *schemaBuilder) visit(v value, k kind, base *url.URL, dialect string, pa
 			b.edge(ref, n, path, depth, "$ref")
 			return
 		}
-		if k >= parameterKind && k <= refKind || k == mediaKind && v.t.edition == 32 {
+		if referenceObject(k, v.t.edition) {
 			return
 		}
 	}
@@ -421,6 +441,9 @@ func (n *schemaNode) schema(d *document) (*Schema, error) {
 }
 
 func (s *Schema) references() ([]SchemaReference, error) {
+	if err := s.v.scopeError(); err != nil {
+		return nil, err
+	}
 	if s.legacy || s.synthetic != nil {
 		// Swagger Parameter/Items Objects have no reference-bearing fields.
 		return nil, nil
@@ -446,6 +469,9 @@ func (s *Schema) references() ([]SchemaReference, error) {
 			break
 		}
 		if e.keyword == "" {
+			if err := e.v.scopeError(); err != nil {
+				return nil, err
+			}
 			return nil, errors.New("openapi: unsupported schema dialect")
 		}
 		e.once.Do(func() { e.resolve(s.doc) })
@@ -471,6 +497,9 @@ func (s *Schema) references() ([]SchemaReference, error) {
 func (e *schemaEdge) resolve(d *document) {
 	r := &e.ref
 	r.Keyword, r.Value = e.keyword, e.v.text()
+	if r.Err = e.v.scopeError(); r.Err != nil {
+		return
+	}
 	if (e.keyword == "mapping" || e.keyword == "defaultMapping") && componentName.MatchString(r.Value) {
 		r.URI = d.tree.source("/components/schemas/" + escapeToken(r.Value))
 	} else {
