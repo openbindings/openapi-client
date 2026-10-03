@@ -19,6 +19,7 @@ type frameReader struct {
 	r       io.Reader
 	buf     [2048]byte
 	lo, hi  int
+	crAt    int
 	err     error
 	scratch []byte
 }
@@ -32,6 +33,7 @@ func (r *frameReader) fill() error {
 	}
 	for range 100 {
 		r.lo = 0
+		r.crAt = -1
 		r.hi, r.err = r.r.Read(r.buf[:])
 		r.err = readFailed(r.err)
 		if r.hi > 0 {
@@ -57,11 +59,19 @@ func (r *frameReader) until(sep byte, cr bool, bound int64) ([]byte, byte, error
 		p := r.buf[r.lo:r.hi]
 		i := -1
 		if cr {
-			for j, c := range p {
-				if c == sep || c == '\r' {
-					i = j
-					break
+			// Cache the next CR; search LF only up to it. Neither a long
+			// LF-only suffix nor a CR-only suffix is repeatedly scanned.
+			if r.crAt < r.lo {
+				r.crAt = bytes.IndexByte(p, '\r')
+				if r.crAt < 0 {
+					r.crAt = r.hi
+				} else {
+					r.crAt += r.lo
 				}
+			}
+			i = bytes.IndexByte(p[:r.crAt-r.lo], sep)
+			if i < 0 && r.crAt < r.hi {
+				i = r.crAt - r.lo
 			}
 		} else {
 			i = bytes.IndexByte(p, sep)
@@ -119,8 +129,8 @@ func newSequenceReader(r io.Reader, sq sequence, bound int64) *sequenceReader {
 
 func (f *sequenceReader) next() ([]byte, error) {
 	if f.sq.events {
-		e, err := f.event()
-		if err != nil {
+		var e eventFields
+		if err := f.event(&e); err != nil {
 			return nil, err
 		}
 		f.object = e.appendJSON(f.object[:0])
@@ -186,8 +196,8 @@ type eventFields struct {
 	typeSet, idSet bool
 }
 
-func (f *sequenceReader) event() (eventFields, error) {
-	var e eventFields
+func (f *sequenceReader) event(e *eventFields) error {
+	*e = eventFields{}
 	f.data = f.data[:0]
 	var used int64
 	for {
@@ -195,14 +205,14 @@ func (f *sequenceReader) event() (eventFields, error) {
 			lf, err := f.wire.optionalLF()
 			f.afterCR = false
 			if err != nil {
-				return eventFields{}, err
+				return err
 			}
 			if lf && f.chargeLF {
 				used++
 			}
 		}
 		if used > f.bound {
-			return eventFields{}, &http.MaxBytesError{Limit: f.bound}
+			return &http.MaxBytesError{Limit: f.bound}
 		}
 		left := f.bound - used
 		if !f.started {
@@ -213,26 +223,26 @@ func (f *sequenceReader) event() (eventFields, error) {
 			line = bytes.TrimPrefix(line, []byte("\xef\xbb\xbf"))
 			f.started = true
 			if int64(len(line)) > f.bound-used {
-				return eventFields{}, &http.MaxBytesError{Limit: f.bound}
+				return &http.MaxBytesError{Limit: f.bound}
 			}
 		}
 		if err != nil {
 			if _, ok := err.(*http.MaxBytesError); ok {
 				err = &http.MaxBytesError{Limit: f.bound}
 			}
-			return eventFields{}, err // even EOF drops an unterminated block
+			return err // even EOF drops an unterminated block
 		}
 		f.afterCR, f.chargeLF = end == '\r', len(line) > 0
 		if len(line) == 0 {
 			used = 0
 			if e.data != nil || e.typeSet || e.idSet || e.retry != "" {
-				return e, nil
+				return nil
 			}
 			continue
 		}
 		used += int64(len(line)) + 1
 		if used > f.bound {
-			return eventFields{}, &http.MaxBytesError{Limit: f.bound}
+			return &http.MaxBytesError{Limit: f.bound}
 		}
 		name, value, _ := bytes.Cut(line, []byte{':'})
 		if len(value) > 0 && value[0] == ' ' {
@@ -271,19 +281,20 @@ func (f *sequenceReader) event() (eventFields, error) {
 	}
 }
 
-func (e eventFields) value() (Event, error) {
-	v := Event{Data: e.data, Event: e.typ, ID: e.id, IDSet: e.idSet, RetrySet: e.retry != ""}
-	if v.RetrySet {
+func (e *eventFields) value(v *Event) error {
+	var retry time.Duration
+	if e.retry != "" {
 		n, err := strconv.ParseUint(e.retry, 10, 64)
 		if err != nil || n > uint64((1<<63-1)/time.Millisecond) {
-			return Event{}, badItem(errors.New("event retry exceeds time.Duration's millisecond range"))
+			return badItem(errors.New("event retry exceeds time.Duration's millisecond range"))
 		}
-		v.Retry = time.Duration(n) * time.Millisecond
+		retry = time.Duration(n) * time.Millisecond
 	}
-	return v, nil
+	*v = Event{Data: e.data, Event: e.typ, ID: e.id, IDSet: e.idSet, Retry: retry, RetrySet: e.retry != ""}
+	return nil
 }
 
-func (e eventFields) appendJSON(b []byte) []byte {
+func (e *eventFields) appendJSON(b []byte) []byte {
 	b = append(b, '{')
 	field := func(name, value string) {
 		if b[len(b)-1] != '{' {

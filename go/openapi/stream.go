@@ -199,14 +199,15 @@ func Events(r *Response) iter.Seq2[Event, error] {
 			return
 		}
 		f := newSequenceReader(r.Body, sequenceOf(ct), limit(x.cfg.MaxItemBytes, 16<<20))
+		var e eventFields
 		for {
-			e, err := f.event()
+			err := f.event(&e)
 			if err == io.EOF {
 				return
 			}
 			var value Event
 			if err == nil {
-				value, err = e.value()
+				err = e.value(&value)
 			}
 			err = withContext(x, err)
 			terminal := itemTerminal(x, err)
