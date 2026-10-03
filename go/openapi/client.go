@@ -637,7 +637,8 @@ type Request struct {
 // success or failure nor decodes the body. The caller owns and must close
 // Response.Body. A request body may still be sending after response headers
 // arrive. WaitRequest reports its separate completion or failure;
-// closing Response.Body or canceling the call context stops it.
+// closing Response.Body or canceling the call context stops it, except for
+// the unchanged upgrade and tunnel bodies described below.
 // A custom HTTPClient.Transport can also handle a Swagger 2.0 ws or wss
 // URL. Send exposes the resulting status and body without imposing
 // WebSocket framing; a 101 upgrade is returned as-is.
@@ -647,6 +648,8 @@ type Request struct {
 // policy differs from Call and Stream. For a CONNECT operation, a custom
 // HTTPClient.Transport can return a Body implementing io.ReadWriteCloser
 // for tunnel use; the client leaves that body unchanged.
+// Closing an unchanged upgrade or tunnel body has the transport's behavior;
+// cancel the original call context to signal an outstanding upload to stop.
 func (r *Request) Send(ctx context.Context) (*Response, error) {
 	x, req, err := r.newExchange(ctx)
 	if err != nil {
@@ -762,8 +765,10 @@ func (r *Response) Decode(out any) error {
 // a transport that neither reads nor closes it, the wait, and Call's,
 // ends only with the context.
 // A cancellation of ctx ends only this wait; cancel the call's original
-// context or close Body to stop an outstanding upload. A caller of Send or
-// Stream should read or close Body concurrently when the peer needs that
+// context or close Body to stop an outstanding upload. For Send's unchanged
+// upgrade and tunnel bodies, use the original context; their Close behavior
+// belongs to the transport. A caller of Send or Stream should read or close
+// Body concurrently when the peer needs that
 // progress before it can read the rest of the request.
 func (r *Response) WaitRequest(ctx context.Context) error {
 	if x := exchangeOf(r.Response); x != nil {

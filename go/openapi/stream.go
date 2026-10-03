@@ -83,7 +83,9 @@ var ErrItem = errors.New("openapi: bad item")
 //   - multipart types: one per part, decoded by the part's own
 //     Content-Type as Call decodes a body, text/plain where it has none
 //     (message/rfc822 in multipart/digest), after any base64 or
-//     quoted-printable Content-Transfer-Encoding is removed. With T =
+//     quoted-printable Content-Transfer-Encoding is removed. An unknown
+//     transfer encoding makes the effective type application/octet-stream
+//     and leaves its bytes encoded, as RFC 2045 requires. With T =
 //     *multipart.Part, each item is the part as mime/multipart's NextPart
 //     returns it, its body read as it arrives and valid until the next
 //     iteration. Nested multipart bodies are decoded as Call decodes them,
@@ -169,6 +171,7 @@ func Items[T any](r *Response) iter.Seq2[T, error] {
 // an earlier block's ID or retry. Blocks that set no valid field are skipped;
 // EOF discards an unfinished block. A valid retry integer that cannot fit in
 // Event.Retry yields an ErrItem, and iteration continues with the next block.
+// Invalid UTF-8 follows the WHATWG Encoding standard's replacement decoder.
 // A body of another media type, or a Response not from Stream or
 // Request.Send, yields one error. Errors, and
 // closing Body, are as for [Items]. The client never reconnects; to resume,
