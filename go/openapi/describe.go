@@ -509,8 +509,10 @@ func (c *Client) Schema(uri string) (*Schema, error) {
 
 // A SchemaReference is one reference in a Schema's Raw tree: a standard
 // $ref or $dynamicRef, or a value of a discriminator's mapping or, in
-// OpenAPI 3.2, its defaultMapping, a component name there resolved as
-// OpenAPI says. A custom dialect can have additional reference keywords;
+// OpenAPI 3.2, its defaultMapping. A component-name value selects only the
+// entry document's components/schemas, with no fallback to the referring
+// document and no fetch. A ./ prefix makes a value a relative URI instead.
+// A custom dialect can have additional reference keywords;
 // the client does not interpret those. Raw preserves them for the
 // dialect-aware caller.
 type SchemaReference struct {
@@ -525,7 +527,8 @@ type SchemaReference struct {
 	Value   string
 
 	// URI is Value resolved against the base effective at At, including
-	// nested $id resources. It can be passed to Client.Schema.
+	// nested $id resources. For a component name, it names that entry
+	// component. It can be passed to Client.Schema.
 	URI string
 
 	// Target is the resolved static target. For $dynamicRef it is only the
