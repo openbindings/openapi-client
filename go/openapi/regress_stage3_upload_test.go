@@ -236,9 +236,11 @@ func TestCloseDuringReadDefersTheEnd(t *testing.T) {
 				if err != nil {
 					t.Fatalf("Send: %v", err)
 				}
+				// Establish the in-flight Read before response Close can
+				// stop the upload and prevent that Read from beginning.
+				await(t, closing, "the transport's Close")
 				io.Copy(io.Discard, resp.Body)
 				resp.Body.Close()
-				await(t, closing, "the transport's Close")
 				go func() {
 					defer close(returned)
 					resp.WaitRequest(ctx)
