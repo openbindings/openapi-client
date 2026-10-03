@@ -56,25 +56,34 @@ var ErrItem = errors.New("openapi: bad item")
 //     OpenAPI 3.2 defines for it, whose members are only the fields the
 //     event set: "data", "event" and "id" as strings, "retry" as a number.
 //     T is the type the operation's itemSchema describes; to decode each
-//     event's data instead, use [Events].
+//     event's data instead, use [Events]. Dispatch and field presence are
+//     as for Events, but retry is a JSON integer without Event.Retry's
+//     time.Duration range restriction.
 //   - multipart types: one per part, decoded by the part's own
 //     Content-Type as Call decodes a body, text/plain where it has none
 //     (message/rfc822 in multipart/digest), after any base64 or
 //     quoted-printable Content-Transfer-Encoding is removed. With T =
 //     *multipart.Part, each item is the part as mime/multipart's NextPart
 //     returns it, its body read as it arrives and valid until the next
-//     iteration.
+//     iteration. Nested multipart bodies are decoded as Call decodes them,
+//     without flattening their parts.
 //   - any other media type: the whole body, as one item.
 //
 // The media type is the response's Content-Type, read as Call reads it, so
 // a T of any receives a body without one as one []byte.
 // An empty body yields no items. Items decode as Call decodes, so with the
-// client's own JSON codec a T of any keeps numbers exact. An error that
-// concerns one item wraps [ErrItem]
-// and is yielded in its place, and the iteration goes on. Any other error
+// client's own JSON codec a T of any keeps numbers exact. A T of []byte
+// bypasses value decoding and receives the framed item's bytes; for SSE,
+// these are the event object's JSON representation. The JSON-sequence
+// scalar-truncation rule still applies. An error that concerns one item
+// wraps [ErrItem] and is yielded in its place, and the iteration goes on.
+// Any other error
 // (a read failure, the context's error, an item over Options.MaxItemBytes)
 // is yielded last. Items yielded before an error stand. When the loop ends,
 // by break or otherwise, Body is closed.
+// A non-EOF read error discards an unfinished item, but completed items
+// read with that error are yielded first. Ordinary EOF may finish a JSON
+// line or JSON-sequence record; SSE dispatch requires an empty line.
 //
 // r must come from Stream or Request.Send, and may be iterated once; for
 // any other Response, Items yields one error.
@@ -84,8 +93,14 @@ func Items[T any](r *Response) iter.Seq2[T, error] {
 
 // Events returns the server-sent events of r's open text/event-stream body as
 // they arrive, one per dispatched event, parsed as the HTML standard says.
-// Events that set no field are skipped. A body of another media type, or a
-// Response not from Stream or Request.Send, yields one error. Errors, and
+// Its non-browser dispatch rule yields each empty-line-terminated block
+// that sets at least one valid data, event, id or retry field, including a
+// block without data. Fields belong to that block alone, without inheriting
+// an earlier block's ID or retry. Blocks that set no valid field are skipped;
+// EOF discards an unfinished block. A valid retry integer that cannot fit in
+// Event.Retry yields an ErrItem, and iteration continues with the next block.
+// A body of another media type, or a Response not from Stream or
+// Request.Send, yields one error. Errors, and
 // closing Body, are as for [Items]. The client never reconnects; to resume,
 // call again with a Last-Event-ID field in Input.Header.
 func Events(r *Response) iter.Seq2[Event, error] {

@@ -137,7 +137,12 @@ type Options struct {
 	// sequential, multipart or application/x-www-form-urlencoded type, whose
 	// framing and field encoding stay the client's, as OpenAPI's Encoding
 	// Object governs them; their items and parts use the codec for their own
-	// type. An Encode error
+	// type. Sequential response items use application/json for JSON Lines
+	// and SSE event objects, or application/json or the corresponding +json
+	// type for JSON sequences. Whole sequential responses are assembled as
+	// JSON arrays and decoded once by that item-type codec, without decoding
+	// and re-encoding each item.
+	// An Encode error
 	// refuses the call at the body's or parameter's Inputs key, or aborts
 	// the body for an iterator's item; a Decode error is a *DecodeError, or
 	// an ErrItem for one item.
@@ -161,6 +166,17 @@ type Options struct {
 	// means no limit. A longer item ends the iteration with an
 	// *http.MaxBytesError. Bytes read from a Stream's Body directly, or from
 	// a *multipart.Part by the caller, are not bounded.
+	//
+	// The bound counts bytes before value decoding: a JSON line without its
+	// terminating LF or CRLF; a JSON-sequence record without RS, including
+	// its JSON whitespace; or an SSE block's nonblank lines and their line
+	// endings, including ignored fields and comments, but not its terminating
+	// empty line or the stream's optional leading UTF-8 BOM. Each empty SSE
+	// line resets the count, even when no event is dispatched. A decoded
+	// multipart part counts its body after transfer decoding, excluding its
+	// headers and boundaries; any other body counts in full. MaxBodyBytes
+	// does not additionally bound Items or Events. Whole-response decoding
+	// uses MaxBodyBytes on the response bytes, without an item bound.
 	MaxItemBytes int64
 
 	// NameOnlyEmpty sends "" for a Swagger 2.0 query or formData parameter
