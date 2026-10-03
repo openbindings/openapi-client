@@ -137,7 +137,12 @@ type Options struct {
 	// sequential, multipart or application/x-www-form-urlencoded type, whose
 	// framing and field encoding stay the client's, as OpenAPI's Encoding
 	// Object governs them; their items and parts use the codec for their own
-	// type. An Encode error
+	// type. Sequential response items use application/json for JSON Lines
+	// and SSE event objects, or application/json or the corresponding +json
+	// type for JSON sequences. Whole sequential responses are assembled as
+	// JSON arrays and decoded once by that item-type codec, without decoding
+	// and re-encoding each item.
+	// An Encode error
 	// refuses the call at the body's or parameter's Inputs key, or aborts
 	// the body for an iterator's item; a Decode error is a *DecodeError, or
 	// an ErrItem for one item.
@@ -161,6 +166,17 @@ type Options struct {
 	// means no limit. A longer item ends the iteration with an
 	// *http.MaxBytesError. Bytes read from a Stream's Body directly, or from
 	// a *multipart.Part by the caller, are not bounded.
+	//
+	// The bound counts bytes before value decoding: a JSON line without its
+	// terminating LF or CRLF; a JSON-sequence record without RS, including
+	// its JSON whitespace; or an SSE block's nonblank lines and their line
+	// endings, including ignored fields and comments, but not its terminating
+	// empty line or the stream's optional leading UTF-8 BOM. Each empty SSE
+	// line resets the count, even when no event is dispatched. A decoded
+	// multipart part counts its body after transfer decoding, excluding its
+	// headers and boundaries; any other body counts in full. MaxBodyBytes
+	// does not additionally bound Items or Events. Whole-response decoding
+	// uses MaxBodyBytes on the response bytes, without an item bound.
 	MaxItemBytes int64
 
 	// NameOnlyEmpty sends "" for a Swagger 2.0 query or formData parameter
@@ -621,7 +637,8 @@ type Request struct {
 // success or failure nor decodes the body. The caller owns and must close
 // Response.Body. A request body may still be sending after response headers
 // arrive. WaitRequest reports its separate completion or failure;
-// closing Response.Body or canceling the call context stops it.
+// closing Response.Body or canceling the call context stops it, except for
+// the unchanged upgrade and tunnel bodies described below.
 // A custom HTTPClient.Transport can also handle a Swagger 2.0 ws or wss
 // URL. Send exposes the resulting status and body without imposing
 // WebSocket framing; a 101 upgrade is returned as-is.
@@ -631,13 +648,14 @@ type Request struct {
 // policy differs from Call and Stream. For a CONNECT operation, a custom
 // HTTPClient.Transport can return a Body implementing io.ReadWriteCloser
 // for tunnel use; the client leaves that body unchanged.
+// Closing an unchanged upgrade or tunnel body has the transport's behavior;
+// cancel the original call context to signal an outstanding upload to stop.
 func (r *Request) Send(ctx context.Context) (*Response, error) {
 	x, req, err := r.newExchange(ctx)
 	if err != nil {
 		return nil, err
 	}
-	resp, _, err := x.send(req)
-	return resp, err
+	return x.streamResponse(req, false)
 }
 
 // Call sends r with ctx, adding credentials, and returns as [Client.Call]
@@ -747,8 +765,10 @@ func (r *Response) Decode(out any) error {
 // a transport that neither reads nor closes it, the wait, and Call's,
 // ends only with the context.
 // A cancellation of ctx ends only this wait; cancel the call's original
-// context or close Body to stop an outstanding upload. A caller of Send or
-// Stream should read or close Body concurrently when the peer needs that
+// context or close Body to stop an outstanding upload. For Send's unchanged
+// upgrade and tunnel bodies, use the original context; their Close behavior
+// belongs to the transport. A caller of Send or Stream should read or close
+// Body concurrently when the peer needs that
 // progress before it can read the rest of the request.
 func (r *Response) WaitRequest(ctx context.Context) error {
 	if x := exchangeOf(r.Response); x != nil {

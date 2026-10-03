@@ -53,8 +53,9 @@ type exchange struct {
 	cfg *config
 	op  *operation
 	selection
-	claim *atomic.Bool // a body that can be read once, which the send that hands it over takes
-	resp  Response
+	claim  *atomic.Bool // a body that can be read once, which the send that hands it over takes
+	resp   Response
+	stream *responseStream
 	upload
 }
 
@@ -137,6 +138,10 @@ func (u *upload) publish() {
 	u.done = true
 	if u.last != nil {
 		u.err = u.last.result
+		if s := u.last.x.stream; s != nil && s.stop != nil {
+			s.stop()
+			s.stop = nil
+		}
 	}
 	if u.wait != nil {
 		close(u.wait)
@@ -337,6 +342,11 @@ func (x *exchange) finish(r *Response, ct parsedMedia, out any) error {
 	if r.StatusCode/100 == 2 {
 		return x.decode(r, ct, out)
 	}
+	return join(x.status(r), x.settle())
+}
+
+// status retains a failed response without waiting for its upload.
+func (x *exchange) status(r *Response) error {
 	se := &StatusError{Response: r}
 	if !bodiless(r.Response) {
 		se.Content, se.Err = readAll(nil, r.Body, r.ContentLength, limit(x.cfg.MaxErrorBytes, 1<<20))
@@ -344,7 +354,7 @@ func (x *exchange) finish(r *Response, ct parsedMedia, out any) error {
 	}
 	r.Body.Close()
 	se.Response = r.keep(se.Content, se.Err != nil)
-	return join(se, x.settle())
+	return se
 }
 
 // keep makes r's Body read content, in place of the body it has read, and
@@ -457,8 +467,8 @@ func (cfg *config) read(r *http.Response, ct parsedMedia, decl *Message, out any
 		_, err := io.Copy(p, r.Body)
 		return nil, err == nil, err
 	}
-	if coding := r.Header["Content-Encoding"]; len(coding) > 0 && coding[0] != "" && !strings.EqualFold(coding[0], "identity") {
-		return nil, false, fmt.Errorf("cannot decode a body with Content-Encoding %q", coding[0])
+	if err := contentCoding(r.Header); err != nil {
+		return nil, false, err
 	}
 	data, err := readAll(nil, r.Body, r.ContentLength, n)
 	if err != nil {
@@ -508,10 +518,8 @@ func (cfg *config) decodeData(ct parsedMedia, decl *Message, data []byte, out an
 		return decodeJSON(data, out)
 	case cls == xmlClass:
 		return decodeXML(data, ct, out)
-	case cls == sequentialClass && len(data) == 0:
-		return json.Unmarshal([]byte("[]"), out)
 	case cls == sequentialClass:
-		return notYet("decoding " + ct.full)
+		return cfg.decodeSequence(ct, data, out)
 	case len(data) == 0:
 		return nil
 	}
@@ -610,7 +618,10 @@ func readAll(dst []byte, r io.Reader, size, bound int64) ([]byte, error) {
 		dst = slices.Grow(dst, int(min(size, bound, 1<<20))+1)
 	}
 	for {
-		left := bound + 1 - int64(len(dst)-start) // what may still be read
+		left := bound - int64(len(dst)-start) // what may still be read
+		if left < 1<<63-1 {
+			left++ // one sentinel byte, unless the bound is already MaxInt64
+		}
 		if len(dst) == cap(dst) {
 			dst = slices.Grow(dst, int(min(max(512, int64(len(dst)-start)), left)))
 		}
@@ -714,9 +725,9 @@ type sentBody struct {
 	rc  io.ReadCloser // read instead of p when set: a body the caller set, of length p.size or -1, or p's reader
 
 	// Guarded by x.mu.
-	prev                                     *sentBody // the generation handed over before it
-	handed, reading, finished, closed, ended bool
-	result                                   error // how its reading finished: nil at io.EOF
+	prev                                              *sentBody // the generation handed over before it
+	handed, reading, finished, closed, closing, ended bool
+	result                                            error // how its reading finished: nil at io.EOF
 }
 
 // newSent returns a generation of p, tracked by x if not nil.
@@ -749,7 +760,7 @@ func (b *sentBody) Read(buf []byte) (int, error) {
 			b.result = withContext(b.x, err)
 		}
 	}
-	if b.closed {
+	if b.closed && !b.closing {
 		u.end(b)
 	}
 	u.mu.Unlock()
@@ -780,17 +791,26 @@ func (b *sentBody) read(buf []byte) (n int, err error) {
 // Close closes the caller's body, or stops an iterator once no Read of it
 // is in flight, and ends the generation.
 func (b *sentBody) Close() error {
+	if b.x != nil {
+		b.x.mu.Lock()
+		if b.closed {
+			b.x.mu.Unlock()
+			return nil
+		}
+		b.closed, b.closing = true, true
+		b.x.mu.Unlock()
+	}
 	var err error
 	if b.rc != nil {
 		err = b.rc.Close()
 	}
 	if b.x != nil {
-		u := &b.x.upload
-		u.mu.Lock()
-		if b.closed = true; !b.reading {
-			u.end(b)
+		b.x.mu.Lock()
+		b.closing = false
+		if !b.reading {
+			b.x.end(b)
 		}
-		u.mu.Unlock()
+		b.x.mu.Unlock()
 	}
 	return err
 }

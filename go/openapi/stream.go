@@ -3,7 +3,12 @@ package openapi
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"iter"
+	"mime/multipart"
+	"net/http"
+	"strings"
 	"time"
 )
 
@@ -28,13 +33,29 @@ import (
 // cancelling it before the headers arrive is an error from Stream, and after
 // them it is observable from WaitRequest and from an affected response read.
 func (c *Client) Stream(ctx context.Context, key string, in *Input) (*Response, error) {
-	panic("unimplemented")
+	o, err := c.operation(key)
+	if err != nil {
+		return nil, err
+	}
+	x := &exchange{Context: ctx, cfg: c.cfg, op: o}
+	re := RequestError{Err: o.Err}
+	req, p, _, sec := c.newRequest(x, o, in, &re)
+	if err := re.refused(); err != nil {
+		return nil, err
+	}
+	x.selection = sec
+	x.attach(req, p)
+	return x.streamResponse(req, true)
 }
 
 // Stream sends r with ctx, adding credentials, and returns as
 // [Client.Stream] does.
 func (r *Request) Stream(ctx context.Context) (*Response, error) {
-	panic("unimplemented")
+	x, req, err := r.newExchange(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return x.streamResponse(req, true)
 }
 
 // ErrItem is wrapped by an error that concerns one item alone: the item was
@@ -56,40 +77,151 @@ var ErrItem = errors.New("openapi: bad item")
 //     OpenAPI 3.2 defines for it, whose members are only the fields the
 //     event set: "data", "event" and "id" as strings, "retry" as a number.
 //     T is the type the operation's itemSchema describes; to decode each
-//     event's data instead, use [Events].
+//     event's data instead, use [Events]. Dispatch and field presence are
+//     as for Events, but retry is a JSON integer without Event.Retry's
+//     time.Duration range restriction.
 //   - multipart types: one per part, decoded by the part's own
 //     Content-Type as Call decodes a body, text/plain where it has none
 //     (message/rfc822 in multipart/digest), after any base64 or
-//     quoted-printable Content-Transfer-Encoding is removed. With T =
+//     quoted-printable Content-Transfer-Encoding is removed. An unknown
+//     transfer encoding makes the effective type application/octet-stream
+//     and leaves its bytes encoded, as RFC 2045 requires. With T =
 //     *multipart.Part, each item is the part as mime/multipart's NextPart
 //     returns it, its body read as it arrives and valid until the next
-//     iteration.
+//     iteration. Nested multipart bodies are decoded as Call decodes them,
+//     without flattening their parts.
 //   - any other media type: the whole body, as one item.
 //
 // The media type is the response's Content-Type, read as Call reads it, so
 // a T of any receives a body without one as one []byte.
 // An empty body yields no items. Items decode as Call decodes, so with the
-// client's own JSON codec a T of any keeps numbers exact. An error that
-// concerns one item wraps [ErrItem]
-// and is yielded in its place, and the iteration goes on. Any other error
+// client's own JSON codec a T of any keeps numbers exact. A T of []byte
+// bypasses value decoding and receives the framed item's bytes; for SSE,
+// these are the event object's JSON representation. The JSON-sequence
+// scalar-truncation rule still applies. An error that concerns one item
+// wraps [ErrItem] and is yielded in its place, and the iteration goes on.
+// Any other error
 // (a read failure, the context's error, an item over Options.MaxItemBytes)
 // is yielded last. Items yielded before an error stand. When the loop ends,
 // by break or otherwise, Body is closed.
+// A non-EOF read error discards an unfinished item, but completed items
+// read with that error are yielded first. Ordinary EOF may finish a JSON
+// line or JSON-sequence record; SSE dispatch requires an empty line.
 //
 // r must come from Stream or Request.Send, and may be iterated once; for
 // any other Response, Items yields one error.
 func Items[T any](r *Response) iter.Seq2[T, error] {
-	panic("unimplemented")
+	return func(yield func(T, error) bool) {
+		var zero T
+		x, err := claimResponse(r)
+		if err != nil {
+			yield(zero, err)
+			return
+		}
+		defer closeStream(x, r)
+		if bodiless(r.Response) {
+			return
+		}
+		_, raw := any(&zero).(*[]byte)
+		_, part := any(&zero).(**multipart.Part)
+		if !raw && !part {
+			if err := contentCoding(r.Header); err != nil {
+				yield(zero, err)
+				return
+			}
+		}
+		ct := mediaOf(r.Header)
+		bound := limit(x.cfg.MaxItemBytes, 16<<20)
+		switch {
+		case strings.EqualFold(ct.typ, "multipart"):
+			multipartItems(x, r, ct, bound, yield)
+		case ct.class() == sequentialClass:
+			f := newSequenceReader(r.Body, sequenceOf(ct), bound)
+			for {
+				data, err := f.next()
+				if err == io.EOF {
+					return
+				}
+				var value T
+				if err == nil {
+					err = decodeItem(x.cfg, f.sq.item, data, &value)
+				}
+				terminal := false
+				if err != nil {
+					err = withContext(x, err)
+					terminal = itemTerminal(x, err)
+				}
+				if !yield(value, err) || terminal {
+					return
+				}
+			}
+		default:
+			data, err := readAll(nil, r.Body, -1, bound)
+			if err == nil && len(data) == 0 {
+				return
+			}
+			if err == nil {
+				err = decodeItem(x.cfg, ct, data, &zero)
+			}
+			yield(zero, withContext(x, err))
+		}
+	}
 }
 
 // Events returns the server-sent events of r's open text/event-stream body as
 // they arrive, one per dispatched event, parsed as the HTML standard says.
-// Events that set no field are skipped. A body of another media type, or a
-// Response not from Stream or Request.Send, yields one error. Errors, and
+// Its non-browser dispatch rule yields each empty-line-terminated block
+// that sets at least one valid data, event, id or retry field, including a
+// block without data. Fields belong to that block alone, without inheriting
+// an earlier block's ID or retry. Blocks that set no valid field are skipped;
+// EOF discards an unfinished block. A valid retry integer that cannot fit in
+// Event.Retry yields an ErrItem, and iteration continues with the next block.
+// Invalid UTF-8 follows the WHATWG Encoding standard's replacement decoder.
+// A body of another media type, or a Response not from Stream or
+// Request.Send, yields one error. Errors, and
 // closing Body, are as for [Items]. The client never reconnects; to resume,
 // call again with a Last-Event-ID field in Input.Header.
 func Events(r *Response) iter.Seq2[Event, error] {
-	panic("unimplemented")
+	return func(yield func(Event, error) bool) {
+		x, err := claimResponse(r)
+		if err != nil {
+			yield(Event{}, err)
+			return
+		}
+		defer closeStream(x, r)
+		ct := mediaOf(r.Header)
+		if !strings.EqualFold(ct.typ, "text") || !strings.EqualFold(ct.sub, "event-stream") {
+			yield(Event{}, errors.New("openapi: Events requires text/event-stream"))
+			return
+		}
+		if err := contentCoding(r.Header); err != nil {
+			yield(Event{}, err)
+			return
+		}
+		if bodiless(r.Response) {
+			return
+		}
+		f := newSequenceReader(r.Body, sequenceOf(ct), limit(x.cfg.MaxItemBytes, 16<<20))
+		var e eventFields
+		for {
+			err := f.event(&e)
+			if err == io.EOF {
+				return
+			}
+			var value Event
+			if err == nil {
+				err = e.value(&value)
+			}
+			terminal := false
+			if err != nil {
+				err = withContext(x, err)
+				terminal = itemTerminal(x, err)
+			}
+			if !yield(value, err) || terminal {
+				return
+			}
+		}
+	}
 }
 
 // An Event is one server-sent event, with the fields it set.
@@ -112,4 +244,64 @@ type Event struct {
 	// the event set one: a zero Retry with RetrySet asks for no delay.
 	Retry    time.Duration
 	RetrySet bool
+}
+
+// decodeItem gives raw targets their own bytes; every value failure is local
+// to this item, while framing and read failures remain terminal.
+func decodeItem(cfg *config, ct parsedMedia, data []byte, out any) error {
+	if p, ok := out.(*[]byte); ok {
+		*p = append([]byte{}, data...)
+		return nil
+	}
+	if err := cfg.decodeData(ct, nil, data, out); err != nil {
+		return badItem(err)
+	}
+	return nil
+}
+
+type itemError struct{ err error }
+
+func (e *itemError) Error() string        { return ErrItem.Error() + ": " + e.err.Error() }
+func (e *itemError) Unwrap() error        { return e.err }
+func (e *itemError) Is(target error) bool { return target == ErrItem }
+
+func badItem(err error) error { return &itemError{err} }
+
+// readError preserves source error text and identity while marking its origin.
+// In particular, a source's ErrItem must not turn a read failure into recovery.
+type readError struct{ err error }
+
+func (e *readError) Error() string { return e.err.Error() }
+func (e *readError) Unwrap() error { return e.err }
+
+func readFailed(err error) error {
+	if err == nil || err == io.EOF {
+		return err
+	}
+	return &readError{err}
+}
+
+func contentCoding(h http.Header) error {
+	if coding := h["Content-Encoding"]; len(coding) > 0 && coding[0] != "" && !strings.EqualFold(coding[0], "identity") {
+		return fmt.Errorf("cannot decode a body with Content-Encoding %q", coding[0])
+	}
+	return nil
+}
+
+// itemTerminal classifies the error actually yielded, before yield can
+// change the context. A call-context error ends iteration even when an item
+// decoder failed at the same time; a decoder's own context stays local.
+func itemTerminal(ctx context.Context, err error) bool {
+	if err == nil {
+		return false
+	}
+	cause := ctx.Err()
+	if cause != nil && errors.Is(err, cause) {
+		return true
+	}
+	if e, ok := err.(*contextError); ok {
+		err = e.err
+	}
+	_, local := err.(*itemError)
+	return !local
 }

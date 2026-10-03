@@ -336,8 +336,11 @@ func TestH6AsyncRegisteredProtocol(t *testing.T) {
 				if err != nil {
 					t.Fatalf("Send: %v", err)
 				}
-				resp.Body.Close()
+				defer resp.Body.Close()
+				// Send's response Close stops an outstanding upload. Observe
+				// the transport's completed/incomplete consumption first.
 				werr := waitResult(t, resp)
+				resp.Body.Close()
 				if complete && werr != nil {
 					t.Errorf("WaitRequest = %v, want nil", werr)
 				}

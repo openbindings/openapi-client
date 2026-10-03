@@ -601,10 +601,8 @@ func TestIP4F8DecodeAForeignResponse(t *testing.T) {
 // any other empty body into a *any as an empty []byte": an empty body under
 // a type with a caller's codec (response.go:481), an empty JSON Lines body
 // (response.go:511), and an empty image into a typed pointer
-// (response.go:515). A JSON Lines body that is not empty is decoded by
-// Items, which stage 7 adds; until then decoding it into out is a
-// *DecodeError wrapping errors.ErrUnsupported (request.go:24,
-// response.go:513).
+// (response.go:515). Call decodes a nonempty sequential body as a JSON
+// array of its items, as its public contract requires in stage 7.
 func TestIP4F8EmptyAndSequentialResponseBodies(t *testing.T) {
 	var ct, body string
 	w := newWire(t, func(rw http.ResponseWriter, r *http.Request) { typedAnswer(200, ct, body)(rw, r) })
@@ -627,9 +625,13 @@ func TestIP4F8EmptyAndSequentialResponseBodies(t *testing.T) {
 	}
 	ct, body = "application/jsonl", "{}\n{}\n"
 	_, err := c.Call(t.Context(), "undeclared", nil, &items)
-	var de *openapi.DecodeError
-	if !errors.As(err, &de) || !errors.Is(err, errors.ErrUnsupported) {
-		t.Errorf("a JSON Lines body: %v; want a *DecodeError wrapping errors.ErrUnsupported until stage 7", err)
+	if err != nil || len(items) != 2 {
+		t.Fatalf("a JSON Lines body: %#v, %v; want two empty objects", items, err)
+	}
+	for i, item := range items {
+		if object, ok := item.(map[string]any); !ok || len(object) != 0 {
+			t.Errorf("item %d = %#v, want an empty object", i, item)
+		}
 	}
 }
 
