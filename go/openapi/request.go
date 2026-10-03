@@ -20,11 +20,6 @@ import (
 // noInput is the empty Input a nil *Input stands for.
 var noInput Input
 
-// notYet reports a feature a later stage of this package implements.
-func notYet(feature string) error {
-	return fmt.Errorf("%s is not implemented yet: %w", feature, errors.ErrUnsupported)
-}
-
 var (
 	errMissing    = errors.New("a required parameter is missing")
 	errDotSegment = errors.New(`the value forms a "." or ".." path segment, which URI resolution removes`)
