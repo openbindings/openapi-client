@@ -565,6 +565,24 @@ func (d *document) discover(ld *loading) error {
 		dc.readers[t].auditScope()
 		t.located = dc.readers[t].located
 	}
+	// Discovery has settled every claim and its workers have finished. Borrow
+	// path bytes from the identifier keys the document will retain, before any
+	// caller can read the URLs. This adds neither an index nor a cached string.
+	for uri, c := range d.ids {
+		if err := ld.ctx.Err(); err != nil {
+			return fmt.Errorf("openapi: %w", err)
+		}
+		// Short keys offer little storage to recover; avoid looking up their
+		// resource bases. Long nested identifiers are where copies compound.
+		if len(uri) < 256 {
+			continue
+		}
+		for ; c != nil; c = c.other {
+			if u := c.v.t.resourceBases[c.v.i]; u != nil {
+				shareResourceURI(u, uri)
+			}
+		}
+	}
 	d.pages = make([]atomic.Pointer[[factsPage]facts], n/factsPage+1)
 	return nil
 }
@@ -1615,6 +1633,22 @@ func (v value) resourceBase(base *url.URL, id value) *url.URL {
 		return u
 	}
 	return base
+}
+
+// shareResourceURI borrows matching path text from an identifier key already
+// retained by the document. It changes no field's value, leaves escaping and
+// resolution to net/url, and runs only before the loaded document is published.
+func shareResourceURI(u *url.URL, uri string) {
+	share := func(s string) string {
+		if s != "" {
+			if i := strings.Index(uri, s); i >= 0 {
+				return uri[i : i+len(s)]
+			}
+		}
+		return s
+	}
+	u.Path = share(u.Path)
+	u.RawPath = share(u.RawPath)
 }
 
 // target returns the node the reference ref, a string, names, and its JSON
