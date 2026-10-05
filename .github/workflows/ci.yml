@@ -64,7 +64,14 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go/go.mod
-      - run: go test ./... -timeout 10m
+      - name: Verify native Windows drive and file URI loading
+        run: go test ./openapi -run '^TestReviewRepairWindowsPaths$' -v
+        working-directory: go
+        env:
+          GOWORK: "off"
+      # Short mode retains functional and allocation checks. The full Linux
+      # race job owns timing gates; this runner quantizes short samples to zero.
+      - run: go test -short ./... -timeout 10m
         working-directory: go
         env:
           GOWORK: "off"
