@@ -5,6 +5,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"reflect"
 	"testing"
 	"time"
 
@@ -90,5 +91,18 @@ func TestReviewRepairJSONSequenceSuffix(t *testing.T) {
 	values, errs := stream7Collect[any](r)
 	if len(values) != 3 || errs[0] != nil || !errors.Is(errs[1], openapi.ErrItem) || errs[2] != nil {
 		t.Fatalf("values=%v errors=%v", values, errs)
+	}
+}
+
+// Raw records also stop at the completed text's LF. Extra JSON whitespace
+// is consumed before the next RS, independently of transport read sizes.
+func TestReviewRepairJSONSequenceRawWhitespace(t *testing.T) {
+	for _, chunk := range []int{1, 3, 4096} {
+		r, _ := stream7Response(t, "application/json-seq", "\x1e{}\n  \t\n\x1e[]\n", nil, chunk)
+		got, errs := stream7Collect[[]byte](r)
+		stream7NoErrors(t, errs)
+		if !reflect.DeepEqual(got, [][]byte{[]byte("{}\n"), []byte("[]\n")}) {
+			t.Fatalf("chunk %d: records %q", chunk, got)
+		}
 	}
 }

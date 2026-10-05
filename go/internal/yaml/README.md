@@ -6,7 +6,7 @@ LICENSE, NOTICE, README (as README.upstream.md), and module metadata
 (as UPSTREAM.go.mod). Upstream test files are omitted; the client tests
 exercise the independently specified Loader contract.
 
-The approved source is the 107,640-byte module archive at
+The upstream source is the 107,640-byte module archive at
 https://proxy.golang.org/go.yaml.in/yaml/v3/@v/v3.0.5.zip.
 
 - Archive SHA-256: `f2d70caa35f66283aec58b889af8c5f07c374c5934be27a738c1215263e19205`

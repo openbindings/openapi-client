@@ -129,7 +129,7 @@ func (r *frameReader) jsonRecord(bound int64) ([]byte, byte, error) {
 			// block. Multiline data still takes the incremental path below.
 			if i := bytes.IndexByte(p, '\x1e'); i >= 0 {
 				lf := bytes.IndexByte(p[:i], '\n')
-				if lf < 0 || len(bytes.Trim(p[lf:i], " \t\r\n")) == 0 {
+				if lf < 0 || lf == i-1 {
 					if int64(i) > bound {
 						return nil, 0, &http.MaxBytesError{Limit: bound}
 					}

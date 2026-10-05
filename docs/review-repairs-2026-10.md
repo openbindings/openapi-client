@@ -88,6 +88,15 @@ Windows performance parity. Linux CI also executes octal-value checks in a
 
 ## Decisions reserved for the owner
 
+A separate six-sample check against handwritten controls still misses the 15%
+target: prepared body Send +77.3% (411 ns extra), SSE +26.9% (4.05 µs per
+256 events), parameter cases +23.4% to +48.4% (195–433 ns extra), and dynamic
+bearer credentials +20.3% (385 ns extra). Header API keys were +13.3% and
+JSON-content parameters +4.4% in that run. An earlier paired-repair collection
+put the prepared/handwritten gap at about 66%; these small absolute timings
+vary across runs. Both collections are retained. No measurement establishes
+that further optimization is impossible.
+
 - **YAML maintenance:** this pass does not approve or replace the parser copy.
   The frozen Loader contract promises YAML 1.2 Core behavior and exact positions;
   the copied parser's patches implement parts of that promise. Keeping the copy
