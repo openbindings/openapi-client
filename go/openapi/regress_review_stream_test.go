@@ -3,6 +3,7 @@ package openapi_test
 import (
 	"errors"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"testing"
 	"time"
@@ -56,17 +57,27 @@ func TestReviewRepairMultipartTruncation(t *testing.T) {
 		{"--b\r\n\r\nhello\r\n--b\r\n", true},
 		{"--b\r\n\r\nhello\r\n--b--", false},
 		{"--b\r\n\r\nhello\r\n--b-- \t\r\nepilogue", false},
+		{"--b\r\nContent-Type: text/plain\r\n", true},
+		{"--b\r\n\r\nhello\r\n--b--X\r\n", true},
+		{"--b\n\nhello\n--b--\nepilogue", false},
 		{"", false},
 	} {
-		for _, chunk := range []int{1, 4096} {
-			r, _ := stream7Response(t, "multipart/mixed; boundary=b", tc.wire, nil, chunk)
-			_, errs := stream7Collect[[]byte](r)
-			var failed bool
-			for _, err := range errs {
-				failed = failed || err != nil
-			}
-			if failed != tc.bad {
-				t.Errorf("%q, chunk %d: errors %v", tc.wire, chunk, errs)
+		for _, chunk := range []int{1, 2, 3, 4, 5, 4096} {
+			for _, raw := range []bool{false, true} {
+				r, _ := stream7Response(t, "multipart/mixed; boundary=b", tc.wire, nil, chunk)
+				var errs []error
+				if raw {
+					_, errs = stream7Collect[*multipart.Part](r)
+				} else {
+					_, errs = stream7Collect[[]byte](r)
+				}
+				var failed bool
+				for _, err := range errs {
+					failed = failed || err != nil
+				}
+				if failed != tc.bad {
+					t.Errorf("%q, chunk %d: errors %v", tc.wire, chunk, errs)
+				}
 			}
 		}
 	}

@@ -51,6 +51,12 @@ jobs:
         working-directory: go
         env:
           GOWORK: "off"
+      - name: Exercise octal word boundaries on 32-bit Go
+        run: go test ./openapi -run '^TestReviewRepairOctalValues$'
+        working-directory: go
+        env:
+          GOWORK: "off"
+          GOARCH: "386"
   go-windows:
     runs-on: windows-latest
     steps:

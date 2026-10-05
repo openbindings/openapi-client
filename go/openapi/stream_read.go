@@ -209,7 +209,25 @@ func (r *multipartEnding) Read(p []byte) (int, error) {
 	if r.ended {
 		return n, err
 	}
-	for _, c := range p[:n] {
+	for i := 0; i < n; {
+		if r.matched < 0 {
+			// Skip ordinary header/payload bytes in bulk; only a line
+			// starting with two hyphens can be a closing delimiter.
+			j := bytes.Index(p[i:n], []byte("\n--"))
+			if j < 0 {
+				if p[n-1] == '\n' {
+					r.matched, r.cr = 0, false
+				} else if n-i >= 2 && p[n-2] == '\n' && p[n-1] == '-' {
+					r.matched, r.cr = 1, false
+				}
+				break
+			}
+			i += j + 3
+			r.matched, r.cr = 2, false
+			continue
+		}
+		c := p[i]
+		i++
 		if c == '\n' {
 			if r.matched == len(r.marker) {
 				r.ended = true

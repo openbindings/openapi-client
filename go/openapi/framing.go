@@ -123,6 +123,21 @@ func (r *frameReader) jsonRecord(bound int64) ([]byte, byte, error) {
 			return r.scratch, 0, err
 		}
 		p := r.buf[r.lo:r.hi]
+		if len(r.scratch) == 0 {
+			// A buffered single-line record needs no lexical scan or extra
+			// JSON validation. Its RS is already here, so delivery cannot
+			// block. Multiline data still takes the incremental path below.
+			if i := bytes.IndexByte(p, '\x1e'); i >= 0 {
+				lf := bytes.IndexByte(p[:i], '\n')
+				if lf < 0 || len(bytes.Trim(p[lf:i], " \t\r\n")) == 0 {
+					if int64(i) > bound {
+						return nil, 0, &http.MaxBytesError{Limit: bound}
+					}
+					r.lo += i + 1
+					return p[:i], '\x1e', nil
+				}
+			}
+		}
 		n, end := len(p), byte(0)
 		for i, c := range p {
 			if c == '\x1e' {
