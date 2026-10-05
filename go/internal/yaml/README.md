@@ -15,7 +15,7 @@ https://proxy.golang.org/go.yaml.in/yaml/v3/@v/v3.0.5.zip.
 
 `upstream.sha256` records the unmodified SHA-256 of every copied file,
 using its name in this directory. `openapi.patch` records the complete
-local source difference, including the added position accessor. From a copy of this directory,
+local source difference, including the added diagnostic accessors. From a copy of this directory,
 `git apply --reverse --unidiff-zero openapi.patch` reconstructs the source
 baseline verified by the manifest. Zero-context hunks keep the exact patch
 free of whitespace-only context lines.
@@ -40,10 +40,13 @@ this third-party footprint is recorded separately from client-owned code.
    directly, including anchored scalars, without rescanning source text.
    Reject the distinct verbatim `!<!>` spelling during scanning, as
    required by YAML 1.2.2 section 6.9.1, example 6.25.
-4. Add Decoder.ErrorPosition in position.go. It reads the existing
+4. Add Decoder.ErrorPosition and Decoder.ErrorProblem in position.go.
+   ErrorPosition reads the existing
    reader byte offset or scanner/parser/alias mark without changing
    parser state. The client uses these typed positions to report the
    original encoding's byte column instead of reflecting private fields.
+   ErrorProblem reads the existing diagnostic without a location prefix,
+   so the client need not parse the decoder's formatted error text.
 
 The internal import is intentional: downstream users receive these same
 sources with the OpenAPI module. A dependency's conventional vendor
