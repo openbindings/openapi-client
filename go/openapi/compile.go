@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"hash/maphash"
 	"net/textproto"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -487,6 +488,11 @@ func compileStyle(p *Param, in string, explode value) param {
 	pp := param{Param: p, style: cmp.Or(styles[p.Style], &noStyle), set: unreservedSet, name: escape(p.Name, unreservedSet)}
 	if p.AllowReserved {
 		pp.set = reservedSet
+		if in == "path" {
+			// Literal ? and # invalidate URL.RawPath; net/url then falls
+			// back to decoded Path, losing preserved percent triplets.
+			pp.set = reservedPathSet
+		}
 	}
 	return pp
 }
@@ -818,6 +824,10 @@ func (d *document) buildSwaggerServers(schemes value) *serverList {
 	if len(list) == 0 {
 		list = []string{""}
 	}
+	basePath := r.str("basePath")
+	u, hostErr := url.Parse("//" + host)
+	invalid := hostErr != nil || u.Host != host || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || strings.ContainsAny(host, "{}?#")
+	invalid = invalid || basePath != "" && basePath[0] != '/' || strings.ContainsAny(basePath, "{}?#")
 	sl := &serverList{}
 	for i, scheme := range list {
 		s := &Server{ID: "swagger-" + idOf(r) + "-" + strconv.Itoa(i), URL: scheme + "://" + host + r.str("basePath")}
@@ -825,7 +835,10 @@ func (d *document) buildSwaggerServers(schemes value) *serverList {
 			s.ID = "swagger-" + idOf(schemes) + "-" + strconv.Itoa(i)
 		}
 		sv := newServer(s, value{}, d.tree)
-		if host == "" || scheme == "" {
+		if invalid {
+			s.Err = errors.New("Swagger host must contain only a host and optional port; basePath must be an absolute path without query, fragment, or template")
+			sv.fixed = nil
+		} else if host == "" || scheme == "" {
 			s.Err = errors.New("Swagger server requires host and schemes or an HTTP retrieval URI")
 			sv.fixed = nil
 		}

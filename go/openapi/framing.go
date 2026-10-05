@@ -111,6 +111,75 @@ func (r *frameReader) optionalLF() (bool, error) {
 	return true, nil
 }
 
+// jsonRecord stops at RS, or at LF outside a top-level JSON value. This
+// lexical scan is linear even for multiline records. Decoding still owns
+// syntax validation; malformed input can always recover at the next RS.
+func (r *frameReader) jsonRecord(bound int64) ([]byte, byte, error) {
+	r.scratch = r.scratch[:0]
+	depth := 0
+	var quoted, escape, begun, invalid bool
+	for {
+		if err := r.fill(); err != nil {
+			return r.scratch, 0, err
+		}
+		p := r.buf[r.lo:r.hi]
+		n, end := len(p), byte(0)
+		for i, c := range p {
+			if c == '\x1e' {
+				n, end = i, c
+				break
+			}
+			if quoted {
+				if escape {
+					escape = false
+				} else if c == '\\' {
+					escape = true
+				} else if c == '"' {
+					quoted = false
+				}
+			} else {
+				switch c {
+				case '"':
+					quoted, begun = true, true
+				case '{', '[':
+					depth++
+					begun = true
+				case '}', ']':
+					depth--
+					begun = true
+				case ' ', '\t', '\r', '\n':
+				default:
+					begun = true
+				}
+				if c == '\n' && begun && depth <= 0 && !invalid {
+					n, end = i+1, c
+					break
+				}
+			}
+		}
+		if int64(len(r.scratch))+int64(n) > bound {
+			return nil, 0, &http.MaxBytesError{Limit: bound}
+		}
+		r.lo += n
+		if end == '\x1e' {
+			r.lo++
+		}
+		if end != 0 && len(r.scratch) == 0 {
+			if end != '\n' || json.Valid(p[:n]) {
+				return p[:n], end, nil
+			}
+			invalid = true
+		}
+		r.scratch = append(r.scratch, p[:n]...)
+		if end != 0 {
+			if end != '\n' || !invalid && json.Valid(r.scratch) {
+				return r.scratch, end, nil
+			}
+			invalid = true // do not rescan malformed records at every LF
+		}
+	}
+}
+
 // sequenceReader owns only one record's framing and an SSE block's fields.
 // Consumers choose recovery: Items continues after ErrItem, aggregate decode
 // fails, and Events alone imposes time.Duration's range on the retry field.
@@ -121,6 +190,8 @@ type sequenceReader struct {
 	started      bool
 	afterCR      bool
 	chargeLF     bool
+	rsTail       bool
+	rsUsed       int64
 	data, object []byte
 }
 
@@ -140,11 +211,12 @@ func (f *sequenceReader) next() ([]byte, error) {
 		f.object = e.appendJSON(f.object[:0])
 		return f.object, nil
 	}
+	if f.sq.rs {
+		return f.nextJSONRecord()
+	}
 	for {
 		sep, bound := byte('\n'), f.bound
-		if f.sq.rs {
-			sep = '\x1e'
-		} else if bound < 1<<63-1 {
+		if bound < 1<<63-1 {
 			bound++ // a possible CR in the terminating CRLF
 		}
 		data, end, err := f.wire.until(sep, false, bound)
@@ -154,27 +226,58 @@ func (f *sequenceReader) next() ([]byte, error) {
 			}
 			return nil, err
 		}
-		if !f.sq.rs && end == '\n' && len(data) > 0 && data[len(data)-1] == '\r' {
+		if end == '\n' && len(data) > 0 && data[len(data)-1] == '\r' {
 			data = data[:len(data)-1]
 		}
 		if int64(len(data)) > f.bound {
 			return nil, &http.MaxBytesError{Limit: f.bound}
 		}
-		if f.sq.rs && !f.started {
-			f.started = true
-			if len(data) > 0 {
-				return nil, badItem(errors.New("JSON sequence data precedes its first record separator"))
-			}
-		} else if f.sq.rs && len(data) > 0 {
-			if scalarTruncated(data) {
-				return nil, badItem(errors.New("JSON sequence scalar lacks trailing whitespace"))
-			}
-			return data, nil
-		} else if !f.sq.rs && len(bytes.Trim(data, " \t\r\n")) > 0 {
+		if len(bytes.Trim(data, " \t\r\n")) > 0 {
 			return data, nil
 		}
 		if err == io.EOF {
 			return nil, io.EOF
+		}
+	}
+}
+
+func (f *sequenceReader) nextJSONRecord() ([]byte, error) {
+	if !f.started || f.rsTail {
+		data, _, err := f.wire.until('\x1e', false, f.bound-f.rsUsed)
+		if err != nil && err != io.EOF {
+			if _, ok := err.(*http.MaxBytesError); ok {
+				err = &http.MaxBytesError{Limit: f.bound}
+			}
+			return nil, err
+		}
+		bad := len(data) > 0
+		if f.started {
+			bad = len(bytes.Trim(data, " \t\r\n")) > 0
+		}
+		f.started, f.rsTail, f.rsUsed = true, false, 0
+		if bad {
+			return nil, badItem(errors.New("JSON sequence data outside a record"))
+		}
+		if err == io.EOF {
+			return nil, err
+		}
+	}
+	for {
+		data, end, err := f.wire.jsonRecord(f.bound)
+		if err != nil && err != io.EOF {
+			return nil, err
+		}
+		if end == '\n' {
+			f.rsTail, f.rsUsed = true, int64(len(data))
+		}
+		if len(data) > 0 {
+			if scalarTruncated(data) {
+				return nil, badItem(errors.New("JSON sequence scalar lacks trailing whitespace"))
+			}
+			return data, nil
+		}
+		if err == io.EOF {
+			return nil, err
 		}
 	}
 }

@@ -155,6 +155,9 @@ func (x *exchange) hop(req *http.Request, resp *http.Response, method string, u 
 			h[k] = vs
 		}
 	}
+	if left && keep && x.payload.ctype != "" {
+		h.Set("Content-Type", x.payload.ctype)
+	}
 	// As net/http has it (Go issue 17494).
 	if x.cfg.jar != nil && len(h["Cookie"]) > 0 {
 		if set := resp.Cookies(); len(set) > 0 {

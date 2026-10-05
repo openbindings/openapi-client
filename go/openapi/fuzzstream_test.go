@@ -38,6 +38,17 @@ func stream7JSONOracle(data string, seq bool) ([]any, []bool) {
 		dec := json.NewDecoder(strings.NewReader(part))
 		dec.UseNumber()
 		err := dec.Decode(&value)
+		if seq && err == nil {
+			// RFC 7464 permits immediate delivery of a complete LF-ended
+			// text, with a later warning for junk before the next RS.
+			tail := part[dec.InputOffset():]
+			white := len(tail) - len(strings.TrimLeft(tail, " \t\r\n"))
+			if strings.Contains(tail[:white], "\n") && white < len(tail) {
+				values = append(values, value, nil)
+				bad = append(bad, false, true)
+				continue
+			}
+		}
 		if err == nil {
 			var tail any
 			if dec.Decode(&tail) == nil {

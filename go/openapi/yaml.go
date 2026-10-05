@@ -328,7 +328,17 @@ func yamlParseError(dec *yaml.Decoder, uri, src string, unit int, err error) err
 	if at < 0 {
 		at = yamlOffset(src, line, column)
 	}
-	return rejection(uri, src, min(max(0, at), len(src)), unit, err.Error())
+	msg := err.Error()
+	// The parser's legacy message may locate a surrounding context (and
+	// uses a different line convention). Report only its exact error mark.
+	if rest, ok := strings.CutPrefix(msg, "yaml: line "); ok {
+		if number, detail, ok := strings.Cut(rest, ": "); ok {
+			if _, err := strconv.Atoi(number); err == nil {
+				msg = "yaml: " + detail
+			}
+		}
+	}
+	return rejection(uri, src, min(max(0, at), len(src)), unit, msg)
 }
 
 // yamlOffset maps a parser mark to the UTF-8 source offset on rejection.
@@ -407,6 +417,24 @@ func yamlNumber(s string) (string, bool, error) {
 		base := 8
 		if s[1] == 'x' {
 			base = 16
+		}
+		if base == 8 {
+			// math/big scans base 8 by repeatedly multiplying the growing
+			// integer. Pack its three-bit digits directly into machine words
+			// so parsing a document-sized integer uses linear work/storage.
+			digits := strings.TrimLeft(s[2:], "0")
+			words := make([]big.Word, (len(digits)*3+strconv.IntSize-1)/strconv.IntSize)
+			for i, bit := len(digits)-1, 0; i >= 0; i, bit = i-1, bit+3 {
+				if digits[i] < '0' || digits[i] > '7' {
+					return "", false, nil
+				}
+				v, word, shift := big.Word(digits[i]-'0'), bit/strconv.IntSize, uint(bit%strconv.IntSize)
+				words[word] |= v << shift
+				if shift > strconv.IntSize-3 {
+					words[word+1] |= v >> (strconv.IntSize - shift)
+				}
+			}
+			return new(big.Int).SetBits(words).String(), true, nil
 		}
 		if i, ok := new(big.Int).SetString(s[2:], base); ok && s[2] != '+' && s[2] != '-' {
 			return i.String(), true, nil
