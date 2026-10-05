@@ -134,7 +134,7 @@ func TestHTTPAndFileCrossings(t *testing.T) {
 	if err := os.WriteFile(local, []byte(`{"P":{"name":"local","in":"query"}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	localURI := (&url.URL{Scheme: "file", Path: filepath.ToSlash(local)}).String()
+	localURI := fileURI(local)
 	s := newSite(t)
 	s.put("/openapi.json", entry31(paramOps(map[string]string{"file": localURI + "#/P"})))
 	s.put("/p.json", `{"P":{"name":"remote","in":"query"}}`)
@@ -525,7 +525,11 @@ func TestReferencedDocumentsUseHTTPClient(t *testing.T) {
 
 // fileURI is the file URL of path.
 func fileURI(path string) string {
-	return (&url.URL{Scheme: "file", Path: filepath.ToSlash(path)}).String()
+	path = filepath.ToSlash(path)
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	return (&url.URL{Scheme: "file", Path: path}).String()
 }
 
 // load.go, Loader.AllowReference: "For a file entry, references may reach

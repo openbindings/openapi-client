@@ -116,7 +116,8 @@ func closeStream(x *exchange, r *Response) {
 func multipartItems[T any](x *exchange, r *Response, ct parsedMedia, bound int64, yield func(T, error) bool) {
 	var zero T
 	boundary, _ := ct.param("boundary")
-	wire := &partSource{Reader: r.Body}
+	ending := &multipartEnding{Reader: r.Body, marker: "--" + boundary + "--"}
+	wire := &partSource{Reader: ending}
 	mr := multipart.NewReader(wire, boundary)
 	_, raw := any(&zero).(**multipart.Part)
 	for {
@@ -128,7 +129,10 @@ func multipartItems[T any](x *exchange, r *Response, ct parsedMedia, bound int64
 			part, err = mr.NextRawPart()
 		}
 		if err == io.EOF {
-			return
+			if ending.complete() {
+				return
+			}
+			err = io.ErrUnexpectedEOF
 		}
 		if err != nil {
 			if !wire.seen && wire.err == io.EOF && errors.Is(err, io.EOF) {
@@ -183,6 +187,63 @@ func multipartItems[T any](x *exchange, r *Response, ct parsedMedia, bound int64
 			return
 		}
 	}
+}
+
+// mime/multipart can report EOF both for a closing delimiter and for an
+// empty, truncated header block. Recognize closing delimiter lines with
+// constant storage so those outcomes remain distinct, even with epilogues
+// and arbitrarily fragmented reads. The MIME reader still parses all parts.
+type multipartEnding struct {
+	io.Reader
+	marker    string
+	matched   int
+	cr, ended bool
+}
+
+func (r *multipartEnding) complete() bool {
+	return r.ended || r.matched == len(r.marker) && !r.cr
+}
+
+func (r *multipartEnding) Read(p []byte) (int, error) {
+	n, err := r.Reader.Read(p)
+	if r.ended {
+		return n, err
+	}
+	for i := 0; i < n; {
+		if r.matched < 0 {
+			// Skip ordinary header/payload bytes in bulk; only a line
+			// starting with two hyphens can be a closing delimiter.
+			j := bytes.Index(p[i:n], []byte("\n--"))
+			if j < 0 {
+				if p[n-1] == '\n' {
+					r.matched, r.cr = 0, false
+				} else if n-i >= 2 && p[n-2] == '\n' && p[n-1] == '-' {
+					r.matched, r.cr = 1, false
+				}
+				break
+			}
+			i += j + 3
+			r.matched, r.cr = 2, false
+			continue
+		}
+		c := p[i]
+		i++
+		if c == '\n' {
+			if r.matched == len(r.marker) {
+				r.ended = true
+				break
+			}
+			r.matched, r.cr = 0, false
+		} else if r.matched >= 0 && r.matched < len(r.marker) && c == r.marker[r.matched] {
+			r.matched++
+		} else if r.matched == len(r.marker) && !r.cr && (c == ' ' || c == '\t') {
+		} else if r.matched == len(r.marker) && !r.cr && c == '\r' {
+			r.cr = true
+		} else {
+			r.matched = -1
+		}
+	}
+	return n, err
 }
 
 // partSource remembers wire bytes and read errors, distinguishing them from

@@ -68,7 +68,7 @@ func (ld *loading) bound(final string) {
 	if u, err := url.Parse(ld.entry); err == nil && (u.Scheme == "http" || u.Scheme == "https") {
 		ld.origins = append(ld.origins, u)
 	} else if u, err := url.Parse(final); err == nil && u.Scheme == "file" {
-		ld.dir, ld.rootErr = filepath.EvalSymlinks(filepath.Dir(filepath.FromSlash(u.Path)))
+		ld.dir, ld.rootErr = filepath.EvalSymlinks(filepath.Dir(filePath(u)))
 		if ld.rootErr == nil && ld.AllowReference == nil && ld.Fetch == nil {
 			ld.root, ld.rootErr = os.OpenRoot(ld.dir)
 		}
@@ -126,7 +126,7 @@ func (ld *loading) admit(from, to string, u *url.URL) bool {
 	case u.Scheme == "http" || u.Scheme == "https":
 		return slices.ContainsFunc(ld.origins, func(o *url.URL) bool { return sameOrigin(o, u) })
 	case u.Scheme == "file" && ld.dir != "":
-		_, err := ld.filePath(filepath.FromSlash(u.Path))
+		_, err := ld.filePath(filePath(u))
 		return err == nil
 	}
 	return false
@@ -260,7 +260,7 @@ func (t *tree) setEdition(inherit int) {
 	}
 	t.reaches = t.reaches || t.edition == 32 && t.editionRefs
 	t.refbase = t.base
-	if t.edition == 32 && r.get("$self").kind() == '"' {
+	if t.openAPI && t.edition == 32 && r.get("$self").kind() == '"' {
 		if u, err := t.base.Parse(r.str("$self")); err == nil && u.IsAbs() && checkURI(u, r.str("$self")) == nil {
 			t.refbase = u
 		}
@@ -1159,7 +1159,7 @@ func (r *reader) visit(v value, k kind, base *url.URL, effective string) {
 		if id.kind() == '"' {
 			valid := false
 			if p := r.pending; p != nil && p.collecting {
-				if u, err := base.Parse(id.text()); err == nil {
+				if u, err := base.Parse(id.text()); err == nil && u.Fragment == "" {
 					u.Fragment, u.RawFragment = "", ""
 					base, valid = u, true
 				}
@@ -1624,7 +1624,7 @@ func (v value) resourceBase(base *url.URL, id value) *url.URL {
 	if u := v.t.resourceBases[v.i]; u != nil {
 		return u
 	}
-	if u, err := base.Parse(id.text()); err == nil {
+	if u, err := base.Parse(id.text()); err == nil && u.Fragment == "" {
 		u.Fragment, u.RawFragment = "", ""
 		if v.t.resourceBases == nil {
 			v.t.resourceBases = map[int32]*url.URL{}
@@ -1844,6 +1844,15 @@ func (d *document) node(uri string) (value, string, error) {
 
 func (d *document) namedNode(uri string) (locatedNode, error) {
 	t, c := d.named[uri], d.ids[uri]
+	if c == nil && t == nil {
+		// An anchor belongs to the document resource, whether that resource
+		// is named by its retrieval URI, a redirect alias, or its $self.
+		if doc, frag, ok := strings.Cut(uri, "#"); ok {
+			if alias := d.named[doc]; alias != nil {
+				c = d.ids[alias.refbase.String()+"#"+frag]
+			}
+		}
+	}
 	switch {
 	case c != nil && c.other != nil:
 		return locatedNode{}, fmt.Errorf("%s names both %s and %s", safeURI(uri), safeURI(c.source()), safeURI(c.other.source()))

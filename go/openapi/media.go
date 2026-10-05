@@ -301,10 +301,11 @@ func newCharset(kept string, triples bool) *charset {
 }
 
 var (
-	unreservedSet = newCharset("", false)
-	reservedSet   = newCharset(":/?#[]@!$&'()*+,;=", true) // RFC 6570 reserved expansion
-	pathSet       = newCharset("!$&'()*+,;=:@/", true)     // path text: pchar and "/"
-	fragmentSet   = newCharset("!$&'()*+,;=:@/?", false)   // RFC 3986 section 3.5
+	unreservedSet   = newCharset("", false)
+	reservedSet     = newCharset(":/?#[]@!$&'()*+,;=", true) // RFC 6570 reserved expansion
+	reservedPathSet = newCharset(":/[]@!$&'()*+,;=", true)   // reserved expansion within a URL path
+	pathSet         = newCharset("!$&'()*+,;=:@/", true)     // path text: pchar and "/"
+	fragmentSet     = newCharset("!$&'()*+,;=:@/?", false)   // RFC 3986 section 3.5
 )
 
 // escapeTo writes s to b, percent-encoding each byte set does not keep as

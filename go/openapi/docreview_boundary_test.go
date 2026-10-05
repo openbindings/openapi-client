@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -160,6 +161,7 @@ func TestDocumentFileBoundarySurvivesSymlinkReplacement(t *testing.T) {
 	admittedRef(t, c, "x")
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
+	var replacements int
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -175,19 +177,37 @@ func TestDocumentFileBoundarySurvivesSymlinkReplacement(t *testing.T) {
 					return
 				}
 				if err := os.Rename(link+".tmp", link); err != nil {
+					// Windows can deny replacing a link while a reader has
+					// it open. That prevents the attack rather than exposing
+					// data; retry once the reader releases it.
+					if runtime.GOOS == "windows" && os.IsPermission(err) {
+						if err := os.Remove(link + ".tmp"); err != nil {
+							t.Errorf("remove refused replacement: %v", err)
+							return
+						}
+						continue
+					}
 					t.Errorf("replace symlink: %v", err)
 					return
 				}
+				replacements++
 			}
 		}
 	}()
-	defer func() { close(stop); wg.Wait() }()
+	var stopped sync.Once
+	finish := func() { stopped.Do(func() { close(stop); wg.Wait() }) }
+	defer finish()
 	for range 256 {
 		c := parse(l)
 		if strings.Contains(string(c.Document(fileURI(link))), "outside-marker") {
 			t.Fatal("default file retrieval crossed the entry directory")
 		}
 	}
+	finish()
+	if replacements == 0 {
+		t.Skip("filesystem prevented every concurrent symlink replacement")
+	}
+	t.Logf("exercised %d successful concurrent symlink replacements", replacements)
 }
 
 // I5-1/SQ6: both requested and final URIs identify the redirected entry.

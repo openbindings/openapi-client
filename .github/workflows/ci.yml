@@ -51,3 +51,27 @@ jobs:
         working-directory: go
         env:
           GOWORK: "off"
+      - name: Exercise octal word boundaries on 32-bit Go
+        run: go test ./openapi -run '^TestReviewRepairOctalValues$'
+        working-directory: go
+        env:
+          GOWORK: "off"
+          GOARCH: "386"
+  go-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+      - name: Verify native Windows drive and file URI loading
+        run: go test ./openapi -run '^TestReviewRepairWindowsPaths$' -v
+        working-directory: go
+        env:
+          GOWORK: "off"
+      # Short mode retains functional and allocation checks. The full Linux
+      # race job owns timing gates; this runner quantizes short samples to zero.
+      - run: go test -short ./... -timeout 10m
+        working-directory: go
+        env:
+          GOWORK: "off"

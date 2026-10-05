@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -37,7 +38,11 @@ func sameFile(t testing.TB, uri, path string) bool {
 		t.Errorf("document URI %q is not a file URI", uri)
 		return false
 	}
-	got, err1 := filepath.EvalSymlinks(filepath.FromSlash(u.Path))
+	filePath := u.Path
+	if runtime.GOOS == "windows" && len(filePath) >= 3 && filePath[0] == '/' && filePath[2] == ':' {
+		filePath = filePath[1:]
+	}
+	got, err1 := filepath.EvalSymlinks(filepath.FromSlash(filePath))
 	want, err2 := filepath.EvalSymlinks(path)
 	if err1 != nil || err2 != nil {
 		t.Errorf("resolving %q and %q: %v, %v", u.Path, path, err1, err2)
@@ -85,10 +90,10 @@ func TestLoadFilePath(t *testing.T) {
 // load.go, Load: a file URL loads the same document.
 func TestLoadFileURL(t *testing.T) {
 	abs, _ := filepath.Abs("testdata/pets.json")
-	u := url.URL{Scheme: "file", Path: filepath.ToSlash(abs)}
-	c, err := openapi.Load(t.Context(), u.String(), nil)
+	u := fileURI(abs)
+	c, err := openapi.Load(t.Context(), u, nil)
 	if err != nil {
-		t.Fatalf("Load(%q): %v", u.String(), err)
+		t.Fatalf("Load(%q): %v", u, err)
 	}
 	if uris := c.DocumentURIs(); len(uris) != 1 || !sameFile(t, uris[0], abs) {
 		t.Errorf("DocumentURIs = %q, want one file URI for %s", uris, abs)

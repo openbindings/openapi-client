@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -233,7 +234,7 @@ func (ld *loading) retrieve(uri string, froms []string, buf []byte) (string, str
 		return "", "", nil, errors.New("openapi: load: the URI has leading or trailing whitespace")
 	case err != nil && hasScheme(uri): // shown neither, as its userinfo cannot be found
 		return "", "", nil, errors.New("openapi: load: the URI cannot be parsed (RFC 3986)")
-	case err != nil || len(u.Scheme) <= 1: // not a URL: a file path, perhaps with a drive letter
+	case err != nil || u.Scheme == "" || froms == nil && drivePath(uri):
 		u, err = &url.URL{}, nil
 	default:
 		err = checkURI(u, uri)
@@ -295,7 +296,7 @@ func (ld *loading) retrieve(uri string, froms []string, buf []byte) (string, str
 	case u.Scheme == "file" && u.Host != "" && u.Host != "localhost":
 		err = errors.New("a file URL cannot name a host other than localhost (RFC 8089)")
 	case u.Scheme == "file":
-		path := filepath.FromSlash(u.Path)
+		path := filePath(u)
 		if from != "" && ld.AllowReference == nil && ld.root != nil {
 			if path, err = ld.filePath(path); err == nil {
 				r, size, err = open(ctx, path, ld.root)
@@ -306,7 +307,11 @@ func (ld *loading) retrieve(uri string, froms []string, buf []byte) (string, str
 	case u.Scheme == "":
 		var abs string
 		if abs, err = filepath.Abs(uri); err == nil {
-			base = &url.URL{Scheme: "file", Path: filepath.ToSlash(abs)}
+			path := filepath.ToSlash(abs)
+			if !strings.HasPrefix(path, "/") {
+				path = "/" + path // a Windows drive is a path segment, not a host
+			}
+			base = &url.URL{Scheme: "file", Path: path}
 			final = base.String()
 			r, size, err = open(ctx, abs, nil)
 		}
@@ -326,11 +331,22 @@ func (ld *loading) retrieve(uri string, froms []string, buf []byte) (string, str
 	return "", "", nil, fmt.Errorf("openapi: load %s: %w", safeURI(uri), safeRetrievalError(withContext(ctx, err)))
 }
 
-// hasScheme reports whether s begins with a URI scheme longer than a drive
-// letter.
+// hasScheme distinguishes URI schemes from native Windows drive paths.
 func hasScheme(s string) bool {
 	i := strings.IndexByte(s, ':')
-	return i > 1 && isScheme(s[:i])
+	return i > 0 && isScheme(s[:i]) && !drivePath(s)
+}
+
+func drivePath(s string) bool {
+	return runtime.GOOS == "windows" && len(s) >= 2 && s[1] == ':' && isScheme(s[:1]) && !strings.HasPrefix(s[2:], "//")
+}
+
+func filePath(u *url.URL) string {
+	p := u.Path
+	if runtime.GOOS == "windows" && len(p) >= 3 && p[0] == '/' && p[2] == ':' {
+		p = p[1:]
+	}
+	return filepath.FromSlash(p)
 }
 
 // isScheme reports whether s is a URI scheme (RFC 3986 section 3.1).

@@ -107,6 +107,7 @@ func FuzzResourceURIStorage(f *testing.F) {
 		if err != nil {
 			return
 		}
+		invalidID := u.Fragment != "" // JSON Schema 2020-12 section 8.2.1
 		u.Fragment, u.RawFragment = "", ""
 		before := *u
 		uri := u.String()
@@ -133,8 +134,12 @@ func FuzzResourceURIStorage(f *testing.F) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if s.Base() != uri || !bytes.Equal(s.Raw(), schema) {
-			t.Fatalf("loaded resource differs: base %q, want %q; raw %s", s.Base(), uri, s.Raw())
+		wantBase := uri
+		if invalidID {
+			wantBase = b.String()
+		}
+		if s.Base() != wantBase || !bytes.Equal(s.Raw(), schema) {
+			t.Fatalf("loaded resource differs: base %q, want %q; raw %s", s.Base(), wantBase, s.Raw())
 		}
 	})
 }

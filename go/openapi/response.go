@@ -119,7 +119,7 @@ func (u *upload) end(b *sentBody) {
 	if b.ended {
 		return
 	}
-	if b.ended = true; !b.finished {
+	if b.ended = true; !b.finished && (b.p.size < 0 || b.pos != b.p.size) {
 		b.result = withContext(b.x, errClosedEarly)
 	}
 	if b.handed {
@@ -777,8 +777,9 @@ func (b *sentBody) Read(buf []byte) (int, error) {
 	return n, err
 }
 
-// read reads the payload, or the caller's body, a body of known length
-// ending at its length and failing short of it.
+// read reads the payload, or the caller's body. A caller's declared length
+// is checked without imposing EOF: transports must be able to detect excess
+// bytes. Closing at exactly the declared length still completes the upload.
 func (b *sentBody) read(buf []byte) (n int, err error) {
 	p := b.p
 	if b.rc != nil {
@@ -789,7 +790,9 @@ func (b *sentBody) read(buf []byte) (n int, err error) {
 	b.pos += int64(n)
 	if p.size >= 0 {
 		switch {
-		case err == nil && b.pos >= p.size:
+		case b.pos > p.size && (err == nil || err == io.EOF):
+			err = errors.New("openapi: request body exceeds ContentLength")
+		case err == nil && b.pos == p.size && (b.x == nil || b.x.claim == nil):
 			err = io.EOF
 		case err == io.EOF && b.pos < p.size:
 			err = io.ErrUnexpectedEOF
