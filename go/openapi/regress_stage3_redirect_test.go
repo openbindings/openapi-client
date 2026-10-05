@@ -1113,7 +1113,7 @@ func TestCrossOriginKeepsOnlyGeneratedContentType(t *testing.T) {
 		sendAndClose(t, req)
 		wantField(t, a.only(t).Header, "Content-Type", edited)
 		hop := b.only(t)
-		wantNoFields(t, hop.Header, "Content-Type")
+		wantField(t, hop.Header, "Content-Type", "application/json")
 		if !bytes.Equal(hop.Body, a.only(t).Body) {
 			t.Errorf("hop body %q, want %q", hop.Body, a.only(t).Body)
 		}
@@ -1125,7 +1125,7 @@ func TestCrossOriginKeepsOnlyGeneratedContentType(t *testing.T) {
 			"q": func(r *http.Request) error { r.Header.Set("Content-Type", edited); return nil },
 		}}, nil)
 		wantField(t, a.only(t).Header, "Content-Type", edited)
-		wantNoFields(t, b.only(t).Header, "Content-Type")
+		wantField(t, b.only(t).Header, "Content-Type", "application/json")
 	})
 	t.Run("generated, with parameters", func(t *testing.T) {
 		a, b := newPair(t)
