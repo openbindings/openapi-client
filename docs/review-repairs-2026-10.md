@@ -37,9 +37,9 @@ streaming comparison). Figures are medians, not universal bounds.
 
 | Workload | Before | After | Time change |
 | --- | ---: | ---: | ---: |
-| JSON sequence, 128 items | 132.17 µs | 136.16 µs | +3.02% |
-| Decoded multipart, 128 parts | 319.98 µs | 330.31 µs | +3.23% |
-| Raw multipart, 128 parts | 138.18 µs | 147.67 µs | +6.87% |
+| JSON sequence, 256 items | 132.17 µs | 136.16 µs | +3.02% |
+| Decoded multipart, 256 parts | 319.98 µs | 330.31 µs | +3.23% |
+| Raw multipart, 256 parts | 138.18 µs | 147.67 µs | +6.87% |
 | Prepared body Send | 855.4 ns | 861.3 ns | +0.68% |
 | Matrix path parameter call | 969.0 ns | 985.0 ns | +1.65% |
 | Large YAML load | 51.30 ms | 51.13 ms | −0.32% |
@@ -49,7 +49,7 @@ The initial streaming fix was measurably worse (+34.72% JSON sequence and
 +21.00% raw multipart). It was revised before qualification: buffered
 single-line sequence records retain their fast path, and MIME closing-delimiter
 detection skips ordinary payload bytes in bulk. The remaining raw multipart
-cost is approximately 74 ns per part and two allocations per response, for
+cost is approximately 37 ns per part and two allocations per response, for
 detecting truncation without retaining the whole multipart body. This is a
 correctness cost, not a claimed optimization. Its recorded reason does not
 waive the separate, still-open 15% target against handwritten clients.
@@ -69,6 +69,22 @@ it now requires the generated value and still excludes the edited secret.
 The resource-storage fuzzer treated a nonempty fragment as a valid `$id`; its
 resource-base oracle now follows [JSON Schema 2020-12 §8.2.1](https://json-schema.org/draft/2020-12/json-schema-core#section-8.2.1).
 The general URL-storage assertions still exercise arbitrary URI fragments.
+
+Local release qualification passed, including the full Go race suite, public
+API snapshots, TypeScript tests, browser checks, and clean Go/TypeScript consumers.
+Native and linux/386 vet passed. Four bounded fuzz campaigns passed: JSON framing
+(596,849 executions), resource URI storage (767,152), YAML robustness (120,413),
+and path/query serialization (75,117).
+
+The first Windows run exercised the drive-path repair successfully and exposed
+Unix-specific test helpers: they constructed `file://C:/...` and passed `/C:/...`
+straight to filesystem functions. The helpers now construct and decode proper
+file URIs. Its sub-millisecond timing samples also frequently reported zero,
+making timing ratios meaningless. Windows CI therefore runs an explicit verbose
+drive-path check plus the existing `-short` suite (functional and allocation
+checks); the full Linux race suite retains timing gates. This does not establish
+Windows performance parity. Linux CI also executes octal-value checks in a
+32-bit process, covering the other machine-word width.
 
 ## Decisions reserved for the owner
 

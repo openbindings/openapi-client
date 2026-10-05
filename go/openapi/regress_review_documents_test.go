@@ -73,6 +73,34 @@ func TestReviewRepairOneLetterSchemeReference(t *testing.T) {
 	}
 }
 
+// Only the Load entry can be a native drive path. References have already
+// resolved to URIs, including opaque one-letter schemes on Windows.
+func TestReviewRepairOpaqueOneLetterAdmission(t *testing.T) {
+	for _, allow := range []bool{false, true} {
+		fs := &zzFS{docs: map[string]string{
+			"https://h.test/api.json": `{"openapi":"3.1.0","paths":{},"components":{"schemas":{"A":{"$ref":"q:opaque"}}}}`,
+			"q:opaque":                `{"type":"string"}`,
+		}}
+		var called bool
+		l := openapi.Loader{Fetch: fs.fetch, AllowReference: func(from, to string) bool { called = true; return allow }}
+		c, err := l.Load(t.Context(), "https://h.test/api.json", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s, err := c.Schema("https://h.test/api.json#/components/schemas/A")
+		if err != nil {
+			t.Fatal(err)
+		}
+		refs, err := s.References()
+		if err != nil || len(refs) != 1 {
+			t.Fatalf("references %v: %v", refs, err)
+		}
+		if !called || fs.fetched("q:opaque") != allow || (refs[0].Err == nil) != allow {
+			t.Fatalf("allow=%v callback=%v fetches=%v ref=%v", allow, called, fs.calls, refs[0].Err)
+		}
+	}
+}
+
 func TestReviewRepairVersionlessSelfIsNotABase(t *testing.T) {
 	fs := &zzFS{docs: map[string]string{
 		"https://h.test/api/openapi.json": `{"openapi":"3.2.0","info":{"title":"t","version":"1"},"paths":{},"components":{"schemas":{"P":{"$ref":"models.json#/Pet"}}}}`,

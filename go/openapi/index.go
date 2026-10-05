@@ -234,7 +234,7 @@ func (ld *loading) retrieve(uri string, froms []string, buf []byte) (string, str
 		return "", "", nil, errors.New("openapi: load: the URI has leading or trailing whitespace")
 	case err != nil && hasScheme(uri): // shown neither, as its userinfo cannot be found
 		return "", "", nil, errors.New("openapi: load: the URI cannot be parsed (RFC 3986)")
-	case err != nil || u.Scheme == "" || drivePath(uri):
+	case err != nil || u.Scheme == "" || froms == nil && drivePath(uri):
 		u, err = &url.URL{}, nil
 	default:
 		err = checkURI(u, uri)
