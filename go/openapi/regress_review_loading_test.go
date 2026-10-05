@@ -124,7 +124,15 @@ func TestReviewRepairOctalValues(t *testing.T) {
 }
 
 func TestReviewRepairYAMLErrorLocation(t *testing.T) {
-	for _, src := range []string{yamlHead + "x-m: [one, *unknown]\n", yamlHead + "x-m: [one, {\n", yamlHead + "x-m: a: b\n"} {
+	// Loader rejections retain the useful diagnostic as well as one accurate
+	// location, including reader, scanner, parser and unknown-alias failures.
+	for _, tt := range []struct{ tail, detail string }{
+		{"x-m: [one, *unknown]\n", "unknown anchor 'unknown' referenced"},
+		{"x-m: [one, {\n", "did not find expected node content"},
+		{"x-m: a: b\n", "mapping values are not allowed in this context"},
+		{"x-m: \x01\n", "control characters are not allowed"},
+	} {
+		src := yamlHead + tt.tail
 		for _, data := range [][]byte{[]byte(src), utf16Text(src, false, true), utf32Text(src, true, true)} {
 			_, err := openapi.Parse(t.Context(), data, testDocURI, nil)
 			if err == nil {
@@ -132,6 +140,9 @@ func TestReviewRepairYAMLErrorLocation(t *testing.T) {
 			}
 			if strings.Contains(err.Error(), "yaml: line ") {
 				t.Fatalf("contradictory parser location: %v", err)
+			}
+			if !strings.Contains(err.Error(), tt.detail) {
+				t.Fatalf("lost diagnostic %q: %v", tt.detail, err)
 			}
 		}
 	}

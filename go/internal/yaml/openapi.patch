@@ -8,8 +8,15 @@
 +	if tag != "" {
 --- /dev/null
 +++ b/position.go
-@@ -0,0 +1,17 @@
+@@ -0,0 +1,24 @@
 +package yaml
++
++// ErrorProblem returns the reader, scanner or parser's diagnostic without
++// a location prefix. An empty result leaves the decoding error itself as
++// the diagnostic, for example when an alias names an unknown anchor.
++func (dec *Decoder) ErrorProblem() string {
++	return dec.parser.parser.problem
++}
 +
 +// ErrorPosition returns the last decoding error's byte offset when the
 +// reader rejected input, or -1 and a one-based line and character column
