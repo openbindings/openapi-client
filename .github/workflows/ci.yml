@@ -51,6 +51,11 @@ jobs:
         working-directory: go
         env:
           GOWORK: "off"
+      - name: Check JSON Schema output with an independent evaluator
+        run: go test -race ./...
+        working-directory: go/jsonschematest
+        env:
+          GOWORK: "off"
       - name: Exercise octal word boundaries on 32-bit Go
         run: go test ./openapi -run '^TestReviewRepairOctalValues$'
         working-directory: go

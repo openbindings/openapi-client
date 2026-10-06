@@ -1,0 +1,115 @@
+{
+  "openapi": "3.0.3",
+  "info": {"title": "Shop", "version": "1"},
+  "servers": [{"url": "https://corpus.example.test/shop"}],
+  "paths": {
+    "/products": {
+      "get": {
+        "parameters": [
+          {"name": "category", "in": "query", "schema": {"$ref": "#/components/schemas/CategoryName"}},
+          {"name": "max", "in": "query", "schema": {"type": "number", "maximum": 1000, "exclusiveMaximum": true, "nullable": true}},
+          {"name": "X-Trace", "in": "header", "schema": {"type": "string", "format": "byte"}},
+          {"name": "session", "in": "cookie", "schema": {"type": "string"}},
+          {"name": "filter", "in": "query", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Filter"}}}}
+        ],
+        "responses": {
+          "200": {
+            "description": "ok",
+            "headers": {"X-Total": {"schema": {"type": "integer", "minimum": 0}}},
+            "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/Product"}}}}
+          },
+          "default": {"description": "error", "content": {"application/problem+json": {"schema": {"$ref": "catalog.json#/Problem"}}}}
+        }
+      },
+      "post": {
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {"schema": {"$ref": "#/components/schemas/Product"}},
+            "multipart/form-data": {
+              "schema": {"$ref": "#/components/schemas/Upload"},
+              "encoding": {"image": {"contentType": "image/png"}}
+            },
+            "application/octet-stream": {"schema": {"type": "string", "format": "binary"}}
+          }
+        },
+        "responses": {
+          "201": {"description": "created", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Product"}}}},
+          "202": {"description": "image", "content": {"image/png": {"schema": {"type": "string", "format": "binary"}}}}
+        }
+      }
+    },
+    "/categories/{name}": {
+      "parameters": [{"name": "name", "in": "path", "required": true, "schema": {"$ref": "#/components/schemas/CategoryName"}}],
+      "put": {
+        "requestBody": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Category"}}}},
+        "responses": {"204": {"description": "stored"}}
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Base": {
+        "type": "object",
+        "required": ["id", "created"],
+        "properties": {
+          "id": {"type": "string", "readOnly": true},
+          "created": {"type": "string", "format": "date-time", "readOnly": true},
+          "etag": {"type": "string", "writeOnly": true}
+        }
+      },
+      "Product": {
+        "allOf": [{"$ref": "#/components/schemas/Base"}],
+        "type": "object",
+        "required": ["id", "name", "price", "secret"],
+        "properties": {
+          "name": {"type": "string", "nullable": true, "minLength": 1},
+          "price": {"$ref": "#/components/schemas/Money"},
+          "secret": {"type": "string", "writeOnly": true},
+          "tags": {"type": "array", "items": {"type": "string", "nullable": true, "enum": ["new", "sale", null]}},
+          "category": {"$ref": "#/components/schemas/Category", "nullable": true},
+          "image": {"$ref": "#/components/schemas/Image"},
+          "related": {"type": "array", "items": {"$ref": "#/components/schemas/Product"}},
+          "legacy": {"$ref": "modern.json#/components/schemas/Legacy"}
+        },
+        "additionalProperties": false,
+        "example": {"id": "p1", "name": "Hat"}
+      },
+      "Money": {
+        "type": "object",
+        "required": ["amount", "currency"],
+        "properties": {
+          "amount": {"type": "number", "minimum": 0, "exclusiveMinimum": true, "multipleOf": 0.01},
+          "currency": {"type": "string", "pattern": "^[A-Z]{3}$"}
+        }
+      },
+      "CategoryName": {"type": "string", "enum": ["shoe", "hat", "bag"]},
+      "Category": {
+        "oneOf": [
+          {"$ref": "#/components/schemas/Shoe"},
+          {"$ref": "#/components/schemas/Hat"},
+          {"$ref": "catalog.json#/Bag"}
+        ],
+        "discriminator": {
+          "propertyName": "kind",
+          "mapping": {"shoe": "Shoe", "hat": "#/components/schemas/Hat", "bag": "catalog.json#/Bag"}
+        }
+      },
+      "Shoe": {"type": "object", "required": ["kind"], "properties": {"kind": {"type": "string"}, "size": {"type": "integer", "minimum": 30, "maximum": 50, "exclusiveMaximum": true}}},
+      "Hat": {"type": "object", "required": ["kind"], "properties": {"kind": {"type": "string"}, "brim": {"type": "boolean", "nullable": true}}},
+      "Image": {"type": "string", "format": "binary", "description": "image bytes", "nullable": false},
+      "Upload": {
+        "type": "object",
+        "required": ["image"],
+        "properties": {
+          "image": {"type": "string", "format": "binary"},
+          "thumbnail": {"type": "string", "format": "byte"},
+          "meta": {"$ref": "#/components/schemas/Product"}
+        }
+      },
+      "Filter": {"type": "object", "properties": {"q": {"type": "string"}, "not": {"not": {"type": "string", "nullable": true}}}},
+      "Alias": {"$ref": "#/components/schemas/Product", "description": "ignored"},
+      "Tree": {"type": "object", "properties": {"kids": {"type": "array", "items": {"$ref": "#/components/schemas/Tree"}}, "value": {"type": "integer", "nullable": true}}}
+    }
+  }
+}

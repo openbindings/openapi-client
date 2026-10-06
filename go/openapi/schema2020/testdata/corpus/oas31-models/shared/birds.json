@@ -1,0 +1,3 @@
+{
+  "Bird": {"type": "object", "required": ["kind"], "properties": {"kind": {"const": "bird"}, "wings": {"type": "integer", "minimum": 2}}}
+}

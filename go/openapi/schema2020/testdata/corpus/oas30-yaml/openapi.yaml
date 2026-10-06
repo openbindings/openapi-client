@@ -1,0 +1,82 @@
+openapi: 3.0.4
+info:
+  title: Accounts
+  version: "1"
+paths:
+  /accounts/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 0
+          exclusiveMinimum: true
+    patch:
+      requestBody:
+        content:
+          application/merge-patch+json:
+            schema:
+              $ref: "#/components/schemas/Account"
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                nickname: {type: string, nullable: true}
+                pin: {type: string, writeOnly: true, pattern: "^[0-9]{4}$"}
+      responses:
+        "200":
+          description: updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Account"
+components:
+  schemas:
+    Account:
+      type: object
+      required: [id, owner, pin, balance]
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        owner:
+          $ref: "#/components/schemas/Person"
+        pin:
+          type: string
+          writeOnly: true
+        balance:
+          type: number
+          format: double
+          maximum: 1.0e9
+          exclusiveMaximum: true
+          readOnly: true
+        history:
+          type: array
+          nullable: true
+          items:
+            allOf:
+              - $ref: "#/components/schemas/Entry"
+    Person:
+      type: object
+      required: [name]
+      propertyNames:
+        maxLength: 20
+      patternProperties:
+        "^x-":
+          type: string
+      properties:
+        name: {type: string}
+        email: {type: string, format: email, nullable: true}
+        photo: {type: string, format: byte}
+        kind: {type: string, const: person}
+    Entry:
+      type: object
+      properties:
+        amount: {type: number, minimum: -1.0e9, exclusiveMinimum: false}
+        at: {type: string, format: date-time}
+        pair:
+          type: array
+          items:
+            - $ref: "#/components/schemas/Entry"
+            - type: string

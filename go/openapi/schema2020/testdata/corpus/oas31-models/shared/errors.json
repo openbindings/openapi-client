@@ -1,0 +1,11 @@
+{
+  "Error": {
+    "type": "object",
+    "required": ["code"],
+    "properties": {
+      "code": {"type": "integer"},
+      "details": {"type": "array", "items": {"$ref": "#/Error"}},
+      "pet": {"$ref": "../openapi.json#/components/schemas/Pet"}
+    }
+  }
+}

@@ -1,0 +1,123 @@
+{
+  "openapi": "3.1.0",
+  "info": {"title": "Models", "version": "1"},
+  "servers": [{"url": "https://corpus.example.test/models"}],
+  "paths": {
+    "/documents/{id}": {
+      "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string", "format": "uuid"}}],
+      "get": {
+        "parameters": [
+          {"name": "fields", "in": "query", "schema": {"type": "array", "items": {"$ref": "#/components/schemas/a%20b"}}},
+          {"name": "query", "in": "query", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Query"}}}}
+        ],
+        "responses": {
+          "200": {"description": "ok", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Document"}}}},
+          "206": {"description": "partial", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Lossy"}}}},
+          "default": {"description": "error", "content": {"application/json": {"schema": {"$ref": "shared/errors.json#/Error"}}}}
+        }
+      },
+      "put": {
+        "requestBody": {
+          "content": {
+            "application/json": {"schema": {"$ref": "#/components/schemas/Document"}},
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "file": {"type": "string", "contentMediaType": "application/pdf"},
+                  "meta": {"$ref": "#/components/schemas/Document"},
+                  "raw": {"type": "string", "format": "binary"}
+                }
+              }
+            }
+          }
+        },
+        "responses": {"204": {"description": "stored", "headers": {"ETag": {"schema": {"type": "string", "pattern": "^\"[^\"]*\"$"}}}}}
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Document": {
+        "$id": "https://corpus.example.test/oas31-models/document.json",
+        "$schema": "https://spec.openapis.org/oas/3.1/dialect/base",
+        "$anchor": "doc",
+        "type": "object",
+        "required": ["id", "title"],
+        "properties": {
+          "id": {"type": "string", "readOnly": true},
+          "title": {"type": "string", "minLength": 1},
+          "body": {"$ref": "#/$defs/Body"},
+          "parent": {"$ref": "#doc"},
+          "author": {"$ref": "openapi.json#/components/schemas/Person", "description": "beside $ref"},
+          "tags": {"type": "array", "prefixItems": [{"type": "string"}], "items": {"$ref": "#/$defs/Tag"}},
+          "attachments": {"type": "array", "items": {"$ref": "attachments.json"}},
+          "pet": {"$ref": "openapi.json#/components/schemas/Pet"},
+          "legacy": {"$ref": "legacy.json#/components/schemas/Old"}
+        },
+        "$defs": {
+          "Body": {"type": ["string", "null"], "contentMediaType": "text/markdown", "maxLength": 100000},
+          "Tag": {"$anchor": "tag", "type": "string", "pattern": "^[a-z]+$"},
+          "Unused": {"type": "integer"}
+        },
+        "unevaluatedProperties": false
+      },
+      "Person": {
+        "type": "object",
+        "properties": {
+          "name": {"type": "string"},
+          "email": {"type": ["string", "null"], "format": "email"},
+          "manager": {"$ref": "#/components/schemas/Person"},
+          "home": {"$ref": "#/components/schemas/Address"}
+        },
+        "dependentSchemas": {"email": {"required": ["name"]}},
+        "patternProperties": {"^x-": {"type": "string"}}
+      },
+      "Address": {
+        "type": "object",
+        "if": {"properties": {"country": {"const": "US"}}},
+        "then": {"required": ["zip"]},
+        "else": {"required": ["postcode"]},
+        "properties": {"country": {"type": "string"}, "zip": {"type": "string"}, "postcode": {"type": "string"}},
+        "examples": [{"country": "US", "zip": "12345"}]
+      },
+      "Pet": {
+        "oneOf": [{"$ref": "#/components/schemas/Cat"}, {"$ref": "#/components/schemas/Dog"}],
+        "discriminator": {
+          "propertyName": "kind",
+          "mapping": {"cat": "Cat", "dog": "#/components/schemas/Dog", "bird": "shared/birds.json#/Bird"}
+        }
+      },
+      "Cat": {"type": "object", "required": ["kind"], "properties": {"kind": {"const": "cat"}, "lives": {"type": "integer", "exclusiveMaximum": 10}}},
+      "Dog": {"type": "object", "required": ["kind"], "properties": {"kind": {"const": "dog"}, "friend": {"$ref": "#/components/schemas/Cat"}}},
+      "a b": {"type": "string", "title": "space"},
+      "a/b": {"type": "integer", "title": "slash"},
+      "é": {"type": "boolean", "title": "accent"},
+      "a#b": {"type": "null", "title": "hash"},
+      "Names": {
+        "type": "object",
+        "properties": {
+          "space": {"$ref": "#/components/schemas/a%20b"},
+          "slash": {"$ref": "#/components/schemas/a~1b"},
+          "accent": {"$ref": "#/components/schemas/%C3%A9"},
+          "hash": {"$ref": "#/components/schemas/a%23b"},
+          "nested": {"$ref": "#/components/schemas/Person/properties/home"}
+        }
+      },
+      "Query": {"type": "object", "properties": {"q": {"type": "string"}, "near": {"$ref": "#/components/schemas/Address"}}, "additionalProperties": {"type": "number"}},
+      "Lossy": {
+        "type": "object",
+        "$dynamicAnchor": "node",
+        "properties": {
+          "kids": {"type": "array", "items": {"$dynamicRef": "#node"}},
+          "missing": {"$ref": "#/components/schemas/DoesNotExist"},
+          "elsewhere": {"$ref": "absent.json#/X"},
+          "foreign": {"$ref": "#/components/schemas/Draft7"},
+          "fine": {"$ref": "#/components/schemas/Person"}
+        }
+      },
+      "Draft7": {"$schema": "http://json-schema.org/draft-07/schema#", "type": "string", "maxLength": 3},
+      "Alias": {"$ref": "#/components/schemas/Person"}
+    }
+  }
+}

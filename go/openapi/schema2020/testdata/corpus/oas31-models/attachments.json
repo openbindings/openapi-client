@@ -1,0 +1,9 @@
+{
+  "type": "object",
+  "required": ["name"],
+  "properties": {
+    "name": {"type": "string"},
+    "size": {"type": "integer", "minimum": 0},
+    "parent": {"$ref": "openapi.json#/components/schemas/Document"}
+  }
+}

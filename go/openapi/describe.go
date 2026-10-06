@@ -475,7 +475,8 @@ type Flow struct {
 // A Schema is a lazy handle to one Schema Object. Describing operations does
 // no schema work. Raw, Source, Base, Dialect and References expose its authored
 // meaning and resolved references. A caller may build its own schema view
-// from this authored graph without changing how an operation is called.
+// from this authored graph without changing how an operation is called;
+// package schema2020 builds one, a standalone JSON Schema 2020-12 schema.
 //
 // A handle is the schema where it is used. In OpenAPI 3.1 and 3.2 it stays
 // at that site, whether or not a $ref there has siblings. In Swagger 2.0
@@ -588,7 +589,9 @@ func (s *Schema) Raw() json.RawMessage {
 // Source is where the schema is written: the absolute URI of its document,
 // with a JSON Pointer from that document's root as the fragment, usable
 // with Client.Document, under a nearer $id too. For a schema made from a
-// Swagger 2.0 parameter, it points to the parameter.
+// Swagger 2.0 parameter, it points to the parameter, and for the object
+// Media.Schema makes from Swagger 2.0 formData parameters, it is the
+// Operation's Source.
 func (s *Schema) Source() string {
 	return s.src + s.sub
 }
@@ -602,6 +605,24 @@ func (s *Schema) Base() string {
 		return n.base.String()
 	}
 	return s.v.t.refbase.String()
+}
+
+// Version is the OpenAPI version that governs how the schema is written: the
+// swagger or openapi value at the root of its document or, for a referenced
+// document that declares no version this client reads, the entry document's
+// (see Client.Version and Loader). Raw and Dialect are read under that
+// edition's rules.
+func (s *Schema) Version() string {
+	if t := s.v.t; t != nil && t.openAPI {
+		r := t.root()
+		if v := r.str("swagger"); v == "2.0" {
+			return v
+		}
+		if v := r.str("openapi"); isPatchOf(v, "3.0") || isPatchOf(v, "3.1") || isPatchOf(v, "3.2") {
+			return v
+		}
+	}
+	return s.doc.version
 }
 
 // Dialect is the JSON Schema dialect the schema is written in, in OpenAPI

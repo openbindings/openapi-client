@@ -20,18 +20,19 @@ available in the authored documents.
   achieve it.
 
 The invocation package exposes authored schemas and resolved references.
-Optional schema conversion is reserved under `openapi/schema2020`; invocation
-does not depend on it.
+The optional `openapi/schema2020` package converts any of them to a
+standalone JSON Schema 2020-12 schema for a request or a response;
+invocation does not depend on it.
 
 ## Status
 
-The invocation engine and authored-schema graph are implemented for all four
-editions, including JSON/YAML loading, parameters, credentials, redirects,
+The invocation engine, authored-schema graph and schema projection are
+implemented for all four editions, including JSON/YAML loading, parameters, credentials, redirects,
 request bodies, response decoding, streaming, prepared requests, descriptors
 and loaded-document inventory. The examples document caller flows; executable
 tests exercise those flows with synthetic documents and test transports.
 
-The optional `schema2020.Project` function is still a stub and must not be
-called. Schema validation and projection are separate from invocation.
+Schema projection is separate from invocation, and the client does not
+validate values against schemas.
 See [DESIGN.md](DESIGN.md) for the model and implementation scope, and
 [DEVELOPMENT.md](DEVELOPMENT.md) for the contract and qualification rules.
