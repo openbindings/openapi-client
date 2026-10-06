@@ -15,8 +15,8 @@ import (
 )
 
 // Supplemental public workloads: Loader's versionless contextual typing,
-// Param.Schema, Client.Schema and References; OAS 3.1.2 section 4.3.2 and the
-// dev-loop hostile-input rule. Incoming Parameter contexts alone establish
+// Param.Schema, Client.Schema and References; OAS 3.1.2 section 4.3.2, with
+// cost linear in the input. Incoming Parameter contexts alone establish
 // schema fields; their local references establish shared/chained targets.
 // No root OpenAPI/$schema/$id/anchor seeds the versionless bundle's schema map.
 const review9VersionlessURI = "https://schemas.example.test/api/versionless.json"

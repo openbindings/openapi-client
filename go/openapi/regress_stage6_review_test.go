@@ -16,9 +16,10 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// C1: Swagger Operation Object 6.4.7 takes its body from parameters and
-// consumes. A requestBody-shaped unknown field cannot replace that body or
-// impose requiredness, even when it appears before the real parameters.
+// The Swagger 2.0 Operation Object (section 6.4.7) takes its body from
+// parameters and consumes. A requestBody-shaped unknown field cannot replace
+// that body or impose requiredness, even when it appears before the real
+// parameters.
 func TestStage6SwaggerRequestBodyInactive(t *testing.T) {
 	for _, first := range []bool{false, true} {
 		t.Run(fmt.Sprint(first), func(t *testing.T) {
@@ -48,7 +49,7 @@ func TestStage6SwaggerRequestBodyInactive(t *testing.T) {
 	})
 }
 
-// C2: Loader explicitly chooses component names for mapping/defaultMapping
+// Loader explicitly chooses component names for mapping/defaultMapping
 // strings that can name a component. A dot is permitted in a component name;
 // ./other.json is a URI, whereas other.json remains a name whether declared
 // or missing. Neither mapping field may fetch a name-shaped string.
@@ -82,7 +83,7 @@ func TestStage6DiscriminatorMappingNamesNotFetched(t *testing.T) {
 	}
 }
 
-// C3: doc.go Configuration derives positional part types from itemSchema or
+// doc.go Configuration derives positional part types from itemSchema or
 // prefixItems/items after references. The raw schema's reference must not
 // erase the type that controls supported structured multipart values.
 func TestStage6PositionalSchemaDerivedTypes(t *testing.T) {
@@ -116,7 +117,7 @@ func TestStage6PositionalSchemaDerivedTypes(t *testing.T) {
 	}
 }
 
-// A6-2 is the same itemSchema default class with no explicit Encoding at all.
+// The same itemSchema default, with no explicit Encoding at all.
 // Input.Body admits positional form-data slices with one-property wrappers,
 // and ordinary multipart slices/iterators. The wrapper supplies the part name,
 // while itemSchema controls the wrapped value's default media type.
@@ -152,7 +153,7 @@ func TestStage6PositionalItemSchemaWithoutEncoding(t *testing.T) {
 	}
 }
 
-// C4/C5: edition gating applies to semantic schema reads as well as discovery.
+// Edition gating applies to semantic schema reads as well as discovery.
 // 3.0 Schema has no contentEncoding; legacy Reference Objects ignore sibling
 // properties when describing/encoding a multipart body's fields.
 func TestStage6LegacyMultipartSchemaSemantics(t *testing.T) {
@@ -197,11 +198,11 @@ func TestStage6LegacyMultipartSchemaSemantics(t *testing.T) {
 	}
 }
 
-// Q1: body/formData entries leave Params during Swagger normalization. The
+// Body and formData entries leave Params during Swagger normalization. The
 // credential destinations must still identify the final Params, both when
 // stale pre-compaction indices would be out of bounds and when they happen to
-// remain in range and point at unrelated parameters. doc.go Credentials and
-// stage 3 required-destination/collision rules apply after normalization.
+// remain in range and point at unrelated parameters. The required-destination
+// and collision rules of doc.go Credentials apply after normalization.
 func TestStage6SwaggerCompactionCredentialIdentity(t *testing.T) {
 	for _, bodyKind := range []string{"body", "formData"} {
 		for _, position := range []int{0, 1, 2, 4} {
@@ -263,7 +264,7 @@ func TestStage6SwaggerCompactionCredentialIdentity(t *testing.T) {
 	})
 }
 
-// P6-P1/Q2 lazy-representation guard: normalized formData Raw contains each
+// A lazy-representation guard: normalized formData Raw contains each
 // operation's own fields and shared schema data, is safe on concurrent first
 // access, and returns independent mutable copies without altering Document.
 func TestStage6SyntheticFormRawIsolation(t *testing.T) {

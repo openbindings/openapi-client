@@ -16,11 +16,13 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Benchmarks the stage 1 review round added (ledger, "Review round"): an
-// in-memory transport next to the loopback benchmarks, so the client's own
-// cost is resolvable (#29); the document tree's memory (#7, F7); and the
-// performance fixes with no functional test: F6, F8, F13, F15, F16, F23,
-// F42, and the body walk's per-type cache (F1, #15).
+// Further benchmarks: an in-memory transport next to the loopback
+// benchmarks, so the client's own cost is resolvable; the document tree's
+// memory; and performance properties no functional test covers: Load's
+// Options checks, Path Item $ref chains, compiling many parameters and
+// server variables, array parameter values, server variables given in
+// Options, With for one call, a non-JSON body into a *any, and the body
+// walk's per-type cache.
 
 // cannedRT answers every request in memory with petJSON (201 for POST),
 // reading and closing any request body first.
@@ -123,10 +125,9 @@ var (
 	postInput = &openapi.Input{Body: Pet{Name: "Rex", Tag: "dog"}}
 )
 
-// #29: Call against the same requests written by hand, over an in-memory
-// transport, serially and in parallel. These resolve the client's own cost
-// against the 10 percent budget; the loopback ones stay the end-to-end
-// check.
+// Call against the same requests written by hand, over an in-memory
+// transport, serially and in parallel. These isolate the client's own cost
+// from the network; the loopback ones stay the end-to-end check.
 func BenchmarkMemCallGetJSON(b *testing.B) {
 	c, _ := cannedClient(b)
 	b.ReportAllocs()
@@ -201,7 +202,7 @@ func BenchmarkMemParallelNetHTTPPostJSON(b *testing.B) {
 
 // reportLoadMemory loads doc once more after the timed loop and reports the
 // heap it retains after a GC, and what the load allocated, per document
-// byte (#7, F7: budgets 3 and 6).
+// byte. TestF7TreeMemoryBudget enforces limits on both.
 func reportLoadMemory(b *testing.B, doc []byte) {
 	b.Helper()
 	var before, loaded, after runtime.MemStats
@@ -233,8 +234,8 @@ func BenchmarkLoadLargeMemory(b *testing.B) {
 	reportLoadMemory(b, doc)
 }
 
-// BenchmarkLoadArrayMemory: the security reviewer's pathological document,
-// an 8 MiB array of zeros (one value per two bytes).
+// BenchmarkLoadArrayMemory: a pathological document, an 8 MiB array of
+// zeros (one value per two bytes).
 func BenchmarkLoadArrayMemory(b *testing.B) {
 	const size = 8 << 20
 	var buf strings.Builder
@@ -254,7 +255,7 @@ func BenchmarkLoadArrayMemory(b *testing.B) {
 	reportLoadMemory(b, doc)
 }
 
-// F6: Load with Options that name servers or media types, against
+// Load with Options that name servers or media types, against
 // BenchmarkLoadLarge.
 func BenchmarkLoadLargeWithServer(b *testing.B) {
 	benchLoadWith(b, &openapi.Options{Server: "https://api.example.test/v1"})
@@ -275,7 +276,7 @@ func benchLoadWith(b *testing.B, opts *openapi.Options) {
 	}
 }
 
-// F8: a Path Item $ref chain resolved at Load.
+// A Path Item $ref chain resolved at Load.
 func BenchmarkLoadPathItemChain(b *testing.B) {
 	var sb strings.Builder
 	sb.WriteString(`{"openapi":"3.1.0","info":{"title":"t","version":"1"},"paths":{"/x":{"$ref":"#/components/pathItems/p0"}},"components":{"pathItems":{`)
@@ -309,7 +310,7 @@ func benchFirstUse(b *testing.B, doc []byte, key string) {
 	}
 }
 
-// F13: compiling an operation with many parameters, and a server with many
+// Compiling an operation with many parameters, and a server with many
 // variables.
 func BenchmarkFirstUseManyParams(b *testing.B) {
 	var sb strings.Builder
@@ -339,7 +340,7 @@ func BenchmarkFirstUseManyServerVariables(b *testing.B) {
 	benchFirstUse(b, []byte(doc), "op")
 }
 
-// F15: an array parameter value against a scalar one.
+// An array parameter value against a scalar one.
 func BenchmarkPrepareArrayParam(b *testing.B) {
 	benchPrepareLarge(b, &openapi.Input{Params: map[string]any{"itemId": "x-1", "limit": 10, "fields": []string{"a", "b"}}})
 }
@@ -362,7 +363,7 @@ func benchPrepareLarge(b *testing.B, in *openapi.Input) {
 	}
 }
 
-// F16: a server variable given in Options.Variables against its default.
+// A server variable given in Options.Variables against its default.
 const variableServerDoc = `{"openapi":"3.1.0","info":{"title":"t","version":"1"},
 	"servers":[{"url":"https://{region}.api.example.test/v1","variables":{"region":{"default":"us","enum":["us","eu"]}}}],
 	"paths":{"/pets/{petId}":{"get":{"operationId":"getPet","parameters":[{"name":"petId","in":"path","required":true,"schema":{"type":"string"}}]}}}}`
@@ -387,7 +388,7 @@ func BenchmarkPrepareServerVariable(b *testing.B) {
 	benchVariables(b, &openapi.Options{Variables: map[string]string{"region": "eu"}})
 }
 
-// F23: With for one call.
+// With for one call.
 func BenchmarkWith(b *testing.B) {
 	c, _ := cannedClient(b)
 	b.ReportAllocs()
@@ -407,7 +408,7 @@ func (rt octetsRT) RoundTrip(r *http.Request) (*http.Response, error) {
 		Header: http.Header{"Content-Type": {"application/octet-stream"}}, Body: b, ContentLength: int64(len(rt.data)), Request: r}, nil
 }
 
-// F42: a non-JSON body into a *any keeps the buffer it read (one body-sized
+// A non-JSON body into a *any keeps the buffer it read (one body-sized
 // allocation, not two).
 func BenchmarkMemCallAnyOctets(b *testing.B) {
 	rt := octetsRT{data: bytes.Repeat([]byte{7}, 64<<10)}
@@ -426,8 +427,8 @@ func BenchmarkMemCallAnyOctets(b *testing.B) {
 	}
 }
 
-// F1 (#15): preparing a large JSON body against json.Marshal alone; the
-// reader walk's per-type cache keeps the difference small.
+// Preparing a large JSON body against json.Marshal alone; the reader walk's
+// per-type cache keeps the difference small.
 var (
 	bigPets = func() []Pet {
 		s := make([]Pet, 2000)

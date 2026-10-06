@@ -18,10 +18,9 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Stage 3, redirects (brief, Scope: "Redirects"; Tests: "Redirect tests
-// against httptest servers on two origins"). Two httptest servers on
-// 127.0.0.1 with different ports are two origins (scheme, host and port);
-// a raw listener shows every byte a hop sent.
+// Redirects, tested against httptest servers on two origins. Two httptest
+// servers on 127.0.0.1 with different ports are two origins (scheme, host and
+// port); a raw listener shows every byte a hop sent.
 
 // redirDoc has one operation per method on /r, each carrying a header, a
 // query and a cookie parameter, under root security that places a header,
@@ -290,17 +289,16 @@ func TestRedirectStatusesNotFollowed(t *testing.T) {
 	})
 }
 
-// client.go, Redirects: "On a hop to another origin (scheme, host and
-// port), the client removes the credentials it added and any header a
-// security scheme placed, the Authorization and Cookie fields (cookie
-// parameters included), all header parameters, and every field supplied
-// through Options.Header, Input.Header, or an edit to Request.HTTP.Header.
-// Generated fields needed to describe a replayed body, such as
-// Content-Type and Content-Length, are rebuilt ... a query credential goes
-// only on the request the client builds, never onto a Location"; "The
-// client adds no Referer" (stage 3 ledger, R2: "A caller's Referer is a
-// caller field like any other"). The second origin is a raw listener, so
-// every byte of the hop is checked.
+// client.go, Redirects: "On a hop to another origin (scheme, host and port),
+// the client removes the credentials it added and any header a security
+// scheme placed, the Authorization and Cookie fields (cookie parameters
+// included), all header parameters, and every field supplied through
+// Options.Header, Input.Header, or an edit to Request.HTTP.Header. Generated
+// fields needed to describe a replayed body, such as Content-Type and
+// Content-Length, are rebuilt ... a query credential goes only on the request
+// the client builds, never onto a Location"; "The client adds no Referer",
+// and a caller's Referer is a caller field like any other. The second origin
+// is a raw listener, so every byte of the hop is checked.
 func TestRedirectCrossOriginStrips(t *testing.T) {
 	for _, via := range []string{"Call", "Send"} {
 		t.Run(via, func(t *testing.T) {
@@ -420,16 +418,16 @@ func TestRedirectStrippingIsSticky(t *testing.T) {
 	})
 }
 
-// client.go, Redirects: "The HTTPClient's CheckRedirect is still consulted
-// on every hop the client follows, after the client applies the rules below
-// and before it places credentials on the hop, and can restore a field the
-// caller deliberately wants to forward ... CheckRedirect may restore a field
-// intentionally, such as Range or Accept". Stage 3 ledger, Q11:
-// "CheckRedirect sees each hop after stripping and before credentials are
-// placed (the unsigned view Prepare gives); ErrUseLastResponse and errors
-// follow net/http's meanings": an error ends the call with a *url.Error
-// wrapping it, and ErrUseLastResponse returns the 3xx, which the client
-// reports as a *StatusError ("A 3xx not followed is the outcome").
+// client.go, Redirects: "The HTTPClient's CheckRedirect is still consulted on
+// every hop the client follows, after the client applies the rules below and
+// before it places credentials on the hop, and can restore a field the caller
+// deliberately wants to forward ... CheckRedirect may restore a field
+// intentionally, such as Range or Accept". CheckRedirect sees each hop after
+// stripping and before credentials are placed (the unsigned view Prepare
+// gives), and ErrUseLastResponse and errors follow net/http's meanings: an
+// error ends the call with a *url.Error wrapping it, and ErrUseLastResponse
+// returns the 3xx, which the client reports as a *StatusError ("A 3xx not
+// followed is the outcome").
 func TestRedirectCheckRedirect(t *testing.T) {
 	t.Run("sees a same-origin hop before credentials are placed", func(t *testing.T) {
 		a := newWire(t, routes(map[string]http.HandlerFunc{"/r": redirect(307, "/next?x=1")}))
@@ -794,10 +792,8 @@ func TestFromTransportSeesEveryHop(t *testing.T) {
 // credential.go, SecretFunc: "On a redirect hop the first request has
 // already been sent, so an error or an empty secret ends the call with a
 // *url.Error wrapping f's error, along with the last response, its body
-// closed" (stage 3 ledger, Q12: "an empty secret from a SecretFunc on a hop
-// ends the call as an error does (*url.Error, no hop sent)"; C3-5: such an
-// error "returns that last Response, its body closed, with the
-// *url.Error").
+// closed". An empty secret on a hop ends the call as an error does, with a
+// *url.Error and no hop sent.
 func TestSecretFuncFailsOnHop(t *testing.T) {
 	errHop := errors.New("token refresh failed")
 	for name, answer := range map[string]func(int64) (string, error){

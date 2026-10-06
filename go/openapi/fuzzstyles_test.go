@@ -9,20 +9,24 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// FuzzStyleSerialization (stage 2 brief, Tests: "comparing every RFC
-// 6570-backed style against the oracle for arbitrary values"): for arbitrary
-// strings, a primitive, a two-item array and a two-member object are
-// prepared under every (location, style, explode, allowReserved)
-// configuration OpenAPI 3.1 defines (styleConfigs), and the prepared request
-// is compared with what styleCfg.expect derives: the RFC 6570 oracle for
-// matrix, label, simple and form (a header's simple with percent-encoding
-// removed, a cookie's form with pairs joined by "; "), and the OAS 3.1.2
-// table and text for spaceDelimited, pipeDelimited and deepObject, with the
-// stage 2 ledger's rulings Q1 to Q4 built in (empty exploded members, [""]
-// under matrix, reserved member names, encoded cookie values). On top of
-// expect: a path value forming a whole "." or ".." segment is refused
-// (doc.go, Fixed rules, Percent-encoding); a header value holding a CR, LF or
-// NUL, or leading or trailing whitespace, is refused (errors.go,
+// FuzzStyleSerialization compares every RFC 6570-backed style against the
+// oracle for arbitrary values: for arbitrary strings, a primitive, a
+// two-item array and a two-member object are prepared under every (location,
+// style, explode, allowReserved) configuration OpenAPI 3.1 defines
+// (styleConfigs), and the prepared request is compared with what
+// styleCfg.expect derives: the RFC 6570 oracle for matrix, label, simple and
+// form (a header's simple with percent-encoding removed, a cookie's form
+// with pairs joined by "; "), and the OAS 3.1.2 table and text for
+// spaceDelimited, pipeDelimited and deepObject, with these rules built in:
+// an exploded object member whose value is "" is its name alone except in
+// form style (doc.go, Fixed rules, Styles: RFC 6570's normative text
+// governs); [""] under matrix without explode is ";p" (RFC 6570 section
+// 3.2.7: "=" only if the value is not empty); under allowReserved, reserved
+// expansion applies to member names; and form-style cookie values are
+// percent-encoded (doc.go, Fixed rules, Percent-encoding). On top of expect:
+// a path value forming a whole "." or ".." segment is refused (doc.go, Fixed
+// rules, Percent-encoding); a header value holding a CR, LF or NUL, or
+// leading or trailing whitespace, is refused (errors.go,
 // RequestError.Inputs), and one holding another control character is not
 // asserted (the contract names only those).
 func FuzzStyleSerialization(f *testing.F) {

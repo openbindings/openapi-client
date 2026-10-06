@@ -5,11 +5,16 @@ import (
 	"testing"
 )
 
-// The ratified Tier 2 feedback boundary also applies when the disproved
-// inferred resource is the versionless document root. Loader's known Parameter
-// context must survive independently; root $schema/$id cues are not an explicit
-// Schema reference. ErrUnresolved location latitude is shared with the frozen
-// feedback oracle. No competing explicit root-Schema interpretation is added.
+// Loader's rule for a disproved inference ("If retrieval based on an
+// inferred schema resource later reveals that the resource is instance data,
+// references whose scope depends on that inference are unresolvable. The
+// documents already retrieved remain available, and parts independent of
+// that inference remain usable.") also applies when the disproved inferred
+// resource is the versionless document root. Loader's known Parameter
+// context must survive independently; root $schema/$id cues are not an
+// explicit Schema reference. ErrUnresolved location latitude is shared with
+// the other feedback tests (review9FeedbackWantUnresolved). No competing
+// explicit root-Schema interpretation is added.
 func TestReview9RootContextFeedbackPreservesParameterSchema(t *testing.T) {
 	const bundle = "https://schemas.example.test/api/root-feedback.json"
 	const inferredCarrier = "https://schemas.example.test/api/data-only/root-feedback-carrier.json"

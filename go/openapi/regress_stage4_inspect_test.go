@@ -14,27 +14,23 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Regression tests for the stage 4 verification pass, class ruling C4-8
-// (stage 4 ledger, "Verification pass (23cfd73), cloud session"; VP3, VP4,
-// VP5, VN4): "Schema inspection costs what the document holds and depends on
-// nothing else ... A schema node's shape (the types it and the schemas its
-// $ref and allOf reach allow, its contentEncoding, its items, its
-// properties) is computed once per node and reused by every field,
+// Regression tests for the cost of schema inspection, which costs what the
+// document holds and depends on nothing else. A schema node's shape (the types
+// it and the schemas its $ref and allOf reach allow, its contentEncoding, its
+// items, its properties) is computed once per node and reused by every field,
 // operation and nested part that reaches it; a field combines its roots'
-// shapes. First-use work for a document with no $ref or allOf cycle is
-// linear in its size however many fields share a target (P1) ... Keywords
-// are read by keyed lookup, never by scanning every member (stage 1's
-// reference() included, VN4). Items chains are followed iteratively with
-// each node's set memoized and no length bound: a long chain gets its true
-// default, and only an items cycle contributes the absent type. This
-// withdraws C4-2's "bounded at 1,000 links" option, whose cut made a stored
-// result depend on where the first walk entered (VP4). Concurrent first uses
-// store with LoadOrStore (IP4F-1: the first stored result wins). A call
-// never computes a closure: a nested part's or form-typed field's encoding
-// is looked up before any shape is computed (VP5)." Each scaling test is
-// checked on time and bytes allocated (regress2_scale_test.go, IP4F-9),
-// with the inputs growing together so that work per field proportional to
-// what the field reaches is quadratic.
+// shapes. First-use work for a document with no $ref or allOf cycle is linear
+// in its size however many fields share a target. Keywords are read by keyed
+// lookup, never by scanning every member (reference() included). Items chains
+// are followed iteratively with each node's set memoized and no length bound:
+// a long chain gets its true default, and only an items cycle contributes the
+// absent type. A length bound would make a stored result depend on where the
+// first walk entered. Concurrent first uses store with LoadOrStore, and the
+// first stored result wins. A call never computes a closure: a nested part's
+// or form-typed field's encoding is looked up before any shape is computed.
+// Each scaling test is checked on time and bytes allocated
+// (regress2_scale_test.go), with the inputs growing together so that work per
+// field proportional to what the field reaches is quadratic.
 
 const inspectHead = `{"openapi":"3.1.0","info":{"title":"t","version":"1"},"servers":[{"url":"https://api.example.test"}],"paths":{`
 
@@ -43,9 +39,9 @@ func emptyMembers(k int) string {
 	return strings.TrimSuffix(strings.Repeat("{},", k), ",")
 }
 
-// fanoutDoc is VP3's document: one operation whose form and multipart
-// bodies have n properties, each a $ref to Big, an object with k empty
-// allOf members.
+// fanoutDoc is a fan-out document: one operation whose form and multipart
+// bodies have n properties, each a $ref to Big, an object with k empty allOf
+// members.
 func fanoutDoc(n, k int) []byte {
 	var props []string
 	for i := range n {
@@ -70,8 +66,8 @@ func sharedAllOfDoc(n, k int) []byte {
 }
 
 // sharedTargetDoc is a document whose one multipart and form body has n
-// properties, each a $ref to T, a string schema with k extension members
-// (VN4), or, with types set, whose type is an array of k entries.
+// properties, each a $ref to T, a string schema with k extension members,
+// or, with types set, whose type is an array of k entries.
 func sharedTargetDoc(n, k int, types bool) []byte {
 	var props []string
 	for i := range n {
@@ -93,26 +89,24 @@ func sharedTargetDoc(n, k int, types bool) []byte {
 		`"components":{"schemas":{"T":` + target + `}}}`)
 }
 
-// C4-8 (VP3): first use is linear in the document however many fields
-// share a target, a shape "computed once per node and reused by every
-// field, operation and nested part that reaches it". Each case grows the
-// fields and what they share together, from 250 to 1,000: n form and
-// multipart properties each a $ref to one schema with n allOf members, and
-// n operations whose body schema is a $ref to one schema with n allOf
-// members. At b4872f9 each property or operation walked the n members:
-// sixteen times the work.
+// First use is linear in the document however many fields share a target, a
+// shape being computed once per node and reused by every field, operation and
+// nested part that reaches it. Each case grows the fields and what they share
+// together, from 250 to 1,000: n form and multipart properties each a $ref to
+// one schema with n allOf members, and n operations whose body schema is a
+// $ref to one schema with n allOf members. An earlier implementation walked
+// the n members for each property or operation: sixteen times the work.
 func TestC48SharedTargetsFirstUseLinear(t *testing.T) {
 	wantLinear(t, "properties sharing a $ref to allOf members", 250, func(n int) func() { return timedOperations(t, fanoutDoc(n, n)) })
 	wantLinear(t, "operations sharing a $ref to allOf members", 250, func(n int) func() { return timedOperations(t, sharedAllOfDoc(n, n)) })
 }
 
-// C4-8 (VN4): "Keywords are read by keyed lookup, never by scanning every
-// member", and a shape is computed once per node, so the cost of each of
-// 2,000 properties sharing a target does not depend on the target's size:
-// a target with 250 or 4,000 extension members, or a type array of 250 or
-// 4,000 entries, costs the same per property (wantFlat: at most 3 times at
-// 16 times the size). At b4872f9 every property scanned every member and
-// every type entry.
+// Keywords are read by keyed lookup, never by scanning every member, and a
+// shape is computed once per node, so the cost of each of 2,000 properties
+// sharing a target does not depend on the target's size: a target with 250 or
+// 4,000 extension members, or a type array of 250 or 4,000 entries, costs the
+// same per property (wantFlat: at most 3 times at 16 times the size).
+// Previously every property scanned every member and every type entry.
 func TestC48SharedTargetCostIndependentOfItsSize(t *testing.T) {
 	wantFlat(t, "a target with many keys", 250, func(k int) func() { return timedOperations(t, sharedTargetDoc(2000, k, false)) })
 	wantFlat(t, "a target with a long type array", 250, func(k int) func() { return timedOperations(t, sharedTargetDoc(2000, k, true)) })
@@ -151,9 +145,9 @@ func TestC48SharedTargetsDescribed(t *testing.T) {
 	}
 }
 
-// nestedAllOfDoc is VP5's document: a multipart field bundle, a $ref to
-// Arr, an array of Obj with k empty allOf members, whose Encoding
-// contentType is ctype, a nested multipart type or the form type.
+// nestedAllOfDoc is a multipart field bundle, a $ref to Arr, an array of Obj
+// with k empty allOf members, whose Encoding contentType is ctype, a nested
+// multipart type or the form type.
 func nestedAllOfDoc(k int, ctype string) []byte {
 	return []byte(inspectHead + `"/up":{"post":{"operationId":"up","requestBody":{"content":{"multipart/form-data":{` +
 		`"schema":{"type":"object","properties":{"bundle":{"$ref":"#/components/schemas/Arr"}}},` +
@@ -162,12 +156,11 @@ func nestedAllOfDoc(k int, ctype string) []byte {
 		`"Arr":{"type":"array","items":{"$ref":"#/components/schemas/Obj"},"allOf":[` + emptyMembers(k) + `]}}}}`)
 }
 
-// C4-8 (VP5): "A call never computes a closure: a nested part's or
-// form-typed field's encoding is looked up before any shape is computed."
-// A warm call whose field, a nested multipart part or a form-typed part,
-// holds n items, its schema reaching n allOf members, costs linear in n
-// (at b4872f9 each item computed the field's closure over the n members on
-// every call).
+// A call never computes a closure: a nested part's or form-typed field's
+// encoding is looked up before any shape is computed. A warm call whose field,
+// a nested multipart part or a form-typed part, holds n items, its schema
+// reaching n allOf members, costs linear in n (previously each item computed
+// the field's closure over the n members on every call).
 func TestC48NestedPartWarmCallLinear(t *testing.T) {
 	for _, ctype := range []string{"multipart/mixed", "application/x-www-form-urlencoded"} {
 		wantLinear(t, ctype+" items, warm Prepare", 250, func(n int) func() {
@@ -189,9 +182,9 @@ func TestC48NestedPartWarmCallLinear(t *testing.T) {
 	}
 }
 
-// longChainDoc is VP4's document: schemas S0 to S(n-1), each an array whose
-// items is the next, Sn a string, and two operations whose multipart field
-// enters the chain at different depths: a's f at S0, b's g at S(mid).
+// longChainDoc is a long items chain: schemas S0 to S(n-1), each an array
+// whose items is the next, Sn a string, and two operations whose multipart
+// field enters the chain at different depths: a's f at S0, b's g at S(mid).
 func longChainDoc(n, mid int) []byte {
 	var b strings.Builder
 	b.WriteString(inspectHead)
@@ -205,15 +198,15 @@ func longChainDoc(n, mid int) []byte {
 	return []byte(b.String())
 }
 
-// C4-8 (VP4): "Items chains are followed iteratively with each node's set
-// memoized and no length bound: a long chain gets its true default", and
-// results do not depend on which operation is used first (C4-2). A 1,600-link
-// chain ending in a string is entered by a at its head and by b 700 links
-// in: whichever operation is described and called first, both fields are
-// text/plain (OpenAPI 3.1.2 section 4.8.15.1.1: an array's default is its
-// items'; a string's is text/plain) and the same parts are sent. At
-// b4872f9, using a first stored application/octet-stream, the 1,000-link
-// cut, for every link on its path; b first gave text/plain.
+// Items chains are followed iteratively with each node's set memoized and no
+// length bound, so a long chain gets its true default, and results do not
+// depend on which operation is used first. A 1,600-link chain ending in a
+// string is entered by a at its head and by b 700 links in: whichever
+// operation is described and called first, both fields are text/plain
+// (OpenAPI 3.1.2 section 4.8.15.1.1: an array's default is its items'; a
+// string's is text/plain) and the same parts are sent. Previously, calling a
+// first stored application/octet-stream, the 1,000-link cut, for every link on
+// its path, while calling b first gave text/plain.
 func TestC48LongChainOrderIndependent(t *testing.T) {
 	doc := longChainDoc(1600, 700)
 	type outcome struct{ f, g, sentA, sentB string }
@@ -254,9 +247,8 @@ func TestC48LongChainOrderIndependent(t *testing.T) {
 	}
 }
 
-// C4-8 withdraws the 1,000-link cut: a single chain of 1,500 links ending in
-// a string is text/plain, under multipart/form-data and as a form field's
-// own type.
+// No 1,000-link cut applies: a single chain of 1,500 links ending in a string
+// is text/plain, under multipart/form-data and as a form field's own type.
 func TestC48LongChainTrueDefault(t *testing.T) {
 	c, err := openapi.Parse(context.Background(), chainDoc(1500), testDocURI, nil)
 	if err != nil {
@@ -268,10 +260,9 @@ func TestC48LongChainTrueDefault(t *testing.T) {
 }
 
 // inspectRaceDoc has operations o0 to o(ops-1) whose multipart bodies share
-// schemas through $ref and allOf, with items cycles, a nested multipart
-// field n and a form-typed field fm (security's verification document), and
-// the operations a and b of a 1,200-link items chain entered at its head
-// and 500 links in.
+// schemas through $ref and allOf, with items cycles, a nested multipart field
+// n and a form-typed field fm, and the operations a and b of a 1,200-link
+// items chain entered at its head and 500 links in.
 func inspectRaceDoc(ops int) []byte {
 	var b strings.Builder
 	b.WriteString(inspectHead)
@@ -339,9 +330,8 @@ var boundaryParam = regexp.MustCompile(`boundary="?([^";\r\n]+)`)
 
 // generatedBoundaries returns body with every boundary the client generated
 // (each one not among given) written as <generated>, as a generated boundary
-// is random (client.go, Input.MediaType; stage 4 ledger, Q13: "Generated
-// boundaries are random and not scanned"; IP4-4; IFP1). Each must still be
-// one RFC 2046 section 5.1.1 allows.
+// is random (body.go, newBoundary) and content is not scanned for it. Each
+// must still be one RFC 2046 section 5.1.1 allows.
 func generatedBoundaries(t *testing.T, body []byte, given ...string) []byte {
 	t.Helper()
 	for _, m := range boundaryParam.FindAllSubmatch(body, -1) {
@@ -357,13 +347,12 @@ func generatedBoundaries(t *testing.T, body []byte, given ...string) []byte {
 	return body
 }
 
-// C4-8, IP4F-1: concurrent first uses in random order give what a serial
-// first use gives, and a serial first use gives the same whichever order
-// it takes (C4-2: "Results do not depend on which operation compiles
-// first"), for descriptors and the bytes sent, every boundary the client
-// generated for a nested part normalized (IFP1); run under -race. At b4872f9
-// the serial orders differ on the long chain (VP4), a first using a's
-// 1,200-link walk and storing application/octet-stream.
+// Concurrent first uses in random order give what a serial first use gives,
+// and a serial first use gives the same whichever order it takes (results do
+// not depend on which operation compiles first), for descriptors and the bytes
+// sent, every boundary the client generated for a nested part normalized; run
+// under -race. Previously the serial orders differed on the long chain, a
+// first using a's 1,200-link walk and storing application/octet-stream.
 func TestC48ConcurrentFirstUseMatchesSerial(t *testing.T) {
 	const ops = 40
 	doc := inspectRaceDoc(ops)

@@ -12,9 +12,9 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// The stage 7 harness operates entirely at the caller's RoundTripper seam.
-// Bodies can fragment reads and return bytes together with EOF or another
-// error, both expressly permitted by io.Reader's contract.
+// The stream test harness operates entirely at the caller's RoundTripper
+// seam. Bodies can fragment reads and return bytes together with EOF or
+// another error, both expressly permitted by io.Reader's contract.
 type stream7RT func(*http.Request) (*http.Response, error)
 
 func (f stream7RT) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

@@ -21,9 +21,9 @@ import (
 // RFC's own examples.
 //
 // Where the normative section 3.2.1 and the informative Appendix A read
-// differently, section 3.2.1 is followed, as the loop owner ruled (stage 2
-// ledger, Q1; doc.go, Fixed rules, Styles: "RFC 6570's normative text
-// governs where its informative Appendix A differs"): an exploded
+// differently, section 3.2.1 is followed (doc.go, Fixed rules, Styles:
+// "RFC 6570's normative text governs where its informative Appendix A
+// differs"): an exploded
 // associative array's member names are encoded "in the same way as simple
 // string values", and an exploded pair whose value is the empty string is
 // written as its name alone except for the "?" and "&" operators, where
@@ -158,8 +158,7 @@ func uexpandOp(o uop, specs ...uspec) string {
 		}
 		if v.allUndef && sp.explode {
 			// Exploded, a list with no defined member writes nothing, the
-			// operator's prefix included (stage 2 ledger, review round, last
-			// entry: RFC 6570 does not settle it).
+			// operator's prefix included (RFC 6570 does not settle it).
 			continue
 		}
 		if first {
@@ -185,7 +184,7 @@ func uexpandOp(o uop, specs ...uspec) string {
 			// of the members, or of each defined pair as "name,value". A named
 			// operator appends "=" only "if the variable's value is not
 			// empty" (section 3.2.7), so a list whose expansion is empty, as
-			// [""] is, takes ifemp (stage 2 ledger, Q2: ";p").
+			// [""] is, takes ifemp (";p" under matrix).
 			var parts []string
 			if v.kind == ulist {
 				for _, m := range v.list {
@@ -598,17 +597,16 @@ func jUndefined(n jnode) bool {
 // uvalOf is JSON data as an RFC 6570 value (doc.go, Values: "An undefined
 // member or array item is skipped, as RFC 6570 section 3.2.1 expands only
 // defined ones"; a number or boolean in its JSON spelling). Undefinedness is
-// settled first (stage 2 ledger, Q5; doc.go, Fixed rules, Styles: "Whether a
-// value is undefined ... is settled first; the refusals here apply to
-// defined values"): an undefined value is never nesting, and an undefined
-// member or array item (null, [] or {}) is skipped (ledger, review round,
-// T2, which reverses the Q5 follow-up). Nesting of a defined collection,
-// which the RFC 6570 styles refuse, is an error. A list whose items are all
-// undefined, such as [null], is defined with no defined member (ledger,
-// review round: "RFC 6570 2.3: only a list with zero members is
-// undefined"): without explode it expands as "" does in every style,
+// settled first (doc.go, Fixed rules, Styles: "Whether a value is undefined
+// ... is settled first; the refusals here apply to defined values"): an
+// undefined value is never nesting, and an undefined member or array item
+// (null, [] or {}) is skipped. Nesting of a defined collection, which the
+// RFC 6570 styles refuse, is an error. A list whose items are all
+// undefined, such as [null], is defined with no defined member (RFC 6570
+// section 2.3: a list is undefined only "if the list contains zero
+// members"): without explode it expands as "" does in every style,
 // spaceDelimited and pipeDelimited included, and exploded it writes nothing,
-// prefix included (ledger, review round, last entry).
+// prefix included, a case RFC 6570 does not settle.
 func uvalOf(n jnode) (uval, error) {
 	if jUndefined(n) {
 		return uval{}, nil
@@ -655,7 +653,8 @@ func oracleValue(t testing.TB, v any) (uval, error) {
 // 3.1.2 style table (section 4.8.12.6: "color=blue%20black%20brown",
 // "color=R%20100%20G%20200%20B%20150", and %7C for pipeDelimited) and
 // Appendix C.3 (values by regular or reserved expansion, based on
-// allowReserved, member names included: stage 2 ledger, Q3), with delim the
+// allowReserved, member names included: doc.go, Fixed rules,
+// Percent-encoding), with delim the
 // encoded delimiter; the parameter name always follows the name rule. It
 // returns "" for an undefined value.
 func delimited(name string, v uval, delim string, allow uallow) string {
@@ -682,7 +681,8 @@ func delimited(name string, v uval, delim string, allow uallow) string {
 // 4.8.12.6: "color%5BR%5D=100&color%5BG%5D=200&color%5BB%5D=150"; doc.go,
 // Fixed rules, Percent-encoding: "deepObject nests objects as
 // a%5Bb%5D%5Bc%5D=v"), skipping undefined members; member names and values
-// take reserved expansion under allowReserved (stage 2 ledger, Q3). It
+// take reserved expansion under allowReserved (doc.go, Fixed rules,
+// Percent-encoding). It
 // returns "" for an undefined value.
 func deepObject(name string, n jnode, allow uallow) string {
 	var pairs []string

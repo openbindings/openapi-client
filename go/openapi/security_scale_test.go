@@ -11,12 +11,10 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Stage 3 scaling tests (dev loop, "Hostile-input cost is a standing
-// gate": every document-driven path a stage adds is covered by the scaling
-// harness; brief, Tests: "an operation with many alternatives and schemes;
-// a document with many operations sharing security"; Internal design:
-// "many alternatives and schemes compile linearly; a long redirect chain
-// costs linearly and is bounded by the hop limit"). The harness is in
+// Scaling tests for security and redirects: an operation with many
+// alternatives and schemes, and a document with many operations sharing
+// security. Many alternatives and schemes compile linearly; a long redirect
+// chain costs linearly and is bounded by the hop limit. The harness is in
 // regress2_scale_test.go.
 
 const scaleBase = "https://api.example.test"
@@ -179,7 +177,7 @@ func TestManySchemesScale(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Query credentials in the order the alternative lists their schemes
-	// (stage 3 ledger, Q3).
+	// (doc.go, Credentials).
 	if reqs := rt.requests(); len(reqs) != 1 || reqs[0].URL.RawQuery != "q0=qv&q1=qv&q2=qv" ||
 		reqs[0].Header.Get("X-H2") != "hv" || reqs[0].Header.Get("Authorization") != "Bearer tok" {
 		t.Errorf("the call did not place every credential: %+v", reqs)

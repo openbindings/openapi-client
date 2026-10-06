@@ -15,9 +15,8 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Regression tests for the stage 3 review round, uploads: class ruling C3-2
-// (stage 3 ledger, "Review round (8101e19)"; panel F2, part (a), and the
-// adversarial contract note on WaitRequest). Every test gates the caller's
+// Regression tests for uploads: when a request body generation ends, and
+// what WaitRequest and Call wait for. Every test gates the caller's
 // reader on channels: a Read that blocks until the test releases it is in
 // flight for as long as the test says, so a call that returns while it is in
 // flight is caught whatever the machine's speed. Run with -race: the reader
@@ -119,19 +118,19 @@ func earlyAnswerServer(t *testing.T) (srv *httptest.Server, answered, done chan 
 	return srv, answered, done
 }
 
-// C3-2: "A body generation ends only when the transport has closed it AND
-// no Read is in flight; a Close during a Read defers the end until that Read
-// returns ... (F2a: net/http closes a request body mid-Read after 301-303
-// ...). WaitRequest and Call wait for every generation the call handed the
-// transport, earlier hops included." client.go, Input: "Call has stopped
+// A body generation ends only when the transport has closed it and no Read
+// is in flight; a Close during a Read defers the end until that Read
+// returns, since net/http closes a request body mid-Read after a 301 to
+// 303. WaitRequest and Call wait for every generation the call handed the
+// transport, earlier hops included. client.go, Input: "Call has stopped
 // reading its body when it returns, provided a reader body returns from Read
 // when the call's context ends or its connection closes ... For Send or
 // Stream, wait for Response.WaitRequest before reusing a body reader";
 // Response.WaitRequest: it waits "for every request of the call that carried
-// one: the first and each redirect hop that sent it again". C3-1: net/http's
-// Client.do no longer acts on the 303 under FollowNone either. The server
-// answers 303 before reading the POST body, as the adversarial reviewer's
-// TestZA3SeeOtherLeavesUploadRunning did.
+// one: the first and each redirect hop that sent it again". The client
+// handles redirects itself, so net/http's Client.do does not act on the 303
+// under FollowNone either. The server answers 303 before reading the POST
+// body.
 func TestReadInFlightAfterAnEarly303(t *testing.T) {
 	for _, follow := range []openapi.Redirects{openapi.FollowNone, openapi.FollowAll} {
 		for _, via := range []string{"Call", "Send"} {
@@ -186,9 +185,9 @@ func TestReadInFlightAfterAnEarly303(t *testing.T) {
 	}
 }
 
-// C3-2: "a Close during a Read defers the end until that Read returns, and
-// later Reads fail without touching the caller's reader (... RoundTrip may
-// close from another goroutine)." net/http, RoundTripper: "RoundTrip must
+// A Close during a Read defers the end until that Read returns, and later
+// Reads fail without touching the caller's reader, since RoundTrip may close
+// from another goroutine. net/http, RoundTripper: "RoundTrip must
 // always close the body, including on errors, but depending on the
 // implementation may do so in a separate goroutine even after RoundTrip
 // returns." The transport here reads the body on one goroutine, as
@@ -258,8 +257,8 @@ func TestCloseDuringReadDefersTheEnd(t *testing.T) {
 	}
 }
 
-// C3-2: "WaitRequest and Call wait for every generation the call handed the
-// transport, earlier hops included". client.go, Response.WaitRequest:
+// WaitRequest and Call wait for every generation the call handed the
+// transport, earlier hops included. client.go, Response.WaitRequest:
 // "for every request of the call that carried one: the first and each
 // redirect hop that sent it again." A 307 answered before the first body
 // was read leaves that body's Read in flight while the hop, from GetBody,
@@ -331,9 +330,9 @@ func cutShort(r *http.Request, n int) {
 	r.Body.Close()
 }
 
-// TQ3 (stage 3 ledger): "WaitRequest reports on the last request that
-// carried the body (a 307 resend that succeeds is nil even if the first
-// upload was cut short); it still waits for all of them." client.go,
+// WaitRequest reports on the last request that carried the body (a 307
+// resend that succeeds is nil even if the first upload was cut short), and
+// still waits for all of them. client.go,
 // Response.WaitRequest: "for every request of the call that carried one: the
 // first and each redirect hop that sent it again. It reports on the last of
 // them: nil when its body was consumed completely (read to EOF, or, for a

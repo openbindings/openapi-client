@@ -16,9 +16,9 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Request bodies in stage 1: the JSON codec class, pre-encoded []byte and
-// io.Reader bodies, media type selection, replay and Content-Length, and
-// caller codecs.
+// Request bodies: the JSON codec class, pre-encoded []byte and io.Reader
+// bodies, media type selection, replay and Content-Length, and caller
+// codecs.
 
 const bodyDoc = `{"openapi":"3.1.0","info":{"title":"t","version":"1"},"servers":[{"url":"@BASE@"}],"paths":{
 	"/json":{"post":{"operationId":"json","requestBody":{"content":{"application/json":{}}}}},
@@ -64,8 +64,8 @@ func TestJSONBody(t *testing.T) {
 		{"RawMessage object", json.RawMessage(`{"a":1}`), `{"a":1}`},
 		{"string", "hi", `"hi"`},
 		{"named bytes as base64", namedBytes("hi"), `"aGk="`},
-		// json.Marshal escapes <, > and & (stage 1 ledger Q6: "as
-		// encoding/json writes" means json.Marshal).
+		// json.Marshal escapes <, > and & ("as encoding/json writes"
+		// means json.Marshal).
 		{"HTML escaping", map[string]string{"a": "<&>"}, `{"a":"\u003c\u0026\u003e"}`},
 		{"array with null", []any{1, "x", nil}, `[1,"x",null]`},
 		{"zero", 0, `0`},
@@ -574,8 +574,8 @@ func TestCodecsForRequestBodies(t *testing.T) {
 // client.go, Options.Codecs: "Load refuses any other key, and one that names
 // a sequential, multipart or application/x-www-form-urlencoded type, whose
 // framing and field encoding stay the client's, as OpenAPI's Encoding Object
-// governs them" (the form key: stage 4 ledger, review round, F7). The
-// refusal is keyed Options.Codecs (errors.go, RequestError.Settings).
+// governs them". The refusal is keyed Options.Codecs (errors.go,
+// RequestError.Settings).
 func TestLoadRefusesCodecKeys(t *testing.T) {
 	codec := tagCodec{tag: "X"}
 	for _, key := range []string{
@@ -591,7 +591,7 @@ func TestLoadRefusesCodecKeys(t *testing.T) {
 		"application/json-seq",
 		"text/event-stream",
 		"+json-seq",
-		"application/x-www-form-urlencoded", // form field encoding (F7)
+		"application/x-www-form-urlencoded", // form field encoding
 		"Application/X-WWW-Form-Urlencoded",
 	} {
 		_, err := openapi.Parse(t.Context(), []byte(expand(bodyDoc, "https://api.example.test")), testDocURI,

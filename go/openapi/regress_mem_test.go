@@ -16,10 +16,9 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Regression tests for the review round's memory and scaling fixes: F2
-// (Content-Length reservation), F6 (Load's Options checks), F7 (compact
-// document tree), F8 (reference resolution, and T1-12: ctx bounds the whole
-// load).
+// Regression tests for memory and scaling: the Content-Length reservation,
+// Load's Options checks, the compact document tree, and reference
+// resolution, which ctx bounds as part of the whole load.
 
 // allocated reports the bytes allocated while f runs.
 func allocated(f func()) uint64 {
@@ -31,12 +30,12 @@ func allocated(f func()) uint64 {
 	return after.TotalAlloc - before.TotalAlloc
 }
 
-// F2 (#2): a peer's Content-Length does not decide an up-front allocation
-// (ledger: the reservation is capped at 1 MiB, and each read at the
-// remaining allowance plus one byte); client.go, Options.MaxBodyBytes and
-// MaxErrorBytes and load.go, Loader.MaxBytes bound what is read, and a
-// negative bound, "no limit", never overflows into a panic. Each server
-// here declares a length and sends 2 bytes.
+// A peer's Content-Length does not decide an up-front allocation (the
+// reservation is capped at 1 MiB, and each read at the remaining allowance
+// plus one byte); client.go, Options.MaxBodyBytes and MaxErrorBytes and
+// load.go, Loader.MaxBytes bound what is read, and a negative bound, "no
+// limit", never overflows into a panic. Each server here declares a length
+// and sends 2 bytes.
 func TestF2ContentLengthReservation(t *testing.T) {
 	const budget = 16 << 20 // the 1 MiB reservation, with room for everything else
 	doc := doc31(`"/x":{"get":{"operationId":"get","responses":{"200":{"description":"ok","content":{"application/json":{}}}}}}`)
@@ -121,11 +120,10 @@ func (b *countedBody) Read(p []byte) (int, error) {
 
 func (b *countedBody) Close() error { return nil }
 
-// F2 (A, performance): each read is capped at the remaining allowance plus
-// one byte, so a *[]byte with a large capacity cannot take in more than
-// MaxBodyBytes+1 bytes (client.go, Call: "A *[]byte receives the raw bytes
-// ... bounded by MaxBodyBytes"; "nil discards it, reading at most
-// MaxBodyBytes").
+// Each read is capped at the remaining allowance plus one byte, so a *[]byte
+// with a large capacity cannot take in more than MaxBodyBytes+1 bytes
+// (client.go, Call: "A *[]byte receives the raw bytes ... bounded by
+// MaxBodyBytes"; "nil discards it, reading at most MaxBodyBytes").
 func TestF2ReadsCappedAtBound(t *testing.T) {
 	var body *countedBody
 	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
@@ -154,10 +152,10 @@ func TestF2ReadsCappedAtBound(t *testing.T) {
 	}
 }
 
-// F6 (#6, A): Load's Options checks do not compile every operation's plan,
-// so setting Options.Server or Options.MediaType costs about what a plain
-// Load costs (the brief's lazy per-operation plans; load.go, Load's
-// Options checks). The review measured 8.7 times the allocations.
+// Load's Options checks do not compile every operation's plan, so setting
+// Options.Server or Options.MediaType costs about what a plain Load costs:
+// plans are compiled lazily, per operation (load.go, Load's Options checks).
+// Checks that compiled every plan measured 8.7 times the allocations.
 func TestF6LoadOptionsChecksStayLazy(t *testing.T) {
 	doc, _ := largeDoc(700, 500)
 	count := func(opts *openapi.Options) float64 {
@@ -179,9 +177,9 @@ func TestF6LoadOptionsChecksStayLazy(t *testing.T) {
 	}
 }
 
-// F7 (#7): the compact document tree's budgets (ledger): retained heap at
-// most 3 times the document's bytes, and allocation during the load at most
-// 6 times (measured as the total allocated, which bounds the peak).
+// The compact document tree's budgets: retained heap at most 3 times the
+// document's bytes, and allocation during the load at most 6 times (measured
+// as the total allocated, which bounds the peak).
 func TestF7TreeMemoryBudget(t *testing.T) {
 	doc, _ := largeDoc(700, 500)
 	var c *openapi.Client
@@ -210,10 +208,9 @@ func TestF7TreeMemoryBudget(t *testing.T) {
 	}
 }
 
-// F8 (#8, A): reference resolution is linear, at Load and at first use
-// (ledger). Four times the references must cost well under the sixteen
-// times a quadratic resolution costs, by the shared harness
-// (regress2_scale_test.go).
+// Reference resolution is linear, at Load and at first use. Four times the
+// references must cost well under the sixteen times a quadratic resolution
+// costs, by the shared harness (regress2_scale_test.go).
 func TestF8ReferenceResolutionScales(t *testing.T) {
 	if testing.Short() {
 		t.Skip("timing test")
@@ -283,8 +280,7 @@ func TestF8ReferenceResolutionScales(t *testing.T) {
 		run   func(int) func()
 		small int
 	}{
-		// Sizes where the quadratic resolution took 18x or more before the
-		// fix (checked against 80d0bf0).
+		// Sizes where a quadratic resolution took 18x or more.
 		{"Path Item chain at Load", func(n int) func() { return load(pathItemChain(n)) }, 16000},
 		{"many Path Item targets at Load", func(n int) func() { return load(manyTargets(n)) }, 16000},
 		{"parameter chain at first use", func(n int) func() { return firstUse(paramChain(n)) }, 2000},
@@ -308,8 +304,8 @@ func TestF8ReferenceResolutionScales(t *testing.T) {
 	}
 }
 
-// T1-12 and F8: "ctx bounds the whole load, reading and parsing included"
-// (load.go, Load): a done context ends Parse with an error matching it.
+// "ctx bounds the whole load, reading and parsing included" (load.go, Load):
+// a done context ends Parse with an error matching it.
 func TestLoadHonorsContext(t *testing.T) {
 	doc, _ := largeDoc(700, 500)
 	ctx, cancel := context.WithCancelCause(context.Background())
@@ -372,21 +368,19 @@ func countValues(t *testing.T, b []byte) int {
 	}
 }
 
-// F7, as ruled (ledger, "Regression-test questions, ruled": "any document
-// stays within document bytes plus 16 bytes per JSON value retained"), and
-// G1 (#1, ledger "Focused second review": the node estimate must not count
-// structural bytes inside strings): an array of zeros with one value per
-// two bytes; one string of commas, and one of braces, which hold a handful
-// of values; and an array of empty objects. Each document is about 1 MiB.
-// The budget has a fixed allowance of 64 KiB (ledger, "TestF7 string cases
-// ruled wrong": Go's allocator rounds a large allocation up to whole 8 KiB
-// pages, so the copy of a document of few values alone exceeds bytes plus
-// 16 per value), as TestG1RejectedDocumentAllocation has. H4 (ledger,
-// "Verification pass") amends the budget: retained memory may add the
-// decoded bytes of escaped strings, plus up to 64 bytes per such string; the
-// cases with escaped member names (including an object that is indexed for
-// a $ref, and escaped Paths keys) check it. (The 3x and 6x budgets stay on
-// the synthetic document, TestF7TreeMemoryBudget.)
+// Any document stays within its bytes plus 16 bytes per JSON value
+// retained, and the node estimate does not count structural bytes inside
+// strings: an array of zeros with one value per two bytes; one string of
+// commas, and one of braces, which hold a handful of values; and an array of
+// empty objects. Each document is about 1 MiB. The budget has a fixed
+// allowance of 64 KiB, as TestG1RejectedDocumentAllocation has: Go's
+// allocator rounds a large allocation up to whole 8 KiB pages, so the copy
+// of a document of few values alone exceeds bytes plus 16 per value.
+// Retained memory may also add the decoded bytes of escaped strings, plus up
+// to 64 bytes per such string; the cases with escaped member names
+// (including an object that is indexed for a $ref, and escaped Paths keys)
+// check it. (The 3x and 6x budgets stay on the synthetic document,
+// TestF7TreeMemoryBudget.)
 func TestF7WorstCaseRetainedBudget(t *testing.T) {
 	const size = 1 << 20
 	const head = `{"openapi":"3.1.0","info":{"title":"t","version":"1"},"paths":{},"components":{"x":`
@@ -436,10 +430,10 @@ func TestF7WorstCaseRetainedBudget(t *testing.T) {
 	}
 }
 
-// G1 (#1): a document rejected at its second byte pays no reservation
-// beyond what a document of its length could need: its allocation stays
-// within the worst-case budget for its length, the document's bytes plus 16
-// bytes for each value its bytes could hold (one per two bytes).
+// A document rejected at its second byte pays no reservation beyond what a
+// document of its length could need: its allocation stays within the
+// worst-case budget for its length, the document's bytes plus 16 bytes for
+// each value its bytes could hold (one per two bytes).
 func TestG1RejectedDocumentAllocation(t *testing.T) {
 	doc := []byte("{" + strings.Repeat(",", 4<<20))
 	var err error

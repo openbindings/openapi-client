@@ -15,30 +15,29 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Stage 4, sequential bodies, in any edition. client.go, Input.Body: "For
-// a sequential media type (JSON Lines, JSON text sequences, server-sent
+// Sequential bodies, in any edition. client.go, Input.Body: "For a
+// sequential media type (JSON Lines, JSON text sequences, server-sent
 // events), in any edition, Body is a slice, an iter.Seq, or an iter.Seq2
 // whose second value is an error, of any element type; each element is one
 // item. Under text/event-stream an item is an object with no members but
 // data, event and id, as strings, and retry, as a non-negative integer, or
 // an [Event] (or a non-nil *Event), of which only the fields it sets are
 // used. It is written as those fields, each as a "field: value" line ending
-// in LF, data as one data
-// line per line (split at CRLF, LF or CR), then a blank line; any other
-// member or type, a line break in event or id, a NUL in id, or a retry that
-// is not whole milliseconds, is an item that cannot be encoded; invalid
-// UTF-8 is written as U+FFFD, as an event stream is UTF-8. Under JSON Lines
-// and JSON text sequences, a []byte or io.Reader item is the item's JSON
-// text, written as given and framed (a JSON Lines item is followed by LF; a
-// sequence item has RS before it and LF after); one holding the framing's
-// separator (LF or CR, or RS) cannot be encoded, and a codec's output is
-// framed after its trailing JSON whitespace is trimmed." Stage brief, Scope: "each item
-// encoded as its own body would be". The framing is each authority's: JSON
-// Lines ("Each Line is a Valid JSON Value"; "Line Separator is '\n'"), RFC
-// 7464 section 2.2 ("JSON-sequence = *(RS JSON-text LF)"), and the HTML
-// standard's event stream (section 9.2.5). Stage 4 ledger, test round
-// (6e13978): Q1 (every JSON Lines item is followed by LF, the last
-// included), Q2 (event stream writing), Q16 (pre-encoded items).
+// in LF, data as one data line per line (split at CRLF, LF or CR), then a
+// blank line; any other member or type, a line break in event or id, a NUL
+// in id, or a retry that is not whole milliseconds, is an item that cannot
+// be encoded; invalid UTF-8 is written as U+FFFD, as an event stream is
+// UTF-8. Under JSON Lines and JSON text sequences, a []byte or io.Reader
+// item is the item's JSON text, written as given and framed (a JSON Lines
+// item is followed by LF; a sequence item has RS before it and LF after);
+// one holding the framing's separator (LF or CR, or RS) cannot be encoded,
+// and a codec's output is framed after its trailing JSON whitespace is
+// trimmed." Each item is "encoded as that value on its own would be"
+// (Input.Body). The framing is each authority's: JSON Lines ("Each Line is a
+// Valid JSON Value"; "Line Separator is '\n'"), RFC 7464 section 2.2
+// ("JSON-sequence = *(RS JSON-text LF)"), and the HTML standard's event
+// stream (section 9.2.5). Every JSON Lines item is followed by LF, the last
+// included.
 
 const seqPaths = `
 	"/jsonl":{"post":{"operationId":"jsonl","requestBody":{"content":{"application/jsonl":{}}}}},
@@ -75,8 +74,8 @@ func seq2Of[T any](items ...T) iter.Seq2[T, error] {
 }
 
 // jsonItemBodies is every body shape of the same items, with the JSON text
-// json.Marshal writes for each (stage 1 ledger, Q6: "as encoding/json
-// writes" means json.Marshal, HTML escaping included).
+// json.Marshal writes for each: "as encoding/json writes" (doc.go, Values)
+// means json.Marshal, HTML escaping included.
 func jsonItemBodies() []struct {
 	name  string
 	body  any
@@ -149,10 +148,9 @@ func TestJSONTextSequenceBodies(t *testing.T) {
 
 // Pre-encoded items (client.go, Input.Body: under JSON Lines and JSON text
 // sequences "a []byte or io.Reader item is the item's JSON text, written as
-// given and framed"; stage 4 ledger, Q16), from a slice and from iterators;
-// a sequence item may hold LF, which only JSON Lines uses as its separator.
-// A whole body given as bytes is pre-encoded under a sequential type too, as
-// under any type.
+// given and framed"), from a slice and from iterators; a sequence item may
+// hold LF, which only JSON Lines uses as its separator. A whole body given
+// as bytes is pre-encoded under a sequential type too, as under any type.
 func TestSequentialPreEncodedItems(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, seqDoc(), nil)
@@ -183,11 +181,12 @@ func TestSequentialPreEncodedItems(t *testing.T) {
 }
 
 // A reader item that holds the framing's separator ends the body as an
-// upload error when the separator is found (stage 4 ledger, Q16: "a
-// reader's ends the body when found"; QQ3: "any io.Reader content
-// (replayable or not) is checked as it streams and fails as an upload
-// error"): the server never receives a complete body, and Call's error is
-// not a *RequestError. Every kind of reader, replayable or not.
+// upload error when the separator is found, since reader content, replayable
+// or not, is checked as it streams (client.go, Input.Body: "an item that
+// cannot be encoded ... aborts the body and is reported by Call or
+// Response.WaitRequest"): the server never receives a complete body, and
+// Call's error is not a *RequestError. Every kind of reader, replayable or
+// not.
 func TestSequentialReaderItemHoldingSeparator(t *testing.T) {
 	for _, tt := range []struct {
 		key  string
@@ -223,21 +222,21 @@ type sseCase struct {
 }
 
 // Server-sent events, byte for byte: each field a "field: value" line with
-// one space, ending in LF, then a blank line (client.go, Input.Body; stage 4
-// ledger, Q2: "always one space, so a value starting with a space survives
-// the parser's removal of one"); data split at CRLF, LF and CR, one data
-// line each (Q2: "the standard's line endings"; HTML standard, section
-// 9.2.5: "end-of-line = ( cr lf / cr / lf )"), so "a\n" is a data line "a"
-// and an empty one, which the standard's parser reads back as "a\n"; data
-// "" written as "data: " (Q2); an item that sets no field a blank line
-// alone (Q2). An object's fields follow its members' order as encoding/json
-// orders them (doc.go, Fixed rules, Order; ledger, readings confirmed); an
-// Event's follow its field order, the data lines, then event, id and retry
-// (ledger, QQ4). An Event writes only the fields it sets: Data when not nil,
-// Event when not "", ID when IDSet, Retry when RetrySet, in whole
-// milliseconds (stream.go, Event: "Retry is the retry field, in whole
-// milliseconds"), in base ten digits (HTML standard, section 9.2.6: "If the
-// field value consists of only ASCII digits").
+// one space, ending in LF, then a blank line (client.go, Input.Body), always
+// one space, so a value starting with a space survives the parser's removal
+// of one (HTML standard, section 9.2.6: "If value starts with a U+0020 SPACE
+// character, remove it from value"); data split at CRLF, LF and CR, the
+// standard's line endings, one data line each (HTML standard, section 9.2.5:
+// "end-of-line = ( cr lf / cr / lf )"), so "a\n" is a data line "a" and an
+// empty one, which the standard's parser reads back as "a\n"; data ""
+// written as "data: "; an item that sets no field a blank line alone. An
+// object's fields follow its members' order as encoding/json orders them
+// (doc.go, Fixed rules, Order); an Event's follow its field order, the data
+// lines, then event, id and retry. An Event writes only the fields it sets:
+// Data when not nil, Event when not "", ID when IDSet, Retry when RetrySet,
+// in whole milliseconds (stream.go, Event: "Retry is the retry field, in
+// whole milliseconds"), in base ten digits (HTML standard, section 9.2.6:
+// "If the field value consists of only ASCII digits").
 func TestEventStreamBodies(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, seqDoc(), nil)
@@ -314,8 +313,7 @@ func TestEventStreamBodies(t *testing.T) {
 }
 
 // eventStream is the event stream of events, each the lines it writes: each
-// line then LF, each event then a blank line (client.go, Input.Body; stage 4
-// ledger, Q2).
+// line then LF, each event then a blank line (client.go, Input.Body).
 func eventStream(events [][]string) string {
 	var b strings.Builder
 	for _, ev := range events {
@@ -333,17 +331,17 @@ var unencodable = make(chan int)
 // Items that cannot be encoded, in a slice, which the client encodes when
 // the call is prepared: refused before sending at the item's Inputs key,
 // "Input.Body" followed by the JSON Pointer to it (errors.go,
-// RequestError.Inputs; stage brief, Refusals: "a property or part value its
-// media type cannot encode ... each at its Inputs key"). Event stream items
-// as client.go, Input.Body, lists them ("any other member or type, a line
-// break in event or id, or a retry that is not whole milliseconds"; stage 4
-// ledger, Q2, a negative Retry too, and Q16: "Under text/event-stream an
-// item is only an object or an Event"); JSON items as encoding/json fails on
-// them, or holding a reader or Part (client.go, Input.Body: "A Part or
-// io.Reader inside a JSON value is refused with an Inputs entry at its place
-// in Body"); a pre-encoded item holding its framing's separator (Input.Body:
-// "one holding the framing's separator (LF or CR, or RS) cannot be
-// encoded").
+// RequestError.Inputs: "The key is the Param.Key or, for the body,
+// "Input.Body" followed by a JSON Pointer to the part of Body concerned").
+// Event stream items as client.go, Input.Body, lists them ("any other member
+// or type, a line break in event or id, or a retry that is not whole
+// milliseconds"), a negative Retry too (retry is "a non-negative integer"),
+// and under text/event-stream an item is only an object or an Event; JSON
+// items as encoding/json fails on them, or holding a reader or Part
+// (client.go, Input.Body: "A Part or io.Reader inside a JSON value is
+// refused with an Inputs entry at its place in Body"); a pre-encoded item
+// holding its framing's separator (Input.Body: "one holding the framing's
+// separator (LF or CR, or RS) cannot be encoded").
 func TestSequentialItemRefusals(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, seqDoc(), nil)
@@ -396,11 +394,10 @@ func TestSequentialItemRefusals(t *testing.T) {
 // (client.go, Options.Codecs: Load refuses a codec key "that names a
 // sequential, multipart or application/x-www-form-urlencoded type, whose
 // framing and field encoding stay the client's, as OpenAPI's Encoding Object
-// governs them; their items and parts use the codec for their own type",
-// and entries for
-// "application/json" "replace encoding/json everywhere"). The codec
-// receives each item as given (doc.go, Values); an Encode error refuses the
-// call at the item's Inputs key.
+// governs them; their items and parts use the codec for their own type", and
+// entries for "application/json" "replace encoding/json everywhere"). The
+// codec receives each item as given (doc.go, Values); an Encode error
+// refuses the call at the item's Inputs key.
 func TestSequentialItemsUseCodecs(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, seqDoc(), &openapi.Options{Codecs: map[string]openapi.Codec{"application/json": tagCodec{tag: "J"}}})

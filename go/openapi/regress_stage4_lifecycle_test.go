@@ -16,19 +16,19 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Regression tests and benchmarks for the stage 4 review round (stage 4
-// ledger, "Review round (6917b84)"): class ruling C4-5, lifecycle ("settle
-// waits for every generation with a Read in flight, closed or not, after
-// the context ends (C3-2); errors are kept while waiting"); class ruling
-// C4-6 ("Compile caches are read without a document-wide lock; a lock only
-// publishes a computed result, and no lock is held across recursion or
-// follow (F13). Measured by a parallel first-use benchmark."); findings A1,
-// F11, F13, A10/F25.
+// Regression tests and benchmarks for the request-body lifecycle and the
+// compile caches. A call settles only when every body generation with a
+// Read in flight has returned, closed or not, after the context ends, and
+// errors are kept while waiting. Compile caches are read without a
+// document-wide lock; a lock only publishes a computed result, and no lock
+// is held across recursion or reference following, which a parallel
+// first-use benchmark measures. Also covered: Part.Header field checks and
+// the streaming form buffer.
 
-// cancelRT is Astra's A1 transport: it reads the request body on a
-// goroutine of its own, as net/http's write loop does, waits until the
-// caller's Read is in flight, closes the body, cancels the call's context,
-// and returns. The Read it started is still running.
+// cancelRT is a transport that reads the request body on a goroutine of its
+// own, as net/http's write loop does, waits until the caller's Read is in
+// flight, closes the body, cancels the call's context, and returns. The Read
+// it started is still running.
 type cancelRT struct {
 	entered  <-chan struct{}
 	cancel   context.CancelFunc
@@ -44,13 +44,13 @@ func (rt *cancelRT) RoundTrip(r *http.Request) (*http.Response, error) {
 	return nil, context.Canceled
 }
 
-// C4-5 (A1): Call does not return while a Read of the caller's body is in
-// flight, though the transport has closed the body and the context has
-// ended (client.go, Input: "Call has stopped reading its body when it
-// returns, provided a reader body returns from Read when the call's context
-// ends"; Input.Body: "Call waits for the iterator to return"; stage 3
-// ledger, C3-2: "A body generation ends only when the transport has closed
-// it AND no Read is in flight"). The caller's reader and iterator write
+// Call does not return while a Read of the caller's body is in flight,
+// though the transport has closed the body and the context has ended
+// (client.go, Input: "Call has stopped reading its body when it returns,
+// provided a reader body returns from Read when the call's context ends";
+// Input.Body: "Call waits for the iterator to return"): a body generation
+// ends only when the transport has closed it and no Read is in flight. The
+// caller's reader and iterator write
 // their own state after they are released, which the test writes once Call
 // returns: a race the detector reports if Call returned first. Its error
 // matches the context's (doc.go, Outcomes).
@@ -127,9 +127,9 @@ func awaitCancelled(t *testing.T, returned <-chan struct{}, done <-chan error, r
 	}
 }
 
-// formOpsDoc is the performance reviewer's F13 document: n operations, each
-// with a multipart body of 20 properties referring to 5 shared component
-// schemas, two of them with an Encoding, and a form body.
+// formOpsDoc is a document of n operations, each with a multipart body of 20
+// properties referring to 5 shared component schemas, two of them with an
+// Encoding, and a form body.
 func formOpsDoc(n int) []byte {
 	var b strings.Builder
 	b.WriteString(`{"openapi":"3.1.0","info":{"title":"t","version":"1"},"servers":[{"url":"https://h.example.test"}],"paths":{`)
@@ -180,15 +180,14 @@ func firstUseAll(tb testing.TB, doc []byte, n, workers int) time.Duration {
 	return time.Since(start)
 }
 
-// C4-6 (F13), IP4F-1: concurrent first uses of form and multipart
-// operations give what a serial first use gives (IP4F-1: "the first stored
-// result wins and every caller sees it"), descriptors and prepared bytes
-// alike, clean under -race: 400 operations first used by 8 goroutines, each
-// in its own order, three times. Stage 4 ledger, IP4F-7: "TestC46's
-// wall-clock ratio fails under machine load; the parallel first-use check
-// moves to the gate's benchmark pair (serial vs parallel, reported by the
-// loop owner), and the test keeps only what is deterministic"; that pair is
-// BenchmarkFirstUseFormsSerial and BenchmarkFirstUseFormsParallel below.
+// Concurrent first uses of form and multipart operations give what a serial
+// first use gives (concurrent first uses may compute a node twice; the
+// first stored result wins and every caller sees it), descriptors and
+// prepared bytes alike, clean under -race: 400 operations first used by 8
+// goroutines, each in its own order, three times. A wall-clock ratio fails
+// under machine load, so the test keeps only what is deterministic; the
+// parallel first-use cost is measured by BenchmarkFirstUseFormsSerial and
+// BenchmarkFirstUseFormsParallel below.
 func TestC46ConcurrentFirstUse(t *testing.T) {
 	const n = 400
 	doc := formOpsDoc(n)
@@ -253,17 +252,16 @@ func benchFirstUseForms(b *testing.B, workers int) {
 
 // BenchmarkFirstUseFormsSerial and BenchmarkFirstUseFormsParallel describe
 // the 400 operations of formOpsDoc on a fresh Client from one goroutine and
-// from GOMAXPROCS goroutines (C4-6: "Measured by a parallel first-use
-// benchmark"). ns/firstuse excludes parsing.
+// from GOMAXPROCS goroutines, so the cost of first use without a
+// document-wide lock is measured. ns/firstuse excludes parsing.
 func BenchmarkFirstUseFormsSerial(b *testing.B) { benchFirstUseForms(b, 1) }
 func BenchmarkFirstUseFormsParallel(b *testing.B) {
 	benchFirstUseForms(b, runtime.GOMAXPROCS(0))
 }
 
-// A10, F25: Part.Header's field names are checked through a set of
-// canonical names, so a part with many header fields costs time linear in
-// their number (at 6917b84 every name was compared with every other: 8,000
-// fields took 16.6 times as long as 2,000).
+// Part.Header's field names are checked through a set of canonical names,
+// so a part with many header fields costs time linear in their number, not
+// the quadratic cost of comparing every name with every other.
 func TestA10PartHeaderScales(t *testing.T) {
 	c := parseAt(t, mpDoc(), "https://api.example.test", testDocURI, nil)
 	wantLinear(t, "Prepare", 500, func(n int) func() {
@@ -281,9 +279,9 @@ func TestA10PartHeaderScales(t *testing.T) {
 }
 
 // BenchmarkMemBodyFormReaderOnce streams a 1 MiB form field from a reader
-// read once through the in-memory transport (F11: "keep the streaming form
-// buffer's backing array and a read offset"; at 6917b84 about 3.5 bytes
-// allocated per byte streamed). Compare B/op with the 1 MiB SetBytes.
+// read once through the in-memory transport: the streaming form buffer
+// keeps its backing array and a read offset rather than allocating as it
+// streams. Compare B/op with the 1 MiB SetBytes.
 func BenchmarkMemBodyFormReaderOnce(b *testing.B) {
 	c, _ := bodyBenchClient(b)
 	field := strings.Repeat("good dog & treats ", (1<<20)/18)

@@ -13,11 +13,11 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// P9-P1: the frozen public schema_cost_probe_test.go fixture, adapted into a
-// standing scaling gate. Source authority: dev-loop hostile-input cost rule;
-// Client.Schema, Source/Base/Raw/References and Core8.2.1. Fixture generation
-// and validation use only public values. Never run this timing test outside
-// the owner's reserved measurement window. Warm-anchor probe remains diagnostic.
+// The first Schema lookup in a deeply nested schema resource costs time and
+// bytes linear in its depth, as a read costs O(size of what it returns or
+// compares) (Client.Schema; Schema.Source, Base, Raw and References; JSON
+// Schema 2020-12 core section 8.2.1, $id). Fixture generation and
+// validation use only public values.
 const review9CostEntry = "https://stage9-cost.example.test/openapi.json"
 const review9CostRoot = review9CostEntry + "#/components/schemas/S"
 
@@ -85,8 +85,8 @@ func review9DeepControl(t *testing.T, f review9DeepFixture) {
 	}
 }
 
-// An untimed functional control permits checking the frozen workload's public
-// oracle without entering the separate scaling measurement below.
+// An untimed functional control checks the workload's public values without
+// entering the separate scaling measurement below.
 func TestReview9DeepResourceFixtureControls(t *testing.T) {
 	for _, nested := range []bool{false, true} {
 		for _, depth := range []int{128, 512} {

@@ -12,10 +12,10 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// This standalone fixture measures the prepared body replay path changed in
-// Stage 8. It depends only on public APIs, so the identical file can be
-// overlaid onto baseline and candidate archives. Request.HTTP/Request.Call
-// promise the initial Body once, GetBody thereafter, and reusable sends.
+// This standalone fixture measures the prepared body replay path. It depends
+// only on public APIs, so the identical file can be copied into two versions
+// of the package to compare them. Request.HTTP/Request.Call promise the
+// initial Body once, GetBody thereafter, and reusable sends.
 const benchPrepared8URL = "https://bench.example.test/upload"
 const benchPrepared8Type = "application/octet-stream"
 const benchPrepared8Size = 4096

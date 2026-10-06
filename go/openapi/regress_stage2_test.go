@@ -18,9 +18,15 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Regression tests for the stage 2 review round (stage 2 ledger, "Review
-// round"; review/panel.json "#N", review/gpt-answer.md "A#"): class ruling
-// P4, the API refreshes of f6dfd90, and fixes K1 to K13.
+// Regression tests for parameter and body serialization. Where the client
+// applies encoding/json, the encoder's output and behavior are
+// authoritative: nesting depth is counted in the JSON it writes, and the
+// search for readers follows the values it encodes. Also covered:
+// content-serialized cookies written as given, framing header fields,
+// []byte and reader content parameters, Header removal conflicts,
+// Param.ExplodeSet, nil ParamWriters entries, path writers in RawPath, lists
+// with no defined item, invalid UTF-8 in content parameters, and the 1 MiB
+// bound on the request target and header fields.
 
 // depthDoc has a JSON content query parameter p and a JSON body.
 const depthDoc = `
@@ -103,13 +109,13 @@ func wantEncoded(t *testing.T, key string, req *openapi.Request, v any) {
 	}
 }
 
-// P4 and K1 (#4, A1): depth is counted in the JSON encoding/json writes, a
-// MarshalJSON's output included (doc.go, Values: "A value the client encodes
-// that is nested deeper than 1,000 levels, counted in the JSON encoding/json
-// writes (a MarshalJSON's output included), is refused at its key"; ledger,
-// Q9: a scalar leaf is a level, the outermost value level 1). A static
-// per-type depth may not refuse a value whose JSON is within the bound, nor
-// accept one whose JSON is not.
+// Depth is counted in the JSON encoding/json writes, a MarshalJSON's output
+// included (doc.go, Values: "A value the client encodes that is nested
+// deeper than 1,000 levels, counted in the JSON encoding/json writes (a
+// MarshalJSON's output included) ..., is refused at its key"; a scalar leaf
+// is a level, the outermost value level 1, as the Loader counts documents).
+// A static per-type depth may not refuse a value whose JSON is within the
+// bound, nor accept one whose JSON is not.
 func TestK1DepthCountedInEncodedJSON(t *testing.T) {
 	c := parseAt(t, doc31(depthDoc), "https://api.example.test", testDocURI, nil)
 	deepType := reflect.TypeFor[int]()
@@ -120,13 +126,13 @@ func TestK1DepthCountedInEncodedJSON(t *testing.T) {
 		name string
 		v    any
 	}{
-		// A1: 1,000 levels ending in an empty typed map.
+		// 1,000 levels ending in an empty typed map.
 		{"999 objects around an empty typed map", nestMap(999, map[string]int{})},
 		{"999 arrays around an empty typed slice", nestAny(999, []int{})},
 		{"999 arrays around a nil typed slice", nestAny(999, []int(nil))},
 		{"999 arrays around a nil struct pointer", nestAny(999, (*readerHolder)(nil))},
 		{"999 arrays around empty raw JSON", nestAny(999, json.RawMessage("[]"))},
-		// #4: a shallow value of a type 1,001 slices deep is null or [].
+		// A shallow value of a type 1,001 slices deep is null or [].
 		{"nil value of a deep type", reflect.Zero(deepType).Interface()},
 		{"empty value of a deep type", reflect.MakeSlice(deepType, 0, 0).Interface()},
 		// []deepByte998{0}: 1 + 998 arrays + 0 = 1,000 levels.
@@ -137,7 +143,7 @@ func TestK1DepthCountedInEncodedJSON(t *testing.T) {
 		name string
 		v    any
 	}{
-		// A1: []B{0}, B's MarshalJSON writing 999 arrays around 0: 1,001.
+		// []B{0}, B's MarshalJSON writing 999 arrays around 0: 1,001.
 		{"byte-kinded Marshaler, 1,001 levels", []deepByte999{0}},
 		{"byte-kinded Marshaler in a map", map[string]any{"k": []deepByte998{0}}},
 		{"pointer-receiver byte Marshaler in a struct field", struct{ F []ptrDeepByte }{[]ptrDeepByte{0}}},
@@ -199,13 +205,13 @@ type unexported struct {
 	S io.Reader `json:"-"`
 }
 
-// P4 and K1 (A2, #9): the reader walk mirrors encoding/json (doc.go, Values:
-// "A reader or Part anywhere inside a parameter value the client encodes
-// with encoding/json is refused at the parameter's key, as for a body";
-// ledger, P4: "value and pointer-receiver Marshaler and TextMarshaler on
-// addressable values ... and stops where json would stop"). A reader json
-// never reaches is no refusal, and the value is sent as json writes it; a
-// reader json encodes is refused.
+// The reader walk mirrors encoding/json (doc.go, Values: "A reader or Part
+// anywhere inside a parameter value the client encodes with encoding/json is
+// refused at the parameter's key, as for a body"): the fields json encodes,
+// value and pointer-receiver Marshaler and TextMarshaler on addressable
+// values, and it stops where json would stop. A reader json never reaches is
+// no refusal, and the value is sent as json writes it; a reader json encodes
+// is refused.
 func TestK1ReaderWalkFollowsEncodingJSON(t *testing.T) {
 	c := parseAt(t, doc31(depthDoc), "https://api.example.test", testDocURI, nil)
 	r := func() io.Reader { return strings.NewReader("x") }
@@ -213,7 +219,7 @@ func TestK1ReaderWalkFollowsEncodingJSON(t *testing.T) {
 		name string
 		v    any
 	}{
-		// A2: json calls the pointer method on an addressable slice element.
+		// json calls the pointer method on an addressable slice element.
 		{"pointer-receiver MarshalJSON, slice element", []hiddenPtr{{R: r()}}},
 		{"pointer-receiver MarshalJSON, pointer", &hiddenPtr{R: r()}},
 		{"pointer-receiver MarshalJSON, struct field", struct{ H []hiddenPtr }{[]hiddenPtr{{R: r()}}}},
@@ -278,11 +284,11 @@ func TestK1ReaderWalkFollowsEncodingJSON(t *testing.T) {
 	}
 }
 
-// K1 (#9): a reader or Part inside a style parameter's value is refused at
-// the key, with nothing sent (doc.go, Values: "A reader or Part anywhere
-// inside a parameter value the client encodes with encoding/json is refused
-// at the parameter's key"), never written as {} or as its Go fields. A
-// reader json never reaches is no refusal.
+// A reader or Part inside a style parameter's value is refused at the key,
+// with nothing sent (doc.go, Values: "A reader or Part anywhere inside a
+// parameter value the client encodes with encoding/json is refused at the
+// parameter's key"), never written as {} or as its Go fields. A reader json
+// never reaches is no refusal.
 func TestK1ReadersInStyleValues(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, doc31(`
@@ -322,11 +328,11 @@ func TestK1ReadersInStyleValues(t *testing.T) {
 	}
 }
 
-// K2 (#1; doc.go, Fixed rules, Percent-encoding: "a content-serialized
-// cookie value (OpenAPI 3.1.2 recommends text/plain content so the
-// application assembles the cookie) ... [is] written as given too; a cookie
-// value written as given that holds a ";" or a control character is
-// refused"; OAS 3.1.2 section 4.8.12.2.3 and Appendix D).
+// doc.go, Fixed rules, Percent-encoding: "a content-serialized cookie value
+// (OpenAPI 3.1.2 recommends text/plain content so the application assembles
+// the cookie) ... [is] written as given too; a cookie value written as given
+// that holds a ";" or a control character is refused" (OAS 3.1.2 section
+// 4.8.12.2.3 and Appendix D).
 func TestK2ContentCookieAsGiven(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, doc31(`"/c":{"get":{"operationId":"op","parameters":[
@@ -366,16 +372,15 @@ func TestK2ContentCookieAsGiven(t *testing.T) {
 // RFC 9113 section 8.2.2).
 var framingFields = []string{"Content-Length", "Transfer-Encoding", "Trailer", "Connection", "Keep-Alive", "Proxy-Connection", "Upgrade"}
 
-// K4 (#3; doc.go, Fixed rules, Header fields: "a field or a header parameter
-// named Host, Content-Length, Transfer-Encoding, Trailer, Connection,
-// Keep-Alive, Proxy-Connection or Upgrade" is refused): as a header
-// parameter, Param.Err is set, a value is refused at its key, a required one
-// refuses the call, and a writer still bypasses it (client.go,
-// Input.ParamWriters: "A writer also bypasses that parameter's
-// serialization Err"); as an Options.Header field, Load refuses it (keyed
-// Options.Header), and so does each call when it comes from With; as an
-// Input.Header field, the call is refused at Input.Header. Field names are
-// compared without regard to case.
+// doc.go, Fixed rules, Header fields: "a field or a header parameter named
+// Host, Content-Length, Transfer-Encoding, Trailer, Connection, Keep-Alive,
+// Proxy-Connection or Upgrade" is refused. As a header parameter, Param.Err
+// is set, a value is refused at its key, a required one refuses the call,
+// and a writer still bypasses it (client.go, Input.ParamWriters: "A writer
+// also bypasses that parameter's serialization Err"); as an Options.Header
+// field, Load refuses it (keyed Options.Header), and so does each call when
+// it comes from With; as an Input.Header field, the call is refused at
+// Input.Header. Field names are compared without regard to case.
 func TestK4FramingHeaders(t *testing.T) {
 	w := newWire(t, nil)
 	for _, name := range framingFields {
@@ -414,9 +419,9 @@ func TestK4FramingHeaders(t *testing.T) {
 	}
 }
 
-// K5 (#5, #8; doc.go, Values: "a []byte is the encoded content; a reader,
-// and a multipart or sequential media type, cannot serialize a parameter
-// and are refused at its key"). The bytes are then percent-encoded by
+// doc.go, Values: "a []byte is the encoded content; a reader, and a
+// multipart or sequential media type, cannot serialize a parameter and are
+// refused at its key". The bytes are then percent-encoded by
 // location, or written as given in a header or cookie.
 func TestK5ContentBytesReadersAndMedia(t *testing.T) {
 	w := newWire(t, nil)
@@ -484,12 +489,12 @@ func TestK5ContentBytesReadersAndMedia(t *testing.T) {
 		}
 		wantKeys(t, fmt.Sprintf("%s %T Inputs", tt.key, tt.v), re.Inputs, true, tt.param)
 	}
-	// Stage 4: form-urlencoded content is encoded as a form body is (WHATWG,
-	// a space as +: doc.go, Fixed rules, Form bodies), then percent-encoded
-	// as a query value (doc.go, Fixed rules, Percent-encoding: "path and
-	// query values (content-serialized ones included,
-	// application/x-www-form-urlencoded too)"; stage 2 ledger, review
-	// round: re-encoding it in a named query parameter is kept).
+	// Form-urlencoded content is encoded as a form body is (WHATWG, a space
+	// as +: doc.go, Fixed rules, Form bodies), then percent-encoded as a
+	// query value (doc.go, Fixed rules, Percent-encoding: "path and query
+	// values (content-serialized ones included,
+	// application/x-www-form-urlencoded too)"), so it stays one value of the
+	// named query parameter rather than separate pairs.
 	got, re := callOne(t, w, c, "form", "p", map[string]string{"a": "1 2", "b": "x"})
 	if re != nil {
 		t.Fatalf("form-urlencoded content refused: %v", re)
@@ -499,10 +504,11 @@ func TestK5ContentBytesReadersAndMedia(t *testing.T) {
 	}
 }
 
-// K7 (#7; doc.go, Fixed rules, Header fields: "A Header entry with no values
-// is a conflict like any other when a header parameter the call supplies, or
-// the Cookie field, sets that field"), keyed by the Header that set it. A
-// removal entry for a field the call does not set is no conflict.
+// doc.go, Fixed rules, Header fields: "A Header entry with no values is a
+// conflict like any other when a header parameter the call supplies, the
+// call's credential, or the Cookie field, sets that field", keyed by the
+// Header that set it. A removal entry for a field the call does not set is
+// no conflict.
 func TestK7RemovalEntriesConflict(t *testing.T) {
 	w := newWire(t, nil)
 	doc := doc31(`"/o":{"get":{"operationId":"op","parameters":[
@@ -539,8 +545,8 @@ func TestK7RemovalEntriesConflict(t *testing.T) {
 	}
 }
 
-// K8 (#11; describe.go, Param.ExplodeSet: "whether the document writes it"):
-// true for a content parameter whose document writes explode.
+// describe.go, Param.ExplodeSet: "whether the document writes it", true for
+// a content parameter whose document writes explode.
 func TestK8ContentExplodeSet(t *testing.T) {
 	doc := bare31(`"/q":{"get":{"operationId":"q","parameters":[
 		{"name":"t","in":"query","explode":true,"content":{"application/json":{}}},
@@ -557,9 +563,9 @@ func TestK8ContentExplodeSet(t *testing.T) {
 	}
 }
 
-// K9 (#13, A3; client.go, Input.ParamWriters: "an unknown key, and the same
-// key in Params and ParamWriters, are refused"): a nil entry is still an
-// entry, at Inputs[key].
+// client.go, Input.ParamWriters: "an unknown key, and the same key in Params
+// and ParamWriters, are refused": a nil entry is still an entry, refused at
+// Inputs[key].
 func TestK9NilWriterEntries(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, doc31(`"/q":{"get":{"operationId":"op","parameters":[{"name":"q","in":"query","schema":{}}]}}`), nil)
@@ -584,11 +590,11 @@ func TestK9NilWriterEntries(t *testing.T) {
 	}
 }
 
-// #18: the depth scan on encoded JSON (P4: "otherwise scan the encoded
-// bytes"), where no static bound decides, as for raw JSON and a time.Time
-// field: brackets inside strings, escaped quotes, and many sibling arrays
-// are not nesting; 1,000 levels ending in an empty array is within the
-// bound; a member at level 1,001 is not.
+// The depth scan on encoded JSON, used where no static per-type bound
+// decides, as for raw JSON and a time.Time field: brackets inside strings,
+// escaped quotes, and many sibling arrays are not nesting; 1,000 levels
+// ending in an empty array is within the bound; a member at level 1,001 is
+// not.
 func TestDepthScanOfEncodedJSON(t *testing.T) {
 	c := parseAt(t, doc31(depthDoc), "https://api.example.test", testDocURI, nil)
 	type stamped struct {
@@ -649,7 +655,7 @@ func TestDepthScanOfEncodedJSON(t *testing.T) {
 // label is a named string type.
 type label string
 
-// #18, encode's branches for a text or other media type (doc.go, Values: a
+// encode's branches for a text or other media type (doc.go, Values: a
 // value is converted "to JSON data as encoding/json would", then "any other
 // type takes only a string, as its UTF-8 bytes, and a text type also a
 // number or boolean"): a named string type and a TextMarshaler are strings,
@@ -688,15 +694,14 @@ func TestContentParamTextEncodeBranches(t *testing.T) {
 	}
 }
 
-// #10 and #18 (client.go, Input.ParamWriters: "Locate the token in RawPath:
-// there other values are percent-encoded, so their text cannot match it, as
-// it can in Path"; "an unresolved path token after all writers refuses
-// preparation", at the writer's key, stage 2 ledger, confirmed readings): a
-// writer that finds its token in RawPath, and keeps RawPath an encoding of
-// Path, is sent whichever side of it another value holding the token's text
-// lies; a value holding the token's text is no unresolved token; and an
-// unresolved token whose name holds a percent sign refuses only its own
-// parameter.
+// client.go, Input.ParamWriters: "Locate the token in RawPath: there other
+// values are percent-encoded, so their text cannot match it, as it can in
+// Path"; "an unresolved path token after all writers refuses preparation",
+// at the writer's key. A writer that finds its token in RawPath, and keeps
+// RawPath an encoding of Path, is sent whichever side of it another value
+// holding the token's text lies; a value holding the token's text is no
+// unresolved token; and an unresolved token whose name holds a percent sign
+// refuses only its own parameter.
 func TestParamWritersTokenInRawPath(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, doc31(`
@@ -759,13 +764,13 @@ func TestParamWritersTokenInRawPath(t *testing.T) {
 	wantKeys(t, "Inputs", asRequestError(t, err).Inputs, true, "q%41")
 }
 
-// Stage 2 ledger, review round, regression-test questions and last entry:
-// "[null] is a defined list (RFC 6570 2.3: only a list with zero members is
-// undefined)". Unexploded it expands like "" in every style ("p=" form and
-// the delimited styles, ";p" matrix, "." label, "" simple); exploded nothing
-// is written, prefix included (no "." or ";", no form pair, no header
-// field); and the parameter counts as given, never missing. The same holds
-// for any list whose items are all undefined.
+// [null] is a defined list (RFC 6570 section 2.3: a list is undefined only
+// "if the list contains zero members"). Unexploded it expands like "" in
+// every style ("p=" form and the delimited styles, ";p" matrix, "." label,
+// "" simple); exploded, a case RFC 6570 does not settle, nothing is written,
+// prefix included (no "." or ";", no form pair, no header field); and the
+// parameter counts as given, never missing. The same holds for any list
+// whose items are all undefined.
 func TestAllUndefinedList(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, doc31(`
@@ -828,10 +833,11 @@ func TestAllUndefinedList(t *testing.T) {
 	}
 }
 
-// Stage 2 ledger, review round, regression-test questions: "An invalid-UTF-8
-// string under a non-JSON content type is sent as its bytes as given; under
-// JSON, encoding/json's U+FFFD replacement stands (P4)". The bytes are then
-// percent-encoded by location, or written as given in a header or cookie.
+// An invalid-UTF-8 string under a non-JSON content type is sent as its bytes
+// as given; under JSON, encoding/json's U+FFFD replacement stands, since a
+// JSON type "is written as encoding/json writes the value" (doc.go, Values).
+// The bytes are then percent-encoded by location, or written as given in a
+// header or cookie.
 func TestContentParamInvalidUTF8(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, doc31(contentDoc), nil)
@@ -915,17 +921,16 @@ type ptrTextReader struct{ S string }
 func (ptrTextReader) Read([]byte) (int, error)      { return 0, io.EOF }
 func (*ptrTextReader) MarshalText() ([]byte, error) { return []byte("t"), nil }
 
-// f098cc3 and 6c6229a (client.go, Input.Body: "A Part or io.Reader inside a
-// JSON value is refused ... unless its own MarshalJSON or MarshalText encodes
-// it"; doc.go, Values: a
-// reader inside a parameter value the client encodes with encoding/json is
-// refused "unless its own MarshalJSON encodes it"): a reader encoding/json
-// encodes by its MarshalJSON is sent as json.Marshal writes it, in a JSON
-// body, a JSON content parameter and a style parameter; one json would
-// encode by reflection (a pointer-receiver MarshalJSON on a value that is
-// not addressable, or a plain reader) is refused. The body and content
-// parameter hold the reader inside the value, since a reader that is the
-// whole body or content value is sent or refused as a reader (client.go,
+// client.go, Input.Body: "A Part or io.Reader inside a JSON value is refused
+// ... unless its own MarshalJSON or MarshalText encodes it"; doc.go, Values:
+// a reader inside a parameter value the client encodes with encoding/json is
+// refused "unless its own MarshalJSON or MarshalText encodes it". A reader
+// encoding/json encodes by its MarshalJSON is sent as json.Marshal writes
+// it, in a JSON body, a JSON content parameter and a style parameter; one
+// json would encode by reflection (a pointer-receiver MarshalJSON on a value
+// that is not addressable, or a plain reader) is refused. The body and
+// content parameter hold the reader inside the value, since a reader that is
+// the whole body or content value is sent or refused as a reader (client.go,
 // Input.Body; doc.go, Values).
 func TestSelfMarshalingReaders(t *testing.T) {
 	w := newWire(t, nil)
@@ -1064,11 +1069,11 @@ func allocatedBy(f func()) uint64 {
 	return after.TotalAlloc - before.TotalAlloc
 }
 
-// be14c3d (doc.go, Values: "The request target and each header field the
-// client builds are limited to 1 MiB ...; a parameter that would pass the
-// limit is refused at its key, and its serialization stops there"; stage 2
-// ledger, review round, reversing the #12 rejection): a value or an
-// amplified serialization past 1 MiB is refused at the parameter's key,
+// doc.go, Values: "A parameter that would take the request target or a
+// header field past 1 MiB ... is refused at its key, and its serialization
+// stops there". A value or an amplified serialization, such as deepObject
+// repeating each member's bracket path per leaf or a template repeating a
+// variable, past 1 MiB is refused at the parameter's key,
 // with nothing sent, and without building the oversized output (allocation
 // during Prepare stays under 16 MiB where the full output would be 20 MiB
 // or more); a request under the limit, with a margin of 1 KiB, is sent.

@@ -21,10 +21,11 @@ func TestYAMLAdapterNonSpecificTags(t *testing.T) {
 	}
 }
 
-// SQ8 changes the interpretation of a valid 1.x directive, not its grammar:
-// YAML 1.2.2 section 6.8.1 requires a numeric major.minor and at most one
-// YAML directive; section 9.1.5 requires --- after directives. Loader
-// rejects an unparseable document with its URI and source position.
+// Loader reads a %YAML 1.x directive as 1.2, which changes the
+// interpretation of a valid directive, not its grammar: YAML 1.2.2 section
+// 6.8.1 requires a numeric major.minor and at most one YAML directive;
+// section 9.1.5 requires --- after directives. Loader rejects an unparseable
+// document with its URI and source position.
 func TestYAMLAdapterDirectiveGrammar(t *testing.T) {
 	for _, tt := range []struct {
 		name, prefix string
@@ -47,15 +48,15 @@ func TestYAMLAdapterDirectiveGrammar(t *testing.T) {
 	t.Run("missing document marker", func(t *testing.T) {
 		rejected(t, "%YAML 1.2\n"+yamlHead)
 	})
-	// The grammar checks must still admit a future 1.x version (SQ8).
+	// The grammar checks must still admit a future 1.x version.
 	c := parsed(t, []byte("%YAML 1.3 # a comment\n---\n"+yamlHead+"x-v: yes\n"))
 	sameJSON(t, "valid directive", c.Document(testDocURI+"#/x-v"), []byte(`"yes"`))
 }
 
 // Loader requires the rejection's own-byte column, including when the
 // scanner cannot construct a node. YAML 1.2.2 section 5.3 reserves @;
-// section 5.4 recognizes LF, CRLF and CR. SQ1 counts UTF-16 code units and
-// UTF-32 characters in bytes; a byte order mark does not add columns.
+// section 5.4 recognizes LF, CRLF and CR. A column counts UTF-16 code units
+// and UTF-32 characters in bytes; a byte order mark does not add columns.
 func TestYAMLAdapterScannerPositions(t *testing.T) {
 	for _, enc := range []struct {
 		name string
@@ -92,10 +93,10 @@ func TestYAMLAdapterLineEndings(t *testing.T) {
 	}
 }
 
-// Loader reads scalar keys as the strings they spell, and YAML 1.2.2
-// section 7.1 aliases an earlier anchored node, including a scalar key.
-// The loop owner's local ruling applies spelling to an explicitly tagged
-// scalar key too; tags on values still undergo Core-schema validation.
+// Loader reads scalar keys as the strings they spell, and YAML 1.2.2 section
+// 7.1 aliases an earlier anchored node, including a scalar key. An
+// explicitly tagged scalar key is read as its spelling too; tags on values
+// still undergo Core-schema validation.
 func TestYAMLAdapterScalarKeyAliases(t *testing.T) {
 	for _, tt := range []struct{ name, tail, json string }{
 		{"key anchor used as value", "x-v: {&k name: first, other: *k}\n", `{"name":"first","other":"name"}`},

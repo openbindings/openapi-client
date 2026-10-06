@@ -13,10 +13,10 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// C1 (stage 2 brief, carried over from stage 1; errors.go at df879ec):
-// DecodeError.Error "returns the operation, the status, the media type and
-// the reason, never the body. A decoder's own error, whose message can quote
-// the body, is not in the text; errors.As finds it through Unwrap." client.go,
+// Error text never quotes a response body. errors.go, DecodeError.Error
+// "returns the operation, the status and the reason, never the body ... A
+// decoder's own error, whose message can quote the body, is not in the text;
+// errors.As finds it through Unwrap." client.go,
 // Call: JSON types are decoded "with encoding/json", XML types "with
 // encoding/xml", a caller's type "exactly as json.Unmarshal would" (doc.go,
 // Values). Each body below is built from letter runs that no error text

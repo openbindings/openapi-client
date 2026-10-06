@@ -26,10 +26,9 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Runnable versions of the stage 3 example flows in example_test.go (dev
-// loop, API preservation: "Examples in example_test.go become runnable
-// tests against httptest servers as their stage lands"): scenarios 4a to 4h
-// (credentials), 10 (tenants, with credentials) and 11 (redirects).
+// Runnable versions of the example flows in example_test.go, as tests
+// against httptest servers: scenarios 4a to 4h (credentials), 10 (tenants,
+// with credentials) and 11 (redirects).
 
 // securedPetsTemplate is a pets API whose listPets security is @LIST@;
 // searchPets allows anonymous access or an API key, and adoptPet needs an

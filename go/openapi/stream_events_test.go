@@ -11,8 +11,8 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// stream.go Events/Event; HTML §§9.2.5–9.2.6 and the Stage 7 non-browser
-// dispatch ruling. Only fields set in this block appear; field-only blocks
+// stream.go Events/Event; HTML §§9.2.5–9.2.6 and the non-browser dispatch
+// rule of Events. Only fields set in this block appear; field-only blocks
 // dispatch, comment/unknown/invalid-only blocks do not, and EOF drops an
 // unfinished block. UTF-8 replacement and a leading BOM follow HTML.
 func TestStream7SSEFields(t *testing.T) {
@@ -62,9 +62,10 @@ func TestStream7SSEItemsAreEventObjects(t *testing.T) {
 	}
 }
 
-// The Event API stores milliseconds in time.Duration. The owner ruled
-// valid but unrepresentable retry values an ErrItem for Events, while the
-// JSON representation retains the exact arbitrary-size integer.
+// The Event API stores milliseconds in time.Duration. A valid but
+// unrepresentable retry value is an ErrItem for Events (stream.go, Events:
+// "A valid retry integer that cannot fit in Event.Retry yields an ErrItem"),
+// while the JSON representation retains the exact arbitrary-size integer.
 func TestStream7SSERetryOverflow(t *testing.T) {
 	const huge = "99999999999999999999999999999999999999999999999"
 	wire := "retry: 9223372036854\n\nretry: 9223372036855\n\nretry: " + huge + "\n\ndata: after\n\n"

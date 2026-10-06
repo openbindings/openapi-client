@@ -32,7 +32,7 @@ func (r *stream7Repeated) Read(p []byte) (int, error) {
 	return n, nil
 }
 
-// Stage 7 brief: bounded current-item work and linear hostile-input costs.
+// Streams do bounded current-item work and have linear hostile-input costs.
 // Use the established best-of-five 12x time / 8x allocated-byte rule for
 // fourfold input. No result list or full repeated stream is retained.
 func TestStream7FramingScales(t *testing.T) {

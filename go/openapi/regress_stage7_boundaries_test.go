@@ -12,7 +12,7 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Stage 7 boundary rulings preserve framing independently of value codecs.
+// Sequential framing boundaries are kept independently of value codecs.
 // RFC 7464 section 2.1 requires RS before each possible-JSON octet string.
 func TestStream7BoundarySequencePrefix(t *testing.T) {
 	for _, prefix := range []string{"{}", " \t\r\n", "\xef\xbb\xbf", "garbage"} {
@@ -152,8 +152,9 @@ func TestStream7BoundarySSEIncrementalEndings(t *testing.T) {
 }
 
 // Array reconstruction must not make malformed records valid by merging
-// their syntax. Caller codecs still own value syntax: Stage 4 F8 and
-// TestSequentialItemsUseCodecs explicitly admit non-JSON codec bytes.
+// their syntax. Caller codecs still own value syntax (client.go,
+// Options.Codecs): TestSequentialItemsUseCodecs also admits non-JSON codec
+// bytes.
 func TestStream7BoundaryAggregateRecordSyntax(t *testing.T) {
 	for _, ct := range []string{"application/jsonl", "application/json-seq"} {
 		t.Run(ct, func(t *testing.T) {
@@ -201,8 +202,9 @@ func TestStream7BoundaryAggregateRecordSyntax(t *testing.T) {
 	}
 }
 
-// RFC 7464 section 2.4 scalar truncation checks apply to valid JSON scalars.
-// The Stage 7 ruling preserves raw/custom syntax escapes for other bytes.
+// RFC 7464 section 2.4 scalar truncation checks apply to valid JSON scalars
+// (Items). A record that is not one is left to a raw []byte target and to
+// custom codecs.
 func TestStream7BoundaryRawScalarCanary(t *testing.T) {
 	for _, tc := range []struct {
 		item string

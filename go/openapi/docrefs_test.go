@@ -15,17 +15,17 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// References across documents (stage 5), over httptest sites. load.go,
-// Load: "Load reads the document at uri, and every document its references
-// reach"; Loader: "The references followed are $ref in Reference Objects,
-// Path Items and Schema Objects, $dynamicRef, Discriminator mapping and
-// defaultMapping values that are not component names, and OpenAPI 3.2
-// security requirement URIs, anywhere in a document, webhooks and
-// callbacks included; operationRef and externalValue are not retrieved.
-// They resolve against each document's base". OpenAPI 3.1.2 section 4.3
-// (multi-document descriptions), 4.6 (relative references resolve against
-// the referring document's base, inside schemas the nearest $id), 4.8.23
-// (Reference Object), 4.8.24 (Schema Object); RFC 3986 section 5.
+// References across documents, over httptest sites. load.go, Load: "Load
+// reads the document at uri, and every document its references reach";
+// Loader: "The references followed are $ref in Reference Objects, Path Items
+// and Schema Objects, $dynamicRef, Discriminator mapping and defaultMapping
+// values that are not component names ..., and OpenAPI 3.2 security
+// requirement URIs, anywhere in a document, webhooks and callbacks included;
+// operationRef and externalValue are not retrieved. They resolve against
+// each document's base". OpenAPI 3.1.2 section 4.3 (multi-document
+// descriptions), 4.6 (relative references resolve against the referring
+// document's base, inside schemas the nearest $id), 4.8.23 (Reference
+// Object), 4.8.24 (Schema Object); RFC 3986 section 5.
 
 // entry31 is doc31 whose root server is the site itself.
 func entry31(paths string, extra ...string) string {
@@ -300,11 +300,11 @@ func waitBoth(content map[string]string) (http.HandlerFunc, http.HandlerFunc, fu
 	}
 }
 
-// brief.md, Admission and retrieval: "the documents of one load fetched in
-// parallel"; load.go, Loader.Fetch: the loader may call Fetch "from several
-// goroutines at once, so that a document split into several files loads in
-// parallel". Two documents the entry references are each served only once
-// the other's request has arrived.
+// The documents of one load are fetched in parallel (load.go, Loader.Fetch:
+// the loader may call Fetch "from several goroutines at once, so that a
+// document split into several files loads in parallel"). Two documents the
+// entry references are each served only once the other's request has
+// arrived.
 func TestDocumentsFetchedInParallel(t *testing.T) {
 	entry := entry31(`"/a":{"$ref":"a.json"},"/b":{"$ref":"b.json"}`)
 	content := map[string]string{"a": `{"get":{"operationId":"a"}}`, "b": `{"get":{"operationId":"b"}}`}
@@ -650,11 +650,10 @@ func TestReferenceCyclesAcrossDocuments(t *testing.T) {
 	}
 }
 
-// Stage 4 ledger, IP4F-6, carried into this stage's brief: "the error
-// naming the cycle deterministically". Two operations enter one cycle of
-// parameter references at different points; each operation's Err is the
-// same text whichever compiles first, and when they compile at once, in
-// one document and across two.
+// The error names a reference cycle deterministically. Two operations enter
+// one cycle of parameter references at different points; each operation's
+// Err is the same text whichever compiles first, and when they compile at
+// once, in one document and across two.
 func TestCycleNamedDeterministically(t *testing.T) {
 	local := doc31(`"/x":{"get":{"operationId":"x","parameters":[{"$ref":"#/components/parameters/A"}]}},
 		"/y":{"get":{"operationId":"y","parameters":[{"$ref":"#/components/parameters/B"}]}}`,
@@ -823,17 +822,17 @@ func TestErrUnresolvedWrapsTheCause(t *testing.T) {
 	}
 }
 
-// Discovery follows the OpenAPI object model, not the text (brief.md;
-// load.go, Loader: references "anywhere in a document, webhooks and
-// callbacks included; operationRef and externalValue are not retrieved"):
-// every Reference Object, Path Item $ref and Schema Object $ref is
-// followed, in webhooks, callbacks, links, examples, headers and unused
-// components, and in every schema keyword whose value is a schema (JSON
-// Schema 2020-12 core sections 8.2.4, $defs, 10, the applicators, and 11,
-// unevaluated locations; validation section 8.5, contentSchema); a "$ref" in
-// data (an example's value, an extension, a schema's default, const, enum,
-// examples or extension keyword) is not a reference, nor are operationRef,
-// externalValue and other URLs.
+// Discovery follows the OpenAPI object model, not the text (load.go, Loader:
+// references "anywhere in a document, webhooks and callbacks included;
+// operationRef and externalValue are not retrieved"): every Reference
+// Object, Path Item $ref and Schema Object $ref is followed, in webhooks,
+// callbacks, links, examples, headers and unused components, and in every
+// schema keyword whose value is a schema (JSON Schema 2020-12 core sections
+// 8.2.4, $defs, 10, the applicators, and 11, unevaluated locations;
+// validation section 8.5, contentSchema); a "$ref" in data (an example's
+// value, an extension, a schema's default, const, enum, examples or
+// extension keyword) is not a reference, nor are operationRef, externalValue
+// and other URLs.
 func TestDiscoveryFollowsTheModel(t *testing.T) {
 	s := newSite(t)
 	followed := []string{}
@@ -914,15 +913,15 @@ func (s *site) hitsCopy() map[string]int {
 	return out
 }
 
-// A 3.2-only rule is not applied to a 3.1 document (brief.md: "a 3.2-only
-// rule must not be applied to a 3.1 document"): a 3.1 document's $self is no
-// base and no alias (load.go, Loader: the base is "its OpenAPI 3.2 $self
-// ... or else" the retrieval URI; Document "also accepts an OpenAPI 3.2
-// document's $self"); defaultMapping, a 3.2 Discriminator field, is not
-// followed; a Media Type Object's "$ref" is not a reference before 3.2; and
-// a security requirement name that is not a component name is "in earlier
-// editions ... a defect of the requirement" (load.go, SchemeLookup), never
-// a URI to fetch.
+// A 3.2-only rule is not applied to a 3.1 document, which uses the edition
+// declared at its root (load.go, Loader): a 3.1 document's $self is no base
+// and no alias (load.go, Loader: the base is "its OpenAPI 3.2 $self ... or
+// else" the retrieval URI; Document "also accepts an OpenAPI 3.2 document's
+// $self"); defaultMapping, a 3.2 Discriminator field, is not followed; a
+// Media Type Object's "$ref" is not a reference before 3.2; and a security
+// requirement name that is not a component name is "in earlier editions ...
+// a defect of the requirement" (load.go, SchemeLookup), never a URI to
+// fetch.
 func TestThreeTwoRulesNotAppliedToThreeOne(t *testing.T) {
 	s := newSite(t)
 	s.put("/api/openapi.json", `{"openapi":"3.1.0","$self":"https://self.example.test/base/openapi.json","info":{"title":"t","version":"1"},
@@ -1064,15 +1063,14 @@ func TestSchemeLookup(t *testing.T) {
 	}
 }
 
-// describe.go, Server.ID: "an opaque identifier unique among distinct
-// server declarations in one Client, including entries with the same URL
-// and name. An inherited declaration keeps its ID across operations. It is
-// stable for the same loaded document"; client.go, Options.ServerID: "An ID
-// not used anywhere in the document is refused by Load". Servers declared
-// alike in two documents have distinct IDs (stage 2 ledger, latent item
-// #15); each selects its own server, at Load too, where only an ID from an
-// earlier load of the same documents can be given, so IDs do not depend on
-// the order in which documents arrive.
+// describe.go, Server.ID: "an opaque identifier unique among distinct server
+// declarations in one Client, including entries with the same URL and name.
+// An inherited declaration keeps its ID across operations. It is stable for
+// the same loaded document"; client.go, Options.ServerID: "An ID not used
+// anywhere in the document is refused by Load". Servers declared alike in
+// two documents have distinct IDs; each selects its own server, at Load too,
+// where only an ID from an earlier load of the same documents can be given,
+// so IDs do not depend on the order in which documents arrive.
 func TestServerIDAcrossDocuments(t *testing.T) {
 	const base = "https://docs.example.test/"
 	docs := map[string]string{

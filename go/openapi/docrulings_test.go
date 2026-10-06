@@ -17,15 +17,19 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Tests for the test author's questions as the stage 5 ledger rules them
-// (SQ1 to SQ10; SQ11 is in TestYAMLRejections), citing the contract
-// sentences the rulings added at 7ebbce0.
+// Tests for the package documentation's sentences on loading: rejection
+// positions, the alias byte bound, URI claims, file admission,
+// discriminator mapping values, redirected references, unreadable
+// referenced documents, %YAML directives, references with userinfo, and
+// the JSON of a YAML document. Each test cites the sentence it pins. That a
+// node's position is where it starts, its tag included, is tested in
+// TestYAMLRejections.
 
 // load.go, Loader: "A rejection names the document's URI and the line and
-// column of the problem, both counted from 1, the column in the document's
-// own bytes (two per UTF-16 code unit, four per UTF-32 character) after any
-// byte order mark" (SQ1), with or without the mark, a character outside the
-// Basic Multilingual Plane taking two UTF-16 code units.
+// column of the problem, both counted from 1, the column in the document's own
+// bytes (two per UTF-16 code unit, four per UTF-32 character) after any byte
+// order mark", with or without the mark, a character outside the Basic
+// Multilingual Plane taking two UTF-16 code units.
 func TestColumnsInUTF16AndUTF32(t *testing.T) {
 	encodings := []struct {
 		name  string
@@ -68,15 +72,14 @@ func TestColumnsInUTF16AndUTF32(t *testing.T) {
 	}
 }
 
-// load.go, Loader: "A document whose aliases would add ... more than 100
-// times its own size in bytes ... is rejected too" (SQ2): one 30 KB string
-// aliased 8,000 times adds 8,000 nodes, within the node bounds, and 240 MB,
-// beyond the byte bound, so it is rejected without its expansion being
-// built; aliased 50 times, it adds 1.5 MB, under the bound of about 3 MB,
-// and loads. The same holds for the document written in UTF-16, whose own
-// size counts its own bytes (SQ13), with the same margins. A loader that
-// expanded the first would use hundreds of megabytes, so the test runs in a
-// child process.
+// load.go, Loader: "A document whose aliases would add ... more than 100 times
+// its own size in bytes ... is rejected too": one 30 KB string aliased 8,000
+// times adds 8,000 nodes, within the node bounds, and 240 MB, beyond the byte
+// bound, so it is rejected without its expansion being built; aliased 50
+// times, it adds 1.5 MB, under the bound of about 3 MB, and loads. The same
+// holds for the document written in UTF-16, whose own size counts its own
+// bytes as retrieved, with the same margins. A loader that expanded the first
+// would use hundreds of megabytes, so the test runs in a child process.
 func TestYAMLAliasByteBound(t *testing.T) {
 	if !inChild(t) {
 		return
@@ -111,13 +114,12 @@ func TestYAMLAliasByteBound(t *testing.T) {
 }
 
 // load.go, Loader: "A URI claimed by two different documents or schemas is
-// unresolvable, and the error names both; a document's URI and the $id of
-// the schema at its root claim one schema" (SQ3). A schema document whose
-// root $id is its own URL resolves, by that URL and by a relative
-// reference; one whose nested schema claims the same URL as its root
-// conflicts. (Each document is reached only as a schema, so its root is
-// read in one context; TestURIClaimedTwice checks that errors name both
-// claimants.)
+// unresolvable, and the error names both; a document's URI and the $id of the
+// schema at its root claim one schema". A schema document whose root $id is
+// its own URL resolves, by that URL and by a relative reference; one whose
+// nested schema claims the same URL as its root conflicts. (Each document is
+// reached only as a schema, so its root is read in one context;
+// TestURIClaimedTwice checks that errors name both claimants.)
 func TestRootIDEqualToRetrievalURI(t *testing.T) {
 	s := newSite(t)
 	body := func(op, ref string) string {
@@ -148,9 +150,8 @@ func TestRootIDEqualToRetrievalURI(t *testing.T) {
 // load.go, Loader.AllowReference: "With nil, http and https references may
 // reach the entry document's original origin and Origins. For a file entry,
 // file references may reach only files under the entry file's directory ...;
-// Origins does not enlarge that file boundary" (SQ4): a file entry reaches
-// an origin Origins lists, not another, and still no file outside its
-// directory.
+// Origins does not enlarge that file boundary": a file entry reaches an origin
+// Origins lists, not another, and still no file outside its directory.
 func TestFileEntryReachesOrigins(t *testing.T) {
 	listed, other := newSite(t), newSite(t)
 	listed.put("/p.json", `{"P":{"name":"p","in":"query"}}`)
@@ -183,13 +184,12 @@ func TestFileEntryReachesOrigins(t *testing.T) {
 	}
 }
 
-// load.go, Loader: Discriminator mapping values that are not component
-// names are followed, and "a value that could be a component name is read as
-// one, as OpenAPI recommends, and never fetched" (SQ5; OpenAPI 3.1.2
-// section 4.8.25.3, and section 4.8.7: component names match
-// ^[a-zA-Z0-9\.\-_]+$), whether or not such a component exists, in the
-// entry and in a referenced document; a value that cannot be a name, such
-// as "./far.json", is a URI and is fetched.
+// load.go, Loader: Discriminator mapping values that are not component names
+// are followed, and "a value that could be a component name is read as one, as
+// OpenAPI recommends, and never fetched" (OpenAPI 3.1.2 section 4.8.25.3, and
+// section 4.8.7: component names match ^[a-zA-Z0-9\.\-_]+$), whether or not
+// such a component exists, in the entry and in a referenced document; a value
+// that cannot be a name, such as "./far.json", is a URI and is fetched.
 func TestNameShapedMappingNeverFetched(t *testing.T) {
 	s := newSite(t)
 	mapped := func(mapping string) string {
@@ -221,9 +221,8 @@ func TestNameShapedMappingNeverFetched(t *testing.T) {
 
 // load.go, Loader: "A reference resolves first to what loaded documents
 // identify: a document by its retrieval URI (and the URI requested, when a
-// redirect led there)" (SQ6): a later reference to a URI that redirected is
-// not requested again, over http or through a Fetch that reports a final
-// URI.
+// redirect led there)": a later reference to a URI that redirected is not
+// requested again, over http or through a Fetch that reports a final URI.
 func TestRedirectedURIIdentified(t *testing.T) {
 	t.Run("http", func(t *testing.T) {
 		s := newSite(t)
@@ -260,10 +259,9 @@ func TestRedirectedURIIdentified(t *testing.T) {
 
 // errors.go, ErrUnresolved: the Err "wraps the retrieval error too when
 // fetching or reading its document failed (one that cannot be read is named
-// with its line and column, as Load names an entry document's)" (SQ7): a
-// referenced YAML document with a duplicate key, a JSON one with a
-// duplicate key, and one with invalid UTF-8, each disabling only what
-// reaches it.
+// with its line and column, as Load names an entry document's)": a referenced
+// YAML document with a duplicate key, a JSON one with a duplicate key, and one
+// with invalid UTF-8, each disabling only what reaches it.
 func TestUnreadableReferencedDocument(t *testing.T) {
 	const base = "https://docs.example.test/"
 	docs := map[string]string{
@@ -296,8 +294,8 @@ func TestUnreadableReferencedDocument(t *testing.T) {
 }
 
 // load.go, Loader: "A %YAML directive for version 1.x is read as 1.2, and
-// any other major version rejects the document (YAML 1.2.2 section 6.8.1)"
-// (SQ8), the rejection at the directive, which begins its line.
+// any other major version rejects the document (YAML 1.2.2 section 6.8.1)",
+// the rejection at the directive, which begins its line.
 func TestYAMLDirectiveVersions(t *testing.T) {
 	for _, v := range []string{"1.1", "1.2", "1.3"} {
 		c := parsed(t, []byte("%YAML "+v+"\n---\n"+yamlHead+"x-v: yes\n"))
@@ -308,11 +306,13 @@ func TestYAMLDirectiveVersions(t *testing.T) {
 	}
 }
 
-// load.go, Loader: "A reference to a URI with userinfo, or to a file URL
-// naming a host other than localhost, is unresolvable and never fetched, as
-// Load refuses such a uri" (SQ9; RFC 9110 section 4.2.4, RFC 8089); the
-// ledger: "not shown with its userinfo". Admission is never asked, nothing
-// is requested, and no error text shows the user or the password.
+// load.go, Loader: "A reference to a URI with userinfo ..., or to a file
+// URL naming a host other than localhost, is unresolvable and never
+// fetched, as Load refuses such a uri" (RFC 9110 section 4.2.4, RFC 8089).
+// The reference is not shown with its userinfo (doc.go, Outcomes: "No
+// credential appears in the text of an error the client creates").
+// Admission is never asked, nothing is requested, and no error text shows
+// the user or the password.
 func TestUserinfoAndFileHostReferences(t *testing.T) {
 	s := newSite(t)
 	host := strings.TrimPrefix(s.URL, "http://")
@@ -378,13 +378,13 @@ func jsonNoHTML(t testing.TB, s string) string {
 
 // load.go, Client.Document: "A YAML document's JSON has no insignificant
 // whitespace, its members in the order written and its strings as
-// encoding/json writes them without HTML escaping. A number keeps its
-// spelling where JSON's grammar allows it; otherwise only what the grammar
-// requires changes: a leading + is dropped, as are zeros leading a whole part
-// of more than one digit, a 0 is written before a leading point, a point
-// with no digit after it is dropped, and a hexadecimal or octal integer is
-// written in decimal" (SQ10, SQ12). Exact bytes, for the whole
-// document, a node, and a Schema's Raw ("as the Loader converts it").
+// encoding/json writes them without HTML escaping. A number keeps its spelling
+// where JSON's grammar allows it; otherwise only what the grammar requires
+// changes: a leading + is dropped, as are zeros leading a whole part of more
+// than one digit, a 0 is written before a leading point, a point with no digit
+// after it is dropped, and a hexadecimal or octal integer is written in
+// decimal". Exact bytes, for the whole document, a node, and a Schema's Raw
+// ("as the Loader converts it").
 func TestYAMLDocumentBytes(t *testing.T) {
 	str := "tab\there \"q\" back\\slash \u2028 \x01 \x7f é 😀 </script> & <b>"
 	yamlDoc := `openapi: 3.1.0

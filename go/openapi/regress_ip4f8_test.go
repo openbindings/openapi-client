@@ -21,13 +21,10 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Stage 4 ledger, "Fix round (23cfd73)", IP4F-8: "the test author covers the
-// listed F35 lines or the implementer removes what no contract needs". The
-// tests here cover the production blocks that no test reached at b4872f9
-// (go test -coverprofile, child processes included) where a contract line
-// or ruling needs their behavior, each citing it; the blocks no contract
-// needs are listed for the implementer in the test author's report. Each
-// pins a behavior that holds at b4872f9 unless it says otherwise.
+// The tests here cover production code that no other test reached (go test
+// -coverprofile, child processes included) where a contract line needs its
+// behavior, each citing that line. Each pins behavior the client already had
+// unless it says otherwise.
 
 const ip4f8Paths = `
 	"/f":{"post":{"operationId":"form","requestBody":{"content":{"application/x-www-form-urlencoded":{
@@ -66,11 +63,12 @@ func refusedAt(t *testing.T, w *wire, c *openapi.Client, key string, in *openapi
 	return re
 }
 
-// Stage brief, Refusals: "a property or part value its media type cannot
-// encode ... each at its Inputs key"; doc.go, Values: "A body under a form,
-// multipart or sequential type takes the shapes Input.Body lists". A form
-// field typed JSON Lines or multipart, and a multipart part typed NDJSON,
-// cannot encode an object (body.go:57 at b4872f9).
+// A property or part value its media type cannot encode is refused at its
+// Inputs key (errors.go, RequestError.Inputs: "Input.Body" followed by "a
+// JSON Pointer to the part of Body concerned"); doc.go, Values: "A body
+// under a form, multipart or sequential type takes the shapes Input.Body
+// lists". A form field typed JSON Lines or multipart, and a multipart part
+// typed NDJSON, cannot encode an object.
 func TestIP4F8FieldTypesThatCannotEncodeAValue(t *testing.T) {
 	w, c := ip4f8Client(t)
 	obj := map[string]any{"a": 1}
@@ -79,12 +77,14 @@ func TestIP4F8FieldTypesThatCannotEncodeAValue(t *testing.T) {
 	refusedAt(t, w, c, "mp", &openapi.Input{Body: map[string]any{"l": obj}}, false, "Input.Body/l")
 }
 
-// A form field's reader read once is streamed as the body is read (stage 4
-// ledger, Q10), and its read error aborts the body and is reported by Call
-// (client.go, Input.Body: an error "aborts the body and is reported by Call
-// or Response.WaitRequest"; body.go:195). A replayable reader is read when
-// the call is prepared, and its read error refuses the call, kept for
-// errors.As (body.go:317): an *os.File opened only for writing.
+// A form field's reader read once is streamed as the body is read (doc.go,
+// Fixed rules, Form bodies: "A body holding a reader that can be read only
+// once is encoded as the transport reads it"), and its read error aborts the
+// body and is reported by Call (client.go, Input.Body: an error "aborts the
+// body and is reported by Call or Response.WaitRequest"). A
+// replayable reader is read when the call is prepared, and its read error
+// refuses the call, kept for errors.As: an *os.File opened only
+// for writing.
 func TestIP4F8FormFieldReadErrors(t *testing.T) {
 	w, c := ip4f8Client(t)
 	errRead := errors.New("the disk went away")
@@ -115,10 +115,10 @@ func TestIP4F8FormFieldReadErrors(t *testing.T) {
 // Input.MediaType: "a boundary given for a multipart body the client encodes
 // is used, a part whose content holds its delimiter, or "--" and the boundary
 // after a CR or LF, being an input that cannot be encoded (RFC 2046 section
-// 5.1.1)"; stage 4 ledger, Q13 and QQ3: content "streamed from a reader ...
-// ends the body as an upload error". A reader that yields one byte at a time
-// splits the delimiter across reads, which the check still finds
-// (body.go:218); the same reader without it is sent whole.
+// 5.1.1)". Content streamed from a reader is checked as it streams, and a
+// delimiter found there ends the body as an upload error. A reader that yields
+// one byte at a time splits the delimiter across reads, which the check still
+// finds; the same reader without it is sent whole.
 func TestIP4F8DelimiterAcrossShortReads(t *testing.T) {
 	w, c := ip4f8Client(t)
 	in := func(content string) *openapi.Input {
@@ -138,17 +138,17 @@ func TestIP4F8DelimiterAcrossShortReads(t *testing.T) {
 
 // doc.go, Values: "a reader, and a multipart or sequential media type,
 // cannot serialize a parameter and are refused at its key": a form content
-// parameter holding a reader (body.go:264, 364).
+// parameter holding a reader.
 func TestIP4F8FormContentParameterRefusesReaders(t *testing.T) {
 	w, c := ip4f8Client(t)
 	refusedAt(t, w, c, "params", &openapi.Input{Params: map[string]any{"fq": map[string]any{"a": strings.NewReader("x")}}}, false, "fq")
 }
 
 // A form field typed application/x-www-form-urlencoded is encoded by the
-// client's form encoder from its schema's fields (stage 4 ledger, F7 and
-// F20: "A form-typed part or content parameter is encoded by the client's
-// form encoder everywhere"), and then as the value of its field (doc.go,
-// Fixed rules, Form bodies; body.go:272).
+// client's form encoder from its schema's fields, as is every form-typed part
+// or content parameter (Options.Codecs: a form key is refused, as "OpenAPI's
+// Encoding Object governs" form encoding), and then as the value of its field
+// (doc.go, Fixed rules, Form bodies).
 func TestIP4F8FormTypedFieldInAFormBody(t *testing.T) {
 	w, c := ip4f8Client(t)
 	mustCall(t, c, "form", &openapi.Input{Body: map[string]any{"t": map[string]any{"a": "b c", "n": 5}}}, nil)
@@ -165,7 +165,7 @@ func (nullJSON) MarshalJSON() ([]byte, error) { return []byte("null"), nil }
 // doc.go, Values: "A form or multipart property or array item whose JSON
 // data is null is omitted, whatever its serialization": JSON data null from
 // a json.RawMessage under a JSON field, and from a MarshalJSON under a text
-// field (body.go:285, 492).
+// field.
 func TestIP4F8NullJSONDataOmitted(t *testing.T) {
 	w, c := ip4f8Client(t)
 	body := map[string]any{"j": json.RawMessage("null"), "s": nullJSON{}, "t": map[string]any{"a": "x"}}
@@ -179,11 +179,10 @@ func TestIP4F8NullJSONDataOmitted(t *testing.T) {
 
 // Input.MediaType: a given boundary's delimiter cannot appear in a part,
 // RFC 2046 section 5.1.1: "the boundary delimiter MUST NOT appear inside any
-// of the encapsulated parts"; stage 4 ledger, IP4-4 (a nested boundary never
-// starts with an enclosing one) and C4-3. A nested multipart part whose
-// given boundary begins with the outer one is refused at its key, whether
-// it has parts (each refused too) or only its close delimiter
-// (body.go:442).
+// of the encapsulated parts", so a nested boundary may not begin with an
+// enclosing one: a generated one never does. A nested multipart part whose
+// given boundary begins with the outer one is refused at its key, whether it
+// has parts (each refused too) or only its close delimiter.
 func TestIP4F8NestedBoundaryHoldingTheOuter(t *testing.T) {
 	w, c := ip4f8Client(t)
 	for _, content := range []map[string]any{{}, {"a": "x"}} {
@@ -197,10 +196,10 @@ func TestIP4F8NestedBoundaryHoldingTheOuter(t *testing.T) {
 }
 
 // Input.MediaType: a boundary is "checked", and "Two boundary parameters are
-// refused"; a part's media type problem is at its key in Settings (stage 4
-// ledger, test round: "part media-type problems in Settings"). A nested
-// multipart Part.MediaType with an invalid boundary, or two, is refused
-// (body.go:503).
+// refused"; a part's media type problem is at its key in Settings (errors.go,
+// RequestError.Settings: "for a part's media type, "Input.Body" followed by
+// the part's JSON Pointer"). A nested multipart Part.MediaType with an invalid
+// boundary, or two, is refused.
 func TestIP4F8PartBoundaryRefused(t *testing.T) {
 	w, c := ip4f8Client(t)
 	for _, mt := range []string{`multipart/mixed; boundary="a "`, "multipart/mixed; boundary=a; boundary=b", `multipart/mixed; boundary="a@b"`} {
@@ -213,7 +212,7 @@ func TestIP4F8PartBoundaryRefused(t *testing.T) {
 // Input.MediaType's boundary is checked against RFC 2046 section 5.1.1:
 // "bcharsnospace := DIGIT / ALPHA / "'" / "(" / ")" / "+" / "_" / "," / "-" /
 // "." / "/" / ":" / "=" / "?"" and the space, so "@", "~", "*" and a byte
-// past ASCII are refused at Input.MediaType (body.go:608), and every bchar
+// past ASCII are refused at Input.MediaType, and every bchar
 // is taken.
 func TestIP4F8BoundaryCharacters(t *testing.T) {
 	w, c := ip4f8Client(t)
@@ -227,10 +226,11 @@ func TestIP4F8BoundaryCharacters(t *testing.T) {
 	checkParts(t, parts, []wantPart{{disposition: formData("s"), ctype: "text/plain", content: "x"}})
 }
 
-// C4-2: "an array's default follows its items the same way", and "a schema
-// without type allows all", so an array whose items are absent has the
-// absent type, application/octet-stream (OAS 3.1.2 section 4.8.15.1.1;
-// fields.go:261), and each item is sent so.
+// An array's default content type follows its items (client.go, Input.Body:
+// "an array schema's items type by default"), and a schema without type allows
+// all, so an array whose items are absent has the absent type,
+// application/octet-stream (OAS 3.1.2 section 4.8.15.1.1), and
+// each item is sent so.
 func TestIP4F8ArrayWithoutItems(t *testing.T) {
 	w, c := ip4f8Client(t)
 	if e := encodingByName(t, reqMedia(t, mustOp(t, c, "mp"), 0))["arr"]; e == nil || e.ContentType != "application/octet-stream" {
@@ -244,9 +244,10 @@ func TestIP4F8ArrayWithoutItems(t *testing.T) {
 }
 
 // client.go, Input.Body: "For form and multipart media, Body is an object (a
-// map or a struct)"; C4-1: a typed nil body "is encoded as null or refused";
-// null is no object. A typed nil pointer to a struct, a pointer to a *Part
-// and a pointer to a reader are refused at Input.Body (fields.go:513, 518).
+// map or a struct)"; a typed nil body is a value (doc.go, Values: "a typed
+// nil, such as a nil pointer or map, is a value, which encoding/json writes as
+// null"), and null is no object. A typed nil pointer to a struct, a pointer to
+// a *Part and a pointer to a reader are refused at Input.Body.
 func TestIP4F8FormBodyThatIsNoObject(t *testing.T) {
 	w, c := ip4f8Client(t)
 	part := &openapi.Part{Content: "x"}
@@ -260,8 +261,7 @@ func TestIP4F8FormBodyThatIsNoObject(t *testing.T) {
 
 // client.go, Client: "The zero Client has no operations: it describes
 // nothing and refuses every call with a *RequestError wrapping
-// ErrNoOperation", and so does a Client With derives from it (load.go:203,
-// 217, 245; client.go:233).
+// ErrNoOperation", and so does a Client With derives from it.
 func TestIP4F8ZeroClient(t *testing.T) {
 	var c openapi.Client
 	if v, uris, d := c.Version(), c.DocumentURIs(), c.Document(""); v != "" || len(uris) != 0 || d != nil {
@@ -278,7 +278,7 @@ func TestIP4F8ZeroClient(t *testing.T) {
 
 // client.go, Request.Call "returns as [Client.Call] does", and Call: "out
 // must be nil, a non-nil *[]byte, an io.Writer, or a non-nil pointer;
-// anything else ... is refused before sending" (client.go:657).
+// anything else ... is refused before sending".
 func TestIP4F8RequestCallChecksOut(t *testing.T) {
 	w, c := ip4f8Client(t)
 	req := mustPrepare(t, c, "params", nil)
@@ -289,8 +289,7 @@ func TestIP4F8RequestCallChecksOut(t *testing.T) {
 }
 
 // client.go, Response.WaitRequest: "It returns nil when no request carried a
-// body", as for a Response the client did not make (client.go:757,
-// response.go:73).
+// body", as for a Response the client did not make.
 func TestIP4F8WaitRequestWithoutARequest(t *testing.T) {
 	for _, r := range []*openapi.Response{{}, {Response: &http.Response{StatusCode: 200}}} {
 		if err := r.WaitRequest(t.Context()); err != nil {
@@ -300,7 +299,7 @@ func TestIP4F8WaitRequestWithoutARequest(t *testing.T) {
 }
 
 // The error types' Error methods describe a value with no Response, as a
-// caller may build one, without failing (errors.go:225).
+// caller may build one, without failing.
 func TestIP4F8ErrorsWithoutAResponse(t *testing.T) {
 	for _, err := range []error{&openapi.StatusError{}, &openapi.DecodeError{}} {
 		var msg string
@@ -311,12 +310,11 @@ func TestIP4F8ErrorsWithoutAResponse(t *testing.T) {
 	}
 }
 
-// errors.go, RequestError.Settings: "Each Options field ... the document
-// cannot use, or that conflicts with another, is keyed by its field, at Load
-// or at a call": Options.Redirects outside its two values (client.go,
-// Redirects; config.go:66), and an Options.MediaType that is no concrete
-// media type (client.go, Options.MediaType: "selects a concrete request media
-// type"; load.go:277), refuse Load.
+// errors.go, RequestError.Settings: "A setting the document cannot use, or one
+// that conflicts with another, is keyed by its field, at Load or at a call":
+// Options.Redirects outside its two values (client.go, Redirects), and an
+// Options.MediaType that is no concrete media type (client.go,
+// Options.MediaType: "selects a concrete request media type"), refuse Load.
 func TestIP4F8OptionsLoadRefuses(t *testing.T) {
 	doc := doc31(`"/x":{"post":{"operationId":"x","requestBody":{"content":{"application/json":{}}}}}`)
 	for _, tt := range []struct {
@@ -334,9 +332,9 @@ func TestIP4F8OptionsLoadRefuses(t *testing.T) {
 
 // load.go, Loader.Fetch: "Fetch, if set, retrieves each document the loader
 // needs in place of the default ... It returns the content ... and the URI
-// it was finally retrieved from ...; an empty final means uri"
-// (index.go:205); a URI scheme other than http, https and file, with no
-// Fetch, is refused (index.go:233).
+// it was finally retrieved from ...; an empty final means uri";
+// a URI scheme other than http, https and file, with no
+// Fetch, is refused.
 func TestIP4F8LoaderFetch(t *testing.T) {
 	const uri = "https://docs.example.test/openapi.json"
 	var asked []string
@@ -357,8 +355,7 @@ func TestIP4F8LoaderFetch(t *testing.T) {
 }
 
 // load.go, Parse: "The uri, if not empty, is the absolute URI ... the
-// document is meant to live at": a relative or unparsable one is refused
-// (index.go:326, 328).
+// document is meant to live at": a relative or unparsable one is refused.
 func TestIP4F8ParseURIMustBeAbsolute(t *testing.T) {
 	doc := []byte(bare31(`"/x":{"get":{}}`))
 	for _, uri := range []string{"openapi.json", "/specs/openapi.json", "https://api example.test/openapi.json"} {
@@ -384,12 +381,12 @@ func (c *laterCanceled) Err() error {
 	return context.Canceled
 }
 
-// T1-12 (stage 1 ledger: "ctx bounds the whole load"): a context that ends
-// at any point of a load ends it with an error matching context.Canceled,
-// while the document is read (every 65,535 nodes, tree.go:395), while its
-// operations are indexed (index.go:361, 421) and while Load checks the
-// Options' names (load.go:283, index.go:726); the load either completes or
-// fails so, at every point.
+// load.go, Load: "ctx bounds the whole load": a context that ends at any point
+// of a load ends it with an error matching context.Canceled, while the
+// document is read (every 65,535 nodes), while its operations are
+// indexed and while Load checks the Options' names;
+// the load either completes or fails so, at every
+// point.
 func TestIP4F8LoadEndsWithItsContext(t *testing.T) {
 	var b strings.Builder
 	b.WriteString(`"/x":{"post":{"operationId":"x","requestBody":{"content":{"application/json":{}}}}},"/y":{"get":{}},"x-big":[`)
@@ -414,12 +411,11 @@ func TestIP4F8LoadEndsWithItsContext(t *testing.T) {
 
 // load.go, Loader: references resolve as RFC 3986 and RFC 6901 say, and
 // errors.go, ErrUnresolved "is wrapped by the Err of a part whose defect is
-// a reference that cannot be resolved": a $ref that is no URI reference
-// (index.go:666), a fragment that is no JSON Pointer or whose
-// percent-encoding is invalid (index.go:680) cannot be resolved; one that
+// a reference that cannot be resolved": a $ref that is no URI reference,
+// a fragment that is no JSON Pointer or whose
+// percent-encoding is invalid cannot be resolved; one that
 // names the document by its own URI resolves (load.go: "A reference resolves
-// first to what loaded documents identify: a document by its retrieval URI";
-// index.go:674).
+// first to what loaded documents identify: a document by its retrieval URI").
 func TestIP4F8ReferenceForms(t *testing.T) {
 	c := parseAt(t, doc31(`"/x":{"get":{"operationId":"x","parameters":[
 		{"$ref":"%zz"},{"$ref":"#plain-name"},{"$ref":"#/components/parameters/a%zz"},
@@ -441,11 +437,11 @@ func TestIP4F8ReferenceForms(t *testing.T) {
 
 // describe.go, Operation: a Path Item's field "on both sides, which OpenAPI
 // leaves undefined, sets Err on each operation whose request it affects ...
-// every operation that uses the parameters or servers" (compile.go:193); a
-// path template with an unclosed "{" is a defect of its operation
-// (compile.go:516, 776); a Paths key that does not begin with "/" is an
+// every operation that uses the parameters or servers"; a
+// path template with an unclosed "{" is a defect of its operation;
+// a Paths key that does not begin with "/" is an
 // entry listed only to report it (describe.go, Operation.Key), which does
-// not upset Load's check of Options.MediaType (index.go:729).
+// not upset Load's check of Options.MediaType.
 func TestIP4F8PathItemDefects(t *testing.T) {
 	c := parseAt(t, doc31(`
 		"nope":{"get":{"operationId":"nope"}},
@@ -468,9 +464,9 @@ func TestIP4F8PathItemDefects(t *testing.T) {
 }
 
 // describe.go, Param: AllowEmptyValue is the parameter's declared
-// allowEmptyValue (compile.go:297); a location other than path, query,
+// allowEmptyValue; a location other than path, query,
 // header and cookie, and a content key that is no media type, are the
-// parameter's Err (compile.go:324, 328).
+// parameter's Err.
 func TestIP4F8ParameterDeclarations(t *testing.T) {
 	c := parseAt(t, doc31(`"/x":{"get":{"operationId":"x","parameters":[
 		{"name":"e","in":"query","allowEmptyValue":true,"schema":{}},
@@ -487,11 +483,10 @@ func TestIP4F8ParameterDeclarations(t *testing.T) {
 	}
 }
 
-// doc.go, Values: "A parameter that would take the request target or header
+// doc.go, Values: "A parameter that would take the request target or a header
 // field past 1 MiB ... is refused at its key": a styled value whose
-// percent-encoding passes the bound (param.go:58), a content parameter
-// whose encoded value passes it (param.go:78), and one whose
-// percent-encoding does (param.go:95).
+// percent-encoding passes the bound, a content parameter whose
+// encoded value passes it, and one whose percent-encoding does.
 func TestIP4F8ParameterLengthBound(t *testing.T) {
 	w, c := ip4f8Client(t)
 	wide := strings.Repeat("é", 200000) // 400,000 bytes, 1,200,000 percent-encoded
@@ -503,9 +498,10 @@ func TestIP4F8ParameterLengthBound(t *testing.T) {
 	}
 }
 
-// Stage 2: a style OpenAPI does not define for its location, such as
-// spaceDelimited exploded, is the parameter's Err, and a call that gives the
-// parameter is refused at its key, its items defined or not (param.go:301).
+// doc.go, Fixed rules, Styles: a style OpenAPI does not define for its
+// location, such as spaceDelimited exploded, is the parameter's Err, and a
+// call that gives the parameter is refused at its key, its items defined or
+// not.
 func TestIP4F8UndefinedStyleRefusedForUndefinedItems(t *testing.T) {
 	w, c := ip4f8Client(t)
 	if p := param(t, mustOp(t, c, "params"), 3); p.Err == nil {
@@ -519,8 +515,8 @@ func TestIP4F8UndefinedStyleRefusedForUndefinedItems(t *testing.T) {
 // client.go, Input.ParamWriters: a writer "must keep the URL valid and
 // return an error on failure; that error is reported at
 // RequestError.Inputs[key]"; a nil writer cannot write and is refused at
-// its key (request.go:198). A writer that leaves an unclosed "{" in the path
-// does not stall preparation (param.go:422).
+// its key. A writer that leaves an unclosed "{" in the path
+// does not stall preparation.
 func TestIP4F8ParamWriterEdges(t *testing.T) {
 	w, c := ip4f8Client(t)
 	refusedAt(t, w, c, "path", &openapi.Input{ParamWriters: map[string]func(*http.Request) error{"id": nil}}, false, "id")
@@ -534,9 +530,9 @@ func TestIP4F8ParamWriterEdges(t *testing.T) {
 }
 
 // errors.go, RequestError.Err: "the error of HTTP.GetBody when a later send
-// of a prepared request takes its body from it" (response.go:289); and a
+// of a prepared request takes its body from it"; and a
 // body the transport takes again for a 307 hop from a GetBody that fails
-// ends the call with that error (response.go:216). The caller replaces the
+// ends the call with that error. The caller replaces the
 // prepared body with its own, and its own GetBody.
 func TestIP4F8CallerGetBodyFails(t *testing.T) {
 	errGet := errors.New("the body is gone")
@@ -557,7 +553,7 @@ func TestIP4F8CallerGetBodyFails(t *testing.T) {
 		t.Errorf("a second Send = %v, want a *RequestError wrapping the GetBody error", err)
 	}
 	// A transport that takes the body again, as net/http's does to retry
-	// on a new connection, gets the GetBody error (response.go:216).
+	// on a new connection, gets the GetBody error.
 	retry := roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		if _, err := r.GetBody(); err != nil {
 			return nil, err
@@ -576,10 +572,9 @@ func TestIP4F8CallerGetBodyFails(t *testing.T) {
 
 // client.go, Response.Decode: it "reads r's open Body into out, using Call's
 // target, codec, empty-body and MaxBodyBytes rules for any HTTP status", for
-// a Response the client did not make too (response.go:375); and "A missing,
+// a Response the client did not make too; and "A missing,
 // repeated or unparsable Content-Type is treated as
-// application/octet-stream, which a *any receives as a []byte"
-// (response.go:431).
+// application/octet-stream, which a *any receives as a []byte".
 func TestIP4F8DecodeAForeignResponse(t *testing.T) {
 	foreign := func(ct, body string) *openapi.Response {
 		return &openapi.Response{Response: &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {ct}},
@@ -596,13 +591,14 @@ func TestIP4F8DecodeAForeignResponse(t *testing.T) {
 }
 
 // client.go, Call: "An empty body is a success for every out, except that a
-// JSON or XML type decoded into a pointer is a *DecodeError ... An empty
-// text body decodes as "", an empty sequential body as an empty array, and
-// any other empty body into a *any as an empty []byte": an empty body under
-// a type with a caller's codec (response.go:481), an empty JSON Lines body
-// (response.go:511), and an empty image into a typed pointer
-// (response.go:515). Call decodes a nonempty sequential body as a JSON
-// array of its items, as its public contract requires in stage 7.
+// JSON or XML type decoded into a pointer is a *DecodeError ... An empty text
+// body decodes as "", an empty sequential body as an empty array, and any
+// other empty body into a *any as an empty []byte": an empty body under a type
+// with a caller's codec, an empty JSON Lines body,
+// and an empty image into a typed pointer.
+// Call decodes a nonempty sequential body as a JSON array
+// of its items (client.go, Call: "a sequential type, as a JSON array of its
+// items").
 func TestIP4F8EmptyAndSequentialResponseBodies(t *testing.T) {
 	var ct, body string
 	w := newWire(t, func(rw http.ResponseWriter, r *http.Request) { typedAnswer(200, ct, body)(rw, r) })
@@ -638,7 +634,7 @@ func TestIP4F8EmptyAndSequentialResponseBodies(t *testing.T) {
 // client.go, Call: JSON types are decoded "with encoding/json, anything but
 // whitespace after the value being a failure, as for json.Unmarshal", and a
 // body that fails to decode is a *DecodeError, into a *any as into any
-// other pointer (response.go:531, 534).
+// other pointer.
 func TestIP4F8DecodeIntoAnyFailures(t *testing.T) {
 	var body string
 	w := newWire(t, func(rw http.ResponseWriter, r *http.Request) { jsonAnswer(200, body)(rw, r) })
@@ -656,9 +652,8 @@ func TestIP4F8DecodeIntoAnyFailures(t *testing.T) {
 // client.go, Call: XML is read "with encoding/xml, which ... reads UTF-8,
 // US-ASCII and ISO-8859-1 documents, taking the encoding from a byte order
 // mark, else the Content-Type's charset, else the document's own
-// declaration": a declared encoding outside the three is a *DecodeError
-// (response.go:565), and a declared UTF-8 or US-ASCII decodes
-// (response.go:571).
+// declaration": a declared encoding outside the three is a *DecodeError,
+// and a declared UTF-8 or US-ASCII decodes.
 func TestIP4F8XMLEncodingDeclaration(t *testing.T) {
 	var body string
 	w := newWire(t, func(rw http.ResponseWriter, r *http.Request) { typedAnswer(200, "application/xml", body)(rw, r) })
@@ -685,7 +680,7 @@ func TestIP4F8XMLEncodingDeclaration(t *testing.T) {
 
 // doc.go, Outcomes: "An upload error may be joined with a response error;
 // errors.As can find both", as when Response.Decode fails and the upload
-// failed too (response.go:403).
+// failed too.
 func TestIP4F8DecodeErrorJoinsUploadError(t *testing.T) {
 	srv := newBodyServer(t, true, "")
 	ctx, _ := gateCtx(t)
@@ -716,8 +711,7 @@ func TestIP4F8DecodeErrorJoinsUploadError(t *testing.T) {
 }
 
 // doc.go, Outcomes: "When the call's context is done before the call
-// completes, the error matches ctx.Err()", and its text says so
-// (response.go:660).
+// completes, the error matches ctx.Err()", and its text says so.
 func TestIP4F8ContextErrorText(t *testing.T) {
 	_, c := ip4f8Client(t)
 	ctx, cancel := context.WithCancel(t.Context())
@@ -730,7 +724,7 @@ func TestIP4F8ContextErrorText(t *testing.T) {
 
 // client.go, Input.Body: a *strings.Reader is sent "from the bytes they hold
 // when the call is prepared", so an empty one, or one already read to its
-// end, is an empty part (response.go:695).
+// end, is an empty part.
 func TestIP4F8EmptyReplayablePart(t *testing.T) {
 	w, c := ip4f8Client(t)
 	read := strings.NewReader("x")
@@ -743,8 +737,7 @@ func TestIP4F8EmptyReplayablePart(t *testing.T) {
 }
 
 // errors.go, ErrUnresolved: wrapped by "the Err of a part whose defect is a
-// reference that cannot be resolved", a Security Scheme Object's included
-// (security.go:55).
+// reference that cannot be resolved", a Security Scheme Object's included.
 func TestIP4F8UnresolvableSecurityScheme(t *testing.T) {
 	c := parseAt(t, doc31(`"/x":{"get":{"operationId":"x","security":[{"s":[]}]}}`,
 		`"components":{"securitySchemes":{"s":{"$ref":"#/components/securitySchemes/nope"}}}`), "https://api.example.test", testDocURI, nil)
@@ -754,10 +747,9 @@ func TestIP4F8UnresolvableSecurityScheme(t *testing.T) {
 }
 
 // client.go, Input.Body: a sequential body is "a slice, an iter.Seq, or an
-// iter.Seq2 whose second value is an error"; a nil iterator is refused
-// (stage 4 ledger, IP4-6), the fast path's iter.Seq[any] included
-// (sequential.go:247), and a function of another shape is no iterator
-// (sequential.go:257).
+// iter.Seq2 whose second value is an error"; a nil iterator is refused, the
+// fast path's iter.Seq[any] included, and a function of
+// another shape is no iterator.
 func TestIP4F8IteratorShapes(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, seqDoc(), nil)
@@ -781,10 +773,9 @@ func (rt readAfterClose) RoundTrip(r *http.Request) (*http.Response, error) {
 	return memResponse(r, 200, nil, ""), nil
 }
 
-// C3-2 and C4-5 (stage 3 and 4 ledgers): an iterator body ends at the
-// transport's Close, its yield then returning false (client.go, Input.Body:
-// "its yield returns false once the body is no longer wanted"); a Read after
-// Close is refused with an error (sequential.go:291).
+// An iterator body ends at the transport's Close, its yield then returning
+// false (client.go, Input.Body: "its yield returns false once the body is no
+// longer wanted"); a Read after Close is refused with an error.
 func TestIP4F8IteratorReadAfterClose(t *testing.T) {
 	rt := readAfterClose{again: make(chan error, 1)}
 	c := parseAt(t, seqDoc(), "https://api.example.test", testDocURI, &openapi.Options{HTTPClient: &http.Client{Transport: rt}})
@@ -801,10 +792,9 @@ func TestIP4F8IteratorReadAfterClose(t *testing.T) {
 
 // client.go, Client.Document: "With a JSON Pointer fragment ... it returns a
 // copy of only that node, or nil when there is none": a node that ends in
-// false (tree.go:100), and pointers that name no node: an array index out of
+// false, and pointers that name no node: an array index out of
 // range, with a leading zero or negative, into a scalar, a fragment that
-// does not begin with "/", and an invalid percent-encoding (tree.go:265,
-// 302, 319, 323; load.go:255).
+// does not begin with "/", and an invalid percent-encoding.
 func TestIP4F8DocumentPointers(t *testing.T) {
 	many := strings.TrimSuffix(strings.Repeat("7,", 100), ",")
 	c := parseAt(t, doc31(`"/x":{"get":{}}`, `"x-e":{"a":[1,2],"f":false}`, `"x-many":[`+many+`]`), "https://api.example.test", testDocURI, nil)
@@ -822,13 +812,11 @@ func TestIP4F8DocumentPointers(t *testing.T) {
 }
 
 // load.go, Loader: "invalid UTF-8 rejects the document", and "A rejection
-// names the document's URI and the line and column of the problem"; the
-// stage 1 brief: "a document that is not valid JSON is a refusal". Each case
+// names the document's URI and the line and column of the problem". Each case
 // is also no YAML (load.go: a document that is not JSON "is read as YAML"):
-// invalid UTF-8 (tree.go:354), a control character, an invalid escape in a
-// value and in a member name, a string that does not end, a member without
-// its colon, and a minus sign with no digits (tree.go:439, 457, 495, 503,
-// 508, 527).
+// invalid UTF-8, a control character, an invalid escape in a
+// value and in a member name, a string that does not end, a member without its
+// colon, and a minus sign with no digits.
 func TestIP4F8LoadRejectsMalformedJSON(t *testing.T) {
 	head := "{\n  \"openapi\": \"3.1.0\",\n  \"info\": {\"title\": \"t\", \"version\": \"1\"},\n  \"paths\": {},\n"
 	for name, tail := range map[string]string{
@@ -858,7 +846,7 @@ func TestIP4F8LoadRejectsMalformedJSON(t *testing.T) {
 // doc.go, Fixed rules, URL: server variables are substituted, and a result
 // that is no usable URL means "the server cannot be used"; with no
 // variable given, the defaults alone decide, and the call is refused before
-// sending (request.go:499).
+// sending.
 func TestIP4F8ServerDefaultsUnusable(t *testing.T) {
 	c := parseAt(t, `{"openapi":"3.1.0","info":{"title":"t","version":"1"},"servers":[{"url":"https://{h}/v1","variables":{"h":{"default":"a b"}}}],"paths":{"/x":{"get":{"operationId":"x"}}}}`,
 		"", testDocURI, nil)
@@ -885,9 +873,9 @@ func (rt cancelThenRead) RoundTrip(r *http.Request) (*http.Response, error) {
 }
 
 // doc.go, Outcomes: "When the call's context is done before the call
-// completes, the error matches ctx.Err()", the transport's own error kept
-// (response.go:660); and a body read after the context ended reports the
-// context's error (stage 3 ledger, C3-2; response.go:731).
+// completes, the error matches ctx.Err()", the transport's own error kept;
+// and a body read after the context ended reports the
+// context's error.
 func TestIP4F8ContextEndsDuringTheUpload(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	rt := cancelThenRead{cancel: cancel, read: make(chan error, 1)}
@@ -902,12 +890,12 @@ func TestIP4F8ContextEndsDuringTheUpload(t *testing.T) {
 	}
 }
 
-// Stage 3 ledger, C3-3: "The client applies the cookie jar itself, as
-// net/http's send does": a request whose Header the caller set to nil still
-// carries the jar's cookies (security.go:561); and, as net/http's redirect
-// does (Go issue 17494), a hop drops the request's own cookie pairs that
-// the redirect response set again, the jar supplying their new values
-// (redirect.go:167).
+// The client applies the cookie jar itself, as net/http's send does
+// (Jar.Cookies before sending, Jar.SetCookies after each response): a request
+// whose Header the caller set to nil still carries the jar's cookies;
+// and, as net/http's redirect does (Go issue 17494), a hop
+// drops the request's own cookie pairs that the redirect response set again,
+// the jar supplying their new values.
 func TestIP4F8JarCookies(t *testing.T) {
 	t.Run("nil Header", func(t *testing.T) {
 		w := newWire(t, nil)
@@ -944,8 +932,7 @@ var errStopHop = errors.New("no further")
 // client.go, Redirects: "The HTTPClient's CheckRedirect is still consulted
 // on every hop the client follows", and its error ends the call as
 // net/http's does, a *url.Error whose Op is the method's ("Get" for a
-// request whose Method the caller left empty, which net/http sends as GET;
-// redirect.go:261).
+// request whose Method the caller left empty, which net/http sends as GET).
 func TestIP4F8CheckRedirectErrorOp(t *testing.T) {
 	w := newWire(t, routes(map[string]http.HandlerFunc{"/r": redirect(302, "/r2")}))
 	c := parseFor(t, w, doc31(`"/r":{"get":{"operationId":"plain"}}`), &openapi.Options{Redirects: openapi.FollowAll,
@@ -960,10 +947,10 @@ func TestIP4F8CheckRedirectErrorOp(t *testing.T) {
 }
 
 // credential.go, SecretFunc: "A nil f, like an empty secret, is no
-// credential" (T1, 5ee091c; the IP4F-8 question on credential.go:102): Load
-// refuses it as it refuses the zero Credential, at Options.Credentials[name],
-// and a Client With derives, which skips that check, refuses a call that
-// needs it as it refuses a call with no credential at all, nothing sent.
+// credential": Load refuses it as it refuses the zero Credential, at
+// Options.Credentials[name], and a Client With derives, which skips that
+// check, refuses a call that needs it as it refuses a call with no credential
+// at all, nothing sent.
 func TestIP4F8SecretFuncOfNil(t *testing.T) {
 	w := newWire(t, nil)
 	err := parseErr(t, credDoc, w.URL, &openapi.Options{Credentials: map[string]openapi.Credential{"bearer": openapi.SecretFunc(nil)}})
@@ -981,11 +968,10 @@ func TestIP4F8SecretFuncOfNil(t *testing.T) {
 	}
 }
 
-// IFP9 (IP4F-8, sequential.go:291 kept): client.go, Input.Body: an
-// iterator "runs on a goroutine of the transport; its yield returns false
-// once the body is no longer wanted". A prepared iterator body that is
-// closed and then read never starts the iterator: the read fails. Its
-// GetBody is nil, an iterator being read once.
+// client.go, Input.Body: an iterator "runs on a goroutine of the transport;
+// its yield returns false once the body is no longer wanted". A prepared
+// iterator body that is closed and then read never starts the iterator: the
+// read fails. Its GetBody is nil, an iterator being read once.
 func TestIFP9ClosedIteratorBodyNeverStarts(t *testing.T) {
 	c := parseAt(t, seqDoc(), "https://api.example.test", testDocURI, nil)
 	started := make(chan struct{}, 1)
@@ -1011,16 +997,15 @@ func TestIFP9ClosedIteratorBodyNeverStarts(t *testing.T) {
 	}
 }
 
-// IFP10 (IP4F-8, tree.go:196 restored): load.go, Load: "Any other defect
-// ... is reported on the part it reaches, in its Err, or ignored where
-// nothing depends on it". A tags value or a server variable's enum that is
-// an object instead of an array lists nothing (describe.go: Variable.Enum
-// "is nil when none is declared"); a security requirement whose scopes are
-// an object is a defect of each operation it reaches (Operation.Err, with
-// no alternative listed), and Load does not take an Options.SecurityKey
-// naming the scopes that object holds as an alternative (client.go,
-// Options.SecurityKey: "A key that names no alternative ... is refused by
-// Load"). At 201f6af the object's string values were listed.
+// load.go, Load: "Any other defect ... is reported on the part it reaches, in
+// its Err, or ignored where nothing depends on it". A tags value or a server
+// variable's enum that is an object instead of an array lists nothing
+// (describe.go: Variable.Enum "is nil when none is declared"); a security
+// requirement whose scopes are an object is a defect of each operation it
+// reaches (Operation.Err, with no alternative listed), and Load does not take
+// an Options.SecurityKey naming the scopes that object holds as an alternative
+// (client.go, Options.SecurityKey: "A key that names no alternative ... is
+// refused by Load"). Previously the object's string values were listed.
 func TestIFP10ObjectsWhereArraysBelong(t *testing.T) {
 	doc := func(scopes string) string {
 		return `{"openapi":"3.1.0","info":{"title":"t","version":"1"},

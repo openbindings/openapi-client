@@ -10,16 +10,14 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Hostile-input cost for documents (dev loop, "Lessons folded in":
-// "Every document-driven path a stage adds must be covered by the
-// scaling-test harness ... every compiled or decoded form is computed at
+// Hostile-input cost for documents. Every document-driven path is covered
+// by the scaling-test harness: every compiled or decoded form is computed at
 // most once per document node, and a read costs O(size of what it returns
-// or compares)"; brief.md, Hostile input: "many documents, long reference
-// chains and cycles across documents, one external URI referenced many
-// times (fetched once), a URI claimed by many schemas, alias bombs, deep
-// YAML, many keys ... each linear (the scaling harness, time and bytes)").
-// Documents are served from memory by a Fetch, so the transport adds no
-// noise.
+// or compares). Many documents, long reference chains and cycles across
+// documents, one external URI referenced many times (fetched once), a URI
+// claimed by many schemas, alias bombs, deep YAML and many keys are each
+// linear, in time and bytes. Documents are served from memory by a Fetch,
+// so the transport adds no noise.
 
 // docsBase is the URI under which the scaling documents are served.
 const docsBase = "https://docs.example.test/"
@@ -191,8 +189,8 @@ func formPaths(n int, ref func(i int) string) string {
 // The identifier index: one $id claimed by many schemas and referenced many
 // times (each reference unresolvable, naming two claimants); many distinct
 // $ids each referenced; a schema chain through many documents, each adding
-// a field (load.go, Loader: identified URIs first; C4-8: schema inspection
-// "costs what the document holds").
+// a field (load.go, Loader: identified URIs first; schema inspection costs
+// what the document holds).
 func TestIdentifiersScale(t *testing.T) {
 	wantLinear(t, "a URI claimed by many schemas", 500, func(n int) func() {
 		var schemas []string
@@ -298,13 +296,11 @@ func sharedNameDoc(refs, nameKiB int) []byte {
 	return []byte(b.String())
 }
 
-// Stage 4 ledger, IFP11, carried into this stage's brief: "a shared
-// parameter's identity computed once per node; assignKeys hashes a long
-// shared name once per referencing operation today" (dev loop, P1: "every
-// compiled or decoded form is computed at most once per document node").
-// With the references fixed, describing the operations costs the same
-// whatever the shared name's length: sixteen times the name, at most three
-// times the time and bytes.
+// A shared parameter's identity is computed once per node, not once per
+// referencing operation: every compiled or decoded form is computed at most
+// once per document node. With the references fixed, describing the
+// operations costs the same whatever the shared name's length: sixteen times
+// the name, at most three times the time and bytes.
 func TestSharedParameterIdentityOncePerNode(t *testing.T) {
 	wantFlat(t, "a shared name 16 times longer", 8, func(n int) func() { return timedOperations(t, sharedNameDoc(4000, n)) })
 }

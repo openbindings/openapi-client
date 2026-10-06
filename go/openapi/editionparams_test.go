@@ -80,8 +80,9 @@ func TestEditionsNestedCollectionAndUndefined(t *testing.T) {
 		want string
 	}{
 		{[][]string{{"a b", "c"}, {"d", "e/f"}}, "p=a%20b%20c%7Cd%20e%2Ff"},
-		// Stage 2 final RFC 6570 2.3 ruling: [null] is a defined list,
-		// serialized empty here, so its outer collection delimiter remains.
+		// [null] is a defined list (RFC 6570 section 2.3: a list is
+		// undefined only when it has zero members), serialized empty here,
+		// so its outer collection delimiter remains.
 		{[]any{nil, []string{"a", "b"}, []any{}, []any{nil}}, "p=a%20b%7C"},
 		{[]any{}, ""},
 	} {
@@ -92,9 +93,10 @@ func TestEditionsNestedCollectionAndUndefined(t *testing.T) {
 	}
 }
 
-// Stage 2's final [null] ruling: a nonempty list counts as given, but an
-// exploded serialization writes only defined members. Swagger multi repeats
-// name/value pairs, so [null] emits none while satisfying required presence.
+// A nonempty list such as [null] counts as given (RFC 6570 section 2.3), but
+// an exploded serialization writes only defined members (section 3.2.1;
+// doc.go, Values). Swagger multi repeats name/value pairs, so [null] emits
+// none while satisfying required presence.
 func TestEditionsSwaggerMultiAllNullPresence(t *testing.T) {
 	for _, tc := range []struct{ loc, media string }{
 		{"query", ""},

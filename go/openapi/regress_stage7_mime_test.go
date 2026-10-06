@@ -14,8 +14,9 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// RFC 2045 §6.8 requires MIME base64 whitespace to be ignored. The Stage 7
-// bound counts decoded bytes; raw Parts continue to follow NextPart exactly.
+// RFC 2045 §6.8 requires MIME base64 whitespace to be ignored. The
+// MaxItemBytes bound counts decoded bytes; raw Parts continue to follow
+// NextPart exactly.
 func TestStream7ReviewMIMEBase64Whitespace(t *testing.T) {
 	for _, tc := range []struct{ encoded, want string }{
 		{"Y WJj", "abc"}, {"YW\tJj", "abc"}, {"Y\r\n W\tJj", "abc"}, {" Y Q =\t=\r\n", "a"},

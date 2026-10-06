@@ -16,10 +16,10 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Runnable versions of the in-scope example flows in example_test.go
-// (stage brief, Tests: first call, create, failure, decode failure, bounds,
-// prepare and send, environments, With-derived tenants without
-// credentials), against a fake of the API testdata/pets.json describes.
+// Runnable versions of example flows in example_test.go (first call,
+// create, failure, decode failure, bounds, prepare and send, environments,
+// With-derived tenants without credentials), against a fake of the API
+// testdata/pets.json describes.
 
 // petsAPI serves testdata/pets.json at /openapi.json and its operations
 // under /v1, the document's relative server.
@@ -555,8 +555,8 @@ func TestFlowPagination(t *testing.T) {
 	}
 }
 
-// Example_dynamicCall, the part in stage 1: JSON arguments decoded with
-// UseNumber, numbers exact both ways, input mistakes reported by key.
+// Example_dynamicCall's core: JSON arguments decoded with UseNumber, numbers
+// exact both ways, input mistakes reported by key.
 func TestFlowDynamicCall(t *testing.T) {
 	api := newPetsAPI(t)
 	c := api.load(t, nil)

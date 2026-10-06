@@ -11,10 +11,11 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Precise Stage 7 owner ruling: JSONL excludes LF/CRLF; JSON-seq excludes
-// RS but includes trailing JSON whitespace; SSE includes each nonblank
-// line and its terminator, including ignored lines, excluding the final
-// empty line and one leading BOM. Each skipped block resets the bound.
+// Options.MaxItemBytes counts bytes before value decoding: JSONL excludes
+// LF/CRLF; JSON-seq excludes RS but includes trailing JSON whitespace; SSE
+// includes each nonblank line and its terminator, including ignored lines,
+// excluding the final empty line and one leading BOM. Each skipped block
+// resets the bound.
 func TestStream7FramingLimitAccounting(t *testing.T) {
 	for _, tc := range []struct {
 		name, ct, wire string

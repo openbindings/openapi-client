@@ -12,14 +12,14 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Stage 3, redaction (brief, Scope: "Redaction"; Tests: "a query
-// credential in a failed request's *url.Error, a Basic credential, a
-// SecretFunc error"). doc.go, Outcomes: "No credential appears in the text
-// of an error the client creates, nor in the URL of the *url.Error the
-// http.Client returns, which names the request without the credentials the
-// client added. Errors made by the caller's own code, such as its transport
-// or a credential source, are passed on as they are, even when their text
-// quotes a URL." errors.go, RequestError: "never a credential".
+// Redaction: a query credential in a failed request's *url.Error, a Basic
+// credential, a SecretFunc error. doc.go, Outcomes: "No credential appears
+// in the text of an error the client creates, nor in the URL of the
+// *url.Error the http.Client returns, which names the request without the
+// credentials the client added. Errors made by the caller's own code, such
+// as its transport or a credential source, are passed on as they are, even
+// when their text quotes a URL." errors.go, RequestError: "never a
+// credential".
 
 // hijackClose ends a request by closing its connection without a response.
 func hijackClose(w http.ResponseWriter, r *http.Request) {
@@ -87,9 +87,8 @@ func (e *quotingError) Error() string { return "caller transport refused " + e.u
 // doc.go, Outcomes: "Errors made by the caller's own code, such as its
 // transport or a credential source, are passed on as they are, even when
 // their text quotes a URL", while no credential appears "in the URL of the
-// *url.Error the http.Client returns" (stage 3 ledger, Q13 and A2): the
-// caller's error is the same value, its text unchanged, and the *url.Error's
-// URL field holds no credential.
+// *url.Error the http.Client returns": the caller's error is the same value,
+// its text unchanged, and the *url.Error's URL field holds no credential.
 func TestCallerErrorQuotingURLPassedOn(t *testing.T) {
 	var made []*quotingError
 	rt := &memRT{answer: func(r *http.Request) (*http.Response, error) {

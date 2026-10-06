@@ -10,9 +10,11 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Options.MediaType's per-call override (saved API 1431-1436), With's
-// affected-call rule (698-705), Stage 1 F35, and Stage 8 regression-brief.md
-// class 3. A replaced default does not participate in media selection.
+// Options.MediaType's per-call override (Options.MediaType:
+// "Input.MediaType overrides it for one call") and With's affected-call
+// rule (client.go, With: "any other Options the document cannot use refuse
+// each call they affect"). A replaced default does not participate in media
+// selection.
 func TestReview8MediaTypeOverride(t *testing.T) {
 	c := parseAt(t, doc31(`"/x":{"post":{"operationId":"post","requestBody":{"content":{"application/json":{}}}}}`), "https://api.example.test", testDocURI, nil)
 	for _, kind := range []string{"raw", "structured"} {
@@ -39,14 +41,16 @@ func TestReview8MediaTypeOverride(t *testing.T) {
 			})
 		}
 	}
-	// F35: a malformed default remains irrelevant when no body is supplied.
+	// A malformed default remains irrelevant when no body is supplied.
 	mustPrepare(t, c.With(func(o *openapi.Options) { o.MediaType = "application/*" }), "post", nil)
 }
 
-// Call's typed-output Accept requirement (saved public API 554-558), HTTP
-// field-name case insensitivity, and Stage 3 F10's preserved caller spelling;
-// Stage 8 regression-brief.md class 6. Direct edits and ParamWriters may add
-// Accept under any spelling without normalizing their caller-owned maps.
+// Call's typed-output Accept requirement (client.go, Call: "a call whose
+// request carries no Accept field is refused before sending, at Settings
+// key "Options.Header""), HTTP field-name case insensitivity (RFC 9110
+// section 5.1), and the caller's spelling of a field, which the client
+// does not canonicalize. Direct edits and ParamWriters may add Accept under
+// any spelling without normalizing their caller-owned maps.
 func TestReview8EditedAcceptSpelling(t *testing.T) {
 	doc := doc31(`"/x":{"get":{"operationId":"get","parameters":[{"name":"custom","in":"query","schema":{"type":"string"}}],"responses":{"200":{"description":"ok","content":{"application/json":{},"application/xml":{}}}}}}`)
 	for _, edit := range []string{"HTTP", "ParamWriter"} {

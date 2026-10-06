@@ -12,14 +12,13 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Stage 4 fuzz targets (stage brief, Tests: "a form body target comparing
-// the client's encoding with a reference built from net/url and the RFC
-// 6570 oracle in the suite; a multipart round trip target through
-// mime/multipart"). Both prepare the body and read it from GetBody, so they
-// send nothing. A string that is not valid UTF-8 is sent as given in a field
-// serialized by a content type that is not JSON (stage 4 ledger, Q9), and as
-// JSON data holds it, each invalid byte U+FFFD, in a JSON field or one
-// written by a style (ledger, QQ1), which is what json.Marshal and the
+// Body fuzz targets: a form body target comparing the client's encoding
+// with a reference built from net/url and the RFC 6570 oracle in the suite,
+// and a multipart round trip target through mime/multipart. Both prepare the
+// body and read it from GetBody, so they send nothing. A string that is not
+// valid UTF-8 is sent as given in a field serialized by a content type that
+// is not JSON, and as JSON data holds it, each invalid byte U+FFFD, in a JSON
+// field or one written by a style, which is what json.Marshal and the
 // oracle's jsonData give. Property names stay valid.
 
 const fuzzFormDoc = `{"openapi":"3.1.0","info":{"title":"f","version":"1"},"servers":[{"url":"https://api.example.test"}],"paths":{
@@ -148,10 +147,10 @@ func controlChar(s string) bool {
 // multipart, and none otherwise"), its Content-Type the one given or the
 // schema's (text/plain for t), its content the bytes as given (doc.go, Fixed
 // rules, Form bodies: "Multipart/form-data fields are never URI
-// percent-encoded"; stage 4 ledger, Q9, for a text value that is not valid
-// UTF-8). A control character other than a tab in the name or filename
-// (client.go, Part: "a control character other than a tab in either is
-// refused"; ledger, Q11, DEL included), or Filename with NoFilename, is
+// percent-encoded", a text value that is not valid UTF-8 included). A
+// control character other than a tab in the name or filename (client.go,
+// Part: "a control character other than a tab in either is refused", DEL
+// included), or Filename with NoFilename, is
 // refused at the property's Inputs key.
 func FuzzMultipartRoundTrip(f *testing.F) {
 	c, err := openapi.Parse(context.Background(), []byte(fuzzMultipartDoc), fuzzURI, nil)

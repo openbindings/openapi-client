@@ -14,14 +14,11 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// VP11 (stage 4 ledger, "Verification pass (23cfd73), cloud session"):
-// "accepted, as a class with A8 (the media-list splitter and the
-// hand-trimmed media parser of F12 mirror RFC 9110's media-type grammar): a
-// quoted backslash at the end leaves the last element for the parser to
-// refuse; a fuzz target checks that the client accepts a media type, a
+// The client's media-list splitter and media-type parser mirror RFC 9110's
+// media-type grammar: a quoted backslash at the end leaves the last element
+// for the parser to refuse, and the client accepts a media type, a
 // media-type list or a Content-Type only where mime.ParseMediaType accepts
-// each element, with the same type, subtype and parameters
-// (proven-conservative mirror, P4)."
+// each element, with the same type, subtype and parameters.
 //
 // The client reads media types at four places: an Encoding Object's
 // contentType, a list (OAS 3.1.2 section 4.8.15.1: "a comma-separated list
@@ -34,16 +31,15 @@ import (
 // element matches a Content-Type of the element as written, and the reverse.
 //
 // RFC 9110 governs the client's media-type grammar, and mime.ParseMediaType
-// is the oracle except on four constructs, where the client follows RFC 9110
-// (stage 4 ledger, "Verification round tests", the VP11 ruling); inputs that
-// use one (mediaQuirks) are left out: an empty parameter (RFC 9110 section
-// 5.6.6: "parameters = *( OWS ";" OWS [ parameter ] )"), a quoted-pair of
-// any octet (section 5.6.4: "Recipients that process the value of a
-// quoted-string MUST handle a quoted-pair as if it were replaced by the
-// octet following the backslash"), a "*" in a parameter name (no RFC 2231 in
-// media type parameters: section 5.6.6's parameter-name is a token), and a
-// parameter given twice (accepted, the boundary excepted: stage 4 ledger,
-// C4-3, "a media type with two boundary parameters is refused").
+// is the oracle except on four constructs, where the client follows RFC
+// 9110; inputs that use one (mediaQuirks) are left out: an empty parameter
+// (RFC 9110 section 5.6.6: "parameters = *( OWS ";" OWS [ parameter ] )"), a
+// quoted-pair of any octet (section 5.6.4: "Recipients that process the
+// value of a quoted-string MUST handle a quoted-pair as if it were replaced
+// by the octet following the backslash"), a "*" in a parameter name (no RFC
+// 2231 in media type parameters: section 5.6.6's parameter-name is a token),
+// and a parameter given twice (accepted, the boundary excepted: client.go,
+// Input.MediaType, "Two boundary parameters are refused").
 
 // mediaElements splits s at commas outside quoted strings, a backslash in a
 // quoted string escaping the byte after it (RFC 9110 section 5.6.4), each
@@ -67,14 +63,14 @@ func mediaElements(s string) []string {
 // mediaQuirks names the construct of the media type e, as the client's RFC
 // 9110 reading takes its parameters (a type, then OWS ";" OWS [ parameter ]
 // repeated), on which RFC 9110 and mime.ParseMediaType disagree and the
-// client follows RFC 9110 (the VP11 ruling), or returns "": an empty
+// client follows RFC 9110, or returns "": an empty
 // parameter before another (RFC 9110 section 5.6.6 allows it; mime refuses
 // all but a last one); a quoted-pair of a byte that is not one of mime's
 // tspecials (RFC 9110 section 5.6.4: "as if it were replaced by the octet
 // following the backslash"; mime keeps the backslash); a "*" in a parameter
 // name (RFC 2231, which mime applies and media type parameters do not
 // have); and a parameter named twice with different values (RFC 9110
-// accepts it, but for the boundary, C4-3; mime refuses it).
+// accepts it, and so does the client but for the boundary; mime refuses it).
 func mediaQuirks(e string) string {
 	_, s, _ := strings.Cut(e, ";")
 	values := map[string]string{}
@@ -223,7 +219,7 @@ func (p *mediaProbe) agree(where, s, e string) {
 		t.Fatalf("%s accepts %q, whose element %q mime.ParseMediaType refuses: %v", where, s, e, err)
 	}
 	if _, ok := params["boundary"]; ok || p.same[e] {
-		return // a declared key's boundary has rules of its own (VP8, IP4F-5)
+		return // a declared key's boundary has rules of its own (Input.MediaType)
 	}
 	p.same[e] = true
 	k := mimeMedia(mt, params)
@@ -264,8 +260,9 @@ func (p *mediaProbe) check(s string) {
 	}
 }
 
-// FuzzMediaTypes: VP11's target. The seeds are media types the suite uses,
-// the verification pass's probes, and the constructs mediaQuirks leaves
+// FuzzMediaTypes checks the client's media-type reading against
+// mime.ParseMediaType. The seeds are media types the suite uses, edge cases
+// of quoting, parameters and lists, and the constructs mediaQuirks leaves
 // out; every seed runs as a test.
 func FuzzMediaTypes(f *testing.F) {
 	for _, s := range []string{
@@ -286,13 +283,13 @@ func FuzzMediaTypes(f *testing.F) {
 	})
 }
 
-// VP11: "a quoted backslash at the end leaves the last element for the
-// parser to refuse": an Encoding contentType whose last element ends in a
-// quoted string's backslash is refused as a document defect (Param.Err; the
-// verification pass's probes), a call with the field is refused at its key,
-// and Input.MediaType, Part.MediaType and a response Content-Type ending so
-// are refused too. At b4872f9 the list splitter dropped the last element, so
-// the contentType was accepted with its other types and no Err.
+// A quoted backslash at the end leaves the last element for the parser to
+// refuse: an Encoding contentType whose last element ends in a quoted
+// string's backslash is refused as a document defect (Param.Err), a call
+// with the field is refused at its key, and Input.MediaType, Part.MediaType
+// and a response Content-Type ending so are refused too. A list splitter
+// that dropped the last element would accept the contentType with its other
+// types and no Err.
 func TestVP11QuotedBackslashAtTheEnd(t *testing.T) {
 	p := newMediaProbe(t)
 	for _, s := range []string{`text/plain; a="x\`, `text/plain, application/json; a="\`, `text/plain; a="\\\`, `image/png; q="\`} {

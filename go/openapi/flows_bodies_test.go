@@ -15,12 +15,11 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Runnable versions of the stage 4 example flows in example_test.go (dev
-// loop: "Examples in example_test.go become runnable tests against httptest
-// servers as their stage lands"): scenarios 6a (Example_filesUpload), 6b
+// Runnable versions of body example flows in example_test.go, as tests
+// against httptest servers: scenarios 6a (Example_filesUpload), 6b
 // (Example_filesUploadRepeated), 6c (Example_filesUploadParts) and 16e
-// (Example_streamingUpload). The OpenAPI 3.2 positional flows (6d, 6e) come
-// with their edition.
+// (Example_streamingUpload). The OpenAPI 3.2 positional flows (6d, 6e)
+// belong with the edition tests.
 
 const filesPaths = `
 	"/folders/{folderId}/documents":{"post":{"operationId":"uploadDocument",

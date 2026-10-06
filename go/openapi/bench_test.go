@@ -18,10 +18,10 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Benchmarks (stage brief, Tests; dev loop, Performance): Call against the
-// same requests hand-written with net/http on the same loopback server,
-// load of a large synthetic 3.1 document, and first-call preparation after
-// load. Run with -benchmem.
+// Benchmarks (DEVELOPMENT.md, Performance): Call against the same requests
+// hand-written with net/http on the same loopback server, load of a large
+// synthetic 3.1 document, and first-call preparation after load. Run with
+// -benchmem.
 
 const benchDoc = `{"openapi":"3.1.0","info":{"title":"bench","version":"1"},"servers":[{"url":"@BASE@"}],
 	"paths":{
@@ -164,7 +164,7 @@ type largeCall struct {
 // largeDoc generates an OpenAPI 3.1 document with paths Path Items of three
 // operations each (get, put and delete), with path-level and operation
 // parameters, request bodies, responses, local references of every kind
-// stage 1 follows, and schemas component schemas that reference one
+// the client follows, and schemas component schemas that reference one
 // another. It returns the document and a call for every operation.
 func largeDoc(paths, schemas int) ([]byte, []largeCall) {
 	var b strings.Builder

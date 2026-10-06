@@ -17,11 +17,10 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Stage 3, credentials and placement (brief, Scope: "Credentials and
-// placement"): what each Credential constructor holds, where the client
-// places it for every scheme type, when it is placed, and how a credential
-// source is called. Refusals are in credrefusals_test.go, destinations in
-// destinations_test.go, redirects in redirects_test.go.
+// Credentials and placement: what each Credential constructor holds, where
+// the client places it for every scheme type, when it is placed, and how a
+// credential source is called. Refusals are in credrefusals_test.go,
+// destinations in destinations_test.go, redirects in redirects_test.go.
 
 // credential.go, Secret: "apiKey: the key, sent in the declared header,
 // query parameter or cookie"; "http bearer, oauth2 and openIdConnect: the
@@ -471,9 +470,8 @@ func TestSecretFuncTransportRetry(t *testing.T) {
 // doc.go, Credentials: "A header credential replaces a field of the same
 // name. Query and cookie credentials go last, in the order the alternative
 // lists their schemes, and one that replaces a pair of the same name,
-// including one edited into Request.HTTP, removes it and goes last" (stage 3
-// ledger, Q3/Q4). Field names compare without regard to case (RFC 9110
-// section 5.1).
+// including one edited into Request.HTTP, removes it and goes last". Field
+// names compare without regard to case (RFC 9110 section 5.1).
 func TestCredentialReplacesEditedFields(t *testing.T) {
 	w := newWire(t, nil)
 	c := credClient(t, w, nil)
@@ -523,11 +521,10 @@ func TestCredentialReplacesEditedFields(t *testing.T) {
 }
 
 // doc.go, Credentials: "Query and cookie credentials go last, in the order
-// the alternative lists their schemes" (stage 3 ledger, Q3), whatever the
-// order of the scheme names, their declarations, or the parameters. Order:
-// "the path item's parameters, then the operation's, in declared order ...
-// query credentials last"; Cookies: "parameters in declared order, then
-// credentials".
+// the alternative lists their schemes", whatever the order of the scheme
+// names, their declarations, or the parameters. Order: "the path item's
+// parameters, then the operation's, in declared order ... query credentials
+// last"; Cookies: "parameters in declared order, then credentials".
 func TestSeveralQueryAndCookieCredentialsOrder(t *testing.T) {
 	w := newWire(t, nil)
 	doc := doc31(`
@@ -663,10 +660,10 @@ func ptr[T any](v T) *T { return &v }
 // doc.go, Credentials: a call is refused when "for a mutualTLS scheme, which
 // needs none, [it] has any credential but FromTransport", and "Load refuses
 // ... any credential but FromTransport for a name all of whose schemes are
-// mutualTLS"; the key is Options.Credentials["name"] (stage 3 ledger, Q8).
-// A derived Client skips only Load's name checks, so there each call is
-// refused (client.go, With). A mutualTLS scheme alongside another in one
-// alternative needs only the other's credential.
+// mutualTLS"; the key is Options.Credentials["name"]. A derived Client skips
+// only Load's name checks, so there each call is refused (client.go, With).
+// A mutualTLS scheme alongside another in one alternative needs only the
+// other's credential.
 func TestMutualTLSCredentials(t *testing.T) {
 	w := newWire(t, nil)
 	doc := doc31(`

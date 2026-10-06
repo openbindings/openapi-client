@@ -14,12 +14,12 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Runnable versions of the stage 5 example flows in example_test.go (dev
-// loop: "Examples in example_test.go become runnable tests against httptest
-// servers as their stage lands"): scenarios 8 (Example_sharedTransport, its
+// Runnable versions of document-loading example flows in example_test.go,
+// against httptest servers: scenarios 8 (Example_sharedTransport, its
 // documents YAML), 12 (Example_bounds, "all documents together") and 18c
-// (Example_loadExactly). Scenario 18b (Example_schemasAsWritten) needs
-// Schema.References, which comes with stage 9.
+// (Example_loadExactly). Scenario 18b (Example_schemasAsWritten) has its
+// runnable equivalent, TestSchema9FlowSchemasAsWritten, in
+// schema_editions_test.go.
 
 // Example_loadExactly: a library loads documents exactly as it chooses:
 // only from its own copies, each at the URI it was published at;

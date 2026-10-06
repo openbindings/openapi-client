@@ -17,25 +17,24 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Regression tests for the stage 4 verification pass, class ruling C4-7
-// (stage 4 ledger, "Verification pass (23cfd73), cloud session"; VP1, VP2,
-// VP6, VP10): "The value walk reaches a verdict on everything encoding/json
-// reaches ... The walk visits exactly the values json writes:
+// Regression tests for the value walk, which reaches a verdict on everything
+// encoding/json reaches. The walk visits exactly the values json writes:
 // pointer-receiver MarshalJSON and MarshalText apply wherever json applies
-// them (an addressable value: every slice element and every field or
-// element of an addressable struct or array, at any depth), not only at a
-// field's own type; a map type whose key json refuses is refused as json
-// refuses it, never walked (its keys never reach mapKey). Dereferences never
-// end the walk: doc.go's Values counts levels "in the JSON encoding/json
-// writes", and pointers add none, so a chain of pointers around a reader is
-// walked to the reader and refused. Past 1,000 dereferences on one path the
-// walk records the pointers on that path, as encoding/json does past its own
-// 1,000 (startDetectingCyclesAfter), and a repeat ends the whole walk: the
-// value is refused as the cycle json would refuse. The walk stops at the
-// first path that decides, so a cyclic value costs what is visited before
-// the repeat, never one walk per path." The authority is encoding/json
-// itself (dev loop, "Standard encoders are authoritative"): expected bytes
-// and refusals are derived from json.Marshal wherever the shape allows.
+// them (an addressable value: every slice element and every field or element
+// of an addressable struct or array, at any depth), not only at a field's own
+// type; a map type whose key json refuses is refused as json refuses it, never
+// walked (its keys never reach mapKey). Dereferences never end the walk:
+// doc.go's Values counts levels "in the JSON encoding/json writes", and
+// pointers add none, so a chain of pointers around a reader is walked to the
+// reader and refused. Past 1,000 dereferences on one path the walk records the
+// pointers on that path, as encoding/json does past its own 1,000
+// (startDetectingCyclesAfter), and a repeat ends the whole walk: the value is
+// refused as the cycle json would refuse. The walk stops at the first path
+// that decides, so a cyclic value costs what is visited before the repeat,
+// never one walk per path. The authority is encoding/json itself (doc.go,
+// Values: "The client first converts a value to JSON data as encoding/json
+// would"): expected bytes and refusals are derived from json.Marshal wherever
+// the shape allows.
 
 // walkPaths has one operation per class the client encodes a value in: a
 // JSON body, a text body, a form body and a multipart body with a JSON
@@ -88,7 +87,7 @@ func inEveryClass(name string, v any) []walkCase {
 	}
 }
 
-// Values that hold themselves along two paths at every level (VP1).
+// Values that hold themselves along two paths at every level.
 type (
 	jwTwo      struct{ A, B any }
 	jwIfacePtr struct {
@@ -97,11 +96,11 @@ type (
 	}
 )
 
-// branchingCycles returns VP1's shapes: a struct{A, B any} whose fields both
-// point back at it, a map whose two keys hold pointers to it, and a struct
-// with an interface field and a pointer field back. Each JSON level costs
-// one or two dereferences, so the dereference bound comes before the level
-// bound, and each level branches twice.
+// branchingCycles returns cycles that branch: a struct{A, B any} whose fields
+// both point back at it, a map whose two keys hold pointers to it, and a
+// struct with an interface field and a pointer field back. Each JSON level
+// costs one or two dereferences, so the dereference bound comes before the
+// level bound, and each level branches twice.
 func branchingCycles() []struct {
 	name string
 	v    any
@@ -122,14 +121,14 @@ func branchingCycles() []struct {
 	}
 }
 
-// C4-7 (VP1): a cyclic value branching at every level is refused promptly,
-// at its key, in every class the client encodes: "a repeat ends the whole
-// walk: the value is refused as the cycle json would refuse. The walk stops
-// at the first path that decides, so a cyclic value costs what is visited
-// before the repeat, never one walk per path". At 23cfd73 and b4872f9 the
-// walk visited about 2^500 paths and Prepare never returned, so every case
-// runs at once on its own goroutine, all bounded by one 30 s wait, in a
-// child process, which ends the walks still running when it fails.
+// A cyclic value branching at every level is refused promptly, at its key, in
+// every class the client encodes: a repeat ends the whole walk, the value
+// refused as the cycle json would refuse, and the walk stops at the first path
+// that decides, so a cyclic value costs what is visited before the repeat,
+// never one walk per path. An earlier walk visited about 2^500
+// paths and Prepare never returned, so every case runs at once on its own
+// goroutine, all bounded by one 30 s wait, in a child process, which ends the
+// walks still running when it fails.
 func TestC47BranchingCyclesRefusedPromptly(t *testing.T) {
 	if !inChild(t) {
 		return
@@ -173,14 +172,13 @@ func derefChain(v any, n int) any {
 	return v
 }
 
-// C4-7 (VP1): "Dereferences never end the walk ... a chain of pointers
-// around a reader is walked to the reader and refused" (client.go,
-// Input.Body: "A Part or io.Reader inside a JSON value is refused with an
-// Inputs entry at its place in Body"; pointers add no JSON Pointer token). A
-// reader or Part behind 1,200 and 3,000 dereferences, a non-cyclic chain of
-// *any, is refused at its key in JSON, form and multipart bodies, and nothing
-// is sent: at b4872f9 the walk gave up past 1,000 dereferences and
-// encoding/json wrote the reader as {}.
+// Dereferences never end the walk, so a chain of pointers around a reader is
+// walked to the reader and refused (client.go, Input.Body: "A Part or
+// io.Reader inside a JSON value is refused with an Inputs entry at its place
+// in Body"; pointers add no JSON Pointer token). A reader or Part behind 1,200
+// and 3,000 dereferences, a non-cyclic chain of *any, is refused at its key in
+// JSON, form and multipart bodies, and nothing is sent: previously the walk
+// gave up past 1,000 dereferences and encoding/json wrote the reader as {}.
 func TestC47ReaderPastAThousandDereferences(t *testing.T) {
 	w, c := walkClient(t)
 	for _, hidden := range []struct {
@@ -218,7 +216,7 @@ func TestC47ReaderPastAThousandDereferences(t *testing.T) {
 }
 
 // refusedKeyMaps are maps whose key type encoding/json refuses, each holding
-// a reader or Part (VP2).
+// a reader or Part.
 func refusedKeyMaps() []struct {
 	name string
 	v    func() any
@@ -235,21 +233,21 @@ func refusedKeyMaps() []struct {
 }
 
 // unsupportedType reports whether err keeps encoding/json's refusal of a
-// type (stage 1 ledger, F24: the encoder's error kept for errors.As).
+// type, the encoder's error being kept for errors.As.
 func unsupportedType(err error) bool {
 	var ut *json.UnsupportedTypeError
 	return errors.As(err, &ut)
 }
 
-// C4-7 (VP2): "a map type whose key json refuses is refused as json refuses
-// it, never walked (its keys never reach mapKey)": json.Marshal returns an
+// A map type whose key json refuses is refused as json refuses it, never
+// walked (its keys never reach mapKey): json.Marshal returns an
 // *UnsupportedTypeError for such a map, whatever it holds. Held in a JSON or
 // text body, a form or multipart field, a JSON Lines item or a styled query
-// parameter, a map[any]any, map[float64]any or map[bool]any holding a
-// reader or Part is refused at its key with json's error. At b4872f9 the
-// walk named the map key after finding the reader and panicked
-// (reflect.Value.Uint on an interface Value); panics are reported as
-// failures, each case on a fresh Client.
+// parameter, a map[any]any, map[float64]any or map[bool]any holding a reader
+// or Part is refused at its key with json's error. Previously the walk named
+// the map key after finding the reader and panicked (reflect.Value.Uint on an
+// interface Value); panics are reported as failures, each case on a fresh
+// Client.
 func TestC47RefusedMapKeysHoldingReaders(t *testing.T) {
 	for _, m := range refusedKeyMaps() {
 		body := func(b any) *openapi.Input { return &openapi.Input{Body: b} }
@@ -277,13 +275,12 @@ func TestC47RefusedMapKeysHoldingReaders(t *testing.T) {
 	}
 }
 
-// C4-7 (VP2): the same maps yielded by an iterator under JSON Lines abort
-// the body with encoding/json's error, reported by Call (client.go,
-// Input.Body: "An error from an iter.Seq2, an item that cannot be encoded
-// ... aborts the body and is reported by Call"), from the fast path for
-// iter.Seq[any] and from an iterator of a typed element. At b4872f9 the
-// panic on net/http's write loop ended the process, so the cases run in a
-// child process.
+// The same maps yielded by an iterator under JSON Lines abort the body with
+// encoding/json's error, reported by Call (client.go, Input.Body: "An error
+// from an iter.Seq2, an item that cannot be encoded ... aborts the body and is
+// reported by Call"), from the fast path for iter.Seq[any] and from an
+// iterator of a typed element. Previously a panic on net/http's write loop
+// ended the process, so the cases run in a child process.
 func TestC47RefusedMapKeyFromIterator(t *testing.T) {
 	if !inChild(t) {
 		return
@@ -309,15 +306,15 @@ func TestC47RefusedMapKeyFromIterator(t *testing.T) {
 }
 
 // Types whose JSON encoding/json decides by a method, by their pointer's
-// only where it can address them (C4-1, C4-7).
+// only where it can address them.
 type (
 	jwValJSON     struct{ V int }
 	jwPtrJSON     struct{ V int }
 	jwValText     struct{ V int }
 	jwPtrText     struct{ V int }
-	jwPtrTextList []string // VP10
+	jwPtrTextList []string // a slice whose pointer has MarshalText
 	jwPtrJSONList []int
-	jwInner       struct { // VP6: the methods one level inside a value
+	jwInner       struct { // the methods one level inside a value
 		J jwPtrJSON `json:"j"`
 		T jwPtrText `json:"t"`
 	}
@@ -345,7 +342,7 @@ const jwReached = `{"Spy":"reached"}`
 func spy() jwSpy { return jwSpy{"reached"} }
 
 // jwBoth has both of json's methods; jwMarshalers is an interface type that
-// embeds both (IFP6 (b)).
+// embeds both.
 type (
 	jwBoth       struct{}
 	jwMarshalers interface {
@@ -412,7 +409,8 @@ func (k jwIntKey) MarshalText() ([]byte, error)    { return []byte(fmt.Sprint("i
 func (k jwStructKey) MarshalText() ([]byte, error) { return []byte("s-" + k.K), nil }
 func (k *jwPtrKey) MarshalText() ([]byte, error)   { return []byte("p-" + *k), nil }
 
-// walkShapes are the shapes C4-1 and C4-7 name, each a fresh value.
+// walkShapes are the shapes TestC47EncodingJSONDifferential lists, each a
+// fresh value.
 func walkShapes() []struct {
 	name string
 	v    any
@@ -752,13 +750,13 @@ func jwFieldsDoc(names []string) string {
 		"/m":{"post":{"operationId":"mp","requestBody":{"content":{"multipart/form-data":{"schema":` + schema + `}}}}}`)
 }
 
-// C4-7 (VP6, VP10), with C4-1: a differential table against json.Marshal.
-// Every shape C4-1 and C4-7 name (value and pointer receiver MarshalJSON and
-// MarshalText, omitempty, omitzero with IsZero on value and pointer
-// receivers, ",string", embedded structs, every map key kind json accepts,
-// typed nils, readers behind methods) at every position (top level, a field,
-// inside a field, a slice element, an array element, a map value, behind a
-// pointer; addressable and not) is sent as encoding/json writes it:
+// A differential table against json.Marshal. Every shape (value and pointer
+// receiver MarshalJSON and MarshalText, omitempty, omitzero with IsZero on
+// value and pointer receivers, ",string", embedded structs, every map key kind
+// json accepts, typed nils, readers behind methods) at every position (top
+// level, a field, inside a field, a slice element, an array element, a map
+// value, behind a pointer; addressable and not) is sent as encoding/json
+// writes it:
 //
 //   - a JSON body is json.Marshal's bytes (doc.go, Values: "a JSON type is
 //     written as encoding/json writes the value");
@@ -771,7 +769,7 @@ func jwFieldsDoc(names []string) string {
 //     and one json never reaches, inside a type json writes by a pointer
 //     method where it is addressable, is not refused.
 //
-// json.Marshal's refusals are the client's. At b4872f9 the walk lost a
+// json.Marshal's refusals are the client's. Previously the walk lost a
 // pointer method one level inside a field's value, or under a pointer or
 // addressable array element, and split a slice whose pointer has
 // MarshalText.
@@ -857,7 +855,7 @@ func againstJSON(t *testing.T, body any) {
 }
 
 // jwReadByPtr is no io.Reader, but its pointer is, and it holds a type whose
-// pointer has MarshalJSON (IFP6 (a)).
+// pointer has MarshalJSON.
 type jwReadByPtr struct {
 	J jwPtrJSON `json:"j"`
 	V int       `json:"v"`
@@ -865,14 +863,14 @@ type jwReadByPtr struct {
 
 func (*jwReadByPtr) Read([]byte) (int, error) { return 0, io.EOF }
 
-// C4-7, IFP6 (a): "a struct that is not a reader but whose pointer is, held
-// addressably with a pointer-method type inside, must be written as json
-// writes it, the reader test applying to the value json writes and never to
-// the pointer handed for its methods". At every position that holds the
-// value, addressable or not, the JSON, form and multipart bodies are what
-// json.Marshal writes (TestC47EncodingJSONDifferential's checks). A
-// position where the caller gives the pointer itself, an io.Reader, is the
-// raw-content case of Input.Body and is not among these.
+// A struct that is not a reader but whose pointer is, held addressably with a
+// pointer-method type inside, is written as json writes it, the reader test
+// applying to the value json writes and never to the pointer handed for its
+// methods. At every position that holds the value, addressable or not, the
+// JSON, form and multipart bodies are what json.Marshal writes
+// (TestC47EncodingJSONDifferential's checks). A position where the caller
+// gives the pointer itself, an io.Reader, is the raw-content case of
+// Input.Body and is not among these.
 func TestC47PointerReaderHeldAddressably(t *testing.T) {
 	for _, pos := range walkPositions() {
 		if pos.name == "top level, by pointer" || pos.name == "behind a pointer in a property" {

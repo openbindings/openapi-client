@@ -114,11 +114,12 @@ func TestEditionsOperationMethods(t *testing.T) {
 	}
 }
 
-// Owner stage 6 interpretation of J2: additionalOperations is one Path Item
-// field, like parameters/servers. Keep the nearest whole map; duplicate maps
-// affect its additional operations, without unioning farther methods or
-// disabling unrelated fixed operations. Forbidden fixed-name entries retain
-// the empty-Key defect required by describe.go Operations.
+// additionalOperations is one Path Item field, like parameters/servers
+// (describe.go Operation: "the nearest map supplies the operations and a
+// duplicate field sets Err on each of them"). Keep the nearest whole map;
+// duplicate maps affect its additional operations, without unioning farther
+// methods or disabling unrelated fixed operations. Forbidden fixed-name
+// entries retain the empty-Key defect required by describe.go Operations.
 func TestEditionsAdditionalOperationsMapConflicts(t *testing.T) {
 	for _, tc := range []struct {
 		name, own, middle, far string
@@ -280,7 +281,7 @@ func TestEditionsReferenceSiblings(t *testing.T) {
 	}
 }
 
-// Stage 5 reference ownership with 3.2 $self (load.go Loader and Document):
+// Reference ownership with 3.2 $self (load.go Loader and Document):
 // retrieval/request aliases identify unchanged bytes, whereas API URLs still
 // resolve against retrieval. Versionless fragments use the entry edition.
 func TestEditionsSelfAndRetrievalBases(t *testing.T) {

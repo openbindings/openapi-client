@@ -25,7 +25,7 @@ func (*stage6PointerJSON) MarshalJSON() ([]byte, error) {
 	return []byte(`["pointer result", ""]`), nil
 }
 
-// O6 / Values / P4: optimized collection traversal must keep encoding/json's
+// doc.go, Values: optimized collection traversal must keep encoding/json's
 // number grammar and spelling, method selection, addressability, JSON
 // whitespace and escaped-string decoding. JSON data, not the Go type's
 // underlying kind, governs serialization. The oracle uses the standard
@@ -135,10 +135,11 @@ func TestStage6GeneralCollectionJSONErrors(t *testing.T) {
 	}
 }
 
-// Stage 2's final [null] rule and TestEditionsNestedCollectionAndUndefined
-// apply equally when the nested JSON arrives from a custom marshaler. Empty
-// arrays/all-undefined objects disappear, but a nonempty [null] contributes
-// the empty final collection member and therefore its outer delimiter.
+// The undefined-value rules (doc.go, Values; RFC 6570 section 2.3) and
+// TestEditionsNestedCollectionAndUndefined apply equally when the nested JSON
+// arrives from a custom marshaler. Empty arrays/all-undefined objects
+// disappear, but a nonempty [null] contributes the empty final collection
+// member and therefore its outer delimiter.
 func TestStage6CustomCollectionUndefinedNestedMembers(t *testing.T) {
 	v := stage6ReturnedJSON{data: []byte(` [null, ["a","b"], [], {"skip":null}, [null]] `)}
 	p := &v

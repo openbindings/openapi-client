@@ -6,11 +6,12 @@ import (
 	"testing"
 )
 
-// Existing R9-3: Loader gives versionless targets their reference context;
-// unknown fields on known non-schema OpenAPI objects do not create schema
-// scope. OAS Parameter Object makes example instance data. A document-root
-// $schema cue is not an explicit Schema reference. Standalone-root positives
-// remain in TestReview9RootDialectWithoutIdentifier; explicit mixed kinds in
+// Loader gives versionless targets their reference context (load.go, Loader:
+// "its object type comes from the reference's context"); unknown fields on
+// known non-schema OpenAPI objects do not create schema scope. OAS Parameter
+// Object makes example instance data. A document-root $schema cue is not an
+// explicit Schema reference. Standalone-root positives remain in
+// TestReview9RootDialectWithoutIdentifier; explicit mixed kinds in
 // TestReview9SharedParameterSchemaContainment are deliberately separate.
 func TestReview9RootParameterContextOverridesSchemaCue(t *testing.T) {
 	const bundle = "https://schemas.example.test/api/root-parameter.json"

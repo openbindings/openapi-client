@@ -10,8 +10,8 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Parameters in stage 1: path (simple), query (form, explode true and
-// false) and header (simple), for primitives, arrays and objects.
+// Parameters: path (simple), query (form, explode true and false) and
+// header (simple), for primitives, arrays and objects.
 
 // rgb is a struct value, whose members encoding/json writes in declaration
 // order.
@@ -256,11 +256,12 @@ func TestPathTemplateSubstitution(t *testing.T) {
 
 // errors.go, RequestError.Inputs: "a missing required one, a value its style
 // cannot serialize or a header cannot carry", keyed by Param.Key. doc.go,
-// Values: "an undefined required one is missing" (a null array item, once
-// refused, is skipped since the stage 2 review round, T2; see
+// Values: "an undefined required one is missing" (a null array item is
+// not refused: "An undefined member or array item is skipped"; see
 // TestUndefinedSettledFirst); doc.go, Fixed rules, Styles: "Nesting in any
-// style but deepObject is refused". client.go, Input.Params: "A key the operation
-// does not declare, or a missing required parameter, refuses the call".
+// style but deepObject is refused". client.go, Input.Params: "A key the
+// operation does not declare, or a missing required parameter, refuses the
+// call".
 func TestParamRefusals(t *testing.T) {
 	w := newWire(t, nil)
 	doc := doc31(`"/r/{id}":{"get":{"operationId":"r","parameters":[

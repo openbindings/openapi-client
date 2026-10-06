@@ -157,7 +157,7 @@ func TestStream7MultipartErrorsAndRawOracle(t *testing.T) {
 }
 
 // MaxItemBytes applies after transfer decoding, excluding headers and MIME
-// delimiters (Stage 7 owner bound ruling); raw Parts remain unbounded.
+// delimiters (Options.MaxItemBytes); raw Parts remain unbounded.
 func TestStream7MultipartLimitAccounting(t *testing.T) {
 	for _, tc := range []struct {
 		name, part string

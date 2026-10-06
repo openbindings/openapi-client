@@ -15,21 +15,20 @@ import (
 
 // Content parameters (OAS 3.1.2 section 4.8.12.2.3: "the content field can
 // define the media type and schema of the parameter"): doc.go, Values: "A
-// parameter serialized by content is encoded as a body of its media type
-// is, so under application/json null, [] and {} are present values"; "a
-// type with a caller's codec takes a value of any Go type, which that codec
-// encodes; a JSON type is written as encoding/json writes the value; and
-// any other type takes only a string, as its UTF-8 bytes, and a text type
-// also a number or boolean, in its JSON spelling"; "Only a nil interface is
-// absent". doc.go, Fixed rules, Percent-encoding: "path and query values
-// (content-serialized ones included ...) ... encode every byte outside RFC
-// 3986's unreserved set as %XX in uppercase hex"; "Header values are written
-// as given", and so is "a content-serialized cookie value" (stage 2 ledger,
-// review round, T2 and K2). OAS 3.1.2 section 4.8.12.4: a value serialized
-// "with a Media Type Object for a media type that does not already
+// parameter serialized by content is encoded as a body of its media type is,
+// so under application/json null, [] and {} are present values"; "a type with
+// a caller's codec takes a value of any Go type, which that codec encodes; a
+// JSON type is written as encoding/json writes the value; and any other type
+// takes only a string, as its UTF-8 bytes, and a text type also a number or
+// boolean, in its JSON spelling"; "Only a nil interface is absent". doc.go,
+// Fixed rules, Percent-encoding: "path and query values (content-serialized
+// ones included ...) ... encode every byte outside RFC 3986's unreserved set
+// as %XX in uppercase hex"; "Header values are written as given", and so is "a
+// content-serialized cookie value". OAS 3.1.2 section 4.8.12.4: a value
+// serialized "with a Media Type Object for a media type that does not already
 // incorporate URI percent-encoding" is percent-encoded by the Parameter
 // Object. "as encoding/json writes" is json.Marshal, HTML escaping included
-// and no trailing newline (stage 1 ledger, Q6).
+// and no trailing newline.
 
 const contentDoc = `
 	"/q":{"get":{"operationId":"q","parameters":[{"name":"p","in":"query","content":{"application/json":{"schema":{}}}}]}},
@@ -148,9 +147,7 @@ func TestContentParamJSON(t *testing.T) {
 
 // A text type takes a string as its UTF-8 bytes, and a number or boolean in
 // its JSON spelling; any other value is refused at the key. Any other media
-// type without a codec takes only a string (doc.go, Values; stage brief:
-// "any other media type takes a string as the encoded content, other values
-// refused at the key").
+// type without a codec takes only a string (doc.go, Values).
 func TestContentParamTextAndOther(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, doc31(contentDoc), nil)
@@ -190,7 +187,7 @@ func TestContentParamTextAndOther(t *testing.T) {
 	}
 	got, re := callOne(t, w, c, "textCookie", "p", "a b/c")
 	if v := got.Header.Values("Cookie"); re != nil || len(v) != 1 || v[0] != "p=a b/c" {
-		t.Errorf("text cookie: %q, %v; want [p=a b/c], as given (review round, K2)", v, re)
+		t.Errorf("text cookie: %q, %v; want [p=a b/c], as given", v, re)
 	}
 	for _, tt := range []struct {
 		key, param string
@@ -347,12 +344,11 @@ func TestContentParamDescriptors(t *testing.T) {
 	}
 }
 
-// Stage 2 ledger, Q7 (client.go, With: "any other Options the document
-// cannot use refuse each call they affect"; stage 1 ledger, F35: a
-// With-derived malformed Codecs key refuses "only calls that would use a
-// codec"): a JSON content parameter uses a codec, so a call that gives one
-// is refused at Settings["Options.Codecs"]; a call that leaves it out is
-// sent.
+// A With-derived malformed Codecs key refuses only calls that would use a
+// codec (client.go, With: "any other Options the document cannot use refuse
+// each call they affect"): a JSON content parameter uses a codec, so a call
+// that gives one is refused at Settings["Options.Codecs"]; a call that leaves
+// it out is sent.
 func TestContentParamMalformedCodecKey(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, doc31(contentDoc), nil)
@@ -379,12 +375,12 @@ type readerHolder struct {
 	R    io.Reader `json:"r"`
 }
 
-// doc.go, Values (2f4418d): "a reader or Part inside its JSON value is
-// refused at its key", as a reader or Part inside a JSON body is (client.go,
-// Input.Body: "A Part or io.Reader inside a JSON value is refused"): at
-// Inputs[Param.Key], with nothing sent, in a query, header or +json content
-// parameter, whether the reader is the value, a map member or a struct
-// field, and for a Part.
+// doc.go, Values: "A reader or Part anywhere inside a parameter value the
+// client encodes with encoding/json is refused at the parameter's key, as for
+// a body" (client.go, Input.Body: "A Part or io.Reader inside a JSON value is
+// refused"): at Inputs[Param.Key], with nothing sent, in a query, header or
+// +json content parameter, whether the reader is the value, a map member or a
+// struct field, and for a Part.
 func TestContentParamRefusesReaders(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, doc31(contentDoc), nil)

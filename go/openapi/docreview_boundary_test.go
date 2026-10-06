@@ -17,10 +17,12 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// S1/S2: Loader and SQ9 prohibit retrieving URIs with userinfo, and error
-// text must exclude it. Admission callbacks do not waive URI validity.
-// These are the saved redirect reproductions, with an admitted redirect
-// control, fragment stripping and the existing wrapped-error contract.
+// The Loader never retrieves a URI with userinfo, a redirect hop's
+// included, and error text must exclude it (Load: a uri with userinfo is
+// refused, "which RFC 9110 section 4.2.4 forbids a sender to generate").
+// Admission callbacks do not waive URI validity. The cases are redirects to
+// such URIs, with an admitted redirect as a control, fragment stripping and
+// the ErrUnresolved wrapping contract.
 func TestDocumentRedirectURIValidity(t *testing.T) {
 	const base = "https://docs.example.test/"
 	for _, tt := range []struct {
@@ -82,8 +84,8 @@ func TestDocumentRedirectURIValidity(t *testing.T) {
 	}
 }
 
-// S2: malformed references must not expose userinfo just because url.Parse
-// cannot produce a URL to sanitize (SQ9). No retrieval is needed.
+// Malformed references must not expose userinfo just because url.Parse
+// cannot produce a URL to sanitize. No retrieval is needed.
 func TestDocumentMalformedReferenceHidesUserinfo(t *testing.T) {
 	for _, ref := range []string{"https://u53r:s3cr3t-pw@docs.example.test/%GG#/P", "https://u53r:s3cr3t-pw@docs.example.test:bad/x#/P"} {
 		c := parsed(t, []byte(bare31(paramOps(map[string]string{"x": ref}))))
@@ -97,7 +99,7 @@ func TestDocumentMalformedReferenceHidesUserinfo(t *testing.T) {
 	}
 }
 
-// S2: sanitizing a nested transport URL error must preserve the retrieval
+// Sanitizing a nested transport URL error must preserve the retrieval
 // cause (ErrUnresolved's wrapping contract), including errors.Is/As.
 func TestDocumentTransportErrorKeepsCauseWithoutUserinfo(t *testing.T) {
 	cause := errors.New("transport refused")
@@ -118,10 +120,10 @@ func TestDocumentTransportErrorKeepsCauseWithoutUserinfo(t *testing.T) {
 	}
 }
 
-// S3: Loader's default file boundary applies at retrieval, including a
-// concurrent replacement of an admitted symlink. This is the saved local
-// filesystem reproduction, bounded to 256 loads. Both files are synthetic
-// test fixtures; no network or existing files are involved.
+// Loader's default file boundary applies at retrieval, including a
+// concurrent replacement of an admitted symlink, tried over at most 256
+// loads. Both files are synthetic test fixtures; no network or existing
+// files are involved.
 func TestDocumentFileBoundarySurvivesSymlinkReplacement(t *testing.T) {
 	root := t.TempDir()
 	allowed := filepath.Join(root, "allowed")
@@ -210,7 +212,9 @@ func TestDocumentFileBoundarySurvivesSymlinkReplacement(t *testing.T) {
 	t.Logf("exercised %d successful concurrent symlink replacements", replacements)
 }
 
-// I5-1/SQ6: both requested and final URIs identify the redirected entry.
+// Both requested and final URIs identify the redirected entry (Load: a
+// document is identified "by its retrieval URI (and the URI requested, when
+// a redirect led there)").
 // Resolving an already loaded document requires no admission or refetch;
 // its Source and DocumentURIs continue to name the final retrieval URI.
 func TestDocumentRedirectedEntryIsAlreadyIdentified(t *testing.T) {

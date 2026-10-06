@@ -10,8 +10,8 @@ import (
 
 // Values and Input.Body: a form/multipart property whose JSON data is null
 // is omitted; a typed nil is a value, never a reader. This also applies to
-// the single named property in a positional form-data element. Stage 4 IP4-3
-// makes a Part with nil Content omitted too. The wrapper still supplies one
+// the single named property in a positional form-data element. A Part with
+// nil Content is omitted too, like null. The wrapper still supplies one
 // property; it is not an invalid zero-property positional element.
 func TestStage6PositionalFormUndefinedProperty(t *testing.T) {
 	for _, tc := range []struct {

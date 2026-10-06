@@ -12,21 +12,18 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Scaling (dev loop, "Lessons folded in from stage 1": "Every
-// document-driven path a stage adds must be covered by the scaling-test
-// harness (4x the input costs at most about 10x, best of 3)"; stage 2 brief:
-// "compiling many parameters is linear, and serializing a value costs O(size
-// of its encoded form)"), with wantLinear (regress2_scale_test.go).
+// Scaling: compiling many parameters is linear, and serializing a value
+// costs O(size of its encoded form), checked with wantLinear
+// (regress2_scale_test.go).
 
 // styledParams is a document with one operation of n parameters that cycle
-// through every serialization stage 2 adds: each style and location, explode
+// through the parameter serializations: each style and location, explode
 // both ways, allowReserved, and content parameters of several media types.
 // Each is declared under components/parameters and referenced by the
 // operation, so that its Param.Source names its component, a fixed length,
-// while the path, with n/6 path parameters, grows with n (stage 4 ledger,
-// "Verification: performance", PN1: an inline parameter's Source embeds the
-// path, which made the Sources quadratic, "the escalation's case, not a
-// test, until Matt rules").
+// while the path, with n/6 path parameters, grows with n (an inline
+// parameter's Source embeds the path, so inline parameters would make the
+// Sources quadratic).
 func styledParams(n int) []byte {
 	var path strings.Builder
 	var params, refs []string
@@ -69,14 +66,12 @@ func styledParams(n int) []byte {
 		`"components":{"parameters":{` + strings.Join(params, ",") + `}}}`)
 }
 
-// Compiling an operation's parameters is linear in their number: at first
-// use (Operations), and at a first Prepare that gives every path parameter,
-// in time and in bytes allocated (stage 4 ledger, IP4F-9 and PN1: "compile,
-// path template included, must be linear in time and bytes, and any byte
-// growth left ... is fixed under P1"). The sizes are where a quadratic
-// dominates: stage 1's path template compile, quadratic in the number of
-// path parameters, took 16x as long for 960 to 3,840 parameters (160 to 640
-// of them in the path).
+// Compiling an operation's parameters, path template included, is linear in
+// their number, in time and in bytes allocated: at first use (Operations),
+// and at a first Prepare that gives every path parameter. The sizes are
+// where a quadratic dominates: an earlier path template compile, quadratic
+// in the number of path parameters, took 16x as long for 960 to 3,840
+// parameters (160 to 640 of them in the path).
 func TestStyledParamsCompileScale(t *testing.T) {
 	wantLinear(t, "Operations()", 960, func(n int) func() { return timedOperations(t, styledParams(n)) })
 	wantLinear(t, "first Prepare", 960, func(n int) func() {
@@ -124,9 +119,9 @@ const largeValueDoc = `{"openapi":"3.1.0","info":{"title":"t","version":"1"},"se
 // Values; at 20,000 items the largest, the deepObject query, is about 500
 // KiB), and a deepObject nested 250 to 1,000 levels (one leaf, so its
 // encoded form is linear in its depth), within the 1,000-level bound on
-// values (stage 2 ledger, Q9). A quadratic serializer, one that copies what
-// it has written for each item, would copy about 190 MB at 5,000 items and
-// 3 GB at 20,000 against a linear cost well under a millisecond, so it takes
+// values (doc.go, Values). A quadratic serializer, one that copies what it
+// has written for each item, would copy about 190 MB at 5,000 items and 3 GB
+// at 20,000 against a linear cost well under a millisecond, so it takes
 // about 16x in time and in bytes allocated. At 1,000 levels such copying is
 // megabytes, which time alone may not separate from the linear cost, which
 // the bytes check does.
@@ -181,7 +176,7 @@ func TestLargeParamValuesScale(t *testing.T) {
 		wantLinearBytes(t, name+", bytes", 5000, func(n int) func() { return prepare(tt.key, tt.param, tt.value(n)) })
 	}
 	// levels returns a deepObject value n levels deep: n-1 objects around a
-	// string leaf, which counts as a level (stage 2 ledger, Q9).
+	// string leaf, which counts as a level.
 	levels := func(n int) any {
 		var v any = "leaf"
 		for range n - 1 {
@@ -208,14 +203,14 @@ func sharedLongName(n int, in string) []byte {
 	return []byte(b.String())
 }
 
-// K3 (#2; dev loop, P1: "every compiled or decoded form is computed at most
-// once per document node"): one Parameter Object with a long name,
-// referenced by many operations, costs Operations() time, allocated bytes
-// and retained memory linear in the document, the name and the references
-// growing together, in every location a shared name can take (a path
-// parameter's name is written in each Paths key, so its document is already
-// the product). Before the fix, 64 KiB by 1,000 references retained about
-// 67 MB (query, cookie) and 133 MB (header), 16x its quarter.
+// Every compiled or decoded form is computed at most once per document node,
+// so one Parameter Object with a long name, referenced by many operations,
+// costs Operations() time, allocated bytes and retained memory linear in the
+// document, the name and the references growing together, in every location
+// a shared name can take (a path parameter's name is written in each Paths
+// key, so its document is already the product). Before the fix, 64 KiB by
+// 1,000 references retained about 67 MB (query, cookie) and 133 MB (header),
+// 16x its quarter.
 func TestK3SharedLongNameScales(t *testing.T) {
 	for _, in := range []string{"query", "header", "cookie"} {
 		wantLinear(t, in+": Operations()", 16, func(n int) func() { return timedOperations(t, sharedLongName(n, in)) })
@@ -253,11 +248,12 @@ func manyParams(n int) []byte {
 	return []byte(b.String())
 }
 
-// K11 (A4; client.go, Input.Params and Input.ParamWriters: "A key the
-// operation does not declare ... refuses the call"): with n declared
-// parameters, all n keys given and one unknown key, the refusal costs time
-// linear in n, in Params and in ParamWriters. Before the fix each key was
-// checked again by a scan of the declarations, n(n+1)/2 comparisons.
+// An unknown key refuses the call (client.go, Input.Params: "A key the
+// operation does not declare ... refuses the call"; Input.ParamWriters):
+// with n declared parameters, all n keys given and one unknown key, the
+// refusal costs time linear in n, in Params and in ParamWriters. Before the
+// fix each key was checked again by a scan of the declarations, n(n+1)/2
+// comparisons.
 func TestK11UnknownKeyScales(t *testing.T) {
 	refused := func(c *openapi.Client, in *openapi.Input) func() {
 		return func() {

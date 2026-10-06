@@ -1,8 +1,7 @@
-# Public API boundary pass
+# Product boundary and escape hatches
 
-This pass changes the proposed public API and examples only. It assumes
-each public contract will be implemented and evaluates whether a caller can
-express the intended operation.
+What the client does and does not take on, and how a caller reaches every
+valid use of each OpenAPI edition through the public API.
 
 ## Product boundary
 
@@ -19,7 +18,7 @@ an incoming webhook is outside this outbound caller API. Thus the
 invocation claim below concerns valid, resolvable `paths` operations,
 not every Operation Object in an OpenAPI document.
 
-## Decisions
+## Design choices
 
 1. **Keep explicit selections.** One usable server, security alternative
    or concrete request media type can be used directly. Several alternatives
@@ -75,7 +74,7 @@ not every Operation Object in an OpenAPI document.
 | Accept, headers, redirects and HTTP middleware | `Header`, `Redirects`, `HTTPClient`, editable `Request.HTTP` |
 | Success policy, unusual response media, streaming framing | `Request.Send`, `Response.Body`, `Response.Decode`, `Stream` |
 
-## Edition pass through the interface
+## Each edition through the interface
 
 | Edition-specific valid use | Public route |
 | --- | --- |
@@ -85,15 +84,3 @@ not every Operation Object in an OpenAPI document.
 | OpenAPI 3.1 JSON Schema dialects, reference siblings and permitted bodies on GET/HEAD/DELETE | `Schema.Raw`, `Dialect`, `References`; `Input.Body` for a declared body on those methods |
 | OpenAPI 3.2 QUERY, additional methods, whole-query parameters, positional multipart and sequential media | `Operation.Method`, `ParamWriters` for a caller-owned query format, `Part` or raw body, `Stream` and `Request.Send` |
 | Any edition's opaque or unusual media, custom auth and response convention | Raw `Input.Body`, `FromTransport`, `Request.Send`, open `Response.Body` |
-
-## Remaining interface gate
-
-Before calling the interface S-tier, walk a complete set of *valid*
-Swagger 2.0 and OpenAPI 3.0, 3.1 and 3.2 `paths` operations through these entry
-points on paper. For each refusal, identify the public setting or raw path
-that resolves it. A refusal caused solely by an unsupported schema dialect,
-media codec, form representation or known parameter serializer is an
-interface defect. An inaccessible reference that hides mandatory wire
-facts is a document-loading problem; the caller can authorize or supply
-the reference through `Loader`. This is a design audit, distinct from
-runtime conformance testing.

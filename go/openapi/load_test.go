@@ -383,7 +383,6 @@ func TestLoadNestingDepth(t *testing.T) {
 	namesURIAndLine(t, err, testDocURI, 5)
 }
 
-// Stage brief, Loading: "a document that is not valid JSON is a refusal".
 // load.go, Loader: a document whose first significant byte is '{' and that
 // is not JSON is read as YAML, which also rejects these (a second document
 // in the stream, or a truncated flow mapping).

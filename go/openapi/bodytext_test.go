@@ -11,16 +11,16 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Stage 4, text and other media types. doc.go, Values: "a type with a
-// caller's codec takes a value of any Go type, which that codec encodes; a
-// JSON type is written as encoding/json writes the value; and any other
-// type takes only a string, as its UTF-8 bytes, and a text type also a
-// number or boolean, in its JSON spelling"; "The client first converts a
-// value to JSON data as encoding/json would (struct tags, MarshalJSON,
-// TextMarshaler map keys)". Stage brief, Text and other types: "XML without
-// a caller codec takes a string." doc.go, Fixed rules, Header fields: the
-// client generates Content-Type, and Content-Length for a body that can be
-// sent again, which every value it encodes can (client.go, Input.Body).
+// Text and other media types. doc.go, Values: "a type with a caller's codec
+// takes a value of any Go type, which that codec encodes; a JSON type is
+// written as encoding/json writes the value; and any other type takes only a
+// string, as its UTF-8 bytes, and a text type also a number or boolean, in
+// its JSON spelling"; "The client first converts a value to JSON data as
+// encoding/json would (struct tags, MarshalJSON, TextMarshaler map keys)".
+// So XML without a caller's codec takes a string. doc.go, Fixed rules,
+// Header fields: the client generates Content-Type, and Content-Length for a
+// body that can be sent again, which every value it encodes can (client.go,
+// Input.Body).
 
 const textDoc = `
 	"/text":{"post":{"operationId":"text","requestBody":{"content":{"text/plain":{}}}}},
@@ -87,10 +87,9 @@ func TestTextBodies(t *testing.T) {
 	}
 }
 
-// Stage 2 ledger, review round: "An invalid-UTF-8 string under a non-JSON
-// content type is sent as its bytes as given" (a content parameter "is
-// encoded as a body of its media type is"; doc.go, Values: "a string ...
-// as it is").
+// An invalid-UTF-8 string under a non-JSON content type is sent as its
+// bytes as given (a content parameter "is encoded as a body of its media
+// type is"; doc.go, Values: "a string ... as it is").
 func TestTextBodyInvalidUTF8(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, doc31(textDoc), nil)
@@ -104,12 +103,10 @@ func TestTextBodyInvalidUTF8(t *testing.T) {
 
 // Any other type without a codec takes only a string, as its UTF-8 bytes;
 // XML without a codec, application/xml, text/xml and +xml alike, takes a
-// string (stage brief); every other value is refused at Inputs["Input.Body"]
-// (errors.go, RequestError.Inputs: "a body the operation does not take"
-// ... "a reader or Part where the media type cannot carry one"; stage
-// brief, Refusals: "a property or part value its media type cannot encode
-// ... at its Inputs key"). A text type takes no array, object or null
-// (a typed nil is null: doc.go, Values).
+// string; every other value is refused at Inputs["Input.Body"] (errors.go,
+// RequestError.Inputs: "a body the operation does not take" ... "a reader or
+// Part where the media type cannot carry one"). A text type takes no array,
+// object or null (a typed nil is null: doc.go, Values).
 func TestOtherTypeBodies(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, doc31(textDoc), nil)
@@ -138,7 +135,7 @@ func TestOtherTypeBodies(t *testing.T) {
 		{"xml", xmlPet{Name: "Rex"}},
 		{"xml", 5},
 		// text/xml is XML class, the classes being taken in order (doc.go,
-		// Values: "taking the first that applies"; stage 4 ledger, Q17).
+		// Values: "taking the first that applies").
 		{"textXML", 5},
 		{"textXML", true},
 		{"atom", map[string]any{"feed": "x"}},

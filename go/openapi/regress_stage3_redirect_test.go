@@ -18,16 +18,15 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Regression tests for the stage 3 review round, redirects (stage 3 ledger,
-// "Review round (8101e19)"; review/panel.json findings F1 to F22,
-// review/gpt-answer.md A1 to A8): class rulings C3-1 (one owner of
-// redirects), C3-4 (the unsigned view never holds a credential) and C3-5 (a
-// 3xx the client cannot follow is the outcome; an error that ends a chain
-// after a response arrived returns that response), the loop owner's finding
-// O1, the implementer contract points R1 (Timeout) and R3 (CheckRedirect
-// sees the hop's body), the contract note on Request.Host, and findings F6,
-// F10 (on hops), F12 (the default port), F19, F22 and A5. The upload ruling
-// C3-2 is in regress_stage3_upload_test.go; the credential rulings are in
+// Regression tests for redirects: the client alone follows them; the unsigned
+// view never holds a credential; a 3xx the client cannot follow is the
+// outcome, and an error that ends a chain after a response arrived returns
+// that response; errors on a hop never quote the Location; HTTPClient.Timeout
+// bounds the whole chain; CheckRedirect sees the hop's body; a caller-set
+// Request.Host is kept across a relative Location; and the hop rules for a
+// caller's method, content fields, an empty User-Agent, a generated
+// Content-Type, the default port and header spellings. Upload generations
+// across hops are in regress_stage3_upload_test.go; credentials are in
 // regress_stage3_cred_test.go.
 
 // plainRedirDoc has, on /r, a query parameter q and an operation per
@@ -141,18 +140,19 @@ func callOrSend(t *testing.T, c *openapi.Client, via, key string, in *openapi.In
 	return resp, err
 }
 
-// C3-4 (F1, A1, O1): "The unsigned view never holds a credential value:
-// every hop's unsigned URL drops each query pair named as a query
-// credential of the applied alternative, on every hop, cross-origin
-// included (a credential the server reflects is not carried onward); sign
-// appends the credential only where the origin rule allows.
-// Response.Request, via, CheckRedirect's view and every URL in an error the
-// client creates come from the unsigned view." client.go, Response: "Its
+// The unsigned view never holds a credential value: every hop's unsigned
+// URL drops each query pair named as a query credential of the applied
+// alternative, on every hop, cross-origin included (a credential the server
+// reflects is not carried onward), and the credential is appended only
+// where the origin rule allows. Response.Request, via, CheckRedirect's view
+// and every URL in an error the client creates come from the unsigned view
+// (client.go, Redirects: "a query credential goes only on the request the
+// client builds, never onto a Location"). client.go, Response: "Its
 // Request is the last request sent, after any redirects, without the
 // credentials the client added to its URL and header fields or the cookies
 // the HTTPClient's Jar supplied, and so is every earlier request reachable
-// from it. The responses in that chain hold what the server sent." The servers repeat the query, as a
-// trailing-slash redirect does.
+// from it. The responses in that chain hold what the server sent." The
+// servers repeat the query, as a trailing-slash redirect does.
 func TestEchoedQueryCredentialNotInUnsignedView(t *testing.T) {
 	for _, origin := range []string{"same origin", "another origin"} {
 		for _, via := range []string{"Call", "Send"} {
@@ -205,7 +205,8 @@ func TestEchoedQueryCredentialNotInUnsignedView(t *testing.T) {
 	}
 
 	// A pair of the credential's name the Location gives another value is
-	// dropped too, and replaced within the origin (stage 3 ledger, R7).
+	// dropped too, and replaced within the origin, as a query credential
+	// replaces a pair of the same name (doc.go, Credentials).
 	t.Run("another value under the credential's name", func(t *testing.T) {
 		for _, origin := range []string{"same origin", "another origin"} {
 			b := newWire(t, nil)
@@ -261,8 +262,7 @@ func TestEchoedQueryCredentialNotInUnsignedView(t *testing.T) {
 	})
 }
 
-// C3-4 with net/http's own ServeMux, as conformance's
-// TestB3_ServeMuxTrailingSlash found it: a pattern "/pets/" answers
+// The unsigned view with net/http's own ServeMux: a pattern "/pets/" answers
 // "/pets?api_key=..." with a 301 to "/pets/?api_key=...", the query kept
 // (net/http, ServeMux: a request "naming the subtree root without its
 // trailing slash" is redirected "to the subtree root (adding the trailing
@@ -304,24 +304,24 @@ func TestServeMuxTrailingSlashKeepsNoCredential(t *testing.T) {
 	}
 }
 
-// O1 and C3-4: "errors the client creates on a hop name the unsigned hop's
-// URL (Redacted), never the Location text"; "every URL in an error the
-// client creates come[s] from the unsigned view". doc.go, Outcomes: "No
+// Errors the client creates on a hop name the unsigned hop's URL
+// (Redacted), never the Location text, since every URL in an error the
+// client creates comes from the unsigned view. doc.go, Outcomes: "No
 // credential appears in the text of an error the client creates, nor in the
 // URL of the *url.Error the http.Client returns, which names the request
-// without the credentials the client added." C3-5: "An error that ends a
-// chain after a response arrived (CheckRedirect's error or the hop limit, a
-// SecretFunc or GetBody failure on a hop) returns that last Response, its
-// body closed, with the *url.Error"; stage 3 ledger, TQ2: "C3-5 covers every
-// error that ends a chain after a response arrived, a hop's transport
-// failure ... included". Each server repeats the query into its Location.
+// without the credentials the client added." An error that ends a chain
+// after a response arrived (CheckRedirect's error or the hop limit, a
+// SecretFunc or GetBody failure on a hop, a hop's transport failure)
+// returns that last Response, its body closed, with the *url.Error (doc.go,
+// Outcomes: "Whenever a response arrived, the [*Response] is returned, even
+// with an error"). Each server repeats the query into its Location.
 func TestHopErrorsNameTheUnsignedHop(t *testing.T) {
 	errStop := errors.New("caller stopped the redirect")
 	errHop := errors.New("token refresh failed")
 	errReopen := errors.New("cannot reopen the body")
 
-	// wantHopError checks err against the unsigned hop URL want, and the
-	// response of status the C3-5 rule returns, its body closed.
+	// wantHopError checks err against the unsigned hop URL want, and that
+	// the last response, of status, is returned with its body closed.
 	wantHopError := func(t *testing.T, resp *openapi.Response, err error, want string, status int, cause error) {
 		t.Helper()
 		var ue *url.Error
@@ -422,16 +422,15 @@ func TestHopErrorsNameTheUnsignedHop(t *testing.T) {
 	})
 }
 
-// C3-5: "A 3xx the client cannot follow is the outcome: a Location that is
-// not a URI reference is 'no Location' (T1 in Redirects), so its text is
-// never quoted"; VP7: C3-5 reads as Redirects does. client.go, Redirects:
-// "Only 301, 302, 303, 307 and 308 with a Location that url.Parse accepts
-// can be followed, as net/http follows them ... A 3xx not followed is the
-// outcome, a *StatusError." C3-1: net/http's Client.do must
-// not parse the Location either, so FollowNone gives the same outcome (F2,
-// A3). O1: an unparsable Location echoing the query is never quoted.
-// client.go, Response: "The responses in that chain hold what the server
-// sent."
+// A 3xx the client cannot follow is the outcome: a Location that url.Parse
+// does not accept is no Location, so its text is never quoted. client.go,
+// Redirects: "Only 301, 302, 303, 307 and 308 with a Location that url.Parse
+// accepts can be followed, as net/http follows them ... A 3xx not followed is
+// the outcome, a *StatusError." The client alone follows redirects, so
+// net/http's Client.do does not parse the Location either, and FollowNone
+// gives the same outcome. An unparsable Location echoing the query is never
+// quoted. client.go, Response: "The responses in that chain hold what the
+// server sent."
 func TestUnparsableLocationIsNotFollowed(t *testing.T) {
 	for _, follow := range []openapi.Redirects{openapi.FollowNone, openapi.FollowAll} {
 		t.Run(fmt.Sprintf("Redirects %d", follow), func(t *testing.T) {
@@ -473,8 +472,8 @@ func TestUnparsableLocationIsNotFollowed(t *testing.T) {
 	}
 }
 
-// wantBodyClosed fails unless nothing more can be read from resp's Body:
-// C3-5, "returns that last Response, its body closed".
+// wantBodyClosed fails unless nothing more can be read from resp's Body: an
+// error that ends a chain returns the last Response with its body closed.
 func wantBodyClosed(t *testing.T, resp *openapi.Response) {
 	t.Helper()
 	if resp == nil || resp.Body == nil {
@@ -485,11 +484,12 @@ func wantBodyClosed(t *testing.T, resp *openapi.Response) {
 	}
 }
 
-// C3-5 (F7, A4): "An error that ends a chain after a response arrived
-// (CheckRedirect's error or the hop limit, a SecretFunc or GetBody failure
-// on a hop) returns that last Response, its body closed, with the
-// *url.Error, as doc.go promises and net/http does for CheckRedirect.
-// ErrUseLastResponse keeps returning it open, as the outcome." doc.go,
+// An error that ends a chain after a response arrived (CheckRedirect's
+// error or the hop limit, a SecretFunc or GetBody failure on a hop, a hop's
+// transport failure, a Timeout spent before a hop) returns that last
+// Response, its body closed, with the *url.Error, as net/http does for
+// CheckRedirect. ErrUseLastResponse keeps returning it open, as the
+// outcome. doc.go,
 // Outcomes: "Whenever a response arrived, the [*Response] is returned, even
 // with an error"; a transport failure is "the *url.Error from the
 // http.Client", not a *StatusError. credential.go, SecretFunc: "On a
@@ -497,10 +497,7 @@ func wantBodyClosed(t *testing.T, resp *openapi.Response) {
 // empty secret ends the call with a *url.Error wrapping f's error, along
 // with the last response, its body closed." net/http's own Client.do returns
 // the 3xx with a CheckRedirect error (go1.25 client.go, "Special case for Go
-// 1 compatibility"). Stage 3 ledger, TQ2: "C3-5 covers every error that ends
-// a chain after a response arrived, a hop's transport failure and a Timeout
-// spent before a hop included (doc.go: whenever a response arrived, it is
-// returned)."
+// 1 compatibility").
 func TestErrorEndingAChainReturnsTheLastResponse(t *testing.T) {
 	errStop := errors.New("caller stopped the redirect")
 	wantChainError := func(t *testing.T, resp *openapi.Response, err error, status int, cause error) {
@@ -654,13 +651,12 @@ func wantTimeout(t *testing.T, err error) {
 	}
 }
 
-// R1 (stage 3 ledger, "Implementer contract points, ruled"):
-// "HTTPClient.Timeout bounds the whole chain, as net/http's own loop does
-// (its doc: 'includes connection time, any redirects, and reading the
-// response body'). Each later hop is sent with the time that remains; none
-// left ends the call as net/http's timeout does." Stage 3 ledger, TQ2: the
-// error ends a chain after a response arrived, so that Response is returned
-// with it, its body closed (C3-5).
+// HTTPClient.Timeout bounds the whole chain, as net/http's own loop does
+// (its doc: "includes connection time, any redirects, and reading the
+// response body"). Each later hop is sent with the time that remains; none
+// left ends the call as net/http's timeout does. The error ends a chain
+// after a response arrived, so that Response is returned with it, its body
+// closed.
 func TestTimeoutBoundsTheWholeChain(t *testing.T) {
 	t.Run("hops share the time", func(t *testing.T) {
 		const timeout = 600 * time.Millisecond
@@ -712,11 +708,11 @@ func TestTimeoutBoundsTheWholeChain(t *testing.T) {
 	})
 }
 
-// R3 (stage 3 ledger): "CheckRedirect sees the hop as net/http passes it,
-// with Body set (from GetBody) whenever the hop resends the body ... When
-// CheckRedirect refuses (ErrUseLastResponse or an error), the client drops
-// that upload generation and closes the body, the same way followNone
-// already does." client.go, Redirects: "A 303 is followed with GET (HEAD
+// CheckRedirect sees the hop as net/http passes it, with Body set (from
+// GetBody) whenever the hop resends the body. When CheckRedirect refuses
+// (ErrUseLastResponse or an error), the client drops that upload
+// generation and closes the body, as it does for a 3xx it does not
+// follow. client.go, Redirects: "A 303 is followed with GET (HEAD
 // stays HEAD) and no body. A 301 or 302 changes POST to GET with no body, and
 // keeps any other method and its body, as 307 and 308 do."
 func TestCheckRedirectSeesTheHopBody(t *testing.T) {
@@ -837,16 +833,16 @@ func (l *legacyRT) RoundTrip(r *http.Request) (*http.Response, error) {
 
 func (l *legacyRT) CancelRequest(*http.Request) { l.once.Do(func() { close(l.canceled) }) }
 
-// C3-1 (F2, A3): "One owner of redirects. net/http's Client.do acts on a
-// followable 3xx before CheckRedirect ... so followNone cannot make the send
-// single-hop. Ruling: the client's http.Client copy wraps the caller's
-// Transport ... in a RoundTripper that moves Location off a
-// 301/302/303/307/308 response ... and the client restores it after Do;
-// Client.do then returns at its own 'loc == \"\"' check, never parsing
-// Location, calling GetBody or consulting CheckRedirect ... Forward
-// CancelRequest when the inner transport has it." client.go, Request.HTTP:
-// "A send takes HTTP.Body the first time and GetBody for every replay";
-// Redirects: "A 3xx not followed is the outcome, a *StatusError."
+// The client alone follows redirects. net/http's Client.do acts on a
+// followable 3xx before CheckRedirect, so a CheckRedirect alone cannot make
+// the send single-hop. The client's http.Client copy wraps the caller's
+// Transport in a RoundTripper that moves Location off a 301/302/303/307/308
+// response, and the client restores it after Do; Client.do then returns at its
+// own `loc == ""` check, never parsing Location, calling GetBody or consulting
+// CheckRedirect. The wrapper forwards CancelRequest when the inner transport
+// has it. client.go, Request.HTTP: "A send takes HTTP.Body the first time and
+// GetBody for every replay"; Redirects: "A 3xx not followed is the outcome, a
+// *StatusError."
 func TestNetHTTPFollowsNothing(t *testing.T) {
 	const payload = `{"n":2}`
 	// prepareCountingBody prepares postR with a body the caller set, whose
@@ -992,11 +988,12 @@ func TestNetHTTPFollowsNothing(t *testing.T) {
 	})
 }
 
-// F6: "build the hop without NewRequestWithContext (a dropped error panics
-// on a caller's invalid method ...)". client.go, Request.HTTP: "HTTP may be
-// changed before sending"; Redirects: a 307 keeps the method. net/http builds
-// its own hop as a struct literal (go1.25 client.go, Client.do), so a method
-// its transport accepts is followed.
+// The client builds a hop without NewRequestWithContext, which refuses a
+// method it deems invalid, so a caller's method is followed and the call never
+// panics. client.go, Request.HTTP: "HTTP may be changed before sending";
+// Redirects: a 307 keeps the method. net/http builds its own hop as a struct
+// literal (go1.25 client.go, Client.do), so a method its transport accepts is
+// followed.
 func TestHopKeepsAMethodNetHTTPWouldRefuse(t *testing.T) {
 	const method = "M-SEARCH\x7f"
 	rt := &memRT{}
@@ -1029,8 +1026,8 @@ func TestHopKeepsAMethodNetHTTPWouldRefuse(t *testing.T) {
 	}
 }
 
-// F19: "content fields are dropped only when the hop drops the body (303,
-// POST under 301/302), not when a kept body is empty." client.go,
+// Content fields are dropped only when the hop drops the body (303, POST
+// under 301/302), not when a kept body is empty. client.go,
 // Redirects: "A hop that drops the body drops Content-Type and the other
 // content fields"; RFC 9110 section 15.4, item 5: content fields go when
 // "the request method has been changed to GET or HEAD".
@@ -1067,9 +1064,10 @@ func TestKeptEmptyBodyKeepsContentFields(t *testing.T) {
 	}
 }
 
-// F22: "a caller's empty User-Agent (suppressing net/http's default) is kept
-// on every hop; it carries no information." doc.go, Header fields: "one with
-// no values removes it (a User-Agent included, so net/http adds none)".
+// A caller's empty User-Agent (suppressing net/http's default) is kept on
+// every hop, even to another origin, since it carries no information.
+// doc.go, Header fields: "one with no values removes it (a User-Agent
+// included, so net/http adds none)".
 func TestUserAgentRemovalKeptOnEveryHop(t *testing.T) {
 	for name, edit := range map[string]func(*openapi.Options, *openapi.Input){
 		"Options.Header": func(o *openapi.Options, _ *openapi.Input) { o.Header = http.Header{"User-Agent": {}} },
@@ -1091,9 +1089,9 @@ func TestUserAgentRemovalKeptOnEveryHop(t *testing.T) {
 	}
 }
 
-// A5: "on a cross-origin hop Content-Type is kept only when it is the value
-// the client generated; a caller-edited one is a caller field and goes
-// (CheckRedirect can restore it)." client.go, Redirects: on a hop to another
+// On a cross-origin hop Content-Type is kept only when it is the value the
+// client generated; a caller-edited one is a caller field and goes
+// (CheckRedirect can restore it). client.go, Redirects: on a hop to another
 // origin the client removes "every field supplied through Options.Header,
 // Input.Header, or an edit to Request.HTTP.Header. Generated fields needed
 // to describe a replayed body, such as Content-Type and Content-Length, are
@@ -1147,10 +1145,9 @@ func TestCrossOriginKeepsOnlyGeneratedContentType(t *testing.T) {
 	})
 }
 
-// R2 (stage 3 ledger): "the client adds no Referer on hops ... A caller's
-// Referer is a caller field like any other." client.go, Redirects: "The
-// client adds no Referer"; a caller field is kept within the origin and
-// removed on a hop to another.
+// The client adds no Referer on hops; a caller's Referer is a caller field
+// like any other. client.go, Redirects: "The client adds no Referer"; a
+// caller field is kept within the origin and removed on a hop to another.
 func TestRedirectAddsNoReferer(t *testing.T) {
 	b := newWire(t, nil)
 	a := newWire(t, routes(map[string]http.HandlerFunc{"/r": redirect(302, "/next"), "/next": redirect(302, b.URL+"/b")}))
@@ -1172,11 +1169,11 @@ func TestRedirectAddsNoReferer(t *testing.T) {
 	wantNoFields(t, b.last(t).Header, "Referer")
 }
 
-// Stage 3 ledger, "Contract notes ruled": "A caller-set Request.Host is kept
-// across a relative Location, as net/http does (Go issue 22233)". net/http
-// keeps it only for a relative Location (go1.25 client.go, Client.do: "If
-// the caller specified a custom Host header and the redirect location is
-// relative, preserve the Host header through the redirect").
+// A caller-set Request.Host is kept across a relative Location, as net/http
+// does (Go issue 22233). net/http keeps it only for a relative Location
+// (go1.25 client.go, Client.do: "If the caller specified a custom Host
+// header and the redirect location is relative, preserve the Host header
+// through the redirect").
 func TestRedirectKeepsCallerHostOnRelativeLocation(t *testing.T) {
 	const host = "virtual.example.test"
 	a := newWire(t, nil)
@@ -1200,8 +1197,8 @@ func TestRedirectKeepsCallerHostOnRelativeLocation(t *testing.T) {
 	}
 }
 
-// F12 (test gap, "http://h versus http://h:80 on a hop"): client.go,
-// Redirects: "On a hop to another origin (scheme, host and port)"; RFC 6454
+// http://h versus http://h:80 on a hop: client.go, Redirects: "On a hop to
+// another origin (scheme, host and port)"; RFC 6454
 // section 4: a URI's port is its scheme's default port when it names none,
 // so http://h and http://h:80 are one origin, and a header credential is
 // placed again; another port or scheme is another origin.
@@ -1244,13 +1241,13 @@ func TestRedirectDefaultPortIsSameOrigin(t *testing.T) {
 	}
 }
 
-// F10, on hops: "replacing a header credential deletes every spelling of
-// the field on the sent copy, on every path; caller spellings are not
-// canonicalized otherwise" (panel F10: "hop's Content-* drop and
-// cross-origin rules also miss non-canonical keys"). client.go, Redirects:
-// "A hop that drops the body drops Content-Type and the other content
-// fields"; on a hop to another origin every caller field goes. Field names
-// compare without regard to case (RFC 9110 section 5.1).
+// On hops, replacing a header credential deletes every spelling of the
+// field on the sent copy, on every path, and caller spellings are not
+// canonicalized otherwise; the Content-* drop and the cross-origin rules
+// also match non-canonical keys. client.go, Redirects: "A hop that drops
+// the body drops Content-Type and the other content fields"; on a hop to
+// another origin every caller field goes. Field names compare without
+// regard to case (RFC 9110 section 5.1).
 func TestHopRulesMatchEverySpelling(t *testing.T) {
 	t.Run("a content field a ParamWriter spelled in lowercase, on a 303", func(t *testing.T) {
 		a := newWire(t, routes(map[string]http.HandlerFunc{"/r": redirect(303, "/next")}))

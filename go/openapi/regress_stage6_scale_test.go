@@ -9,7 +9,7 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// P6-P1/Q2: grow use count and one shared schema/operation declaration together.
+// Grow use count and one shared schema/operation declaration together.
 // Listing descriptions must share normalized plans and defer synthetic Raw
 // construction, rather than materializing shared content once per operation.
 func stage6SharedForm(n int) []byte {

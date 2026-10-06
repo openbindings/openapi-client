@@ -12,7 +12,8 @@ import (
 // Input.Body allows raw []byte, reader and Part field values in every edition.
 // Swagger collectionFormat governs arrays, not these scalar field sources.
 // Required fields still apply to structured bodies, while a pre-encoded whole
-// body bypasses them. Stage 4 replay/ownership rules remain in force.
+// body bypasses them. Input.Body's replay and reader ownership rules still
+// apply.
 func TestEditionsSwaggerScalarRawFields(t *testing.T) {
 	for _, kind := range []string{"string", "file"} {
 		for _, media := range []string{"application/x-www-form-urlencoded", "multipart/form-data"} {

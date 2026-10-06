@@ -8,10 +8,10 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// C5-1: Loader identifies schemas, not their instance data. JSON Schema
-// 2020-12 Core sections 4.3.1 and 9.4.2 distinguish known schema-bearing
-// locations from annotations and other data. Adopted from the saved
-// conformance reproduction, including its annotation-free control.
+// Loader identifies schemas, not their instance data. JSON Schema 2020-12
+// Core sections 4.3.1 and 9.4.2 distinguish known schema-bearing locations
+// from annotations and other data. The cases include an annotation-free
+// control.
 func TestDocumentSchemaDataCannotClaimIdentifiers(t *testing.T) {
 	const base = "https://docs.example.test/"
 	const entry = `{"openapi":"3.1.2","paths":{"/u":{"post":{"operationId":"u","requestBody":{"content":{"multipart/form-data":{"schema":{"$ref":"schema.json"}}}}}}}}`
@@ -33,11 +33,11 @@ func TestDocumentSchemaDataCannotClaimIdentifiers(t *testing.T) {
 	}
 }
 
-// C5-1 verification: known schema locations remain schemas through $defs,
-// even when a child has no identifier of its own. JSON Schema 2020-12
-// Core sections 4.3.1, 8.2.4 and 9.4.2 do not make a sibling schema's
-// instance data an identifier claimant. The reference names a schema,
-// never a pointer into the data. This is the saved 165ca53 reproduction.
+// Known schema locations remain schemas through $defs, even when a child
+// has no identifier of its own. JSON Schema 2020-12 Core sections 4.3.1,
+// 8.2.4 and 9.4.2 do not make a sibling schema's instance data an
+// identifier claimant. The reference names a schema, never a pointer into
+// the data.
 func TestDocumentNestedSchemaDataCannotClaimIdentifiers(t *testing.T) {
 	const base = "https://docs.example.test/"
 	const entry = `{"openapi":"3.1.2","paths":{"/u":{"post":{"operationId":"u","requestBody":{"content":{"multipart/form-data":{"schema":{"$ref":"schema.json#/$defs/Used"}}}}}}}}`
@@ -56,10 +56,10 @@ func TestDocumentNestedSchemaDataCannotClaimIdentifiers(t *testing.T) {
 	}
 }
 
-// C5-2: OAS 3.1.2 section 4.8.24.5 makes jsonSchemaDialect the document
-// default; an explicit resource $schema overrides it. Schema's contract
-// does not interpret identifiers in a foreign dialect. These are the
-// saved conformance cases plus the two explicit-override controls.
+// OAS 3.1.2 section 4.8.24.5 makes jsonSchemaDialect the document default;
+// an explicit resource $schema overrides it. Schema's contract does not
+// interpret identifiers in a foreign dialect. The cases include two
+// explicit-override controls.
 func TestDocumentEffectiveSchemaDialect(t *testing.T) {
 	const base = "https://docs.example.test/"
 	const foreign = "https://example.test/custom-dialect"
@@ -104,7 +104,7 @@ func TestDocumentEffectiveSchemaDialect(t *testing.T) {
 	})
 }
 
-// C5-3: OAS 3.1.2 section 4.8.7.1 permits x-prefixed component names.
+// OAS 3.1.2 section 4.8.7.1 permits x-prefixed component names.
 // Loader follows declarations throughout the document, even when unused.
 // Genuine extensions still contain data, not references to retrieve.
 func TestDocumentXPrefixedComponentNames(t *testing.T) {

@@ -12,11 +12,10 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Fuzz targets for YAML documents (brief.md, Tests: "a fuzz target that
-// writes random JSON documents as block and flow YAML (the test's own
-// emitter) and requires the same Client descriptors and Document bytes as
-// the JSON; a fuzz target for robustness (no panic, bounded time and
-// memory)").
+// Fuzz targets for YAML documents: one writes random JSON documents as block
+// and flow YAML (the test's own emitter) and requires the same Client
+// descriptors and Document bytes as the JSON; one checks robustness (no
+// panic, bounded time and memory).
 
 // A fuzzGen draws choices from fuzz input, then zeros.
 type fuzzGen struct {
@@ -278,9 +277,9 @@ var fuzzYAMLSeeds = []string{
 // FuzzYAMLRobustness: any input, YAML or not, is read or rejected without
 // a panic, in bounded time and memory (load.go, Loader: aliases add at most
 // 1,000,000 nodes, 100 times the document's own node count and 100 times
-// its own size in bytes, the last ruled in SQ2, and nesting stops at 1,000
-// levels, so an input of at most 4 KiB grows by at most 400 KB); a
-// document that loads describes its operations, and Document is JSON.
+// its own size in bytes, and nesting stops at 1,000 levels, so an input of
+// at most 4 KiB grows by at most 400 KB); a document that loads describes
+// its operations, and Document is JSON.
 func FuzzYAMLRobustness(f *testing.F) {
 	for _, seed := range fuzzYAMLSeeds {
 		f.Add([]byte(seed))

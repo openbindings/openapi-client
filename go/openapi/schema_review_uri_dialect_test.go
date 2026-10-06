@@ -18,7 +18,7 @@ func review9EditionDocument(version, schemas string) string {
 	return schema9Doc(version, schemas)
 }
 
-// C9-1: Parse permits self-reference with no provided URI and names that
+// Parse permits self-reference with no provided URI and names that
 // document with a generated URN. A fragment-only reference retains the
 // effective base, including opaque path and query (RFC3986 5.2.2). Legacy
 // subset references obey the same resolution rule as modern SchemaReference.
@@ -134,11 +134,12 @@ func TestReview9OpaqueRelativePathRefusal(t *testing.T) {
 	}
 }
 
-// C9-2: dialect identity is exact, not prefix recognition. These known IDs
-// come from OAS3.1's normative base and the official publication index at
-// https://spec.openapis.org/oas/ (checked2026-10-03), plus JSONSchema2020-12.
-// Explicit support for a later publication does not change the pinned public
-// 3.2 default2025-09-17. Both discovery and inspection must honor these IDs.
+// Dialect identity is exact, not prefix recognition. These known IDs come
+// from OAS 3.1's normative base and the official publication index at
+// https://spec.openapis.org/oas/ (checked 2026-10-03), plus JSON Schema
+// 2020-12. Explicit support for a later publication does not change the
+// pinned public 3.2 default 2025-09-17. Both discovery and inspection must
+// honor these IDs.
 func TestReview9KnownDialectIdentifiers(t *testing.T) {
 	known := []struct{ version, dialect string }{
 		{"3.1.2", schema9OAS31},
@@ -227,9 +228,9 @@ func TestReview9UnknownDialectLookalikes(t *testing.T) {
 	}
 }
 
-// C9-3: jsonSchemaDialect belongs to an OpenAPI Object. On a standalone
-// schema it is ordinary annotation; only $schema or inherited/default
-// dialect governs vocabulary (Core4.3.1/8.1.1 and OAS Schema Object).
+// jsonSchemaDialect belongs to an OpenAPI Object. On a standalone schema it
+// is ordinary annotation; only $schema or inherited/default dialect governs
+// vocabulary (Core 4.3.1/8.1.1 and OAS Schema Object).
 func TestReview9StandaloneDialectAnnotation(t *testing.T) {
 	const external = "https://schemas.example.test/api/standalone.json"
 	const resource = "https://schemas.example.test/api/models/standalone.json"

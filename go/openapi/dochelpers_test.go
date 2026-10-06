@@ -23,11 +23,11 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Shared apparatus for the stage 5 document tests: a site of documents
-// served over httptest that counts what it serves, an in-memory Fetch,
-// JSON equivalence that compares numbers by exact value, a YAML emitter (the
-// tests' own: no YAML library), position checks for rejections, UTF-16 and
-// UTF-32 encoders, and a canonical dump of a Client's descriptors.
+// Shared apparatus for the document tests: a site of documents served over
+// httptest that counts what it serves, an in-memory Fetch, JSON equivalence
+// that compares numbers by exact value, a YAML emitter (the tests' own: no
+// YAML library), position checks for rejections, UTF-16 and UTF-32 encoders,
+// and a canonical dump of a Client's descriptors.
 
 // A site is an httptest server, one origin, holding documents by path. A
 // request for a path that holds a document gets it; a path with a handler

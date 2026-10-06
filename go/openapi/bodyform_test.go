@@ -12,7 +12,7 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Stage 4, application/x-www-form-urlencoded bodies, checked byte for byte.
+// Form bodies (application/x-www-form-urlencoded), checked byte for byte.
 // client.go, Input.Body: "For form and multipart media, Body is an object
 // (a map or a struct) whose properties are the fields. A property may be a
 // []byte, an io.Reader or a [Part] (or a non-nil *Part); a property whose
@@ -160,8 +160,8 @@ func TestFormBodyContentFields(t *testing.T) {
 		{"exponent", "form", map[string]any{"x": 1e21}, "x=1e%2B21"},
 		{"json.Number", "form", map[string]any{"x": json.Number("1.50")}, "x=1.50"},
 		{"boolean", "form", map[string]any{"b": true}, "b=true"},
-		// application/json for an object, as json.Marshal writes it (stage 1
-		// ledger, Q6), HTML escaping included.
+		// application/json for an object, as json.Marshal writes it, HTML
+		// escaping included.
 		{"object as JSON", "form", map[string]any{"o": map[string]any{"k": "v w", "n": nil}}, "o=%7B%22k%22%3A%22v+w%22%2C%22n%22%3Anull%7D"},
 		{"JSON HTML escaping", "form", map[string]any{"o": map[string]string{"k": "<&>"}}, "o=" + formEnc(`{"k":"`+esc("003c")+esc("0026")+esc("003e")+`"}`)},
 		{"empty object as JSON", "form", map[string]any{"o": map[string]any{}}, "o=%7B%7D"},
@@ -310,8 +310,8 @@ func formStyleDoc() string {
 // responsible for percent-encoding reserved characters that ... have a
 // special meaning in application/x-www-form-urlencoded"). Undefined values
 // are omitted, and a value a style refuses is refused at
-// Inputs["Input.Body/p"] (stage brief, Refusals; doc.go, Fixed rules,
-// Styles: each "refused at the parameter's key").
+// Inputs["Input.Body/p"] (doc.go, Fixed rules, Styles: each "refused at the
+// parameter's key").
 func TestFormBodyStyledFields(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, formStyleDoc(), nil)
@@ -368,18 +368,17 @@ func TestFormBodyStyleExamples(t *testing.T) {
 	}
 }
 
-// Refusals, each at its Inputs key: "Input.Body" followed by a JSON
-// Pointer to the part of Body concerned (errors.go, RequestError.Inputs;
-// RFC 6901, "~" as "~0" and "/" as "~1"): a body that is not an object
-// (client.go, Input.Body: "Body is an object (a map or a struct)"); a
-// property or item value its media type cannot encode (doc.go, Values; stage
-// brief, Refusals); a reader or Part inside a JSON value (client.go,
-// Input.Body: "A Part or io.Reader inside a JSON value is refused with an
-// Inputs entry at its place in Body"). A field's media type that the call
-// must choose, or chose outside the Encoding's list, is a setting:
-// Settings["Input.Body/<field>"] (errors.go, RequestError.Settings: "for a
-// part's media type, "Input.Body" followed by the part's JSON Pointer";
-// client.go, Part.MediaType: "A range is refused").
+// Refusals, each at its Inputs key: "Input.Body" followed by a JSON Pointer
+// to the part of Body concerned (errors.go, RequestError.Inputs; RFC 6901,
+// "~" as "~0" and "/" as "~1"): a body that is not an object (client.go,
+// Input.Body: "Body is an object (a map or a struct)"); a property or item
+// value its media type cannot encode (doc.go, Values); a reader or Part
+// inside a JSON value (client.go, Input.Body: "A Part or io.Reader inside a
+// JSON value is refused with an Inputs entry at its place in Body"). A
+// field's media type that the call must choose, or chose outside the
+// Encoding's list, is a setting: Settings["Input.Body/<field>"] (errors.go,
+// RequestError.Settings: "for a part's media type, "Input.Body" followed by
+// the part's JSON Pointer"; client.go, Part.MediaType: "A range is refused").
 func TestFormBodyRefusals(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, doc31(formDoc), nil)
@@ -408,12 +407,12 @@ func TestFormBodyRefusals(t *testing.T) {
 		{"an item's type not offered", "form", map[string]any{"pick": []any{openapi.Part{Content: "x", MediaType: "text/plain"}, openapi.Part{Content: "y", MediaType: "text/csv"}}}, nil, []string{"Input.Body/pick/1"}},
 		// client.go, Part: "In an application/x-www-form-urlencoded body only
 		// Content and MediaType apply, and Filename, NoFilename or Header is
-		// refused" (stage 4 ledger, Q18), at the field's key.
+		// refused", at the field's key.
 		{"a Part's Filename", "form", map[string]any{"pick": openapi.Part{Content: "x", MediaType: "text/plain", Filename: "f.txt"}}, []string{"Input.Body/pick"}, nil},
 		{"a Part's NoFilename", "form", map[string]any{"s": openapi.Part{Content: "x", NoFilename: true}}, []string{"Input.Body/s"}, nil},
 		{"a Part's Header", "form", map[string]any{"s": openapi.Part{Content: "x", Header: http.Header{"X-A": {"v"}}}}, []string{"Input.Body/s"}, nil},
 		{"an item Part's Header", "form", map[string]any{"a": []any{"x", openapi.Part{Content: "y", Header: http.Header{"X-A": {"v"}}}}}, []string{"Input.Body/a/1"}, nil},
-		// The pointer passes through a Part (stage 4 ledger, Q14).
+		// The pointer passes through a Part.
 		{"reader inside a Part's JSON", "form", map[string]any{"pick": openapi.Part{Content: map[string]any{"r": strings.NewReader("x")}, MediaType: "application/json"}}, []string{"Input.Body/pick/r"}, nil},
 	}
 	for _, tt := range tests {
@@ -429,11 +428,11 @@ func TestFormBodyRefusals(t *testing.T) {
 
 // A form body whose every source can be sent again is encoded once, when
 // prepared, so HTTP.Body and every GetBody give the same bytes (doc.go,
-// Fixed rules, Form bodies: "A body is encoded once, when the call is
+// Fixed rules, Form bodies: "A body ... is encoded once, when the call is
 // prepared, so HTTP.Body and every GetBody give the same bytes; a file in a
 // field is read into memory then"), with Content-Length (Header fields: "for a
-// body that can be sent again"; stage 4 ledger, Q10: "replayable readers
-// read by ReadAt, not drained"). TestBodyReplayPrepared covers a form body
+// body that can be sent again"). Replayable readers are read by ReadAt, not
+// drained. TestBodyReplayPrepared covers a form body
 // holding a reader read once, which has no Content-Length.
 func TestFormBodyPrepared(t *testing.T) {
 	c := parseAt(t, doc31(formDoc), "https://api.example.test", testDocURI, nil)
@@ -464,12 +463,11 @@ func TestFormBodyPrepared(t *testing.T) {
 	}
 }
 
-// A property's value decides how many fields it sends (stage 4 ledger, Q7;
-// client.go, Input.Body): an array value, []byte excluded, one field per
-// item, each typed by the items schema when the property's schema is an
-// array, else by the property's own type, an Encoding contentType applying
-// to each; any other value one field, typed by the items type for an array
-// schema.
+// A property's value decides how many fields it sends (client.go,
+// Input.Body): an array value, []byte excluded, one field per item, each
+// typed by the items schema when the property's schema is an array, else by
+// the property's own type, an Encoding contentType applying to each; any
+// other value one field, typed by the items type for an array schema.
 func TestFormBodyArrayValues(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, doc31(formDoc), nil)
@@ -498,9 +496,8 @@ func TestFormBodyArrayValues(t *testing.T) {
 
 // A field string that is not valid UTF-8 is sent as given, each byte %XX,
 // when its field is serialized by a content type that is not JSON, the
-// text/plain default included (stage 4 ledger, Q9: "invalid UTF-8 in field
-// strings is sent as given (form: each byte %XX), as stage 2 and whole text
-// bodies"; QQ1). A field written by a style is not: see
+// text/plain default included, as a parameter serialized by content and a
+// whole text body are. A field written by a style is not: see
 // TestStyledFieldInvalidUTF8.
 func TestFormBodyInvalidUTF8(t *testing.T) {
 	w := newWire(t, nil)
@@ -511,12 +508,12 @@ func TestFormBodyInvalidUTF8(t *testing.T) {
 	}
 }
 
-// A field written by a style follows stage 2's styled parameters: its value
+// A field written by a style is written as a styled parameter is: its value
 // becomes JSON data as encoding/json makes it (doc.go, Values: "The client
 // first converts a value to JSON data as encoding/json would"), so each
-// invalid UTF-8 byte is U+FFFD, then percent-encoded in a form body (stage 4
-// ledger, QQ1: "s=a%EF%BF%BDb for a bare string, a struct member and a map
-// member"), and sent as its UTF-8 bytes in a multipart part, which is never
+// invalid UTF-8 byte is U+FFFD, then percent-encoded in a form body
+// (s=a%EF%BF%BDb for a bare string, a struct member and a map member), and
+// sent as its UTF-8 bytes in a multipart part, which is never
 // percent-encoded.
 func TestStyledFieldInvalidUTF8(t *testing.T) {
 	w := newWire(t, nil)
