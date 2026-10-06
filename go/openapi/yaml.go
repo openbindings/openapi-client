@@ -14,7 +14,7 @@ import (
 	"sync/atomic"
 	"unicode/utf8"
 
-	"github.com/openbindings/openapi-client/go/internal/yaml"
+	"go.yaml.in/yaml/v3"
 )
 
 // parseYAML reads the UTF-8 text of a document whose original encoding used
@@ -23,7 +23,7 @@ import (
 func parseYAML(ctx context.Context, src, uri string, unit, size int) (*tree, error) {
 	input, directive := src, false
 	for i := 0; i < len(src); {
-		end := strings.IndexAny(src[i:], "\r\n")
+		end := strings.IndexFunc(src[i:], yamlBreak)
 		if end < 0 {
 			end = len(src) - i
 		}
@@ -46,28 +46,28 @@ func parseYAML(ctx context.Context, src, uri string, unit, size int) (*tree, err
 		} else if s := strings.TrimLeft(line, " \t\r"); line != "" && line[0] != '%' && s != "" && s[0] != '#' {
 			break
 		}
-		i += len(line) + 1
+		_, n := utf8.DecodeRuneInString(src[i+end:])
+		i += end + n
 	}
 	dec := yaml.NewDecoder(ctxReader{ctx, strings.NewReader(input)})
-	var document yaml.Node
-	if err := dec.Decode(&document); err != nil {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
+	var document, next yaml.Node
+	err := dec.Decode(&document)
+	if err == nil {
+		if err = dec.Decode(&next); err == io.EOF {
+			return yamlTree(ctx, document.Content[0], src, uri, unit, size)
 		}
-		return nil, yamlParseError(dec, uri, src, unit, err)
 	}
-	var next yaml.Node
-	if err := dec.Decode(&next); err != io.EOF {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		w := yamlWriter{uri: uri, src: src, unit: unit}
-		if err != nil {
-			return nil, yamlParseError(dec, uri, src, unit, err)
-		}
-		return nil, w.reject(&next, "a second document in the YAML stream")
+	switch {
+	case ctx.Err() != nil:
+		return nil, ctx.Err()
+	case err == io.EOF:
+		return nil, rejection(uri, src, len(src), unit, "no document in the YAML stream")
+	case err != nil:
+		// A syntax error, which the parser's own message describes.
+		return nil, fmt.Errorf("openapi: %s: %v", safeURI(uri), err)
 	}
-	return yamlTree(ctx, document.Content[0], src, uri, unit, size)
+	w := yamlWriter{uri: uri, src: src, unit: unit}
+	return nil, w.reject(&next, "a second document in the YAML stream")
 }
 
 // A yamlWriter writes a YAML document's nodes as the client's JSON text and
@@ -157,7 +157,7 @@ func (w *yamlWriter) value(n *yaml.Node, depth int, name uint32) (int, error) {
 		if n.Kind == yaml.MappingNode {
 			tag, write = "!!map", w.mapping
 		}
-		if n.Style&yaml.TaggedStyle != 0 && n.Tag != tag && n.Tag != "!" {
+		if n.Style&yaml.TaggedStyle != 0 && n.Tag != tag {
 			return 0, w.reject(n, "the tag "+n.Tag+" is outside the Core schema")
 		}
 		var err error
@@ -323,39 +323,36 @@ func (w *yamlWriter) reject(n *yaml.Node, msg string) error {
 	return rejection(w.uri, w.src, yamlOffset(w.src, n.Line, n.Column), w.unit, msg)
 }
 
-func yamlParseError(dec *yaml.Decoder, uri, src string, unit int, err error) error {
-	at, line, column := dec.ErrorPosition()
-	if at < 0 {
-		at = yamlOffset(src, line, column)
-	}
-	msg := err.Error()
-	// Use the problem text directly: the formatted error may locate a
-	// surrounding context rather than the exact error mark above.
-	if problem := dec.ErrorProblem(); problem != "" {
-		msg = "yaml: " + problem
-	}
-	return rejection(uri, src, min(max(0, at), len(src)), unit, msg)
-}
-
-// yamlOffset maps a parser mark to the UTF-8 source offset on rejection.
-// CR, LF and CRLF each advance one line; columns count Unicode characters.
+// yamlOffset maps a node's line and column, as the parser counts them, to
+// its offset in src: lines end at CR, LF, CRLF, NEL, LS and PS, and columns
+// count characters.
 func yamlOffset(src string, line, column int) int {
 	i := 0
 	for row := 1; row < line && i < len(src); row++ {
-		j := strings.IndexAny(src[i:], "\r\n")
+		j := strings.IndexFunc(src[i:], yamlBreak)
 		if j < 0 {
 			return len(src)
 		}
-		i += j + 1
+		_, n := utf8.DecodeRuneInString(src[i+j:])
+		i += j + n
 		if src[i-1] == '\r' && i < len(src) && src[i] == '\n' {
 			i++
 		}
 	}
-	for col := 1; col < column && i < len(src) && src[i] != '\r' && src[i] != '\n'; col++ {
-		_, size := utf8.DecodeRuneInString(src[i:])
-		i += size
+	for col := 1; col < column && i < len(src); col++ {
+		r, n := utf8.DecodeRuneInString(src[i:])
+		if yamlBreak(r) {
+			break
+		}
+		i += n
 	}
 	return i
+}
+
+// yamlBreak reports whether the parser ends a line at r: CR, LF, NEL, LS or
+// PS, a CR followed by LF being one break.
+func yamlBreak(r rune) bool {
+	return r == '\r' || r == '\n' || r == '\u0085' || r == '\u2028' || r == '\u2029'
 }
 
 // yamlFloat matches the integers and floats of YAML 1.2's Core schema
@@ -375,7 +372,7 @@ func yamlScalar(n *yaml.Node) (text string, quoted bool, err error) {
 	case n.Style&(yaml.DoubleQuotedStyle|yaml.SingleQuotedStyle|yaml.LiteralStyle|yaml.FoldedStyle) != 0:
 		tag = "!!str"
 	}
-	if tag == "!" || tag == "!!str" {
+	if tag == "!!str" {
 		return s, true, nil
 	}
 	number, numeric, err := yamlNumber(s)

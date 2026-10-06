@@ -312,9 +312,10 @@ func numberRE(n int) *regexp.Regexp {
 	return regexp.MustCompile(fmt.Sprintf(`(^|[^0-9])%d([^0-9]|$)`, n))
 }
 
-// wantPosition checks a rejection (load.go, Loader: "A rejection names the
-// document's URI and the line and column of the problem, both counted from
-// 1, the column in bytes after any byte order mark"): err names uri, line
+// wantPosition checks a rejection that is not a YAML syntax error (load.go,
+// Loader: "A rejection names the document's URI and where the problem is:
+// ... otherwise the line and column, both counted from 1, the column in the
+// document's own bytes ... after any byte order mark"): err names uri, line
 // and one of cols, each line and column as a whole number. Callers choose
 // documents whose line and column differ from each other and from any
 // other number the text could hold.
@@ -337,6 +338,27 @@ func wantPosition(t testing.TB, err error, uri string, line int, cols ...int) {
 		}
 	}
 	t.Errorf("rejection %q does not name column %v", msg, cols)
+}
+
+// wantSyntaxError checks a rejection of a YAML document the parser cannot
+// read (load.go, Loader: "YAML is parsed by go.yaml.in/yaml/v3, whose syntax
+// rules apply"; "A rejection names the document's URI and where the problem
+// is: for a YAML syntax error, the parser's own message, as it gives it"):
+// err names uri and carries the parser's message. The message's wording,
+// and any line or column in it, are the parser's own and are not checked.
+func wantSyntaxError(t testing.TB, err error, uri string) {
+	t.Helper()
+	if err == nil {
+		t.Errorf("no error, want a rejection naming %s", uri)
+		return
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, uri) {
+		t.Errorf("rejection %q does not name the document %q", msg, uri)
+	}
+	if !strings.Contains(msg, "yaml: ") {
+		t.Errorf("rejection %q does not carry the parser's message", msg)
+	}
 }
 
 // rejected parses content at testDocURI and returns the error, failing

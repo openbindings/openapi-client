@@ -25,11 +25,13 @@ import (
 // node's position is where it starts, its tag included, is tested in
 // TestYAMLRejections.
 
-// load.go, Loader: "A rejection names the document's URI and the line and
-// column of the problem, both counted from 1, the column in the document's own
-// bytes (two per UTF-16 code unit, four per UTF-32 character) after any byte
-// order mark", with or without the mark, a character outside the Basic
-// Multilingual Plane taking two UTF-16 code units.
+// load.go, Loader: "A rejection names the document's URI and where the
+// problem is: ... otherwise the line and column, both counted from 1, the
+// column in the document's own bytes (two per UTF-16 code unit, four per
+// UTF-32 character) after any byte order mark", with or without the mark, a
+// character outside the Basic Multilingual Plane taking two UTF-16 code
+// units. A duplicate key is no syntax error, so its line and column are
+// named.
 func TestColumnsInUTF16AndUTF32(t *testing.T) {
 	encodings := []struct {
 		name  string

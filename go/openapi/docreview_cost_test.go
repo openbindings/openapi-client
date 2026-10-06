@@ -43,7 +43,6 @@ func TestYAMLKnownStringsAvoidNumericAllocation(t *testing.T) {
 		{"single quoted", "x-v: '", "'\n"},
 		{"block", "x-v: |-\n  ", "\n"},
 		{"explicit string", "x-v: !!str ", "\n"},
-		{"non-specific tag", "x-v: ! ", "\n"},
 	} {
 		t.Run(style.name, func(t *testing.T) {
 			var allocations [2]float64

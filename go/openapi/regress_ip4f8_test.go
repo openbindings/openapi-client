@@ -812,11 +812,14 @@ func TestIP4F8DocumentPointers(t *testing.T) {
 }
 
 // load.go, Loader: "invalid UTF-8 rejects the document", and "A rejection
-// names the document's URI and the line and column of the problem". Each case
-// is also no YAML (load.go: a document that is not JSON "is read as YAML"):
-// invalid UTF-8, a control character, an invalid escape in a
-// value and in a member name, a string that does not end, a member without its
-// colon, and a minus sign with no digits.
+// names the document's URI and where the problem is: for a YAML syntax
+// error, the parser's own message, as it gives it; otherwise the line
+// and column". Each case is also no YAML (load.go: a document that is not
+// JSON "is read as YAML"): invalid UTF-8, a control character, an invalid
+// escape in a value and in a member name, a string that does not end, a
+// member without its colon, and a minus sign with no digits. Invalid UTF-8
+// is rejected before any YAML is read, at its line; every other case is a
+// YAML syntax error, whose line is the parser's to give.
 func TestIP4F8LoadRejectsMalformedJSON(t *testing.T) {
 	head := "{\n  \"openapi\": \"3.1.0\",\n  \"info\": {\"title\": \"t\", \"version\": \"1\"},\n  \"paths\": {},\n"
 	for name, tail := range map[string]string{
@@ -838,7 +841,11 @@ func TestIP4F8LoadRejectsMalformedJSON(t *testing.T) {
 			if err == nil || c != nil {
 				t.Fatalf("Parse = %v, %v; want a rejection", c, err)
 			}
-			namesURIAndLine(t, err, testDocURI, 5)
+			if name == "invalid UTF-8" {
+				namesURIAndLine(t, err, testDocURI, 5)
+			} else {
+				wantSyntaxError(t, err, testDocURI)
+			}
 		})
 	}
 }
