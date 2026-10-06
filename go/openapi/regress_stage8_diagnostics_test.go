@@ -30,11 +30,12 @@ func review8SecuredResponse(t *testing.T, answer func(*http.Request) (*http.Resp
 	return parseAt(t, doc, "https://api.example.test", testDocURI, o)
 }
 
-// doc.go Outcomes' no-credential-in-generated-text rule (saved API 129-134),
-// Call/Response.Decode/StatusError.Decode, and Stage 8 regression-brief.md
-// class 5 plus its Tier 2 correction to DecodeError.Error. Response-controlled
-// type, subtype, parameters, coding and charset remain explicit metadata,
-// not generated diagnostics. Each reflected value comes from a placed key.
+// doc.go Outcomes' no-credential-in-generated-text rule,
+// Call/Response.Decode/StatusError.Decode, and DecodeError.Error, which
+// returns "never the body or response-controlled media and encoding text,
+// which may reflect credentials". Response-controlled type, subtype,
+// parameters, coding and charset remain explicit metadata, not generated
+// diagnostics. Each reflected value comes from a placed key.
 func TestReview8ResponseMetadataDiagnostics(t *testing.T) {
 	for _, field := range []string{"type", "subtype", "parameter", "malformed Content-Type", "coding", "charset", "invalid target"} {
 		for _, mode := range []string{"Send Decode", "Call", "StatusError Decode"} {
@@ -143,8 +144,9 @@ func TestReview8ResponseMetadataDiagnostics(t *testing.T) {
 	}
 }
 
-// Class 5 forbids arbitrary server-controlled text, not merely strings
-// matching retained credentials. No credential is configured in this control.
+// Generated error text omits arbitrary server-controlled text, not merely
+// strings matching retained credentials. No credential is configured in this
+// control.
 func TestReview8UntrustedMediaDiagnostic(t *testing.T) {
 	const serverValue = "peer-controlled-private-type"
 	c := stream7Client(t, "3.1.2", stream7RT(func(r *http.Request) (*http.Response, error) {

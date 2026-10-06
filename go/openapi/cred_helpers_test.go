@@ -19,14 +19,13 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Shared apparatus for the stage 3 tests (credentials, security and
-// redirects): a document with one operation per security scheme type, the
-// credentials for it, an in-memory transport for hosts that must never be
-// dialled, a raw listener that keeps the bytes of every request, counting
-// credential sources, and a check that no secret appears in an error's
-// text or in a *url.Error's URL.
+// Shared apparatus for the credential, security and redirect tests: a document
+// with one operation per security scheme type, the credentials for it, an
+// in-memory transport for hosts that must never be dialled, a raw listener
+// that keeps the bytes of every request, counting credential sources, and a
+// check that no secret appears in an error's text or in a *url.Error's URL.
 
-// Secrets the stage 3 tests place. Each is distinctive, so finding one in
+// Secrets the credential tests place. Each is distinctive, so finding one in
 // an error or on the wire is unambiguous.
 const (
 	hSecret   = "h-secret-7Qw" // apiKey in a header
@@ -320,8 +319,9 @@ func contains(list []string, s string) bool {
 // *url.Error the http.Client returns, which names the request without the
 // credentials the client added"). It walks the whole chain, which is
 // stricter than that: use it only where the caller's own code makes no error
-// that quotes a credential (stage 3 ledger, A2: such an error "is passed on
-// as it is").
+// that quotes a credential (doc.go, Outcomes: "Errors made by the caller's
+// own code, such as its transport or a credential source, are passed on as
+// they are").
 func noSecrets(t testing.TB, err error, secrets ...string) {
 	t.Helper()
 	if err == nil {

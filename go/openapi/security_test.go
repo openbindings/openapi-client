@@ -7,14 +7,13 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Stage 3, selection (brief, Scope: "Selection"): security requirements
-// from the root and the operation, the canonical key, one alternative
-// selecting itself, several requiring a setting, the preference semantics
-// of Options.Security and Options.SecurityKey against the exact
-// Input.Security, the anonymous alternative, Request.Security and
-// Response.Security. Stage 1's cases (an anonymous or absent requirement,
-// several alternatives, an unlisted key, and an alternative that needs a
-// credential) are kept.
+// Security selection: security requirements from the root and the operation,
+// the canonical key, one alternative selecting itself, several requiring a
+// setting, the preference semantics of Options.Security and
+// Options.SecurityKey against the exact Input.Security, the anonymous
+// alternative, Request.Security and Response.Security; also an anonymous or
+// absent requirement, several alternatives, an unlisted key, and an
+// alternative that needs a credential.
 
 const securityDoc = `{"openapi":"3.1.0","info":{"title":"t","version":"1"},"servers":[{"url":"@BASE@"}],"paths":{
 	"/open":{"get":{"operationId":"open"}},
@@ -250,8 +249,7 @@ func TestSecurityPreference(t *testing.T) {
 		// them. errors.go, RequestError.Settings: "Several security
 		// alternatives with none selected, or an Options.Security matching
 		// several that differ only in scopes, are keyed "Options.Security",
-		// the error naming Options.SecurityKey and Input.Security too"
-		// (stage 3 ledger, Q1).
+		// the error naming Options.SecurityKey and Input.Security too".
 		{key: "scopes", refused: []string{"Options.Security"}},
 		{key: "scopes", in: &openapi.Input{Security: `{"oauth":["write"]}`}, want: `{"oauth":["write"]}`},
 		// Input.Security overrides the preference.
@@ -300,7 +298,7 @@ func TestSecurityKeyPreference(t *testing.T) {
 // or SecurityKey that matches no alternative". errors.go,
 // RequestError.Settings: "A setting the document cannot use, or one that
 // conflicts with another, is keyed by its field ... SecurityKey set with
-// Security is keyed "Options.SecurityKey"" (stage 3 ledger, Q2).
+// Security is keyed "Options.SecurityKey"".
 func TestSecurityLoadRefusals(t *testing.T) {
 	base := "https://api.example.test"
 	for _, tt := range []struct {

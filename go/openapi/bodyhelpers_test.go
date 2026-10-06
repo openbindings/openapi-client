@@ -21,8 +21,8 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Shared apparatus for the stage 4 request-body tests: independent
-// references for form bytes, a multipart reader built on mime/multipart, a
+// Shared apparatus for the request-body tests: independent references for
+// form bytes, a multipart reader built on mime/multipart, a
 // server-sent events reader written from the HTML standard, and a server
 // that reports what it has received as it arrives, for the deterministic
 // streaming tests.
@@ -118,11 +118,11 @@ func hexByte(b byte) string {
 // application/x-www-form-urlencoded message bodies, and MUST be removed"),
 // derived as styleCfg.expect derives a query parameter (styles_test.go):
 // the RFC 6570 oracle for form, the OAS 3.1.2 table and text for
-// spaceDelimited, pipeDelimited and deepObject, with the stage 2 rulings on
-// undefined values. A field written as nothing is omitted (doc.go, Values:
-// "A form or multipart property or array item whose JSON data is null is
-// omitted, whatever its serialization"; an undefined value is omitted as an
-// undefined optional parameter is).
+// spaceDelimited, pipeDelimited and deepObject, with undefined values
+// settled as doc.go, Values says. A field written as nothing is omitted
+// (doc.go, Values: "A form or multipart property or array item whose JSON
+// data is null is omitted, whatever its serialization"; an undefined value
+// is omitted as an undefined optional parameter is).
 func styledField(t testing.TB, name, style string, explode, reserved bool, v any) (string, fate) {
 	t.Helper()
 	if v == nil {
@@ -196,10 +196,9 @@ func quoted(s string) string {
 // additional parameter of "name""; client.go, Part: "A part's name and
 // filename are written in its Content-Disposition as given, each as a
 // quoted-string with \ and " escaped, never as filename*"). Every named part
-// of every multipart type takes it, nested multipart included (stage 4
-// ledger, Q5; OAS 3.1.2 section 4.8.15.3: other multipart types may be
-// supported "when Content-Disposition: form-data is used with a name
-// parameter").
+// of every multipart type takes it, nested multipart included (OAS 3.1.2
+// section 4.8.15.3: other multipart types may be supported "when
+// Content-Disposition: form-data is used with a name parameter").
 func formData(name string, filename ...string) string {
 	s := "form-data; name=" + quoted(name)
 	for _, f := range filename {
@@ -313,9 +312,8 @@ func checkParts(t testing.TB, parts []mpart, want []wantPart) {
 }
 
 // wantLines checks a JSON Lines body: the items, each followed by "\n",
-// the last included (JSON Lines: "Line Separator is '\n'"; stage 4 ledger,
-// Q1: "every JSON Lines item is followed by "\n", the last included";
-// client.go, Input.Body: "a JSON Lines item is followed by LF").
+// the last included (JSON Lines: "Line Separator is '\n'"; client.go,
+// Input.Body: "a JSON Lines item is followed by LF").
 func wantLines(t testing.TB, body []byte, items ...string) {
 	t.Helper()
 	var want strings.Builder

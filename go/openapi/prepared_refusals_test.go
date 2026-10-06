@@ -13,12 +13,12 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Sources for these Stage 8 tests are the frozen public documentation saved
-// in stage-7/validation/static-8d469a7/openapi-api.log in the loop records.
-// Prepare (648-658), RequestError (1735-1803), and Configuration (136-158)
-// require actionable, independently detectable refusals without electing an
-// alternative. Example_whatIsMissing is the runnable flow below. A part's
-// content type is only determined after choosing the governing body media.
+// Sources for these tests are the package documentation. Prepare
+// (client.go), RequestError (errors.go), and Configuration when the document
+// is incomplete (doc.go) require actionable, independently detectable
+// refusals without electing an alternative. Example_whatIsMissing is the
+// runnable flow below. A part's content type is only determined after
+// choosing the governing body media.
 func TestPrepared8WhatIsMissingFlow(t *testing.T) {
 	w := newWire(t, typedAnswer(http.StatusCreated, "text/plain", "created"))
 	c, err := openapi.Parse(t.Context(), reportsYAML, "", nil)
@@ -137,10 +137,10 @@ func TestPrepared8WhatIsMissingFlow(t *testing.T) {
 	}
 }
 
-// RequestError.Settings (1736-1760) states exact keys for the three server
-// selector conflicts. Options.Server/ServerID/BaseURL (1354-1384) say how
-// clearing the named conflicting field makes the remaining selection usable.
-// Older TestLoadRefusesOptions checks refusal but intentionally no conflict key.
+// RequestError.Settings states exact keys for the three server selector
+// conflicts. Options.Server/ServerID/BaseURL say how clearing the named
+// conflicting field makes the remaining selection usable. Older
+// TestLoadRefusesOptions checks refusal but intentionally no conflict key.
 func TestPrepared8ServerConflictRepair(t *testing.T) {
 	doc := `{"openapi":"3.1.0","info":{"title":"t","version":"1"},"servers":[{"url":"https://a.example.test"},{"url":"https://b.example.test"}],"paths":{"/x":{"get":{"operationId":"get"}}}}`
 	c := parseAt(t, doc, "", testDocURI, nil)
@@ -176,10 +176,10 @@ func TestPrepared8ServerConflictRepair(t *testing.T) {
 	}
 }
 
-// Prepare (648-658), Input.Params (857-870), RequestError.Settings/Inputs
-// (1735-1773), and Error/Unwrap (1797-1803): failures of already-selected
-// configuration and independent parameter/part serialization must compose,
-// retain exact keys, and omit input values. RFC 6901 section 3 gives ~0/~1.
+// Prepare, Input.Params, RequestError.Settings/Inputs, and Error/Unwrap:
+// failures of already-selected configuration and independent parameter/part
+// serialization must compose, retain exact keys, and omit input values. RFC
+// 6901 section 3 gives ~0/~1.
 func TestPrepared8IndependentRefusalsRepair(t *testing.T) {
 	doc := `{"openapi":"3.1.0","info":{"title":"t","version":"1"},"servers":[{"url":"https://api.example.test/{tenant}","variables":{"tenant":{"default":"allowed","enum":["allowed"]}}}],"paths":{"/x/{id}":{"post":{"operationId":"post","security":[{"key":[]}],"parameters":[{"name":"id","in":"path","required":true,"schema":{"type":"string"}},{"name":"Input.Body","in":"query","required":true,"schema":{"type":"string"}},{"name":"X-Trace","in":"header","schema":{"type":"string"}}],"requestBody":{"content":{"multipart/form-data":{"encoding":{"file/name~":{"contentType":"text/plain"}}}}}}}},"components":{"securitySchemes":{"key":{"type":"apiKey","in":"header","name":"X-Key"}}}}`
 	var dispatches atomic.Int32

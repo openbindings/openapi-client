@@ -124,11 +124,11 @@ func TestCookieFieldConflicts(t *testing.T) {
 	mustCall(t, c, "cookieHeader", nil, nil)
 }
 
-// Stage 2 ledger, Q4 (doc.go, Fixed rules, Percent-encoding: cookie values
-// "encode every byte outside RFC 3986's unreserved set"; only "a cookie value
-// written as given that holds a ";" or a control character is refused"): an
-// OpenAPI 3.1 form-style cookie value holding a ";" or a control character
-// is percent-encoded, not refused.
+// An OpenAPI 3.1 form-style cookie value holding a ";" or a control
+// character is percent-encoded, not refused (doc.go, Fixed rules,
+// Percent-encoding: form-style cookie values "encode every byte outside RFC
+// 3986's unreserved set"; only "a cookie value written as given that holds a
+// ";" or a control character is refused").
 func TestCookieValuesEncoded(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, doc31(cookieDoc), nil)
@@ -158,13 +158,12 @@ func TestCookieValuesEncoded(t *testing.T) {
 	}
 }
 
-// Stage 2 ledger, Q8 (doc.go, Fixed rules, Cookies: "A required cookie
-// parameter is given in Params or by a writer; a Cookie field never supplies
-// it"): with a Cookie field in Input.Header or Options.Header and no value,
-// a required cookie parameter is missing, at Inputs[key]; the Cookie field
-// itself is not refused, since no cookie parameter is sent. A writer
-// supplies it; then the field is refused, as for any call that sends cookie
-// parameters.
+// doc.go, Fixed rules, Cookies: "A required cookie parameter is given in
+// Params or by a writer; a Cookie field never supplies it". With a Cookie
+// field in Input.Header or Options.Header and no value, a required cookie
+// parameter is missing, at Inputs[key]; the Cookie field itself is not
+// refused, since no cookie parameter is sent. A writer supplies it; then the
+// field is refused, as for any call that sends cookie parameters.
 func TestCookieFieldNeverSuppliesRequired(t *testing.T) {
 	w := newWire(t, nil)
 	doc := doc31(`"/r":{"get":{"operationId":"r","parameters":[{"name":"k","in":"cookie","required":true,"schema":{}}]}}`)

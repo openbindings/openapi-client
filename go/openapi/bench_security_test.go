@@ -14,12 +14,11 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Stage 3 benchmarks (brief, Tests: "a call with an apiKey header, with a
-// bearer SecretFunc, and a same-origin redirect, each against the same
-// request built by hand"; Budgets: "credential placement near hand-written
-// parity"). The in-memory ones resolve the client's own cost (stage 1
-// ledger, #29); the loopback redirect is the end-to-end check. Run with
-// -benchmem.
+// Credential benchmarks: a call with an apiKey header, with a bearer
+// SecretFunc, and a same-origin redirect, each against the same request
+// built by hand, so the cost of credential placement can be compared with
+// hand-written code. The in-memory ones resolve the client's own cost; the
+// loopback redirect is the end-to-end check. Run with -benchmem.
 
 // securedBenchDoc is benchDoc under root security that uses scheme, one of
 // "api_key" (an apiKey header X-API-Key) and "bearer" (http bearer).

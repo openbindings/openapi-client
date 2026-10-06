@@ -22,12 +22,12 @@ func (b *prepared8Tunnel) Close() error {
 	return b.closeErr
 }
 
-// Public contract: stage-7/validation/static-8d469a7/openapi-api.log,
-// Request.HTTP (1668-1683), Send (1712-1730), and doc.go (220-226).
-// A CONNECT operation uses caller-owned authority-form edits and retains
-// its transport's exact duplex Body. Stage 7's Tier 2 Close correction
-// (stage-7/ledger.md, "owner accepts one Tier 2 correction") explicitly
-// assigns raw tunnel Close behavior to that transport, including its error.
+// Public contract: Request.HTTP, Request.Send, and doc.go (Fixed rules,
+// Bodies by method). A CONNECT operation uses caller-owned authority-form
+// edits and retains its transport's exact duplex Body. Request.Send assigns
+// raw tunnel Close behavior to that transport, including its error:
+// "Closing an unchanged upgrade or tunnel body has the transport's
+// behavior".
 func TestPrepared8ConnectTunnelOwnership(t *testing.T) {
 	closeErr := errors.New("transport tunnel close")
 	body := &prepared8Tunnel{closeErr: closeErr}
@@ -77,10 +77,10 @@ func TestPrepared8ConnectTunnelOwnership(t *testing.T) {
 	}
 }
 
-// Public contract: the same saved API, Call no-body/empty rules (560-568)
-// and Response.Decode (1849-1864). Decode applies those rules to raw Send
-// responses at any status, without StatusError; a forbidden body supplied
-// by a custom transport must remain unread even if its media claims JSON.
+// Public contract: Call's no-body and empty-body rules and Response.Decode.
+// Decode applies those rules to raw Send responses at any status, without
+// StatusError; a forbidden body supplied by a custom transport must remain
+// unread even if its media claims JSON.
 func TestPrepared8DecodeNoBody(t *testing.T) {
 	doc := editionDoc("3.2.1", `"/x":{"get":{"operationId":"get"},"head":{"operationId":"head"},"additionalOperations":{"CONNECT":{"operationId":"connect"}}}`)
 	for _, tc := range []struct {

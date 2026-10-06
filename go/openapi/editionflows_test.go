@@ -11,8 +11,8 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Stage 6 applies the prior ordinary HTTP flows to every edition, including
-// real transport header/body handling, credential placement and decoding.
+// The ordinary HTTP flows in every edition, including real transport
+// header/body handling, credential placement and decoding.
 func TestEditionsHTTPFlows(t *testing.T) {
 	for _, version := range editionVersions {
 		t.Run(version, func(t *testing.T) {
@@ -49,9 +49,10 @@ func TestEditionsEnvironmentExample(t *testing.T) {
 	b.only(t)
 }
 
-// Schema's frozen handle rules: 2.0/3.0 follow root $ref while 3.1/3.2
-// retain the use site. Swagger nonbody parameters retain all schema fields,
-// without Parameter Object fields leaking into their Raw representation.
+// Schema's handle rules (describe.go, Schema: "A handle is the schema where
+// it is used"): 2.0/3.0 follow root $ref while 3.1/3.2 retain the use site.
+// Swagger nonbody parameters retain all schema fields, without Parameter
+// Object fields leaking into their Raw representation.
 func TestEditionsSchemaHandles(t *testing.T) {
 	for _, version := range editionVersions {
 		t.Run(version, func(t *testing.T) {

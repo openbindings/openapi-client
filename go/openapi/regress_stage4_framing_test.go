@@ -13,27 +13,25 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Regression tests for the stage 4 review round (stage 4 ledger, "Review
-// round (6917b84)"): class ruling C4-3, framing checks ("Framing checks
-// refuse every separator form common receivers recognize, which costs no
-// conformant content: with a given boundary, "--" + boundary at the start
-// of content or after a CR or LF; a media type with two boundary
-// parameters is refused; a pre-encoded JSON Lines item may not hold CR or
-// LF ...; an event id holding NUL cannot be encoded; event fields with
-// invalid UTF-8 are written as U+FFFD"); class ruling C4-4 ("Every Media a
-// call can select has its compiled plan"); findings F1, F8, F14, F20, F23,
-// F24, F26, F27, F30, A4, A9. client.go, Input.MediaType: "a boundary given
-// for a multipart body the client encodes is used, a part whose content
-// holds its delimiter, or "--" and the boundary after a CR or LF, being an
-// input that cannot be encoded (RFC 2046 section 5.1.1). A boundary in the
-// declared content key is used and checked the same way; an invalid one is
-// the Media's Err. Two boundary parameters are refused."
+// Regression tests for framing and media selection. Framing checks refuse
+// every separator form common receivers recognize, which costs no conformant
+// content: with a given boundary, "--" + boundary at the start of content or
+// after a CR or LF; a media type with two boundary parameters is refused; a
+// pre-encoded JSON Lines item may not hold CR or LF; an event id holding NUL
+// cannot be encoded; event fields with invalid UTF-8 are written as U+FFFD.
+// Every Media a call can select has its compiled plan. client.go,
+// Input.MediaType: "a boundary given for a multipart body the client encodes
+// is used, a part whose content holds its delimiter, or "--" and the
+// boundary after a CR or LF, being an input that cannot be encoded (RFC 2046
+// section 5.1.1). A boundary in the declared content key is used and checked
+// the same way; an invalid one is the Media's Err. Two boundary parameters
+// are refused."
 
-// C4-3 (F14): with a boundary the caller gives, content holding "--" and
-// the boundary after a lone LF or a lone CR is refused at its key before
-// sending, as after CRLF (receivers in wide use split parts at either); one
-// streamed from any reader ends the body as an upload error (stage 4
-// ledger, QQ3).
+// With a boundary the caller gives, content holding "--" and the boundary
+// after a lone LF or a lone CR is refused at its key before sending, as
+// after CRLF (receivers in wide use split parts at either); one streamed
+// from any reader, which is checked as it streams, ends the body as an
+// upload error.
 func TestC43LoneLineBreakDelimiters(t *testing.T) {
 	const mt = "multipart/form-data; boundary=b0und4ry"
 	w := newWire(t, nil)
@@ -90,11 +88,11 @@ func boundaryDoc() string {
 		key(`multipart/form-data; boundary=""`)))
 }
 
-// C4-3 (F23), F1: a boundary in the declared content key is used as given
-// and checked as a given one is; two boundary parameters, in Input.MediaType
-// or the content key, are refused (RFC 6838 section 4.3: a parameter given
-// more than once is an error), in Input.MediaType at Settings
-// ["Input.MediaType"] and in the key as the Media's Err.
+// A boundary in the declared content key is used as given and checked as a
+// given one is; two boundary parameters, in Input.MediaType or the content
+// key, are refused (RFC 6838 section 4.3: a parameter given more than once
+// is an error), in Input.MediaType at Settings ["Input.MediaType"] and in
+// the key as the Media's Err.
 func TestC43DeclaredAndDuplicateBoundaries(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, boundaryDoc(), nil)
@@ -130,13 +128,14 @@ func TestC43DeclaredAndDuplicateBoundaries(t *testing.T) {
 	})
 }
 
-// F1: an empty quoted boundary, given in Input.MediaType or declared in the
+// An empty quoted boundary, given in Input.MediaType or declared in the
 // content key, is refused, never a hang: Input.MediaType's at Settings
-// ["Input.MediaType"], the key's as the Media's Err (stage 4 ledger, F1: "a
-// declared multipart key with an invalid boundary sets Media.Err (a
-// document defect, not "Input.MediaType")"), with a nested multipart part
-// whose own boundary would be generated. At 6917b84 Prepare spun forever,
-// so the cases run in a child process under a 10 s guard.
+// ["Input.MediaType"], the key's as the Media's Err (client.go,
+// Input.MediaType: "A boundary in the declared content key is used and
+// checked the same way; an invalid one is the Media's Err"), a document
+// defect, not "Input.MediaType", with a nested multipart part whose own
+// boundary would be generated. Since a regression would make Prepare spin
+// forever, the cases run in a child process under a 10 s guard.
 func TestF1EmptyBoundaryRefused(t *testing.T) {
 	if !inChild(t) {
 		return
@@ -166,10 +165,10 @@ func TestF1EmptyBoundaryRefused(t *testing.T) {
 	refusedBeforeSending(t, w, resp, err)
 }
 
-// C4-3 (F24): a pre-encoded JSON Lines item may not hold a CR either
-// (client.go, Input.Body: "one holding the framing's separator (LF or CR,
-// or RS) cannot be encoded"), which some receivers end a line at: refused
-// at its key from a slice; from a reader, the body ends as an upload error.
+// A pre-encoded JSON Lines item may not hold a CR either (client.go,
+// Input.Body: "one holding the framing's separator (LF or CR, or RS) cannot
+// be encoded"), which some receivers end a line at: refused at its key from
+// a slice; from a reader, the body ends as an upload error.
 func TestC43JSONLinesItemHoldingCR(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, seqDoc(), nil)
@@ -203,16 +202,15 @@ func TestC43JSONLinesItemHoldingCR(t *testing.T) {
 	}
 }
 
-// C4-3 (F26, A9): an event id holding NUL cannot be encoded (HTML
-// standard, section 9.2.6, the id field: "If the field value does not
-// contain U+0000 NULL, then set the last event ID buffer to the field
-// value. Otherwise, ignore the field"; client.go, Input.Body: "a NUL in
-// id"), and an Event's invalid UTF-8 is written as U+FFFD, one per invalid
-// byte, as the object path's JSON data has it ("invalid UTF-8 is written as
-// U+FFFD, as an event stream is UTF-8"; HTML standard: "Event streams in
-// this specification must always be encoded as UTF-8"), a run of invalid
-// bytes as one U+FFFD each, as encoding/json writes it (stage 4 ledger,
-// RQ4).
+// An event id holding NUL cannot be encoded (HTML standard, section 9.2.6,
+// the id field: "If the field value does not contain U+0000 NULL, then set
+// the last event ID buffer to the field value. Otherwise, ignore the field";
+// client.go, Input.Body: "a NUL in id"), and an Event's invalid UTF-8 is
+// written as U+FFFD, one per invalid byte, as the object path's JSON data
+// has it ("invalid UTF-8 is written as U+FFFD, as an event stream is UTF-8";
+// HTML standard: "Event streams in this specification must always be encoded
+// as UTF-8"), a run of invalid bytes as one U+FFFD each, as encoding/json
+// writes it.
 func TestC43EventStreamNULAndUTF8(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, seqDoc(), nil)
@@ -268,8 +266,8 @@ func (indentCodec) Encode(w io.Writer, v any) error {
 }
 func (indentCodec) Decode(r io.Reader, v any) error { return json.NewDecoder(r).Decode(v) }
 
-// F8: a codec's output is framed after its trailing JSON whitespace (SP,
-// HTAB, LF, CR; RFC 8259 section 2: "JSON-text = ws value ws") is trimmed
+// A codec's output is framed after its trailing JSON whitespace (SP, HTAB,
+// LF, CR; RFC 8259 section 2: "JSON-text = ws value ws") is trimmed
 // (client.go, Input.Body: "a codec's output is framed after its trailing
 // JSON whitespace is trimmed"), so json.Encoder works under JSON Lines and
 // sequences; a separator left inside is refused at the item's key, with an
@@ -300,9 +298,11 @@ func TestF8CodecOutputFramed(t *testing.T) {
 	}
 }
 
-// F20 (with F7): a part typed application/x-www-form-urlencoded is encoded
-// by the client's form encoder, as a form body or content parameter is,
-// from the part's object and its schema's properties.
+// A part typed application/x-www-form-urlencoded is encoded by the
+// client's form encoder, as a form body or content parameter is, from the
+// part's object and its schema's properties (Options.Codecs: Load refuses a
+// key naming application/x-www-form-urlencoded, "whose framing and field
+// encoding stay the client's").
 func TestF20FormTypedPart(t *testing.T) {
 	doc := doc31(`"/p":{"post":{"operationId":"formPart","requestBody":{"content":{"multipart/form-data":{
 		"schema":{"type":"object","properties":{"a":{"type":"object","properties":{"k":{"type":"string"},"n":{"type":"integer"}}}}},
@@ -313,13 +313,12 @@ func TestF20FormTypedPart(t *testing.T) {
 	checkParts(t, parts, []wantPart{{disposition: formData("a"), ctype: "application/x-www-form-urlencoded", content: "k=v+w%26&n=1"}})
 }
 
-// F27 (T1, client.go, Input.Body: "A multipart object with no fields sends
-// the close delimiter alone ("--" boundary "--" CRLF), as browsers do"; stage
-// 4 ledger, RQ2: the WHATWG form-data algorithm, the body starting at the
-// dash-boundary as RFC 2046's multipart-body does): an empty object, one
-// whose every property is null, and a Part with nil Content (ledger, IP4-3:
-// omitted like null) each send exactly "--B--" CRLF, which mime/multipart
-// reads as no parts.
+// client.go, Input.Body: "A multipart object with no fields sends the close
+// delimiter alone ("--" boundary "--" CRLF), as browsers do" (the WHATWG
+// form-data algorithm, the body starting at the dash-boundary as RFC 2046's
+// multipart-body does): an empty object, one whose every property is null,
+// and a Part with nil Content (omitted like null) each send exactly "--B--"
+// CRLF, which mime/multipart reads as no parts.
 func TestF27EmptyMultipart(t *testing.T) {
 	const mt = "multipart/form-data; boundary=B"
 	w := newWire(t, nil)
@@ -336,9 +335,9 @@ func TestF27EmptyMultipart(t *testing.T) {
 	}
 }
 
-// F30 (stage 4 ledger, IP4-3: "Part.Header written canonical and sorted
-// after Content-Disposition and Content-Type"): sorted by the canonical
-// name written, whatever the caller's spelling.
+// Part.Header is written canonical and sorted, after Content-Disposition
+// and Content-Type: sorted by the canonical name written, whatever the
+// caller's spelling.
 func TestF30PartHeaderOrder(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, mpDoc(), nil)
@@ -357,14 +356,13 @@ func TestF30PartHeaderOrder(t *testing.T) {
 	}
 }
 
-// C4-4 (F3, A4): "Every Media a call can select has its compiled plan: a
-// declared range that covers a form or multipart type compiles an encoding
-// from its schema with no Encoding Object". A form or multipart type
-// selected under */* or application/*, by Input.MediaType or
-// Options.MediaType, encodes its body (its schema's types applying), never
-// a panic (OAS 3.1.2 section 4.8.13: a content key may be a media type
-// range; client.go, Input.MediaType: "a concrete type matching one the
-// operation declares").
+// Every Media a call can select has its compiled plan: a declared range that
+// covers a form or multipart type compiles an encoding from its schema with
+// no Encoding Object. A form or multipart type selected under */* or
+// application/*, by Input.MediaType or Options.MediaType, encodes its body
+// (its schema's types applying), never a panic (OAS 3.1.2 section 4.8.13: a
+// content key may be a media type range; client.go, Input.MediaType: "a
+// concrete type matching one the operation declares").
 func TestC44RangesSelectFormAndMultipart(t *testing.T) {
 	doc := doc31(`
 		"/a":{"post":{"operationId":"appRange","requestBody":{"content":{"application/*":{"schema":{"type":"object","properties":{"x":{"type":"string"},"n":{"type":"integer"}}}}}}}},

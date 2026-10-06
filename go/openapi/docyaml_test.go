@@ -13,7 +13,7 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// YAML documents (stage 5): the Loader's rules for reading a document,
+// YAML documents: the Loader's rules for reading a document,
 // stated in load.go, Loader: "A document whose first significant byte is
 // '{' is read as JSON and, if it is not JSON, as YAML; anything else is
 // read as YAML 1.2 under its Core schema, so yes and no stay strings, << is
@@ -181,9 +181,8 @@ func TestYAMLDetection(t *testing.T) {
 // schema, such as !!timestamp)"; "invalid UTF-8 rejects the document"; and
 // "A rejection names the document's URI and the line and column of the
 // problem, both counted from 1, the column in the document's own bytes ...;
-// a node's position is where it starts, its tag included" (stage 5 ledger,
-// SQ11). Keys are compared as the strings they spell, so 200 and "200" are
-// one key. Every column differs from the line, so naming the line alone
+// a node's position is where it starts, its tag included". Keys are
+// compared as the strings they spell, so 200 and "200" are one key. Every column differs from the line, so naming the line alone
 // never passes for naming the column.
 func TestYAMLRejections(t *testing.T) {
 	tests := []struct {
@@ -417,7 +416,7 @@ func TestDocumentEncodings(t *testing.T) {
 // Document, beyond float64 in range and precision, in YAML and in JSON
 // alike (describe.go, Schema.Raw: "a copy of the Schema Object exactly as
 // written, as JSON (from YAML if need be, as the Loader converts it)"). The
-// JSON case is a pin: stage 1 keeps numbers as written.
+// JSON case checks that a JSON document keeps numbers as written too.
 func TestDocumentNumbersExact(t *testing.T) {
 	schema := `{"type":"integer","maximum":18446744073709551615,"minimum":-123456789012345678901234567890,"multipleOf":0.1,"x-tiny":1e-400,"x-fine":1.000000000000000000001}`
 	jsonDoc := bare31(`"/n":{"get":{"operationId":"n","parameters":[{"name":"q","in":"query","schema":` + schema + `}]}}`)

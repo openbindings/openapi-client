@@ -8,10 +8,11 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// The owner feedback boundary preserves parts independent of the disproved
-// inference. This explicitly reached schema supplies BOTH its own absolute
-// $id and supported $schema (Core 8.2.1/8.1.1; Schema Base/Dialect), so neither
-// depends on the surrounding Parameter example. Partial resets are not tested.
+// Parts independent of a disproved inference remain usable (load.go, Loader:
+// "parts independent of that inference remain usable"). This explicitly
+// reached schema supplies BOTH its own absolute $id and supported $schema
+// (Core 8.2.1/8.1.1; Schema Base/Dialect), so neither depends on the
+// surrounding Parameter example. Partial resets are not tested.
 func TestReview9FeedbackPreservesIndependentNestedResource(t *testing.T) {
 	const bundle = "https://schemas.example.test/api/bundle.json"
 	const inferredCarrier = "https://schemas.example.test/api/data-only/carrier-openapi.json"

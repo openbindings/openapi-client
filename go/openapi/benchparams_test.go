@@ -13,14 +13,13 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Parameter benchmarks (stage 2 brief, Tests: "a query with several form
-// parameters, an exploded object, a deepObject, a matrix path, a JSON
-// content parameter, each against the same request built by hand with
-// net/url and strings.Builder"), over the in-memory transport of
-// bench_review_test.go (cannedRT), so the client's own cost is resolvable.
-// Each BenchmarkMemParamX has a BenchmarkMemParamXHand counterpart;
-// TestParamBenchRequestsMatch checks that the two send the same request.
-// Run with -benchmem.
+// Parameter benchmarks: a query with several form parameters, an exploded
+// object, a deepObject, a matrix path, a JSON content parameter, each against
+// the same request built by hand with net/url and strings.Builder, over the
+// in-memory transport of bench_review_test.go (cannedRT), so the client's own
+// cost is resolvable. Each BenchmarkMemParamX has a BenchmarkMemParamXHand
+// counterpart; TestParamBenchRequestsMatch checks that the two send the same
+// request. Run with -benchmem.
 
 const paramBenchDoc = `{"openapi":"3.1.0","info":{"title":"bench","version":"1"},"servers":[{"url":"@BASE@"}],"paths":{
 	"/search":{"get":{"operationId":"search","parameters":[

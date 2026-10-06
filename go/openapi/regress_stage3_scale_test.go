@@ -9,10 +9,9 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Regression tests for the stage 3 review round, cost (stage 3 ledger,
-// "Review round (8101e19)"): F5 (retained memory of a secured operation)
-// and F17 (per-call selection cost). The harness is in
-// regress2_scale_test.go.
+// Regression tests for security cost: the retained memory of a secured
+// operation and the per-call cost of selecting an alternative. The harness
+// is in regress2_scale_test.go.
 
 // fourParamOps returns a document of n operations, each with a path, two
 // query and a header parameter, under root security with one apiKey header
@@ -34,11 +33,11 @@ func fourParamOps(n int, secured bool) []byte {
 	return []byte(b.String())
 }
 
-// F5: "derive destinations from shape()'s map; retain nothing extra per
-// secured operation" (panel F5: o.dests kept about 400 bytes per secured
-// operation for a parameter-credential collision real documents almost never
-// have). Dev loop, "Hostile-input cost is a standing gate": every compiled
-// form is computed at most once per document node. The same operations
+// Credential destinations are derived from the parameter shape map already
+// compiled, so a secured operation retains nothing extra for a
+// parameter-credential collision real documents almost never have. Every
+// compiled form is computed at most once per document node. The same
+// operations
 // retain the same memory, give or take noise, with root security as
 // without; the root's alternatives are shared.
 func TestSecuredOperationsRetainNothingExtra(t *testing.T) {
@@ -76,10 +75,9 @@ func identicalAlternatives(n int) []byte {
 	return []byte(b.String())
 }
 
-// F17: "whether one alternative selects itself is decided at plan time
-// (P1)" (panel F17: each call compared every alternative's key, about 20 ns
-// per alternative on every call). Dev loop, P1: "every compiled or decoded
-// form is computed at most once per document node". doc.go, Configuration:
+// Whether one alternative selects itself is decided when the operation is
+// compiled, not on every call: every compiled or decoded form is computed at
+// most once per document node. doc.go, Configuration:
 // "One security alternative selects itself", and identical alternatives are
 // one. Preparing the call after the operation is compiled costs the same
 // whatever the number of copies: sixteen times the copies may cost at most

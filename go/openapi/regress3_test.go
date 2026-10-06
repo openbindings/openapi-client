@@ -14,9 +14,9 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Regression tests for the stage 1 verification pass (ledger, "Verification
-// pass"; verify/panel.json "#N"): class rulings P1 to P3, fixes H1 to H10,
-// and the server variable rule T1-23.
+// Regression tests for the cost of shared document nodes, server variable
+// placement, body completion with a transport that reads asynchronously,
+// error key quoting, and Load URI refusals.
 
 // sharedOperation returns a document with n Paths entries, each a $ref to
 // one Path Item whose single operation holds m servers, m query parameters
@@ -68,17 +68,17 @@ func sharedOperation(n, m int, kind string) []byte {
 	return []byte(b.String())
 }
 
-// H1 and P1 (ledger: "every compiled or decoded form is computed at most
-// once per document node"; H1: "compile each Operation Object node once and
-// share its path-independent parts"): N Paths entries sharing one Operation
-// Object with M servers, parameters or response media types cost
-// Operations() time and retained memory linear in the document, N and M
-// growing together; the first Call too.
+// Every compiled or decoded form is computed at most once per document node:
+// each Operation Object node is compiled once and its path-independent parts
+// are shared. N Paths entries sharing one Operation Object with M servers,
+// parameters or response media types cost Operations() time and retained
+// memory linear in the document, N and M growing together; the first Call
+// too.
 func TestH1SharedOperationObject(t *testing.T) {
 	for _, kind := range []string{"servers", "params", "media"} {
-		// Compiling the shared Operation Object once per Paths entry made
-		// N times M compiled parts: checked on allocations (stage 2 ledger,
-		// test maintenance), which quadrupled 16 times before the fix.
+		// Compiling the shared Operation Object once per Paths entry would
+		// make N times M compiled parts, so quadrupling N and M would
+		// multiply allocations by 16: checked on allocations.
 		wantLinearAllocs(t, kind+": Operations()", 125, func(n int) func() {
 			return timedOperations(t, sharedOperation(n, n, kind))
 		})
@@ -113,9 +113,9 @@ func TestH1SharedOperationObject(t *testing.T) {
 	}
 }
 
-// H5 (ledger: "checkNames once per node"): Load with Options.Server or
-// Options.MediaType that no server or media type matches, over the H1
-// fan-in document, checks each shared Operation Object once.
+// checkNames runs once per node: Load with Options.Server or
+// Options.MediaType that no server or media type matches, over the
+// sharedOperation document, checks each shared Operation Object once.
 func TestH5LoadChecksScale(t *testing.T) {
 	refused := func(doc []byte, opts func() *openapi.Options) func() {
 		return func() {
@@ -137,11 +137,11 @@ func TestH5LoadChecksScale(t *testing.T) {
 // escapedQuotes returns n bytes of escaped quotes: \" repeated.
 func escapedQuotes(n int) string { return strings.Repeat(`\"`, n/2) }
 
-// H2 (ledger: "str consults the decoded cache before scanning; name
-// comparison reads forward only as far as the key"): strings made of escaped
-// quotes, as long member names on the path to $ref targets and as a shared
-// description, cost Parse and Operations() linear in the document when the
-// strings and the references grow together.
+// str consults the decoded cache before scanning, and name comparison reads
+// forward only as far as the key: strings made of escaped quotes, as long
+// member names on the path to $ref targets and as a shared description, cost
+// Parse and Operations() linear in the document when the strings and the
+// references grow together.
 func TestH2EscapedQuoteStrings(t *testing.T) {
 	names := func(k int, refs bool) []byte {
 		var b strings.Builder
@@ -190,12 +190,12 @@ func varDoc(url string, defaults map[string]string) string {
 		strings.Join(vars, ",") + `}}],"paths":{"/x":{"get":{"operationId":"op"}}}}`
 }
 
-// H3, P2 and T1-23 (client.go, Options.Variables: "Each variable is placed
-// by where its default falls in the URL with every default substituted. A
-// variable whose default spans "://" supplies a whole URL and is not
-// restricted. Otherwise a value may change only its own part"). Each
-// refusal is keyed Options.Variables["<name>"] (at Load or at the call),
-// and nothing is sent, to the document's host or to the host a value names.
+// client.go, Options.Variables: "Each variable is placed by where its default
+// falls in the URL with every default substituted. A variable whose default
+// spans "://" ... supplies a whole URL and is not restricted. ... Otherwise a
+// value may change only its own part". Each refusal is keyed
+// Options.Variables["<name>"] (at Load or at the call), and nothing is sent,
+// to the document's host or to the host a value names.
 func TestH3VariablesByPart(t *testing.T) {
 	home, evil := newWire(t, nil), newWire(t, nil)
 	evilHost := evil.hostport()
@@ -256,8 +256,8 @@ func TestH3VariablesByPart(t *testing.T) {
 		{"whole URL", "{endpoint}/v1", map[string]string{"endpoint": "https://api.example/x"}, "endpoint", "@BASE@/e", "@BASE@/e/v1/x", true},
 		// A path value.
 		{"basePath", "{scheme}://{host}{basePath}", map[string]string{"scheme": "http", "host": "@HOSTPORT@", "basePath": "/v1"}, "basePath", "/v2", "@BASE@/v2/x", true},
-		// An authority value may change the host: by rule; an enum is the
-		// document's restriction (ledger P2).
+		// An authority value may change the host; an enum is the
+		// document's restriction (client.go, Options.Variables).
 		{"host moved by an authority value", "http://{host}/v1", map[string]string{"host": "api.example.test"}, "host", "@HOSTPORT@", "@BASE@/v1/x", true},
 		{"domain labels appended", "https://api.example.test{port}", map[string]string{"port": ":443"}, "port", ".attacker.test", "https://api.example.test.attacker.test/x", false},
 	}
@@ -281,11 +281,11 @@ func TestH3VariablesByPart(t *testing.T) {
 	}
 }
 
-// H6 and P3 (ledger: "Every body goes through the reporting reader with the
-// T1-18 known-length rule"): a registered alternative-protocol transport
-// that reads and closes the body in a goroutine after RoundTrip returns, as
-// the http.RoundTripper contract allows, causes no data race (run with
-// -race), and WaitRequest and Call report what it actually consumed.
+// Every body goes through the reporting reader with the known-length rule of
+// Response.WaitRequest: a registered alternative-protocol transport that
+// reads and closes the body in a goroutine after RoundTrip returns, as the
+// http.RoundTripper contract allows, causes no data race (run with -race),
+// and WaitRequest and Call report what it actually consumed.
 func TestH6AsyncRegisteredProtocol(t *testing.T) {
 	type async struct {
 		wg   sync.WaitGroup
@@ -353,9 +353,9 @@ func TestH6AsyncRegisteredProtocol(t *testing.T) {
 	}
 }
 
-// H7 (ledger: "ErrNoOperation's key list quoted like other keys"): a Paths
-// key holding a newline appears quoted in the error listing the operations
-// that share an operationId.
+// ErrNoOperation's key list is quoted like other keys: a Paths key holding
+// a newline appears quoted in the error listing the operations that share
+// an operationId.
 func TestH7NoOperationListQuoted(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, doc31(`"/a\nlevel=ERROR msg=forged":{"get":{"operationId":"dup"}},"/b":{"get":{"operationId":"dup"}}`), nil)
@@ -373,12 +373,12 @@ func TestH7NoOperationListQuoted(t *testing.T) {
 	w.nothingSent(t)
 }
 
-// H8 (ledger: "the known-length rule applies to a caller-set body when the
-// request declares ContentLength"; client.go, Request.HTTP: a caller who
-// replaces the body sets GetBody and ContentLength with it, or clears
-// GetBody; T1-18): a transport that reads exactly the declared length and
-// closes has consumed the body completely; a body shorter than its declared
-// length has not.
+// The known-length rule applies to a caller-set body when the request
+// declares ContentLength (client.go, Request.HTTP: a caller who replaces the
+// body sets GetBody and ContentLength with it, or clears GetBody;
+// Response.WaitRequest): a transport that reads exactly the declared length
+// and closes has consumed the body completely; a body shorter than its
+// declared length has not.
 func TestH8CallerSetBodyKnownLength(t *testing.T) {
 	var got int
 	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
@@ -426,9 +426,10 @@ func TestH8CallerSetBodyKnownLength(t *testing.T) {
 	}
 }
 
-// H9 (ledger: "a Load URI with leading or trailing whitespace is refused
-// (not a path)"): no password in the text, and Loader.Fetch is not called
-// (T2-3; doc.go, Outcomes).
+// A Load URI with leading or trailing whitespace is refused, not read as a
+// path: no password in the text, and Loader.Fetch is not called (Load: a uri
+// with userinfo is refused, as RFC 9110 section 4.2.4 forbids a sender to
+// generate it; doc.go, Outcomes).
 func TestH9PaddedLoadURI(t *testing.T) {
 	for _, uri := range []string{
 		" https://u:s3cret@127.0.0.1:1/x",
@@ -461,8 +462,8 @@ func TestH9PaddedLoadURI(t *testing.T) {
 	}
 }
 
-// H10 (ledger: "an unusable server from Variables values is keyed
-// Options.Variables["<name>"], not Options.BaseURL"): values that make the
+// An unusable server from Variables values is keyed
+// Options.Variables["<name>"], not Options.BaseURL: values that make the
 // server URL unusable are refused at their key, with nothing sent.
 func TestH10UnusableServerFromValues(t *testing.T) {
 	w := newWire(t, nil)
@@ -492,12 +493,12 @@ func TestH10UnusableServerFromValues(t *testing.T) {
 	}
 }
 
-// T1-24 (refines T1-23; client.go, Options.Variables: "A variable whose
-// default spans "://", or that is the whole URL template, supplies a whole
-// URL and is not restricted. An empty default at the boundary between two
-// parts may take a value belonging to either"). Where a value is refused it
-// is keyed Options.Variables["<name>"] (at Load or at the call), and
-// nothing is sent, to the test server or to a host the value names.
+// client.go, Options.Variables: "A variable whose default spans "://", or
+// that is the whole URL template, supplies a whole URL and is not restricted.
+// An empty default at the boundary between two parts may take a value
+// belonging to either". Where a value is refused it is keyed
+// Options.Variables["<name>"] (at Load or at the call), and nothing is sent,
+// to the test server or to a host the value names.
 func TestT1_24WholeTemplateAndBoundaryVariables(t *testing.T) {
 	w, evil := newWire(t, nil), newWire(t, nil)
 	host, port, _ := strings.Cut(w.hostport(), ":")

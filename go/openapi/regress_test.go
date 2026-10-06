@@ -21,9 +21,8 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Regression tests for the stage 1 review round. Each test names the fix
-// it holds (Fn, stage 1 ledger, "Review round") and the contract line or
-// specification section it checks; Tn-n are the ledger's doc refreshes.
+// Regression tests. The comment on each test names the contract line or
+// specification section it checks.
 
 // inChild runs the calling test in a child process of the test binary and
 // fails it when the child fails or crashes, so that a crash (a fatal stack
@@ -93,11 +92,11 @@ type cycleNode struct {
 	Next *cycleNode `json:"next"`
 }
 
-// F1 (#1, A1): a cyclic Body is refused as json.Marshal refuses it, at
+// A cyclic Body is refused as json.Marshal refuses it, at
 // Inputs["Input.Body"] (client.go, Options.Codecs: "An Encode error refuses
-// the call at the body's ... Inputs key"), never a crash. F24: the
-// encoding error keeps its cause for errors.As. Run in a child process: the
-// failure mode is a fatal stack overflow.
+// the call at the body's ... Inputs key"), never a crash, and the encoding
+// error keeps its cause for errors.As. Run in a child process: the failure
+// mode is a fatal stack overflow.
 func TestF1CyclicBody(t *testing.T) {
 	if !inChild(t) {
 		return
@@ -155,12 +154,12 @@ type skipped struct {
 	Name string    `json:"name"`
 }
 
-// F1 (#1, A1): the reader walk follows encoding/json's field rules. A
-// reader encoding/json would not write is no refusal, and the body is sent
-// as encoding/json writes it; a reader it would write is refused at its
-// place, a TextMarshaler key named by its text (client.go, Input.Body: "A
-// Part or io.Reader inside a JSON value is refused with an Inputs entry at
-// its place in Body").
+// The reader walk follows encoding/json's field rules. A reader
+// encoding/json would not write is no refusal, and the body is sent as
+// encoding/json writes it; a reader it would write is refused at its place,
+// a TextMarshaler key named by its text (client.go, Input.Body: "A Part or
+// io.Reader inside a JSON value is refused with an Inputs entry at its place
+// in Body").
 func TestF1ReaderWalkFollowsEncodingJSON(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, doc31(jsonBodyOp), nil)
@@ -206,12 +205,12 @@ func TestF1ReaderWalkFollowsEncodingJSON(t *testing.T) {
 	}
 }
 
-// F3 (#3): the Paths key's literal text is percent-encoded once, so the
-// path is always a valid escaped path and a value's encoding survives
-// (doc.go, Fixed rules, Percent-encoding; RFC 3986 section 3.3: pchar is
-// unreserved, pct-encoded, sub-delims, ":" and "@"). A valid %XX triple in
-// the key is kept; any other byte outside pchar is encoded, in uppercase
-// hex (RFC 3986 section 2.1).
+// The Paths key's literal text is percent-encoded once, so the path is
+// always a valid escaped path and a value's encoding survives (doc.go, Fixed
+// rules, Percent-encoding; RFC 3986 section 3.3: pchar is unreserved,
+// pct-encoded, sub-delims, ":" and "@"). A valid %XX triple in the key is
+// kept; any other byte outside pchar is encoded, in uppercase hex (RFC 3986
+// section 2.1).
 func TestF3PathTemplateLiterals(t *testing.T) {
 	const value = "x/y;z"
 	tests := []struct{ key, want string }{
@@ -243,7 +242,7 @@ func TestF3PathTemplateLiterals(t *testing.T) {
 		})
 	}
 
-	// The same for a server URL's path (ledger F3: "same for a server path").
+	// The same holds for a server URL's path.
 	w := newWire(t, nil)
 	doc := `{"openapi":"3.1.0","info":{"title":"t","version":"1"},"servers":[{"url":"@BASE@/café"}],
 		"paths":{"/{id}":{"get":{"operationId":"op","parameters":[{"name":"id","in":"path","required":true,"schema":{}}]}}}}`
@@ -253,9 +252,9 @@ func TestF3PathTemplateLiterals(t *testing.T) {
 	}
 }
 
-// F4 (#4, A2): server usability is judged on the substituted values; only
-// a defect independent of the values sets Server.Err (describe.go,
-// Server.Err; OAS 3.1.2 section 4.8.5, whose own example uses {port}).
+// Server usability is judged on the substituted values; only a defect
+// independent of the values sets Server.Err (describe.go, Server.Err; OAS
+// 3.1.2 section 4.8.5, whose own example uses {port}).
 func TestF4ServerUsabilityOnValues(t *testing.T) {
 	w := newWire(t, nil)
 	host, port, _ := net.SplitHostPort(w.hostport())
@@ -314,10 +313,10 @@ func TestF4ServerUsabilityOnValues(t *testing.T) {
 	}
 }
 
-// F5 (#5, A5) and T1-5: out must be "a non-nil *[]byte" (client.go, Call);
-// a nil one is refused before sending. Response.Decode and
-// StatusError.Decode report it as a *DecodeError (client.go, Response.Decode:
-// "An invalid out is a *DecodeError without consuming or closing Body").
+// Call's out must be "a non-nil *[]byte" (client.go, Call); a nil one is
+// refused before sending. Response.Decode and StatusError.Decode report it
+// as a *DecodeError (client.go, Response.Decode: "An invalid out is a
+// *DecodeError without consuming or closing Body").
 func TestF5NilBytePointerOut(t *testing.T) {
 	w := newWire(t, jsonAnswer(200, `{"a":1}`))
 	c := parseFor(t, w, doc31(`"/x":{"post":{"operationId":"create"}}`), &openapi.Options{MaxErrorBytes: 4})
@@ -358,14 +357,14 @@ func TestF5NilBytePointerOut(t *testing.T) {
 	}
 }
 
-// F9 (#9, A11): a (location, style) pair OAS 3.1.2 section 4.8.12.3 (Style
-// Values) does not allow is a document defect on Param.Err, not a missing
-// feature (errors.ErrUnsupported), and fails a call only when the call uses
-// the parameter (describe.go, Operation.Err: "A defect in an optional part
-// is reported on that part instead"). Since stage 2 every valid pair is
-// serialized, so its Param.Err is nil; explode false, since explode true
-// with spaceDelimited or pipeDelimited is an undefined combination (doc.go,
-// Fixed rules, Styles; TestStyleRefusals).
+// A (location, style) pair OAS 3.1.2 section 4.8.12.3 (Style Values) does
+// not allow is a document defect on Param.Err, not a missing feature
+// (errors.ErrUnsupported), and fails a call only when the call uses the
+// parameter (describe.go, Operation.Err: "A defect in an optional part is
+// reported on that part instead"). Every valid pair is serialized, so its
+// Param.Err is nil; explode false, since explode true with spaceDelimited or
+// pipeDelimited is an undefined combination (doc.go, Fixed rules, Styles;
+// TestStyleRefusals).
 func TestF9StyleLocationPairs(t *testing.T) {
 	w := newWire(t, nil)
 	invalid := []struct{ path, in, style string }{
@@ -420,9 +419,9 @@ func TestF9StyleLocationPairs(t *testing.T) {
 	}
 }
 
-// F10 (#10, A7): an undeclared key is refused however often the template
-// names a parameter (client.go, Input.Params: "A key the operation does not
-// declare ... refuses the call").
+// An undeclared key is refused however often the template names a parameter
+// (client.go, Input.Params: "A key the operation does not declare ...
+// refuses the call").
 func TestF10RepeatedTemplateVariable(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, doc31(`"/a/{id}/b/{id}":{"get":{"operationId":"op","parameters":[{"name":"id","in":"path","required":true,"schema":{}}]}}`), nil)
@@ -435,12 +434,12 @@ func TestF10RepeatedTemplateVariable(t *testing.T) {
 	}
 }
 
-// F11 (#11) and T2-3: a Load or Parse URI with userinfo is refused (load.go,
-// Load: "one with userinfo, which RFC 9110 section 4.2.4 forbids a sender
-// to generate"), before anything is fetched, and the password never
-// appears in error text (doc.go, Outcomes: "No credential appears in the
-// text of an error the client creates"). A BaseURL that fails to parse is
-// refused without quoting its userinfo.
+// A Load or Parse URI with userinfo is refused (load.go, Load: "one with
+// userinfo, which RFC 9110 section 4.2.4 forbids a sender to generate"),
+// before anything is fetched, and the password never appears in error text
+// (doc.go, Outcomes: "No credential appears in the text of an error the
+// client creates"). A BaseURL that fails to parse is refused without quoting
+// its userinfo.
 func TestF11Userinfo(t *testing.T) {
 	w := newWire(t, typedAnswer(200, "application/json", string(readPets(t))))
 	withUser := strings.Replace(w.URL, "http://", "http://user:s3cret@", 1) + "/openapi.json"
@@ -469,12 +468,12 @@ func TestF11Userinfo(t *testing.T) {
 	}
 }
 
-// F12 (#12, #40, A10), T1-1 and the Inputs doc (errors.go): header names
-// must be RFC 9110 tokens (section 5.1) and values cannot carry CR, LF, NUL,
-// other controls, or leading or trailing whitespace (section 5.5); each is
-// refused before sending at its key: the header parameter's Param.Key, or
-// the Header that set it. Input.MediaType is validated as a media type
-// (section 8.3.1, parameters quoted as section 5.6.4 says).
+// Header names must be RFC 9110 tokens (section 5.1) and values cannot carry
+// CR, LF, NUL, other controls, or leading or trailing whitespace (section
+// 5.5); each is refused before sending at its key (errors.go, RequestError):
+// the header parameter's Param.Key, or the Header that set it.
+// Input.MediaType is validated as a media type (section 8.3.1, parameters
+// quoted as section 5.6.4 says).
 func TestF12HeaderFieldValidation(t *testing.T) {
 	w := newWire(t, nil)
 	doc := doc31(`"/h":{"get":{"operationId":"h","parameters":[{"name":"X-V","in":"header","schema":{}},{"name":"X C","in":"header","schema":{}}]}},
@@ -565,10 +564,10 @@ func TestF12HeaderFieldValidation(t *testing.T) {
 	})
 }
 
-// F17 (#19): an empty servers array on either side of a Path Item $ref is
-// read as absent (doc.go, Fixed rules, URL: "An empty servers array on a
-// path item or operation ... [is] read as absent"; describe.go, Operation:
-// "a field on one side only is used").
+// An empty servers array on either side of a Path Item $ref is read as
+// absent (doc.go, Fixed rules, URL: "An empty servers array on a path item
+// or operation ... [is] read as absent"; describe.go, Operation: "a field on
+// one side only is used").
 func TestF17EmptyServersBesideRef(t *testing.T) {
 	w := newWire(t, nil)
 	doc := bare31(`"/a":{"$ref":"#/components/pathItems/A","servers":[]},
@@ -591,11 +590,11 @@ func TestF17EmptyServersBesideRef(t *testing.T) {
 	}
 }
 
-// F18 (#20) and T1-6: "a server with a variable that has none [no default]
-// is not usable until Options.Variables gives it a value" (doc.go,
-// Configuration), so the one other server selects itself; with the value,
-// both are usable and the call needs a selection, keyed Options.Server
-// (errors.go, RequestError.Settings).
+// "A server with a variable that has none [no default] is not usable until
+// Options.Variables gives it a value" (doc.go, Configuration), so the one
+// other server selects itself; with the value, both are usable and the call
+// needs a selection, keyed Options.Server (errors.go,
+// RequestError.Settings).
 func TestF18DefaultlessVariableUnusable(t *testing.T) {
 	w := newWire(t, nil)
 	for name, second := range map[string]string{
@@ -618,9 +617,9 @@ func TestF18DefaultlessVariableUnusable(t *testing.T) {
 	}
 }
 
-// F19 (#21) and T1-7: "A *string and a *any take any text/* type as text,
-// whatever its codec class (text/xml and text/event-stream included): a
-// *string its bytes as sent ... and a *any a string" (client.go, Call).
+// "A *string and a *any take any text/* type as text, whatever its codec
+// class (text/xml and text/event-stream included): a *string its bytes as
+// sent ... and a *any a string" (client.go, Call).
 func TestF19TextXMLAsText(t *testing.T) {
 	body := `<a>hi<b>x</b></a>`
 	for _, ct := range []string{"text/xml", "text/xml; charset=utf-8", "text/event-stream"} {
@@ -639,10 +638,10 @@ func TestF19TextXMLAsText(t *testing.T) {
 	}
 }
 
-// Review addition (#26): the XML charset paths. client.go, Call: encoding/xml
-// "reads UTF-8, US-ASCII and ISO-8859-1 documents, taking the encoding from
-// a byte order mark, else the Content-Type's charset, else the document's
-// own declaration"; any other is a *DecodeError.
+// The XML charset paths. client.go, Call: encoding/xml "reads UTF-8,
+// US-ASCII and ISO-8859-1 documents, taking the encoding from a byte order
+// mark, else the Content-Type's charset, else the document's own
+// declaration"; any other is a *DecodeError.
 func TestXMLCharsets(t *testing.T) {
 	tests := []struct {
 		name, ct, body string
@@ -677,8 +676,8 @@ func TestXMLCharsets(t *testing.T) {
 	}
 }
 
-// F20 (A9): a "~" not followed by "0" or "1" makes a JSON Pointer invalid
-// (RFC 6901 section 3), in Client.Document and in references.
+// A "~" not followed by "0" or "1" makes a JSON Pointer invalid (RFC 6901
+// section 3), in Client.Document and in references.
 func TestF20InvalidPointerEscape(t *testing.T) {
 	doc := bare31(`"/ok":{"get":{"operationId":"ok","parameters":[{"$ref":"#/components/parameters/a~02b"}]}},
 		"/bad":{"get":{"operationId":"bad","parameters":[{"$ref":"#/components/parameters/a~2b"}]}}`,
@@ -698,10 +697,10 @@ func TestF20InvalidPointerEscape(t *testing.T) {
 	}
 }
 
-// F21 (A10): media specificity is compared by type specificity first, then
-// parameter count (client.go, Response.Media: "a concrete type over type/*,
-// type/* over */*, then more parameters over fewer"), so no number of
-// parameters lets a range beat a concrete type.
+// Media specificity is compared by type specificity first, then parameter
+// count (client.go, Response.Media: "a concrete type over type/*, type/*
+// over */*, then more parameters over fewer"), so no number of parameters
+// lets a range beat a concrete type.
 func TestF21MediaSpecificityOrder(t *testing.T) {
 	var params strings.Builder
 	for i := range 1001 {
@@ -722,10 +721,10 @@ func TestF21MediaSpecificityOrder(t *testing.T) {
 	}
 }
 
-// F24 (#31, A8, #46): raw document text is quoted in error text, so a
-// hostile document cannot forge a log line, and a caller's value never
-// appears (errors.go, RequestError.Error: "never a credential or an input's
-// value"); an encoding error keeps its cause.
+// Raw document text is quoted in error text, so a hostile document cannot
+// forge a log line, and a caller's value never appears (errors.go,
+// RequestError.Error: "never a credential or an input's value"); an encoding
+// error keeps its cause.
 func TestF24ErrorTextSafety(t *testing.T) {
 	w := newWire(t, nil)
 	doc := doc31(`"/x\n{a\nFAKE: line}":{"get":{"operationId":"forged"}},
@@ -764,8 +763,8 @@ func TestF24ErrorTextSafety(t *testing.T) {
 	w.nothingSent(t)
 }
 
-// F25 (#32) and T2-4: "a file URL naming a host other than localhost is
-// refused" (load.go, Load; RFC 8089 section 2).
+// A file URL naming a host other than localhost is refused (load.go, Load;
+// RFC 8089 section 2).
 func TestF25FileURLHost(t *testing.T) {
 	abs, _ := filepath.Abs("testdata/pets.json")
 	p := filepath.ToSlash(abs)
@@ -777,9 +776,9 @@ func TestF25FileURLHost(t *testing.T) {
 	}
 }
 
-// F26 (#33): an invalid media key is not a codec class, so it forces no
-// Accept (client.go, Call: a typed out is refused only when 2xx responses
-// "declare concrete media types of more than one codec class").
+// An invalid media key is not a codec class, so it forces no Accept
+// (client.go, Call: a typed out is refused only when 2xx responses "declare
+// concrete media types of more than one codec class").
 func TestF26InvalidMediaKeyNoClass(t *testing.T) {
 	w := newWire(t, jsonAnswer(200, `{"a":1}`))
 	c := parseFor(t, w, doc31(`"/a":{"get":{"operationId":"op","responses":{"200":{"description":"ok","content":{"application/json":{},"json":{}}}}}}`), nil)
@@ -787,9 +786,9 @@ func TestF26InvalidMediaKeyNoClass(t *testing.T) {
 	mustCall(t, c, "op", nil, &out)
 }
 
-// F27 (#34) and T1-9: "It is nil when the operation declares nothing for
-// the status, or the status is outside 100 to 599" (client.go,
-// Response.Declaration), even with a "default".
+// "It is nil when the operation declares nothing for the status, or the
+// status is outside 100 to 599" (client.go, Response.Declaration), even with
+// a "default".
 func TestF27StatusOutsideRange(t *testing.T) {
 	doc := doc31(`"/a":{"get":{"operationId":"op","responses":{"200":{"description":"ok"},"2xx":{"description":"bad key"},"default":{"description":"other"}}}}`)
 	for _, status := range []string{"099", "000", "600", "999"} {
@@ -807,9 +806,9 @@ func TestF27StatusOutsideRange(t *testing.T) {
 	}
 }
 
-// F28 (#35): a server URL with no host, or ending in "#", cannot be used
-// (doc.go, Fixed rules, URL); the call is refused before sending rather
-// than failing in the transport, and BaseURL "http://h/#" is refused.
+// A server URL with no host, or ending in "#", cannot be used (doc.go, Fixed
+// rules, URL); the call is refused before sending rather than failing in the
+// transport, and BaseURL "http://h/#" is refused.
 func TestF28HostlessAndEmptyFragment(t *testing.T) {
 	for _, u := range []string{"https:///v1", "https:v1", "https://api.example.test/v#"} {
 		t.Run(u, func(t *testing.T) {
@@ -826,11 +825,11 @@ func TestF28HostlessAndEmptyFragment(t *testing.T) {
 	wantKeys(t, "Settings", asRequestError(t, err).Settings, false, "Options.BaseURL")
 }
 
-// F29 (#36): Load checks Server and Variables against every server of the
-// document (load.go, Load: "a Server or ServerID that matches no server";
-// client.go, Options.Variables: "A name that appears in no server URL of
-// the document is refused by Load"), root servers every operation overrides
-// and documents without operations included.
+// Load checks Server and Variables against every server of the document
+// (load.go, Load: "a Server or ServerID that matches no server"; client.go,
+// Options.Variables: "A name that appears in no server URL of the document
+// is refused by Load"), root servers every operation overrides and documents
+// without operations included.
 func TestF29LoadChecksEveryServer(t *testing.T) {
 	componentsOnly := `{"openapi":"3.1.0","info":{"title":"t","version":"1"},"servers":[{"url":"https://api.example.test/{v}","variables":{"v":{"default":"1"}}}],"components":{}}`
 	if _, err := openapi.Parse(t.Context(), []byte(componentsOnly), testDocURI,
@@ -846,9 +845,9 @@ func TestF29LoadChecksEveryServer(t *testing.T) {
 	}
 }
 
-// F30 (#37): Specification Extensions of the Paths and Responses Objects
-// are not entries (OAS 3.1.2 sections 4.8.8 and 4.8.16: both "MAY be
-// extended with Specification Extensions").
+// Specification Extensions of the Paths and Responses Objects are not
+// entries (OAS 3.1.2 sections 4.8.8 and 4.8.16: both "MAY be extended with
+// Specification Extensions").
 func TestF30ExtensionsAreNotEntries(t *testing.T) {
 	doc := bare31(`"x-shared":{"$ref":"other.json#/x"},"/a":{"get":{"operationId":"op","responses":{"200":{"description":"ok"},"x-codegen":{"flag":true}}}}`)
 	c := parseAt(t, doc, "", testDocURI, nil)
@@ -860,9 +859,9 @@ func TestF30ExtensionsAreNotEntries(t *testing.T) {
 	}
 }
 
-// F31 (#38): a Paths key that does not begin with "/" (OAS 3.1.2 section
-// 4.8.8.1: "The field name MUST begin with a forward slash") is a defect on
-// its entry, never a callable operation.
+// A Paths key that does not begin with "/" (OAS 3.1.2 section 4.8.8.1: "The
+// field name MUST begin with a forward slash") is a defect on its entry,
+// never a callable operation.
 func TestF31PathsKeyWithoutSlash(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, doc31(`"pets":{"get":{}}`), nil)
@@ -874,9 +873,9 @@ func TestF31PathsKeyWithoutSlash(t *testing.T) {
 	refusedBeforeSending(t, w, resp, err)
 }
 
-// F32 (#39): a 3.1 Server Object has no "name" (OAS 3.1.2 section 4.8.5;
-// describe.go, Server.Name: "the OpenAPI 3.2 server name"), so it neither
-// sets Server.Name nor matches Options.Server.
+// A 3.1 Server Object has no "name" (OAS 3.1.2 section 4.8.5; describe.go,
+// Server.Name: "the OpenAPI 3.2 server name"), so it neither sets
+// Server.Name nor matches Options.Server.
 func TestF32ServerNameIs32Only(t *testing.T) {
 	doc := bare31(`"/a":{"get":{"operationId":"op"}}`, `"servers":[{"url":"https://api.example.test","name":"prod"}]`)
 	c := parseAt(t, doc, "", testDocURI, nil)
@@ -887,9 +886,8 @@ func TestF32ServerNameIs32Only(t *testing.T) {
 	wantKeys(t, "Settings", asRequestError(t, err).Settings, false, "Options.Server")
 }
 
-// F33 (#41): a Codecs key with surrounding whitespace is not a media type
-// without parameters (client.go, Options.Codecs: "Load refuses any other
-// key").
+// A Codecs key with surrounding whitespace is not a media type without
+// parameters (client.go, Options.Codecs: "Load refuses any other key").
 func TestF33CodecKeyWhitespace(t *testing.T) {
 	for _, key := range []string{" application/cbor", "application/cbor ", "\tapplication/cbor", " +cbor", "+cbor "} {
 		_, err := openapi.Parse(t.Context(), []byte(expand(bodyDoc, "https://api.example.test")), testDocURI,
@@ -902,10 +900,10 @@ func TestF33CodecKeyWhitespace(t *testing.T) {
 	}
 }
 
-// F34 (#42): "Prepare returns a *RequestError listing every problem at
-// once" (client.go, Prepare): the Accept requirement beside a missing
-// parameter, and the out and a derived Client's unusable Options beside a
-// defective operation's Err.
+// "Prepare returns a *RequestError listing every problem at once"
+// (client.go, Prepare): the Accept requirement beside a missing parameter,
+// and the out and a derived Client's unusable Options beside a defective
+// operation's Err.
 func TestF34EveryProblemAtOnce(t *testing.T) {
 	w := newWire(t, nil)
 	doc := doc31(`"/a":{"get":{"operationId":"op","parameters":[{"name":"q","in":"query","required":true,"schema":{}}],
@@ -931,7 +929,7 @@ func TestF34EveryProblemAtOnce(t *testing.T) {
 	}
 }
 
-// F35 (#43): client.go, With: "any other Options the document cannot use
+// As client.go, With says, "any other Options the document cannot use
 // refuse each call they affect": a media range in Options.MediaType affects
 // only calls that send a body, and a Codecs key only calls that encode or
 // decode with a codec.
@@ -957,10 +955,9 @@ func TestF35WithRefusalsOnlyWhereUsed(t *testing.T) {
 	}
 	wantKeys(t, "Settings", re.Settings, false, "Options.Codecs")
 
-	// As ruled (ledger, "Regression-test questions, ruled", F35): a malformed
-	// Codecs key refuses "only calls that would use a codec (a structured
-	// body or a decoded out)". A decoded out is refused before sending; a
-	// *[]byte, which bypasses codecs, is not.
+	// A malformed Codecs key refuses only calls that would use a codec: a
+	// structured body or a decoded out. A decoded out is refused before
+	// sending; a *[]byte, which bypasses codecs, is not.
 	before = w.count()
 	resp, err = e.Call(t.Context(), "json", nil, new(Pet))
 	re = refusedSince(t, w, before, resp, err)
@@ -969,10 +966,10 @@ func TestF35WithRefusalsOnlyWhereUsed(t *testing.T) {
 	mustCall(t, e, "json", nil, &raw)
 }
 
-// F36 (#44): a declared path parameter the template does not name (OAS
-// 3.1.2 section 4.8.12.1: its name "MUST correspond to a template
-// expression") has Param.Err; a required one refuses the call (describe.go,
-// Param.Err), and a value given for it is refused at its key.
+// A declared path parameter the template does not name (OAS 3.1.2 section
+// 4.8.12.2.1: its name "MUST correspond to a template expression") has
+// Param.Err; a required one refuses the call (describe.go, Param.Err), and a
+// value given for it is refused at its key.
 func TestF36PathParameterNotInTemplate(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, doc31(`"/a":{"get":{"operationId":"op","parameters":[{"name":"id","in":"path","required":true,"schema":{}}]}}`), nil)
@@ -987,13 +984,12 @@ func TestF36PathParameterNotInTemplate(t *testing.T) {
 	refusedSince(t, w, before, resp, err)
 }
 
-// F37 (#45), as ruled (ledger, "Regression-test questions, ruled": "header
-// parameter identity compares names case-insensitively, so a path-level
-// "X-Id" is overridden by an operation-level "x-id"; OAS 3.1.2 section 4.3:
-// names that map to HTTP concepts follow HTTP's case rules): Operation.Params
-// lists one header parameter, the operation's, and the call writes the field
-// once. A required parameter that was given is not also reported missing:
-// since stage 2 the given required content parameter is sent, its JSON
+// Header parameter identity compares names case-insensitively, so a
+// path-level "X-Id" is overridden by an operation-level "x-id" (OAS 3.1.2
+// section 3.8: names that map to HTTP concepts follow HTTP's case rules):
+// Operation.Params lists one header parameter, the operation's, and the call
+// writes the field once. A required parameter that was given is not also
+// reported missing: the given required content parameter is sent, its JSON
 // written as given (doc.go, Values and Fixed rules, Percent-encoding).
 func TestF37HeaderRefusalCauses(t *testing.T) {
 	w := newWire(t, nil)
@@ -1029,9 +1025,9 @@ func TestF37HeaderRefusalCauses(t *testing.T) {
 	}
 }
 
-// F38 (#47) and T1-14: "A Header holding two spellings of one field is
-// refused" (doc.go, Fixed rules, Header fields), at Load for Options.Header
-// and at a call for Input.Header.
+// "A Header holding two spellings of one field is refused" (doc.go, Fixed
+// rules, Header fields), at Load for Options.Header and at a call for
+// Input.Header.
 func TestF38TwoSpellingsRefused(t *testing.T) {
 	w := newWire(t, nil)
 	h := http.Header{"x-tenant": {"lower"}, "X-Tenant": {"canonical"}}
@@ -1043,8 +1039,8 @@ func TestF38TwoSpellingsRefused(t *testing.T) {
 	wantKeys(t, "Settings", re.Settings, false, "Input.Header")
 }
 
-// F39 (#48) and T2-3: "A uri with a fragment is refused" (load.go, Load),
-// and Parse's uri is "without a fragment" (load.go, Parse).
+// "A uri with a fragment is refused" (load.go, Load), and Parse's uri is
+// "without a fragment" (load.go, Parse).
 func TestF39DocumentURIFragment(t *testing.T) {
 	w := newWire(t, typedAnswer(200, "application/json", string(readPets(t))))
 	if c, err := openapi.Load(t.Context(), w.URL+"/openapi.json#section", nil); err == nil || c != nil {
@@ -1056,8 +1052,8 @@ func TestF39DocumentURIFragment(t *testing.T) {
 	}
 }
 
-// F40 (#49) and T1-11: a field with no values removes it, "a User-Agent
-// included, so net/http adds none" (doc.go, Fixed rules, Header fields).
+// A field with no values removes it, "a User-Agent included, so net/http
+// adds none" (doc.go, Fixed rules, Header fields).
 func TestF40RemoveUserAgent(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, headerDoc, &openapi.Options{Header: http.Header{"User-Agent": nil}})
@@ -1072,9 +1068,9 @@ func TestF40RemoveUserAgent(t *testing.T) {
 	}
 }
 
-// F41 and T2-1: "A path parameter value that would form a whole "." or ".."
-// segment is refused, since RFC 3986 section 5.2.4 removes such segments"
-// (doc.go, Fixed rules, Percent-encoding). Other dotted values are sent.
+// "A path parameter value that would form a whole "." or ".." segment is
+// refused, since RFC 3986 section 5.2.4 removes such segments" (doc.go,
+// Fixed rules, Percent-encoding). Other dotted values are sent.
 func TestF41DotSegmentValues(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, doc31(`"/users/{id}/sessions":{"delete":{"operationId":"op","parameters":[{"name":"id","in":"path","required":true,"schema":{}}]}}`), nil)
@@ -1097,11 +1093,10 @@ func TestF41DotSegmentValues(t *testing.T) {
 	}
 }
 
-// F41 and T2-2: a Variables value substituted into the scheme or authority
-// "may not hold "/", "?", "#", "@" or "\\", so a value cannot move the
-// request to another host (RFC 3986 section 3.2)" (client.go,
-// Options.Variables). Each value here would move the request to the test
-// server, which must receive nothing.
+// A Variables value substituted into the authority "may not hold "/", "?",
+// "#", "@" or "\\"" (client.go, Options.Variables; RFC 3986 section 3.2), so
+// a value cannot move the request to another host. Each value here would
+// move the request to the test server, which must receive nothing.
 func TestF41AuthorityVariableValues(t *testing.T) {
 	w := newWire(t, nil)
 	host := w.hostport()
@@ -1127,8 +1122,9 @@ func TestF41AuthorityVariableValues(t *testing.T) {
 	}
 }
 
-// T1-2 and the Loader doc: line and column count "from 1, the column in
-// bytes after any byte order mark", so a BOM does not move the column.
+// The Loader doc: a rejection's line and column are "both counted from 1,
+// the column in the document's own bytes ... after any byte order mark", so
+// a BOM does not move the column.
 func TestColumnsAfterBOM(t *testing.T) {
 	doc := `{"openapi":"3.1.0","paths":{},"paths":{}}`
 	_, plain := openapi.Parse(t.Context(), []byte(doc), testDocURI, nil)
@@ -1146,7 +1142,7 @@ func TestColumnsAfterBOM(t *testing.T) {
 	}
 }
 
-// T1-15: out must not be "a nil pointer of any type" (client.go, Call:
+// Call's out must not be "a nil pointer of any type" (client.go, Call:
 // "anything else, a nil pointer of any type included, is refused before
 // sending"). A nil *bytes.Buffer is an io.Writer, and still refused.
 func TestT1_15NilPointerOfAnyType(t *testing.T) {
@@ -1182,8 +1178,8 @@ func TestT1_15NilPointerOfAnyType(t *testing.T) {
 	})
 }
 
-// T1-16: "a Host field or a header parameter named Host" is refused, "since
-// net/http derives Host from the URL" (doc.go, Fixed rules, Header fields):
+// A Host field or a header parameter named Host is refused, since net/http
+// derives Host from the URL (doc.go, Fixed rules, Header fields):
 // Options.Header by Load (load.go, Load: "a Header field that is always
 // refused") at Settings["Options.Header"], Input.Header at a call at
 // Settings["Input.Header"], and a value for a header parameter named Host at
@@ -1234,10 +1230,9 @@ func TestT1_16HostRefused(t *testing.T) {
 	}
 }
 
-// T2-1, as ruled (ledger, "Regression-test questions, ruled": "the rule
-// applies to the resulting segment, however many values form it"): in
-// "/{a}{b}", a="." and b="." form "..", which is refused; so is a="" and
-// b="..". Values that form any other segment are sent.
+// The dot-segment rule applies to the resulting segment, however many values
+// form it: in "/{a}{b}", a="." and b="." form "..", which is refused; so is
+// a="" and b="..". Values that form any other segment are sent.
 func TestT2_1DotSegmentFromTwoValues(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, doc31(`"/x/{a}{b}/y":{"get":{"operationId":"op","parameters":[

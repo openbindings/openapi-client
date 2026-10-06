@@ -14,9 +14,9 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// IP4F-8 (see regress_ip4f8_test.go): a document read from a file that is
-// not a regular file, a FIFO, which may block. load.go, Loader: file URLs
-// are read "from disk", and stage 1's T1-12, "ctx bounds the whole load":
+// A document read from a file that is not a regular file, a FIFO, which may
+// block (see also regress_ip4f8_test.go). load.go, Loader: file URLs are read
+// "from disk"; Load: "ctx bounds the whole load":
 // a FIFO a writer fills loads, and one no writer opens ends the load with
 // its context (index.go:305).
 func TestIP4F8LoadFromAFIFO(t *testing.T) {

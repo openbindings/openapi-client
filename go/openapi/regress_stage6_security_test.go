@@ -11,7 +11,7 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// S6-S1: RFC 6265 4.1.1 requires token cookie names. 3.2 cookie style sends
+// RFC 6265 4.1.1 requires token cookie names. 3.2 cookie style sends
 // authored names and defined exploded member keys raw, so both must satisfy
 // that boundary. Form style continues percent-encoding names instead.
 func TestStage6RawCookieNameTokens(t *testing.T) {
@@ -42,7 +42,7 @@ func TestStage6RawCookieNameTokens(t *testing.T) {
 	}
 }
 
-// S6-S2: doc.go's whole-dot-segment refusal still applies when 3.2 reserved
+// doc.go's whole-dot-segment refusal still applies when 3.2 reserved
 // expansion emits slashes or retains encoded dots. Check assembled segments,
 // not just the raw value or one isolated parameter's whole expansion.
 func TestStage6ReservedPathDotSegments(t *testing.T) {
@@ -89,9 +89,11 @@ func TestStage6ReservedPathDotSegments(t *testing.T) {
 	}
 }
 
-// S6-S3: Stage 5's URI-userinfo presentation rule applies to generated labels
-// for URI security names. Programmatic identity and Settings keys still use
-// the exact authored name; no generic rewriting of caller errors is requested.
+// Generated error text never shows a URI's userinfo, and that applies to
+// the labels of URI security names too (doc.go, Outcomes: "No credential
+// appears in the text of an error the client creates"). Programmatic
+// identity and Settings keys still use the exact authored name; caller
+// errors are not rewritten.
 func TestStage6URISecurityNameErrorPresentation(t *testing.T) {
 	const name = "https://private-user:private-password@api.example.test/scheme.json#/Key"
 	encoded, _ := json.Marshal(name)

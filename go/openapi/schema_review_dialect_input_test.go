@@ -7,10 +7,10 @@ import (
 
 // Loader reads JSON and YAML into the same public document model. Dialect and
 // References therefore retain the root-resource and annotation boundaries in
-// both encodings (Core 4.3.5/9.1.1; the R9-3 ruling). JSON member names are
-// decoded strings: an escaped spelling of $schema has the same meaning
-// (RFC 8259 sections 7 and 8.3). These four cases supplement the JSON matrix
-// without repeating its edition, reference-order or child-resource axes.
+// both encodings (Core 4.3.5/9.1.1). JSON member names are decoded strings: an
+// escaped spelling of $schema has the same meaning (RFC 8259 sections 7 and
+// 8.3). These four cases supplement the JSON matrix without repeating its
+// edition, reference-order or child-resource axes.
 func TestReview9DialectInputParity(t *testing.T) {
 	const external = "https://schemas.example.test/api/dialect-input"
 	const target = external + "#/$defs/Leaf"

@@ -742,7 +742,7 @@ type server struct {
 
 // A urlVar is a variable of a server URL template: its index into
 // Server.Variables, and the part of the URL its default falls in, with
-// every default substituted (T1-23).
+// every default substituted (see Options.Variables).
 type urlVar struct {
 	index int
 	part  urlPart

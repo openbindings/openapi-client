@@ -15,8 +15,8 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// G16 (#18), H10 and T1-12: "ctx bounds the whole load, reading and parsing
-// included" (load.go, Load), a file that never delivers its content, such
+// "ctx bounds the whole load, reading and parsing included" (load.go,
+// Load), a file that never delivers its content, such
 // as a FIFO nobody writes to, included.
 func TestG16LoadFIFOHonorsContext(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "doc.json")
@@ -40,8 +40,7 @@ func TestG16LoadFIFOHonorsContext(t *testing.T) {
 				if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
 					t.Errorf("Load of a silent FIFO = %v, want the context's error", err)
 				}
-				// H10 (ledger, "Verification pass"): the text says the
-				// context ended.
+				// The text says the context ended.
 				if err != nil && !strings.Contains(err.Error(), ctx.Err().Error()) {
 					t.Errorf("error text %q does not say the context ended (%q)", err, ctx.Err())
 				}

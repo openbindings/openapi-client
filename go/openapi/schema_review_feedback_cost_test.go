@@ -15,7 +15,11 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Owner Tier 2 feedback boundary, ErrUnresolved, and Schema/Document contracts.
+// An inferred schema resource that retrieval later reveals to be instance
+// data (Loader: "references whose scope depends on that inference are
+// unresolvable. The documents already retrieved remain available, and parts
+// independent of that inference remain usable"), ErrUnresolved, and the
+// Schema/Document contracts.
 // Each inferred example resource discovers the Parameter context that disproves
 // it. Unlike the independent-route workloads, these enter the refusal path.
 // Every fourth example has an explicitly reached, fully independent resource
@@ -111,8 +115,9 @@ func (r *review9FeedbackRun) parse(ctx context.Context, f review9FeedbackFixture
 }
 
 // Fixed lookup batch; References is attempted after successful non-alias
-// lookups. Error-location latitude makes its actual count variable, recorded
-// outside timing. No oracle or metadata inspection occurs in this batch.
+// lookups. Which part reports an error may vary, so the number of
+// References calls varies; it is recorded outside timing. No oracle or
+// metadata inspection occurs in this batch.
 func (r *review9FeedbackRun) read(f review9FeedbackFixture) {
 	if r.loadErr != nil || r.client == nil {
 		return
@@ -249,10 +254,10 @@ func TestReview9FeedbackFixtureControls(t *testing.T) {
 	}
 }
 
-// Four times the feedback contexts and independent holes, unchanged five-trial
-// 12x-time/8x-byte gates. ParseOnly includes final refusal/discovery work;
-// GraphOnly excludes Parse and its retained state. Harness, validation and
-// fixture work remain outside measurement. Root owns the timing window.
+// Four times the feedback contexts and independent holes, under the
+// harness's five-trial 12x-time/8x-byte bounds. ParseOnly includes final
+// refusal/discovery work; GraphOnly excludes Parse and its retained state.
+// Harness, validation and fixture work remain outside measurement.
 func TestReview9FeedbackContextScale(t *testing.T) {
 	ctx := t.Context()
 	fixtures := [2]review9FeedbackFixture{review9FeedbackGraph(128), review9FeedbackGraph(512)}

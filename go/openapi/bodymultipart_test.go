@@ -14,7 +14,7 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Stage 4, multipart bodies from an object, parsed back with
+// Multipart bodies from an object, parsed back with
 // mime/multipart and checked part by part: names, filenames, media types,
 // header fields and content. client.go, Input.Body: "For form and multipart
 // media, Body is an object (a map or a struct) whose properties are the
@@ -41,8 +41,7 @@ import (
 // handled by applying the same name to multiple parts, as is recommended by
 // [RFC7578] Section 4.3". RFC 7578 section 4.2: "Each part MUST contain a
 // Content-Disposition header field where the disposition type is
-// "form-data"". Stage 4 ledger, test round (6e13978), Q4 to Q7, Q9, Q11,
-// Q13 to Q15.
+// "form-data"".
 
 const mpPaths = `
 	"/oas1":{"post":{"operationId":"oas1","requestBody":{"content":{"multipart/form-data":{"schema":{"type":"object","properties":{
@@ -188,8 +187,8 @@ func TestMultipartOASExamples(t *testing.T) {
 // 4.8.15.1.1), never by the Go value (doc.go, Configuration: "The default
 // is read from the field's schema ..., never from the Go value"); text as
 // doc.go, Values, says; a JSON part "exactly what its codec writes, null
-// members, [] and {} included", as json.Marshal writes it (stage 1 ledger,
-// Q6); null properties and items omitted (doc.go, Values); fields in the
+// members, [] and {} included", as json.Marshal writes it; null
+// properties and items omitted (doc.go, Values); fields in the
 // order encoding/json writes them (doc.go, Fixed rules, Order); content
 // never percent-encoded (doc.go, Fixed rules, Form bodies).
 func TestMultipartFieldDefaults(t *testing.T) {
@@ -279,20 +278,18 @@ func TestMultipartPartOverrides(t *testing.T) {
 
 // Refusals, at the keys errors.go gives: Inputs for a value that cannot be
 // sent ("a Part that sets both Filename and NoFilename"; client.go, Part: "a
-// control character other than a tab in either is refused", Header "under
-// the rules for Options.Header's field names and values" and
-// "Content-Type, in any spelling, is refused"; stage 4 ledger, Q11: "Part.Header
-// names must be tokens and values pass the header-field rule (C3-7)", the
-// doc.go Credentials rule of "a control character other than a tab, or ...
-// leading or trailing whitespace"; stage brief, Refusals: "a property or part
-// value its media type cannot encode"; client.go, Input.Body: a Part or
-// reader "inside a JSON value is refused with an Inputs entry at its place
-// in Body", the pointer passing through a Part with no Content segment
-// (ledger, Q14), and Body is an object, a slice being an OpenAPI 3.2
-// shape), and Settings for a part's media type the call must give or gave
-// wrongly (RequestError.Settings: "for a part's media type, "Input.Body"
-// followed by the part's JSON Pointer"; Part.MediaType: "A range is
-// refused").
+// control character other than a tab in either is refused", Header "under the
+// rules for Options.Header's field names and values" and "Content-Type, in
+// any spelling, is refused"; Part.Header names must be tokens and values pass
+// the header-field rule, the doc.go Credentials rule of "a control character
+// other than a tab, or ... leading or trailing whitespace"; a property or
+// part value its media type cannot encode; client.go, Input.Body: a Part or
+// reader "inside a JSON value is refused with an Inputs entry at its place in
+// Body", the pointer passing through a Part with no Content segment; and a
+// Body that is not an object, a slice being an OpenAPI 3.2 shape), and
+// Settings for a part's media type the call must give or gave wrongly
+// (RequestError.Settings: "for a part's media type, "Input.Body" followed by
+// the part's JSON Pointer"; Part.MediaType: "A range is refused").
 func TestMultipartRefusals(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, mpDoc(), nil)
@@ -426,12 +423,10 @@ func TestMultipartBoundary(t *testing.T) {
 // pre-encoded, with its boundary in Part.MediaType"). In OpenAPI 3.1 an
 // Encoding Object has no encoding of its own, so the nested parts take the
 // defaults of the nested schema's properties, each named by its
-// Content-Disposition form-data (stage 4 ledger, Q5), with exactly that
-// field and its Content-Type (ledger, readings confirmed). A part whose
-// media type is multipart takes no default filename (client.go,
-// Part.Filename; ledger, Q15). Nesting past one level is refused at its
-// Inputs key (stage brief, Refusals), the pointer passing through a Part
-// (ledger, Q14).
+// Content-Disposition form-data, with exactly that field and its
+// Content-Type. A part whose media type is multipart takes no default
+// filename (client.go, Part.Filename). Nesting past one level is refused at
+// its Inputs key, the pointer passing through a Part.
 func TestMultipartNested(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, mpDoc(), nil)
@@ -491,12 +486,10 @@ func TestMultipartNested(t *testing.T) {
 	}
 }
 
-// Another multipart type with an object Body: one part per property (stage
-// brief, Scope: "multipart/form-data and other multipart types (object
-// Body): one part per property"), each with Content-Disposition form-data
-// and its name (stage 4 ledger, Q5; OAS 3.1.2 section 4.8.15.3: such types
-// may be supported "when Content-Disposition: form-data is used with a name
-// parameter"), typed by its schema.
+// Another multipart type with an object Body: one part per property, each
+// with Content-Disposition form-data and its name (OAS 3.1.2 section
+// 4.8.15.3: such types may be supported "when Content-Disposition: form-data
+// is used with a name parameter"), typed by its schema.
 func TestMultipartMixedObject(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, mpDoc(), nil)
@@ -516,8 +509,8 @@ func TestMultipartMixedObject(t *testing.T) {
 // allowReserved"; section 4.8.15.1.2: "When using RFC6570-style
 // serialization for multipart/form-data, URI percent-encoding MUST NOT be
 // applied". doc.go, Values: an undefined value (an empty array) is omitted.
-// Each such part is text/plain (stage 4 ledger, Q4: RFC 7578 section 4.4's
-// default, as OpenAPI says contentType is ignored), its value unencoded.
+// Each such part is text/plain (RFC 7578 section 4.4's default, as OpenAPI
+// says contentType is ignored), its value unencoded.
 func TestMultipartStyledFields(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, mpDoc(), nil)
@@ -547,12 +540,11 @@ func TestMultipartStyledFields(t *testing.T) {
 	checkParts(t, parts, []wantPart{text("f2", "s t")})
 }
 
-// A property's value decides how many parts it sends (stage 4 ledger, Q7;
-// client.go, Input.Body): an array value, []byte excluded, one part per
-// item, each typed by the items schema when the property's schema is an
-// array, else by the property's own type, an Encoding contentType applying
-// to each; any other value one part, typed by the items type for an array
-// schema.
+// A property's value decides how many parts it sends (client.go, Input.Body):
+// an array value, []byte excluded, one part per item, each typed by the items
+// schema when the property's schema is an array, else by the property's own
+// type, an Encoding contentType applying to each; any other value one part,
+// typed by the items type for an array schema.
 func TestMultipartArrayValues(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, mpDoc(), nil)
@@ -596,9 +588,8 @@ func TestMultipartArrayValues(t *testing.T) {
 // An untyped property is application/octet-stream (OAS 3.1.2 section
 // 4.8.15.1.1: type absent, application/octet-stream), whether the schema
 // gives it no type or does not list it, so it takes a string, []byte or
-// reader; a number is refused at its key, the error naming the media type
-// (stage 4 ledger, Q6: "{"count": 5} is refused at its key, naming the
-// media type. No inference from Go values").
+// reader; a number is refused at its key, the error naming the media type,
+// which is never inferred from the Go value (doc.go, Configuration).
 func TestUntypedPropertyTakesOctets(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, mpDoc(), nil)
@@ -625,8 +616,8 @@ func TestUntypedPropertyTakesOctets(t *testing.T) {
 	}
 }
 
-// A field string that is not valid UTF-8 is sent as given (stage 4 ledger,
-// Q9), as stage 2 sends a content parameter's.
+// A field string that is not valid UTF-8 is sent as given, as a parameter
+// serialized by content is.
 func TestMultipartInvalidUTF8(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, mpDoc(), nil)
@@ -640,13 +631,11 @@ func TestMultipartInvalidUTF8(t *testing.T) {
 // With a boundary the caller gives, a part whose content holds its
 // delimiter, CRLF "--" boundary (RFC 2046 section 5.1.1: "The boundary
 // delimiter MUST NOT appear inside any of the encapsulated parts"), or
-// begins with "--" boundary, which follows the header block's CRLF (stage 4
-// ledger, QQ2), cannot be encoded (client.go, Input.MediaType; ledger, Q13).
-// Content held as a value, a string or a []byte is refused at its key
-// before sending; content from any io.Reader, replayable or not, is checked
-// as it streams, and holding it ends the body as an upload error (ledger,
-// QQ3: "only content held as values, strings or []byte is checked before
-// sending"). The boundary's text elsewhere is sent.
+// begins with "--" boundary, which follows the header block's CRLF, cannot
+// be encoded (client.go, Input.MediaType). Only content held as a value, a
+// string or a []byte, is refused at its key before sending; content from
+// any io.Reader, replayable or not, is checked as it streams, and holding it
+// ends the body as an upload error. The boundary's text elsewhere is sent.
 func TestMultipartGivenBoundaryInContent(t *testing.T) {
 	const mt = "multipart/form-data; boundary=b0und4ry"
 	w := newWire(t, nil)

@@ -18,7 +18,8 @@ import (
 
 // Comparable per-edition load/prepare/call benchmarks use one JSON operation
 // and the same body and response transport. The 3.1 branch also runs on the
-// stage 5 baseline. New-edition baseline failures remain visible, not skipped.
+// pre-editions baseline. New-edition baseline failures remain visible, not
+// skipped.
 func BenchmarkEditions(b *testing.B) {
 	for _, version := range editionVersions {
 		b.Run(version, func(b *testing.B) {

@@ -13,9 +13,10 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Owner stage 6 clarification: versionless documents use the entry edition,
-// independently of which explicitly versioned referrer discovers them first.
-// The shared Reference Object's description therefore follows 3.2 rules.
+// load.go, Loader: "A referenced document with neither an openapi nor a
+// swagger field uses the entry document's edition", independently of which
+// explicitly versioned referrer discovers it first. The shared Reference
+// Object's description therefore follows 3.2 rules.
 func TestEditionsVersionlessEntryEdition(t *testing.T) {
 	for _, reverse := range []bool{false, true} {
 		t.Run(fmt.Sprint(reverse), func(t *testing.T) {
@@ -160,8 +161,9 @@ func TestEditionsCookieMembersAndUndefined(t *testing.T) {
 			t.Errorf("undefined cookie %q", got)
 		}
 	}
-	// Stage 2's final [null] ruling: a nonempty list remains defined even
-	// when every member is undefined, so explode:false's refusal still applies.
+	// A nonempty list remains defined even when every member is undefined
+	// (RFC 6570 section 2.3: a list "is considered undefined if the list
+	// contains zero members"), so explode:false's refusal still applies.
 	for _, v := range []any{[]any{nil}, []any{nil, []any{}, map[string]any{}}} {
 		_, err := c.Prepare("POST /x", &openapi.Input{Params: map[string]any{"c": v}})
 		wantKeys(t, "Inputs", asRequestError(t, err).Inputs, false, "c")
@@ -197,7 +199,7 @@ func TestEditionsSecuritySchemeTypes(t *testing.T) {
 
 // Schema.Dialect uses the explicitly versioned schema document's own
 // jsonSchemaDialect, not the entry document's default. This asserts only the
-// basic handle; full graph traversal remains stage 9.
+// basic handle, not a traversal of the whole schema graph.
 func TestEditionsExternalSchemaDocumentDialect(t *testing.T) {
 	const dialect = "https://json-schema.org/draft/2020-12/schema"
 	l := openapi.Loader{Fetch: func(_ context.Context, u string) (io.ReadCloser, string, error) {

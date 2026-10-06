@@ -19,9 +19,9 @@ import (
 // characters that are not allowed in the query string ([, ], #)") and
 // Appendix C.3 (non-RFC 6570 styles take "regular or reserved expansion
 // (based on allowReserved)"). Reserved expansion covers member names too,
-// while parameter names always follow the name rule (stage 2 ledger, Q3;
-// doc.go: "RFC 6570 reserved expansion is used exactly, member names
-// included (parameter names always follow the rule above)").
+// while parameter names always follow the name rule (doc.go: "RFC 6570
+// reserved expansion is used exactly, member names included (parameter
+// names always follow the rule above)").
 func TestAllowReservedQuery(t *testing.T) {
 	w := newWire(t, nil)
 	doc := doc31(`
@@ -55,7 +55,8 @@ func TestAllowReservedQuery(t *testing.T) {
 		{"spaceDelimited keeps its delimiter", "s", "p", []string{"a b", "c"}, "/s?p=a%20b%20c"},
 		{"pipeDelimited", "pd", "p", []string{"a/b", "c|d"}, "/pd?p=a/b%7Cc%7Cd"},
 		{"deepObject", "d", "p", map[string]string{"k": "a/b?c"}, "/d?p%5Bk%5D=a/b?c"},
-		// Member names take reserved expansion (ledger, Q3), in every style
+		// Member names take reserved expansion (doc.go, Fixed rules,
+		// Percent-encoding), in every style
 		// and whether or not the object is exploded; a character outside
 		// the reserved and unreserved sets is still encoded.
 		{"member names exploded", "f", "p", map[string]string{"a/b": "c", "d[e]": "f"}, "/f?a/b=c&d[e]=f"},

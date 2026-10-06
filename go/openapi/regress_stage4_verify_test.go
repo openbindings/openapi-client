@@ -13,21 +13,19 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Regression tests for the stage 4 verification pass's findings VP7, VP8 and
-// VP9, contract notes VN8, VN12 and VN13 (stage 4 ledger, "Verification pass
-// (23cfd73), cloud session"), and the fix round's IP4F-5 (ledger, "Fix round
-// (23cfd73)").
+// Regression tests for media type selection, refusal text, sequential
+// items, short replayable sources and response media.
 
-// VP7: "JSON Schema 2020-12 Validation section 6.1.1: an integer is a number
-// with a zero fractional part, so number allows every integer; intersecting
-// number with integer gives integer (text/plain)" (OAS 3.1.2 section 4.2.2,
-// Data Types: "since there is no distinct JSON integer type, JSON Schema
-// defines integers mathematically"; section 4.8.24.2: "both type: number and
+// JSON Schema 2020-12 Validation section 6.1.1 makes an integer a number
+// with a zero fractional part, so number allows every integer, and
+// intersecting number with integer gives integer (OAS 3.1.2 section 4.4,
+// Data Types: "Since there is no distinct JSON integer type, JSON Schema
+// defines integers mathematically"; section 4.4.1: "both type: number and
 // type: integer are considered to be numbers in the data model"). A property
 // whose schemas allow number and integer, by a $ref with a sibling type, by
 // allOf, by a type array beside allOf, and by two allOf members each
 // declaring it, is text/plain (OAS 3.1.2 section 4.8.15.1.1: a primitive's
-// default), under form and multipart, and 5 is sent. At b4872f9 the two
+// default), under form and multipart, and 5 is sent. Before the fix the two
 // types did not meet: application/octet-stream, which refuses 5.
 func TestVP7NumberWithIntegerIsInteger(t *testing.T) {
 	schema := `{"type":"object","properties":{
@@ -66,17 +64,17 @@ func TestVP7NumberWithIntegerIsInteger(t *testing.T) {
 	checkParts(t, parts, want)
 }
 
-// VP8: "the key stays Input.MediaType (RequestError: "an undetermined or
-// unusable request media type"), but the error must be true: when the Media
-// that would govern the call (the most specific declared key covering its
-// type, or the sole declared one when none is given) has an Err, the
-// refusal wraps that Err with the Media's Source; when nothing covers the
-// type, the text names the type as given, parameters included" (client.go,
-// Input.MediaType: "A boundary in the declared content key is used and
-// checked the same way; an invalid one is the Media's Err"; OAS 3.1.2
-// section 4.8.13: "only the most specific key is applicable"). At b4872f9 the
-// refusal said the operation offers no single concrete media type, or does
-// not declare multipart/form-data, and dropped the parameters.
+// The refusal stays keyed Input.MediaType (errors.go, RequestError.Settings:
+// "an undetermined or unusable request media type"), but its error is true:
+// when the Media that would govern the call (the most specific declared key
+// covering its type, or the sole declared one when none is given) has an
+// Err, the refusal wraps that Err with the Media's Source; when nothing
+// covers the type, the text names the type as given, parameters included
+// (client.go, Input.MediaType: "A boundary in the declared content key is
+// used and checked the same way; an invalid one is the Media's Err"; OAS
+// 3.1.2 section 4.8.13: "only the most specific key is applicable"). Before
+// the fix the refusal said the operation offers no single concrete media
+// type, or does not declare multipart/form-data, and dropped the parameters.
 func TestVP8DeclaredBoundaryRefusalNamesTheMedia(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, doc31(`
@@ -119,16 +117,16 @@ func TestVP8DeclaredBoundaryRefusalNamesTheMedia(t *testing.T) {
 	}
 }
 
-// VP9: "a style's compile error refuses a call only where the style applies
-// (application/x-www-form-urlencoded and multipart/form-data calls). The
+// A style's compile error refuses a call only where the style applies
+// (application/x-www-form-urlencoded and multipart/form-data calls); the
 // descriptor's Param.Err for a range stays, as the range covers form-data
-// calls" (OAS 3.1.2 section 4.8.15.1.2, style and explode: "This field SHALL
+// calls (OAS 3.1.2 section 4.8.15.1.2, style and explode: "This field SHALL
 // be ignored if the request body media type is not
 // application/x-www-form-urlencoded or multipart/form-data"). Under a
 // multipart/* key whose Encodings set a style invalid for a query value and
 // a delimited style exploded, a multipart/mixed call sends the parts by
-// their content type, and a multipart/form-data call is still refused. At
-// b4872f9 the multipart/mixed call was refused too.
+// their content type, and a multipart/form-data call is still refused.
+// Before the fix the multipart/mixed call was refused too.
 func TestVP9RangeStyleErrorOnlyWhereStylesApply(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, doc31(`"/m":{"post":{"operationId":"range","requestBody":{"content":{"multipart/*":{
@@ -155,14 +153,14 @@ func TestVP9RangeStyleErrorOnlyWhereStylesApply(t *testing.T) {
 	wantAnyKey(t, "Inputs", re.Inputs, "Input.Body/y", "Input.Body/y/0")
 }
 
-// VN8: "an event-stream refusal says what is wrong (a line break in event
-// or id, a NUL in id, nesting past 1,000 levels), as retry's does", each at
-// Input.Body/<i> (client.go, Input.Body: "a line break in event or id, a
-// NUL in id ... is an item that cannot be encoded"; doc.go, Values: "nested
+// An event-stream refusal says what is wrong (a line break in event or id, a
+// NUL in id, nesting past 1,000 levels), as retry's does, each at
+// Input.Body/<i> (client.go, Input.Body: "a line break in event or id, a NUL
+// in id ... is an item that cannot be encoded"; doc.go, Values: "nested
 // deeper than 1,000 levels ... is refused at its key"). The text is checked
-// for the contract's own words for each problem. At b4872f9 every one said
-// only that an item is an Event or an object of data, event and id strings
-// and a retry integer.
+// for the documentation's own words for each problem. Before the fix every
+// one said only that an item is an Event or an object of data, event and id
+// strings and a retry integer.
 func TestVN8EventStreamRefusalsNameTheProblem(t *testing.T) {
 	_, c := walkClient(t)
 	for _, tt := range []struct {
@@ -201,15 +199,14 @@ type (
 
 func (*vnPtrElem) MarshalJSON() ([]byte, error) { return []byte(`"ptr"`), nil }
 
-// VN12 (T1 on Input.Body: "each element is one item, encoded as that value
-// on its own would be, so a slice and an iterator yielding the same values
-// send the same bytes"; ledger: "a pointer-receiver MarshalJSON of the
+// Under JSON Lines and JSON text sequences, a slice and an iterator of the
+// same values send the same items (client.go, Input.Body: "each element is
+// one item, encoded as that value on its own would be, so a slice and an
+// iterator yielding the same values send the same bytes"), each
+// json.Marshal of the item on its own. A pointer-receiver MarshalJSON of the
 // element type does not apply to a slice's items, as it does not to an
-// iterator's"): under JSON Lines and JSON text sequences, a slice and an
-// iterator of the same values send the same items, each json.Marshal of the
-// item on its own: a value whose pointer has MarshalJSON, directly or one
-// level inside, is written by reflection, and a pointer to it by the method.
-// This pins a ruled behavior that holds at b4872f9.
+// iterator's: a value whose pointer has MarshalJSON, directly or one level
+// inside, is written by reflection, and a pointer to it by the method.
 func TestVN12SliceAndIteratorSendTheSameItems(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, doc31(`"/l":{"post":{"operationId":"jsonl","requestBody":{"content":{"application/jsonl":{}}}}},
@@ -272,14 +269,14 @@ func shortRegularFile(t *testing.T) *os.File {
 	return nil
 }
 
-// VN13: "a replayable source that yields fewer bytes than its size ends the
-// form body as the multipart path does, with io.ErrUnexpectedEOF" (client.go,
-// Input.Body: an *os.File "that Stat reports to be a regular file" is sent
-// again "from its offset when the call is prepared"; a file that ends before
-// its size is not its content). A sysfs attribute, which Stat reports as a
-// regular file of 4,096 bytes and which yields a few, stands for a file
+// A replayable source that yields fewer bytes than its size ends the form
+// body as the multipart path does, with io.ErrUnexpectedEOF. An *os.File
+// "that Stat reports to be a regular file" is sent again "from its offset
+// when the call is prepared" (client.go, Input.Body), and a file that ends
+// before its size is not its content. A sysfs attribute, which Stat reports
+// as a regular file of 4,096 bytes and which yields a few, stands for a file
 // truncated after Stat. As a form field and as a multipart part the call
-// fails with an error matching io.ErrUnexpectedEOF. At b4872f9 the form
+// fails with an error matching io.ErrUnexpectedEOF. Before the fix the form
 // field was sent short; the multipart part already failed so.
 func TestVN13ShortReplayableFormField(t *testing.T) {
 	w, c := walkClient(t)
@@ -297,16 +294,16 @@ func TestVN13ShortReplayableFormField(t *testing.T) {
 	}
 }
 
-// IP4F-5: "responses are exempt from request-side boundary checks (a
-// response's boundary comes from the response), so a declared response key
-// never gets Media.Err for its boundary; response content compiles no form
-// or multipart field list (reads cost what they return)" (OAS 3.1.2 section
+// Responses are exempt from request-side boundary checks (a response's
+// boundary comes from the response), so a declared response key never gets
+// Media.Err for its boundary, and response content compiles no form or
+// multipart field list, so reads cost what they return (OAS 3.1.2 section
 // 4.8.14, encoding: "The encoding field SHALL only apply to Request Body
 // Objects"). A response's multipart key with an invalid boundary or two has
 // no Media.Err, and response Media of form and multipart types and ranges
-// list no Encoding fields, whether the schema or an encoding map names
-// them; the request body's are unchanged. At b4872f9 the response keys had
-// the request's boundary Err and fields.
+// list no Encoding fields, whether the schema or an encoding map names them;
+// the request body's are unchanged. Before the fix the response keys had the
+// request's boundary Err and fields.
 func TestIP4F5ResponseMediaHaveNoRequestRules(t *testing.T) {
 	content := `{
 		"multipart/form-data; boundary=\"a \"":{"schema":{"type":"object","properties":{"x":{"type":"string"}}}},

@@ -11,11 +11,9 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Stage 5 benchmarks (brief.md, Tests: "load time and retained memory for a
-// large YAML document against the same document as JSON, and for a document
-// split into many files against the same document whole"; Budgets: "loading
-// a document split into files within 15% of loading it whole, excluding the
-// transport; YAML loading reported against JSON"). The JSON counterparts of
+// Document benchmarks: load time and retained memory for a large YAML
+// document against the same document as JSON, and for a document split into
+// many files against the same document whole. The JSON counterparts of
 // the YAML benchmarks are BenchmarkLoadLarge and BenchmarkLoadLargeMemory.
 // The split and whole loads both read from memory through Fetch.
 

@@ -15,25 +15,21 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Regression tests for the stage 4 review round (stage 4 ledger, "Review
-// round (6917b84)"), class ruling C4-1, one authoritative value traversal:
-// "encoding/json decides how a Go value becomes JSON data (P4). The client's
+// Regression tests for the one authoritative value traversal: encoding/json
+// decides how a Go value becomes JSON data (doc.go, Values). The client's
 // walk is a conservative fast path, only for shapes whose equivalence is
 // proven (omitempty, omitzero with the IsZero fallback and pointer
 // receivers, ",string", addressable pointer-receiver MarshalJSON and
 // MarshalText, map keys exactly as encoding/json accepts them and their
 // MarshalText errors), and defers to json.Marshal plus the JSON-data reader
-// everywhere else. Every pointer or interface dereference counts toward the
-// 1,000 bound independently of JSON depth; past it the walk defers to
-// encoding/json, whose cycle detection decides. The depth walk runs before
-// every client encoding, in every class (F16). A typed nil is a value, never
-// a reader (F5, F10)". Findings A2, A5, F5, F10, F15, F16, F28, F35, and the
-// *Part, *Event and nil-iterator notes. Expected form bytes are derived from
-// json.Marshal itself (jsonForm), the authority, wherever the shape allows.
-// The verification pass's C4-7 amends the dereference sentence ("Dereferences
-// never end the walk ... Past 1,000 dereferences on one path the walk
-// records the pointers on that path ... and a repeat ends the whole walk");
-// its tests are in regress_stage4_walk_test.go.
+// everywhere else. The depth walk runs before every client encoding, in
+// every class. A typed nil is a value, never a reader (client.go,
+// Input.Body). The tests also cover a Part or *Part as the whole body, *Event
+// items and nil iterators. Expected form bytes are derived from json.Marshal
+// itself (jsonForm), the authority, wherever the shape allows. Dereferences
+// never end the walk: past 1,000 dereferences on one path the walk records
+// the pointers on that path, as encoding/json does, and a repeat is a cycle;
+// those tests are in regress_stage4_walk_test.go.
 
 const valuesPaths = `
 	"/f":{"post":{"operationId":"form","requestBody":{"content":{"application/x-www-form-urlencoded":{
@@ -152,13 +148,12 @@ type marshalerBody struct {
 	S string  `json:"s,omitempty"`
 }
 
-// C4-1 (A5): the form and multipart field walk gives exactly what
-// encoding/json gives: omitzero through IsZero (a value or pointer
-// receiver, a time.Time); a pointer-receiver MarshalJSON or MarshalText
-// used for an addressable field (the body given by pointer) and not for an
-// unaddressable one; ",string"; a MarshalJSON body walked by its JSON
-// members, and a MarshalJSON property whose JSON is an array split into
-// items (F35: lines no test reached).
+// The form and multipart field walk gives exactly what encoding/json gives:
+// omitzero through IsZero (a value or pointer receiver, a time.Time); a
+// pointer-receiver MarshalJSON or MarshalText used for an addressable field
+// (the body given by pointer) and not for an unaddressable one; ",string"; a
+// MarshalJSON body walked by its JSON members, and a MarshalJSON property
+// whose JSON is an array split into items.
 func TestC41EncodingJSONEquivalence(t *testing.T) {
 	w, c := valuesClient(t)
 	cases := []struct {
@@ -203,11 +198,11 @@ func TestC41EncodingJSONEquivalence(t *testing.T) {
 	checkParts(t, parts, []wantPart{{disposition: formData("s"), ctype: "text/plain", content: "x"}})
 }
 
-// C4-1, stage 4 ledger RQ3: under a JSON-typed field a ",string" member
-// holds its JSON data, the string encoding/json makes of it, so the JSON
-// content is `"5"` and `"true"` (doc.go, Values: "The client first converts
-// a value to JSON data as encoding/json would (struct tags ...)"), in a form
-// body percent-encoded, in a multipart part as it is.
+// Under a JSON-typed field a ",string" member holds its JSON data, the
+// string encoding/json makes of it, so the JSON content is `"5"` and
+// `"true"` (doc.go, Values: "The client first converts a value to JSON data
+// as encoding/json would (struct tags ...)"), in a form body
+// percent-encoded, in a multipart part as it is.
 func TestRQ3StringOptionUnderJSONField(t *testing.T) {
 	w, c := valuesClient(t)
 	body := struct {
@@ -225,10 +220,10 @@ func TestRQ3StringOptionUnderJSONField(t *testing.T) {
 	})
 }
 
-// C4-1 (A5): map keys exactly as encoding/json accepts them: a map whose
-// key type json.Marshal refuses, and a key whose MarshalText fails, are
-// refused at their key, the encoder's error kept for errors.Is/As (stage 1
-// ledger, F24), in form and multipart bodies and their properties.
+// Map keys exactly as encoding/json accepts them: a map whose key type
+// json.Marshal refuses, and a key whose MarshalText fails, are refused at
+// their key, the encoder's error kept for errors.Is/As, in form and
+// multipart bodies and their properties.
 func TestC41MapKeys(t *testing.T) {
 	w, c := valuesClient(t)
 	for _, key := range []string{"bareForm", "bareMp", "form", "mp"} {
@@ -269,7 +264,7 @@ func TestC41MapKeys(t *testing.T) {
 }
 
 // cycle returns a value that holds itself through an interface and a
-// pointer: var v any; v = &v (Astra, A2).
+// pointer: var v any; v = &v.
 func cycle() any {
 	var v any
 	v = &v
@@ -281,16 +276,13 @@ type selfNode struct {
 	Next *selfNode `json:"next"`
 }
 
-// C4-1 (A2): a pointer or interface cycle is refused, never a hang or a
-// stack overflow: "Every pointer or interface dereference counts toward the
-// 1,000 bound independently of JSON depth; past it the walk defers to
-// encoding/json, whose cycle detection decides" (encoding/json: "JSON
-// cannot represent cyclic data structures and Marshal does not handle
-// them", reported as an *UnsupportedValueError). As a whole body under
-// form, multipart, JSON, text and JSON Lines, as a property, and as an
-// item, each refused at its key. The cases run in a child process, each
-// under a 10 s guard, as a stack overflow or a hang would end the test
-// binary or hold a core.
+// A pointer or interface cycle is refused, never a hang or a stack overflow,
+// as encoding/json refuses it ("JSON cannot represent cyclic data structures
+// and Marshal does not handle them", reported as an *UnsupportedValueError).
+// As a whole body under form, multipart, JSON, text and JSON Lines, as a
+// property, and as an item, each refused at its key. The cases run in a
+// child process, each under a 10 s guard, as a stack overflow or a hang
+// would end the test binary or hold a core.
 func TestC41CyclesRefused(t *testing.T) {
 	if !inChild(t) {
 		return
@@ -329,12 +321,12 @@ func TestC41CyclesRefused(t *testing.T) {
 	}
 }
 
-// C4-1 (F16): "The depth walk runs before every client encoding, in every
-// class": an object 50,000 levels deep is refused at its key under text,
-// octet-stream, a form text field, a multipart text part and an event
-// stream item, without encoding it first (stage brief: "a deep value is
-// refused at 1,000 levels before large allocation"; json.Marshal of it
-// allocates several megabytes): each refusal allocates under 1 MiB.
+// The depth walk runs before every client encoding, in every class: an
+// object 50,000 levels deep is refused at its key under text, octet-stream,
+// a form text field, a multipart text part and an event stream item, without
+// encoding it first (doc.go, Values: a value "nested deeper than 1,000
+// levels ... is refused at its key"; json.Marshal of it allocates several
+// megabytes): each refusal allocates under 1 MiB.
 func TestC41DepthWalkInEveryClass(t *testing.T) {
 	_, c := valuesClient(t)
 	deep := nestMap(50000, "x")
@@ -365,12 +357,12 @@ func TestC41DepthWalkInEveryClass(t *testing.T) {
 	}
 }
 
-// C4-1 (F5, F10): "A typed nil is a value, never a reader: as a form or
-// multipart property or item it is omitted (Values: null), as a sequential
-// item it is null, as a body it is encoded as null or refused where its
-// type takes only strings" (client.go, Input.Body: "A typed nil is a value,
-// never a reader, so a property or item holding one is omitted as null").
-// Panics are reported as failures (noPanic).
+// A typed nil is a value, never a reader: as a form or multipart property or
+// item it is omitted (doc.go, Values: null), as a sequential item it is
+// null, as a body it is encoded as null or refused where its type takes only
+// strings (client.go, Input.Body: "A typed nil is a value, never a reader,
+// so a property or item holding one is omitted as null"). Panics are
+// reported as failures (noPanic).
 func TestC41TypedNilReaders(t *testing.T) {
 	w, c := valuesClient(t)
 	run := func(name string, f func(t *testing.T)) {
@@ -417,9 +409,9 @@ func TestC41TypedNilReaders(t *testing.T) {
 	}
 }
 
-// C4-1 (F5): a typed-nil reader yielded by an iterator is the item null.
-// At 6917b84 it crashed the process from net/http's write loop, so the case
-// runs in a child process.
+// A typed-nil reader yielded by an iterator is the item null. Such a reader
+// once crashed the process from net/http's write loop, so the case runs in a
+// child process.
 func TestC41TypedNilReaderFromIterator(t *testing.T) {
 	if !inChild(t) {
 		return
@@ -434,11 +426,11 @@ func TestC41TypedNilReaderFromIterator(t *testing.T) {
 	wantLines(t, w.last(t).Body, "null", "2")
 }
 
-// F15: a Part, or a non-nil *Part, as the whole form or multipart Body is
-// refused at Input.Body (client.go, Input.Body: "For form and multipart
-// media, Body is an object (a map or a struct)"; errors.go,
-// RequestError.Inputs: "a reader or Part where the media type cannot carry
-// one"), never sent as an empty body.
+// A Part, or a non-nil *Part, as the whole form or multipart Body is refused
+// at Input.Body (client.go, Input.Body: "For form and multipart media, Body
+// is an object (a map or a struct)"; errors.go, RequestError.Inputs: "a
+// reader or Part where the media type cannot carry one"), never sent as an
+// empty body.
 func TestF15PartAsBodyRefused(t *testing.T) {
 	w, c := valuesClient(t)
 	for _, key := range []string{"bareForm", "bareMp"} {
@@ -451,10 +443,10 @@ func TestF15PartAsBodyRefused(t *testing.T) {
 	}
 }
 
-// F28 (T1, client.go, Input.Body: "A field an Encoding style serializes
-// takes JSON data, so a []byte there is a base64 string and a Part or
-// reader is refused"): in a form body the base64 is percent-encoded as any
-// RFC 6570 value; in a multipart part it is sent as it is.
+// "A field an Encoding style serializes takes JSON data, so a []byte there
+// is a base64 string and a Part or reader is refused" (client.go,
+// Input.Body): in a form body the base64 is percent-encoded as any RFC 6570
+// value; in a multipart part it is sent as it is.
 func TestF28StyledFieldTakesJSONData(t *testing.T) {
 	w, c := valuesClient(t)
 	mustCall(t, c, "styledForm", &openapi.Input{Body: map[string]any{"a": []byte("raw bytes?")}}, nil)
@@ -475,8 +467,8 @@ func TestF28StyledFieldTakesJSONData(t *testing.T) {
 
 // A non-nil *Part is a Part and a non-nil *Event an Event (client.go,
 // Input.Body: "a [Part] (or a non-nil *Part)", "an [Event] (or a non-nil
-// *Event)"; stage 4 ledger, IP4-6 and the review's contract notes); a nil
-// *Part is a typed nil, omitted, and a nil *Event cannot be encoded.
+// *Event)"); a nil *Part is a typed nil, omitted, and a nil *Event cannot be
+// encoded.
 func TestPointerPartsAndEvents(t *testing.T) {
 	w, c := valuesClient(t)
 	_, parts := sendMultipart(t, w, c, "mp", "multipart/form-data", map[string]any{
@@ -498,8 +490,7 @@ func TestPointerPartsAndEvents(t *testing.T) {
 	wantKeys(t, "Inputs", re.Inputs, true, "Input.Body/1")
 }
 
-// IP4-6 (test gap): a nil iterator is refused at Input.Body; a nil slice is
-// an empty body.
+// A nil iterator is refused at Input.Body; a nil slice is an empty body.
 func TestNilIteratorRefused(t *testing.T) {
 	w, c := valuesClient(t)
 	for _, body := range []any{iter.Seq[int](nil), iter.Seq2[any, error](nil)} {

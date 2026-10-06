@@ -12,27 +12,24 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Regression tests for the stage 4 review round, class ruling C4-2, schema
-// inspection (stage 4 ledger, "Review round (6917b84)"): "property lists
-// and types come from the schema and every schema reachable from it by $ref
-// and allOf (OpenAPI 3.2.1 section 4.24.4 MUST; adopted for 3.1, whose text
-// is silent). Types from several reachable schemas intersect (a schema
-// without type allows all); an array's default follows its items the same
-// way; an items chain that leads back into a schema being resolved
-// contributes the absent type (application/octet-stream). Results do not
-// depend on which operation compiles first. No compile path recurses once
-// per $ref or items link (iterative, or bounded at 1,000 links, past which
-// the absent type applies); each node's result is computed once (P1); the
-// default set is held as a set of the three possible defaults and
-// formatted only for a descriptor." The verification pass's C4-8 withdraws
-// the bound ("Items chains are followed iteratively with each node's set
-// memoized and no length bound: a long chain gets its true default"; see
-// regress_stage4_inspect_test.go). Findings F2, F9, F17, A3; and F4/A7
-// (nested multipart from array items), F6/A6 (RFC 6570 fields ignored
-// outside form-urlencoded and multipart/form-data, OAS 3.1.2 section
-// 4.8.15.1.2: "This field SHALL be ignored if the request body media type
-// is not application/x-www-form-urlencoded or multipart/form-data"), F29
-// and A8.
+// Regression tests for schema inspection. Property lists and types come
+// from the schema and every schema reachable from it by $ref and allOf
+// (OpenAPI 3.2.1 section 4.24.4.2, a MUST; the client applies it to 3.1 as
+// well, whose text is silent). Types from several reachable schemas
+// intersect (a schema without type allows all); an array's default follows
+// its items the same way; an items chain that leads back into a schema
+// being resolved contributes the absent type (application/octet-stream).
+// Results do not depend on which operation compiles first. No compile path
+// recurses once per $ref or items link: items chains are followed
+// iteratively, each node's set computed once and memoized, with no length
+// bound, so a long chain gets its true default (see
+// regress_stage4_inspect_test.go). The default set is held as a set of the
+// three possible defaults and formatted only for a descriptor. Also nested
+// multipart from array items, RFC 6570 fields ignored outside
+// form-urlencoded and multipart/form-data (OAS 3.1.2 section 4.8.15.1.2:
+// "This field SHALL be ignored if the request body media type is not
+// application/x-www-form-urlencoded or multipart/form-data"), allowReserved
+// under multipart/form-data, and quote-aware contentType lists.
 
 const schemaPaths = `
 	"/ao":{"post":{"operationId":"allOf","requestBody":{"content":{
@@ -82,9 +79,9 @@ func contentTypes(ct string) []string {
 	return set
 }
 
-// C4-2 (F17): properties declared through allOf, or through a $ref with
-// sibling keywords, are fields with their declared types: in
-// Media.Encoding, and on the wire under form and multipart.
+// Properties declared through allOf, or through a $ref with sibling
+// keywords, are fields with their declared types: in Media.Encoding, and on
+// the wire under form and multipart.
 func TestC42AllOfAndRefSiblingProperties(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, schemaDoc(), nil)
@@ -121,11 +118,11 @@ func TestC42AllOfAndRefSiblingProperties(t *testing.T) {
 	}
 }
 
-// C4-2 (F17): a property's type is read through allOf and a $ref with
-// siblings, types from several reachable schemas intersect (a schema
-// without type allows all), an array's default follows its items the same
-// way, and a type left with two defaults requires Part.MediaType (stage 4
-// ledger, IP4-2).
+// A property's type is read through allOf and a $ref with siblings, types
+// from several reachable schemas intersect (a schema without type allows
+// all), an array's default follows its items the same way, and a type left
+// with two defaults requires Part.MediaType ("Empty uses the part's type
+// where one selects itself ...; otherwise the call requires MediaType").
 func TestC42PropertyTypes(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, schemaDoc(), nil)
@@ -164,13 +161,13 @@ func TestC42PropertyTypes(t *testing.T) {
 	wantKeys(t, "Settings", re.Settings, true, "Input.Body/v")
 }
 
-// C4-2 (F9, IP4-2 cycle coverage): X is an array of Y and Y an array or
-// object of X. An items chain that leads back into a schema being resolved
-// contributes the absent type, and "Results do not depend on which
-// operation compiles first": whichever field is described first, each
-// field's default set is that of its schema entered first, application/json
-// (Y's object) and application/octet-stream (the back edge), and the same
-// call has the same outcome.
+// A cycle through items: X is an array of Y and Y an array or object of X.
+// An items chain that leads back into a schema being resolved contributes
+// the absent type, and results do not depend on which operation compiles
+// first: whichever field is described first, each field's default set is
+// that of its schema entered first, application/json (Y's object) and
+// application/octet-stream (the back edge), and the same call has the same
+// outcome.
 func TestC42ItemsCycleOrderIndependent(t *testing.T) {
 	type outcome struct {
 		x, y           string
@@ -204,8 +201,8 @@ func TestC42ItemsCycleOrderIndependent(t *testing.T) {
 
 // chainDoc is a document whose one form field f, under multipart/form-data,
 // is the head of an items chain of n links through $ref, each link a
-// shallow schema in an extension array (F2: "a valid but hostile document
-// with a long chain under a form or multipart body"), the last a string.
+// shallow schema in an extension array (a valid but hostile document with
+// a long chain under a form or multipart body), the last a string.
 func chainDoc(n int) []byte {
 	var b strings.Builder
 	b.Grow(n * 48)
@@ -221,19 +218,19 @@ func chainDoc(n int) []byte {
 // grow: a walk that recursed once per link would need a frame per link,
 // which at 12,500 links passes 128 KiB for any frame over 10 bytes, where a
 // minimal recursive Go function takes 24 on amd64 (frame and return
-// address); 6917b84's recursive walk overflows it at that length.
+// address), so such a walk overflows it at that length.
 const chainStack = 128 << 10
 
-// C4-2 (F2): "No compile path recurses once per $ref or items link". Chains
-// of 12,500 and 50,000 links are described, parse and Operations(), with
-// every goroutine's stack held to 128 KiB (runtime/debug.SetMaxStack), at a
-// cost linear in the chain, the field text/plain as the string at the
-// chain's end gives it (C4-8, which withdraws the 1,000-link cut: "a long
-// chain gets its true default"; at b4872f9 the cut gave
-// application/octet-stream). A walk recursing per link exceeds that stack
-// and ends the process, as 6917b84's did, so the test runs in a child
-// process. It used 900,000 links with the default stack, about 73 s under
-// -race against the child's 2-minute limit (stage 4 ledger, IFP7).
+// No compile path recurses once per $ref or items link. Chains of 12,500
+// and 50,000 links are described, parse and Operations(), with every
+// goroutine's stack held to 128 KiB (runtime/debug.SetMaxStack), at a cost
+// linear in the chain, the field text/plain as the string at the chain's
+// end gives it: a long chain gets its true default, with no length cut
+// past which the absent type, application/octet-stream, would apply. A
+// walk recursing per link exceeds that stack and ends the process, so the
+// test runs in a child process. A 900,000-link chain with the default
+// stack took about 73 s under -race, too close to the child's 2-minute
+// limit.
 func TestC42LongItemsChain(t *testing.T) {
 	if !inChild(t) {
 		return
@@ -256,7 +253,7 @@ func TestC42LongItemsChain(t *testing.T) {
 	})
 }
 
-// typeListChain is Astra's A3 document: schemas S0 to S(n-1) of type
+// typeListChain is a document with schemas S0 to S(n-1) of type
 // [array, string] whose items is the next, Sn an object, and one form
 // field whose schema is S0.
 func typeListChain(n int) []byte {
@@ -269,12 +266,12 @@ func typeListChain(n int) []byte {
 	return []byte(b.String())
 }
 
-// C4-2 (A3): "the default set is held as a set of the three possible
-// defaults and formatted only for a descriptor": a chain of
-// [array, string] schemas gives one field the defaults text/plain and
-// application/json, a short ContentType, and costs allocated bytes and
-// retained memory linear in the chain (a joined list grown per link would
-// be quadratic: about 600 MB at 10,000 links).
+// The default set is held as a set of the three possible defaults and
+// formatted only for a descriptor: a chain of [array, string] schemas gives
+// one field the defaults text/plain and application/json, a short
+// ContentType, and costs allocated bytes and retained memory linear in the
+// chain (a joined list grown per link would be quadratic: about 600 MB at
+// 10,000 links).
 func TestC42DefaultSetLinear(t *testing.T) {
 	c, err := openapi.Parse(context.Background(), typeListChain(1000), testDocURI, nil)
 	if err != nil {
@@ -302,10 +299,10 @@ func TestC42DefaultSetLinear(t *testing.T) {
 	})
 }
 
-// F4, A7: a nested multipart part made from an array value takes its
-// fields from the items schema (client.go, Input.Body: "each item taking
-// the property's content type (an array schema's items type by default)";
-// stage 4 ledger, Q7), so each item's members have their declared types.
+// A nested multipart part made from an array value takes its fields from
+// the items schema (client.go, Input.Body: "each item taking the
+// property's content type (an array schema's items type by default)"), so
+// each item's members have their declared types.
 func TestF4NestedMultipartFromArrayItems(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, schemaDoc(), nil)
@@ -332,14 +329,13 @@ func TestF4NestedMultipartFromArrayItems(t *testing.T) {
 	}
 }
 
-// F6, A6: under a multipart type other than multipart/form-data, an
-// Encoding's style, explode and allowReserved are ignored and its
-// contentType governs (OAS 3.1.2 section 4.8.15.1.2; describe.go,
-// Param.ContentType: "Under application/x-www-form-urlencoded and
-// multipart/form-data it is empty for a field whose Encoding sets style,
-// explode or allowReserved"): the parts are typed by contentType or the
-// default, an array value one part per item, and the descriptors carry no
-// style.
+// Under a multipart type other than multipart/form-data, an Encoding's
+// style, explode and allowReserved are ignored and its contentType governs
+// (OAS 3.1.2 section 4.8.15.1.2; describe.go, Param.ContentType: "Under
+// application/x-www-form-urlencoded and multipart/form-data it is empty for
+// a field whose Encoding sets style, explode or allowReserved"): the parts
+// are typed by contentType or the default, an array value one part per item,
+// and the descriptors carry no style.
 func TestF6StylesIgnoredOutsideFormData(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, schemaDoc(), nil)
@@ -360,7 +356,7 @@ func TestF6StylesIgnoredOutsideFormData(t *testing.T) {
 	}
 }
 
-// F29: Param.AllowReserved is "false where the edition or the media type
+// Param.AllowReserved is "false where the edition or the media type
 // ignores it, as for a multipart/form-data field" (OAS 3.1.2 section
 // 4.8.15.1.2: "When using RFC6570-style serialization for
 // multipart/form-data, URI percent-encoding MUST NOT be applied, and the
@@ -377,8 +373,8 @@ func TestF29AllowReservedIgnoredInFormData(t *testing.T) {
 	}
 }
 
-// A8: an Encoding's contentType list is split where a comma separates
-// media types, not inside a quoted parameter value (RFC 9110 section 5.6.4,
+// An Encoding's contentType list is split where a comma separates media
+// types, not inside a quoted parameter value (RFC 9110 section 5.6.4,
 // quoted-string): `text/plain; profile="a,b"` is one type, which selects
 // itself, and a list of it and application/json requires Part.MediaType.
 func TestA8ContentTypeListQuoteAware(t *testing.T) {
@@ -411,11 +407,11 @@ func TestA8ContentTypeListQuoteAware(t *testing.T) {
 	}
 }
 
-// Stage 4 ledger, RQ5: Media.Encoding lists fields only for a form type, a
-// multipart type, or a range of multipart types such as multipart/*; for
-// */* and application/* it lists none, their fields depending on the type
-// a call selects (describe.go, Media.Encoding: "the fields of form or
-// multipart content").
+// Media.Encoding lists fields only for a form type, a multipart type, or a
+// range of multipart types such as multipart/*; for */* and application/*
+// it lists none, their fields depending on the type a call selects
+// (describe.go, Media.Encoding: "the fields of form or multipart
+// content").
 func TestRQ5RangeEncodingDescriptors(t *testing.T) {
 	doc := doc31(`"/r":{"post":{"operationId":"ranges","requestBody":{"content":{
 		"*/*":{"schema":{"type":"object","properties":{"x":{"type":"string"}}}},
@@ -434,16 +430,15 @@ func TestRQ5RangeEncodingDescriptors(t *testing.T) {
 	}
 }
 
-// Stage 4 ledger, RQ6: Media.Encoding's order is the schema's own
-// properties in document order, then those reached through $ref and allOf,
-// depth first in document order, a property's first declaration fixing its
-// place, then the names only the encoding map has (describe.go,
-// Media.Encoding: "the properties the schema lists at its top level (after
-// following $ref), in document order, then those that only declare an
-// Encoding Object, in the encoding map's order"). Here the schema writes a
-// $ref, its own properties, then two allOf branches, the second a $ref; R,
-// reached first, has an allOf of its own and repeats own2; allOf's first
-// branch repeats r1.
+// Media.Encoding's order is the schema's own properties in document order,
+// then those reached through $ref and allOf, depth first in document order,
+// a property's first declaration fixing its place, then the names only the
+// encoding map has (describe.go, Media.Encoding: "the properties the schema
+// lists at its top level (after following $ref), in document order, then
+// those that only declare an Encoding Object, in the encoding map's order").
+// Here the schema writes a $ref, its own properties, then two allOf
+// branches, the second a $ref; R, reached first, has an allOf of its own and
+// repeats own2; allOf's first branch repeats r1.
 func TestRQ6EncodingOrder(t *testing.T) {
 	doc := doc31(`"/o":{"post":{"operationId":"ordered","requestBody":{"content":{"multipart/form-data":{
 		"schema":{"$ref":"#/components/schemas/R","properties":{"own1":{"type":"string"},"own2":{"type":"string"}},

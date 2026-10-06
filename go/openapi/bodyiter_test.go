@@ -17,7 +17,7 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Stage 4, iterator bodies, deterministically: every wait is on a channel
+// Iterator bodies, tested deterministically: every wait is on a channel
 // the server or the iterator closes (bodyServer.seen, gates), never on time
 // alone; where a test must show that something has NOT happened yet, it
 // waits the suite's grace period on top of the channel that proves the
@@ -371,13 +371,12 @@ func TestIteratorErrorAbortsTheBody(t *testing.T) {
 	})
 }
 
-// An item that cannot be encoded aborts the body as an iterator's error
-// does: a JSON item encoding/json refuses (its error reachable with
-// errors.As, stage 1 ledger, F24: "encoding errors get safe text with the
-// cause kept for errors.Is/As"), an event stream item client.go,
-// Input.Body, rules out, and an item whose caller codec fails (client.go,
-// Options.Codecs: "An Encode error ... aborts the body for an iterator's
-// item").
+// An item that cannot be encoded aborts the body as an iterator's error does:
+// a JSON item encoding/json refuses (its error reachable with errors.As:
+// encoding errors get safe text with the cause kept for errors.Is/As), an
+// event stream item client.go, Input.Body, rules out, and an item whose
+// caller codec fails (client.go, Options.Codecs: "An Encode error ... aborts
+// the body for an iterator's item").
 func TestUnencodableItemAbortsTheBody(t *testing.T) {
 	errEncode := errors.New("cannot encode")
 	for _, tt := range []struct {
@@ -512,7 +511,7 @@ func TestIteratorContextEnds(t *testing.T) {
 		}
 		defer resp.Body.Close()
 		// Send promises response headers, not iterator entry. Establish an
-		// active source; IFP9 permits a body stopped before entry never to run.
+		// active source; a body stopped before entry may never run.
 		select {
 		case <-srv.seen(itemMark(0)):
 		case <-time.After(10 * time.Second):

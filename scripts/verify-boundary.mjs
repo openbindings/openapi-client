@@ -82,6 +82,23 @@ for (const name of goFiles) {
   }
 }
 
+// The Go module's sources and documents justify behavior by the package
+// documentation and the specifications, never by development records,
+// review rounds or the people and tools involved. The copied upstream YAML
+// parser keeps its own text.
+const developmentRecord = /\b(ledgers?|loop owner|test author|reviewers?|review round|panels?|rulings?|ruled|escalat\w*|Matt|Astra|Codex|Claude|Opus|GPT)\b|\b[Ss]tage \d+\b|\b[Tt]ier [123]\b/;
+const goTextFiles = (await readdir(new URL("../go/", import.meta.url), { recursive: true }))
+  .filter((name) => /\.(go|md)$/.test(name) && !name.startsWith("internal/yaml/"));
+for (const name of goTextFiles) {
+  const lines = (await readFile(new URL(`../go/${name}`, import.meta.url), "utf8")).split("\n");
+  lines.forEach((line, index) => {
+    const match = developmentRecord.exec(line);
+    if (match) {
+      throw new Error(`go/${name}:${index + 1} cites development records ("${match[0]}"); cite the package documentation or a specification instead`);
+    }
+  });
+}
+
 const tsCorpusAdapter = await readFile(
   new URL("../typescript/src/upstream-processor-corpus.test.ts", import.meta.url),
   "utf8",

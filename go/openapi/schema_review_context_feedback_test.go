@@ -8,12 +8,13 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Owner Tier 2 feedback boundary: a route whose inferred schema scope is
-// contradicted by context learned only through that route becomes unresolved.
-// ErrUnresolved and SchemaReference.Err preserve a per-part failure. Loader
-// retains reached documents/context; ordinary independently routed contexts
-// remain governed by the stronger existing carrier regressions. OAS 3.1.2
-// Parameter Object (4.8.12) still makes the newly identified example data.
+// Inference-dependent context: a route whose inferred schema scope is
+// contradicted by context learned only through that route becomes
+// unresolved. ErrUnresolved and SchemaReference.Err preserve a per-part
+// failure. Loader retains reached documents/context; ordinary independently
+// routed contexts remain governed by the stronger existing carrier
+// regressions. OAS 3.1.2 Parameter Object (4.8.12) still makes the newly
+// identified example data.
 func TestReview9InferenceDependentContextIsUnresolved(t *testing.T) {
 	const bundle = "https://schemas.example.test/api/bundle.json"
 	const inferredCarrier = "https://schemas.example.test/api/data-only/carrier-openapi.json"
@@ -36,9 +37,9 @@ func TestReview9InferenceDependentContextIsUnresolved(t *testing.T) {
 			}
 		}
 	}
-	// The owner deliberately leaves the affected error's public location open:
-	// direct lookup, whole References, or its edge. A successful affected edge
-	// is forbidden even if another error is also returned.
+	// The affected error's public location is left open: direct lookup,
+	// whole References, or its edge. A successful affected edge is forbidden
+	// even if another error is also returned.
 	unresolved := func(uri, value string) {
 		t.Helper()
 		s, lookupErr := c.Schema(uri)

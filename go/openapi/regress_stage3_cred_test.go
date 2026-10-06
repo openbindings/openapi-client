@@ -16,13 +16,12 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Regression tests for the stage 3 review round, credentials and security
-// (stage 3 ledger, "Review round (8101e19)"; review/panel.json, F1 to F22;
-// review/gpt-answer.md, A1 to A8): class rulings C3-3 (the client applies
-// the cookie jar), C3-6 (credentials placed after the last edit, checked
-// against the URL sent), C3-7 (a value its destination cannot carry) and
-// C3-8 (static credential problems at Load), and findings F3, F4, F8, F9,
-// F10, F12, F13, F20 and A2 (redaction) and A8.
+// Regression tests for credentials and security: the client applies the
+// cookie jar itself, places credentials after the last edit and checks them
+// against the URL sent, refuses a credential value its destination cannot
+// carry, and refuses static credential problems at Load. Further cases
+// cover malformed security values, defective schemes, header and query
+// placement, and redaction.
 
 // cookiePairs returns the pairs of the one Cookie field h holds, or nil
 // when it holds none, failing when it holds several.
@@ -53,13 +52,13 @@ func newJar(t *testing.T, base string, cookies ...*http.Cookie) http.CookieJar {
 	return jar
 }
 
-// C3-3 (F11, A6): "The client applies the cookie jar itself, as net/http's
-// send does (Jar.Cookies before sending, Jar.SetCookies after each
-// response), on the copy with Jar nil". Stage 3 ledger, TQ1: "one Cookie
-// field: cookie parameters (declared order), then jar cookies (net/http's
-// send appends them after the request's own), then credentials last, each
+// The client applies the cookie jar itself, as net/http's send does
+// (Jar.Cookies before sending, Jar.SetCookies after each response), on a
+// copy of the http.Client with Jar nil. The request holds one Cookie field:
+// cookie parameters in declared order, then jar cookies (net/http's send
+// appends them after the request's own), then credentials last, each
 // replacing a pair of its name. Jar and parameter pairs of one name are both
-// kept, as net/http does." doc.go, Credentials: "Query and cookie
+// kept, as net/http does. doc.go, Credentials: "Query and cookie
 // credentials go last ... and one that replaces a pair of the same name ...
 // removes it and goes last"; Cookies: "one Cookie field ... parameters in
 // declared order, then credentials". net/http's cookiejar returns cookies
@@ -96,12 +95,11 @@ func TestJarCookiesThenCredentials(t *testing.T) {
 	}
 }
 
-// C3-3 and F12 (test gap: "a jar with FollowAll and same-origin hops, with
-// and without a placed credential"; quality-economy's
-// TestQEJarRedirectNoCredential: without the jar step a third hop sent
-// "j=1; j=1"): each hop carries the jar's cookies for it once, the cookie a
+// A jar with FollowAll and same-origin hops, with and without a placed
+// credential: each hop carries the jar's cookies for it once, the cookie a
 // response set included (Jar.SetCookies after each response), then the
-// credential, last.
+// credential, last. Without the client's jar step on every hop, the third
+// hop would send "j=1; j=1".
 func TestJarOnEveryHop(t *testing.T) {
 	doc := doc31(`"/r":{"get":{"operationId":"plain"}},"/s":{"get":{"operationId":"withCredential","security":[{"key_c":[]}]}}`, credSchemes)
 	setAndGo := func(loc string) http.HandlerFunc {
@@ -143,8 +141,8 @@ func TestJarOnEveryHop(t *testing.T) {
 	}
 }
 
-// C3-3: "Jar cookies go on the request sent, never into Request.HTTP."
-// client.go, Request.HTTP: a prepared request is the caller's to send again;
+// Jar cookies go on the request sent, never into Request.HTTP. client.go,
+// Request.HTTP: a prepared request is the caller's to send again;
 // Request.Call: one whose body can be sent again "may be sent any number of
 // times". client.go, Options.HTTPClient: "It is used as given and never
 // modified."
@@ -157,7 +155,7 @@ func TestJarNeverEditsRequestHTTP(t *testing.T) {
 	for i := range 2 {
 		sendAndClose(t, req)
 		wantField(t, req.HTTP.Header, "Cookie", "c1=v")
-		want := []string{"c1=v", "z=1", "sid=" + cSecret} // TQ1: parameters, the jar's, credentials
+		want := []string{"c1=v", "z=1", "sid=" + cSecret} // parameters, the jar's, credentials
 		if got := cookiePairs(t, w.last(t).Header); strings.Join(got, "; ") != strings.Join(want, "; ") {
 			t.Errorf("send %d: Cookie pairs %q, want %q", i, got, want)
 		}
@@ -167,7 +165,7 @@ func TestJarNeverEditsRequestHTTP(t *testing.T) {
 	}
 }
 
-// C3-3 with Redirects: a hop to another origin carries no credential, the
+// The jar with Redirects: a hop to another origin carries no credential, the
 // jar's cookies being the jar's to choose (client.go, Redirects: "On a hop
 // to another origin ... the client removes the credentials it added").
 func TestJarKeepsCredentialOnItsOrigin(t *testing.T) {
@@ -210,14 +208,14 @@ func writer(f func(*http.Request)) *openapi.Input {
 	return &openapi.Input{ParamWriters: map[string]func(*http.Request) error{"p": func(r *http.Request) error { f(r); return nil }}}
 }
 
-// C3-6 (F9): "Credentials are placed after the last edit, and the origin
-// and plain-http checks run against the URL actually sent, on every hop the
-// client signs (F9 writers changing scheme or host ...)". doc.go,
-// Credentials: the client "adds credentials only to requests with the
-// origin of the server the call resolved to"; client.go, Request.HTTP: "If
-// the URL is changed to another origin and the call needs credentials,
-// sending it is refused". The adversarial reviewer's TestZA3WriterMovesOrigin
-// sent a bearer token over plain http to another host.
+// Credentials are placed after the last edit, and the origin and plain-http
+// checks run against the URL actually sent, on every hop the client signs,
+// so a parameter writer that changes the scheme or host cannot carry them
+// elsewhere. doc.go, Credentials: the client "adds credentials only to
+// requests with the origin of the server the call resolved to"; client.go,
+// Request.HTTP: "If the URL is changed to another origin and the call needs
+// credentials, sending it is refused". Without these checks, a writer that
+// moves the URL would send a bearer token over plain http to another host.
 func TestParamWriterCannotMoveCredentials(t *testing.T) {
 	moves := map[string]func(*http.Request){
 		"to another host over plain http": func(r *http.Request) { r.URL.Scheme, r.URL.Host = "http", "elsewhere.example.test" },
@@ -259,13 +257,13 @@ func TestParamWriterCannotMoveCredentials(t *testing.T) {
 	}
 }
 
-// F3 and C3-6: doc.go, Credentials: bearer and Basic credentials go over
-// plain http only to "a loopback IP address, an IPv4-mapped one included,
-// or the name localhost written exactly so, the one name
-// http.ProxyFromEnvironment never sends through a proxy"; C3-6: "the origin and plain-http checks run
-// against the URL actually sent, on every hop the client signs" (panel F3:
-// a hop from http://localhost:P to http://LOCALHOST:P is the same origin,
-// signed again without the rule, and net/http proxies it). The transport
+// doc.go, Credentials: bearer and Basic credentials go over plain http only
+// to "a loopback IP address, an IPv4-mapped one included, or the name
+// localhost written exactly so, the one name http.ProxyFromEnvironment never
+// sends through a proxy". The origin and plain-http checks run against the
+// URL actually sent, on every hop the client signs: a hop from
+// http://localhost:P to http://LOCALHOST:P is the same origin, which would
+// otherwise be signed again although net/http proxies it. The transport
 // dials nothing.
 func TestLocalhostSpellingCheckedOnTheURLSent(t *testing.T) {
 	const base = "http://localhost:9"
@@ -354,7 +352,7 @@ func valueCases() []valueCase {
 	add("key_h", "keyHeader", true, "Zq9 a\tb", "Zq9-\xc3\xa9")
 	add("key_h", "keyHeader", false, "Zq9\x01", "Zq9\x7f", " Zq9", "Zq9\t", "Zq9\rX", "Zq9\nX", "Zq9\x00")
 	// A bearer token (http bearer, oauth2, openIdConnect): a header field
-	// value only (VN4), not RFC 6750's b64token, so Laravel Sanctum's
+	// value only, not RFC 6750's b64token, so Laravel Sanctum's
 	// "<id>|<token>" and other characters b64token excludes are carried.
 	add("bearer", "bearer", true, "Zq9", "Zq9-A.z_0~9+/", "Zq9=", "Zq9==", "mF_9.B5f-4.1JqM-Zq9", "1|Zq9abcdef",
 		"Zq9 a", "Zq9,a", "Zq9\"a", "Zq9;a", "=Zq9", "Zq9=a", "Zq9\ta", "Zq9\xc3\xa9", "Zq9:a", "Zq9\\a", "Zq9@a")
@@ -374,8 +372,8 @@ func valueCases() []valueCase {
 	add("dpop", "dpop", false, "Zq9\x01", " Zq9", "Zq9 ", "Zq9\nX")
 	// A cookie value, as RFC 6265 section 5 lets a user agent send it: no
 	// ";", no control character, and no whitespace around it, which section
-	// 5.2 trims (stage 3 ledger, C3-7, R6 and VP8: a backslash, a quote, a
-	// comma or a space within is carried).
+	// 5.2 trims (a backslash, a quote, a comma or a space within is
+	// carried).
 	add("key_c", "keyCookie", true, "Zq9\\a", "Zq9\"a", "Zq9,a", "Zq9 a")
 	add("key_c", "keyCookie", false, "Zq9;a", "Zq9\x00", "Zq9\ta", "Zq9\x7f", "Zq9\r\nX", " Zq9", "Zq9 ")
 	// A query value is percent-encoded, so any value can be carried.
@@ -383,14 +381,12 @@ func valueCases() []valueCase {
 	return cases
 }
 
-// C3-7 (F21, A7): "A credential value is refused at
-// Options.Credentials["name"] (Load for a static one, the call for a
-// source's) wherever its wire syntax cannot carry it". C3-8: "every static
-// credential problem is refused by Load (by each call for a Client.With's
-// Options), a source's value by the call". VN4 (reversing C3-7's bearer
-// item): "bearer tokens (bearer, oauth2, openIdConnect) are held only to the
-// header-field rule, not to RFC 6750's b64token. Laravel Sanctum's widely
-// deployed '<id>|<token>' is outside b64token". doc.go, Credentials: "A
+// A credential value is refused at Options.Credentials["name"] wherever its
+// wire syntax cannot carry it: every static credential problem by Load (by
+// each call for a Client.With's Options), a source's value by the call.
+// Bearer tokens (bearer, oauth2, openIdConnect) are held only to the
+// header-field rule, not to RFC 6750's b64token, since Laravel Sanctum's
+// widely deployed "<id>|<token>" is outside b64token. doc.go, Credentials: "A
 // credential value its destination cannot carry is refused at
 // Options.Credentials["name"]: by Load for a static credential (by each
 // call, for a Client from Client.With), by the call for a source's. Such a
@@ -464,11 +460,11 @@ func TestCredentialValueSyntax(t *testing.T) {
 	}
 }
 
-// F12 (test gap: "Basic given to a non-basic scheme through With"):
-// doc.go, Credentials: Load refuses "a [Basic] credential for a name none of
-// whose schemes is http basic"; client.go, With: a derived Client skips only
-// Load's name checks, "and any other Options the document cannot use refuse
-// each call they affect"; C3-8: "by each call for a Client.With's Options".
+// Basic given to a non-basic scheme through With: doc.go, Credentials: Load
+// refuses "a [Basic] credential for a name none of whose schemes is http
+// basic"; client.go, With: a derived Client skips only Load's name checks,
+// "and any other Options the document cannot use refuse each call they
+// affect", so each call made with a Client.With's Options refuses it.
 func TestBasicForAnotherSchemeThroughWith(t *testing.T) {
 	w := newWire(t, nil)
 	c := credClient(t, w, nil)
@@ -481,13 +477,13 @@ func TestBasicForAnotherSchemeThroughWith(t *testing.T) {
 	}
 }
 
-// F13: "a hop's refused credential names its scheme; no unchecked type
-// assertion." C3-7, as VN4 leaves it, applies on a hop as on the first
-// request (the value is a source's, refused by the call), and C3-5 returns
-// the response that arrived. errors.go, RequestError.Err: "a credential
-// source's error (naming the scheme)"; credential.go, SecretFunc: on a hop,
-// "an error or an empty secret ends the call with a *url.Error ... along
-// with the last response".
+// A hop's refused credential names its scheme, with no unchecked type
+// assertion. A credential value its destination cannot carry is refused on a
+// hop as on the first request (the value is a source's, refused by the call),
+// and the response that arrived is returned. errors.go, RequestError.Err: "a
+// credential source's error (naming the scheme)"; credential.go, SecretFunc:
+// on a hop, "an error or an empty secret ends the call with a *url.Error ...
+// along with the last response".
 func TestHopCredentialRefusalNamesItsScheme(t *testing.T) {
 	doc := doc31(`"/r":{"get":{"operationId":"getR"}}`, `"security":[{"corp_bearer":[]}]`,
 		`"components":{"securitySchemes":{"corp_bearer":{"type":"http","scheme":"bearer"}}}`)
@@ -524,13 +520,13 @@ func TestHopCredentialRefusalNamesItsScheme(t *testing.T) {
 	}
 }
 
-// F4: "a refusal before dispatch leaves a prepared Request sendable; T1 on
-// Request.Call: a *RequestError does not use up a body that can be read
-// once." client.go, Request.Call: a read-once Request "may be sent once, and
-// sending it again is refused with a *RequestError, nothing sent; a send
-// refused with a *RequestError does not count." credential.go, SecretFunc:
-// "An error from f, or an empty secret, on the first request refuses the
-// call with a *RequestError: nothing is sent."
+// A refusal before dispatch leaves a prepared Request sendable: a
+// *RequestError does not use up a body that can be read once. client.go,
+// Request.Call: a read-once Request "may be sent once, and sending it again
+// is refused with a *RequestError, nothing sent; a send refused with a
+// *RequestError does not count." credential.go, SecretFunc: "An error from f,
+// or an empty secret, on the first request refuses the call with a
+// *RequestError: nothing is sent."
 func TestRefusedSendKeepsReadOnceRequest(t *testing.T) {
 	doc := doc31(`"/up":{"post":{"operationId":"up","security":[{"bearer":[]}],"requestBody":{"content":{"application/octet-stream":{}}}}}`, credSchemes)
 	for name, first := range map[string]func() (string, error){
@@ -573,13 +569,12 @@ func TestRefusedSendKeepsReadOnceRequest(t *testing.T) {
 	}
 }
 
-// F10: "replacing a header credential deletes every spelling of the field
-// on the sent copy, on every path". doc.go, Credentials: "A header
-// credential replaces a field of the same name"; field names compare
-// without regard to case (RFC 9110 section 5.1). The adversarial reviewer's
-// TestZA3WriterLowercaseCredentialField sent two fields from a ParamWriter
-// on the Call path, and TestZA3CheckRedirectLowercaseCredentialField two on
-// a hop.
+// Replacing a header credential deletes every spelling of the field on the
+// sent copy, on every path. doc.go, Credentials: "A header credential
+// replaces a field of the same name"; field names compare without regard to
+// case (RFC 9110 section 5.1). Otherwise a lowercase spelling set by a
+// ParamWriter on the Call path, or by CheckRedirect on a hop, would be sent
+// as a second field beside the credential's.
 func TestCredentialReplacesEverySpelling(t *testing.T) {
 	cases := []struct {
 		key, spelled, value, field string
@@ -627,11 +622,10 @@ func TestCredentialReplacesEverySpelling(t *testing.T) {
 	})
 }
 
-// F10: "caller spellings are not canonicalized otherwise." net/http writes
-// a header field name as the map key holds it (net/http, Header: "To use
-// non-canonical keys, assign to the map directly"); quality-economy's
-// TestQEPreparedHeaderSpellingRewritten found a prepared send rewriting it.
-// The listener keeps the bytes of each request.
+// Caller spellings are not canonicalized otherwise. net/http writes a
+// header field name as the map key holds it (net/http, Header: "To use
+// non-canonical keys, assign to the map directly"), and a prepared send must
+// not rewrite it. The listener keeps the bytes of each request.
 func TestCallerFieldSpellingKept(t *testing.T) {
 	const line = "\r\nx-legacy-token: v\r\n"
 	for _, key := range []string{"open", "keyHeader", "keyQuery"} {
@@ -663,12 +657,11 @@ func TestCallerFieldSpellingKept(t *testing.T) {
 	}
 }
 
-// F20: "placing a query credential preserves every other pair byte for
-// byte, empty ones included." doc.go, Credentials: a query credential "that
+// Placing a query credential preserves every other pair byte for byte,
+// empty ones included. doc.go, Credentials: a query credential "that
 // replaces a pair of the same name, including one edited into Request.HTTP,
 // removes it and goes last"; RFC 3986 section 3.4 leaves the query's syntax
-// to the application. conformance's TestE_PairsRewritten found empty pairs
-// dropped.
+// to the application, so empty pairs are not dropped.
 func TestQueryCredentialKeepsOtherPairs(t *testing.T) {
 	w := newWire(t, nil)
 	c := credClient(t, w, nil)
@@ -685,8 +678,8 @@ func TestQueryCredentialKeepsOtherPairs(t *testing.T) {
 	}
 }
 
-// F12 (test gap: "an edited query pair spelled with %XX or + that a query
-// credential replaces"): a pair whose name decodes to the credential's
+// An edited query pair spelled with %XX or + that a query credential
+// replaces: a pair whose name decodes to the credential's
 // (application/x-www-form-urlencoded, as url.QueryUnescape reads it) is
 // replaced; another name, a different case included, is kept (doc.go,
 // Credentials: "one that replaces a pair of the same name ... removes it").
@@ -713,18 +706,18 @@ func TestQueryCredentialReplacesEncodedName(t *testing.T) {
 	}
 }
 
-// F8: "a present security value that is not an array, an entry that is not
-// an object, or scopes that are not an array of strings sets Operation.Err
-// (root security: each inheriting operation)." describe.go, Operation.Err
-// (TQ6, 0ad55d7): it is set by "a security value, the operation's or the
+// A present security value that is not an array, an entry that is not an
+// object, or scopes that are not an array of strings sets Operation.Err (for
+// root security, each inheriting operation's). describe.go, Operation.Err:
+// it is set by "a security value, the operation's or the
 // root's it inherits, that is not an array of Security Requirement Objects
 // each mapping names to arrays of strings ... Calling an operation with Err
 // set returns a *RequestError wrapping Err." OAS 3.1.2 sections 4.8.1.1 and
 // 4.8.10.1: security is "[Security Requirement Object]"; section 4.8.30.1: a
 // Security Requirement Object's fields are "[string]". Operation.Security:
 // "An empty Security means the operation declares no requirement; the
-// client adds no credentials", which a malformed value must not be read as
-// (conformance's TestC_MalformedSecurity: sent without credentials).
+// client adds no credentials", which a malformed value must not be read as,
+// or the call would be sent without credentials.
 func TestMalformedSecurityValue(t *testing.T) {
 	malformed := []string{
 		`null`, `{}`, `{"key_h":[]}`, `["key_h"]`, `"key_h"`, `5`, `true`,
@@ -789,13 +782,11 @@ type schemeCase struct {
 // with a Secret, at the credential's key, and is satisfied by FromTransport
 // (describe.go, SecurityScheme.Err: "a defective or missing declaration.
 // Alternatives that use it can be applied only when FromTransport satisfies
-// it"; doc.go, Credentials: "FromTransport also satisfies a scheme a
+// it"; doc.go, Credentials: "FromTransport is what satisfies a scheme a
 // requirement names but the document never declares, or declares
-// defectively"). Stage 3 ledger, TQ4: "Load refuses any credential but
-// FromTransport for a name all of whose schemes are defective
-// (SecurityScheme.Err), as for mutualTLS; each call does so for a
-// Client.With" (doc.go, Credentials: Load refuses "any credential but
-// FromTransport for a name all of whose schemes are mutualTLS").
+// defectively"). doc.go, Credentials: Load refuses "any credential but
+// FromTransport for a name all of whose schemes are mutualTLS, or undeclared
+// or declared defectively", and each call does so for a Client.With.
 func checkSchemeCases(t *testing.T, cases []schemeCase) {
 	t.Helper()
 	for _, tc := range cases {
@@ -829,8 +820,8 @@ func checkSchemeCases(t *testing.T, cases []schemeCase) {
 	}
 }
 
-// wantLoadRefusesAllButFromTransport checks TQ4 for the name of a defective
-// or undeclared scheme in doc: Load refuses a Secret, a Basic and a
+// wantLoadRefusesAllButFromTransport checks, for the name of a defective or
+// undeclared scheme in doc, that Load refuses a Secret, a Basic and a
 // SecretFunc for it, keyed at its credential, without quoting them, and
 // accepts FromTransport.
 func wantLoadRefusesAllButFromTransport(t *testing.T, doc, base, name string) {
@@ -855,18 +846,19 @@ func wantLoadRefusesAllButFromTransport(t *testing.T, doc, base, name string) {
 	}
 }
 
-// TQ4 for a scheme a requirement names but the document never declares
-// (describe.go, SecurityScheme.Err: "a defective or missing declaration";
-// TestSecuritySchemeDescriptors: an undeclared scheme has Err set).
+// The same refusals for a scheme a requirement names but the document never
+// declares (describe.go, SecurityScheme.Err: "a defective or missing
+// declaration"; TestSecuritySchemeDescriptors: an undeclared scheme has Err
+// set).
 func TestLoadRefusesCredentialForUndeclaredScheme(t *testing.T) {
 	doc := doc31(`"/g":{"get":{"operationId":"g","security":[{"ghost":[]}]}}`, credSchemes)
 	wantLoadRefusesAllButFromTransport(t, doc, "https://api.example.test", "ghost")
 }
 
-// A8: "an OAuth Flow Object missing a URL its flow requires or its scopes
-// map, or that is not an object, sets SecurityScheme.Err, as openIdConnect
-// without openIdConnectUrl already does (class: a Security Scheme or OAuth
-// Flow Object missing a field OpenAPI requires is defective)." OAS 3.1.2
+// An OAuth Flow Object missing a URL its flow requires or its scopes map, or
+// that is not an object, sets SecurityScheme.Err, as openIdConnect without
+// openIdConnectUrl does: a Security Scheme or OAuth Flow Object missing a
+// field OpenAPI requires is defective. OAS 3.1.2
 // section 4.8.29.1: authorizationUrl is REQUIRED for implicit and
 // authorizationCode, tokenUrl for password, clientCredentials and
 // authorizationCode, scopes for all four, "the map MAY be empty"; refreshUrl
@@ -899,11 +891,11 @@ func TestOAuthFlowDefects(t *testing.T) {
 	})
 }
 
-// F12 (test gap: "each newScheme defect") and R5: "SecurityScheme.Err for a
+// Each defect a Security Scheme Object can have. SecurityScheme.Err for a
 // header apiKey naming Content-Type, Cookie or a derived field follows the
-// existing rule for Options.Header and header parameters (checkHeader,
+// rule for Options.Header and header parameters (checkHeader,
 // derivedFields); a cookie apiKey name that is not a token (RFC 6265
-// section 4.1.1) is Err." OAS 3.1.2 section 4.8.27.1: flows is REQUIRED for
+// section 4.1.1) is Err. OAS 3.1.2 section 4.8.27.1: flows is REQUIRED for
 // oauth2, openIdConnectUrl for openIdConnect, scheme for http; RFC 9110
 // section 11.1: an auth-scheme is a token. doc.go, Header fields: Host,
 // Content-Length, Transfer-Encoding, Trailer, Connection, Keep-Alive,
@@ -935,15 +927,15 @@ func TestSecuritySchemeDefectsEveryBranch(t *testing.T) {
 	checkSchemeCases(t, cases)
 }
 
-// A2 (not a defect; T1 clarification): "a *url.Error the caller's own
-// transport creates is the caller's error, passed on as it is (Q13);
-// rewriting caller error trees cannot be done in general". doc.go,
+// A *url.Error the caller's own transport creates is the caller's error,
+// passed on as it is, since rewriting caller error trees cannot be done in
+// general. doc.go,
 // Outcomes: "No credential appears in the text of an error the client
 // creates, nor in the URL of the *url.Error the http.Client returns, which
 // names the request without the credentials the client added. Errors made by
 // the caller's own code, such as its transport or a credential source, are
-// passed on as they are, even when their text quotes a URL." Astra's
-// reproduction: a transport returning &url.Error{URL: r.URL.String(), ...}.
+// passed on as they are, even when their text quotes a URL." The case here
+// is a transport returning &url.Error{URL: r.URL.String(), ...}.
 func TestCallerURLErrorPassedOn(t *testing.T) {
 	var made atomic.Pointer[url.Error]
 	rt := &memRT{answer: func(r *http.Request) (*http.Response, error) {

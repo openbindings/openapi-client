@@ -16,8 +16,7 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Fuzz targets (stage brief, Tests): the document tree parser, and path and
-// query serialization.
+// Fuzz targets: the document tree parser, and path and query serialization.
 
 const fuzzURI = "https://fuzz.example.test/openapi.json"
 
@@ -171,9 +170,8 @@ const fuzzParamDoc = `{"openapi":"3.1.0","info":{"title":"f","version":"1"},"ser
 // true and false) serializations of any strings use only unreserved
 // characters and %XX triples outside the style's own delimiters, and parse
 // back with net/url to the values given. A template with non-ASCII literal
-// text keeps the value's encoding (stage 1 review, F3). A value forming a
-// whole "." or ".." segment is refused (T2-1; doc.go, Fixed rules,
-// Percent-encoding).
+// text keeps the value's encoding. A value forming a whole "." or ".."
+// segment is refused (doc.go, Fixed rules, Percent-encoding).
 func FuzzPathQuerySerialization(f *testing.F) {
 	c, err := openapi.Parse(context.Background(), []byte(fuzzParamDoc), fuzzURI, nil)
 	if err != nil {

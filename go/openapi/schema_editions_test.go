@@ -101,10 +101,11 @@ func TestSchema9LegacyVocabulary(t *testing.T) {
 	}
 }
 
-// Stage 9 entry-document-only ruling, SchemaReference, OAS 3.1.2 4.3.3 /
-// 4.8.25.3 and OAS 3.2.1 4.1.2.3 / Discriminator Object. A component-shaped
-// string never falls back to a referrer or becomes a fetch; ./ forces URI.
-// Security SchemeLookup does not alter discriminator names.
+// SchemaReference: a component-name value selects only the entry document's
+// components/schemas (OAS 3.1.2 4.3.3 / 4.8.25.3 and OAS 3.2.1 4.1.2.3 /
+// Discriminator Object). A component-shaped string never falls back to a
+// referrer or becomes a fetch; ./ forces URI. Security SchemeLookup does not
+// alter discriminator names.
 func TestSchema9DiscriminatorEntryNames(t *testing.T) {
 	const external = "https://schemas.example.test/api/other.json"
 	const root = external + "#/components/schemas/Union"
@@ -149,7 +150,9 @@ func TestSchema9DiscriminatorEntryNames(t *testing.T) {
 }
 
 // References and Schema's opaque-resource rule applies inside a known schema
-// too (Stage 9 Tier 1 clarification). No partial slice shape is promised.
+// too (Schema.References: "If the tree includes a schema resource in another
+// dialect (see Schema), References returns an error"). No partial slice
+// shape is promised.
 func TestSchema9NestedForeignReferencesRefuse(t *testing.T) {
 	const foreign = "https://dialects.example.test/foreign"
 	c := schema9Parse(t, schema9Doc("3.1.2", `"S":{"$defs":{"Foreign":{"$id":"ignored.json","$schema":"`+foreign+`","customReference":"never.json"}}},"Data":{"default":{"$schema":"`+foreign+`"},"example":{"$schema":"`+foreign+`"},"x-data":{"$schema":"`+foreign+`"}}`), nil)

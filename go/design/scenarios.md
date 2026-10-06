@@ -1,9 +1,8 @@
 # Caller scenarios
 
-Every candidate design writes each scenario below as a compilable Go
-`Example` against its own exported declarations, with stub bodies. The
-examples are the design's evidence: reviewers grade the caller code, not the
-declarations alone. A scenario the design cannot express cleanly is a design
+Each scenario below is written as a compilable Go `Example` against the
+exported declarations. The caller code is the evidence that the API serves
+the scenario; a scenario the API cannot express cleanly is a design
 defect.
 
 The client is a plain OpenAPI client. No scenario involves any concept beyond
@@ -71,7 +70,7 @@ OpenAPI, HTTP, and Go.
     It asks only for OpenAPI and HTTP facts, never for anything shaped for
     its own purposes.
 
-## Reviewing the package (Go API reviewer)
+## The package itself
 
 19. **The package itself.** `go doc` reads well top to bottom; zero values
     are safe or impossible; errors work with `errors.Is` and `errors.As`;

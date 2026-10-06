@@ -9,13 +9,13 @@ import (
 )
 
 // doc.go Outcomes and Credential: no credential appears in client-created
-// error text. The inherited document userinfo tests and Stage 8 response
-// diagnostic tests apply this to generated presentation while preserving
-// explicitly inspectable metadata. Schema/References must reject an unknown
-// dialect, while Schema.Raw and Dialect preserve the authored declaration.
-// Both URI sentinels are configured credentials, so this does not invent a
-// rule that every arbitrary query value is a credential. No caller-supplied
-// error is involved, and no network request is needed to inspect the schema.
+// error text. The document userinfo tests and the response diagnostic tests
+// apply this to generated presentation while preserving explicitly
+// inspectable metadata. Schema/References must reject an unknown dialect,
+// while Schema.Raw and Dialect preserve the authored declaration. Both URI
+// sentinels are configured credentials, so this does not invent a rule that
+// every arbitrary query value is a credential. No caller-supplied error is
+// involved, and no network request is needed to inspect the schema.
 func TestSchema9UnknownDialectDiagnosticRedaction(t *testing.T) {
 	const password = "synthetic-schema9-dialect-password"
 	const token = "synthetic-schema9-dialect-bearer-token"

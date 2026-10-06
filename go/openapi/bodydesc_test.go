@@ -7,7 +7,7 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Stage 4 descriptors. describe.go, Media.Encoding: "Encoding describes
+// Request-body descriptors. describe.go, Media.Encoding: "Encoding describes
 // the fields of form or multipart content, as Params whose Name is the
 // field, each with its effective ContentType: the properties the schema
 // lists at its top level (after following $ref), in document order, then
@@ -38,8 +38,7 @@ import (
 // not a multipart"; section 4.8.15.1.2, style "follows the same values as
 // query parameters, including the default value of "form" which applies
 // only when contentType is not being used due to one or both of explode or
-// allowReserved being explicitly specified". Stage 4 ledger, test round
-// (6e13978): Q3, Q4, Q12.
+// allowReserved being explicitly specified".
 
 const descPaths = `
 	"/a":{"post":{"operationId":"schemaOnly","requestBody":{"content":{"multipart/form-data":{"schema":{"type":"object","properties":{
@@ -227,8 +226,8 @@ func TestEncodingDescriptorsFromEncoding(t *testing.T) {
 // RFC 6570 fields: effective style, explode and allowReserved, as for
 // query parameters (OAS 3.1.2 section 4.8.15.1.2; describe.go, Param);
 // defects on the field's Err, never Media.Err, and never a "not
-// implemented" (stage 1 ledger, F9: an undefined combination is the
-// document's); headers ignored outside multipart.
+// implemented" (an undefined combination is a defect of the document);
+// headers ignored outside multipart.
 func TestEncodingDescriptorStyles(t *testing.T) {
 	c := parseAt(t, doc31(descPaths, descComponents), "https://api.example.test", testDocURI, nil)
 	op := mustOp(t, c, "styles")

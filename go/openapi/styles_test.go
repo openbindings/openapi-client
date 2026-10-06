@@ -10,7 +10,7 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Stage 2 styles: every style, explode and location OpenAPI 3.1 defines,
+// Styles: every style, explode and location OpenAPI 3.1 defines,
 // for primitive, array and object values, checked on the wire with exact
 // bytes: against the OAS 3.1.2 style table, and against the RFC 6570 oracle
 // (oracle_test.go) for matrix, label, simple and form, and the table and
@@ -97,7 +97,7 @@ func (c styleCfg) expect(t testing.TB, v any) (string, fate) {
 		allow = allowUR
 	}
 	// Undefinedness is settled first; style refusals apply to defined values
-	// (stage 2 ledger, Q5; doc.go, Fixed rules, Styles).
+	// (doc.go, Fixed rules, Styles).
 	if jUndefined(n) {
 		return absent()
 	}
@@ -133,8 +133,8 @@ func (c styleCfg) expect(t testing.TB, v any) (string, fate) {
 		return absent()
 	case uv.allUndef && c.explode && c.in == "header":
 		// Exploded, a list of only undefined items writes nothing, and the
-		// header field is left out (stage 2 ledger, review round, last
-		// entry).
+		// header field is left out (RFC 6570 leaves the exploded expansion
+		// of a list with no defined members unsettled).
 		return "", omitted
 	}
 	spec := uspec{name: pctName(c.field()), explode: c.explode, value: uv}
@@ -156,7 +156,8 @@ func (c styleCfg) expect(t testing.TB, v any) (string, fate) {
 		// form "?" prefix is stripped, and pairs in cookies "are delimited by
 		// a semicolon followed by a space character rather than &".
 		// A ";" or control character in a value is percent-encoded, as any
-		// other byte outside the unreserved set (stage 2 ledger, Q4).
+		// other byte outside the unreserved set (doc.go, Fixed rules,
+		// Percent-encoding).
 		want := strings.ReplaceAll(strings.TrimPrefix(uexpand("?", spec), "?"), "&", "; ")
 		if want == "" {
 			return "", omitted // no pair: no Cookie field
@@ -169,7 +170,7 @@ func (c styleCfg) expect(t testing.TB, v any) (string, fate) {
 // Fixed rules, Styles: "Nesting in any style but deepObject is refused, and
 // so are an array in a deepObject value, a primitive for ... deepObject";
 // Values: "An undefined member is skipped". Undefinedness is settled first
-// (stage 2 ledger, Q5), so an undefined member, an empty array included, is
+// (Fixed rules, Styles), so an undefined member, an empty array included, is
 // skipped at any depth.
 func deepExpect(name string, n jnode, allow uallow) (string, fate) {
 	if n.kind != 'o' {
@@ -345,12 +346,13 @@ var styleCorpus = []struct {
 	{"array member", map[string]any{"a": []int{1}}},
 	{"object member", map[string]any{"a": map[string]int{"b": 1}, "c": "d"}},
 	{"deep object member", map[string]any{"a": map[string]any{"b": map[string]any{"c": "v", "d": nil}}}},
-	// Stage 2 ledger, Q5: undefined collections nested in a value are
-	// skipped, not refused as nesting.
+	// Undefinedness is settled first (doc.go, Fixed rules, Styles):
+	// undefined collections nested in a value are skipped, not refused as
+	// nesting.
 	{"nested undefined collections skipped", map[string]any{"a": []int{}, "b": map[string]any{}, "c": "x", "d": map[string]any{"e": nil}}},
 	{"undefined: only nested undefined members", map[string]any{"a": []int{}, "b": map[string]any{"c": []string{}}}},
-	// Stage 2 ledger, review round, T2: undefined array items are skipped;
-	// nested defined collections stay refused.
+	// doc.go, Values: undefined array items are skipped; nested defined
+	// collections stay refused.
 	{"undefined array items skipped", []any{"a", nil, []int{}, map[string]any{}, "b"}},
 	{"all-undefined object item skipped", []any{"a", map[string]any{"b": nil}}},
 	{"only undefined items", []any{nil, []int{}}},
@@ -364,12 +366,13 @@ var styleCorpus = []struct {
 // 4.8.12.3: matrix is RFC 6570 section 3.2.7, label 3.2.5, simple 3.2.2,
 // form 3.2.8), spaceDelimited, pipeDelimited and deepObject against the OAS
 // 3.1.2 table and text. allowReserved applies to the query styles: RFC 6570
-// reserved expansion (doc.go, Fixed rules, Percent-encoding), member names
-// included (stage 2 ledger, Q3). An exploded member whose value is "" is
-// written as its name alone except in form style (ledger, Q1), matrix
-// without explode writes [""] as ";p" (ledger, Q2), a cookie value's ";" is
-// percent-encoded (ledger, Q4), and undefined values, nested ones included,
-// are settled before any style refusal (ledger, Q5).
+// reserved expansion, member names included (doc.go, Fixed rules,
+// Percent-encoding). An exploded member whose value is "" is written as its
+// name alone except in form style (Fixed rules, Styles), matrix without
+// explode writes [""] as ";p" (RFC 6570 section 3.2.7), a cookie value's ";"
+// is percent-encoded (Fixed rules, Percent-encoding), and undefined values,
+// nested ones included, are settled before any style refusal (Fixed rules,
+// Styles).
 func TestStylesAgainstOracle(t *testing.T) {
 	cfgs := styleConfigs()
 	w := newWire(t, nil)
@@ -862,8 +865,8 @@ func TestStyleRefusals(t *testing.T) {
 
 // Refusals the RFC 6570 styles share, for each location (doc.go, Fixed
 // rules, Styles: "Nesting in any style but deepObject is refused": a defined
-// collection as an item or member, the undefined ones being skipped, stage 2
-// ledger, review round, T2), keyed by Param.Key, and reported together
+// collection as an item or member, the undefined ones being skipped as
+// Values says), keyed by Param.Key, and reported together
 // (client.go, Prepare: "a *RequestError listing every problem at once").
 func TestNestingRefusedEveryStyle(t *testing.T) {
 	var cfgs []styleCfg
@@ -901,10 +904,10 @@ func TestNestingRefusedEveryStyle(t *testing.T) {
 
 // doc.go, Fixed rules, Percent-encoding: "A path parameter value that would
 // form a whole "." or ".." segment is refused, since RFC 3986 section 5.2.4
-// removes such segments before the value could reach the server"; stage 1
-// ledger, T2-1: "the rule applies to the resulting segment, however many
-// values form it". A label expansion that is a whole segment forms "." from
-// "" and ".." from "." (RFC 6570 section 3.2.5: X{.empty} is "X.").
+// removes such segments before the value could reach the server". The rule
+// applies to the resulting segment, however many values form it. A label
+// expansion that is a whole segment forms "." from "" and ".." from "."
+// (RFC 6570 section 3.2.5: X{.empty} is "X.").
 func TestLabelDotSegments(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, doc31(`"/l/{p}/z":{"get":{"operationId":"l","parameters":[{"name":"p","in":"path","required":true,"style":"label","schema":{}}]}},
@@ -933,11 +936,10 @@ func TestLabelDotSegments(t *testing.T) {
 	}
 }
 
-// Stage 2 ledger, Q1 (doc.go, Fixed rules, Styles: "an exploded object
-// member whose value is "" is written as its name alone except in form
-// style"; RFC 6570 section 3.2.1) and Q2 (matrix without explode writes
-// [""] as ";p": section 3.2.7 appends "=" only "if the variable's value is
-// not empty").
+// doc.go, Fixed rules, Styles: "an exploded object member whose value is ""
+// is written as its name alone except in form style" (RFC 6570 section
+// 3.2.1); and matrix without explode writes [""] as ";p", since RFC 6570
+// section 3.2.7 appends "=" only "if the variable's value is not empty".
 func TestEmptyValueRulings(t *testing.T) {
 	w := newWire(t, nil)
 	doc := doc31(`
@@ -958,7 +960,7 @@ func TestEmptyValueRulings(t *testing.T) {
 		v          any
 		want       string // the request target, or the header or Cookie value
 	}{
-		// Q1: exploded, the member "a" with "" is "a" except in form style.
+		// Exploded, the member "a" with "" is "a" except in form style.
 		{"simple", "p", member, "/s/a,b=x"},
 		{"label", "p", member, "/l/x.a.b=x"},
 		{"matrix", "p", member, "/m/x;a;b=x"},
@@ -969,7 +971,7 @@ func TestEmptyValueRulings(t *testing.T) {
 		{"simple2", "p", member, "/s2/a,,b,x"},
 		{"matrix2", "p", member, "/m2/x;p=a,,b,x"},
 		{"form2", "p", member, "/f2?p=a,,b,x"},
-		// Q2: [""] under matrix without explode is ";p"; with explode each
+		// [""] under matrix without explode is ";p"; with explode each
 		// empty item is the name alone (ifemp ""); form writes "p=".
 		{"matrix2", "p", []string{""}, "/m2/x;p"},
 		{"matrix", "p", []string{""}, "/m/x;p"},
@@ -1003,17 +1005,16 @@ func TestEmptyValueRulings(t *testing.T) {
 	}
 }
 
-// Stage 2 ledger, Q5 (doc.go, Fixed rules, Styles: "Whether a value is
-// undefined (see Values) is settled first; the refusals here apply to
-// defined values"): an empty array under deepObject, a typed nil under
-// spaceDelimited, pipeDelimited and deepObject, and an empty array or object
-// nested as a member are undefined: omitted when optional, missing when
-// required, skipped as members; none is refused as nesting or as a
-// primitive. An undefined array item (null, [] or {}) is skipped too (stage
-// 2 ledger, review round, T2, reversing the Q5 follow-up; doc.go, Values:
-// "An undefined member or array item is skipped, as RFC 6570 section 3.2.1
-// expands only defined ones"), in every style; a defined collection as an
-// item is still refused as nesting.
+// doc.go, Fixed rules, Styles: "Whether a value is undefined (see Values)
+// is settled first; the refusals here apply to defined values": an empty
+// array under deepObject, a typed nil under spaceDelimited, pipeDelimited
+// and deepObject, and an empty array or object nested as a member are
+// undefined: omitted when optional, missing when required, skipped as
+// members; none is refused as nesting or as a primitive. An undefined array
+// item (null, [] or {}) is skipped too (doc.go, Values: "An undefined member
+// or array item is skipped, as RFC 6570 section 3.2.1 expands only defined
+// ones"), in every style; a defined collection as an item is still refused
+// as nesting.
 func TestUndefinedSettledFirst(t *testing.T) {
 	w := newWire(t, nil)
 	doc := doc31(`

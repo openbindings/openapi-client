@@ -194,10 +194,10 @@ func TestStream7SequentialDecodeFailuresAndBounds(t *testing.T) {
 	})
 }
 
-// Options.Codecs and Stage 7 owner ruling: Items decodes each item's own
-// media type. Typed whole-body decoding passes the reconstructed array to
-// that codec once. +json-seq uses its corresponding +json type (Stage 4
-// ledger IP4-5 / RFC 8091), and raw targets bypass all codecs.
+// Options.Codecs: Items decodes each item's own media type. Typed whole-body
+// decoding passes the reconstructed array to that codec once. +json-seq uses
+// its corresponding +json type (RFC 8091), and raw targets bypass all
+// codecs.
 func TestStream7Codecs(t *testing.T) {
 	for _, tc := range []struct{ ct, key, wire string }{{"application/jsonl", "application/json", "1\n2\n"}, {"application/json-seq", "application/json", "\x1e1\n\x1e2\n"}, {"application/geo+json-seq", "application/geo+json", "\x1e1\n\x1e2\n"}, {"text/event-stream", "application/json", "data: x\n\ndata: y\n\n"}} {
 		t.Run(tc.ct, func(t *testing.T) {

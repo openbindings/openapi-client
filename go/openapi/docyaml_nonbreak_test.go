@@ -6,10 +6,10 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Loader reads YAML 1.2, including when a 1.x directive is present (SQ8).
-// YAML 1.2.2 section 5.4 makes U+0085, U+2028 and U+2029 non-break
-// characters, so they remain scalar content rather than folding or
-// ending a line: https://yaml.org/spec/1.2.2/#54-line-break-characters.
+// Loader reads YAML 1.2, including when a 1.x directive is present. YAML
+// 1.2.2 section 5.4 makes U+0085, U+2028 and U+2029 non-break characters, so
+// they remain scalar content rather than folding or ending a line:
+// https://yaml.org/spec/1.2.2/#54-line-break-characters.
 func TestYAMLNonASCIICharactersAreNotLineBreaks(t *testing.T) {
 	const content = "a\u0085b\u2028c\u2029d"
 	for _, tt := range []struct{ name, tail, value string }{
@@ -22,8 +22,9 @@ func TestYAMLNonASCIICharactersAreNotLineBreaks(t *testing.T) {
 		{"folded block", "x-v: >-\n  " + content + "\n  next\n", content + " next"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			// SQ10 pins exact encoding/json string bytes without HTML
-			// escaping, including the escapes for U+2028 and U+2029.
+			// Document's strings are exactly as encoding/json writes them
+			// without HTML escaping, including the escapes for U+2028 and
+			// U+2029.
 			if got, want := string(yamlValue(t, tt.tail, "#/x-v")), jsonNoHTML(t, tt.value); got != want {
 				t.Errorf("Document scalar = %q, want %q", got, want)
 			}
@@ -59,7 +60,7 @@ func TestYAMLNonASCIICharactersAreNotLineBreaks(t *testing.T) {
 	})
 }
 
-// SQ8 accepts valid 1.x directives as YAML 1.2. YAML 1.2.2 section 6.8.1
+// Loader reads valid 1.x directives as YAML 1.2. YAML 1.2.2 section 6.8.1
 // permits one or more decimal digits in each version component, with no
 // two-digit limit; section 6.6 requires whitespace before a comment.
 func TestYAMLDirectiveLongMinor(t *testing.T) {

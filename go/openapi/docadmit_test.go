@@ -18,9 +18,9 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Admission and retrieval of referenced documents (stage 5): the default
-// boundary, Origins, AllowReference, redirect hops, Fetch, MaxBytes and the
-// context, stated in load.go, Loader. Every refusal disables only what
+// Admission and retrieval of referenced documents: the default boundary,
+// Origins, AllowReference, redirect hops, Fetch, MaxBytes and the context,
+// stated in load.go, Loader. Every refusal disables only what
 // reaches the refused document, and its Err wraps ErrUnresolved and an
 // error naming the refused URI (errors.go).
 

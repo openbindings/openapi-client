@@ -103,8 +103,11 @@ func TestReview9ForeignRootDialectWithoutIdentifier(t *testing.T) {
 	}
 }
 
-// The ledger's schema-looking data ruling and References' semantic containment
-// contract: a $schema in ordinary default data cannot create dialect scope.
+// Schema-looking data stays data (JSON Schema 2020-12 Core sections 4.3.1
+// and 9.4.2 distinguish schema-bearing locations from annotations and other
+// data), and References follows only "schema-bearing keywords of the
+// declared dialect": a $schema in ordinary default data cannot create
+// dialect scope.
 // The true outer root explicitly uses the edition's default dialect, so this
 // control does not invent a rule about an independently reached annotation's
 // relationship to a different true outer dialect.

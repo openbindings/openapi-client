@@ -12,7 +12,7 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// O2: OAS 3.2.1 4.15.1.1 defaults a whole positional array to JSON.
+// OAS 3.2.1 section 4.15.1.1 defaults a whole positional array to JSON.
 // Named array properties still expand into individual parts whose default
 // comes from the items schema. Defaults never depend on the caller's value.
 func TestStage6WholePositionalArrayDefaults(t *testing.T) {
@@ -65,9 +65,9 @@ func TestStage6WholePositionalArrayDefaults(t *testing.T) {
 	})
 }
 
-// O3: Encoding styles apply under multipart/form-data, override contentType,
-// and use the established unescaped multipart style serializer. Other
-// multipart types retain content encoding. Headers remain public descriptors.
+// Encoding styles apply under multipart/form-data, override contentType, and
+// use the established unescaped multipart style serializer. Other multipart
+// types retain content encoding. Headers remain public descriptors.
 func TestStage6PositionalEncodingContext(t *testing.T) {
 	enc := `{"style":"form","explode":false,"contentType":"application/json","headers":{"X-Part":{"description":"part header","schema":{"type":"string"}},"Content-Type":{"schema":{}}}}`
 	for _, media := range []string{"multipart/form-data", "multipart/mixed"} {
@@ -191,7 +191,7 @@ func TestStage6PositionalPartHeaderControl(t *testing.T) {
 	}
 }
 
-// O4: Message.Media retains only form consumes entries for Swagger formData,
+// Message.Media retains only form consumes entries for Swagger formData,
 // preserving their order. Adjacent rejected entries cannot leave a stray
 // alternative or prevent the sole usable alternative from selecting itself.
 func TestStage6SwaggerFormConsumesFiltering(t *testing.T) {
@@ -235,7 +235,7 @@ func TestStage6SwaggerFormConsumesFiltering(t *testing.T) {
 	}
 }
 
-// O5: collectionFormat governs structured fields; it does not replace the
+// collectionFormat governs structured fields; it does not replace the
 // Input.Body raw-byte, reader or Part paths. Both form encoders obey this.
 func TestStage6SwaggerArrayRawFieldParity(t *testing.T) {
 	for _, media := range []string{"application/x-www-form-urlencoded", "multipart/form-data"} {
@@ -269,10 +269,10 @@ func TestStage6SwaggerArrayRawFieldParity(t *testing.T) {
 	}
 }
 
-// O7: explicit external versions govern their body declaration; versionless
-// fragments inherit the entry edition. An undeclared multipart field has
-// the owning 3.0 text default or the later octet default, without guessing
-// from the Go value. Exercise both absent and object-only schema context.
+// Explicit external versions govern their body declaration; versionless
+// fragments inherit the entry edition. An undeclared multipart field has the
+// owning 3.0 text default or the later octet default, without guessing from
+// the Go value. Exercise both absent and object-only schema context.
 func TestStage6ExternalBodyOwnsFallbackDefault(t *testing.T) {
 	for _, entry := range []string{"3.0.4", "3.1.2"} {
 		for _, owner := range []string{"", "3.0.4", "3.1.2"} {
@@ -314,7 +314,7 @@ func TestStage6ExternalBodyOwnsFallbackDefault(t *testing.T) {
 	}
 }
 
-// O5 undefined raw/structured sources remain omitted before serialization.
+// Undefined raw/structured sources remain omitted before serialization.
 func TestStage6SwaggerArrayUndefinedField(t *testing.T) {
 	for _, media := range []string{"application/x-www-form-urlencoded", "multipart/form-data"} {
 		c := editionClient(t, editionDoc("2.0", `"/x":{"post":{"consumes":["`+media+`"],"parameters":[{"name":"p","in":"formData","type":"array","items":{"type":"string"},"collectionFormat":"csv"}]}}`), nil)
@@ -335,9 +335,9 @@ func TestStage6SwaggerArrayUndefinedField(t *testing.T) {
 	}
 }
 
-// O6: the same 1 MiB stop rule covers named/general/nested collection values
-// and headers. Inputs are prebuilt and plans compiled outside measurement;
-// reuse TestRequestSizeLimit's established 16 MiB allocation ceiling. Small
+// The same 1 MiB stop rule covers named/general/nested collection values and
+// headers. Inputs are prebuilt and plans compiled outside measurement; reuse
+// TestRequestSizeLimit's established 16 MiB allocation ceiling. Small
 // counterparts retain JSON replacement and undefined-item semantics.
 func TestStage6GeneralCollectionStopsAtLimit(t *testing.T) {
 	const n = 4096

@@ -8,10 +8,10 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Stage 3, descriptors (brief, Scope: "Descriptors"): SecurityRequirement
-// Key and Schemes, SecurityScheme and Flow fields for every OpenAPI 3.1
-// scheme type, and Operation.Security. The canonical Key and root
-// inheritance are also in describe_test.go (TestSecurityDescriptor).
+// Security descriptors: SecurityRequirement Key and Schemes, SecurityScheme
+// and Flow fields for every OpenAPI 3.1 scheme type, and Operation.Security.
+// The canonical Key and root inheritance are also in describe_test.go
+// (TestSecurityDescriptor).
 
 const descSecurityDoc = `{"openapi":"3.1.0","info":{"title":"t","version":"1"},
 	"security":[{"api_key":[]}],

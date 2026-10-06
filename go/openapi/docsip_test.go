@@ -15,18 +15,18 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Tests for the implementer's points the stage 5 ledger rules under
-// "Implementation (5ec6fe5)": SIP1 and SIP5.
+// Tests for the retrieval of a document several documents refer to, and
+// for the resolution of plain relative references.
 
-// load.go, Loader.AllowReference (de98c7d, SIP1): "A document several
-// documents refer to is retrieved when any of them may retrieve it,
-// whatever order they are read in, and every reference to it then
-// resolves, as to any loaded document." Three documents refer to one
-// shared document; the callback lets only b.json retrieve it. The three are
-// read in a forced order, the admitting one first or last, by a Fetch that
-// returns each only after the one before it has returned, several times
-// each (and under -race). With every referrer refused, the shared document
-// is never fetched and every reference to it is unresolvable, naming it.
+// load.go, Loader.AllowReference: "A document several documents refer to is
+// retrieved when any of them may retrieve it, whatever order they are read in,
+// and every reference to it then resolves, as to any loaded document." Three
+// documents refer to one shared document; the callback lets only b.json
+// retrieve it. The three are read in a forced order, the admitting one first
+// or last, by a Fetch that returns each only after the one before it has
+// returned, several times each (and under -race). With every referrer refused,
+// the shared document is never fetched and every reference to it is
+// unresolvable, naming it.
 func TestSharedDocumentAnyReferrerMayRetrieve(t *testing.T) {
 	const base = "https://docs.example.test/"
 	shared := base + "shared.json"
@@ -127,27 +127,25 @@ var rfc3986Examples = []string{
 	"g;x=1/./y", "g;x=1/../y", "g?y/./x", "g?y/../x", "g#s/./x", "g#s/../x", "http:g",
 }
 
-// SIP5 (stage 5 ledger, "Implementation (5ec6fe5)": "the fast path for
-// plain relative references gets a differential test against net/url's
-// ResolveReference (P4: mirrors of a standard parser match it exactly)");
-// load.go, Loader: references "resolve against each document's base"
-// (RFC 3986 section 5.2). A document whose one parameter is a Reference
-// Object to a generated reference is loaded with a Fetch that records what
-// is requested and an AllowReference admitting everything: the one URI
-// requested beside the entry is base.ResolveReference(ref) without its
-// fragment, exactly as net/url writes it, and nothing is requested when that
-// is the entry's own URI. A result with leading or trailing whitespace is
-// requested not at all, and the operation's Err wraps ErrUnresolved (SQ14;
-// load.go, Loader: "A reference to a URI with userinfo or with leading or
-// trailing whitespace ... is unresolvable and never fetched"). References
-// net/url cannot parse, or whose result another rule decides (a scheme
-// other than http, https and file, an http URI without a host, userinfo, a
-// file URL naming a host: SQ9), are left out.
+// The fast path for plain relative references is tested against net/url's
+// ResolveReference, which it must match exactly; load.go, Loader: references
+// "resolve against each document's base" (RFC 3986 section 5.2). A document
+// whose one parameter is a Reference Object to a generated reference is loaded
+// with a Fetch that records what is requested and an AllowReference admitting
+// everything: the one URI requested beside the entry is
+// base.ResolveReference(ref) without its fragment, exactly as net/url writes
+// it, and nothing is requested when that is the entry's own URI. A result with
+// leading or trailing whitespace is requested not at all, and the operation's
+// Err wraps ErrUnresolved (load.go, Loader: "A reference to a URI with
+// userinfo or with leading or trailing whitespace ... is unresolvable and
+// never fetched"). References net/url cannot parse, or whose result another
+// rule decides (a scheme other than http, https and file, an http URI without
+// a host, userinfo, a file URL naming a host), are left out.
 func FuzzRelativeReferences(f *testing.F) {
 	for _, ref := range rfc3986Examples {
 		f.Add(uint8(0), ref)
 	}
-	// The input that found SQ14's case, and others like it.
+	// The input that found the whitespace case, and others like it.
 	f.Add(uint8(8), "? ")
 	f.Add(uint8(3), "x.json?a ")
 	f.Add(uint8(0), "g? y")
@@ -178,7 +176,7 @@ func FuzzRelativeReferences(f *testing.F) {
 			return
 		}
 		wantURI := want.String()
-		blank := strings.TrimSpace(wantURI) != wantURI // SQ14: unresolvable, never fetched
+		blank := strings.TrimSpace(wantURI) != wantURI // unresolvable, never fetched
 
 		var mu sync.Mutex
 		var requested []string

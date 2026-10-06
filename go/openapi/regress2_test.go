@@ -17,9 +17,9 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Regression tests for the stage 1 focused second review (ledger, "Focused
-// second review"; review2/panel.json "#N"). Gn are its accepted fixes; Tn-n
-// its doc refreshes.
+// Regression tests for transports, JSON Pointer member names, the reader
+// walk, server variables, Load URIs, upload completion, and the text of
+// errors.
 
 // promptly runs f and fails when it has not returned within d, so a hang
 // fails the test instead of the run. The goroutine is left behind then.
@@ -58,8 +58,8 @@ const g2Doc = `{"openapi":"3.1.0","info":{"title":"t","version":"1"},"servers":[
 	"/p":{"put":{"operationId":"put","requestBody":{"content":{"application/json":{}}},"responses":{"200":{"description":"ok","content":{"application/json":{}}}}}}
 }}`
 
-// g2Bodies are the bodies G2 found hanging: a []byte, a structured value, a
-// small *strings.Reader.
+// g2Bodies are the bodies each transport check sends: a []byte, a structured
+// value, a small *strings.Reader.
 var g2Bodies = map[string]struct {
 	body func() any
 	size int
@@ -69,8 +69,8 @@ var g2Bodies = map[string]struct {
 	"strings.Reader": {func() any { return strings.NewReader(`{"a":"bc"}`) }, 10},
 }
 
-// checkG2 calls put with each G2 body under context.Background and wants the
-// transport's answer promptly, and Send's WaitRequest nil.
+// checkG2 calls put with each of g2Bodies under context.Background and wants
+// the transport's answer promptly, and Send's WaitRequest nil.
 func checkG2(t *testing.T, c *openapi.Client) {
 	t.Helper()
 	for name, b := range g2Bodies {
@@ -99,11 +99,11 @@ func checkG2(t *testing.T, c *openapi.Client) {
 	}
 }
 
-// G2 (#2): whether net/http's own transport carries a request is decided
-// per send (ledger: "resolve a nil Transport to http.DefaultTransport at send
-// time"). A replaced http.DefaultTransport, with Options.HTTPClient nil, is a
-// transport like any other: a call completes when it has read and closed
-// the body (client.go, Response.WaitRequest; Call).
+// Whether net/http's own transport carries a request is decided per send, a
+// nil Transport resolving to http.DefaultTransport at send time. A replaced
+// http.DefaultTransport, with Options.HTTPClient nil, is a transport like
+// any other: a call completes when it has read and closed the body
+// (client.go, Response.WaitRequest; Call).
 func TestG2ReplacedDefaultTransport(t *testing.T) {
 	orig := http.DefaultTransport
 	http.DefaultTransport = echoLenRT{}
@@ -112,9 +112,9 @@ func TestG2ReplacedDefaultTransport(t *testing.T) {
 	checkG2(t, c)
 }
 
-// G2 (#2): a *http.Transport that routes the scheme to another
-// RoundTripper through RegisterProtocol (ledger: "detect routes the static
-// type cannot see").
+// A *http.Transport that routes the scheme to another RoundTripper through
+// RegisterProtocol, a route its static type cannot show, is a transport like
+// any other too.
 func TestG2RegisteredProtocol(t *testing.T) {
 	tr := &http.Transport{}
 	tr.RegisterProtocol("https", echoLenRT{})
@@ -122,7 +122,7 @@ func TestG2RegisteredProtocol(t *testing.T) {
 	checkG2(t, c)
 }
 
-// G5 (#5): a JSON Pointer token is compared with member names as decoded
+// A JSON Pointer token is compared with member names as decoded
 // (RFC 6901 section 4; RFC 8259 section 7), so a token holding a backslash
 // names the member whose decoded name holds it, not one whose raw spelling
 // happens to match. Member "a\u0062" decodes to "ab"; member "a\\u0062"
@@ -170,7 +170,7 @@ type optsOnly struct {
 	N int
 }
 
-// G9 (#11): the reader walk follows encoding/json's rules for a nil-pointer
+// The reader walk follows encoding/json's rules for a nil-pointer
 // TextMarshaler map key (encoding/json names it "") and for a tag with only
 // options, which does not name the field in dominance (client.go,
 // Input.Body; encoding/json's documentation of map keys and embedded
@@ -209,10 +209,11 @@ func TestG9ReaderWalkEdgeCases(t *testing.T) {
 	})
 }
 
-// G10 (#12) and T1-20: the authority restriction on Variables values
-// applies to "a value whose first character falls in the authority of the
-// substituted URL (after "//", before the path)" (client.go,
-// Options.Variables), a network-path reference included (RFC 3986 section
+// The authority restriction on Variables values applies to a variable whose
+// default falls in the authority (client.go, Options.Variables: "Each
+// variable is placed by where its default falls in the URL with every
+// default substituted"; "in the authority, a value may not hold "/", "?",
+// "#", "@" or "\\""), a network-path reference included (RFC 3986 section
 // 4.2); a value in the path, as {basePath} in "{scheme}://{host}{basePath}",
 // is not restricted.
 func TestG10NetworkPathAuthority(t *testing.T) {
@@ -256,7 +257,7 @@ func TestG10NetworkPathAuthority(t *testing.T) {
 	}
 }
 
-// G11 (#13): sub-delimiters in a Paths key are sent as written whatever the
+// Sub-delimiters in a Paths key are sent as written whatever the
 // parameter value (doc.go, Fixed rules, URL: "The path is then appended as
 // written"; RFC 3986 section 6.2.2.2: "(" and %28 are not equivalent).
 func TestG11PathSubDelimsAsWritten(t *testing.T) {
@@ -280,10 +281,11 @@ func TestG11PathSubDelimsAsWritten(t *testing.T) {
 	}
 }
 
-// G13 (#15): a Load URI net/url rejects is refused as a URI, not read as a
-// file path; the password never appears in the error (doc.go, Outcomes:
-// "No credential appears in the text of an error the client creates"), and
-// Loader.Fetch never sees it (T2-3: userinfo and fragments are refused).
+// A Load URI net/url rejects is refused as a URI, not read as a file path;
+// the password never appears in the error (doc.go, Outcomes: "No credential
+// appears in the text of an error the client creates"), and Loader.Fetch
+// never sees it (Load: a uri with a fragment is refused, "as is one with
+// userinfo, which RFC 9110 section 4.2.4 forbids a sender to generate").
 func TestG13UnparsableLoadURI(t *testing.T) {
 	for _, uri := range []string{
 		"http://user:s3cret@127.0.0.1:1/%zz",
@@ -321,7 +323,7 @@ func TestG13UnparsableLoadURI(t *testing.T) {
 	}
 }
 
-// G14 (#16): "The client never presents an incomplete upload as complete"
+// "The client never presents an incomplete upload as complete"
 // (stream.go, Stream; client.go, Response.WaitRequest): a regular file body
 // that shrinks after Prepare ends short of its declared length and is
 // reported incomplete; and a small in-memory reader is never sent padded
@@ -378,7 +380,7 @@ func TestG14ShortBodies(t *testing.T) {
 	})
 }
 
-// G15 (#17): untrusted text is quoted in error strings: an operation key
+// Untrusted text is quoted in error strings: an operation key
 // and a parameter key from the document, and a server's reason phrase, so
 // they cannot forge a log line or send terminal escapes.
 func TestG15ErrorTextQuoting(t *testing.T) {
@@ -409,10 +411,10 @@ func TestG15ErrorTextQuoting(t *testing.T) {
 	}
 }
 
-// G8 (#9) and T1-18: "consumed completely (read to EOF, or, for a body of
-// known length, read to that length)" (client.go, Response.WaitRequest): a
-// transport that reads exactly the declared length and closes has consumed
-// the body completely, on every upload path.
+// client.go, Response.WaitRequest: "consumed completely (read to EOF, or,
+// for a body of known length, read to that length)". A transport that reads
+// exactly the declared length and closes has consumed the body completely,
+// on every upload path.
 func TestG8ExactLengthConsumer(t *testing.T) {
 	framed := func(copyN bool) roundTripFunc {
 		return func(r *http.Request) (*http.Response, error) {
@@ -453,11 +455,11 @@ func TestG8ExactLengthConsumer(t *testing.T) {
 	}
 }
 
-// T1-19: "It relies on the transport closing the request body, as
-// http.RoundTripper requires, and every copy it takes with GetBody; with a
-// transport that neither reads nor closes it, the wait, and Call's, ends
-// only with the context" (client.go, Response.WaitRequest). The call ends at its deadline, not before and not
-// never, with the Response and the context's error.
+// client.go, Response.WaitRequest: "It relies on the transport closing the
+// request body, as http.RoundTripper requires, and every copy it takes with
+// GetBody; with a transport that neither reads nor closes it, the wait, and
+// Call's, ends only with the context". The call ends at its deadline, not
+// before and not never, with the Response and the context's error.
 func TestT1_19TransportIgnoringBody(t *testing.T) {
 	canned := roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}},
@@ -479,9 +481,9 @@ func TestT1_19TransportIgnoringBody(t *testing.T) {
 	}
 }
 
-// T1-21: a DecodeError's text may quote "a short token" of the body through
-// a decoder's message, and never the body itself (errors.go,
-// DecodeError.Error).
+// A DecodeError's text never holds the body (errors.go, DecodeError.Error:
+// "never the body"; "A decoder's own error, whose message can quote the
+// body, is not in the text").
 func TestT1_21DecodeErrorQuotesAtMostAToken(t *testing.T) {
 	body := "SECRETBODY-" + strings.Repeat("x", 200)
 	_, c := respClient(t, jsonAnswer(200, body), nil)
@@ -495,9 +497,9 @@ func TestT1_21DecodeErrorQuotesAtMostAToken(t *testing.T) {
 	}
 }
 
-// G18 (T2-5): "a value that forms a whole "." or ".." segment of the path is
-// refused, as for path parameters" (client.go, Options.Variables), at
-// Options.Variables["name"]; a value forming any other segment is used.
+// client.go, Options.Variables: in the path, a value may not "form a whole
+// "." or ".." segment, percent-encoded or not"; it is refused at
+// Options.Variables["name"], and a value forming any other segment is used.
 func TestG18ServerVariableDotSegments(t *testing.T) {
 	w := newWire(t, nil)
 	doc := `{"openapi":"3.1.0","info":{"title":"t","version":"1"},
@@ -535,13 +537,13 @@ func TestG18ServerVariableDotSegments(t *testing.T) {
 	}
 }
 
-// T1-22 (ledger: "a value followed by a literal "://" must be a URI scheme
-// (RFC 3986 3.1); only a variable that starts the URL and is not followed
-// by "://" is an unrestricted whole URL"; client.go, Options.Variables): in
-// "{scheme}://{host}/v1", the scheme must match ALPHA *( ALPHA / DIGIT /
-// "+" / "-" / "." ), and anything else is refused at
-// Options.Variables["scheme"] with nothing sent, so a scheme value cannot
-// carry a host. "{endpoint}/v1" stays an unrestricted whole URL.
+// client.go, Options.Variables: "in the scheme, the resulting scheme must
+// be one (RFC 3986 section 3.1)", and "A variable whose default spans "://",
+// or that is the whole URL template, supplies a whole URL and is not
+// restricted". In "{scheme}://{host}/v1", the scheme must match
+// ALPHA *( ALPHA / DIGIT / "+" / "-" / "." ), and anything else is refused
+// at Options.Variables["scheme"] with nothing sent, so a scheme value
+// cannot carry a host. "{endpoint}/v1" stays an unrestricted whole URL.
 func TestT1_22SchemeVariableIsAScheme(t *testing.T) {
 	w := newWire(t, nil)
 	doc := `{"openapi":"3.1.0","info":{"title":"t","version":"1"},

@@ -18,19 +18,18 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// F14 (#14, A3, A4, A6, #18): the upload state machine, and the review's
-// additions for the body-rewind and blocking-wait paths (#26). The
+// The upload state machine, with the body-rewind and blocking-wait paths. The
 // contract: client.go, Response.WaitRequest ("It reports on the last of them:
 // nil when its body was consumed completely (read to EOF, or, for a body of
 // known length, read to that length), or the encoding, iterator, read,
 // premature-close or cancellation error that stopped it. It returns nil when
-// no request carried a body"), Call ("Call
-// drains a successful response and waits for complete consumption of its
-// request body before closing the response body. This lets a peer make
-// progress on both sides of a finite duplex exchange. If request-body
-// consumption fails, the error wraps its cause and the Response is still
-// returned ... A successful response does not hide an incomplete upload"),
-// and Request.Call (a replayable Request may be sent again).
+// no request carried a body"), Call ("Call drains a successful response and
+// waits for complete consumption of its request body before closing the
+// response body. This lets a peer make progress on both sides of a finite
+// duplex exchange. If request-body consumption fails, the error wraps its
+// cause and the Response is still returned ... A successful response does not
+// hide an incomplete upload"), and Request.Call (a replayable Request may be
+// sent again).
 
 const uploadDoc = `{"openapi":"3.1.0","info":{"title":"t","version":"1"},"servers":[{"url":"https://h.example.test"}],"paths":{
 	"/p":{"put":{"operationId":"put","requestBody":{"content":{"application/json":{}}},"responses":{"200":{"description":"ok","content":{"application/json":{}}}}}},
@@ -117,11 +116,11 @@ func waitResult(t *testing.T, resp *openapi.Response) error {
 	return err
 }
 
-// Replay after a transport retry (A3, #26 body rewind): the result is the
-// final generation's. A final generation read to EOF is complete, whatever
-// earlier ones did; a final generation closed early is a premature close,
-// even after an earlier one completed; with no rewind, closing early is a
-// premature close.
+// Replay after a transport retry (body rewind): the result is the final
+// generation's. A final generation read to EOF is complete, whatever earlier
+// ones did; a final generation closed early is a premature close, even after
+// an earlier one completed; with no rewind, closing early is a premature
+// close.
 func TestF14ReplayGenerations(t *testing.T) {
 	const full = `{"k":"abcdef"}`
 	bodies := map[string]func() any{
@@ -209,8 +208,8 @@ func (rt *slowRT) RoundTrip(req *http.Request) (*http.Response, error) {
 		Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader("{}")), ContentLength: 2, Request: req}, nil
 }
 
-// The blocking-wait path (#26): WaitRequest blocks while a slow transport is
-// still reading, returning nil only once the body can have reached EOF; "A
+// The blocking-wait path: WaitRequest blocks while a slow transport is still
+// reading, returning nil only once the body can have reached EOF; "A
 // cancellation of ctx ends only this wait".
 func TestF14BlockingWait(t *testing.T) {
 	const payload = `{"k":"abcdefgh"}`
@@ -314,11 +313,11 @@ type zeros struct{}
 
 func (zeros) Read(p []byte) (int, error) { clear(p); return len(p), nil }
 
-// Response cutoff (A4): with a nil out and a small MaxBodyBytes, Call stops
-// reading at the bound ("nil discards it, reading at most MaxBodyBytes
-// before closing the connection"), so it must close the response before
-// waiting for an upload that a finite duplex peer consumes only after its
-// response is read. It returns promptly, reporting the incomplete upload.
+// Response cutoff: with a nil out and a small MaxBodyBytes, Call stops reading
+// at the bound ("nil discards it, reading at most MaxBodyBytes before closing
+// the connection"), so it must close the response before waiting for an upload
+// that a finite duplex peer consumes only after its response is read. It
+// returns promptly, reporting the incomplete upload.
 func TestF14CutoffClosesBeforeWaiting(t *testing.T) {
 	const size = 64 << 20 // larger than the loopback socket buffers
 	base := duplexPeer(t, size)
@@ -339,11 +338,11 @@ func TestF14CutoffClosesBeforeWaiting(t *testing.T) {
 	}
 }
 
-// T1 (client.go, Input): "Call has stopped reading its body when it
-// returns, provided a reader body returns from Read when the call's context
-// ends or its connection closes." A peer that answers without reading the
-// body and closes: Call reports the incomplete upload, and the reader is not
-// read after Call returns.
+// client.go, Input: "Call has stopped reading its body when it returns,
+// provided a reader body returns from Read when the call's context ends or its
+// connection closes." A peer that answers without reading the body and closes:
+// Call reports the incomplete upload, and the reader is not read after Call
+// returns.
 func TestCallStopsReadingBody(t *testing.T) {
 	base := rawHTTP(t, "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", 100*time.Millisecond)
 	doc := doc31(`"/o":{"post":{"operationId":"octets","requestBody":{"content":{"application/octet-stream":{}}}}}`)
@@ -374,9 +373,9 @@ func (r *endlessReader) Read(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// A transport that leaves Response.Request nil (#18): Load works, and a
-// Response from Send still carries the Client's settings and upload state:
-// client.go, Response: "Its Request is the last request sent".
+// A transport that leaves Response.Request nil: Load works, and a Response
+// from Send still carries the Client's settings and upload state: client.go,
+// Response: "Its Request is the last request sent".
 func TestF14ResponseRequestNil(t *testing.T) {
 	noRequest := roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}},
@@ -450,7 +449,6 @@ func TestF14ResponseRequestNil(t *testing.T) {
 	}
 }
 
-// TestF14SmallPostOneWrite (a small in-memory POST in one socket write) is
-// withdrawn by the verification pass's class ruling P3 (ledger,
-// "Verification pass"): the single-write in-memory path is removed, and every
-// body goes through the reporting reader with the T1-18 known-length rule.
+// A small in-memory POST has no single-write path: every body goes through
+// the reporting reader, and one of known length is consumed completely when
+// read to that length (client.go, Response.WaitRequest).

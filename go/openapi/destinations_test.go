@@ -7,10 +7,10 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Stage 3, credential and parameter destinations (brief, Scope: "Credential
-// and parameter destinations"): a declared parameter at the credential's
-// destination, header settings conflicting with the credential's field, and
-// FromTransport, which takes part in no destination rule.
+// Credential and parameter destinations: a declared parameter at the
+// credential's destination, header settings conflicting with the
+// credential's field, and FromTransport, which takes part in no destination
+// rule.
 
 // destDoc declares, for each apiKey location, an operation with a required
 // parameter at the credential's destination, and an anonymous alternative
@@ -137,15 +137,14 @@ func TestFromTransportLeavesDestination(t *testing.T) {
 
 // doc.go, Header fields: "A Header entry with no values is a conflict like
 // any other when a header parameter the call supplies, the call's
-// credential, or the Cookie field, sets that field" (stage 3 ledger, Q9);
-// "At either level, ... [refused is] a field that a header parameter the
-// call supplies, or the call's credential, sets";
-// Cookies: "A Cookie field in Options.Header or Input.Header is refused when
-// the call sends cookie parameters or a cookie credential". errors.go,
-// RequestError.Settings: "a header field that a supplied header parameter
-// or the credential sets [is keyed] by the Header that set it". Names
-// compare without regard to case. Without the credential (the anonymous
-// alternative), the field is the caller's.
+// credential, or the Cookie field, sets that field"; "At either level, ...
+// [refused is] a field that a header parameter the call supplies, or the
+// call's credential, sets"; Cookies: "A Cookie field in Options.Header or
+// Input.Header is refused when the call sends cookie parameters or a cookie
+// credential". errors.go, RequestError.Settings: "a header field that a
+// supplied header parameter or the credential sets [is keyed] by the Header
+// that set it". Names compare without regard to case. Without the
+// credential (the anonymous alternative), the field is the caller's.
 func TestHeaderSettingConflictsWithCredential(t *testing.T) {
 	w := newWire(t, nil)
 	c := destClient(t, w)

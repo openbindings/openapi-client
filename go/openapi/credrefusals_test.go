@@ -8,7 +8,7 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Stage 3, refusals (brief, Scope: "Refusals"): calls refused for a
+// Credential refusals: calls refused for a
 // missing, empty or zero credential, an alternative two of whose schemes
 // set one field, the plain-http rule and the URL scheme rule; Load's
 // refusals of Credentials; Basic's own checks; and cookie credentials that
@@ -65,13 +65,12 @@ func TestMissingEmptyOrZeroCredential(t *testing.T) {
 // a likely misspelling, an empty static credential (Secret(""), Basic("",
 // "") or the zero Credential), and a Basic credential for a name none of
 // whose schemes is http basic, and any credential but FromTransport for a
-// name all of whose schemes are mutualTLS" (stage 3 ledger, Q8); "A
-// credential value its destination cannot carry is refused at
-// Options.Credentials["name"]: by Load for a static credential ... Such a
-// value is a header field value with a control character other than a tab,
-// or with leading or trailing whitespace" (Q7, C3-7). errors.go,
-// RequestError.Settings: keyed Options.Credentials[<name>], the name quoted
-// as strconv.Quote does.
+// name all of whose schemes are mutualTLS"; "A credential value its
+// destination cannot carry is refused at Options.Credentials["name"]: by
+// Load for a static credential ... Such a value is a header field value with
+// a control character other than a tab, or with leading or trailing
+// whitespace". errors.go, RequestError.Settings: keyed
+// Options.Credentials[<name>], the name quoted as strconv.Quote does.
 func TestLoadRefusesCredentials(t *testing.T) {
 	base := "https://api.example.test"
 	tests := []struct {
@@ -133,10 +132,10 @@ func TestLoadRefusesCredentials(t *testing.T) {
 // password "MUST NOT contain any control characters", CTL in RFC 5234:
 // %x00-1F / %x7F); doc.go, Credentials: such a value is refused "at
 // Options.Credentials["name"]: by Load for a static credential (by each
-// call, for a Client from Client.With)". Stage 3 ledger, C3-8 (reversing
-// Q8's split for Basic): "every static credential problem is refused by Load
-// (by each call for a Client.With's Options)". The key is the setting that
-// fixes it (errors.go, RequestError.Settings).
+// call, for a Client from Client.With)", so every static credential problem,
+// Basic's included, is refused by Load (by each call for a Client.With's
+// Options). The key is the setting that fixes it (errors.go,
+// RequestError.Settings).
 func TestBasicRefusals(t *testing.T) {
 	w := newWire(t, nil)
 	base := parseFor(t, w, credDoc, nil)
@@ -189,12 +188,11 @@ func TestCookieCredentialRefused(t *testing.T) {
 
 // doc.go, Credentials: "An alternative two of whose schemes set the same
 // header field, query name or cookie name cannot be used, and is refused
-// naming both" (stage 3 ledger, Q5). errors.go,
-// RequestError.Err: "a selected alternative two of whose schemes set the
-// same field". Field names compare without regard to case (RFC 9110 section
-// 5.1). "A FromTransport scheme places nothing, so it takes part in no
-// destination rule", and "Unselected alternatives have no effect on the
-// call."
+// naming both". errors.go, RequestError.Err: "a selected alternative two of
+// whose schemes set the same field". Field names compare without regard to
+// case (RFC 9110 section 5.1). "A FromTransport scheme places nothing, so it
+// takes part in no destination rule", and "Unselected alternatives have no
+// effect on the call."
 func TestAlternativeSettingOneFieldTwice(t *testing.T) {
 	w := newWire(t, nil)
 	doc := doc31(`
@@ -268,19 +266,18 @@ func TestAlternativeSettingOneFieldTwice(t *testing.T) {
 // the name localhost written exactly so, the one name
 // http.ProxyFromEnvironment never sends through a proxy. Other names, such
 // as those under .localhost, can be proxied or resolved elsewhere, so they
-// are not loopback here. A call
-// that would send one over plain http or ws to any other host is refused.
-// ... A URL scheme other than http, https, ws or wss requires FromTransport
-// for these credentials. API keys, which no RFC governs, are not restricted
-// by this rule." errors.go, RequestError.Err: "a bearer or Basic credential
-// that would go over plain http or ws". Loopback addresses are 127.0.0.0/8
-// and ::1 (RFC 6890, RFC 4291 section 2.5.3); "127.1" is not a loopback
-// literal (RFC 3986 section 3.2.2's IPv4address has four parts). Stage 3
-// ledger, F3 (reversing Q15 on new evidence): "loopback is a loopback IP
-// literal (IPv4-mapped included) or the name 'localhost' exactly, as
-// net/http's proxy bypass reads it ... *.localhost, a trailing dot and case
-// variants are refused over plain http." The transport here dials nothing,
-// so a name the client resolved would show up only as a refusal.
+// are not loopback here. A call that would send one over plain http or ws to
+// any other host is refused. ... A URL scheme other than http, https, ws or
+// wss requires FromTransport for these credentials. API keys, which no RFC
+// governs, are not restricted by this rule." errors.go, RequestError.Err: "a
+// bearer or Basic credential that would go over plain http or ws". Loopback
+// addresses are 127.0.0.0/8 and ::1 (RFC 6890, RFC 4291 section 2.5.3);
+// "127.1" is not a loopback literal (RFC 3986 section 3.2.2's IPv4address
+// has four parts). Loopback is a loopback IP literal (IPv4-mapped included)
+// or the name "localhost" exactly, as net/http's proxy bypass reads it, so
+// *.localhost, a trailing dot and case variants are refused over plain http.
+// The transport here dials nothing, so a name the client resolved would show
+// up only as a refusal.
 func TestPlainHTTPRule(t *testing.T) {
 	doc := bare31(credPaths, credSchemes)
 	restricted := []string{"bearer", "bearerUpper", "basic", "basicMixedCase", "oauth", "oidc"}
@@ -421,11 +418,10 @@ func TestPlainHTTPRule(t *testing.T) {
 
 // The plain-http rule names bearer tokens and Basic credentials; an http
 // scheme other than those (here DPoP), like an API key, is not listed among
-// the refusals (doc.go, Credentials: "A call is refused ... when ..."), so it
-// is sent over plain http. Stage 3 ledger, Q6: "only Bearer and Basic are
-// restricted over plain http (RFC 6750, RFC 7617); other http schemes
-// (Digest, DPoP) are governed by their own RFCs, which the client does not
-// model."
+// the refusals (doc.go, Credentials: "A call is refused ... when ..."), so
+// it is sent over plain http. Only Bearer and Basic are restricted over
+// plain http (RFC 6750, RFC 7617); other http schemes, such as Digest and
+// DPoP, are governed by their own RFCs, which the client does not model.
 func TestPlainHTTPOtherHTTPScheme(t *testing.T) {
 	hc, rt := memClient()
 	c, err := openapi.Parse(t.Context(), []byte(bare31(credPaths, credSchemes)), testDocURI,
@@ -446,9 +442,9 @@ func TestPlainHTTPOtherHTTPScheme(t *testing.T) {
 // doc.go, Credentials: "A credential value its destination cannot carry is
 // refused at Options.Credentials["name"]: by Load for a static credential
 // (by each call, for a Client from Client.With), by the call for a source's.
-// Such a value is a header field value with a control character other than
-// a tab, or with leading or trailing whitespace" (stage 3 ledger, Q7, C3-7).
-// The call is refused before anything is sent.
+// Such a value is a header field value with a control character other than a
+// tab, or with leading or trailing whitespace". The call is refused before
+// anything is sent.
 func TestHeaderUnsafeCredentialRefused(t *testing.T) {
 	values := map[string]string{
 		"CR":                  "hu-3Kl\rX",

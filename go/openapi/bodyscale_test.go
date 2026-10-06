@@ -13,16 +13,15 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Stage 4 scaling tests, with the harness of regress2_scale_test.go (four
-// times the input within 12 times the time, best of 5, or 8 times the
-// allocations or bytes). Dev loop, "Hostile-input cost is a standing gate":
-// "every compiled or decoded form is computed at most once per document
-// node, and a read costs O(size of what it returns or compares)". Stage
-// brief, Internal design: "a document with many properties and encodings
-// compiles linearly; a body with many fields or items costs O(its encoded
-// size); a deep value is refused at 1,000 levels before large allocation";
-// Tests: "many properties and encodings (compile), a 100k-field form and a
-// 100k-item sequential body (per call, O(size)), a deep value".
+// Body scaling tests, with the harness of regress2_scale_test.go (four times
+// the input within 12 times the time, best of 5, or 8 times the allocations
+// or bytes). Every compiled or decoded form is computed at most once per
+// document node, and a read costs O(size of what it returns or compares): a
+// document with many properties and encodings compiles linearly; a body with
+// many fields or items costs O(its encoded size); a deep value is refused at
+// 1,000 levels before large allocation. The tests cover many properties and
+// encodings (compile), a 100k-field form and a 100k-item sequential body
+// (per call, O(size)), and a deep value.
 
 // manyEncodings is a document whose one operation, "op", takes a
 // multipart/form-data body of n properties, each with an Encoding Object
@@ -125,11 +124,10 @@ func sharedRequestBody(n int) []byte {
 }
 
 // One Request Body with many Encodings, referenced by many operations, is
-// compiled once (dev loop, P1: "every compiled or decoded form is computed
-// at most once per document node"): Operations() costs time, allocated
-// bytes and retained memory linear in the document. Compiled per
-// reference, n Encodings for 16*n operations would be 16 times the work at
-// four times the input.
+// compiled once, as every compiled or decoded form is computed at most once
+// per document node: Operations() costs time, allocated bytes and retained
+// memory linear in the document. Compiled per reference, n Encodings for
+// 16*n operations would be 16 times the work at four times the input.
 func TestSharedEncodingsScale(t *testing.T) {
 	wantLinear(t, "Operations()", 64, func(n int) func() { return timedOperations(t, sharedRequestBody(n)) })
 	wantLinearBytes(t, "Operations() bytes", 64, func(n int) func() { return timedOperations(t, sharedRequestBody(n)) })
@@ -245,11 +243,10 @@ const depthBodyDoc = `{"openapi":"3.1.0","info":{"title":"t","version":"1"},"ser
 // doc.go, Values: "A value the client encodes that is nested deeper than
 // 1,000 levels, counted in the JSON encoding/json writes (a MarshalJSON's
 // output included) from the root of that value (a body, a field or part, a
-// sequential item), is refused at its key" (stage 4 ledger, Q8). A scalar
-// leaf counts as a level, the outermost value being level 1 (stage 2
-// ledger, Q9): 999 objects around a leaf in a field, a part or an item are
-// sent, 1,000 are refused at its key. Refusing costs time and bytes linear
-// in the depth; so does accepting.
+// sequential item), is refused at its key". A scalar leaf counts as a level,
+// the outermost value being level 1: 999 objects around a leaf in a field, a
+// part or an item are sent, 1,000 are refused at its key. Refusing costs
+// time and bytes linear in the depth; so does accepting.
 func TestBodyDepthLimit(t *testing.T) {
 	c, err := openapi.Parse(context.Background(), []byte(depthBodyDoc), testDocURI, nil)
 	if err != nil {

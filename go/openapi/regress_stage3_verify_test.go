@@ -19,11 +19,13 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Regression tests for the stage 3 verification pass (stage 3 ledger, "Fix
-// round (1c90fdb)": IP6 to IP8; "Verification pass (1c90fdb)": V1, VP1 to
-// VP9, and "Contract notes from verification, ruled": VN1 to VN3;
-// verify/panel.json, whose findings VP1 to VP9 follow; verify/gpt-answer.md).
-// VN4 reverses part of C3-7; its cases are in TestCredentialValueSyntax.
+// Regression tests for redirect chains and the requests they send: the
+// chain's Timeout, a caller-set Host, request body generations and GetBody
+// copies, the held Location field, cookies on a hop, transports that break
+// the RoundTripper contract, origin comparison, the requests a Response
+// holds, replaying a prepared Request, a nil Transport, credential
+// refusals, defective oauth2 schemes, and lenient Location parsing.
+// Credential value syntax cases are in TestCredentialValueSyntax.
 
 // heldDone returns a channel closed when the test ends, for handlers that
 // hold a response until the client gives up.
@@ -33,18 +35,19 @@ func heldDone(t *testing.T) <-chan struct{} {
 	return done
 }
 
-// VP1 (= V1, widened): "the remaining Timeout is computed immediately before
-// each hop's Do, after sign and after discarding the 3xx body; with none
-// left, the hop's handed body is closed and the call returns the last
-// Response with errChainTimeout. A hop's credential sources get a context
-// bounded by the chain deadline (the call's values and cancellation kept),
-// so a hanging source ends as a timeout". R1: "HTTPClient.Timeout bounds the
-// whole chain, as net/http's own loop does (its doc: 'includes connection
-// time, any redirects, and reading the response body')"; net/http computes
-// its deadline once and reads the 3xx body under it (go1.25 client.go,
-// Client.do). TQ2: the last Response comes back with the error, its body
-// closed. Each case's margins hold on a slow machine: slowness can only make
-// the chain later, never less late.
+// The remaining Timeout is computed immediately before each hop's Do, after
+// the hop is signed and after the 3xx body is discarded; with none left, the
+// hop's handed body is closed and the call returns the last Response with
+// errChainTimeout. A hop's credential sources get a context bounded by the
+// chain deadline (the call's values and cancellation kept), so a hanging
+// source ends as a timeout. HTTPClient.Timeout bounds the whole chain, as
+// net/http's own loop does (its doc: "includes connection time, any
+// redirects, and reading the response body"); net/http computes its deadline
+// once and reads the 3xx body under it (go1.25 client.go, Client.do). The
+// last Response comes back with the error, its body closed (doc.go,
+// Outcomes: "Whenever a response arrived, the *Response is returned, even
+// with an error"). Each case's margins hold on a slow machine: slowness can
+// only make the chain later, never less late.
 func TestTimeoutChargesEverythingBeforeAHop(t *testing.T) {
 	ok := func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -222,11 +225,11 @@ func TestTimeoutChargesEverythingBeforeAHop(t *testing.T) {
 	})
 }
 
-// VP2: "a caller-set Host is kept only when the Location has no authority
-// component (ref.Host == \"\"); a network-path reference names another
-// authority (RFC 3986 section 4.2)." RFC 9110 section 7.2: Host carries the
-// target URI's host and port. Stage 3 ledger, contract note: the Host is
-// kept "across a relative Location, as net/http does (Go issue 22233)".
+// A caller-set Host is kept only when the Location has no authority
+// component (ref.Host == ""); a network-path reference names another
+// authority (RFC 3986 section 4.2). RFC 9110 section 7.2: Host carries the
+// target URI's host and port. The Host is kept across a relative Location,
+// as net/http does (Go issue 22233).
 func TestNetworkPathLocationDropsCallerHost(t *testing.T) {
 	const host = "virtual.example.test"
 	b := newWire(t, nil)
@@ -286,17 +289,17 @@ func (l *lateCloser) Close() error {
 	return nil
 }
 
-// VP3 (C3-2 as written): "a generation ends at the transport's Close with
-// no Read in flight, not at EOF; EOF or an error only records the result and
-// stops later Reads reaching the reader." C3-2: "A body generation ends only
-// when the transport has closed it AND no Read is in flight". net/http,
-// RoundTripper: "RoundTrip must always close the body, including on errors,
-// but depending on the implementation may do so in a separate goroutine even
-// after RoundTrip returns." client.go, Response.WaitRequest: "It relies on
-// the transport closing the request body". The transport here reads the body
-// to EOF, answers, and closes it only when the test lets it; the caller's
-// Close must have run before Call or WaitRequest returns (the security
-// reviewer's TestZVerLateCloseAfterCall saw it run 101 ms after).
+// A body generation ends at the transport's Close with no Read in flight,
+// not at EOF; EOF or an error only records the result and stops later Reads
+// reaching the reader. A generation ends only when the transport has closed
+// it and no Read is in flight. net/http, RoundTripper: "RoundTrip must
+// always close the body, including on errors, but depending on the
+// implementation may do so in a separate goroutine even after RoundTrip
+// returns." client.go, Response.WaitRequest: "It relies on the transport
+// closing the request body". The transport here reads the body to EOF,
+// answers, and closes it only when the test lets it; the caller's Close must
+// have run before Call or WaitRequest returns, not after (as late as 101 ms
+// after, in the failure this test guards against).
 func TestCallerCloseRunsBeforeReturn(t *testing.T) {
 	for _, tt := range []struct{ via, body string }{
 		{"Call", "the caller's"}, {"Send", "the caller's"}, {"Call", "the client's"},
@@ -356,15 +359,13 @@ func TestCallerCloseRunsBeforeReturn(t *testing.T) {
 	}
 }
 
-// VP4: "a copy CheckRedirect takes with GetBody is the caller's and is not
-// waited for; generations are counted when handed to the transport. T1 on
-// WaitRequest: it relies on the transport closing the body and every copy it
-// takes with GetBody (the middleware case)." client.go,
-// Response.WaitRequest: "It relies on the transport closing the request
-// body, as http.RoundTripper requires, and every copy it takes with GetBody;
-// with a transport that neither reads nor closes it, the wait, and Call's,
-// ends only with the context." The adversarial reviewer's
-// TestZVGetBodyOutsideTransport.
+// A copy CheckRedirect takes with GetBody is the caller's and is not waited
+// for; generations are counted when handed to the transport. WaitRequest
+// relies on the transport closing the body and every copy it takes with
+// GetBody (the middleware case). client.go, Response.WaitRequest: "It relies
+// on the transport closing the request body, as http.RoundTripper requires,
+// and every copy it takes with GetBody; with a transport that neither reads
+// nor closes it, the wait, and Call's, ends only with the context."
 func TestCheckRedirectGetBodyCopyNotWaitedFor(t *testing.T) {
 	for name, peek := range map[string]int{"dropped unread": 0, "dropped after a few bytes": 3} {
 		t.Run(name, func(t *testing.T) {
@@ -435,16 +436,15 @@ func TestCheckRedirectGetBodyCopyNotWaitedFor(t *testing.T) {
 	})
 }
 
-// VP4, as ruled on the test author's question: "when CheckRedirect
-// installs its GetBody copy as the hop's Body, that copy is sent, so it
-// counts as handed to the transport. Call and WaitRequest wait for it as for
-// any hop body, and WaitRequest reports its result, since it is the last
-// request that carried the body." client.go, Response.WaitRequest: it waits
-// "for every request of the call that carried one: the first and each
-// redirect hop that sent it again. It reports on the last of them". The
-// transport reads the first body completely, and the hop's as each case
-// says; in the last case it closes the hop's body only when the test lets
-// it.
+// When CheckRedirect installs its GetBody copy as the hop's Body, that copy
+// is sent, so it counts as handed to the transport. Call and WaitRequest
+// wait for it as for any hop body, and WaitRequest reports its result, since
+// it is the last request that carried the body. client.go,
+// Response.WaitRequest: it waits "for every request of the call that carried
+// one: the first and each redirect hop that sent it again. It reports on the
+// last of them". The transport reads the first body completely, and the
+// hop's as each case says; in the last case it closes the hop's body only
+// when the test lets it.
 func TestCheckRedirectInstalledCopyIsWaitedFor(t *testing.T) {
 	const payload = "0123456789"
 	install := func(r *http.Request, _ []*http.Request) error {
@@ -593,13 +593,13 @@ func (s *scriptServer) requested() []string {
 	return append([]string(nil), s.paths...)
 }
 
-// VP5: "the held Location key holds a colon, which an HTTP/1 field name
-// cannot contain and HTTP/2 rejects." C3-1: Location is moved "under a key
-// the wire cannot produce". client.go, Redirects: only a 3xx with a Location
-// can be followed; "A 3xx not followed is the outcome, a *StatusError";
-// Response: "The responses in that chain hold what the server sent." Go's
-// HTTP/1 reader keeps a field name with spaces as sent (net/textproto,
-// ReadMIMEHeader; go.dev/issue/34540), so a server can send the old key.
+// The held Location key holds a colon, which an HTTP/1 field name cannot
+// contain and HTTP/2 rejects: Location is moved under a key the wire cannot
+// produce. client.go, Redirects: only a 3xx with a Location can be followed;
+// "A 3xx not followed is the outcome, a *StatusError"; Response: "The
+// responses in that chain hold what the server sent." Go's HTTP/1 reader
+// keeps a field name with spaces as sent (net/textproto, ReadMIMEHeader;
+// go.dev/issue/34540), so a server can send the old key.
 func TestServerFieldNamedLikeTheHeldLocation(t *testing.T) {
 	const field = "Location held by openapi"
 	reply := func(fields string) func(string) string {
@@ -648,9 +648,9 @@ func TestServerFieldNamedLikeTheHeldLocation(t *testing.T) {
 	})
 }
 
-// VP6: "on a hop, with a jar, the carried Cookie field drops each pair whose
-// name the 3xx's Set-Cookie sets, and the jar supplies it, as net/http does
-// (go.dev/issue/17494)" (TQ1 governs the first request only). net/http's
+// On a hop, with a jar, the carried Cookie field drops each pair whose name
+// the 3xx's Set-Cookie sets, and the jar supplies it, as net/http does
+// (go.dev/issue/17494); the first request is not affected. net/http's
 // redirect loop removes from the carried Cookie field the cookies a 3xx set
 // when the Client has a Jar (go1.25 client.go, makeHeadersCopier). Here a
 // login-style 302 rotates the cookie the parameter c sent.
@@ -709,13 +709,13 @@ func (nilBodyRT) RoundTrip(r *http.Request) (*http.Response, error) {
 	return &http.Response{StatusCode: 200, Header: http.Header{}, ContentLength: 5, Request: r}, nil
 }
 
-// VP9: "when the inner transport breaks the RoundTripper contract (nil
-// response and nil error; a positive ContentLength with a nil Body),
-// noFollow returns net/http's error text naming the caller's transport type,
-// not noFollow." doc.go, Outcomes: a transport failure is "the *url.Error
-// from the http.Client"; errors from the caller's own transport "are passed
-// on as they are". net/http writes these errors with the transport's type
-// (go1.25 client.go, send: "http: RoundTripper implementation (%T) ...").
+// When the inner transport breaks the RoundTripper contract (nil response
+// and nil error; a positive ContentLength with a nil Body), noFollow returns
+// net/http's error text naming the caller's transport type, not noFollow.
+// doc.go, Outcomes: a transport failure is "the *url.Error from the
+// http.Client"; errors from the caller's own transport "are passed on as
+// they are". net/http writes these errors with the transport's type (go1.25
+// client.go, send: "http: RoundTripper implementation (%T) ...").
 func TestBrokenTransportNamedInError(t *testing.T) {
 	for name, rt := range map[string]http.RoundTripper{"nil response and nil error": nilNilRT{}, "a nil Body": nilBodyRT{}} {
 		t.Run(name, func(t *testing.T) {
@@ -740,15 +740,15 @@ func TestBrokenTransportNamedInError(t *testing.T) {
 	}
 }
 
-// VN1: "sameOrigin's strings.EqualFold folds Unicode, so hosts IDNA keeps
-// distinct (final sigma) compare equal and credentials follow a hop to
-// another host. Compare scheme and host with ASCII-only case folding (RFC
-// 3986 section 6.2.2.1); non-ASCII bytes must match exactly, which can only
-// call one host two origins, never two hosts one." client.go, Redirects: on
-// a hop to another origin "the client removes the credentials it added";
-// Request.HTTP: a URL changed to another origin is refused when the call
-// needs credentials. UTS 46 (nontransitional) maps σ and ς to different
-// ASCII labels (xn--4xa, xn--3xa). The transport dials nothing.
+// Origins compare scheme and host with ASCII-only case folding (RFC 3986
+// section 6.2.2.1), not strings.EqualFold, which folds Unicode, so hosts
+// IDNA keeps distinct (final sigma) would compare equal and credentials
+// would follow a hop to another host. Non-ASCII bytes must match exactly,
+// which can only call one host two origins, never two hosts one. client.go,
+// Redirects: on a hop to another origin "the client removes the credentials
+// it added"; Request.HTTP: a URL changed to another origin is refused when
+// the call needs credentials. UTS 46 (nontransitional) maps σ and ς to
+// different ASCII labels (xn--4xa, xn--3xa). The transport dials nothing.
 func TestOriginComparesHostsASCIIOnly(t *testing.T) {
 	for _, tt := range []struct {
 		base, loc string
@@ -803,14 +803,13 @@ func TestOriginComparesHostsASCIIOnly(t *testing.T) {
 	})
 }
 
-// VN2: "Response.Request never holds the jar's cookies, on every path (F16's
-// in-place shortcut goes: a jar costs a copy)." client.go, Response: "Its
-// Request is the last request sent, after any redirects, without the
-// credentials the client added to its URL and header fields or the cookies
-// the HTTPClient's Jar supplied, and so is every earlier request reachable
-// from it." The eight paths of the adversarial note: Call and Prepare with
-// Send, FollowNone and FollowAll, with and without a credential. The
-// request's own cookie parameter stays.
+// Response.Request never holds the jar's cookies, on every path: with a jar,
+// the request sent is a copy. client.go, Response: "Its Request is the last
+// request sent, after any redirects, without the credentials the client
+// added to its URL and header fields or the cookies the HTTPClient's Jar
+// supplied, and so is every earlier request reachable from it." The eight
+// paths: Call and Prepare with Send, FollowNone and FollowAll, with and
+// without a credential. The request's own cookie parameter stays.
 func TestResponseRequestHoldsNoJarCookies(t *testing.T) {
 	doc := doc31(`
 		"/r":{"get":{"operationId":"plain","parameters":[{"name":"p","in":"cookie"}]}},
@@ -857,9 +856,8 @@ func TestResponseRequestHoldsNoJarCookies(t *testing.T) {
 	}
 }
 
-// VN3: "a prepared Request whose HTTP.Body and GetBody are set is sent the
-// first time from HTTP.Body and every later or concurrent time from GetBody,
-// as Request.Call promises ('any number of times, concurrently too')."
+// A prepared Request whose HTTP.Body and GetBody are set is sent the first
+// time from HTTP.Body and every later or concurrent time from GetBody.
 // client.go, Request.Call: "When r's body can be sent again (HTTP.GetBody is
 // set, or there is no body), r may be sent any number of times, concurrently
 // too"; Request.HTTP: "A send takes HTTP.Body the first time and GetBody for
@@ -929,11 +927,11 @@ func TestPreparedCallerBodySentAgain(t *testing.T) {
 	})
 }
 
-// IP6: "a nil caller Transport resolves to http.DefaultTransport at each
-// send, as net/http's Client does, so replacing DefaultTransport (test
-// mocks) keeps working after Load." client.go, Options.HTTPClient: "Nil
-// means http.DefaultClient"; net/http, Client.Transport: "If nil,
-// DefaultTransport is used." The test replaces the global and restores it.
+// A nil caller Transport resolves to http.DefaultTransport at each send, as
+// net/http's Client does, so replacing DefaultTransport (test mocks) keeps
+// working after Load. client.go, Options.HTTPClient: "Nil means
+// http.DefaultClient"; net/http, Client.Transport: "If nil, DefaultTransport
+// is used." The test replaces the global and restores it.
 func TestDefaultTransportResolvedAtSend(t *testing.T) {
 	w := newWire(t, nil)
 	for name, hc := range map[string]*http.Client{"a nil HTTPClient": nil, "an HTTPClient with no Transport": {}} {
@@ -956,8 +954,8 @@ func TestDefaultTransportResolvedAtSend(t *testing.T) {
 	}
 }
 
-// IP7: "a source's refused value on the first request names its scheme once
-// (Settings key plus the reason)." errors.go, RequestError.Settings: keyed
+// A source's refused value on the first request names its scheme once (the
+// Settings key plus the reason). errors.go, RequestError.Settings: keyed
 // "Options.Credentials[\"api_key\"]"; RequestError.Settings: "An empty
 // secret from a credential source is keyed as a missing credential is." The
 // hop's error, which has no Settings key, still names the scheme
@@ -982,11 +980,11 @@ func TestSourceRefusalNamesItsSchemeOnce(t *testing.T) {
 	}
 }
 
-// IP8: "a defective oauth2 scheme still describes every flow that is an
-// object, with the fields it has; Err says why it cannot be used."
-// describe.go, SecurityScheme: Flows for oauth2; Flow: Type, URLs "as
-// written", Scopes; SecurityScheme.Err: "a defective or missing
-// declaration". The order of Flows is not fixed by the contract.
+// A defective oauth2 scheme still describes every flow that is an object,
+// with the fields it has; Err says why it cannot be used. describe.go,
+// SecurityScheme: Flows for oauth2; Flow: Type, URLs "as written", Scopes;
+// SecurityScheme.Err: "a defective or missing declaration". The order of
+// Flows is not fixed by the contract.
 func TestDefectiveOAuthSchemeListsItsFlows(t *testing.T) {
 	doc := doc31(`"/o":{"get":{"operationId":"o","security":[{"o":[]}]}}`,
 		`"components":{"securitySchemes":{"o":{"type":"oauth2","flows":{
@@ -1018,12 +1016,11 @@ func TestDefectiveOAuthSchemeListsItsFlows(t *testing.T) {
 	}
 }
 
-// VP7 (T1): "Redirects says 'a Location that url.Parse accepts', as net/http
-// and browsers follow leniently; C3-5 reads the same." client.go, Redirects:
-// "Only 301, 302, 303, 307 and 308 with a Location that url.Parse accepts
-// can be followed, as net/http follows them." A Location RFC 3986 would not
-// take but url.Parse does is followed, to the target net/http sends for it
-// (conformance's TestV5).
+// Redirects accepts a Location that url.Parse accepts, as net/http and
+// browsers follow leniently. client.go, Redirects: "Only 301, 302, 303, 307
+// and 308 with a Location that url.Parse accepts can be followed, as
+// net/http follows them." A Location RFC 3986 would not take but url.Parse
+// does is followed, to the target net/http sends for it.
 func TestLenientLocationFollowed(t *testing.T) {
 	for _, loc := range []string{"/a b", "/a<b>", "/caf\u00e9", "/a\"b", "/a{b}", "/a\\b"} {
 		a := newWire(t, routes(map[string]http.HandlerFunc{"/r": redirect(302, loc)}))

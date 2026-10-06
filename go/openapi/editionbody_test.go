@@ -186,8 +186,9 @@ func TestEditionsMultipartDefaults(t *testing.T) {
 	}
 }
 
-// Input.Body sequential framing is independent of edition. This incorporates
-// the stage 4 carried TestConfSeqEditions rather than gating unsupported loads.
+// Input.Body sequential framing is independent of edition ("in any
+// edition"): every edition loads a sequential body and frames it the same
+// way.
 func TestEditionsSequentialBodies(t *testing.T) {
 	for _, version := range editionVersions {
 		for _, media := range []string{"application/jsonl", "application/json-seq", "text/event-stream"} {
@@ -318,9 +319,9 @@ func TestEditionsArrayFormData(t *testing.T) {
 	}
 }
 
-// Stage 4 lifecycle/error rules extend to positional writers: caller readers
-// remain caller-owned; iterator errors retain identity, and no value is read
-// by Prepare. Input.Body paths identify the failing item.
+// Input.Body's lifecycle and error rules extend to positional writers:
+// caller readers remain caller-owned; iterator errors retain identity, and
+// no value is read by Prepare. Input.Body paths identify the failing item.
 func TestEditionsPositionalIteratorError(t *testing.T) {
 	c := editionClient(t, positionalDoc("multipart/mixed", `"itemEncoding":{"contentType":"text/plain"}`), nil)
 	boom := errors.New("edition iterator failed")
@@ -342,9 +343,9 @@ func TestEditionsPositionalIteratorError(t *testing.T) {
 	}
 }
 
-// Owner stage 6 positional-null clarification: omitted null wire parts do
-// not compact source-array positions (OAS 3.2.1 4.14.5.2). Iterators are
-// admitted for multipart types other than form-data, per Input.Body.
+// Omitted null wire parts do not compact source-array positions (OAS 3.2.1
+// section 4.14.5.2). Iterators are admitted for multipart types other than
+// form-data, per Input.Body.
 func TestEditionsPositionalNullKeepsEncodingIndex(t *testing.T) {
 	for _, media := range []string{"multipart/mixed", "multipart/form-data"} {
 		t.Run(media, func(t *testing.T) {

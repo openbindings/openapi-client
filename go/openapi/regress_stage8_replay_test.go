@@ -15,9 +15,9 @@ import (
 
 const review8UploadDoc = `"/x":{"post":{"operationId":"post","requestBody":{"content":{"application/octet-stream":{}}}}}`
 
-// Request.HTTP and Request.Call, saved public API lines 1668-1710; Stage 8
-// regression-brief.md class 1. Current HTTP.Body is the first body; current
-// GetBody and ContentLength govern replays even if Body itself is unchanged.
+// Request.HTTP and Request.Call: prepared HTTP body edits govern the actual
+// send. Current HTTP.Body is the first body; current GetBody and
+// ContentLength govern replays even if Body itself is unchanged.
 func TestReview8CurrentPreparedReplay(t *testing.T) {
 	for _, mode := range []string{"read-once", "reusable", "replace Body control"} {
 		t.Run(mode, func(t *testing.T) {
@@ -97,9 +97,9 @@ func TestReview8CurrentPreparedReplay(t *testing.T) {
 	}
 }
 
-// The same contract, plus RequestError.Err (saved API 1776-1784): a current
-// GetBody error is a pre-dispatch RequestError preserving its exact cause;
-// clearing GetBody turns an existing prepared body into a read-once body.
+// The same contract, plus RequestError.Err: a current GetBody error is a
+// pre-dispatch RequestError preserving its exact cause; clearing GetBody
+// turns an existing prepared body into a read-once body.
 func TestReview8PreparedReplayRefusals(t *testing.T) {
 	for _, mode := range []string{"GetBody error", "clear GetBody"} {
 		t.Run(mode, func(t *testing.T) {
@@ -146,7 +146,7 @@ func TestReview8PreparedReplayRefusals(t *testing.T) {
 }
 
 // Request.Call's "a send refused with a *RequestError does not count" also
-// holds after adding GetBody to a prepared reader (class 1). Credential
+// holds after adding GetBody to a prepared reader. Credential
 // acquisition must fail without reading either the first body or a replay.
 func TestReview8EditedReplayAfterRefusal(t *testing.T) {
 	var credentials, copies, dispatches int

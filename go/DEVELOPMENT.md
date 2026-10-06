@@ -1,8 +1,8 @@
 # Developing the Go client
 
 The public API in `openapi/` and `openapi/schema2020/` is designed first
-and implemented beneath, in the stages `DESIGN.md` lists. This file says
-how each stage is built and what it must pass.
+and implemented beneath it. This file says how a change is built and what
+it must pass.
 
 ## The API is fixed
 
@@ -14,15 +14,15 @@ of three kinds:
    changing behavior.
 2. A correction: a rule found to contradict the OpenAPI specifications or
    an RFC they rely on, or one no implementation could honor.
-3. A change to the exported surface or to a design ruling. This needs the
-   project owner's decision.
+3. A change to the exported surface or to a settled design decision. This
+   needs a maintainer's decision.
 
 Release qualification compares the Go documentation with the reviewed
 snapshot in `../api/public-api-v1.json`, so any change is deliberate: the
 snapshot is refreshed in the same change, and the change says which kind
 it is.
 
-## Each stage
+## Each change
 
 1. **Tests first.** Tests are written from the documented contract and the
    specifications before the implementation, each citing the rule it
@@ -39,20 +39,20 @@ it is.
    and adversarial inputs, followed by fixes.
 5. **Land** on `main` through a pull request.
 
-Examples in `openapi/example_test.go` stay as documentation; each stage adds
-tests that run the same flows against real test servers.
+Examples in `openapi/example_test.go` stay as documentation; tests run the
+same flows against real test servers.
 
 ## Performance
 
 `openapi/bench_test.go` compares calls with the same requests written by
 hand with net/http, and measures loading a large document. Report
-latency, allocations and bytes with `-benchmem`. A stage may not regress a
+latency, allocations and bytes with `-benchmem`. A change may not regress a
 benchmark beyond its budget without a recorded reason. Profile before
-optimizing, and profile at the end of every stage.
+optimizing, and after each substantial change.
 
 ## Code
 
 The engine uses the standard library and the copied YAML parser under
 `internal/yaml`, whose provenance and maintained changes are recorded there.
-Additional dependencies require a project-owner decision. No dead code and
+Additional dependencies require a maintainer's decision. No dead code and
 nothing the tests do not justify. An internal package must earn its place.

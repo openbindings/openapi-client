@@ -6,11 +6,12 @@ import (
 	"testing"
 )
 
-// Q9-1/C9-4: References follows schema-bearing vocabulary locations, not every
+// References follows schema-bearing vocabulary locations, not every
 // independently classified schema physically inside Raw. Core 4.3.1/9.4.2;
 // Loader assigns the object type of a referenced fragment from its context.
 // A separately reached annotation remains independently usable while it is
-// excluded from the enclosing schema's traversal, including foreign dialects.
+// excluded from the enclosing schema's traversal, including foreign
+// dialects.
 func TestReview9AnnotationSchemaContainment(t *testing.T) {
 	const external = "https://schemas.example.test/api/annotation-bundle.json"
 	const target = external + "#/Target"

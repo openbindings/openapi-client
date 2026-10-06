@@ -391,8 +391,10 @@ type xmlPet struct {
 // remove it ... A header field that sets Accept-Encoding turns that off. A
 // body whose Content-Encoding, other than identity, remains passes through
 // unchanged to a *[]byte or io.Writer; any other target ... report[s] an
-// error". Stage 8 class 5/Tier 2: generated text identifies Content-Encoding;
-// its response-controlled value remains available through Header.
+// error". Generated text identifies Content-Encoding; its
+// response-controlled value remains available through Header ("The coding
+// remains available in Header; generated diagnostics omit
+// response-controlled values").
 func TestContentCodings(t *testing.T) {
 	var gz bytes.Buffer
 	zw := gzip.NewWriter(&gz)
@@ -568,9 +570,9 @@ func TestMaxErrorBytes(t *testing.T) {
 // errors.go, DecodeError: "a response whose body could not be used by Call
 // ... it did not decode into the value given"; "Content is the start of the
 // body, at most 4 KiB"; "The promoted Body reads Content again, and
-// ContentLength is len(Content)". Stage 8 class 5/Tier 2: Error returns the
-// operation, status and static reason, with response-controlled media text
-// available only through Header. doc.go, Outcomes: "A 2xx
+// ContentLength is len(Content)". DecodeError.Error returns the operation,
+// status and static reason, with response-controlled media text available
+// only through Header. doc.go, Outcomes: "A 2xx
 // whose body could not be read or decoded: a *DecodeError."
 func TestDecodeError(t *testing.T) {
 	bad := `{"name": 5, "detail":"SECRET-BODY"}`

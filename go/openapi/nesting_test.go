@@ -8,15 +8,15 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Stage 2 ledger, Q9 (doc.go, Values: "A value nested deeper than 1,000
-// levels is refused at its key"; the bound documents have, load.go: "the
-// outermost value being level 1"): a parameter or body value up to 1,000
-// levels deep is serialized, and one 1,001 levels deep is refused at its key
-// (a parameter's Param.Key, or "Input.Body").
+// doc.go, Values: "A value the client encodes that is nested deeper than
+// 1,000 levels ... is refused at its key", the bound documents have
+// (load.go: "the outermost value being level 1"): a parameter or body value
+// up to 1,000 levels deep is serialized, and one 1,001 levels deep is
+// refused at its key (a parameter's Param.Key, or "Input.Body").
 //
-// Levels are counted as the Loader counts them for documents (ledger, Q9,
-// leaf ruling): the outermost value is level 1, and each value is one level
-// deeper than its container, a scalar leaf included. So n nested empty
+// Levels are counted as the Loader counts them for documents: the outermost
+// value is level 1, and each value is one level deeper than its container,
+// a scalar leaf included. So n nested empty
 // arrays are n levels, and n objects around a leaf are n+1: 999 objects
 // around a leaf (1,000 levels) are sent, and 1,000 (1,001 levels) are
 // refused at "p".

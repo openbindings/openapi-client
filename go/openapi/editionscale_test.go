@@ -10,9 +10,9 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Stage 6 brief: every normalization plan is computed once per node. Grow
-// both use count and a shared declaration's size to expose n*n work. The
-// inherited best-of-five harness bounds 4x input at 12x time and 8x bytes.
+// Every normalization plan is computed once per node. Grow both use count
+// and a shared declaration's size to expose n*n work. The best-of-five
+// harness bounds 4x input at 12x time and 8x bytes.
 func editionSharedDoc(n int) []byte {
 	var paths, values []string
 	for i := range n {
@@ -134,10 +134,11 @@ func TestEditionsSecurityURIScale(t *testing.T) {
 	})
 }
 
-// Owner stage 6 interpretation of the frozen Path Item merge rule: the nearest
-// whole additionalOperations map is selected, and duplicate maps set Err on
-// its operations. Farther maps are not unioned. Inspecting this input must have
-// bounded cost rather than copying accumulated methods at every chain level.
+// describe.go, Operation: "For additionalOperations, the nearest map
+// supplies the operations and a duplicate field sets Err on each of them."
+// The nearest whole map is selected, and farther maps are not unioned.
+// Inspecting this input must have bounded cost rather than copying
+// accumulated methods at every chain level.
 func TestEditionsAdditionalOperationsReferenceChainScale(t *testing.T) {
 	wantLinearAllocs(t, "additionalOperations chain", 200, func(n int) func() {
 		var items []string

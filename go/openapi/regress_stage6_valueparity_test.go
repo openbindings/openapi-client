@@ -18,10 +18,11 @@ func (stage6JSONStrings) MarshalJSON() ([]byte, error) {
 	return []byte(`["custom value",""]`), nil
 }
 
-// Values and stage 2 P4 make encoding/json authoritative for collection
-// data. Keep the caller's invalid UTF-8 intact until Prepare: the edition
-// fuzz oracle currently normalizes its arguments before invoking the client.
-// Named types and custom marshalers must retain that same JSON-data rule.
+// Values makes encoding/json authoritative for collection data: where the
+// client applies encoding/json, its output and behavior govern. Keep the
+// caller's invalid UTF-8 intact until Prepare: the edition fuzz oracle
+// currently normalizes its arguments before invoking the client. Named types
+// and custom marshalers must retain that same JSON-data rule.
 func TestStage6CollectionValueParity(t *testing.T) {
 	values := []struct {
 		name string
@@ -61,9 +62,9 @@ func TestStage6CollectionValueParity(t *testing.T) {
 }
 
 // Querystring uses form-body rules, including byte-preserving non-JSON
-// strings (stage 4 Q9), undefined omission, JSON marshaling, and Encoding.
-// Mixed fields must produce each pair once, in sorted map-key order, even
-// when only some fields can be handled by a specialized encoder.
+// strings, undefined omission, JSON marshaling, and Encoding. Mixed fields
+// must produce each pair once, in sorted map-key order, even when only some
+// fields can be handled by a specialized encoder.
 func TestStage6WholeQueryValueParity(t *testing.T) {
 	base := `"schema":{"type":"object","properties":{"a":{"type":"string"},"z":{"type":"integer"},"p":{"type":"array","items":{"type":"string"}}}}`
 	for _, tc := range []struct {
@@ -94,9 +95,10 @@ func TestStage6WholeQueryValueParity(t *testing.T) {
 	}
 }
 
-// C1 also applies to admission: Loader refuses an Options.MediaType that no
-// operation declares. An inactive Swagger requestBody cannot supply a match
-// absent from the operation's actual consumes/body declarations.
+// A Swagger 2.0 operation reads only its own edition's fields, at admission
+// too: Loader refuses an Options.MediaType that no operation declares. An
+// inactive Swagger requestBody cannot supply a match absent from the
+// operation's actual consumes/body declarations.
 func TestStage6SwaggerInactiveMediaPreference(t *testing.T) {
 	for _, hasBody := range []bool{false, true} {
 		t.Run(fmt.Sprint(hasBody), func(t *testing.T) {

@@ -19,9 +19,10 @@ func review8ResponseClient(t *testing.T, status int, body io.ReadCloser) *openap
 	})}})
 }
 
-// DecodeError's response-copy/Content/ContentLength promises (saved public
-// API 789-805), Response.Decode's invalid-out guarantee (1849-1864), and
-// StatusError.Decode (2134-2139); Stage 8 regression-brief.md class 2.
+// DecodeError's response-copy, Content and ContentLength promises (errors.go,
+// DecodeError), Response.Decode's invalid-out guarantee (an invalid out
+// leaves Body unread and open for a retry), and the same promises for an
+// invalid target passed to StatusError.Decode.
 // Scalar fields test both response copies without requiring deep-cloned maps.
 func TestReview8InvalidDecodeOwnsResponse(t *testing.T) {
 	for _, mode := range []string{"Response.Decode", "StatusError.Decode"} {
@@ -85,8 +86,11 @@ func TestReview8InvalidDecodeOwnsResponse(t *testing.T) {
 	}
 }
 
-// With (698-705), Options.Codecs (1451-1480), Response.Decode and
-// StatusError.Decode; Stage 1 F35 and Stage 8 regression-brief.md class 4.
+// Client.With, Options.Codecs, Response.Decode and StatusError.Decode: a
+// malformed Codecs key from With refuses the calls that would use a codec, a
+// decoded out included, and Response.Decode applies Call's codec rules at
+// every status, so a typed Decode reports Options.Codecs rather than falling
+// back to built-in decoding.
 // A decoding target makes malformed Codecs relevant after raw Send too.
 // Raw targets bypass the map; configuration-error read timing is not pinned.
 func TestReview8LateCodecConfiguration(t *testing.T) {
@@ -155,8 +159,9 @@ func TestReview8LateCodecConfiguration(t *testing.T) {
 	}
 }
 
-// Class 4 controls: an invalid out retains its specific unread/open promise;
-// known no-body responses have no codec work after target validation.
+// Controls for malformed Codecs: an invalid out retains its specific
+// unread/open promise; known no-body responses have no codec work after
+// target validation.
 func TestReview8CodecConfigurationControls(t *testing.T) {
 	for _, status := range []int{200, 204, 304} {
 		t.Run(http.StatusText(status), func(t *testing.T) {

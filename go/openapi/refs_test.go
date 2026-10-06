@@ -8,9 +8,9 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Local references (stage 1): Path Item $ref and Reference Objects for
-// parameters, request bodies and responses, chains, cycles, broken
-// references, and references to other documents.
+// Local references: Path Item $ref and Reference Objects for parameters,
+// request bodies and responses, chains, cycles, broken references, and
+// references to other documents.
 
 // describe.go, Operation: "The descriptions follow references. A Path
 // Item's $ref and the Path Item's own fields are read together: a field on
@@ -327,11 +327,11 @@ func TestResponseRefs(t *testing.T) {
 	}
 }
 
-// Stage brief, Loading: "A reference to another document is not followed
-// yet: the part it reaches carries Err". errors.go, ErrUnresolved: a
-// reference that cannot be resolved. load.go, Loader.AllowReference: by
-// default, http references reach only the entry document's origin, so no
-// stage fetches this one.
+// load.go, Loader.AllowReference: "With nil, http and https references may
+// reach the entry document's original origin and Origins", so a reference
+// to another origin is not followed, and the part it reaches carries an Err
+// wrapping ErrUnresolved (errors.go: a reference that cannot be resolved).
+// Nothing is fetched.
 func TestReferenceToAnotherDocument(t *testing.T) {
 	ct := &countingTransport{}
 	doc := bare31(`
@@ -356,10 +356,9 @@ func TestReferenceToAnotherDocument(t *testing.T) {
 	}
 }
 
-// Stage brief, Loading: "Schemas are never interpreted; keep them raw."
-// doc.go, Raw invocation boundary: "A resolvable operation does not depend
-// on the client's ability to interpret its schemas." A broken schema
-// reference neither disables the operation nor its parameter.
+// doc.go, Raw invocation boundary: "A resolvable operation does not depend on
+// the client's ability to interpret its schemas." A broken schema reference
+// neither disables the operation nor its parameter.
 func TestSchemasNotInterpreted(t *testing.T) {
 	w := newWire(t, nil)
 	doc := doc31(`"/s":{"post":{"operationId":"s",

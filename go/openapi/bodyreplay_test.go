@@ -15,29 +15,29 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Stage 4, replay: which bodies can be sent again, by a redirect, a second
-// send of a Request, or a transport retry through GetBody, and which are
-// read once. client.go, Input.Body: "A body can be sent again, by a
-// redirect, a retry or a second send of a Request, when every source in it
-// can: a []byte, a *bytes.Buffer, a *bytes.Reader and a *strings.Reader,
-// from the bytes they hold when the call is prepared, without being
-// drained; an *os.File that Stat reports to be a regular file, from its
-// offset when the call is prepared; and every value the client encodes. Any
-// other reader, such as a pipe or os.Stdin, and an iterator, is read once."
-// "The client never closes a reader it is given." Request.HTTP: "GetBody is
-// set when the body can be sent again"; Request.Call: such a Request "may
-// be sent any number of times", and otherwise "it may be sent once, and
-// sending it again is refused with a *RequestError, nothing sent";
-// Redirects: "a hop that must resend a body that cannot be sent again (see
-// Input.Body) is not followed" and "A 3xx not followed is the outcome, a
-// *StatusError". doc.go, Fixed rules, Form bodies: "A body is encoded once,
-// when the call is prepared, so HTTP.Body and every GetBody give the same
-// bytes; a file in a field is read into memory then"; Header fields: the
-// client generates "Content-Length for a body that can be sent again".
-// Stage 4 ledger, Q10: "a form body whose every source can be sent again is
-// encoded once when prepared (replayable readers read by ReadAt, not
-// drained), so it has Content-Length; one holding a reader read once is
-// encoded as the transport reads it, without Content-Length".
+// Replay: which bodies can be sent again, by a redirect, a second send of a
+// Request, or a transport retry through GetBody, and which are read once.
+// client.go, Input.Body: "A body can be sent again, by a redirect, a retry
+// or a second send of a Request, when every source in it can: a []byte, a
+// *bytes.Buffer, a *bytes.Reader and a *strings.Reader, from the bytes they
+// hold when the call is prepared, without being drained; an *os.File that
+// Stat reports to be a regular file, from its offset when the call is
+// prepared; and every value the client encodes. Any other reader, such as a
+// pipe or os.Stdin, and an iterator, is read once." "The client never closes
+// a reader it is given." Request.HTTP: "GetBody is set when the body can be
+// sent again"; Request.Call: such a Request "may be sent any number of
+// times", and otherwise "it may be sent once, and sending it again is
+// refused with a *RequestError, nothing sent"; Redirects: "a hop that must
+// resend a body that cannot be sent again (see Input.Body) is not followed"
+// and "A 3xx not followed is the outcome, a *StatusError". doc.go, Fixed
+// rules, Form bodies: "A body whose every source can be sent again is
+// encoded once, when the call is prepared, so HTTP.Body and every GetBody
+// give the same bytes; a file in a field is read into memory then. A body
+// holding a reader that can be read only once is encoded as the transport
+// reads it"; Header fields: the client generates "Content-Length for a body
+// that can be sent again". So a form body whose every source can be sent
+// again has Content-Length, its replayable readers read by ReadAt, not
+// drained; one holding a reader read once is sent without Content-Length.
 
 const replayPaths = `
 	"/r/text":{"post":{"operationId":"text","requestBody":{"content":{"text/plain":{}}}}},
@@ -321,11 +321,10 @@ func (g *tailGate) Close() error { g.closed.Store(true); return nil }
 
 // A reader in a multipart body is streamed as it is read, never held: a 4
 // MiB part whose reader returns io.EOF only after the server has received 2
-// MiB of the body (stage brief, Scope: "readers streamed without being
-// held"; Example_filesUpload: "The file is streamed from disk when the
-// request is sent"). A client that read the reader to its end before
-// sending would never let the server see those bytes, and the call would
-// not end.
+// MiB of the body (Example_filesUpload: "The file is streamed from disk when
+// the request is sent"). A client that read the reader to its end before
+// sending would never let the server see those bytes, and the call would not
+// end.
 func TestMultipartReaderStreamed(t *testing.T) {
 	srv := newBodyServer(t, false, "")
 	c := parseAt(t, mpDoc(), srv.URL, srv.URL+"/openapi.json", nil)

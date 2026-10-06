@@ -17,8 +17,8 @@ import (
 // ContentType for a content parameter; Err "why built-in serialization
 // cannot use the value" (doc.go, Fixed rules, Styles: set "where the
 // document alone decides it"). Explode is true for deepObject, whatever the
-// document writes (stage 2 ledger, Q6; describe.go, Param.Explode: "true for
-// deepObject, which ignores the field").
+// document writes (describe.go, Param.Explode: "true for deepObject, which
+// ignores the field").
 func TestParamDescriptorsStage2(t *testing.T) {
 	doc := bare31(`"/d/{s}/{m}/{me}/{l}/{lf}/{pc}":{"get":{"operationId":"d","parameters":[
 		{"name":"s","in":"path","required":true,"schema":{}},
@@ -108,7 +108,7 @@ func TestParamDescriptorsStage2(t *testing.T) {
 		switch {
 		case d.err && (p.Err == nil || errors.Is(p.Err, errors.ErrUnsupported)):
 			// An undefined combination is the document's, not a missing
-			// feature (stage 1 ledger, F9).
+			// feature.
 			t.Errorf("%s: Err = %v, want the undefined combination", p.Key, p.Err)
 		case !d.err && p.Err != nil:
 			t.Errorf("%s: Err = %v, want nil", p.Key, p.Err)

@@ -1,8 +1,8 @@
 # Go OpenAPI client: design
 
 This directory holds the Go invocation client, its public contract and tests.
-The nine-stage implementation covers loading, calls, prepared requests,
-streaming, descriptors and the lazy authored-schema graph. `Example` functions
+The client covers loading, calls, prepared requests, streaming, descriptors
+and the lazy authored-schema graph. `Example` functions
 document caller scenarios in `design/scenarios.md`; executable tests exercise
 the corresponding flows. The optional `schema2020.Project` helper remains
 unimplemented and is outside the invocation engine.
@@ -10,8 +10,8 @@ unimplemented and is outside the invocation engine.
 `design/requirements.md` records source material and candidate rules. Where
 it differs from the public package documentation, the package documentation
 is the current design.
-`design/interface-boundary-2026-09-26.md` records the product boundary and
-the invocation fallback boundary.
+`design/boundary.md` records the product boundary and the escape hatches
+that reach every valid use of each edition.
 
 Import path `github.com/openbindings/openapi-client/go/openapi`.
 
@@ -40,7 +40,7 @@ and success. `Send` leaves classification to its caller. `Operations` describes
 the document, with `Err` and `Source` on its parts. `DocumentURIs` and lazy
 `Schema` handles expose authored source and resolved references. The
 optional `openapi/schema2020` contract reserves a directional 2020-12 view
-only when conversion is faithful; its implementation is a separate pass,
+only when conversion is faithful; its implementation is separate,
 and invocation does not depend on it.
 
 ## Where each rule lives
@@ -80,11 +80,10 @@ schema validation, net/http for all HTTP, and a YAML parser as the only
 dependency. The description surface mirrors OpenAPI objects so a dynamic
 caller, a code generator, or another library can apply its own conventions.
 
-## Implementation order
+## Capabilities
 
-These nine stages build the invocation engine. Each capability has independent
-contract tests and a code review before landing. The optional schema projection
-pass remains separate.
+The invocation engine covers these capabilities, each with independent
+contract tests. The optional schema projection is separate.
 
 1. **Vertical slice**: `Load` and `Parse` of 3.1 JSON documents
    with local references, the operation index and descriptors, servers and
@@ -96,8 +95,8 @@ pass remains separate.
    `explode` value, `allowReserved`, content parameters, header and
    cookie parameters, and the per-parameter writer escape hatch. The
    OpenAPI 3.2 querystring and cookie style, 3.2's wider `allowReserved`,
-   and Swagger 2.0's `collectionFormat` and `allowEmptyValue` land with
-   their editions in stage 6.
+   and Swagger 2.0's `collectionFormat` and `allowEmptyValue` come with
+   their editions (6).
 3. **Credentials, security and redirects**: explicit and exact alternatives,
    stable server identity, credential placement, the plain-http rule,
    `Redirects` and hop stripping, `FromTransport`.
@@ -114,8 +113,8 @@ pass remains separate.
 8. **Prepare and raw send**: `Prepare`, `Request.Send`, `Response.Decode`,
    and refusals that name the setting that fixes them.
 9. **Description**: descriptors, loaded-document inventory and lazy raw
-   schema graph. A separate optional pass can implement the `schema2020`
-   projection helper after the invocation contract is settled.
+   schema graph. The optional `schema2020` projection helper is not yet
+   implemented.
 
-Stage 1 established the initial cost and performance measurements. Later
-stages retain those workloads and add coverage for their new capabilities.
+Benchmarks compare calls with the same requests written by hand with
+net/http, and cover the workloads of each capability.

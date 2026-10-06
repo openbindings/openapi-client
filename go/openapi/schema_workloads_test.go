@@ -12,14 +12,14 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// These synthetic graph workloads are frozen separately from inherited
-// measurements. Client.Schema and References were stubs at the baseline;
-// first/warm costs are absolute measurements, not an old/new or Hand ratio.
-// Sources/edges are derived from the authored fixture, outside the timer.
-// Run First cases with a fixed iteration count (e.g. -benchtime=100x):
-// each timed first read needs a fresh client built outside the timer. Warm
-// cases may use duration-based calibration. Root owns all timing windows.
-// Authority: Client.Schema, SchemaReference, References; Core 8.2 and 9.2.1.
+// Synthetic schema graph workloads. First and warm costs are absolute
+// measurements, not a ratio to another implementation or to hand-written
+// code. Sources/edges are derived from the authored fixture, outside the
+// timer. Run First cases with a fixed iteration count (e.g.
+// -benchtime=100x): each timed first read needs a fresh client built outside
+// the timer. Warm cases may use duration-based calibration.
+// Authority: Client.Schema, SchemaReference, References; JSON Schema
+// 2020-12 Core sections 8.2 and 9.2.1.
 type schema9Workload struct {
 	doc         string
 	root        string
@@ -181,7 +181,7 @@ func BenchmarkSchema9ReferencesWarm(b *testing.B) {
 	}
 }
 
-// Hostile-input scaling, under the inherited 4x-input / 8x-bytes / 12x-time
+// Hostile-input scaling, under the shared 4x-input / 8x-bytes / 12x-time
 // harness: many identifier lookups, a broad graph with distinct targets,
 // ancestry depth, and many entry points into one legacy reference chain.
 // These exercise public graph reads, excluding Parse from measured work.
