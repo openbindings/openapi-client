@@ -1,0 +1,20 @@
+{
+  "openapi": "3.0.3",
+  "info": {"title": "Legacy", "version": "1"},
+  "paths": {},
+  "components": {
+    "schemas": {
+      "Old": {
+        "type": "object",
+        "required": ["id", "name"],
+        "properties": {
+          "id": {"type": "string", "readOnly": true},
+          "name": {"type": "string", "nullable": true},
+          "score": {"type": "number", "minimum": 0, "exclusiveMinimum": true},
+          "blob": {"type": "string", "format": "byte"},
+          "next": {"$ref": "#/components/schemas/Old", "nullable": true}
+        }
+      }
+    }
+  }
+}

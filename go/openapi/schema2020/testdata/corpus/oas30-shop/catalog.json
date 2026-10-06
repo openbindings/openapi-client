@@ -1,0 +1,20 @@
+{
+  "Bag": {
+    "type": "object",
+    "required": ["kind"],
+    "properties": {
+      "kind": {"type": "string"},
+      "price": {"$ref": "openapi.json#/components/schemas/Money"},
+      "volume": {"type": "number", "minimum": 0, "exclusiveMinimum": true, "nullable": true}
+    }
+  },
+  "Problem": {
+    "type": "object",
+    "required": ["status"],
+    "properties": {
+      "status": {"type": "integer"},
+      "detail": {"type": "string", "nullable": true},
+      "cause": {"$ref": "#/Problem"}
+    }
+  }
+}

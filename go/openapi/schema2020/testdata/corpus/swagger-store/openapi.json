@@ -1,0 +1,96 @@
+{
+  "swagger": "2.0",
+  "info": {"title": "Store", "version": "1"},
+  "host": "corpus.example.test",
+  "basePath": "/v1",
+  "consumes": ["application/json"],
+  "produces": ["application/json"],
+  "paths": {
+    "/pets": {
+      "get": {
+        "parameters": [
+          {"name": "limit", "in": "query", "type": "integer", "minimum": 1, "maximum": 100, "exclusiveMaximum": true},
+          {"name": "tags", "in": "query", "type": "array", "items": {"type": "string", "format": "byte"}, "collectionFormat": "multi"},
+          {"name": "X-Request-Id", "in": "header", "type": "string", "format": "uuid"},
+          {"$ref": "#/parameters/Page"}
+        ],
+        "responses": {
+          "200": {
+            "description": "ok",
+            "schema": {"type": "array", "items": {"$ref": "#/definitions/Pet"}},
+            "headers": {"X-Rate": {"type": "integer", "minimum": 0, "exclusiveMinimum": true}}
+          },
+          "default": {"description": "error", "schema": {"$ref": "#/definitions/Error"}}
+        }
+      },
+      "post": {
+        "parameters": [{"name": "pet", "in": "body", "required": true, "schema": {"$ref": "#/definitions/NewPet"}}],
+        "responses": {"201": {"description": "created", "schema": {"$ref": "#/definitions/Pet"}}}
+      }
+    },
+    "/pets/{id}/photo": {
+      "put": {
+        "consumes": ["multipart/form-data"],
+        "produces": ["image/png"],
+        "parameters": [
+          {"name": "id", "in": "path", "required": true, "type": "string", "format": "byte"},
+          {"name": "photo", "in": "formData", "type": "file", "required": true},
+          {"name": "caption", "in": "formData", "type": "string", "maxLength": 140},
+          {"name": "raw", "in": "formData", "type": "string", "format": "binary"},
+          {"name": "score", "in": "formData", "type": "number", "minimum": 0, "exclusiveMinimum": true}
+        ],
+        "responses": {"200": {"description": "the photo", "schema": {"type": "file"}}}
+      }
+    },
+    "/owners": {
+      "put": {
+        "parameters": [{"name": "owner", "in": "body", "schema": {"$ref": "#/definitions/Owner"}}],
+        "responses": {"200": {"description": "ok", "schema": {"$ref": "#/definitions/Shared"}}}
+      }
+    }
+  },
+  "parameters": {
+    "Page": {"name": "page", "in": "query", "type": "integer", "minimum": 0, "exclusiveMinimum": false, "default": 1}
+  },
+  "definitions": {
+    "Pet": {
+      "allOf": [
+        {"$ref": "#/definitions/NewPet"},
+        {"type": "object", "required": ["id"], "properties": {"id": {"type": "integer", "format": "int64", "readOnly": true}, "owner": {"$ref": "#/definitions/Owner"}}}
+      ]
+    },
+    "NewPet": {
+      "type": "object",
+      "discriminator": "kind",
+      "required": ["name", "kind"],
+      "properties": {
+        "name": {"type": "string", "example": "Rex"},
+        "kind": {"type": "string"},
+        "weight": {"type": "number", "minimum": 0, "exclusiveMinimum": true},
+        "tag": {"$ref": "#/definitions/Tag", "description": "ignored beside $ref"}
+      }
+    },
+    "Owner": {
+      "type": "object",
+      "required": ["id", "name"],
+      "properties": {
+        "id": {"$ref": "#/definitions/Id"},
+        "name": {"type": "string"},
+        "pets": {"type": "array", "items": {"$ref": "#/definitions/Pet"}},
+        "avatar": {"type": "string", "format": "binary"}
+      }
+    },
+    "Id": {"type": "string", "readOnly": true},
+    "Tag": {"type": "string", "x-nullable": true},
+    "Error": {
+      "type": "object",
+      "properties": {
+        "code": {"type": "integer", "maximum": 600, "exclusiveMaximum": false},
+        "message": {"type": "string"},
+        "signature": {"type": "string", "format": "byte"}
+      },
+      "additionalProperties": {"type": "string"}
+    },
+    "Shared": {"$ref": "shared.json#/Common"}
+  }
+}

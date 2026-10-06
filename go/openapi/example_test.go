@@ -1122,11 +1122,11 @@ func bodyMedia(body *openapi.Message) (m *openapi.Media, sendAs string, binary b
 // they compose without rewriting.
 // A schema that cannot be rendered stops this tool; it is not silently
 // replaced with a schema accepting anything.
-func toolInput(op *openapi.Operation) (schema map[string]any, mediaType string, binary bool, err error) {
+func toolInput(c *openapi.Client, op *openapi.Operation) (schema map[string]any, mediaType string, binary bool, err error) {
 	defs := map[string]any{}
 	var renderErr error
 	render := func(s *openapi.Schema) any {
-		p, err := schema2020.Project(s, schema2020.Request)
+		p, err := schema2020.Project(c, s, schema2020.Request)
 		if err != nil {
 			renderErr = errors.Join(renderErr, err)
 			return nil
@@ -1196,7 +1196,7 @@ func Example_toolSchema() {
 		if op.Err != nil || op.Deprecated {
 			continue
 		}
-		input, _, _, err := toolInput(op)
+		input, _, _, err := toolInput(client, op)
 		if err != nil {
 			log.Printf("skipping %s: %v", op.Key, err)
 			continue
@@ -1232,7 +1232,7 @@ func Example_dynamicCall() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	_, mediaType, binary, err := toolInput(op) // how the tool's body was described
+	_, mediaType, binary, err := toolInput(client, op) // how the tool's body was described
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -1884,7 +1884,7 @@ func Example_fixedConventions() {
 		if m.Schema == nil {
 			continue
 		}
-		projection, err := schema2020.Project(m.Schema, schema2020.Request)
+		projection, err := schema2020.Project(client, m.Schema, schema2020.Request)
 		if err != nil {
 			log.Fatal(err) // do not publish a lossy input schema
 		}

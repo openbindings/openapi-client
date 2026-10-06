@@ -1,0 +1,10 @@
+{
+  "Common": {
+    "type": "object",
+    "properties": {
+      "when": {"type": "string", "format": "date-time"},
+      "self": {"$ref": "#/Common"},
+      "owner": {"$ref": "openapi.json#/definitions/Owner"}
+    }
+  }
+}

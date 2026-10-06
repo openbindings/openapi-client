@@ -1,0 +1,18 @@
+{
+  "openapi": "3.1.0",
+  "info": {"title": "Modern", "version": "1"},
+  "paths": {},
+  "components": {
+    "schemas": {
+      "Legacy": {
+        "type": ["object", "null"],
+        "properties": {
+          "code": {"type": "integer", "exclusiveMinimum": 0},
+          "data": {"type": "string", "contentEncoding": "base64", "contentMediaType": "application/pdf"},
+          "back": {"$ref": "openapi.json#/components/schemas/Money", "description": "kept beside $ref in 3.1"}
+        },
+        "$defs": {"unused": {"type": "null"}}
+      }
+    }
+  }
+}

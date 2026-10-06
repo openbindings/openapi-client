@@ -4,8 +4,8 @@ This directory holds the Go invocation client, its public contract and tests.
 The client covers loading, calls, prepared requests, streaming, descriptors
 and the lazy authored-schema graph. `Example` functions
 document caller scenarios in `design/scenarios.md`; executable tests exercise
-the corresponding flows. The optional `schema2020.Project` helper remains
-unimplemented and is outside the invocation engine.
+the corresponding flows. The optional `schema2020.Project` helper is outside
+the invocation engine.
 
 `design/requirements.md` records source material and candidate rules. Where
 it differs from the public package documentation, the package documentation
@@ -39,9 +39,9 @@ net/http's errors, `*StatusError` (non-2xx), `*DecodeError` (2xx unusable),
 and success. `Send` leaves classification to its caller. `Operations` describes
 the document, with `Err` and `Source` on its parts. `DocumentURIs` and lazy
 `Schema` handles expose authored source and resolved references. The
-optional `openapi/schema2020` contract reserves a directional 2020-12 view
-only when conversion is faithful; its implementation is separate,
-and invocation does not depend on it.
+optional `openapi/schema2020` package gives a directional, standalone JSON
+Schema 2020-12 view, reporting what it cannot carry faithfully; invocation
+does not depend on it.
 
 ## Where each rule lives
 
@@ -113,8 +113,8 @@ contract tests. The optional schema projection is separate.
 8. **Prepare and raw send**: `Prepare`, `Request.Send`, `Response.Decode`,
    and refusals that name the setting that fixes them.
 9. **Description**: descriptors, loaded-document inventory and lazy raw
-   schema graph. The optional `schema2020` projection helper is not yet
-   implemented.
+   schema graph, with the optional `schema2020` projection of any schema
+   to standalone JSON Schema 2020-12.
 
 Benchmarks compare calls with the same requests written by hand with
 net/http, and cover the workloads of each capability.

@@ -1,0 +1,98 @@
+openapi: 3.2.0
+$self: https://corpus.example.test/oas32-items/openapi.yaml
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+info:
+  title: Events
+  version: "1"
+paths:
+  /events:
+    get:
+      parameters:
+        - name: since
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: q
+          in: querystring
+          content:
+            application/x-www-form-urlencoded:
+              schema:
+                $ref: "#/components/schemas/Search"
+      responses:
+        "200":
+          description: a stream of events
+          content:
+            application/jsonl:
+              itemSchema:
+                $ref: "#/components/schemas/Event"
+            text/event-stream:
+              itemSchema:
+                type: object
+                required: [data]
+                properties:
+                  event: {type: string}
+                  data:
+                    type: string
+                    contentMediaType: application/json
+                    contentSchema:
+                      $ref: "#/components/schemas/Event"
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Event"
+      responses:
+        "202":
+          description: accepted
+components:
+  schemas:
+    Event:
+      type: object
+      required: [type]
+      properties:
+        type: {type: string}
+        payload:
+          $ref: "#/components/schemas/Payload"
+        at:
+          type: string
+          format: date-time
+          readOnly: true
+      discriminator:
+        propertyName: type
+        mapping:
+          created: Created
+          deleted: "#/components/schemas/Deleted"
+        defaultMapping: Generic
+    Created:
+      type: object
+      properties:
+        id: {type: string}
+        payload: {$ref: "#/components/schemas/Payload"}
+    Deleted:
+      type: object
+      properties:
+        id: {type: string}
+        reason: {type: [string, "null"]}
+    Generic:
+      type: object
+      additionalProperties: true
+    Payload:
+      $id: payload.json
+      type: object
+      properties:
+        items:
+          type: array
+          items: {$ref: "#/$defs/Item"}
+      $defs:
+        Item:
+          type: object
+          properties:
+            name: {type: string}
+            next: {$ref: "#/$defs/Item"}
+    Search:
+      type: object
+      properties:
+        text: {type: string, writeOnly: true}
+        page: {type: integer, minimum: 1}

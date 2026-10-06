@@ -255,7 +255,7 @@ func (o *operation) swaggerBody(n value) error {
 				required = true
 			}
 		}
-		schema = &Schema{doc: o.doc, v: n, synthetic: params}
+		schema = &Schema{doc: o.doc, v: n, src: o.Source, synthetic: params}
 		list = slices.DeleteFunc(list, func(typ string) bool {
 			m, ok := parseMedia(typ)
 			return !ok || !(isForm(m) || strings.EqualFold(m.full, "multipart/form-data"))
