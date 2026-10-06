@@ -52,7 +52,7 @@ optimizing, and after each substantial change.
 
 ## Code
 
-The engine uses the standard library and the copied YAML parser under
-`internal/yaml`, whose provenance and maintained changes are recorded there.
+The engine uses the standard library and, for YAML syntax, the unmodified
+`go.yaml.in/yaml/v3` module that `go.mod` and `go.sum` pin.
 Additional dependencies require a maintainer's decision. No dead code and
 nothing the tests do not justify. An internal package must earn its place.

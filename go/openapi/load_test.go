@@ -300,7 +300,8 @@ func namesURIAndLine(t testing.TB, err error, uri string, line int) {
 }
 
 // load.go, Loader: "A duplicate key ... rejects the document ... A rejection
-// names the document's URI and the line and column of the problem."
+// names the document's URI and where the problem is: ... otherwise the line
+// and column".
 func TestLoadRejectsDuplicateKeys(t *testing.T) {
 	tests := []struct {
 		name string

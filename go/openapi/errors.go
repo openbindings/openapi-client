@@ -23,7 +23,8 @@ var ErrNoOperation = errors.New("openapi: no such operation")
 // that cannot be resolved, a reference cycle included, as distinct from a
 // malformed declaration. The Err names the reference, and wraps the retrieval
 // error too when fetching or reading its document failed (one that cannot be
-// read is named with its line and column, as Load names an entry document's),
+// read is named with where the problem is, as Loader describes for an entry
+// document),
 // or an error naming the refused URI when admission refused it, so a caller can
 // tell a fixable fetch or admission (see Loader.Origins, Loader.AllowReference
 // and Loader.Fetch) from a broken document.

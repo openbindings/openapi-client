@@ -63,22 +63,26 @@ func Parse(ctx context.Context, content []byte, uri string, opts *Options) (*Cli
 // as YAML 1.2.2 section 5.2 deduces it; a UTF-8 byte order mark is ignored, and
 // invalid UTF-8 rejects the document. A document whose first significant byte
 // is '{' is read as JSON and, if it is not JSON, as YAML; anything else is read
-// as YAML 1.2 under its Core schema, so yes and no stay strings, << is an
-// ordinary key, and a scalar key such as an unquoted 200 is read as the string
-// it spells. A %YAML directive for version 1.x is read as 1.2, and any other
-// major version rejects the document (YAML 1.2.2 section 6.8.1). Numbers keep
-// the exact value written. A duplicate key, a key that is not a scalar, or a
-// second document in the stream rejects the document, and so, in every edition,
-// does a value JSON cannot hold (.inf, .nan, or a tag outside the Core schema,
-// such as !!timestamp), since Document and Raw are JSON. A document whose
-// aliases would add more than 1,000,000 nodes, more than 100 times its own node
-// count, or more than 100 times its own size in bytes, or that nests deeper
-// than 1,000 levels (the outermost value being level 1), is rejected too. A
-// rejection names the document's URI and the line and column of the problem,
-// both counted from 1, the column in the document's own bytes (two per UTF-16
-// code unit, four per UTF-32 character) after any byte order mark; a node's
-// position is where it starts, its tag included. Reference cycles are detected,
-// never followed forever.
+// as YAML. YAML is parsed by go.yaml.in/yaml/v3, whose syntax rules apply, and
+// its scalars are resolved under the YAML 1.2 Core schema, so yes and no stay
+// strings, << is an ordinary key, and a scalar key such as an unquoted 200 is
+// read as the string it spells. The parser reads a scalar written with the
+// non-specific tag ! as if it had no tag. A %YAML directive for any version 1.x
+// changes none of this, and any other major version rejects the document (YAML
+// 1.2.2 section 6.8.1). Numbers keep the exact value written. A duplicate key,
+// a key that is not a scalar, or a second document in the stream rejects the
+// document, and so, in every edition, does a value JSON cannot hold (.inf,
+// .nan, or a tag outside the Core schema, such as !!timestamp), since Document
+// and Raw are JSON. A document whose aliases would add more than 1,000,000
+// nodes, more than 100 times its own node count, or more than 100 times its own
+// size in bytes, or that nests deeper than 1,000 levels (the outermost value
+// being level 1), is rejected too. A rejection names the document's URI and
+// where the problem is: for a YAML syntax error, the parser's own message, as
+// it gives it; otherwise the line and column, both counted from 1, the column
+// in the document's own bytes (two per UTF-16 code unit, four per UTF-32
+// character) after any byte order mark, a node's position being where it
+// starts, its tag included. Reference cycles are detected, never followed
+// forever.
 //
 // An OpenAPI document uses the edition declared at its root. A referenced
 // document with neither an openapi nor a swagger field uses the entry

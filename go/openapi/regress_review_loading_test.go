@@ -124,26 +124,24 @@ func TestReviewRepairOctalValues(t *testing.T) {
 }
 
 func TestReviewRepairYAMLErrorLocation(t *testing.T) {
-	// Loader rejections retain the useful diagnostic as well as one accurate
-	// location, including reader, scanner, parser and unknown-alias failures.
-	for _, tt := range []struct{ tail, detail string }{
-		{"x-m: [one, *unknown]\n", "unknown anchor 'unknown' referenced"},
-		{"x-m: [one, {\n", "did not find expected node content"},
-		{"x-m: a: b\n", "mapping values are not allowed in this context"},
-		{"x-m: \x01\n", "control characters are not allowed"},
+	// load.go, Loader: "A rejection names the document's URI and where the
+	// problem is: for a YAML syntax error, the parser's own message".
+	// Reader, scanner, parser and unknown-alias failures are each rejected,
+	// in every encoding, naming the document's URI; the parser's message,
+	// its wording and whatever position it gives, is its own.
+	for _, tail := range []string{
+		"x-m: [one, *unknown]\n",
+		"x-m: [one, {\n",
+		"x-m: a: b\n",
+		"x-m: \x01\n",
 	} {
-		src := yamlHead + tt.tail
+		src := yamlHead + tail
 		for _, data := range [][]byte{[]byte(src), utf16Text(src, false, true), utf32Text(src, true, true)} {
-			_, err := openapi.Parse(t.Context(), data, testDocURI, nil)
-			if err == nil {
-				t.Fatal("accepted malformed YAML")
+			c, err := openapi.Parse(t.Context(), data, testDocURI, nil)
+			if c != nil || err == nil {
+				t.Fatalf("Parse = %v, %v; want a rejection of %q", c, err, tail)
 			}
-			if strings.Contains(err.Error(), "yaml: line ") {
-				t.Fatalf("contradictory parser location: %v", err)
-			}
-			if !strings.Contains(err.Error(), tt.detail) {
-				t.Fatalf("lost diagnostic %q: %v", tt.detail, err)
-			}
+			wantSyntaxError(t, err, testDocURI)
 		}
 	}
 }

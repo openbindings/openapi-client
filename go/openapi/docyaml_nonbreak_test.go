@@ -1,63 +1,92 @@
 package openapi_test
 
 import (
+	"strings"
 	"testing"
+	"unicode/utf16"
 
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Loader reads YAML 1.2, including when a 1.x directive is present. YAML
-// 1.2.2 section 5.4 makes U+0085, U+2028 and U+2029 non-break characters, so
-// they remain scalar content rather than folding or ending a line:
-// https://yaml.org/spec/1.2.2/#54-line-break-characters.
-func TestYAMLNonASCIICharactersAreNotLineBreaks(t *testing.T) {
+// load.go, Client.Document: "A YAML document's JSON has ... its strings as
+// encoding/json writes them without HTML escaping". YAML 1.2.2 section 5.7
+// writes U+0085, U+2028 and U+2029 in a double-quoted scalar as the escapes
+// \N, \L and \P, or as \u escapes; whether the characters written as
+// themselves end a line is the parser's syntax (section 5.4), so they are
+// escaped here. Document writes them as encoding/json does, U+2028 and
+// U+2029 as \u escapes.
+func TestYAMLEscapedNonASCIIBreakCharacters(t *testing.T) {
 	const content = "a\u0085b\u2028c\u2029d"
-	for _, tt := range []struct{ name, tail, value string }{
-		{"double quoted NEL", "x-v: \"a\u0085b\"\n", "a\u0085b"},
-		{"double quoted line separator", "x-v: \"a\u2028b\"\n", "a\u2028b"},
-		{"double quoted paragraph separator", "x-v: \"a\u2029b\"\n", "a\u2029b"},
-		{"single quoted", "x-v: '" + content + "'\n", content},
-		{"plain", "x-v: " + content + "\n", content},
-		{"literal block", "x-v: |-\n  " + content + "\n", content},
-		{"folded block", "x-v: >-\n  " + content + "\n  next\n", content + " next"},
+	each := "[" + jsonNoHTML(t, "\u0085") + "," + jsonNoHTML(t, "\u2028") + "," + jsonNoHTML(t, "\u2029") + "]"
+	for _, tt := range []struct{ name, tail, want string }{
+		{"named escapes", `x-v: "a\Nb\Lc\Pd"` + "\n", jsonNoHTML(t, content)},
+		{"unicode escapes", `x-v: "a\u0085b\u2028c\u2029d"` + "\n", jsonNoHTML(t, content)},
+		{"each alone", `x-v: ["\N", "\L", "\P"]` + "\n", each},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			// Document's strings are exactly as encoding/json writes them
-			// without HTML escaping, including the escapes for U+2028 and
-			// U+2029.
-			if got, want := string(yamlValue(t, tt.tail, "#/x-v")), jsonNoHTML(t, tt.value); got != want {
-				t.Errorf("Document scalar = %q, want %q", got, want)
+			if got := string(yamlValue(t, tt.tail, "#/x-v")); got != tt.want {
+				t.Errorf("Document = %s, want %s", got, tt.want)
 			}
 		})
 	}
-	t.Run("version 1.1 directive", func(t *testing.T) {
-		c := parsed(t, []byte("%YAML 1.1\n---\n"+yamlHead+"x-v: \""+content+"\"\n"))
-		if got, want := string(c.Document(testDocURI+"#/x-v")), jsonNoHTML(t, content); got != want {
-			t.Errorf("Document scalar = %q, want %q", got, want)
-		}
-	})
+}
 
-	// Loader's positions use the document's own bytes. These characters
-	// neither advance the source line nor reset the byte column, for a
-	// scanner error or a semantic rejection after a successfully read node.
-	const scannerPrefix = "x-v: [\"" + content + "\", "
+// load.go, Loader: a rejection that is not a YAML syntax error names "the
+// line and column, both counted from 1, the column in the document's own
+// bytes (two per UTF-16 code unit, four per UTF-32 character) ..., a node's
+// position being where it starts". YAML 1.2.2 section 5.4 makes U+0085,
+// U+2028 and U+2029 content, while YAML 1.1 made them line breaks; which
+// the parser does is its syntax ("YAML is parsed by go.yaml.in/yaml/v3,
+// whose syntax rules apply"). A quoted scalar holding one is read either
+// way, and a duplicate key after it is rejected where the key starts: on
+// line 6 if the character does not end a line, or on line 7 if it does,
+// the column counting the document's own bytes from that line's start.
+func TestYAMLPositionAfterNonASCIIBreakCharacters(t *testing.T) {
+	const after = `b", {k: 1, ` // the text before the second key, after the character
 	for _, tt := range []struct {
-		name, doc string
-		line, col int
+		name, char, open string
+		utf16            bool
 	}{
-		{"scanner after quoted content", yamlHead + scannerPrefix + "@bad]\n", 6, len(scannerPrefix) + 1},
-		{"duplicate after plain content", yamlHead + "x-v: {s: " + content + ", k: 1, k: 2}\n", 6, len("x-v: {s: "+content+", k: 1, ") + 1},
-		{"duplicate after block content", yamlHead + "x-v: |-\n  " + content + "\nx-dupe: {k: 1, k: 2}\n", 8, len("x-dupe: {k: 1, ") + 1},
+		{"NEL, double quoted", "\u0085", `"`, false},
+		{"LS, single quoted", "\u2028", `'`, false},
+		{"PS, double quoted", "\u2029", `"`, false},
+		{"NEL, double quoted, UTF-16", "\u0085", `"`, true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			wantPosition(t, rejected(t, tt.doc), testDocURI, tt.line, tt.col)
+			before := "x-v: [" + tt.open + "a" + tt.char // line 6 before the character
+			rest := strings.ReplaceAll(after, `"`, tt.open)
+			doc := yamlHead + before + rest + "k: 2}]\n"
+			sameLine, nextLine := len(before+rest)+1, len(rest)+1
+			content := []byte(doc)
+			if tt.utf16 {
+				content = utf16Text(doc, false, true)
+				sameLine = 2*len(utf16.Encode([]rune(before+rest))) + 1
+				nextLine = 2*len(rest) + 1
+			}
+			_, err := openapi.Parse(t.Context(), content, testDocURI, nil)
+			wantOnePosition(t, err, testDocURI, [2]int{6, sameLine}, [2]int{7, nextLine})
 		})
 	}
-	t.Run("UTF-16 scanner column", func(t *testing.T) {
-		doc := utf16Text(yamlHead+scannerPrefix+"@bad]\n", false, true)
-		_, err := openapi.Parse(t.Context(), doc, testDocURI, nil)
-		wantPosition(t, err, testDocURI, 6, 2*len([]rune(scannerPrefix))+1)
-	})
+}
+
+// wantOnePosition checks that err names uri and, as whole numbers, the line
+// and column of one of the positions.
+func wantOnePosition(t testing.TB, err error, uri string, positions ...[2]int) {
+	t.Helper()
+	if err == nil {
+		t.Errorf("no error, want a rejection at one of %v", positions)
+		return
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, uri) {
+		t.Errorf("rejection %q does not name the document %q", msg, uri)
+	}
+	for _, p := range positions {
+		if numberRE(p[0]).MatchString(msg) && numberRE(p[1]).MatchString(msg) {
+			return
+		}
+	}
+	t.Errorf("rejection %q names none of the lines and columns %v", msg, positions)
 }
 
 // Loader reads valid 1.x directives as YAML 1.2. YAML 1.2.2 section 6.8.1
