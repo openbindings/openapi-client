@@ -18,7 +18,7 @@ import (
 // "ctx bounds the whole load, reading and parsing included" (load.go,
 // Load), a file that never delivers its content, such
 // as a FIFO nobody writes to, included.
-func TestG16LoadFIFOHonorsContext(t *testing.T) {
+func TestLoadOfSilentFIFOEndsWithContext(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "doc.json")
 	if err := syscall.Mkfifo(path, 0o600); err != nil {
 		t.Skipf("mkfifo: %v", err)

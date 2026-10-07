@@ -56,7 +56,7 @@ func nestedHeaderDoc(l, k, w int) []byte {
 // nested Encodings from many places. The measure isolates the innermost w
 // entries: the cost of describing with them less the cost of the same
 // document without them, each the best of interleaved runs (bestCosts, from
-// regress2_scale_test.go). Read once, they add the same whatever refers to
+// scaling_test.go). Read once, they add the same whatever refers to
 // them; read once for each reference, they add in proportion to the
 // references. With sixteen times the references, what the entries add must
 // stay within 3 times (flatBound), in time, not checked under -short, and in

@@ -16,21 +16,21 @@ import (
 // only on public APIs, so the identical file can be copied into two versions
 // of the package to compare them. Request.HTTP/Request.Call promise the
 // initial Body once, GetBody thereafter, and reusable sends.
-const benchPrepared8URL = "https://bench.example.test/upload"
-const benchPrepared8Type = "application/octet-stream"
-const benchPrepared8Size = 4096
-const benchPrepared8Doc = `{"openapi":"3.1.0","info":{"title":"prepared body benchmark","version":"1"},"servers":[{"url":"https://bench.example.test"}],"paths":{"/upload":{"post":{"operationId":"upload","requestBody":{"content":{"application/octet-stream":{}}},"responses":{"204":{"description":"done"}}}}}}`
+const benchPreparedURL = "https://bench.example.test/upload"
+const benchPreparedType = "application/octet-stream"
+const benchPreparedSize = 4096
+const benchPreparedDoc = `{"openapi":"3.1.0","info":{"title":"prepared body benchmark","version":"1"},"servers":[{"url":"https://bench.example.test"}],"paths":{"/upload":{"post":{"operationId":"upload","requestBody":{"content":{"application/octet-stream":{}}},"responses":{"204":{"description":"done"}}}}}}`
 
-func benchPrepared8Payload() []byte {
-	return bytes.Repeat([]byte("0123456789abcdef"), benchPrepared8Size/16)
+func benchPreparedPayload() []byte {
+	return bytes.Repeat([]byte("0123456789abcdef"), benchPreparedSize/16)
 }
 
-type benchPrepared8Transport struct {
+type benchPreparedTransport struct {
 	verify   bool
 	verified int
 }
 
-func (tr *benchPrepared8Transport) RoundTrip(r *http.Request) (*http.Response, error) {
+func (tr *benchPreparedTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	var data []byte
 	var err error
 	if tr.verify {
@@ -46,14 +46,14 @@ func (tr *benchPrepared8Transport) RoundTrip(r *http.Request) (*http.Response, e
 		return nil, closeErr
 	}
 	if tr.verify {
-		wantHeader := http.Header{"Content-Type": {benchPrepared8Type}, "X-Benchmark": {"prepared-body"}}
-		if r.Method != "POST" || r.URL.String() != benchPrepared8URL || !reflect.DeepEqual(r.Header, wantHeader) || r.ContentLength != benchPrepared8Size {
+		wantHeader := http.Header{"Content-Type": {benchPreparedType}, "X-Benchmark": {"prepared-body"}}
+		if r.Method != "POST" || r.URL.String() != benchPreparedURL || !reflect.DeepEqual(r.Header, wantHeader) || r.ContentLength != benchPreparedSize {
 			return nil, fmt.Errorf("prepared exchange metadata: %s %s, headers %#v, ContentLength %d", r.Method, r.URL, r.Header, r.ContentLength)
 		}
 		// The oracle is fixed independently of either prepared request or
 		// its GetBody implementation, including a separate backing slice.
-		if !bytes.Equal(data, benchPrepared8Payload()) {
-			return nil, fmt.Errorf("prepared exchange body differs from fixed %d-byte payload (received %d bytes)", benchPrepared8Size, len(data))
+		if !bytes.Equal(data, benchPreparedPayload()) {
+			return nil, fmt.Errorf("prepared exchange body differs from fixed %d-byte payload (received %d bytes)", benchPreparedSize, len(data))
 		}
 		tr.verified++
 	}
@@ -64,16 +64,16 @@ func (tr *benchPrepared8Transport) RoundTrip(r *http.Request) (*http.Response, e
 	}, nil
 }
 
-// benchPrepared8Path constructs one actual measured path. Parse, Prepare,
+// benchPreparedPath constructs one actual measured path. Parse, Prepare,
 // NewRequest, payload creation and the first body are all outside timing.
-func benchPrepared8Path(tb testing.TB, path string) (*benchPrepared8Transport, func() (*http.Response, error)) {
+func benchPreparedPath(tb testing.TB, path string) (*benchPreparedTransport, func() (*http.Response, error)) {
 	tb.Helper()
 	ctx := context.Background()
-	tr := &benchPrepared8Transport{verify: true}
+	tr := &benchPreparedTransport{verify: true}
 	hc := &http.Client{Transport: tr}
-	payload := benchPrepared8Payload()
+	payload := benchPreparedPayload()
 	if path == "Client" {
-		c, err := openapi.Parse(ctx, []byte(benchPrepared8Doc), "", &openapi.Options{
+		c, err := openapi.Parse(ctx, []byte(benchPreparedDoc), "", &openapi.Options{
 			HTTPClient: hc, Header: http.Header{"X-Benchmark": {"prepared-body"}},
 		})
 		if err != nil {
@@ -94,11 +94,11 @@ func benchPrepared8Path(tb testing.TB, path string) (*benchPrepared8Transport, f
 	if path != "Hand" {
 		tb.Fatalf("unknown prepared benchmark path %q", path)
 	}
-	req, err := http.NewRequestWithContext(ctx, "POST", benchPrepared8URL, bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, "POST", benchPreparedURL, bytes.NewReader(payload))
 	if err != nil {
 		tb.Fatal(err)
 	}
-	req.Header = http.Header{"Content-Type": {benchPrepared8Type}, "X-Benchmark": {"prepared-body"}}
+	req.Header = http.Header{"Content-Type": {benchPreparedType}, "X-Benchmark": {"prepared-body"}}
 	first := true
 	return tr, func() (*http.Response, error) {
 		// Preserve the prepared request and its original body. Each exchange
@@ -119,7 +119,7 @@ func benchPrepared8Path(tb testing.TB, path string) (*benchPrepared8Transport, f
 	}
 }
 
-func benchPrepared8Exchange(send func() (*http.Response, error)) error {
+func benchPreparedExchange(send func() (*http.Response, error)) error {
 	r, err := send()
 	if err != nil {
 		if r != nil {
@@ -130,10 +130,10 @@ func benchPrepared8Exchange(send func() (*http.Response, error)) error {
 	return r.Body.Close()
 }
 
-func benchPrepared8Verify(tb testing.TB, tr *benchPrepared8Transport, send func() (*http.Response, error)) {
+func benchPreparedVerify(tb testing.TB, tr *benchPreparedTransport, send func() (*http.Response, error)) {
 	tb.Helper()
 	for range 2 {
-		if err := benchPrepared8Exchange(send); err != nil {
+		if err := benchPreparedExchange(send); err != nil {
 			tb.Fatal(err)
 		}
 	}
@@ -143,27 +143,27 @@ func benchPrepared8Verify(tb testing.TB, tr *benchPrepared8Transport, send func(
 	tr.verify = false
 }
 
-func TestPrepared8SendBodyBenchmarkParity(t *testing.T) {
+func TestPreparedSendBodyMatchesHand(t *testing.T) {
 	for _, path := range []string{"Client", "Hand"} {
 		t.Run(path, func(t *testing.T) {
-			tr, send := benchPrepared8Path(t, path)
-			benchPrepared8Verify(t, tr, send)
+			tr, send := benchPreparedPath(t, path)
+			benchPreparedVerify(t, tr, send)
 		})
 	}
 }
 
-func BenchmarkPrepared8SendBody(b *testing.B) {
+func BenchmarkPreparedSendBody(b *testing.B) {
 	for _, path := range []string{"Client", "Hand"} {
 		b.Run(path, func(b *testing.B) {
 			b.StopTimer()
-			tr, send := benchPrepared8Path(b, path)
-			benchPrepared8Verify(b, tr, send)
+			tr, send := benchPreparedPath(b, path)
+			benchPreparedVerify(b, tr, send)
 			b.ReportAllocs()
-			b.SetBytes(benchPrepared8Size)
+			b.SetBytes(benchPreparedSize)
 			b.ResetTimer()
 			b.StartTimer()
 			for i := 0; i < b.N; i++ {
-				if err := benchPrepared8Exchange(send); err != nil {
+				if err := benchPreparedExchange(send); err != nil {
 					b.Fatal(err)
 				}
 			}

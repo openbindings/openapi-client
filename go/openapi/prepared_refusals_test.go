@@ -19,14 +19,14 @@ import (
 // refusals without electing an alternative. Example_whatIsMissing is the
 // runnable flow below. A part's content type is only determined after
 // choosing the governing body media.
-func TestPrepared8WhatIsMissingFlow(t *testing.T) {
+func TestPrepareNamesMissingSettingsThenSends(t *testing.T) {
 	w := newWire(t, typedAnswer(http.StatusCreated, "text/plain", "created"))
 	c, err := openapi.Parse(t.Context(), reportsYAML, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	op := mustOp(t, c, "uploadReport")
-	file := &stream7Body{reader: strings.NewReader("report bytes")}
+	file := &streamBody{reader: strings.NewReader("report bytes")}
 	in := &openapi.Input{Body: map[string]any{
 		"title": "Q3", "file": openapi.Part{Content: file},
 	}}
@@ -141,7 +141,7 @@ func TestPrepared8WhatIsMissingFlow(t *testing.T) {
 // conflicts. Options.Server/ServerID/BaseURL say how clearing the named
 // conflicting field makes the remaining selection usable. Older
 // TestLoadRefusesOptions checks refusal but intentionally no conflict key.
-func TestPrepared8ServerConflictRepair(t *testing.T) {
+func TestServerSelectorConflictKeys(t *testing.T) {
 	doc := `{"openapi":"3.1.0","info":{"title":"t","version":"1"},"servers":[{"url":"https://a.example.test"},{"url":"https://b.example.test"}],"paths":{"/x":{"get":{"operationId":"get"}}}}`
 	c := parseAt(t, doc, "", testDocURI, nil)
 	op := mustOp(t, c, "get")
@@ -180,10 +180,10 @@ func TestPrepared8ServerConflictRepair(t *testing.T) {
 // failures of already-selected configuration and independent parameter/part
 // serialization must compose, retain exact keys, and omit input values. RFC
 // 6901 section 3 gives ~0/~1.
-func TestPrepared8IndependentRefusalsRepair(t *testing.T) {
+func TestPrepareIndependentRefusalsCompose(t *testing.T) {
 	doc := `{"openapi":"3.1.0","info":{"title":"t","version":"1"},"servers":[{"url":"https://api.example.test/{tenant}","variables":{"tenant":{"default":"allowed","enum":["allowed"]}}}],"paths":{"/x/{id}":{"post":{"operationId":"post","security":[{"key":[]}],"parameters":[{"name":"id","in":"path","required":true,"schema":{"type":"string"}},{"name":"Input.Body","in":"query","required":true,"schema":{"type":"string"}},{"name":"X-Trace","in":"header","schema":{"type":"string"}}],"requestBody":{"content":{"multipart/form-data":{"encoding":{"file/name~":{"contentType":"text/plain"}}}}}}}},"components":{"securitySchemes":{"key":{"type":"apiKey","in":"header","name":"X-Key"}}}}`
 	var dispatches atomic.Int32
-	c := parseAt(t, doc, "", testDocURI, &openapi.Options{HTTPClient: &http.Client{Transport: stream7RT(func(r *http.Request) (*http.Response, error) {
+	c := parseAt(t, doc, "", testDocURI, &openapi.Options{HTTPClient: &http.Client{Transport: streamRT(func(r *http.Request) (*http.Response, error) {
 		dispatches.Add(1)
 		if _, err := io.Copy(io.Discard, r.Body); err != nil {
 			return nil, err
@@ -192,7 +192,7 @@ func TestPrepared8IndependentRefusalsRepair(t *testing.T) {
 		if r.URL.Path != "/allowed/x/fixed" || r.URL.Query().Get("Input.Body") != "fixed-query" || r.Header.Get("X-Key") != "fixed-key" || r.Header.Get("X-Trace") != "fixed-header" {
 			t.Errorf("corrected request values did not reach the transport")
 		}
-		return stream7HTTP(r, 204, "", http.NoBody), nil
+		return streamHTTP(r, 204, "", http.NoBody), nil
 	})}})
 	c = c.With(func(o *openapi.Options) {
 		o.Variables["tenant"] = "private-tenant"

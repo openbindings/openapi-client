@@ -21,7 +21,7 @@ import (
 // plus a client-acknowledged first item proves incremental delivery, not
 // merely eventual decoding of a buffered response. Each real HTTP response
 // is closed on break, as callers in the examples require.
-func TestStream7ExampleFlows(t *testing.T) {
+func TestStreamIncrementalExampleFlows(t *testing.T) {
 	for _, family := range []string{"events", "jsonl", "dynamic", "raw"} {
 		t.Run(family, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
@@ -58,7 +58,7 @@ func TestStream7ExampleFlows(t *testing.T) {
 				}
 			}))
 			defer func() { ack(); cancel(); srv.Close() }()
-			c := parseAt(t, stream7Doc("3.2.1"), srv.URL, srv.URL+"/openapi.json", &openapi.Options{BaseURL: srv.URL, HTTPClient: srv.Client()})
+			c := parseAt(t, streamDoc("3.2.1"), srv.URL, srv.URL+"/openapi.json", &openapi.Options{BaseURL: srv.URL, HTTPClient: srv.Client()})
 			r, err := c.Stream(ctx, "get", nil)
 			if err != nil {
 				t.Fatal(err)

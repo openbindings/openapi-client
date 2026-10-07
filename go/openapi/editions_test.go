@@ -53,8 +53,8 @@ func editionBody(t testing.TB, req *openapi.Request) []byte {
 	return b
 }
 
-// load.go Load defines accepted minor lines and required roots. 3.1 is an
-// existing-behavior pin; admitting the other editions must not relax roots.
+// load.go Load defines accepted minor lines and required roots. Admitting
+// the other editions must not relax the roots 3.1 requires.
 func TestEditionsAdmission(t *testing.T) {
 	for _, version := range editionVersions {
 		t.Run(version, func(t *testing.T) {

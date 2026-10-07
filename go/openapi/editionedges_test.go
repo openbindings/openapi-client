@@ -13,8 +13,7 @@ import (
 
 // OAS 3.0.4 4.7.15.1.2 explicitly ignores style/explode/allowReserved on
 // multipart. Later lines apply them to multipart/form-data (OAS 3.1.2
-// 4.8.15.1.2), without URI escaping. This is a 3.1 pin, with a distinct 3.0
-// rule.
+// 4.8.15.1.2), without URI escaping. 3.0 keeps its distinct rule.
 func TestEditionsMultipartStyleApplicability(t *testing.T) {
 	for _, version := range []string{"3.0.4", "3.1.2", "3.2.1"} {
 		t.Run(version, func(t *testing.T) {

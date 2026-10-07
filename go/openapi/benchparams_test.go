@@ -16,7 +16,7 @@ import (
 // Parameter benchmarks: a query with several form parameters, an exploded
 // object, a deepObject, a matrix path, a JSON content parameter, each against
 // the same request built by hand with net/url and strings.Builder, over the
-// in-memory transport of bench_review_test.go (cannedRT), so the client's own
+// in-memory transport of bench_inmemory_test.go (cannedRT), so the client's own
 // cost is resolvable. Each BenchmarkMemParamX has a BenchmarkMemParamXHand
 // counterpart; TestParamBenchRequestsMatch checks that the two send the same
 // request. Run with -benchmem.

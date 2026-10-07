@@ -15,7 +15,7 @@ import (
 // rule of Events. Only fields set in this block appear; field-only blocks
 // dispatch, comment/unknown/invalid-only blocks do not, and EOF drops an
 // unfinished block. UTF-8 replacement and a leading BOM follow HTML.
-func TestStream7SSEFields(t *testing.T) {
+func TestEventsFieldParsing(t *testing.T) {
 	wire := "\ufeff: comment\r\nunknown: ignore\r\n\r\n" +
 		"event: first\revent: changed\rid: old\rid: fresh\rretry: 0007\rdata: a\rdata:  b:c\r\r" +
 		"data\n\n" +
@@ -28,7 +28,7 @@ func TestStream7SSEFields(t *testing.T) {
 		"data: unfinished\n"
 	want := []openapi.Event{{Data: []byte("a\n b:c"), Event: "changed", ID: "fresh", IDSet: true, Retry: 7 * time.Millisecond, RetrySet: true}, {Data: []byte{}}, {IDSet: true}, {RetrySet: true}, {Event: ""}, {Data: []byte("z"), ID: "keep", IDSet: true, Retry: 5 * time.Millisecond, RetrySet: true}, {Data: []byte("\ufffd")}}
 	for _, chunks := range [][]int{nil, {1}, {3, 1, 4, 2}} {
-		r, b := stream7Response(t, "text/event-stream; charset=utf-8", wire, nil, chunks...)
+		r, b := streamedResponse(t, "text/event-stream; charset=utf-8", wire, nil, chunks...)
 		var got []openapi.Event
 		for e, err := range openapi.Events(r) {
 			if err != nil {
@@ -51,11 +51,11 @@ func TestStream7SSEFields(t *testing.T) {
 // OAS 3.2.1 §4.14.4 models data as a string, even when the field contains
 // JSON. It models retry as a number. Event/ID/retry presence is per block;
 // an explicit empty event/id is retained in Items' JSON object.
-func TestStream7SSEItemsAreEventObjects(t *testing.T) {
+func TestItemsSSEEventObjects(t *testing.T) {
 	wire := "data: {\"n\":1}\nevent: update\nid: a\nretry: 5\n\ndata: next\n\nevent:\nid:\n\n"
-	r, _ := stream7Response(t, "text/event-stream", wire, nil, 1)
-	got, errs := stream7Collect[map[string]any](r)
-	stream7NoErrors(t, errs)
+	r, _ := streamedResponse(t, "text/event-stream", wire, nil, 1)
+	got, errs := streamCollect[map[string]any](r)
+	streamNoErrors(t, errs)
 	want := []map[string]any{{"data": `{"n":1}`, "event": "update", "id": "a", "retry": json.Number("5")}, {"data": "next"}, {"event": "", "id": ""}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %#v want %#v", got, want)
@@ -66,10 +66,10 @@ func TestStream7SSEItemsAreEventObjects(t *testing.T) {
 // unrepresentable retry value is an ErrItem for Events (stream.go, Events:
 // "A valid retry integer that cannot fit in Event.Retry yields an ErrItem"),
 // while the JSON representation retains the exact arbitrary-size integer.
-func TestStream7SSERetryOverflow(t *testing.T) {
+func TestEventsRetryOverflow(t *testing.T) {
 	const huge = "99999999999999999999999999999999999999999999999"
 	wire := "retry: 9223372036854\n\nretry: 9223372036855\n\nretry: " + huge + "\n\ndata: after\n\n"
-	r, _ := stream7Response(t, "text/event-stream", wire, nil, 1)
+	r, _ := streamedResponse(t, "text/event-stream", wire, nil, 1)
 	var got []openapi.Event
 	var errs []error
 	for v, e := range openapi.Events(r) {
@@ -79,9 +79,9 @@ func TestStream7SSERetryOverflow(t *testing.T) {
 	if len(got) != 4 || errs[0] != nil || got[0].Retry != 9223372036854*time.Millisecond || !errors.Is(errs[1], openapi.ErrItem) || !errors.Is(errs[2], openapi.ErrItem) || errs[3] != nil || string(got[3].Data) != "after" {
 		t.Fatalf("events %#v errors %v", got, errs)
 	}
-	r, _ = stream7Response(t, "text/event-stream", "retry: "+huge+"\n\n", nil)
-	objs, es := stream7Collect[map[string]any](r)
-	stream7NoErrors(t, es)
+	r, _ = streamedResponse(t, "text/event-stream", "retry: "+huge+"\n\n", nil)
+	objs, es := streamCollect[map[string]any](r)
+	streamNoErrors(t, es)
 	if len(objs) != 1 || objs[0]["retry"] != json.Number(huge) {
 		t.Fatalf("objects %#v", objs)
 	}
@@ -93,8 +93,8 @@ func TestStream7SSERetryOverflow(t *testing.T) {
 
 // Events must reject another media type rather than treating arbitrary
 // text as SSE, and break closes Body just as Items does (stream.go).
-func TestStream7EventsOwnershipAndBreak(t *testing.T) {
-	r, b := stream7Response(t, "application/jsonl", "1\n", nil)
+func TestEventsWrongTypeAndBreakClose(t *testing.T) {
+	r, b := streamedResponse(t, "application/jsonl", "1\n", nil)
 	var errs []error
 	for _, err := range openapi.Events(r) {
 		errs = append(errs, err)
@@ -105,7 +105,7 @@ func TestStream7EventsOwnershipAndBreak(t *testing.T) {
 	if b.closed.Load() == 0 {
 		t.Fatal("wrong-type iteration did not close")
 	}
-	r, b = stream7Response(t, "text/event-stream", "data: first\n\ndata: later\n\n", nil, 1)
+	r, b = streamedResponse(t, "text/event-stream", "data: first\n\ndata: later\n\n", nil, 1)
 	for e, err := range openapi.Events(r) {
 		if err != nil || string(e.Data) != "first" {
 			t.Fatalf("%v %v", e, err)
@@ -124,9 +124,9 @@ func TestStream7EventsOwnershipAndBreak(t *testing.T) {
 
 // HTML does not case-fold field names or strip more than one leading space.
 // Repeated data lines are appended with LF, not accumulated quadratically.
-func TestStream7SSELongDataAndEmptyResets(t *testing.T) {
+func TestEventsLongDataAndFieldReset(t *testing.T) {
 	wire := strings.Repeat("data: x\n", 2000) + "\n" + "data:\n\n" + "id: a\n\nid:\n\ndata: b\n\n"
-	r, _ := stream7Response(t, "text/event-stream", wire, nil, 1)
+	r, _ := streamedResponse(t, "text/event-stream", wire, nil, 1)
 	var got []openapi.Event
 	for e, err := range openapi.Events(r) {
 		if err != nil {
@@ -145,15 +145,15 @@ func TestStream7SSELongDataAndEmptyResets(t *testing.T) {
 // HTML field processing replaces only on valid retry values, normalizes
 // leading zeros for JSON, and applies Event's duration range only after
 // the block's last effective field value is known.
-func TestStream7SSERetryLastValidValue(t *testing.T) {
+func TestEventsRetryLastValidValue(t *testing.T) {
 	wire := "retry: 999999999999999999999999999999\nretry: 0007\nretry: nope\n\n"
-	r, _ := stream7Response(t, "text/event-stream", wire, nil, 1)
-	got, errs := stream7Collect[map[string]any](r)
-	stream7NoErrors(t, errs)
+	r, _ := streamedResponse(t, "text/event-stream", wire, nil, 1)
+	got, errs := streamCollect[map[string]any](r)
+	streamNoErrors(t, errs)
 	if len(got) != 1 || got[0]["retry"] != json.Number("7") {
 		t.Fatalf("objects %#v", got)
 	}
-	r, _ = stream7Response(t, "text/event-stream", wire, nil, 1)
+	r, _ = streamedResponse(t, "text/event-stream", wire, nil, 1)
 	n := 0
 	for e, err := range openapi.Events(r) {
 		if err != nil || !e.RetrySet || e.Retry != 7*time.Millisecond {

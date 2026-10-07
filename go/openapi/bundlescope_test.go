@@ -61,7 +61,7 @@ func largeMapLoader(doc []byte) *openapi.Loader {
 // or below "$ref", in describing (Client.Operations) or in loading (load.go,
 // Loader: references "are followed"). With the operations fixed, sixteen
 // times the members must cost about the same (wantFlat, the convention of
-// regress2_scale_test.go; only parsing the larger map grows, and it is small
+// scaling_test.go; only parsing the larger map grows, and it is small
 // beside the references).
 func TestBundleCostLargeMap(t *testing.T) {
 	const operations = 4000

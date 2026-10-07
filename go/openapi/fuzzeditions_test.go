@@ -31,7 +31,7 @@ func FuzzEditionCollectionFormat(f *testing.F) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		values := []any{[]string{a, b}, stage6Strings{a, b}, stage6ReturnedJSON{data: append(append([]byte(" \n"), encoded...), '\t')}}
+		values := []any{[]string{a, b}, namedStrings{a, b}, callerReturnedJSON{data: append(append([]byte(" \n"), encoded...), '\t')}}
 		for i, delimiter := range []string{",", "%20", "%09", "%7C", ""} {
 			want := "p=" + pctName(a) + delimiter + pctName(b)
 			if i == 4 {

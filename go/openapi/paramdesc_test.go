@@ -19,7 +19,7 @@ import (
 // document alone decides it"). Explode is true for deepObject, whatever the
 // document writes (describe.go, Param.Explode: "true for deepObject, which
 // ignores the field").
-func TestParamDescriptorsStage2(t *testing.T) {
+func TestParamDescriptorsEverySerialization(t *testing.T) {
 	doc := bare31(`"/d/{s}/{m}/{me}/{l}/{lf}/{pc}":{"get":{"operationId":"d","parameters":[
 		{"name":"s","in":"path","required":true,"schema":{}},
 		{"name":"m","in":"path","required":true,"style":"matrix","schema":{}},

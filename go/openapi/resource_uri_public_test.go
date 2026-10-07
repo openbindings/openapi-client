@@ -13,12 +13,12 @@ import (
 // deep-resource gate. Its fixtures also verify exact Base, Source and Raw values.
 func BenchmarkResourceURIParse(b *testing.B) {
 	for _, depth := range []int{128, 512} {
-		f := review9Deep(depth, true)
+		f := newDeepResourceFixture(depth, true)
 		raw := []byte(f.doc)
 		b.Run(fmt.Sprint(depth), func(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
-				c, err := openapi.Parse(context.Background(), raw, review9CostEntry, nil)
+				c, err := openapi.Parse(context.Background(), raw, deepResourceEntry, nil)
 				if err != nil {
 					b.Fatal(err)
 				}

@@ -19,7 +19,7 @@ import (
 // Body benchmarks against the same request built by hand: a form body with
 // several fields, a multipart body with a file part and fields, and a JSON
 // Lines body from a slice, each with latency and allocations, over the
-// in-memory transport of bench_review_test.go (cannedRT, which reads and
+// in-memory transport of bench_inmemory_test.go (cannedRT, which reads and
 // discards the request body). Each BenchmarkMemBodyX has a
 // BenchmarkMemBodyXHand counterpart; TestBodyBenchRequestsMatch checks that
 // the two send the same body. Run with -benchmem.

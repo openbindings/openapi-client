@@ -940,7 +940,7 @@ func TestLabelDotSegments(t *testing.T) {
 // is written as its name alone except in form style" (RFC 6570 section
 // 3.2.1); and matrix without explode writes [""] as ";p", since RFC 6570
 // section 3.2.7 appends "=" only "if the variable's value is not empty".
-func TestEmptyValueRulings(t *testing.T) {
+func TestEmptyStringMembersAndItems(t *testing.T) {
 	w := newWire(t, nil)
 	doc := doc31(`
 		"/s/{p}":{"get":{"operationId":"simple","parameters":[{"name":"p","in":"path","required":true,"explode":true,"schema":{}}]}},
@@ -1096,7 +1096,7 @@ func TestUndefinedSettledFirst(t *testing.T) {
 		wantKeys(t, fmt.Sprintf("%s %#v Inputs", tt.key, tt.v), re.Inputs, true, "p")
 	}
 	// Undefined array items: skipped, the defined members written as the
-	// style writes them (T2).
+	// style writes them.
 	items := []any{"a", nil, []int{}, map[string]any{}, "b"}
 	for _, tt := range []struct {
 		key, param string

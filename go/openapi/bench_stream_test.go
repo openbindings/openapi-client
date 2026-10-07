@@ -16,13 +16,13 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-type stream7BenchRecord struct {
+type streamBenchRecord struct {
 	ID   int    `json:"id"`
 	Name string `json:"name"`
 }
-type stream7BenchResult struct{ Count, Sum int }
+type streamBenchResult struct{ Count, Sum int }
 
-func stream7BenchmarkFixture(kind string) (ct, wire string, want stream7BenchResult) {
+func streamBenchmarkFixture(kind string) (ct, wire string, want streamBenchResult) {
 	const n = 256
 	var b strings.Builder
 	for i := range n {
@@ -48,7 +48,7 @@ func stream7BenchmarkFixture(kind string) (ct, wire string, want stream7BenchRes
 		b.WriteString("--B--\r\n")
 	}
 	if kind == "EarlyBreak" {
-		want = stream7BenchResult{Count: 1}
+		want = streamBenchResult{Count: 1}
 	}
 	if kind == "RawMultipart" || kind == "Events" {
 		want.Sum = 0
@@ -65,7 +65,7 @@ func stream7BenchmarkFixture(kind string) (ct, wire string, want stream7BenchRes
 // Controls deliberately use only standard-library framing/decoding for
 // these identical fixtures. The scanner buffer is large enough for each
 // known short record. A fresh response/target belongs to every operation.
-func stream7HandRead(kind string, body io.ReadCloser) (result stream7BenchResult, err error) {
+func streamHandRead(kind string, body io.ReadCloser) (result streamBenchResult, err error) {
 	defer body.Close()
 	if kind == "Multipart" || kind == "RawMultipart" {
 		mr := multipart.NewReader(body, "B")
@@ -85,7 +85,7 @@ func stream7HandRead(kind string, body io.ReadCloser) (result stream7BenchResult
 					return result, e
 				}
 			} else {
-				var v stream7BenchRecord
+				var v streamBenchRecord
 				if e = json.NewDecoder(p).Decode(&v); e != nil {
 					return result, e
 				}
@@ -121,7 +121,7 @@ func stream7HandRead(kind string, body io.ReadCloser) (result stream7BenchResult
 			}
 			line = line[1:]
 		}
-		var v stream7BenchRecord
+		var v streamBenchRecord
 		if e := json.Unmarshal(line, &v); e != nil {
 			return result, e
 		}
@@ -133,7 +133,7 @@ func stream7HandRead(kind string, body io.ReadCloser) (result stream7BenchResult
 	}
 	return result, sc.Err()
 }
-func stream7APIRead(kind string, r *openapi.Response) (result stream7BenchResult, err error) {
+func streamAPIRead(kind string, r *openapi.Response) (result streamBenchResult, err error) {
 	switch kind {
 	case "Events":
 		for ev, e := range openapi.Events(r) {
@@ -159,7 +159,7 @@ func stream7APIRead(kind string, r *openapi.Response) (result stream7BenchResult
 			result.Sum += int(n)
 		}
 	default:
-		for v, e := range openapi.Items[stream7BenchRecord](r) {
+		for v, e := range openapi.Items[streamBenchRecord](r) {
 			if e != nil {
 				return result, e
 			}
@@ -176,11 +176,11 @@ func stream7APIRead(kind string, r *openapi.Response) (result stream7BenchResult
 // Verify generated workload/control parity separately from timings, so a
 // faster control cannot silently do less work. Fixture expectations are
 // computed from records before framing, independent of either reader.
-func TestStream7BenchmarkFixtures(t *testing.T) {
+func TestStreamBenchmarkControls(t *testing.T) {
 	for _, kind := range []string{"JSONL", "JSONSeq", "Events", "Multipart", "RawMultipart", "EarlyBreak"} {
 		t.Run(kind, func(t *testing.T) {
-			_, wire, want := stream7BenchmarkFixture(kind)
-			got, e := stream7HandRead(kind, io.NopCloser(strings.NewReader(wire)))
+			_, wire, want := streamBenchmarkFixture(kind)
+			got, e := streamHandRead(kind, io.NopCloser(strings.NewReader(wire)))
 			if e != nil || got != want {
 				t.Fatalf("control %v %v want %v", got, e, want)
 			}
@@ -188,28 +188,28 @@ func TestStream7BenchmarkFixtures(t *testing.T) {
 	}
 }
 
-func stream7Benchmark(b *testing.B, kind string, hand bool) {
-	ct, wire, want := stream7BenchmarkFixture(kind)
-	rt := stream7RT(func(r *http.Request) (*http.Response, error) {
-		return stream7HTTP(r, 200, ct, io.NopCloser(strings.NewReader(wire))), nil
+func streamBenchmark(b *testing.B, kind string, hand bool) {
+	ct, wire, want := streamBenchmarkFixture(kind)
+	rt := streamRT(func(r *http.Request) (*http.Response, error) {
+		return streamHTTP(r, 200, ct, io.NopCloser(strings.NewReader(wire))), nil
 	})
-	c := stream7Client(b, "3.1.2", rt, nil)
+	c := streamClient(b, "3.1.2", rt, nil)
 	req := mustPrepare(b, c, "get", nil)
 	hc := &http.Client{Transport: rt}
 	ctx := context.Background()
-	run := func() (stream7BenchResult, error) {
+	run := func() (streamBenchResult, error) {
 		if hand {
 			r, e := hc.Do(req.HTTP.WithContext(ctx))
 			if e != nil {
-				return stream7BenchResult{}, e
+				return streamBenchResult{}, e
 			}
-			return stream7HandRead(kind, r.Body)
+			return streamHandRead(kind, r.Body)
 		}
 		r, e := req.Send(ctx)
 		if e != nil {
-			return stream7BenchResult{}, e
+			return streamBenchResult{}, e
 		}
-		return stream7APIRead(kind, r)
+		return streamAPIRead(kind, r)
 	}
 	// This call is outside the benchmark timer and validates the actual path.
 	got, e := run()
@@ -230,15 +230,15 @@ func stream7Benchmark(b *testing.B, kind string, hand bool) {
 		}
 	}
 }
-func BenchmarkStream7JSONL(b *testing.B)            { stream7Benchmark(b, "JSONL", false) }
-func BenchmarkStream7HandJSONL(b *testing.B)        { stream7Benchmark(b, "JSONL", true) }
-func BenchmarkStream7JSONSeq(b *testing.B)          { stream7Benchmark(b, "JSONSeq", false) }
-func BenchmarkStream7HandJSONSeq(b *testing.B)      { stream7Benchmark(b, "JSONSeq", true) }
-func BenchmarkStream7Events(b *testing.B)           { stream7Benchmark(b, "Events", false) }
-func BenchmarkStream7HandEvents(b *testing.B)       { stream7Benchmark(b, "Events", true) }
-func BenchmarkStream7Multipart(b *testing.B)        { stream7Benchmark(b, "Multipart", false) }
-func BenchmarkStream7HandMultipart(b *testing.B)    { stream7Benchmark(b, "Multipart", true) }
-func BenchmarkStream7RawMultipart(b *testing.B)     { stream7Benchmark(b, "RawMultipart", false) }
-func BenchmarkStream7HandRawMultipart(b *testing.B) { stream7Benchmark(b, "RawMultipart", true) }
-func BenchmarkStream7EarlyBreak(b *testing.B)       { stream7Benchmark(b, "EarlyBreak", false) }
-func BenchmarkStream7HandEarlyBreak(b *testing.B)   { stream7Benchmark(b, "EarlyBreak", true) }
+func BenchmarkStreamJSONL(b *testing.B)            { streamBenchmark(b, "JSONL", false) }
+func BenchmarkStreamHandJSONL(b *testing.B)        { streamBenchmark(b, "JSONL", true) }
+func BenchmarkStreamJSONSeq(b *testing.B)          { streamBenchmark(b, "JSONSeq", false) }
+func BenchmarkStreamHandJSONSeq(b *testing.B)      { streamBenchmark(b, "JSONSeq", true) }
+func BenchmarkStreamEvents(b *testing.B)           { streamBenchmark(b, "Events", false) }
+func BenchmarkStreamHandEvents(b *testing.B)       { streamBenchmark(b, "Events", true) }
+func BenchmarkStreamMultipart(b *testing.B)        { streamBenchmark(b, "Multipart", false) }
+func BenchmarkStreamHandMultipart(b *testing.B)    { streamBenchmark(b, "Multipart", true) }
+func BenchmarkStreamRawMultipart(b *testing.B)     { streamBenchmark(b, "RawMultipart", false) }
+func BenchmarkStreamHandRawMultipart(b *testing.B) { streamBenchmark(b, "RawMultipart", true) }
+func BenchmarkStreamEarlyBreak(b *testing.B)       { streamBenchmark(b, "EarlyBreak", false) }
+func BenchmarkStreamHandEarlyBreak(b *testing.B)   { streamBenchmark(b, "EarlyBreak", true) }

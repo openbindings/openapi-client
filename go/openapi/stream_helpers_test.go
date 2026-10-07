@@ -15,27 +15,27 @@ import (
 // The stream test harness operates entirely at the caller's RoundTripper
 // seam. Bodies can fragment reads and return bytes together with EOF or
 // another error, both expressly permitted by io.Reader's contract.
-type stream7RT func(*http.Request) (*http.Response, error)
+type streamRT func(*http.Request) (*http.Response, error)
 
-func (f stream7RT) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+func (f streamRT) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
-type stream7Body struct {
+type streamBody struct {
 	reader io.Reader
 	closed atomic.Int32
 	reads  atomic.Int64
 }
 
-func (r *stream7Body) Read(p []byte) (int, error) { r.reads.Add(1); return r.reader.Read(p) }
-func (r *stream7Body) Close() error               { r.closed.Add(1); return nil }
+func (r *streamBody) Read(p []byte) (int, error) { r.reads.Add(1); return r.reader.Read(p) }
+func (r *streamBody) Close() error               { r.closed.Add(1); return nil }
 
-type stream7Chunks struct {
+type streamChunks struct {
 	data     string
 	chunks   []int
 	next     int
 	terminal error
 }
 
-func (r *stream7Chunks) Read(p []byte) (int, error) {
+func (r *streamChunks) Read(p []byte) (int, error) {
 	if r.data == "" {
 		if r.terminal != nil {
 			return 0, r.terminal
@@ -55,28 +55,28 @@ func (r *stream7Chunks) Read(p []byte) (int, error) {
 	return n, nil
 }
 
-func stream7Doc(version string) string {
+func streamDoc(version string) string {
 	return editionDoc(version, `"/x":{"get":{"operationId":"get","responses":{"200":{"description":"ok","content":{"application/jsonl":{}}},"default":{"description":"other"}}},"post":{"operationId":"post","responses":{"200":{"description":"ok"}}}}`)
 }
-func stream7Client(t testing.TB, version string, rt http.RoundTripper, change func(*openapi.Options)) *openapi.Client {
+func streamClient(t testing.TB, version string, rt http.RoundTripper, change func(*openapi.Options)) *openapi.Client {
 	t.Helper()
 	o := &openapi.Options{BaseURL: "https://stream.example.test", HTTPClient: &http.Client{Transport: rt}}
 	if change != nil {
 		change(o)
 	}
-	return editionClient(t, stream7Doc(version), o)
+	return editionClient(t, streamDoc(version), o)
 }
-func stream7HTTP(r *http.Request, status int, ct string, body io.ReadCloser) *http.Response {
+func streamHTTP(r *http.Request, status int, ct string, body io.ReadCloser) *http.Response {
 	h := make(http.Header)
 	if ct != "" {
 		h.Set("Content-Type", ct)
 	}
 	return &http.Response{StatusCode: status, Status: fmt.Sprintf("%d %s", status, http.StatusText(status)), Header: h, Body: body, Request: r, ContentLength: -1}
 }
-func stream7Response(t testing.TB, ct, data string, change func(*openapi.Options), chunks ...int) (*openapi.Response, *stream7Body) {
+func streamedResponse(t testing.TB, ct, data string, change func(*openapi.Options), chunks ...int) (*openapi.Response, *streamBody) {
 	t.Helper()
-	body := &stream7Body{reader: &stream7Chunks{data: data, chunks: chunks}}
-	c := stream7Client(t, "3.1.2", stream7RT(func(r *http.Request) (*http.Response, error) { return stream7HTTP(r, 200, ct, body), nil }), change)
+	body := &streamBody{reader: &streamChunks{data: data, chunks: chunks}}
+	c := streamClient(t, "3.1.2", streamRT(func(r *http.Request) (*http.Response, error) { return streamHTTP(r, 200, ct, body), nil }), change)
 	req := mustPrepare(t, c, "get", nil)
 	resp, err := req.Send(context.Background())
 	if err != nil {
@@ -85,7 +85,7 @@ func stream7Response(t testing.TB, ct, data string, change func(*openapi.Options
 	t.Cleanup(func() { resp.Body.Close() })
 	return resp, body
 }
-func stream7Collect[T any](r *openapi.Response) ([]T, []error) {
+func streamCollect[T any](r *openapi.Response) ([]T, []error) {
 	var values []T
 	var errs []error
 	for v, err := range openapi.Items[T](r) {
@@ -94,7 +94,7 @@ func stream7Collect[T any](r *openapi.Response) ([]T, []error) {
 	}
 	return values, errs
 }
-func stream7NoErrors(t testing.TB, errs []error) {
+func streamNoErrors(t testing.TB, errs []error) {
 	t.Helper()
 	for i, err := range errs {
 		if err != nil {
@@ -102,9 +102,9 @@ func stream7NoErrors(t testing.TB, errs []error) {
 		}
 	}
 }
-func stream7CallClient(t testing.TB, ct, data string, status int, change func(*openapi.Options)) *openapi.Client {
+func streamCallClient(t testing.TB, ct, data string, status int, change func(*openapi.Options)) *openapi.Client {
 	t.Helper()
-	return stream7Client(t, "3.1.2", stream7RT(func(r *http.Request) (*http.Response, error) {
-		return stream7HTTP(r, status, ct, io.NopCloser(strings.NewReader(data))), nil
+	return streamClient(t, "3.1.2", streamRT(func(r *http.Request) (*http.Response, error) {
+		return streamHTTP(r, status, ct, io.NopCloser(strings.NewReader(data))), nil
 	}), change)
 }
