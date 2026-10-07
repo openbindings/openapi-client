@@ -2,6 +2,7 @@ package openapi
 
 import (
 	"bytes"
+	"cmp"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -237,7 +238,9 @@ func (c *Client) formBody(b *builder, enc *formEncoding, v any, body string, rea
 		if f.legacy.ok() {
 			at := key{body, name, -1}
 			if f.legacy.str("type") == "file" {
-				re.input(at.String(), errors.New("a Swagger file requires multipart/form-data"))
+				if !null(v) { // a null property is omitted, whatever its serialization
+					re.input(at.String(), cmp.Or(f.Err, errors.New("a Swagger file requires multipart/form-data")))
+				}
 				return
 			}
 		}
@@ -250,7 +253,7 @@ func (c *Client) formBody(b *builder, enc *formEncoding, v any, body string, rea
 			}
 			var err error
 			if given, err = c.writeLegacy(&out, lead, &f.param, v, true); err != nil {
-				re.input(at.String(), err)
+				re.input(at.String(), cmp.Or(f.Err, err)) // a defective field is refused for its Err
 			}
 			b.buf = append(b.buf, out.String()...)
 			return
@@ -266,7 +269,7 @@ func (c *Client) formBody(b *builder, enc *formEncoding, v any, body string, rea
 			}
 			s, err := c.styled(&f.param, v, lead)
 			if err != nil {
-				re.input(at.String(), err)
+				re.input(at.String(), cmp.Or(f.Err, err))
 			}
 			b.buf = append(b.buf, s...)
 			return
@@ -383,7 +386,7 @@ func (p *payload) appendForm(b []byte) ([]byte, error) {
 // parameter's value is, after lead, with no bound on its length.
 func (c *Client) styled(p *param, v any, lead string) (string, error) {
 	var s strings.Builder
-	e := emitter{param: p, b: &s, lead: lead}
+	e := emitter{param: p, b: &s, lead: lead, arrays: c.cfg.DeepObjectArrays}
 	_, err := e.write(c.doc, v)
 	return s.String(), err
 }
@@ -577,17 +580,21 @@ func (w *partWriter) parts(enc *formEncoding, v any, body, boundary string, give
 	}
 	err := w.c.membersChecked(v, enc, body, w.re, w.b, func(name string, f *field, v any) (given bool) {
 		at := key{body, name, -1}
-		if !rawField(v) && f.legacy.ok() && f.CollectionFormat != "" && f.CollectionFormat != "multi" {
+		if !rawField(v) && f.legacy.ok() && (f.Err != nil || f.CollectionFormat != "" && f.CollectionFormat != "multi") {
 			s, _, err := encodeJSON(w.c.doc, v, marshal)
+			var xs []string
 			if err == nil {
-				var xs []string
 				xs, err = legacyValues(&jsonReader{s: s}, f.legacy)
-				for _, x := range xs {
-					w.write(textField, name, x, at)
+				if err == nil && (len(xs) > 0 || s[0] == '[' && s[1] != ']') {
+					err = f.Err // a defined value, which a defective field refuses as writeLegacy does
 				}
 			}
 			if err != nil {
-				w.re.input(at.String(), err)
+				w.re.input(at.String(), cmp.Or(f.Err, err))
+				return
+			}
+			for _, x := range xs {
+				w.write(textField, name, x, at)
 			}
 			return
 		}
@@ -614,7 +621,7 @@ func (w *partWriter) styled(f *field, name string, v any, at key) {
 	p.set = unreservedSet
 	s, err := w.c.styled(&p, v, "")
 	if err != nil {
-		w.re.input(at.String(), err)
+		w.re.input(at.String(), cmp.Or(p.Err, err))
 		return
 	}
 	for pair := range strings.SplitSeq(s, "&") {

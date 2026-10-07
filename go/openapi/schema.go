@@ -1,6 +1,7 @@
 package openapi
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/url"
@@ -79,7 +80,10 @@ func (d *document) schemaGraph(t *tree) *schemaGraph {
 		// this tree has neither nonlocal references nor identifier declarations.
 		if !t.reaches && !t.declares && t.kind() == anyKind {
 			t.scopeReady = true
-			r := reader{d: d, t: t, complete: true}
+			// This runs after Load, for methods that take no context, and
+			// reads a tree already in memory once, in time linear in its
+			// size, retrieving nothing: no context can cancel it.
+			r := reader{d: d, ctx: context.Background(), t: t, complete: true}
 			if t.dialects {
 				for frag, kinds := range t.schemaIntents {
 					for k := kind(1); k <= itemsKind; k++ {

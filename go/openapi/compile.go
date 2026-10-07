@@ -15,7 +15,7 @@ import (
 // An operation is a compiled operation: its descriptor, and the plan its
 // calls follow, so that calls do no document work.
 type operation struct {
-	Operation
+	*Operation
 	doc *document
 	plan
 }
@@ -48,6 +48,13 @@ type param struct {
 	name     string        // the name, percent-encoded
 	media    *parsedMedia  // a content parameter's ContentType, parsed
 	form     *formEncoding // the fields of a form-urlencoded content parameter
+	bundled  bool          // a header parameter OpenAPI ignores holds a value written as a reference (see holdsBundled)
+}
+
+// ignoredHeader reports whether OpenAPI ignores a header parameter named
+// name: Accept, Content-Type and Authorization, which other fields govern.
+func ignoredHeader(name string) bool {
+	return strings.EqualFold(name, "Accept") || strings.EqualFold(name, "Content-Type") || strings.EqualFold(name, "Authorization")
 }
 
 // A pathPart is literal text of the path template, percent-encoded, or one
@@ -66,21 +73,57 @@ type responsePlan struct {
 	media    []parsedMedia
 }
 
+// errBundle is the Err of a part holding a value written as a reference where
+// its edition defines no Reference Object. Such a reference is for a bundler
+// to replace before the document is used, so the client never follows it, and
+// says the same whether or not its target could be retrieved.
+var errBundle = errors.New("a $ref where OpenAPI defines no Reference Object: the document must be bundled first")
+
+// bundled reports whether v, where an object, list or map belongs, is written
+// as a reference: an object whose $ref member is a string. In a map of
+// objects, a member named $ref whose value is an object is an entry like any
+// other. Bundling replaces such a value whole, so its other members are not
+// read. It looks at the names of at most many members, comparing only those
+// that begin with "$" or an escape, and for a larger object searches the few
+// such objects the parser recorded, so that a check costs no more than that
+// whatever the object's size.
+func bundled(v value) bool {
+	if v.kind() != '{' {
+		return false
+	}
+	t, n := v.t, 0
+	for c := v.i + 1; uint32(c) < t.nodes[v.i].next; c = int32(t.nodes[c].next) {
+		if n++; n > many {
+			_, found := slices.BinarySearch(t.bigRefs, v.i)
+			return found
+		}
+		if q := t.nodes[c].name; (t.src[q+1] == '$' || t.src[q+1] == '\\') && t.compareName(c, "$ref") == 0 {
+			return value{t, c}.kind() == '"'
+		}
+	}
+	return false
+}
+
 // build compiles the entry: what its Operation Object compiles to on any
 // path, shared by the entries of its group, then what its own path decides.
-func (e *entry) build() *operation {
+// Without plan, it skips the parts of the plan that describing does not
+// need, and the caller keeps only the descriptor.
+func (e *entry) build(plan bool) *operation {
 	d := e.doc
 	if e.m < 0 {
-		o := &operation{doc: d}
-		o.Path, o.Source, o.Err = e.path, e.levels.v.t.source(e.levels.ptr), e.err
-		return o
+		return &operation{doc: d, Operation: &Operation{Path: e.path, Source: e.levels.v.t.source(e.levels.ptr), Err: e.err}}
 	}
 	var o *operation
-	if g := e.group; g != nil {
-		c := *loadOrMake(&g.op, e.shape)
-		o = &c
-	} else {
-		o = e.shape()
+	switch g := e.group; {
+	case g == nil:
+		o = e.shape(plan)
+	case plan:
+		c := *g.compile(e.shape)
+		op := *c.Operation
+		c.Operation, o = &op, &c
+	default:
+		op := *g.describe(e.shape)
+		o = &operation{doc: d, Operation: &op}
 	}
 	o.Key, o.Path = e.id, e.path
 	if e.forbidden {
@@ -90,22 +133,50 @@ func (e *entry) build() *operation {
 	if e.id == "" || d.byID[e.id] != e {
 		o.Key = o.Method + " " + o.Path
 	}
-	if err := o.parsePath(); err != nil {
+	if err := o.parsePath(plan); err != nil {
 		o.Err = errors.Join(o.Err, err)
 	}
 	return o
 }
 
+// bind makes o, a plan built while d was already published as its
+// descriptor, report d's parts in place of the equal ones it built: the
+// Operation, which holds the body and its Media, and each Param and Response,
+// which a build lists in step with its parameter and response plans, one
+// entry beside the other. Every other Err a call can report is the
+// document's own value for its defect (see document.defect), or comes from
+// the document's memos, as servers, security schemes and a shape its group
+// shares do. Only a part that differs is changed, and such a part was built
+// with o and is private until o is published.
+func (o *operation) bind(d *Operation) {
+	o.Operation = d
+	for i, p := range d.Params {
+		if o.params[i].Param != p {
+			o.params[i].Param = p
+		}
+	}
+	for i, m := range d.Responses {
+		if o.responses[i].Message != m {
+			o.responses[i].Message = m
+		}
+	}
+}
+
 // shape compiles what the entry's Operation Object compiles to on every
 // path its Path Item chain reaches it from: all but the Key and what the
 // path template decides.
-func (e *entry) shape() *operation {
+func (e *entry) shape(plan bool) *operation {
 	d, n, src := e.doc, e.node, e.source()
-	o := &operation{doc: d}
-	op := &o.Operation
+	o := &operation{doc: d, Operation: &Operation{}}
+	op := o.Operation
 	op.ID, op.Method, op.Source = e.id, e.method(), src
 	var params, body, responses, servers, security value
-	for name, m := range n.members() { // one pass: a member's name is read from the source
+	errs := []error{e.err}
+	own := n // the Operation Object's members, none when it is written as a reference
+	if bundled(n) {
+		own, errs = value{}, append(errs, errBundle)
+	}
+	for name, m := range own.members() { // one pass: a member's name is read from the source
 		switch name {
 		case "summary":
 			op.Summary = m.string()
@@ -129,15 +200,32 @@ func (e *entry) shape() *operation {
 			security = m
 		}
 	}
-	errs := []error{e.err}
+	if bundled(responses) {
+		errs = append(errs, errBundle)
+	}
 
 	ids := map[uint32]int{}
 	list, at, err := e.field(parametersField)
 	errs = append(errs, err)
 	errs = o.addParams(list, at, ids, errs)
 	errs = o.addParams(params, src+"/parameters", ids, errs)
+	// A header parameter OpenAPI 3 ignores is merged as any other, so the
+	// operation's own replaces a path-level one, and then is described by
+	// no Param, whatever the operation's edition: the operation is the
+	// nearest part holding a value written as a reference in it. Swagger
+	// 2.0 ignores none.
+	merged := len(o.params)
+	o.params = slices.DeleteFunc(o.params, func(pp param) bool {
+		ignored := pp.In == "header" && pp.legacy.t == nil && ignoredHeader(pp.Name)
+		if ignored && pp.bundled {
+			errs = append(errs, errBundle)
+		}
+		return ignored
+	})
 	if n.t.edition == 20 {
 		errs = append(errs, o.swaggerBody(n))
+	}
+	if len(o.params) < merged || n.t.edition == 20 {
 		clear(ids)
 		for i, p := range o.params {
 			k, _ := find(ids, p.idHash, func(j int) bool { return o.params[j].identity() == p.identity() })
@@ -168,13 +256,13 @@ func (e *entry) shape() *operation {
 		op.Body.Required = target.flag("required")
 		o.body, o.encodings = c.parsed, c.encodings
 	}
-	if responses.kind() == '{' {
+	if responses.kind() == '{' && !bundled(responses) {
 		for key, r := range responses.members() {
 			if !strings.HasPrefix(key, "x-") {
 				var m *Message
 				var c *content
 				if n.t.edition == 20 {
-					produces := n.get("produces")
+					produces := own.get("produces")
 					if !produces.ok() {
 						produces = d.root().get("produces")
 					}
@@ -183,7 +271,7 @@ func (e *entry) shape() *operation {
 					m, _, c = d.message(r, src+"/responses/"+token(key), false)
 				}
 				m.Key = key
-				o.addResponse(m, c)
+				o.addResponse(m, c, plan)
 			}
 		}
 	}
@@ -191,9 +279,9 @@ func (e *entry) shape() *operation {
 	var sl *serverList
 	switch s, at, err := e.field(serversField); {
 	case n.t.edition == 20:
-		sl = d.swaggerServers(n.get("schemes"))
+		sl = d.swaggerServers(own.get("schemes"))
 	case servers.hasMembers():
-		sl = d.parseServers(servers, src+"/servers")
+		sl = d.serverLists.get(servers.id(), func() *serverList { return d.parseServers(servers, src+"/servers") })
 	case s.ok():
 		errs = append(errs, err)
 		sl = d.serverLists.get(s.id(), func() *serverList { return d.parseServers(s, at) })
@@ -245,6 +333,9 @@ type paramID struct{ in, name string }
 // addParams adds the parameters of list, each taking the place of an
 // earlier one it identifies.
 func (o *operation) addParams(list value, src string, ids map[uint32]int, errs []error) []error {
+	if bundled(list) { // the operation cannot be sent without them
+		return append(errs, errBundle)
+	}
 	if list.kind() != '[' {
 		return errs
 	}
@@ -258,9 +349,6 @@ func (o *operation) addParams(list value, src string, ids map[uint32]int, errs [
 		pp := o.doc.param(v, src, i)
 		i++
 		p := pp.Param
-		if p.In == "header" && pp.legacy.t == nil && (strings.EqualFold(p.Name, "Accept") || strings.EqualFold(p.Name, "Content-Type") || strings.EqualFold(p.Name, "Authorization")) {
-			continue
-		}
 		if p.In == "" {
 			errs = append(errs, p.Err) // its identity cannot be known
 			o.params = append(o.params, pp)
@@ -343,7 +431,7 @@ func find(m map[uint32]int, h uint32, same func(int) bool) (uint32, bool) {
 // Source in the list, made only then.
 func (d *document) param(v value, list string, i int) param {
 	src := func() string { return list + "/" + strconv.Itoa(i) }
-	if ref, desc, _ := reference(v); !ref.ok() { // only this place reaches it
+	if ref, desc, _ := reference(v); !ref.ok() { // only its list reaches it, which each operation of a Path Item reads for its path-level parameters
 		pp := d.newParam(v, src())
 		pp.Description = desc
 		return pp
@@ -391,13 +479,18 @@ func (d *document) newParam(t value, at string) param {
 	if t.t.edition == 20 {
 		return d.swaggerParam(t, at, p)
 	}
+	if bundled(content) {
+		p.Err = errBundle
+	}
 	if content.ok() {
 		for typ, m := range content.members() {
-			if entries++; entries == 1 {
+			if entries++; entries == 1 && p.Err == nil {
 				p.ContentType, media = typ, m
 				mat := at + "/content/" + token(typ)
 				if m.t.edition == 32 {
 					media, mat, _, p.Err = d.follow(m, mat)
+				} else if bundled(m) { // a Reference Object only from OpenAPI 3.2: none of it is read
+					media, p.Err = value{}, errBundle
 				}
 				p.Schema = d.schema(media.get("schema"), mat, "/schema")
 			}
@@ -433,7 +526,20 @@ func (d *document) newParam(t value, at string) param {
 			if p.In == "querystring" {
 				enc = media.get("encoding")
 			}
-			pp.form, _ = d.encodingOf([]value{media.get("schema")}, at+"/content/"+token(p.ContentType)+"/schema", enc, at+"/content/"+token(p.ContentType)+"/encoding", m, media.t.edition)
+			edition := t.t.edition // the Media Type Object's, when one is read
+			if media.ok() {
+				edition = media.t.edition
+			}
+			pp.form, _ = d.encodingOf([]value{media.get("schema")}, at+"/content/"+token(p.ContentType)+"/schema", enc, at+"/content/"+token(p.ContentType)+"/encoding", m, edition)
+		}
+		// The parameter is the nearest part holding a value written as a
+		// reference among its content's Encoding Objects, under any media
+		// type; a field's other defects refuse only the values that use it.
+		// Its answer is kept, as each operation of a Path Item compiles its
+		// path-level parameters, and a Media Type Object a reference leads
+		// to may serve others.
+		if d.holdsBundled(media, mediaKind, true, true) {
+			p.Err = cmp.Or(p.Err, errBundle)
 		}
 	} else {
 		if p.Style == "" {
@@ -463,6 +569,7 @@ func (d *document) newParam(t value, at string) param {
 		pp.style = &cookieForm
 	case p.In == "header":
 		pp.field, pp.set = textproto.CanonicalMIMEHeaderKey(p.Name), nil
+		pp.bundled = ignoredHeader(p.Name) && d.holdsBundled(t, parameterKind, true, true) // kept, as for its content
 	}
 	loc, _, dotted := strings.Cut(p.Name, ".")
 	pp.idHash, pp.nameHash = paramHash(p.In, pp.identity().name), uint32(maphash.String(paramSeed, p.Name))
@@ -519,6 +626,7 @@ type content struct {
 	parsed    []parsedMedia   // media, parsed
 	encodings []*formEncoding // the fields of each Media, under a form or multipart type it covers
 	success   []parsedMedia   // the concrete media types among them, for a 2xx response
+	err       error           // why the object cannot be used: its headers or content map is written as a reference
 }
 
 // noContent is the content of an object a reference cannot reach.
@@ -543,7 +651,7 @@ func (d *document) message(v value, src string, request bool) (*Message, value, 
 	} else {
 		c = memo.get(t.id(), func() *content { return d.content(t, at, request) })
 	}
-	return &Message{Description: desc, Source: c.source, Headers: c.headers, Media: c.media}, t, c
+	return &Message{Description: desc, Source: c.source, Headers: c.headers, Media: c.media, Err: c.err}, t, c
 }
 
 // content compiles the content map of the object t, whose Source is at, a
@@ -551,9 +659,18 @@ func (d *document) message(v value, src string, request bool) (*Message, value, 
 func (d *document) content(t value, at string, request bool) *content {
 	c := &content{source: at}
 	if h := t.get("headers"); h.ok() && !request {
-		c.headers = d.headers(h, at+"/headers")
+		if bundled(h) {
+			c.err = errBundle
+		} else {
+			c.headers = d.headers(h, at+"/headers")
+			if d.headersBundled(h) { // in a header no Param describes, so the response is the nearest part holding it
+				c.err = errBundle
+			}
+		}
 	}
-	if m := t.get("content"); m.kind() == '{' {
+	if m := t.get("content"); bundled(m) {
+		c.err = errBundle
+	} else if m.kind() == '{' {
 		for typ, mv := range m.members() {
 			p := d.media(mv, at+"/content/"+token(typ), typ, request)
 			c.media, c.parsed, c.encodings = append(c.media, p.md), append(c.parsed, p.parsed), append(c.encodings, p.encoding)
@@ -583,23 +700,28 @@ func (d *document) media(v value, src, typ string, request bool) *mediaPlan {
 	t, at, err := v, src, error(nil)
 	if v.t.edition == 32 {
 		t, at, _, err = d.follow(v, src)
+	} else if bundled(v) { // a Reference Object only from OpenAPI 3.2
+		err = errBundle
 	}
 	if err != nil {
 		pm, valid := parseMedia(typ)
 		return &mediaPlan{md: &Media{Type: typ, Source: src, Err: err}, parsed: pm, valid: valid}
 	}
 	if t == v {
-		return d.newMedia(t, at, typ, request)
+		return d.newMedia(t, at, typ, request, false)
 	}
 	key := mediaUse{t.id(), typ, request}
 	if p, ok := d.mediaForms.Load(key); ok {
 		return p.(*mediaPlan)
 	}
-	p, _ := d.mediaForms.LoadOrStore(key, d.newMedia(t, at, typ, request))
+	p, _ := d.mediaForms.LoadOrStore(key, d.newMedia(t, at, typ, request, true))
 	return p.(*mediaPlan)
 }
 
-func (d *document) newMedia(v value, src, typ string, request bool) *mediaPlan {
+// newMedia describes and compiles the Media Type Object v, at src, under the
+// media type typ, for a request body when request; shared when a Reference
+// Object leads to it, as more may, under other types.
+func (d *document) newMedia(v value, src, typ string, request, shared bool) *mediaPlan {
 	md := &Media{Type: typ, Source: src, Schema: d.schema(v.get("schema"), src, "/schema")}
 	if v.t.edition == 32 {
 		md.ItemSchema = d.schema(v.get("itemSchema"), src, "/itemSchema")
@@ -611,26 +733,31 @@ func (d *document) newMedia(v value, src, typ string, request bool) *mediaPlan {
 		return p
 	}
 	md.Sequential = pm.class() == sequentialClass || isMultipart(pm)
-	if !request {
-		return p
-	}
-	schema := schemaRoots(v.get("schema"))
-	switch {
-	case isForm(pm) || isMultipart(pm):
-		if _, _, err := pm.boundary(); err != nil {
-			md.Err = err
+	if request {
+		schema := schemaRoots(v.get("schema"))
+		switch {
+		case isForm(pm) || isMultipart(pm):
+			if _, _, err := pm.boundary(); err != nil {
+				md.Err = err
+			}
+			p.encoding, md.Encoding = d.encodingOf(schema, src+"/schema", v.get("encoding"), src+"/encoding", pm, v.t.edition)
+		case pm.typ == "*" || pm.sub == "*" && strings.EqualFold(pm.typ, "application"):
+			p.encoding, _ = d.encodingOf(schema, src+"/schema", value{}, "", pm, v.t.edition)
 		}
-		p.encoding, md.Encoding = d.encodingOf(schema, src+"/schema", v.get("encoding"), src+"/encoding", pm, v.t.edition)
-	case pm.typ == "*" || pm.sub == "*" && strings.EqualFold(pm.typ, "application"):
-		p.encoding, _ = d.encodingOf(schema, src+"/schema", value{}, "", pm, v.t.edition)
+		if isMultipart(pm) && v.t.edition == 32 {
+			md.Encoding = d.positionalEncoding(p.encoding, v, schema, src, pm, md.Encoding...)
+		}
 	}
-	if isMultipart(pm) && v.t.edition == 32 {
-		md.Encoding = d.positionalEncoding(p.encoding, v, schema, src, pm, md.Encoding...)
+	// A value written as a reference among its Encoding Objects counts under
+	// any media type, even where OpenAPI ignores it; the Media is the nearest
+	// part holding it unless an Encoding Param describes that part.
+	if d.bundledMedia(v, src, md.Encoding, shared) {
+		md.Err = errBundle
 	}
 	return p
 }
 
-func (o *operation) addResponse(m *Message, c *content) {
+func (o *operation) addResponse(m *Message, c *content, plan bool) {
 	r := responsePlan{Message: m, media: c.parsed}
 	key := m.Key
 	digit := func(i int) bool { return '0' <= key[i] && key[i] <= '9' }
@@ -645,6 +772,9 @@ func (o *operation) addResponse(m *Message, c *content) {
 		m.Err = fmt.Errorf("response key %q is not a status code, a range such as 4XX, or default", key)
 	}
 	o.Responses = append(o.Responses, m)
+	if !plan {
+		return
+	}
 	o.responses = append(o.responses, r)
 	if (r.status/100 == 2 || r.class == 2) && len(c.success) > 0 {
 		o.success = append(o.success, c.success)
@@ -673,37 +803,50 @@ func (pl *plan) declaration(status int) *responsePlan {
 	return fallback
 }
 
-// parsePath splits the path template into its text, percent-encoded, and
-// its parameters. A path parameter the template does not name cannot be
-// serialized: it is copied with Err set, as other paths may share it.
-func (o *operation) parsePath() error {
+// parsePath checks the path template against the path parameters and, with
+// plan, splits it into its text, percent-encoded, and its parameters. A path
+// parameter the template does not name cannot be serialized: it is copied
+// with Err set, as other paths may share it.
+func (o *operation) parsePath(plan bool) error {
 	text, names, ok := splitTemplate(o.Path)
 	if !ok {
 		return fmt.Errorf("path template %q has an unclosed {", o.Path)
 	}
-	byName := make(map[string]int, len(o.pathParams))
-	for j, i := range o.pathParams {
-		byName[o.params[i].Name] = j
+	byName := map[string]int{} // each path parameter's index in Params
+	for i, p := range o.Params {
+		if p.In == "path" {
+			byName[p.Name] = i
+		}
 	}
-	named := make([]bool, len(o.pathParams))
+	named := make([]bool, len(o.Params))
 	for i, name := range names {
 		j, ok := byName[name]
 		if !ok {
 			return fmt.Errorf("path template %q names %q, which no path parameter declares", o.Path, name)
 		}
-		o.path = append(o.path, pathPart{escape(text[i], pathSet), -1}, pathPart{param: o.pathParams[j]})
 		named[j] = true
+		if plan {
+			o.path = append(o.path, pathPart{escape(text[i], pathSet), -1}, pathPart{param: j})
+		}
 	}
-	o.path = append(o.path, pathPart{escape(text[len(names)], pathSet), -1})
+	if plan {
+		o.path = append(o.path, pathPart{escape(text[len(names)], pathSet), -1})
+	}
 	copied := false
-	for j, i := range o.pathParams {
-		if p := o.params[i].Param; !named[j] && p.Err == nil {
-			if !copied {
-				o.params, o.Params, copied = slices.Clone(o.params), slices.Clone(o.Params), true
+	for i, p := range o.Params {
+		if p.In != "path" || named[i] || p.Err != nil {
+			continue
+		}
+		if !copied {
+			o.Params, copied = slices.Clone(o.Params), true
+			if plan {
+				o.params = slices.Clone(o.params)
 			}
-			c := *p
-			c.Err = fmt.Errorf("path parameter %q is not named in the path template", p.Name)
-			o.params[i].Param, o.Params[i] = &c, &c
+		}
+		c := *p
+		c.Err = fmt.Errorf("path parameter %q is not named in the path template", p.Name)
+		if o.Params[i] = &c; plan {
+			o.params[i].Param = &c
 		}
 	}
 	return nil
@@ -806,7 +949,12 @@ func (d *document) swaggerServers(schemes value) *serverList {
 	if schemes.hasMembers() {
 		key = schemes.id()
 	}
-	return d.serverLists.get(key, func() *serverList { return d.buildSwaggerServers(schemes) })
+	return d.serverLists.get(key, func() *serverList {
+		if bundled(schemes) { // described as a servers list so written is, with no Source as any Swagger 2.0 server
+			return d.parseServers(schemes, "")
+		}
+		return d.buildSwaggerServers(schemes)
+	})
 }
 
 func (d *document) buildSwaggerServers(schemes value) *serverList {
@@ -849,14 +997,35 @@ func (d *document) buildSwaggerServers(schemes value) *serverList {
 
 // parseServers compiles the Server Objects of list, whose Source is src.
 func (d *document) parseServers(list value, src string) *serverList {
+	if bundled(list) { // one server, unusable as any is, which Options.BaseURL replaces
+		s := &Server{ID: idOf(list), Source: src}
+		sv := newServer(s, value{}, list.t)
+		s.Err = errBundle
+		return &serverList{[]*server{sv}, []*Server{s}}
+	}
 	sl := &serverList{}
 	for _, v := range list.members() {
 		at := src + "/" + strconv.Itoa(len(sl.servers))
-		s := &Server{ID: idOf(v), URL: v.str("url"), Description: v.str("description"), Source: at}
-		if v.t.edition == 32 {
-			s.Name = v.str("name")
+		s := &Server{ID: idOf(v), Source: at}
+		ref := bundled(v)
+		if !ref {
+			s.URL, s.Description = v.str("url"), v.str("description")
+			if v.t.edition == 32 {
+				s.Name = v.str("name")
+			}
 		}
-		sl.servers, sl.desc = append(sl.servers, newServer(s, v.get("variables"), list.t)), append(sl.desc, s)
+		vars := v.get("variables")
+		if ref || bundled(vars) {
+			vars, ref = value{}, true
+		}
+		for _, x := range vars.members() {
+			ref = ref || bundled(x)
+		}
+		sv := newServer(s, vars, list.t)
+		if ref {
+			s.Err = errBundle
+		}
+		sl.servers, sl.desc = append(sl.servers, sv), append(sl.desc, s)
 	}
 	return sl
 }
@@ -882,10 +1051,13 @@ func newServer(s *Server, declared value, t *tree) *server {
 			index[name] = j
 			v := Variable{Name: name}
 			if n := declared.get(name); n.ok() {
-				v.Declared, v.Description = true, n.str("description")
-				v.Default, v.DefaultSet = n.str("default"), n.get("default").ok()
-				if e := n.get("enum"); e.kind() == '[' {
-					v.Enum = append([]string{}, e.strs()...)
+				v.Declared = true
+				if !bundled(n) { // written as a reference, it has nothing to read (its Server's Err says so)
+					v.Description = n.str("description")
+					v.Default, v.DefaultSet = n.str("default"), n.get("default").ok()
+					if e := n.get("enum"); e.kind() == '[' {
+						v.Enum = append([]string{}, e.strs()...)
+					}
 				}
 			}
 			s.Variables = append(s.Variables, v)

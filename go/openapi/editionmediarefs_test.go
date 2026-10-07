@@ -85,8 +85,21 @@ func TestEditionsMediaReferences(t *testing.T) {
 	}
 }
 
-// Before 3.2, a Media Type Object's $ref is not a reference. Its own schema
-// still governs the body, and feature-shaped component entries cause no fetch.
+// Before 3.2, a content map's values are Media Type Objects, never Reference
+// Objects, so one with a $ref member marks a document meant to be bundled
+// (describe.go, Operation: "It makes the nearest part holding that object
+// unusable: the Err of that ... Media says the document must be bundled
+// first, and does not wrap ErrUnresolved"). Such a $ref is never retrieved,
+// and neither is one in a components.mediaTypes entry, a field OpenAPI 3.0
+// and 3.1 do not define (load.go, Loader: the references followed are those
+// in Reference Objects, Path Items and Schema Objects).
+//
+// The Media still names its media type, so the type can govern a call: a
+// structured body is checked against Media.Err and refused at the body
+// (client.go, Input.Body: a pre-encoded body is not checked "against a
+// Media.Err", so a structured one is; errors.go, RequestError.Inputs: "for
+// the body, "Input.Body""), while a pre-encoded body is sent under it, with
+// Request.Media that Media (client.go, Request.Media).
 func TestEditionsMediaReferencesEarlierEditions(t *testing.T) {
 	for _, version := range []string{"3.0.4", "3.1.2"} {
 		t.Run(version, func(t *testing.T) {
@@ -99,18 +112,44 @@ func TestEditionsMediaReferencesEarlierEditions(t *testing.T) {
 				return nil, "", fmt.Errorf("unexpected fetch %s", u)
 			}}
 			doc := editionDoc(version, `"/x":{"post":{"requestBody":{"content":{"multipart/form-data":{"$ref":"not-a-reference.json#/M","schema":{"type":"object","properties":{"p":{"type":"string"}}}}}}}}`, `"components":{"mediaTypes":{"Unused":{"$ref":"also-not-a-reference.json#/M"}}}`)
-			c, err := l.Parse(t.Context(), []byte(doc), testDocURI, nil)
+			rt := &memRT{}
+			c, err := l.Parse(t.Context(), []byte(doc), testDocURI, &openapi.Options{HTTPClient: &http.Client{Transport: rt}, BaseURL: "https://api.example.test"})
 			if err != nil {
 				t.Fatal(err)
 			}
-			m := reqMedia(t, mustOp(t, c, "POST /x"), 0)
-			if m.Err != nil || m.Source != testDocURI+"#/paths/~1x/post/requestBody/content/multipart~1form-data" || m.Schema == nil || len(m.Encoding) != 1 {
-				t.Fatalf("Media %+v", m)
+			op := mustOp(t, c, "POST /x")
+			if op.Err != nil || op.Body.Err != nil {
+				t.Errorf("Operation.Err %v, Body.Err %v; want the defect on the Media alone", op.Err, op.Body.Err)
 			}
-			req := mustPrepare(t, c, "POST /x", &openapi.Input{Body: map[string]string{"p": "own schema"}})
-			_, _, parts := readMultipart(t, req.HTTP.Header.Get("Content-Type"), editionBody(t, req))
-			if len(parts) != 1 || string(parts[0].body) != "own schema" {
-				t.Errorf("parts %#v", parts)
+			m := reqMedia(t, op, 0)
+			if !mentionsBundling(m.Err) || errors.Is(m.Err, openapi.ErrUnresolved) {
+				t.Errorf("Media.Err = %v; want it to say the document must be bundled first, without ErrUnresolved", m.Err)
+			}
+			if m.Type != "multipart/form-data" || m.Source != testDocURI+"#/paths/~1x/post/requestBody/content/multipart~1form-data" {
+				t.Errorf("Media Type %q Source %q", m.Type, m.Source)
+			}
+
+			_, err = c.Call(t.Context(), op.Key, &openapi.Input{Body: map[string]string{"p": "value"}}, nil)
+			re := asRequestError(t, err)
+			wantKeys(t, "Inputs", re.Inputs, true, "Input.Body")
+			if !errors.Is(re.Inputs["Input.Body"], m.Err) {
+				t.Errorf("Inputs[\"Input.Body\"] = %v; want it to wrap Media.Err", re.Inputs["Input.Body"])
+			}
+			if len(re.Settings) != 0 {
+				t.Errorf("Settings %q; the declared media type is usable", sortedKeys(re.Settings))
+			}
+			if n := rt.count(); n != 0 {
+				t.Fatalf("a refused call sent %d requests", n)
+			}
+
+			raw := "--b\r\nContent-Disposition: form-data; name=\"p\"\r\n\r\nvalue\r\n--b--\r\n"
+			req := mustPrepare(t, c, op.Key, &openapi.Input{Body: []byte(raw), MediaType: "multipart/form-data; boundary=b"})
+			if req.Media != m {
+				t.Errorf("Request.Media %p; want the operation's Media %p", req.Media, m)
+			}
+			sendAndClose(t, req)
+			if reqs := rt.requests(); len(reqs) != 1 || string(reqs[0].Body) != raw {
+				t.Errorf("pre-encoded body: requests %+v", reqs)
 			}
 			if hits != 0 {
 				t.Errorf("earlier edition fetched %d references", hits)

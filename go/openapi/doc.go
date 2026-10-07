@@ -275,7 +275,8 @@
 //     is written as its name alone except in form style. Whether a value
 //     is undefined (see Values) is settled first; the refusals here apply
 //     to defined values. deepObject ignores explode. Nesting in any style but
-//     deepObject is refused, and so are an array in a deepObject value, a
+//     deepObject is refused, and so are an array in a deepObject value
+//     unless Options.DeepObjectArrays says how to write it, a
 //     primitive for spaceDelimited, pipeDelimited or deepObject, explode
 //     true with spaceDelimited or pipeDelimited, and, in OpenAPI 3.2, an
 //     array or object for a cookie parameter with explode false. Each is

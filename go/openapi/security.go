@@ -45,25 +45,17 @@ var authorization = paramID{"header", "Authorization"}
 // from names, compiled once for each declaration: the component of that name
 // where the Loader's SchemeLookup looks, following references.
 func (d *document) securityScheme(name string, from *tree) *scheme {
-	v := d.schemeComponent(name, from)
+	v, err := d.schemeComponent(name, from)
+	if err != nil {
+		return &scheme{desc: SecurityScheme{Err: err}}
+	}
 	if !v.ok() {
-		if from.edition == 32 {
-			t, ptr, err := d.targetName(from, name)
-			if err != nil {
-				return &scheme{desc: SecurityScheme{Err: err}, uri: true}
-			}
-			v = t
-			sc := *d.schemeForms.get(v.id(), func() *scheme {
-				t, at, _, err := d.follow(v, v.t.source(ptr))
-				if err != nil {
-					return &scheme{desc: SecurityScheme{Err: err}}
-				}
-				return newScheme(t, at)
-			})
-			sc.uri = true
-			return &sc
+		k := schemeUse{name, from}
+		if sc, ok := d.schemeURIs.Load(k); ok {
+			return sc.(*scheme)
 		}
-		return &scheme{desc: SecurityScheme{Err: fmt.Errorf("the document declares no security scheme %q", name)}}
+		sc, _ := d.schemeURIs.LoadOrStore(k, d.schemeURI(name, from))
+		return sc.(*scheme)
 	}
 	return d.schemeNames.get(v.id(), func() *scheme {
 		prefix := "/components/securitySchemes/"
@@ -71,6 +63,9 @@ func (d *document) securityScheme(name string, from *tree) *scheme {
 			prefix = "/securityDefinitions/"
 		}
 		src := v.t.source(prefix + escapeToken(name))
+		if v.t.edition == 20 && bundled(v) { // a Swagger 2.0 Security Scheme Object is never a reference
+			return &scheme{desc: SecurityScheme{Source: src, Err: errBundle}}
+		}
 		t, at, desc, err := d.follow(v, src)
 		switch {
 		case err != nil:
@@ -88,7 +83,40 @@ func (d *document) securityScheme(name string, from *tree) *scheme {
 	})
 }
 
-func (d *document) schemeComponent(name string, from *tree) value {
+// A schemeUse is a security scheme name as a requirement in the document
+// from writes it.
+type schemeUse struct {
+	name string
+	from *tree
+}
+
+// schemeURI returns the scheme a name that no component declares names: in
+// OpenAPI 3.2 the Security Scheme Object its URI reaches, and otherwise none,
+// which only FromTransport satisfies.
+func (d *document) schemeURI(name string, from *tree) *scheme {
+	if from.edition != 32 {
+		return &scheme{desc: SecurityScheme{Err: fmt.Errorf("the document declares no security scheme %q", name)}}
+	}
+	v, ptr, err := d.targetName(from, name)
+	if err != nil {
+		return &scheme{desc: SecurityScheme{Err: err}, uri: true}
+	}
+	sc := *d.schemeForms.get(v.id(), func() *scheme {
+		t, at, _, err := d.follow(v, v.t.source(ptr))
+		if err != nil {
+			return &scheme{desc: SecurityScheme{Err: err}}
+		}
+		return newScheme(t, at)
+	})
+	sc.uri = true
+	return &sc
+}
+
+// schemeComponent returns the component the Loader's SchemeLookup finds for
+// name, or an absent value, or errBundle when a Components Object or scheme
+// map it looks in is written as a reference, so that the lookup cannot be
+// made before bundling, and the name is not read as a URI either.
+func (d *document) schemeComponent(name string, from *tree) (value, error) {
 	in := [...]*tree{d.tree, from}
 	switch d.schemes {
 	case SchemesInEntry:
@@ -97,15 +125,19 @@ func (d *document) schemeComponent(name string, from *tree) value {
 		in[0] = from
 	}
 	for _, t := range in {
-		v := t.root().get("components").get("securitySchemes").get(name)
+		comps := t.root().get("components")
+		schemes := comps.get("securitySchemes")
 		if t.edition == 20 {
-			v = t.root().get("securityDefinitions").get(name)
+			comps, schemes = value{}, t.root().get("securityDefinitions")
 		}
-		if v.ok() {
-			return v
+		if bundled(comps) || bundled(schemes) {
+			return value{}, errBundle
+		}
+		if v := schemes.get(name); v.ok() {
+			return v, nil
 		}
 	}
-	return value{}
+	return value{}, nil
 }
 
 // newScheme compiles the Security Scheme Object t, whose Source is at.
@@ -211,6 +243,9 @@ func oauthFlows(v value) (flows []Flow, err error) {
 	if v.kind() != '{' {
 		return nil, errors.New("an oauth2 scheme needs flows")
 	}
+	if bundled(v) {
+		return nil, errBundle
+	}
 	for typ, f := range v.members() {
 		if typ == "deviceAuthorization" && v.t.edition != 32 {
 			continue
@@ -238,10 +273,16 @@ func appendFlow(flows []Flow, typ string, f value) ([]Flow, error) {
 	default:
 		return flows, nil
 	}
+	if bundled(f) { // an OAuth Flow Object is never a reference
+		return flows, errBundle
+	}
 	var err error
 	scopes := f.get("scopes")
 	if f.kind() != '{' || scopes.kind() != '{' || slices.ContainsFunc(needs, func(n string) bool { return f.get(n).kind() != '"' }) {
 		err = fmt.Errorf("the %s flow needs %s and scopes", typ, strings.Join(needs, " and "))
+	}
+	if bundled(scopes) {
+		err, scopes = errBundle, value{}
 	}
 	if f.kind() != '{' {
 		return flows, err
@@ -279,11 +320,17 @@ type securityPlan struct {
 
 // compileSecurity compiles the security value list.
 func (d *document) compileSecurity(list value) securityPlan {
+	if bundled(list) {
+		return securityPlan{err: errBundle}
+	}
 	if list.kind() != '[' {
 		return securityPlan{err: errSecurityValue}
 	}
 	var p securityPlan
 	for _, r := range list.members() {
+		if bundled(r) {
+			return securityPlan{err: errBundle}
+		}
 		if r.kind() != '{' {
 			return securityPlan{err: errSecurityValue}
 		}
@@ -850,12 +897,17 @@ func (s *securityCheck) done() bool { return len(s.creds) == 0 && s.names == nil
 // list checks the Security Requirement Objects of list, reporting whether
 // it holds none, which makes an operation that has it credential-free.
 func (s *securityCheck) list(list value) (none bool) {
+	if bundled(list) {
+		return false // it offers nothing before bundling, not even no credentials
+	}
 	none = true
 	for _, r := range list.members() {
 		if list.kind() != '[' || r.kind() != '{' {
 			continue
 		}
-		none = false
+		if none = false; bundled(r) {
+			continue
+		}
 		var schemes []SecurityScheme // for the key
 		n, named := 0, 0             // the schemes, and those Options.Security names
 		for name, scopes := range r.members() {

@@ -39,6 +39,7 @@ type tree struct {
 	nodes     []node
 	escapes   []uint32 // the offsets of the strings written with an escape, in order
 	off       int32    // the number of its first node among the nodes of every document loaded
+	bigRefs   []int32  // the objects of more than many members that have a string $ref member, in order
 
 	// What discovery reads it for: a reference that may reach another
 	// document (one not to a fragment of itself, or a discriminator mapping
@@ -407,7 +408,8 @@ func parseTree(ctx context.Context, src, uri string, unit int) (*tree, error) {
 	if cap(p.nodes)-len(p.nodes) > len(p.nodes)/8 {
 		p.nodes = slices.Clone(p.nodes)
 	}
-	return &tree{src: src, nodes: p.nodes, escapes: p.escapes, decoded: make([]atomic.Pointer[string], len(p.escapes)), reaches: p.reaches, declares: p.declares, editionRefs: p.editionRefs, dialects: p.dialects}, nil
+	slices.Sort(p.bigRefs) // recorded as each object ends, so an outer one follows those inside it
+	return &tree{src: src, nodes: p.nodes, escapes: p.escapes, decoded: make([]atomic.Pointer[string], len(p.escapes)), bigRefs: p.bigRefs, reaches: p.reaches, declares: p.declares, editionRefs: p.editionRefs, dialects: p.dialects}, nil
 }
 
 // A scanner reads a JSON text into a tree's nodes.
@@ -419,6 +421,7 @@ type scanner struct {
 	nodes             []node   // the nodes read
 	escapes           []uint32 // the offsets of the strings read with an escape
 	names             []string // the member names of the objects being read
+	bigRefs           []int32  // see tree
 	reaches, declares bool     // see tree
 	editionRefs       bool
 	dialects          bool // a $schema occurs; distinct from identifier declarations
@@ -476,7 +479,7 @@ func (p *scanner) value(depth int, name uint32) error {
 func (p *scanner) container(depth int) error {
 	end := p.src[p.i] + 2 // '}' or ']'
 	p.i++
-	base := len(p.names)
+	base, self, ref := len(p.names), int32(len(p.nodes)-1), -1 // ref: the node of its $ref member's value
 	defer func() { p.names = p.names[:base] }()
 	var seen map[string]bool // the member names of an object with many
 	for first := true; ; first = false {
@@ -515,6 +518,9 @@ func (p *scanner) container(depth int) error {
 			if p.space(); len(name) > 1 && (name[0] == '$' || name[0] == 'm' || name[0] == 'd' || name[0] == 's') {
 				note(name, p.src[p.i:], &p.reaches, &p.declares, &p.editionRefs, &p.dialects)
 			}
+			if name == "$ref" {
+				ref = len(p.nodes)
+			}
 		}
 		if err := p.value(depth+1, uint32(at)); err != nil {
 			return err
@@ -528,6 +534,9 @@ func (p *scanner) container(depth int) error {
 		p.i++
 	}
 	p.i++
+	if seen != nil && ref >= 0 && p.src[p.nodes[ref].start] == '"' {
+		p.bigRefs = append(p.bigRefs, self) // see bundled
+	}
 	return nil
 }
 
