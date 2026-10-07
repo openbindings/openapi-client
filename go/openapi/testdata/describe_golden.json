@@ -720,7 +720,7 @@
         {
          "key": "",
          "name": "photo",
-         "in": "formData",
+         "in": "",
          "description": "",
          "required": true,
          "deprecated": false,
@@ -746,7 +746,7 @@
         {
          "key": "",
          "name": "note",
-         "in": "formData",
+         "in": "",
          "description": "",
          "required": false,
          "deprecated": false,
@@ -773,7 +773,7 @@
         {
          "key": "",
          "name": "sizes",
-         "in": "formData",
+         "in": "",
          "description": "",
          "required": false,
          "deprecated": false,
@@ -837,7 +837,7 @@
         {
          "key": "",
          "name": "photo",
-         "in": "formData",
+         "in": "",
          "description": "",
          "required": true,
          "deprecated": false,
@@ -863,7 +863,7 @@
         {
          "key": "",
          "name": "note",
-         "in": "formData",
+         "in": "",
          "description": "",
          "required": false,
          "deprecated": false,
@@ -890,7 +890,7 @@
         {
          "key": "",
          "name": "sizes",
-         "in": "formData",
+         "in": "",
          "description": "",
          "required": false,
          "deprecated": false,

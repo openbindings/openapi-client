@@ -18,8 +18,9 @@ import (
 // References across documents, over httptest sites. load.go, Load: "Load
 // reads the document at uri, and every document its references reach";
 // Loader: "The references followed are $ref in Reference Objects, Path Items
-// and Schema Objects, $dynamicRef, Discriminator mapping and defaultMapping
-// values that are not component names ..., and OpenAPI 3.2 security
+// and Schema Objects, $dynamicRef, the values of a Discriminator mapping
+// written as an object and a defaultMapping value, where they are not
+// component names ..., and OpenAPI 3.2 security
 // requirement URIs, anywhere in a document, webhooks and callbacks included;
 // operationRef and externalValue are not retrieved. They resolve against
 // each document's base". OpenAPI 3.1.2 section 4.3 (multi-document

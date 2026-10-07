@@ -224,6 +224,17 @@ func (e *entry) shape(plan bool) *operation {
 	})
 	if n.t.edition == 20 {
 		errs = append(errs, o.swaggerBody(n))
+	} else {
+		// A Swagger 2.0 body or formData parameter, reached through a
+		// reference into a Swagger document, has no place in an OpenAPI 3.x
+		// operation, whose body comes only from requestBody.
+		o.params = slices.DeleteFunc(o.params, func(pp param) bool {
+			misplaced := pp.legacy.t != nil && (pp.In == "body" || pp.In == "formData")
+			if misplaced {
+				errs = append(errs, fmt.Errorf("an OpenAPI 3.x operation has no place for the Swagger 2.0 %s parameter %q", pp.In, pp.Name))
+			}
+			return misplaced
+		})
 	}
 	if len(o.params) < merged || n.t.edition == 20 {
 		clear(ids)

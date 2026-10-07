@@ -204,27 +204,34 @@ func (c *Client) writeLegacy(b *strings.Builder, lead string, p *param, v any, f
 	return true, nil
 }
 
-// swaggerBody removes body/formData declarations from the parameter plan
-// and normalizes their media without rewriting the authored document.
+// swaggerBody removes Swagger 2.0 body/formData declarations from the
+// parameter plan and normalizes their media without rewriting the authored
+// document.
 func (o *operation) swaggerBody(n value) error {
 	var fields []param
 	var body *param
+	var err error
 	kept := o.params[:0]
 	for i := range o.params {
 		p := o.params[i]
-		switch p.In {
-		case "body":
+		switch {
+		case p.legacy.t == nil: // written in an OpenAPI 3.x document, so neither a body nor a form field
+			kept = append(kept, p)
+		case p.In == "body":
 			if body != nil {
-				return errors.New("several Swagger body parameters")
+				err = errors.New("several Swagger body parameters")
 			}
 			body = &p
-		case "formData":
+		case p.In == "formData":
 			fields = append(fields, p)
 		default:
 			kept = append(kept, p)
 		}
 	}
 	o.params = kept
+	if err != nil {
+		return err
+	}
 	if body == nil && len(fields) == 0 {
 		return nil
 	}
@@ -250,6 +257,7 @@ func (o *operation) swaggerBody(n value) error {
 	} else {
 		encoding = &formEncoding{byName: map[string]*field{}, swagger: true}
 		for _, p := range fields {
+			p.In = "" // a field of the body, which has no location of its own
 			// A defective parameter refuses every value given for it, under
 			// any media type.
 			f := &field{param: p, err: p.Err, roots: []value{p.legacy}, types: textField.types, parsed: textField.parsed, class: textClass}

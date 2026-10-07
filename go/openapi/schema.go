@@ -383,11 +383,8 @@ func (b *schemaBuilder) discriminator(v value, n *schemaNode, path *documentPath
 				b.edge(m, n, path, depth+1, name)
 			}
 		case "mapping":
-			if m.kind() != '{' {
-				continue // an array is not a mapping
-			}
 			p := &documentPath{parent: path, part: name, token: true}
-			for _, item := range m.members() {
+			for _, item := range mappingValues(m) {
 				b.edge(item, n, p, depth+2, name)
 			}
 		}

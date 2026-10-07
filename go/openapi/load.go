@@ -95,16 +95,17 @@ func Parse(ctx context.Context, content []byte, uri string, opts *Options) (*Cli
 // independent of that inference remain usable.
 //
 // The references followed are $ref in Reference Objects, Path Items and Schema
-// Objects, $dynamicRef, Discriminator mapping and defaultMapping values that
-// are not component names (a value that could be a component name is read as
-// one, as OpenAPI recommends, and never fetched), and OpenAPI 3.2 security
-// requirement URIs, anywhere in a document, webhooks and callbacks included;
-// operationRef and externalValue are not retrieved. They resolve against each
-// document's base: its OpenAPI 3.2 $self, itself resolved first against the URI
-// the document was retrieved from when relative, or else that URI. Inside a 3.1
-// or 3.2 schema, the nearest $id sets the base, as JSON Schema 2020-12 says
-// (see Schema for other dialects). A fragment is percent-decoded as UTF-8
-// before it is read as a JSON Pointer or a plain name.
+// Objects, $dynamicRef, the values of a Discriminator mapping written as an
+// object and a defaultMapping value, where they are not component names (a
+// value that could be a component name is read as one, as OpenAPI recommends,
+// and never fetched), and OpenAPI 3.2 security requirement URIs, anywhere in a
+// document, webhooks and callbacks included; operationRef and externalValue are
+// not retrieved. They resolve against each document's base: its OpenAPI 3.2
+// $self, itself resolved first against the URI the document was retrieved from
+// when relative, or else that URI. Inside a 3.1 or 3.2 schema, the nearest $id
+// sets the base, as JSON Schema 2020-12 says (see Schema for other dialects). A
+// fragment is percent-decoded as UTF-8 before it is read as a JSON Pointer or a
+// plain name.
 //
 // A reference resolves first to what loaded documents identify: a document by
 // its retrieval URI (and the URI requested, when a redirect led there) or 3.2
