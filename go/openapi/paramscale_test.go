@@ -14,7 +14,7 @@ import (
 
 // Scaling: compiling many parameters is linear, and serializing a value
 // costs O(size of its encoded form), checked with wantLinear
-// (regress2_scale_test.go).
+// (scaling_test.go).
 
 // styledParams is a document with one operation of n parameters that cycle
 // through the parameter serializations: each style and location, explode
@@ -211,7 +211,7 @@ func sharedLongName(n int, in string) []byte {
 // key, so its document is already the product). Before the fix, 64 KiB by
 // 1,000 references retained about 67 MB (query, cookie) and 133 MB (header),
 // 16x its quarter.
-func TestK3SharedLongNameScales(t *testing.T) {
+func TestSharedLongParamNameScalesLinearly(t *testing.T) {
 	for _, in := range []string{"query", "header", "cookie"} {
 		wantLinear(t, in+": Operations()", 16, func(n int) func() { return timedOperations(t, sharedLongName(n, in)) })
 		wantLinearBytes(t, in+": Operations() bytes", 16, func(n int) func() { return timedOperations(t, sharedLongName(n, in)) })
@@ -254,7 +254,7 @@ func manyParams(n int) []byte {
 // refusal costs time linear in n, in Params and in ParamWriters. Before the
 // fix each key was checked again by a scan of the declarations, n(n+1)/2
 // comparisons.
-func TestK11UnknownKeyScales(t *testing.T) {
+func TestUnknownParamKeyRefusalScalesLinearly(t *testing.T) {
 	refused := func(c *openapi.Client, in *openapi.Input) func() {
 		return func() {
 			_, err := c.Prepare("op", in)

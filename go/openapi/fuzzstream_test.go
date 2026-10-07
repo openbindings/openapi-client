@@ -16,7 +16,7 @@ import (
 // iterator with production. JSON-seq seeds all begin with RS; the fuzzed
 // records are arbitrary, including raw delimiters, malformed text and
 // non-ASCII bytes. The corpus limit keeps each fuzz execution bounded.
-func stream7JSONOracle(data string, seq bool) ([]any, []bool) {
+func streamJSONOracle(data string, seq bool) ([]any, []bool) {
 	delimiter := "\n"
 	if seq {
 		delimiter = "\x1e"
@@ -74,7 +74,7 @@ func stream7JSONOracle(data string, seq bool) ([]any, []bool) {
 	}
 	return values, bad
 }
-func FuzzStream7JSONFraming(f *testing.F) {
+func FuzzItemsJSONFraming(f *testing.F) {
 	for _, seed := range []string{"1\n{\"n\":9007199254740993}\n", "\x1e123\x1etrue \x1e[1,2]", "\n{bad}\nnull\n", "\"é\\n\\u001e\"\n", "\x1e\x1e{}\n", " ", ""} {
 		f.Add(seed, byte(1), false)
 		f.Add(seed, byte(3), true)
@@ -89,9 +89,9 @@ func FuzzStream7JSONFraming(f *testing.F) {
 			ct = "application/json-seq"
 			wire = "\x1e" + wire
 		}
-		want, bad := stream7JSONOracle(wire, seq)
-		r, _ := stream7Response(t, ct, wire, nil, int(chunk)%31+1)
-		got, errs := stream7Collect[any](r)
+		want, bad := streamJSONOracle(wire, seq)
+		r, _ := streamedResponse(t, ct, wire, nil, int(chunk)%31+1)
+		got, errs := streamCollect[any](r)
 		if len(got) != len(want) {
 			t.Fatalf("got %d want %d; errors %v wire %q", len(got), len(want), errs, wire)
 		}
@@ -111,7 +111,7 @@ func FuzzStream7JSONFraming(f *testing.F) {
 // escaped physical line boundaries, and vary CR/LF/CRLF terminators. JSON
 // marshaling constructs expected event objects, never the production SSE
 // encoder. An incomplete final block must not dispatch (HTML §9.2.6).
-func FuzzStream7SSEFields(f *testing.F) {
+func FuzzEventsFields(f *testing.F) {
 	f.Add("Rex\nFido", uint16(0), byte(0))
 	f.Add("é\xff\n", uint16(1000), byte(1))
 	f.Add("", uint16(12), byte(2))
@@ -131,14 +131,14 @@ func FuzzStream7SSEFields(f *testing.F) {
 		num, _ := json.Marshal(retry)
 		wire.Write(num)
 		wire.WriteString(sep + sep + "data: unfinished")
-		r, _ := stream7Response(t, "text/event-stream", wire.String(), nil, 1+int(ending)%7)
-		got, errs := stream7Collect[map[string]any](r)
-		stream7NoErrors(t, errs)
+		r, _ := streamedResponse(t, "text/event-stream", wire.String(), nil, 1+int(ending)%7)
+		got, errs := streamCollect[map[string]any](r)
+		streamNoErrors(t, errs)
 		want := map[string]any{"data": data, "id": "", "retry": json.Number(string(num))}
 		if len(got) != 1 || !reflect.DeepEqual(got[0], want) {
 			t.Fatalf("got %#v want %#v wire %q", got, want, wire.String())
 		}
-		r, _ = stream7Response(t, "text/event-stream", wire.String(), nil, 1)
+		r, _ = streamedResponse(t, "text/event-stream", wire.String(), nil, 1)
 		i := 0
 		for ev, err := range openapi.Events(r) {
 			if err != nil || ev.Data == nil || !bytes.Equal(ev.Data, []byte(data)) || !ev.IDSet || ev.ID != "" || !ev.RetrySet || ev.Retry.Milliseconds() != int64(retry) {

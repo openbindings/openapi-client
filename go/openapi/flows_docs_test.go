@@ -18,7 +18,7 @@ import (
 // against httptest servers: scenarios 8 (Example_sharedTransport, its
 // documents YAML), 12 (Example_bounds, "all documents together") and 18c
 // (Example_loadExactly). Scenario 18b (Example_schemasAsWritten) has its
-// runnable equivalent, TestSchema9FlowSchemasAsWritten, in
+// runnable equivalent, TestSchemaFlowSchemasAsWritten, in
 // schema_editions_test.go.
 
 // Example_loadExactly: a library loads documents exactly as it chooses:

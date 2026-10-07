@@ -11,13 +11,13 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-type prepared8Tunnel struct {
+type connectTunnel struct {
 	bytes.Buffer
 	closeErr error
 	closed   int
 }
 
-func (b *prepared8Tunnel) Close() error {
+func (b *connectTunnel) Close() error {
 	b.closed++
 	return b.closeErr
 }
@@ -28,13 +28,13 @@ func (b *prepared8Tunnel) Close() error {
 // raw tunnel Close behavior to that transport, including its error:
 // "Closing an unchanged upgrade or tunnel body has the transport's
 // behavior".
-func TestPrepared8ConnectTunnelOwnership(t *testing.T) {
+func TestSendConnectTunnelBodyUnchanged(t *testing.T) {
 	closeErr := errors.New("transport tunnel close")
-	body := &prepared8Tunnel{closeErr: closeErr}
+	body := &connectTunnel{closeErr: closeErr}
 	body.WriteString("from peer")
 	var sent bool
 	doc := editionDoc("3.2.1", `"/tunnel":{"additionalOperations":{"CONNECT":{"operationId":"connect","responses":{"200":{"description":"tunnel"}}}}}`)
-	c := editionClient(t, doc, &openapi.Options{BaseURL: "https://tunnel.example.test", HTTPClient: &http.Client{Transport: stream7RT(func(r *http.Request) (*http.Response, error) {
+	c := editionClient(t, doc, &openapi.Options{BaseURL: "https://tunnel.example.test", HTTPClient: &http.Client{Transport: streamRT(func(r *http.Request) (*http.Response, error) {
 		sent = true
 		if r.Method != "CONNECT" || r.URL.Host != "tunnel.example.test:443" || r.URL.Path != "" || r.Header.Get("X-Tunnel") != "requested" {
 			t.Errorf("caller edits not preserved: %s %s %v", r.Method, r.URL, r.Header)
@@ -42,7 +42,7 @@ func TestPrepared8ConnectTunnelOwnership(t *testing.T) {
 		if op := openapi.OperationFromContext(r.Context()); op == nil || op.Key != "connect" {
 			t.Errorf("missing CONNECT operation in transport context")
 		}
-		return stream7HTTP(r, 200, "", body), nil
+		return streamHTTP(r, 200, "", body), nil
 	})}})
 	req := mustPrepare(t, c, "connect", nil)
 	if sent {
@@ -81,7 +81,7 @@ func TestPrepared8ConnectTunnelOwnership(t *testing.T) {
 // Decode applies those rules to raw Send responses at any status, without
 // StatusError; a forbidden body supplied by a custom transport must remain
 // unread even if its media claims JSON.
-func TestPrepared8DecodeNoBody(t *testing.T) {
+func TestDecodeNoBodyStatuses(t *testing.T) {
 	doc := editionDoc("3.2.1", `"/x":{"get":{"operationId":"get"},"head":{"operationId":"head"},"additionalOperations":{"CONNECT":{"operationId":"connect"}}}`)
 	for _, tc := range []struct {
 		key    string
@@ -91,9 +91,9 @@ func TestPrepared8DecodeNoBody(t *testing.T) {
 		{"head", 200}, {"connect", 200},
 	} {
 		t.Run(tc.key+" "+http.StatusText(tc.status), func(t *testing.T) {
-			body := &stream7Body{reader: strings.NewReader("not a JSON body")}
-			c := editionClient(t, doc, &openapi.Options{BaseURL: "https://body.example.test", HTTPClient: &http.Client{Transport: stream7RT(func(r *http.Request) (*http.Response, error) {
-				return stream7HTTP(r, tc.status, "application/json", body), nil
+			body := &streamBody{reader: strings.NewReader("not a JSON body")}
+			c := editionClient(t, doc, &openapi.Options{BaseURL: "https://body.example.test", HTTPClient: &http.Client{Transport: streamRT(func(r *http.Request) (*http.Response, error) {
+				return streamHTTP(r, tc.status, "application/json", body), nil
 			})}})
 			req := mustPrepare(t, c, tc.key, nil)
 			resp, err := req.Send(t.Context())

@@ -23,7 +23,7 @@ import (
 // waits the suite's grace period on top of the channel that proves the
 // state, and the race detector checks the rest (the iterator writes caller
 // state the test then writes, as gatedReader does in
-// regress_stage3_upload_test.go). Run with -race. client.go, Input.Body: "An
+// upload_inflight_read_test.go). Run with -race. client.go, Input.Body: "An
 // iterator is written one item at a time as it yields, so a large body is
 // never held. It runs on a goroutine of the transport; its yield returns
 // false once the body is no longer wanted. Call waits for the iterator to

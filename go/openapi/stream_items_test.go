@@ -18,7 +18,7 @@ import (
 // repeated RS is not an empty record, malformed records are recoverable,
 // and top-level scalars require trailing JSON whitespace. JSON Lines has
 // exactly one value per nonblank line. Final non-LF JSON lines remain lines.
-func TestStream7JSONFraming(t *testing.T) {
+func TestItemsJSONFraming(t *testing.T) {
 	cases := []struct {
 		name, ct, wire string
 		want           []any
@@ -36,8 +36,8 @@ func TestStream7JSONFraming(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			for _, chunks := range [][]int{nil, {1}, {2, 1, 7, 3}} {
-				r, body := stream7Response(t, tc.ct, tc.wire, nil, chunks...)
-				got, errs := stream7Collect[any](r)
+				r, body := streamedResponse(t, tc.ct, tc.wire, nil, chunks...)
+				got, errs := streamCollect[any](r)
 				if len(got) != len(tc.want) {
 					t.Fatalf("chunks %v: got %d items, want %d: %v", chunks, len(got), len(tc.want), errs)
 				}
@@ -66,7 +66,7 @@ func TestStream7JSONFraming(t *testing.T) {
 
 // Each successful item is decoded into a fresh T (stream.go Items); target
 // errors wrap ErrItem and do not poison the decoder for the next record.
-func TestStream7FreshTypedTargetsAndRecovery(t *testing.T) {
+func TestItemsFreshTargetPerItem(t *testing.T) {
 	type item struct {
 		A int `json:"a"`
 		B int `json:"b"`
@@ -77,8 +77,8 @@ func TestStream7FreshTypedTargetsAndRecovery(t *testing.T) {
 			if ct == "application/json-seq" {
 				wire = "\x1e" + strings.ReplaceAll(strings.TrimSuffix(wire, "\n"), "\n", "\n\x1e") + "\n"
 			}
-			r, _ := stream7Response(t, ct, wire, nil, 1)
-			got, errs := stream7Collect[*item](r)
+			r, _ := streamedResponse(t, ct, wire, nil, 1)
+			got, errs := streamCollect[*item](r)
 			if len(got) != 3 {
 				t.Fatalf("got %d items", len(got))
 			}
@@ -95,7 +95,7 @@ func TestStream7FreshTypedTargetsAndRecovery(t *testing.T) {
 // Call media and target precedence also governs whole-body Items. A
 // missing, repeated or malformed Content-Type is application/octet-stream;
 // response schemas never supply a missing HTTP media type.
-func TestStream7WholeBodyFallback(t *testing.T) {
+func TestItemsWholeBodyFallback(t *testing.T) {
 	for _, tc := range []struct {
 		ct, wire string
 		want     any
@@ -108,47 +108,47 @@ func TestStream7WholeBodyFallback(t *testing.T) {
 		{"application/octet-stream", "abc", []byte("abc")},
 	} {
 		t.Run(tc.ct, func(t *testing.T) {
-			r, _ := stream7Response(t, tc.ct, tc.wire, nil, 1)
-			got, errs := stream7Collect[any](r)
-			stream7NoErrors(t, errs)
+			r, _ := streamedResponse(t, tc.ct, tc.wire, nil, 1)
+			got, errs := streamCollect[any](r)
+			streamNoErrors(t, errs)
 			if len(got) != 1 || !reflect.DeepEqual(got[0], tc.want) {
 				t.Fatalf("got %#v want %#v", got, tc.want)
 			}
 		})
 	}
 	t.Run("repeated header", func(t *testing.T) {
-		r, _ := stream7Response(t, "application/jsonl", "1\n2\n", nil)
+		r, _ := streamedResponse(t, "application/jsonl", "1\n2\n", nil)
 		r.Header.Add("Content-Type", "application/jsonl")
-		got, errs := stream7Collect[any](r)
-		stream7NoErrors(t, errs)
+		got, errs := streamCollect[any](r)
+		streamNoErrors(t, errs)
 		if len(got) != 1 || !bytes.Equal(got[0].([]byte), []byte("1\n2\n")) {
 			t.Fatalf("got %#v", got)
 		}
 	})
 	for _, ct := range []string{"", "application/json", "text/plain"} {
 		t.Run("empty "+ct, func(t *testing.T) {
-			r, _ := stream7Response(t, ct, "", nil)
-			got, errs := stream7Collect[any](r)
+			r, _ := streamedResponse(t, ct, "", nil)
+			got, errs := streamCollect[any](r)
 			if len(got) != 0 || len(errs) != 0 {
 				t.Fatalf("empty body yielded %v %v", got, errs)
 			}
 		})
 	}
 	t.Run("typed XML", func(t *testing.T) {
-		r, _ := stream7Response(t, "application/xml", "<x><n>3</n></x>", nil, 1)
+		r, _ := streamedResponse(t, "application/xml", "<x><n>3</n></x>", nil, 1)
 		type x struct {
 			N int `xml:"n"`
 		}
-		got, errs := stream7Collect[x](r)
-		stream7NoErrors(t, errs)
+		got, errs := streamCollect[x](r)
+		streamNoErrors(t, errs)
 		if len(got) != 1 || got[0].N != 3 {
 			t.Fatalf("got %+v", got)
 		}
 	})
 	t.Run("raw bypass", func(t *testing.T) {
-		r, _ := stream7Response(t, "application/jsonl", "1\n{bad}\n", nil)
-		got, errs := stream7Collect[[]byte](r)
-		stream7NoErrors(t, errs)
+		r, _ := streamedResponse(t, "application/jsonl", "1\n{bad}\n", nil)
+		got, errs := streamCollect[[]byte](r)
+		streamNoErrors(t, errs)
 		if len(got) != 2 || string(got[0]) != "1" || string(got[1]) != "{bad}" {
 			t.Fatalf("raw items %q", got)
 		}
@@ -157,19 +157,19 @@ func TestStream7WholeBodyFallback(t *testing.T) {
 
 // io.Reader requires callers to process n>0 before err. Completed records
 // before a read failure survive; the failure is terminal, not ErrItem.
-func TestStream7ReadResults(t *testing.T) {
+func TestItemsReadErrorAfterCompleteItems(t *testing.T) {
 	boom := errors.New("response read failed")
 	for _, terminal := range []error{io.EOF, boom} {
 		t.Run(terminal.Error(), func(t *testing.T) {
-			body := &stream7Body{reader: &stream7Chunks{data: "1\n2\n", terminal: terminal}}
-			c := stream7Client(t, "3.1.2", stream7RT(func(r *http.Request) (*http.Response, error) {
-				return stream7HTTP(r, 200, "application/jsonl", body), nil
+			body := &streamBody{reader: &streamChunks{data: "1\n2\n", terminal: terminal}}
+			c := streamClient(t, "3.1.2", streamRT(func(r *http.Request) (*http.Response, error) {
+				return streamHTTP(r, 200, "application/jsonl", body), nil
 			}), nil)
 			r, err := mustPrepare(t, c, "get", nil).Send(t.Context())
 			if err != nil {
 				t.Fatal(err)
 			}
-			got, errs := stream7Collect[int](r)
+			got, errs := streamCollect[int](r)
 			want := 2
 			if terminal != io.EOF {
 				want++
@@ -189,7 +189,7 @@ func TestStream7ReadResults(t *testing.T) {
 
 // Items/Events accept only a live Stream/Send response and one iteration.
 // A value copy refers to the same underlying exchange, not a second stream.
-func TestStream7IterationOwnership(t *testing.T) {
+func TestItemsSingleIteration(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		response func(*testing.T) *openapi.Response
@@ -199,18 +199,18 @@ func TestStream7IterationOwnership(t *testing.T) {
 			return &openapi.Response{Response: &http.Response{Header: http.Header{"Content-Type": {"application/jsonl"}}, Body: io.NopCloser(strings.NewReader("1\n"))}}
 		}},
 		{"Call", func(t *testing.T) *openapi.Response {
-			return mustCall(t, stream7CallClient(t, "application/jsonl", "1\n", 200, nil), "get", nil, nil)
+			return mustCall(t, streamCallClient(t, "application/jsonl", "1\n", 200, nil), "get", nil, nil)
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, errs := stream7Collect[any](tc.response(t))
+			_, errs := streamCollect[any](tc.response(t))
 			if len(errs) != 1 || errs[0] == nil {
 				t.Fatalf("errors %v, want exactly one", errs)
 			}
 		})
 	}
 	t.Run("break then another iterator", func(t *testing.T) {
-		r, b := stream7Response(t, "application/jsonl", "1\n2\n", nil, 1)
+		r, b := streamedResponse(t, "application/jsonl", "1\n2\n", nil, 1)
 		copyR := *r
 		seq := openapi.Items[int](r)
 		for v, err := range seq {
@@ -228,7 +228,7 @@ func TestStream7IterationOwnership(t *testing.T) {
 				es = append(es, e)
 			}
 			return es
-		}, func() []error { _, es := stream7Collect[int](&copyR); return es }} {
+		}, func() []error { _, es := streamCollect[int](&copyR); return es }} {
 			es := again()
 			if len(es) != 1 || es[0] == nil {
 				t.Fatalf("repeat errors %v", es)
@@ -236,13 +236,13 @@ func TestStream7IterationOwnership(t *testing.T) {
 		}
 	})
 	t.Run("Events shares ownership", func(t *testing.T) {
-		r, _ := stream7Response(t, "text/event-stream", "data: x\n\n", nil)
+		r, _ := streamedResponse(t, "text/event-stream", "data: x\n\n", nil)
 		for _, err := range openapi.Events(r) {
 			if err != nil {
 				t.Fatal(err)
 			}
 		}
-		_, errs := stream7Collect[any](r)
+		_, errs := streamCollect[any](r)
 		if len(errs) != 1 || errs[0] == nil {
 			t.Fatalf("errors %v", errs)
 		}
@@ -251,15 +251,15 @@ func TestStream7IterationOwnership(t *testing.T) {
 
 // MaxItemBytes is independent of MaxBodyBytes, and a size error is terminal.
 // Raw direct Body reads are deliberately exempt (client.go Options).
-func TestStream7ItemLimits(t *testing.T) {
+func TestItemsMaxItemBytes(t *testing.T) {
 	for _, ct := range []string{"application/jsonl", "application/json-seq", "application/octet-stream"} {
 		t.Run(ct, func(t *testing.T) {
 			wire := "1\n\"" + strings.Repeat("x", 256) + "\"\n2\n"
 			if ct == "application/json-seq" {
 				wire = "\x1e" + strings.ReplaceAll(strings.TrimSuffix(wire, "\n"), "\n", "\n\x1e") + "\n"
 			}
-			r, b := stream7Response(t, ct, wire, func(o *openapi.Options) { o.MaxItemBytes = 32; o.MaxBodyBytes = 1 }, 1)
-			_, errs := stream7Collect[any](r)
+			r, b := streamedResponse(t, ct, wire, func(o *openapi.Options) { o.MaxItemBytes = 32; o.MaxBodyBytes = 1 }, 1)
+			_, errs := streamCollect[any](r)
 			want := 2
 			if ct == "application/octet-stream" {
 				want = 1
@@ -277,32 +277,32 @@ func TestStream7ItemLimits(t *testing.T) {
 		})
 	}
 	t.Run("whole-body exact bound", func(t *testing.T) {
-		r, _ := stream7Response(t, "application/octet-stream", "1234", func(o *openapi.Options) { o.MaxItemBytes = 4 })
-		got, errs := stream7Collect[[]byte](r)
-		stream7NoErrors(t, errs)
+		r, _ := streamedResponse(t, "application/octet-stream", "1234", func(o *openapi.Options) { o.MaxItemBytes = 4 })
+		got, errs := streamCollect[[]byte](r)
+		streamNoErrors(t, errs)
 		if len(got) != 1 || string(got[0]) != "1234" {
 			t.Fatalf("got %q", got)
 		}
 	})
 	t.Run("negative unlimited", func(t *testing.T) {
-		r, _ := stream7Response(t, "application/jsonl", `"`+strings.Repeat("x", 1<<17)+"\"\n", func(o *openapi.Options) { o.MaxItemBytes = -1; o.MaxBodyBytes = 1 })
-		got, errs := stream7Collect[string](r)
-		stream7NoErrors(t, errs)
+		r, _ := streamedResponse(t, "application/jsonl", `"`+strings.Repeat("x", 1<<17)+"\"\n", func(o *openapi.Options) { o.MaxItemBytes = -1; o.MaxBodyBytes = 1 })
+		got, errs := streamCollect[string](r)
+		streamNoErrors(t, errs)
 		if len(got) != 1 || len(got[0]) != 1<<17 {
 			t.Fatalf("got %d items", len(got))
 		}
 	})
 	t.Run("direct Body unbounded", func(t *testing.T) {
-		r, _ := stream7Response(t, "application/octet-stream", "123456789", func(o *openapi.Options) { o.MaxItemBytes = 1; o.MaxBodyBytes = 1 })
+		r, _ := streamedResponse(t, "application/octet-stream", "123456789", func(o *openapi.Options) { o.MaxItemBytes = 1; o.MaxBodyBytes = 1 })
 		got, err := io.ReadAll(r.Body)
 		if err != nil || string(got) != "123456789" {
 			t.Fatalf("read %q %v", got, err)
 		}
 	})
 	t.Run("body limit does not cap Items", func(t *testing.T) {
-		r, _ := stream7Response(t, "application/jsonl", "12345\n", func(o *openapi.Options) { o.MaxItemBytes = 32; o.MaxBodyBytes = 1 })
-		got, errs := stream7Collect[int](r)
-		stream7NoErrors(t, errs)
+		r, _ := streamedResponse(t, "application/jsonl", "12345\n", func(o *openapi.Options) { o.MaxItemBytes = 32; o.MaxBodyBytes = 1 })
+		got, errs := streamCollect[int](r)
+		streamNoErrors(t, errs)
 		if !reflect.DeepEqual(got, []int{12345}) {
 			t.Fatal(got)
 		}
@@ -310,7 +310,7 @@ func TestStream7ItemLimits(t *testing.T) {
 }
 
 // Stream applies Call's pre-dispatch policy, including zero values.
-func TestStream7ZeroRefusals(t *testing.T) {
+func TestStreamZeroClientAndRequestRefused(t *testing.T) {
 	for _, run := range []func() (*openapi.Response, error){func() (*openapi.Response, error) {
 		return new(openapi.Client).Stream(context.Background(), "missing", nil)
 	}, func() (*openapi.Response, error) { return new(openapi.Request).Stream(context.Background()) }} {

@@ -290,7 +290,7 @@ func FuzzMediaTypes(f *testing.F) {
 // and a response Content-Type ending so are refused too. A list splitter
 // that dropped the last element would accept the contentType with its other
 // types and no Err.
-func TestVP11QuotedBackslashAtTheEnd(t *testing.T) {
+func TestMediaTypeTrailingQuotedBackslash(t *testing.T) {
 	p := newMediaProbe(t)
 	for _, s := range []string{`text/plain; a="x\`, `text/plain, application/json; a="\`, `text/plain; a="\\\`, `image/png; q="\`} {
 		t.Run(s, func(t *testing.T) {

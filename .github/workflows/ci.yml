@@ -57,7 +57,7 @@ jobs:
         env:
           GOWORK: "off"
       - name: Exercise octal word boundaries on 32-bit Go
-        run: go test ./openapi -run '^TestReviewRepairOctalValues$'
+        run: go test ./openapi -run '^TestYAMLOctalValuesExact$'
         working-directory: go
         env:
           GOWORK: "off"
@@ -70,7 +70,7 @@ jobs:
         with:
           go-version-file: go/go.mod
       - name: Verify native Windows drive and file URI loading
-        run: go test ./openapi -run '^TestReviewRepairWindowsPaths$' -v
+        run: go test ./openapi -run '^TestWindowsPathEntryURIs$' -v
         working-directory: go
         env:
           GOWORK: "off"

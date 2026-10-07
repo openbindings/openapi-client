@@ -23,7 +23,7 @@ func editionPost(version, media, schema string) string {
 
 // describe.go Message/Media and Input.Body: Swagger body normalization and
 // equivalent ordinary calls, response decoding, raw sends and replay in all
-// editions. This is a 3.1 behavior pin alongside newly admitted editions.
+// editions, 3.1 included.
 func TestEditionsJSONFlow(t *testing.T) {
 	for _, version := range editionVersions {
 		t.Run(version, func(t *testing.T) {

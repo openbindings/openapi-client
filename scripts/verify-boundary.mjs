@@ -1,6 +1,12 @@
 import { readFile, readdir } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
-import { isForbiddenPackage, isForbiddenGoPackage } from "./boundary-policy.mjs";
+import {
+  goDeclaredNames,
+  isForbiddenGoPackage,
+  isForbiddenPackage,
+  processLabelInGoFileName,
+  processLabelInGoName,
+} from "./boundary-policy.mjs";
 
 // Repository ownership is not an architectural dependency. These qualified
 // leaves are protocol-neutral; Core, invoker and synthesis remain forbidden.
@@ -96,6 +102,26 @@ for (const name of goTextFiles) {
       throw new Error(`go/${name}:${index + 1} cites development records ("${match[0]}"); cite the package documentation or a specification instead`);
     }
   });
+}
+
+// Go file names and the names Go declarations introduce say what the code
+// does or what a test checks, never how it was developed.
+const processLabels = [];
+for (const name of goFiles) {
+  const fileLabel = processLabelInGoFileName(name.split(/[\\/]/).pop());
+  if (fileLabel) {
+    processLabels.push(`go/${name}: file name carries "${fileLabel}"`);
+  }
+  const source = await readFile(new URL(`../go/${name}`, import.meta.url), "utf8");
+  for (const { name: declared, line } of goDeclaredNames(source)) {
+    const label = processLabelInGoName(declared);
+    if (label) {
+      processLabels.push(`go/${name}:${line}: ${declared} carries "${label}"`);
+    }
+  }
+}
+if (processLabels.length > 0) {
+  throw new Error(`Go names carry development-process labels; name what the code does or the test checks instead:\n${processLabels.join("\n")}`);
 }
 
 const tsCorpusAdapter = await readFile(

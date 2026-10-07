@@ -15,7 +15,7 @@ import (
 // alternatives and schemes, and a document with many operations sharing
 // security. Many alternatives and schemes compile linearly; a long redirect
 // chain costs linearly and is bounded by the hop limit. The harness is in
-// regress2_scale_test.go.
+// scaling_test.go.
 
 const scaleBase = "https://api.example.test"
 

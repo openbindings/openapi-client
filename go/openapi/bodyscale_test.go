@@ -13,7 +13,7 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Body scaling tests, with the harness of regress2_scale_test.go (four times
+// Body scaling tests, with the harness of scaling_test.go (four times
 // the input within 12 times the time, best of 5, or 8 times the allocations
 // or bytes). Every compiled or decoded form is computed at most once per
 // document node, and a read costs O(size of what it returns or compares): a
