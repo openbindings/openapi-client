@@ -1,6 +1,7 @@
 package openapi
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -57,10 +58,13 @@ func (d *document) swaggerParam(t value, at string, p *Param) param {
 		if p.CollectionFormat == "" {
 			p.CollectionFormat = "csv"
 		}
-		for v, depth := t, 0; v.str("type") == "array"; v, depth = v.get("items"), depth+1 {
+		for v, depth := t, 0; v.str("type") == "array" && !bundled(v); v, depth = v.get("items"), depth+1 {
 			cf := v.str("collectionFormat")
 			if !slices.Contains([]string{"", "csv", "ssv", "tsv", "pipes", "multi"}, cf) || cf == "multi" && (depth > 0 || p.In != "query" && p.In != "formData") {
 				p.Err = fmt.Errorf("unsupported collectionFormat %q for %s", cf, p.In)
+			}
+			if bundled(v.get("items")) { // an Items Object is never a reference
+				p.Err = errBundle
 			}
 		}
 	}
@@ -75,6 +79,7 @@ func (d *document) swaggerParam(t value, at string, p *Param) param {
 	pp.nameHash = uint32(maphash.String(paramSeed, p.Name))
 	loc, _, dot := strings.Cut(p.Name, ".")
 	pp.dotted = p.Name == "" || strings.HasPrefix(p.Name, "/") || strings.HasPrefix(p.Name, "Input.Body") || dot && slices.Contains([]string{"path", "query", "header", "cookie", "querystring"}, loc)
+	p.Err = d.defect(t, p.Err) // so a formData field built for a plan holds its description's Err
 	return pp
 }
 
@@ -226,7 +231,10 @@ func (o *operation) swaggerBody(n value) error {
 	if body != nil && len(fields) > 0 {
 		return errors.New("Swagger body and formData parameters cannot coexist")
 	}
-	types := n.get("consumes")
+	var types value
+	if !bundled(n) {
+		types = n.get("consumes")
+	}
 	if !types.ok() {
 		types = o.doc.root().get("consumes")
 	}
@@ -242,7 +250,9 @@ func (o *operation) swaggerBody(n value) error {
 	} else {
 		encoding = &formEncoding{byName: map[string]*field{}, swagger: true}
 		for _, p := range fields {
-			f := &field{param: p, roots: []value{p.legacy}, types: textField.types, parsed: textField.parsed, class: textClass}
+			// A defective parameter refuses every value given for it, under
+			// any media type.
+			f := &field{param: p, err: p.Err, roots: []value{p.legacy}, types: textField.types, parsed: textField.parsed, class: textClass}
 			f.ContentType = "text/plain"
 			if p.legacy.str("type") == "file" {
 				f.types, f.parsed, f.class = []string{octetStream.full}, []parsedMedia{octetStream}, otherClass
@@ -272,6 +282,9 @@ func (o *operation) swaggerBody(n value) error {
 		}
 	}
 	o.Body = &Message{Required: required, Source: src, Description: desc, Media: c.media}
+	if bundled(types) {
+		o.Body.Err = errBundle // the media types it takes are in a document to bundle first
+	}
 	o.body, o.encodings = c.parsed, c.encodings
 	return nil
 }
@@ -318,8 +331,14 @@ func (d *document) swaggerResponse(v value, src string, produces value) (*Messag
 	if schema := d.schema(t.get("schema"), at, "/schema"); schema != nil {
 		c = d.swaggerContent(schema, produces.strs(), at)
 	}
-	c.headers = d.headers(t.get("headers"), at+"/headers")
-	return &Message{Source: at, Description: desc, Headers: c.headers, Media: c.media}, c
+	h := t.get("headers")
+	if bundled(h) || bundled(produces) { // produces so written makes each response unusable
+		c.err = errBundle
+	}
+	if !bundled(h) {
+		c.headers = d.headers(h, at+"/headers")
+	}
+	return &Message{Source: at, Description: desc, Headers: c.headers, Media: c.media, Err: c.err}, c
 }
 
 // membersChecked adds Swagger required-field checks without making a second
@@ -361,8 +380,10 @@ func (d *document) positionalEncoding(enc *formEncoding, v value, roots []value,
 		}
 	})
 	var prefix []value
-	for _, e := range v.get("prefixEncoding").members() {
-		prefix = append(prefix, e)
+	if list := v.get("prefixEncoding"); !bundled(list) { // the part holding it reports it
+		for _, e := range list.members() {
+			prefix = append(prefix, e)
+		}
 	}
 	if len(prefix) == 0 && !v.get("itemEncoding").ok() {
 		named = slices.Clone(named)
@@ -429,7 +450,7 @@ func (w *partWriter) position(enc *formEncoding, v any, body string, i int) {
 	var content any
 	err := w.c.doc.members(v, noFields, func(n string, _ *field, x any) { count++; name, content = n, x })
 	if err != nil || count != 1 {
-		w.re.input(at.String(), errors.New("a form-data array item requires a one-property object or Part with Content-Disposition"))
+		w.re.input(at.String(), cmp.Or(f.Err, errors.New("a form-data array item requires a one-property object or Part with Content-Disposition")))
 		return
 	}
 	if !null(content) {

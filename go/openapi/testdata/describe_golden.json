@@ -1,0 +1,4134 @@
+[
+ {
+  "edition": "2.0",
+  "version": "2.0",
+  "documents": [
+   "https://golden.example.test/v2/swagger.json",
+   "https://golden.example.test/v2/params.json",
+   "https://golden.example.test/v2/pathitem.json"
+  ],
+  "operations": [
+   {
+    "key": "listPets",
+    "id": "listPets",
+    "method": "GET",
+    "path": "/pets",
+    "summary": "List",
+    "description": "Lists pets",
+    "tags": [
+     "pets",
+     "read"
+    ],
+    "deprecated": false,
+    "params": [
+     {
+      "key": "X-Trace",
+      "name": "X-Trace",
+      "in": "header",
+      "description": "",
+      "required": false,
+      "deprecated": false,
+      "style": "",
+      "explode": false,
+      "explodeSet": false,
+      "allowReserved": false,
+      "allowEmptyValue": false,
+      "contentType": "",
+      "collectionFormat": "",
+      "schema": {
+       "raw": {
+        "type": "string"
+       },
+       "source": "https://golden.example.test/v2/swagger.json#/parameters/trace",
+       "base": "https://golden.example.test/v2/swagger.json",
+       "version": "2.0"
+      },
+      "headers": null,
+      "source": "https://golden.example.test/v2/swagger.json#/parameters/trace",
+      "err": null
+     },
+     {
+      "key": "limit",
+      "name": "limit",
+      "in": "query",
+      "description": "page size",
+      "required": false,
+      "deprecated": false,
+      "style": "",
+      "explode": false,
+      "explodeSet": false,
+      "allowReserved": false,
+      "allowEmptyValue": false,
+      "contentType": "",
+      "collectionFormat": "",
+      "schema": {
+       "raw": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100,
+        "default": 10
+       },
+       "source": "https://golden.example.test/v2/swagger.json#/parameters/limit",
+       "base": "https://golden.example.test/v2/swagger.json",
+       "version": "2.0"
+      },
+      "headers": null,
+      "source": "https://golden.example.test/v2/swagger.json#/parameters/limit",
+      "err": null
+     },
+     {
+      "key": "tags",
+      "name": "tags",
+      "in": "query",
+      "description": "",
+      "required": false,
+      "deprecated": false,
+      "style": "",
+      "explode": false,
+      "explodeSet": false,
+      "allowReserved": false,
+      "allowEmptyValue": false,
+      "contentType": "",
+      "collectionFormat": "multi",
+      "schema": {
+       "raw": {
+        "type": "array",
+        "items": {
+         "type": "string"
+        }
+       },
+       "source": "https://golden.example.test/v2/swagger.json#/paths/~1pets/get/parameters/1",
+       "base": "https://golden.example.test/v2/swagger.json",
+       "version": "2.0"
+      },
+      "headers": null,
+      "source": "https://golden.example.test/v2/swagger.json#/paths/~1pets/get/parameters/1",
+      "err": null
+     },
+     {
+      "key": "ids",
+      "name": "ids",
+      "in": "query",
+      "description": "",
+      "required": false,
+      "deprecated": false,
+      "style": "",
+      "explode": false,
+      "explodeSet": false,
+      "allowReserved": false,
+      "allowEmptyValue": false,
+      "contentType": "",
+      "collectionFormat": "csv",
+      "schema": {
+       "raw": {
+        "type": "array",
+        "items": {
+         "type": "array",
+         "items": {
+          "type": "integer"
+         },
+         "collectionFormat": "pipes"
+        }
+       },
+       "source": "https://golden.example.test/v2/swagger.json#/paths/~1pets/get/parameters/2",
+       "base": "https://golden.example.test/v2/swagger.json",
+       "version": "2.0"
+      },
+      "headers": null,
+      "source": "https://golden.example.test/v2/swagger.json#/paths/~1pets/get/parameters/2",
+      "err": null
+     },
+     {
+      "key": "flag",
+      "name": "flag",
+      "in": "query",
+      "description": "",
+      "required": false,
+      "deprecated": false,
+      "style": "",
+      "explode": false,
+      "explodeSet": false,
+      "allowReserved": false,
+      "allowEmptyValue": true,
+      "contentType": "",
+      "collectionFormat": "",
+      "schema": {
+       "raw": {
+        "type": "boolean"
+       },
+       "source": "https://golden.example.test/v2/swagger.json#/paths/~1pets/get/parameters/3",
+       "base": "https://golden.example.test/v2/swagger.json",
+       "version": "2.0"
+      },
+      "headers": null,
+      "source": "https://golden.example.test/v2/swagger.json#/paths/~1pets/get/parameters/3",
+      "err": null
+     },
+     {
+      "key": "Accept",
+      "name": "Accept",
+      "in": "header",
+      "description": "",
+      "required": false,
+      "deprecated": false,
+      "style": "",
+      "explode": false,
+      "explodeSet": false,
+      "allowReserved": false,
+      "allowEmptyValue": false,
+      "contentType": "",
+      "collectionFormat": "",
+      "schema": {
+       "raw": {
+        "type": "string"
+       },
+       "source": "https://golden.example.test/v2/swagger.json#/paths/~1pets/get/parameters/4",
+       "base": "https://golden.example.test/v2/swagger.json",
+       "version": "2.0"
+      },
+      "headers": null,
+      "source": "https://golden.example.test/v2/swagger.json#/paths/~1pets/get/parameters/4",
+      "err": null
+     }
+    ],
+    "body": null,
+    "responses": [
+     {
+      "key": "200",
+      "description": "ok",
+      "required": false,
+      "headers": [
+       {
+        "key": "",
+        "name": "X-Next",
+        "in": "header",
+        "description": "",
+        "required": false,
+        "deprecated": false,
+        "style": "",
+        "explode": false,
+        "explodeSet": false,
+        "allowReserved": false,
+        "allowEmptyValue": false,
+        "contentType": "",
+        "collectionFormat": "",
+        "schema": {
+         "raw": {
+          "type": "string"
+         },
+         "source": "https://golden.example.test/v2/swagger.json#/paths/~1pets/get/responses/200/headers/X-Next",
+         "base": "https://golden.example.test/v2/swagger.json",
+         "version": "2.0"
+        },
+        "headers": null,
+        "source": "https://golden.example.test/v2/swagger.json#/paths/~1pets/get/responses/200/headers/X-Next",
+        "err": null
+       },
+       {
+        "key": "",
+        "name": "X-Rate",
+        "in": "header",
+        "description": "",
+        "required": false,
+        "deprecated": false,
+        "style": "",
+        "explode": false,
+        "explodeSet": false,
+        "allowReserved": false,
+        "allowEmptyValue": false,
+        "contentType": "",
+        "collectionFormat": "csv",
+        "schema": {
+         "raw": {
+          "type": "array",
+          "items": {
+           "type": "integer"
+          }
+         },
+         "source": "https://golden.example.test/v2/swagger.json#/paths/~1pets/get/responses/200/headers/X-Rate",
+         "base": "https://golden.example.test/v2/swagger.json",
+         "version": "2.0"
+        },
+        "headers": null,
+        "source": "https://golden.example.test/v2/swagger.json#/paths/~1pets/get/responses/200/headers/X-Rate",
+        "err": null
+       }
+      ],
+      "media": [
+       {
+        "type": "application/json",
+        "schema": {
+         "raw": {
+          "type": "array",
+          "items": {
+           "$ref": "#/definitions/Pet"
+          }
+         },
+         "source": "https://golden.example.test/v2/swagger.json#/paths/~1pets/get/responses/200/schema",
+         "base": "https://golden.example.test/v2/swagger.json",
+         "version": "2.0",
+         "references": [
+          {
+           "at": "/items/$ref",
+           "keyword": "$ref",
+           "value": "#/definitions/Pet",
+           "uri": "https://golden.example.test/v2/swagger.json#/definitions/Pet",
+           "target": "https://golden.example.test/v2/swagger.json#/definitions/Pet"
+          }
+         ]
+        },
+        "itemSchema": null,
+        "sequential": false,
+        "encoding": null,
+        "source": "https://golden.example.test/v2/swagger.json#/paths/~1pets/get/responses/200",
+        "err": null
+       },
+       {
+        "type": "application/xml",
+        "schema": {
+         "raw": {
+          "type": "array",
+          "items": {
+           "$ref": "#/definitions/Pet"
+          }
+         },
+         "source": "https://golden.example.test/v2/swagger.json#/paths/~1pets/get/responses/200/schema",
+         "base": "https://golden.example.test/v2/swagger.json",
+         "version": "2.0",
+         "references": [
+          {
+           "at": "/items/$ref",
+           "keyword": "$ref",
+           "value": "#/definitions/Pet",
+           "uri": "https://golden.example.test/v2/swagger.json#/definitions/Pet",
+           "target": "https://golden.example.test/v2/swagger.json#/definitions/Pet"
+          }
+         ]
+        },
+        "itemSchema": null,
+        "sequential": false,
+        "encoding": null,
+        "source": "https://golden.example.test/v2/swagger.json#/paths/~1pets/get/responses/200",
+        "err": null
+       }
+      ],
+      "source": "https://golden.example.test/v2/swagger.json#/paths/~1pets/get/responses/200",
+      "err": null
+     },
+     {
+      "key": "default",
+      "description": "error",
+      "required": false,
+      "headers": [
+       {
+        "key": "",
+        "name": "X-Request-Id",
+        "in": "header",
+        "description": "request id",
+        "required": false,
+        "deprecated": false,
+        "style": "",
+        "explode": false,
+        "explodeSet": false,
+        "allowReserved": false,
+        "allowEmptyValue": false,
+        "contentType": "",
+        "collectionFormat": "",
+        "schema": {
+         "raw": {
+          "type": "string"
+         },
+         "source": "https://golden.example.test/v2/swagger.json#/responses/Error/headers/X-Request-Id",
+         "base": "https://golden.example.test/v2/swagger.json",
+         "version": "2.0"
+        },
+        "headers": null,
+        "source": "https://golden.example.test/v2/swagger.json#/responses/Error/headers/X-Request-Id",
+        "err": null
+       }
+      ],
+      "media": [
+       {
+        "type": "application/json",
+        "schema": {
+         "raw": {
+          "type": "object",
+          "properties": {
+           "code": {
+            "type": "integer"
+           },
+           "message": {
+            "type": "string"
+           }
+          }
+         },
+         "source": "https://golden.example.test/v2/swagger.json#/definitions/Error",
+         "base": "https://golden.example.test/v2/swagger.json",
+         "version": "2.0"
+        },
+        "itemSchema": null,
+        "sequential": false,
+        "encoding": null,
+        "source": "https://golden.example.test/v2/swagger.json#/responses/Error",
+        "err": null
+       },
+       {
+        "type": "application/xml",
+        "schema": {
+         "raw": {
+          "type": "object",
+          "properties": {
+           "code": {
+            "type": "integer"
+           },
+           "message": {
+            "type": "string"
+           }
+          }
+         },
+         "source": "https://golden.example.test/v2/swagger.json#/definitions/Error",
+         "base": "https://golden.example.test/v2/swagger.json",
+         "version": "2.0"
+        },
+        "itemSchema": null,
+        "sequential": false,
+        "encoding": null,
+        "source": "https://golden.example.test/v2/swagger.json#/responses/Error",
+        "err": null
+       }
+      ],
+      "source": "https://golden.example.test/v2/swagger.json#/responses/Error",
+      "err": null
+     }
+    ],
+    "servers": [
+     {
+      "id": "server-0",
+      "url": "https://api.example.test/v2",
+      "name": "",
+      "description": "",
+      "variables": null,
+      "source": "",
+      "err": null
+     },
+     {
+      "id": "server-1",
+      "url": "http://api.example.test/v2",
+      "name": "",
+      "description": "",
+      "variables": null,
+      "source": "",
+      "err": null
+     }
+    ],
+    "security": [
+     {
+      "key": "{\"key\":[]}",
+      "schemes": [
+       {
+        "name": "key",
+        "scopes": null,
+        "type": "apiKey",
+        "description": "",
+        "in": "header",
+        "paramName": "X-Key",
+        "scheme": "",
+        "bearerFormat": "",
+        "flows": null,
+        "openIdConnectURL": "",
+        "oauth2MetadataURL": "",
+        "deprecated": false,
+        "source": "https://golden.example.test/v2/swagger.json#/securityDefinitions/key",
+        "err": null
+       }
+      ]
+     },
+     {
+      "key": "{\"oauth\":[\"read\",\"write\"]}",
+      "schemes": [
+       {
+        "name": "oauth",
+        "scopes": [
+         "read",
+         "write",
+         "read"
+        ],
+        "type": "oauth2",
+        "description": "",
+        "in": "",
+        "paramName": "",
+        "scheme": "",
+        "bearerFormat": "",
+        "flows": [
+         {
+          "type": "authorizationCode",
+          "authorizationURL": "https://auth.example.test/authorize",
+          "tokenURL": "https://auth.example.test/token",
+          "refreshURL": "",
+          "deviceAuthorizationURL": "",
+          "scopes": {
+           "read": "read things",
+           "write": "write things"
+          }
+         }
+        ],
+        "openIdConnectURL": "",
+        "oauth2MetadataURL": "",
+        "deprecated": false,
+        "source": "https://golden.example.test/v2/swagger.json#/securityDefinitions/oauth",
+        "err": null
+       }
+      ]
+     }
+    ],
+    "source": "https://golden.example.test/v2/swagger.json#/paths/~1pets/get",
+    "err": null
+   },
+   {
+    "key": "createPet",
+    "id": "createPet",
+    "method": "POST",
+    "path": "/pets",
+    "summary": "",
+    "description": "",
+    "tags": null,
+    "deprecated": false,
+    "params": [
+     {
+      "key": "X-Trace",
+      "name": "X-Trace",
+      "in": "header",
+      "description": "",
+      "required": false,
+      "deprecated": false,
+      "style": "",
+      "explode": false,
+      "explodeSet": false,
+      "allowReserved": false,
+      "allowEmptyValue": false,
+      "contentType": "",
+      "collectionFormat": "",
+      "schema": {
+       "raw": {
+        "type": "string"
+       },
+       "source": "https://golden.example.test/v2/swagger.json#/parameters/trace",
+       "base": "https://golden.example.test/v2/swagger.json",
+       "version": "2.0"
+      },
+      "headers": null,
+      "source": "https://golden.example.test/v2/swagger.json#/parameters/trace",
+      "err": null
+     },
+     {
+      "key": "Content-Type",
+      "name": "Content-Type",
+      "in": "header",
+      "description": "",
+      "required": false,
+      "deprecated": false,
+      "style": "",
+      "explode": false,
+      "explodeSet": false,
+      "allowReserved": false,
+      "allowEmptyValue": false,
+      "contentType": "",
+      "collectionFormat": "",
+      "schema": {
+       "raw": {
+        "type": "string"
+       },
+       "source": "https://golden.example.test/v2/swagger.json#/paths/~1pets/post/parameters/1",
+       "base": "https://golden.example.test/v2/swagger.json",
+       "version": "2.0"
+      },
+      "headers": null,
+      "source": "https://golden.example.test/v2/swagger.json#/paths/~1pets/post/parameters/1",
+      "err": null
+     }
+    ],
+    "body": {
+     "key": "",
+     "description": "",
+     "required": true,
+     "headers": null,
+     "media": [
+      {
+       "type": "application/json",
+       "schema": {
+        "raw": {
+         "type": "object",
+         "required": [
+          "name"
+         ],
+         "properties": {
+          "id": {
+           "type": "integer",
+           "format": "int64"
+          },
+          "name": {
+           "type": "string"
+          },
+          "tag": {
+           "$ref": "#/definitions/Tag"
+          }
+         }
+        },
+        "source": "https://golden.example.test/v2/swagger.json#/definitions/Pet",
+        "base": "https://golden.example.test/v2/swagger.json",
+        "version": "2.0",
+        "references": [
+         {
+          "at": "/properties/tag/$ref",
+          "keyword": "$ref",
+          "value": "#/definitions/Tag",
+          "uri": "https://golden.example.test/v2/swagger.json#/definitions/Tag",
+          "target": "https://golden.example.test/v2/swagger.json#/definitions/Tag"
+         }
+        ]
+       },
+       "itemSchema": null,
+       "sequential": false,
+       "encoding": null,
+       "source": "https://golden.example.test/v2/swagger.json#/paths/~1pets/post/parameters/0",
+       "err": null
+      }
+     ],
+     "source": "https://golden.example.test/v2/swagger.json#/paths/~1pets/post/parameters/0",
+     "err": null
+    },
+    "responses": [
+     {
+      "key": "201",
+      "description": "created",
+      "required": false,
+      "headers": null,
+      "media": null,
+      "source": "https://golden.example.test/v2/swagger.json#/paths/~1pets/post/responses/201",
+      "err": null
+     },
+     {
+      "key": "2xx",
+      "description": "lowercase range",
+      "required": false,
+      "headers": null,
+      "media": null,
+      "source": "https://golden.example.test/v2/swagger.json#/paths/~1pets/post/responses/2xx",
+      "err": {
+       "message": "response key \"2xx\" is not a status code, a range such as 4XX, or default"
+      }
+     }
+    ],
+    "servers": [
+     {
+      "id": "server-0",
+      "url": "https://api.example.test/v2",
+      "name": "",
+      "description": "",
+      "variables": null,
+      "source": "",
+      "err": null
+     },
+     {
+      "id": "server-1",
+      "url": "http://api.example.test/v2",
+      "name": "",
+      "description": "",
+      "variables": null,
+      "source": "",
+      "err": null
+     }
+    ],
+    "security": null,
+    "source": "https://golden.example.test/v2/swagger.json#/paths/~1pets/post",
+    "err": null
+   },
+   {
+    "key": "uploadPhoto",
+    "id": "uploadPhoto",
+    "method": "PUT",
+    "path": "/pets/{petId}",
+    "summary": "",
+    "description": "",
+    "tags": null,
+    "deprecated": false,
+    "params": [
+     {
+      "key": "petId",
+      "name": "petId",
+      "in": "path",
+      "description": "",
+      "required": true,
+      "deprecated": false,
+      "style": "",
+      "explode": false,
+      "explodeSet": false,
+      "allowReserved": false,
+      "allowEmptyValue": false,
+      "contentType": "",
+      "collectionFormat": "",
+      "schema": {
+       "raw": {
+        "type": "string"
+       },
+       "source": "https://golden.example.test/v2/swagger.json#/paths/~1pets~1%7BpetId%7D/parameters/0",
+       "base": "https://golden.example.test/v2/swagger.json",
+       "version": "2.0"
+      },
+      "headers": null,
+      "source": "https://golden.example.test/v2/swagger.json#/paths/~1pets~1%7BpetId%7D/parameters/0",
+      "err": null
+     }
+    ],
+    "body": {
+     "key": "",
+     "description": "",
+     "required": true,
+     "headers": null,
+     "media": [
+      {
+       "type": "multipart/form-data",
+       "schema": {
+        "raw": {
+         "type": "object",
+         "properties": {
+          "note": {
+           "type": "string",
+           "maxLength": 10
+          },
+          "photo": {
+           "type": "file"
+          },
+          "sizes": {
+           "type": "array",
+           "items": {
+            "type": "integer"
+           }
+          }
+         },
+         "required": [
+          "photo"
+         ]
+        },
+        "source": "https://golden.example.test/v2/swagger.json#/paths/~1pets~1%7BpetId%7D/put",
+        "base": "https://golden.example.test/v2/swagger.json",
+        "version": "2.0"
+       },
+       "itemSchema": null,
+       "sequential": true,
+       "encoding": [
+        {
+         "key": "",
+         "name": "photo",
+         "in": "formData",
+         "description": "",
+         "required": true,
+         "deprecated": false,
+         "style": "",
+         "explode": false,
+         "explodeSet": false,
+         "allowReserved": false,
+         "allowEmptyValue": false,
+         "contentType": "application/octet-stream",
+         "collectionFormat": "",
+         "schema": {
+          "raw": {
+           "type": "file"
+          },
+          "source": "https://golden.example.test/v2/swagger.json#/paths/~1pets~1%7BpetId%7D/put/parameters/0",
+          "base": "https://golden.example.test/v2/swagger.json",
+          "version": "2.0"
+         },
+         "headers": null,
+         "source": "https://golden.example.test/v2/swagger.json#/paths/~1pets~1%7BpetId%7D/put/parameters/0",
+         "err": null
+        },
+        {
+         "key": "",
+         "name": "note",
+         "in": "formData",
+         "description": "",
+         "required": false,
+         "deprecated": false,
+         "style": "",
+         "explode": false,
+         "explodeSet": false,
+         "allowReserved": false,
+         "allowEmptyValue": false,
+         "contentType": "text/plain",
+         "collectionFormat": "",
+         "schema": {
+          "raw": {
+           "type": "string",
+           "maxLength": 10
+          },
+          "source": "https://golden.example.test/v2/swagger.json#/paths/~1pets~1%7BpetId%7D/put/parameters/1",
+          "base": "https://golden.example.test/v2/swagger.json",
+          "version": "2.0"
+         },
+         "headers": null,
+         "source": "https://golden.example.test/v2/swagger.json#/paths/~1pets~1%7BpetId%7D/put/parameters/1",
+         "err": null
+        },
+        {
+         "key": "",
+         "name": "sizes",
+         "in": "formData",
+         "description": "",
+         "required": false,
+         "deprecated": false,
+         "style": "",
+         "explode": false,
+         "explodeSet": false,
+         "allowReserved": false,
+         "allowEmptyValue": false,
+         "contentType": "text/plain",
+         "collectionFormat": "ssv",
+         "schema": {
+          "raw": {
+           "type": "array",
+           "items": {
+            "type": "integer"
+           }
+          },
+          "source": "https://golden.example.test/v2/swagger.json#/paths/~1pets~1%7BpetId%7D/put/parameters/2",
+          "base": "https://golden.example.test/v2/swagger.json",
+          "version": "2.0"
+         },
+         "headers": null,
+         "source": "https://golden.example.test/v2/swagger.json#/paths/~1pets~1%7BpetId%7D/put/parameters/2",
+         "err": null
+        }
+       ],
+       "source": "",
+       "err": null
+      },
+      {
+       "type": "application/x-www-form-urlencoded",
+       "schema": {
+        "raw": {
+         "type": "object",
+         "properties": {
+          "note": {
+           "type": "string",
+           "maxLength": 10
+          },
+          "photo": {
+           "type": "file"
+          },
+          "sizes": {
+           "type": "array",
+           "items": {
+            "type": "integer"
+           }
+          }
+         },
+         "required": [
+          "photo"
+         ]
+        },
+        "source": "https://golden.example.test/v2/swagger.json#/paths/~1pets~1%7BpetId%7D/put",
+        "base": "https://golden.example.test/v2/swagger.json",
+        "version": "2.0"
+       },
+       "itemSchema": null,
+       "sequential": false,
+       "encoding": [
+        {
+         "key": "",
+         "name": "photo",
+         "in": "formData",
+         "description": "",
+         "required": true,
+         "deprecated": false,
+         "style": "",
+         "explode": false,
+         "explodeSet": false,
+         "allowReserved": false,
+         "allowEmptyValue": false,
+         "contentType": "application/octet-stream",
+         "collectionFormat": "",
+         "schema": {
+          "raw": {
+           "type": "file"
+          },
+          "source": "https://golden.example.test/v2/swagger.json#/paths/~1pets~1%7BpetId%7D/put/parameters/0",
+          "base": "https://golden.example.test/v2/swagger.json",
+          "version": "2.0"
+         },
+         "headers": null,
+         "source": "https://golden.example.test/v2/swagger.json#/paths/~1pets~1%7BpetId%7D/put/parameters/0",
+         "err": null
+        },
+        {
+         "key": "",
+         "name": "note",
+         "in": "formData",
+         "description": "",
+         "required": false,
+         "deprecated": false,
+         "style": "",
+         "explode": false,
+         "explodeSet": false,
+         "allowReserved": false,
+         "allowEmptyValue": false,
+         "contentType": "text/plain",
+         "collectionFormat": "",
+         "schema": {
+          "raw": {
+           "type": "string",
+           "maxLength": 10
+          },
+          "source": "https://golden.example.test/v2/swagger.json#/paths/~1pets~1%7BpetId%7D/put/parameters/1",
+          "base": "https://golden.example.test/v2/swagger.json",
+          "version": "2.0"
+         },
+         "headers": null,
+         "source": "https://golden.example.test/v2/swagger.json#/paths/~1pets~1%7BpetId%7D/put/parameters/1",
+         "err": null
+        },
+        {
+         "key": "",
+         "name": "sizes",
+         "in": "formData",
+         "description": "",
+         "required": false,
+         "deprecated": false,
+         "style": "",
+         "explode": false,
+         "explodeSet": false,
+         "allowReserved": false,
+         "allowEmptyValue": false,
+         "contentType": "text/plain",
+         "collectionFormat": "ssv",
+         "schema": {
+          "raw": {
+           "type": "array",
+           "items": {
+            "type": "integer"
+           }
+          },
+          "source": "https://golden.example.test/v2/swagger.json#/paths/~1pets~1%7BpetId%7D/put/parameters/2",
+          "base": "https://golden.example.test/v2/swagger.json",
+          "version": "2.0"
+         },
+         "headers": null,
+         "source": "https://golden.example.test/v2/swagger.json#/paths/~1pets~1%7BpetId%7D/put/parameters/2",
+         "err": null
+        }
+       ],
+       "source": "",
+       "err": null
+      }
+     ],
+     "source": "",
+     "err": null
+    },
+    "responses": [
+     {
+      "key": "204",
+      "description": "stored",
+      "required": false,
+      "headers": null,
+      "media": null,
+      "source": "https://golden.example.test/v2/swagger.json#/paths/~1pets~1%7BpetId%7D/put/responses/204",
+      "err": null
+     }
+    ],
+    "servers": [
+     {
+      "id": "server-0",
+      "url": "https://api.example.test/v2",
+      "name": "",
+      "description": "",
+      "variables": null,
+      "source": "",
+      "err": null
+     },
+     {
+      "id": "server-1",
+      "url": "http://api.example.test/v2",
+      "name": "",
+      "description": "",
+      "variables": null,
+      "source": "",
+      "err": null
+     }
+    ],
+    "security": [
+     {
+      "key": "{\"basicAuth\":[]}",
+      "schemes": [
+       {
+        "name": "basicAuth",
+        "scopes": null,
+        "type": "http",
+        "description": "basic credentials",
+        "in": "",
+        "paramName": "",
+        "scheme": "basic",
+        "bearerFormat": "",
+        "flows": null,
+        "openIdConnectURL": "",
+        "oauth2MetadataURL": "",
+        "deprecated": false,
+        "source": "https://golden.example.test/v2/swagger.json#/securityDefinitions/basicAuth",
+        "err": null
+       }
+      ]
+     },
+     {
+      "key": "{\"app\":[],\"qkey\":[]}",
+      "schemes": [
+       {
+        "name": "qkey",
+        "scopes": null,
+        "type": "apiKey",
+        "description": "",
+        "in": "query",
+        "paramName": "api_key",
+        "scheme": "",
+        "bearerFormat": "",
+        "flows": null,
+        "openIdConnectURL": "",
+        "oauth2MetadataURL": "",
+        "deprecated": false,
+        "source": "https://golden.example.test/v2/swagger.json#/securityDefinitions/qkey",
+        "err": null
+       },
+       {
+        "name": "app",
+        "scopes": null,
+        "type": "oauth2",
+        "description": "",
+        "in": "",
+        "paramName": "",
+        "scheme": "",
+        "bearerFormat": "",
+        "flows": [
+         {
+          "type": "clientCredentials",
+          "authorizationURL": "",
+          "tokenURL": "/token",
+          "refreshURL": "",
+          "deviceAuthorizationURL": "",
+          "scopes": {}
+         }
+        ],
+        "openIdConnectURL": "",
+        "oauth2MetadataURL": "",
+        "deprecated": false,
+        "source": "https://golden.example.test/v2/swagger.json#/securityDefinitions/app",
+        "err": null
+       }
+      ]
+     }
+    ],
+    "source": "https://golden.example.test/v2/swagger.json#/paths/~1pets~1%7BpetId%7D/put",
+    "err": null
+   },
+   {
+    "key": "DELETE /pets/{petId}",
+    "id": "",
+    "method": "DELETE",
+    "path": "/pets/{petId}",
+    "summary": "",
+    "description": "",
+    "tags": null,
+    "deprecated": true,
+    "params": [
+     {
+      "key": "petId",
+      "name": "petId",
+      "in": "path",
+      "description": "",
+      "required": true,
+      "deprecated": false,
+      "style": "",
+      "explode": false,
+      "explodeSet": false,
+      "allowReserved": false,
+      "allowEmptyValue": false,
+      "contentType": "",
+      "collectionFormat": "",
+      "schema": {
+       "raw": {
+        "type": "string"
+       },
+       "source": "https://golden.example.test/v2/swagger.json#/paths/~1pets~1%7BpetId%7D/parameters/0",
+       "base": "https://golden.example.test/v2/swagger.json",
+       "version": "2.0"
+      },
+      "headers": null,
+      "source": "https://golden.example.test/v2/swagger.json#/paths/~1pets~1%7BpetId%7D/parameters/0",
+      "err": null
+     },
+     {
+      "key": "hard",
+      "name": "hard",
+      "in": "query",
+      "description": "remote",
+      "required": true,
+      "deprecated": false,
+      "style": "",
+      "explode": false,
+      "explodeSet": false,
+      "allowReserved": false,
+      "allowEmptyValue": false,
+      "contentType": "",
+      "collectionFormat": "",
+      "schema": {
+       "raw": {
+        "type": "string"
+       },
+       "source": "https://golden.example.test/v2/params.json#/hard",
+       "base": "https://golden.example.test/v2/params.json",
+       "version": "2.0"
+      },
+      "headers": null,
+      "source": "https://golden.example.test/v2/params.json#/hard",
+      "err": null
+     }
+    ],
+    "body": null,
+    "responses": [
+     {
+      "key": "204",
+      "description": "gone",
+      "required": false,
+      "headers": null,
+      "media": null,
+      "source": "https://golden.example.test/v2/swagger.json#/paths/~1pets~1%7BpetId%7D/delete/responses/204",
+      "err": null
+     }
+    ],
+    "servers": [
+     {
+      "id": "server-0",
+      "url": "https://api.example.test/v2",
+      "name": "",
+      "description": "",
+      "variables": null,
+      "source": "",
+      "err": null
+     },
+     {
+      "id": "server-1",
+      "url": "http://api.example.test/v2",
+      "name": "",
+      "description": "",
+      "variables": null,
+      "source": "",
+      "err": null
+     }
+    ],
+    "security": [
+     {
+      "key": "{\"key\":[]}",
+      "schemes": [
+       {
+        "name": "key",
+        "scopes": null,
+        "type": "apiKey",
+        "description": "",
+        "in": "header",
+        "paramName": "X-Key",
+        "scheme": "",
+        "bearerFormat": "",
+        "flows": null,
+        "openIdConnectURL": "",
+        "oauth2MetadataURL": "",
+        "deprecated": false,
+        "source": "https://golden.example.test/v2/swagger.json#/securityDefinitions/key",
+        "err": null
+       }
+      ]
+     },
+     {
+      "key": "{\"oauth\":[\"read\",\"write\"]}",
+      "schemes": [
+       {
+        "name": "oauth",
+        "scopes": [
+         "read",
+         "write",
+         "read"
+        ],
+        "type": "oauth2",
+        "description": "",
+        "in": "",
+        "paramName": "",
+        "scheme": "",
+        "bearerFormat": "",
+        "flows": [
+         {
+          "type": "authorizationCode",
+          "authorizationURL": "https://auth.example.test/authorize",
+          "tokenURL": "https://auth.example.test/token",
+          "refreshURL": "",
+          "deviceAuthorizationURL": "",
+          "scopes": {
+           "read": "read things",
+           "write": "write things"
+          }
+         }
+        ],
+        "openIdConnectURL": "",
+        "oauth2MetadataURL": "",
+        "deprecated": false,
+        "source": "https://golden.example.test/v2/swagger.json#/securityDefinitions/oauth",
+        "err": null
+       }
+      ]
+     }
+    ],
+    "source": "https://golden.example.test/v2/swagger.json#/paths/~1pets~1%7BpetId%7D/delete",
+    "err": null
+   },
+   {
+    "key": "PATCH /pets/{petId}",
+    "id": "",
+    "method": "PATCH",
+    "path": "/pets/{petId}",
+    "summary": "",
+    "description": "",
+    "tags": null,
+    "deprecated": false,
+    "params": [
+     {
+      "key": "petId",
+      "name": "petId",
+      "in": "path",
+      "description": "",
+      "required": true,
+      "deprecated": false,
+      "style": "",
+      "explode": false,
+      "explodeSet": false,
+      "allowReserved": false,
+      "allowEmptyValue": false,
+      "contentType": "",
+      "collectionFormat": "",
+      "schema": {
+       "raw": {
+        "type": "string"
+       },
+       "source": "https://golden.example.test/v2/swagger.json#/paths/~1pets~1%7BpetId%7D/parameters/0",
+       "base": "https://golden.example.test/v2/swagger.json",
+       "version": "2.0"
+      },
+      "headers": null,
+      "source": "https://golden.example.test/v2/swagger.json#/paths/~1pets~1%7BpetId%7D/parameters/0",
+      "err": null
+     },
+     {
+      "key": "",
+      "name": "",
+      "in": "",
+      "description": "",
+      "required": false,
+      "deprecated": false,
+      "style": "",
+      "explode": false,
+      "explodeSet": false,
+      "allowReserved": false,
+      "allowEmptyValue": false,
+      "contentType": "",
+      "collectionFormat": "",
+      "schema": null,
+      "headers": null,
+      "source": "https://golden.example.test/v2/swagger.json#/paths/~1pets~1%7BpetId%7D/patch/parameters/0",
+      "err": {
+       "message": "openapi: unresolved reference \"#/parameters/missing\": no such node",
+       "unresolved": true
+      }
+     }
+    ],
+    "body": null,
+    "responses": [
+     {
+      "key": "200",
+      "description": "ok",
+      "required": false,
+      "headers": null,
+      "media": null,
+      "source": "https://golden.example.test/v2/swagger.json#/paths/~1pets~1%7BpetId%7D/patch/responses/200",
+      "err": null
+     }
+    ],
+    "servers": [
+     {
+      "id": "server-0",
+      "url": "https://api.example.test/v2",
+      "name": "",
+      "description": "",
+      "variables": null,
+      "source": "",
+      "err": null
+     },
+     {
+      "id": "server-1",
+      "url": "http://api.example.test/v2",
+      "name": "",
+      "description": "",
+      "variables": null,
+      "source": "",
+      "err": null
+     }
+    ],
+    "security": [
+     {
+      "key": "{\"key\":[]}",
+      "schemes": [
+       {
+        "name": "key",
+        "scopes": null,
+        "type": "apiKey",
+        "description": "",
+        "in": "header",
+        "paramName": "X-Key",
+        "scheme": "",
+        "bearerFormat": "",
+        "flows": null,
+        "openIdConnectURL": "",
+        "oauth2MetadataURL": "",
+        "deprecated": false,
+        "source": "https://golden.example.test/v2/swagger.json#/securityDefinitions/key",
+        "err": null
+       }
+      ]
+     },
+     {
+      "key": "{\"oauth\":[\"read\",\"write\"]}",
+      "schemes": [
+       {
+        "name": "oauth",
+        "scopes": [
+         "read",
+         "write",
+         "read"
+        ],
+        "type": "oauth2",
+        "description": "",
+        "in": "",
+        "paramName": "",
+        "scheme": "",
+        "bearerFormat": "",
+        "flows": [
+         {
+          "type": "authorizationCode",
+          "authorizationURL": "https://auth.example.test/authorize",
+          "tokenURL": "https://auth.example.test/token",
+          "refreshURL": "",
+          "deviceAuthorizationURL": "",
+          "scopes": {
+           "read": "read things",
+           "write": "write things"
+          }
+         }
+        ],
+        "openIdConnectURL": "",
+        "oauth2MetadataURL": "",
+        "deprecated": false,
+        "source": "https://golden.example.test/v2/swagger.json#/securityDefinitions/oauth",
+        "err": null
+       }
+      ]
+     }
+    ],
+    "source": "https://golden.example.test/v2/swagger.json#/paths/~1pets~1%7BpetId%7D/patch",
+    "err": {
+     "message": "openapi: unresolved reference \"#/parameters/missing\": no such node",
+     "unresolved": true
+    }
+   },
+   {
+    "key": "badTemplate",
+    "id": "badTemplate",
+    "method": "GET",
+    "path": "/things/{thingId}",
+    "summary": "",
+    "description": "",
+    "tags": null,
+    "deprecated": false,
+    "params": null,
+    "body": null,
+    "responses": [
+     {
+      "key": "200",
+      "description": "ok",
+      "required": false,
+      "headers": null,
+      "media": null,
+      "source": "https://golden.example.test/v2/swagger.json#/paths/~1things~1%7BthingId%7D/get/responses/200",
+      "err": null
+     }
+    ],
+    "servers": [
+     {
+      "id": "server-0",
+      "url": "https://api.example.test/v2",
+      "name": "",
+      "description": "",
+      "variables": null,
+      "source": "",
+      "err": null
+     },
+     {
+      "id": "server-1",
+      "url": "http://api.example.test/v2",
+      "name": "",
+      "description": "",
+      "variables": null,
+      "source": "",
+      "err": null
+     }
+    ],
+    "security": [
+     {
+      "key": "{\"key\":[]}",
+      "schemes": [
+       {
+        "name": "key",
+        "scopes": null,
+        "type": "apiKey",
+        "description": "",
+        "in": "header",
+        "paramName": "X-Key",
+        "scheme": "",
+        "bearerFormat": "",
+        "flows": null,
+        "openIdConnectURL": "",
+        "oauth2MetadataURL": "",
+        "deprecated": false,
+        "source": "https://golden.example.test/v2/swagger.json#/securityDefinitions/key",
+        "err": null
+       }
+      ]
+     },
+     {
+      "key": "{\"oauth\":[\"read\",\"write\"]}",
+      "schemes": [
+       {
+        "name": "oauth",
+        "scopes": [
+         "read",
+         "write",
+         "read"
+        ],
+        "type": "oauth2",
+        "description": "",
+        "in": "",
+        "paramName": "",
+        "scheme": "",
+        "bearerFormat": "",
+        "flows": [
+         {
+          "type": "authorizationCode",
+          "authorizationURL": "https://auth.example.test/authorize",
+          "tokenURL": "https://auth.example.test/token",
+          "refreshURL": "",
+          "deviceAuthorizationURL": "",
+          "scopes": {
+           "read": "read things",
+           "write": "write things"
+          }
+         }
+        ],
+        "openIdConnectURL": "",
+        "oauth2MetadataURL": "",
+        "deprecated": false,
+        "source": "https://golden.example.test/v2/swagger.json#/securityDefinitions/oauth",
+        "err": null
+       }
+      ]
+     }
+    ],
+    "source": "https://golden.example.test/v2/swagger.json#/paths/~1things~1%7BthingId%7D/get",
+    "err": {
+     "message": "path template \"/things/{thingId}\" names \"thingId\", which no path parameter declares"
+    }
+   },
+   {
+    "key": "extGet",
+    "id": "extGet",
+    "method": "GET",
+    "path": "/ext",
+    "summary": "",
+    "description": "",
+    "tags": null,
+    "deprecated": false,
+    "params": [
+     {
+      "key": "hard",
+      "name": "hard",
+      "in": "query",
+      "description": "remote",
+      "required": true,
+      "deprecated": false,
+      "style": "",
+      "explode": false,
+      "explodeSet": false,
+      "allowReserved": false,
+      "allowEmptyValue": false,
+      "contentType": "",
+      "collectionFormat": "",
+      "schema": {
+       "raw": {
+        "type": "string"
+       },
+       "source": "https://golden.example.test/v2/params.json#/hard",
+       "base": "https://golden.example.test/v2/params.json",
+       "version": "2.0"
+      },
+      "headers": null,
+      "source": "https://golden.example.test/v2/params.json#/hard",
+      "err": null
+     }
+    ],
+    "body": null,
+    "responses": [
+     {
+      "key": "200",
+      "description": "ok",
+      "required": false,
+      "headers": null,
+      "media": [
+       {
+        "type": "application/json",
+        "schema": {
+         "raw": {
+          "type": "string"
+         },
+         "source": "https://golden.example.test/v2/pathitem.json#/get/responses/200/schema",
+         "base": "https://golden.example.test/v2/pathitem.json",
+         "version": "2.0"
+        },
+        "itemSchema": null,
+        "sequential": false,
+        "encoding": null,
+        "source": "https://golden.example.test/v2/pathitem.json#/get/responses/200",
+        "err": null
+       }
+      ],
+      "source": "https://golden.example.test/v2/pathitem.json#/get/responses/200",
+      "err": null
+     }
+    ],
+    "servers": [
+     {
+      "id": "server-0",
+      "url": "https://api.example.test/v2",
+      "name": "",
+      "description": "",
+      "variables": null,
+      "source": "",
+      "err": null
+     },
+     {
+      "id": "server-1",
+      "url": "http://api.example.test/v2",
+      "name": "",
+      "description": "",
+      "variables": null,
+      "source": "",
+      "err": null
+     }
+    ],
+    "security": [
+     {
+      "key": "{\"key\":[]}",
+      "schemes": [
+       {
+        "name": "key",
+        "scopes": null,
+        "type": "apiKey",
+        "description": "",
+        "in": "header",
+        "paramName": "X-Key",
+        "scheme": "",
+        "bearerFormat": "",
+        "flows": null,
+        "openIdConnectURL": "",
+        "oauth2MetadataURL": "",
+        "deprecated": false,
+        "source": "https://golden.example.test/v2/swagger.json#/securityDefinitions/key",
+        "err": null
+       }
+      ]
+     },
+     {
+      "key": "{\"oauth\":[\"read\",\"write\"]}",
+      "schemes": [
+       {
+        "name": "oauth",
+        "scopes": [
+         "read",
+         "write",
+         "read"
+        ],
+        "type": "oauth2",
+        "description": "",
+        "in": "",
+        "paramName": "",
+        "scheme": "",
+        "bearerFormat": "",
+        "flows": [
+         {
+          "type": "authorizationCode",
+          "authorizationURL": "https://auth.example.test/authorize",
+          "tokenURL": "https://auth.example.test/token",
+          "refreshURL": "",
+          "deviceAuthorizationURL": "",
+          "scopes": {
+           "read": "read things",
+           "write": "write things"
+          }
+         }
+        ],
+        "openIdConnectURL": "",
+        "oauth2MetadataURL": "",
+        "deprecated": false,
+        "source": "https://golden.example.test/v2/swagger.json#/securityDefinitions/oauth",
+        "err": null
+       }
+      ]
+     }
+    ],
+    "source": "https://golden.example.test/v2/pathitem.json#/get",
+    "err": null
+   },
+   {
+    "key": "",
+    "id": "",
+    "method": "",
+    "path": "/gone",
+    "summary": "",
+    "description": "",
+    "tags": null,
+    "deprecated": false,
+    "params": null,
+    "body": null,
+    "responses": null,
+    "servers": null,
+    "security": null,
+    "source": "https://golden.example.test/v2/swagger.json#/paths/~1gone",
+    "err": {
+     "message": "openapi: unresolved reference \"missing.json\": openapi: load https://golden.example.test/v2/missing.json: no document at https://golden.example.test/v2/missing.json",
+     "unresolved": true
+    }
+   },
+   {
+    "key": "GET /schemes",
+    "id": "",
+    "method": "GET",
+    "path": "/schemes",
+    "summary": "",
+    "description": "",
+    "tags": null,
+    "deprecated": false,
+    "params": null,
+    "body": null,
+    "responses": [
+     {
+      "key": "200",
+      "description": "ok",
+      "required": false,
+      "headers": null,
+      "media": null,
+      "source": "https://golden.example.test/v2/swagger.json#/paths/~1schemes/get/responses/200",
+      "err": null
+     }
+    ],
+    "servers": [
+     {
+      "id": "server-2",
+      "url": "wss://api.example.test/v2",
+      "name": "",
+      "description": "",
+      "variables": null,
+      "source": "",
+      "err": null
+     }
+    ],
+    "security": [
+     {
+      "key": "{\"nodef\":[]}",
+      "schemes": [
+       {
+        "name": "nodef",
+        "scopes": null,
+        "type": "",
+        "description": "",
+        "in": "",
+        "paramName": "",
+        "scheme": "",
+        "bearerFormat": "",
+        "flows": null,
+        "openIdConnectURL": "",
+        "oauth2MetadataURL": "",
+        "deprecated": false,
+        "source": "",
+        "err": {
+         "message": "the document declares no security scheme \"nodef\""
+        }
+       }
+      ]
+     }
+    ],
+    "source": "https://golden.example.test/v2/swagger.json#/paths/~1schemes/get",
+    "err": null
+   }
+  ]
+ },
+ {
+  "edition": "3.0",
+  "version": "3.0.4",
+  "documents": [
+   "https://golden.example.test/v30/openapi.json",
+   "https://golden.example.test/v30/security.json"
+  ],
+  "operations": [
+   {
+    "key": "getPet",
+    "id": "getPet",
+    "method": "GET",
+    "path": "/pets/{petId}",
+    "summary": "",
+    "description": "",
+    "tags": null,
+    "deprecated": false,
+    "params": [
+     {
+      "key": "petId",
+      "name": "petId",
+      "in": "path",
+      "description": "",
+      "required": true,
+      "deprecated": false,
+      "style": "label",
+      "explode": true,
+      "explodeSet": true,
+      "allowReserved": false,
+      "allowEmptyValue": false,
+      "contentType": "",
+      "collectionFormat": "",
+      "schema": {
+       "raw": {
+        "type": "string"
+       },
+       "source": "https://golden.example.test/v30/openapi.json#/paths/~1pets~1%7BpetId%7D/parameters/0/schema",
+       "base": "https://golden.example.test/v30/openapi.json",
+       "version": "3.0.4"
+      },
+      "headers": null,
+      "source": "https://golden.example.test/v30/openapi.json#/paths/~1pets~1%7BpetId%7D/parameters/0",
+      "err": null
+     },
+     {
+      "key": "page",
+      "name": "page",
+      "in": "query",
+      "description": "",
+      "required": false,
+      "deprecated": false,
+      "style": "form",
+      "explode": true,
+      "explodeSet": false,
+      "allowReserved": false,
+      "allowEmptyValue": false,
+      "contentType": "",
+      "collectionFormat": "",
+      "schema": {
+       "raw": {
+        "type": "integer"
+       },
+       "source": "https://golden.example.test/v30/openapi.json#/components/parameters/Page/schema",
+       "base": "https://golden.example.test/v30/openapi.json",
+       "version": "3.0.4"
+      },
+      "headers": null,
+      "source": "https://golden.example.test/v30/openapi.json#/components/parameters/Page",
+      "err": null
+     },
+     {
+      "key": "filter",
+      "name": "filter",
+      "in": "query",
+      "description": "",
+      "required": false,
+      "deprecated": false,
+      "style": "deepObject",
+      "explode": true,
+      "explodeSet": false,
+      "allowReserved": false,
+      "allowEmptyValue": false,
+      "contentType": "",
+      "collectionFormat": "",
+      "schema": {
+       "raw": {
+        "type": "object",
+        "properties": {
+         "a": {
+          "type": "string"
+         }
+        }
+       },
+       "source": "https://golden.example.test/v30/openapi.json#/paths/~1pets~1%7BpetId%7D/get/parameters/1/schema",
+       "base": "https://golden.example.test/v30/openapi.json",
+       "version": "3.0.4"
+      },
+      "headers": null,
+      "source": "https://golden.example.test/v30/openapi.json#/paths/~1pets~1%7BpetId%7D/get/parameters/1",
+      "err": null
+     },
+     {
+      "key": "sort",
+      "name": "sort",
+      "in": "query",
+      "description": "",
+      "required": false,
+      "deprecated": false,
+      "style": "pipeDelimited",
+      "explode": false,
+      "explodeSet": true,
+      "allowReserved": false,
+      "allowEmptyValue": false,
+      "contentType": "",
+      "collectionFormat": "",
+      "schema": {
+       "raw": {
+        "type": "array",
+        "items": {
+         "type": "string"
+        }
+       },
+       "source": "https://golden.example.test/v30/openapi.json#/paths/~1pets~1%7BpetId%7D/get/parameters/2/schema",
+       "base": "https://golden.example.test/v30/openapi.json",
+       "version": "3.0.4"
+      },
+      "headers": null,
+      "source": "https://golden.example.test/v30/openapi.json#/paths/~1pets~1%7BpetId%7D/get/parameters/2",
+      "err": null
+     },
+     {
+      "key": "q",
+      "name": "q",
+      "in": "query",
+      "description": "",
+      "required": false,
+      "deprecated": false,
+      "style": "",
+      "explode": false,
+      "explodeSet": false,
+      "allowReserved": false,
+      "allowEmptyValue": false,
+      "contentType": "application/json",
+      "collectionFormat": "",
+      "schema": {
+       "raw": {
+        "type": "object"
+       },
+       "source": "https://golden.example.test/v30/openapi.json#/paths/~1pets~1%7BpetId%7D/get/parameters/3/content/application~1json/schema",
+       "base": "https://golden.example.test/v30/openapi.json",
+       "version": "3.0.4"
+      },
+      "headers": null,
+      "source": "https://golden.example.test/v30/openapi.json#/paths/~1pets~1%7BpetId%7D/get/parameters/3",
+      "err": null
+     },
+     {
+      "key": "X-Flags",
+      "name": "X-Flags",
+      "in": "header",
+      "description": "",
+      "required": false,
+      "deprecated": false,
+      "style": "simple",
+      "explode": true,
+      "explodeSet": true,
+      "allowReserved": false,
+      "allowEmptyValue": false,
+      "contentType": "",
+      "collectionFormat": "",
+      "schema": {
+       "raw": {
+        "type": "array",
+        "items": {
+         "type": "string"
+        }
+       },
+       "source": "https://golden.example.test/v30/openapi.json#/paths/~1pets~1%7BpetId%7D/get/parameters/4/schema",
+       "base": "https://golden.example.test/v30/openapi.json",
+       "version": "3.0.4"
+      },
+      "headers": null,
+      "source": "https://golden.example.test/v30/openapi.json#/paths/~1pets~1%7BpetId%7D/get/parameters/4",
+      "err": null
+     },
+     {
+      "key": "sid2",
+      "name": "sid2",
+      "in": "cookie",
+      "description": "",
+      "required": false,
+      "deprecated": false,
+      "style": "form",
+      "explode": true,
+      "explodeSet": false,
+      "allowReserved": false,
+      "allowEmptyValue": false,
+      "contentType": "",
+      "collectionFormat": "",
+      "schema": {
+       "raw": {
+        "type": "string"
+       },
+       "source": "https://golden.example.test/v30/openapi.json#/paths/~1pets~1%7BpetId%7D/get/parameters/5/schema",
+       "base": "https://golden.example.test/v30/openapi.json",
+       "version": "3.0.4"
+      },
+      "headers": null,
+      "source": "https://golden.example.test/v30/openapi.json#/paths/~1pets~1%7BpetId%7D/get/parameters/5",
+      "err": null
+     },
+     {
+      "key": "bad",
+      "name": "bad",
+      "in": "query",
+      "description": "",
+      "required": false,
+      "deprecated": false,
+      "style": "spaceDelimited",
+      "explode": true,
+      "explodeSet": true,
+      "allowReserved": false,
+      "allowEmptyValue": false,
+      "contentType": "",
+      "collectionFormat": "",
+      "schema": {
+       "raw": {
+        "type": "array"
+       },
+       "source": "https://golden.example.test/v30/openapi.json#/paths/~1pets~1%7BpetId%7D/get/parameters/7/schema",
+       "base": "https://golden.example.test/v30/openapi.json",
+       "version": "3.0.4"
+      },
+      "headers": null,
+      "source": "https://golden.example.test/v30/openapi.json#/paths/~1pets~1%7BpetId%7D/get/parameters/7",
+      "err": {
+       "message": "OpenAPI does not define the spaceDelimited style with explode true"
+      }
+     }
+    ],
+    "body": null,
+    "responses": [
+     {
+      "key": "200",
+      "description": "ok",
+      "required": false,
+      "headers": [
+       {
+        "key": "",
+        "name": "X-Rate",
+        "in": "header",
+        "description": "rate",
+        "required": false,
+        "deprecated": false,
+        "style": "",
+        "explode": false,
+        "explodeSet": false,
+        "allowReserved": false,
+        "allowEmptyValue": false,
+        "contentType": "",
+        "collectionFormat": "",
+        "schema": {
+         "raw": {
+          "type": "integer"
+         },
+         "source": "https://golden.example.test/v30/openapi.json#/components/headers/Rate/schema",
+         "base": "https://golden.example.test/v30/openapi.json",
+         "version": "3.0.4"
+        },
+        "headers": null,
+        "source": "https://golden.example.test/v30/openapi.json#/components/headers/Rate",
+        "err": null
+       }
+      ],
+      "media": [
+       {
+        "type": "application/json",
+        "schema": {
+         "raw": {
+          "type": "object",
+          "nullable": true,
+          "properties": {
+           "name": {
+            "type": "string"
+           },
+           "photo": {
+            "type": "string",
+            "format": "binary"
+           },
+           "meta": {
+            "type": "object"
+           }
+          }
+         },
+         "source": "https://golden.example.test/v30/openapi.json#/components/schemas/Pet",
+         "base": "https://golden.example.test/v30/openapi.json",
+         "version": "3.0.4"
+        },
+        "itemSchema": null,
+        "sequential": false,
+        "encoding": null,
+        "source": "https://golden.example.test/v30/openapi.json#/paths/~1pets~1%7BpetId%7D/get/responses/200/content/application~1json",
+        "err": null
+       },
+       {
+        "type": "text/*",
+        "schema": null,
+        "itemSchema": null,
+        "sequential": false,
+        "encoding": null,
+        "source": "https://golden.example.test/v30/openapi.json#/paths/~1pets~1%7BpetId%7D/get/responses/200/content/text~1*",
+        "err": null
+       }
+      ],
+      "source": "https://golden.example.test/v30/openapi.json#/paths/~1pets~1%7BpetId%7D/get/responses/200",
+      "err": null
+     },
+     {
+      "key": "404",
+      "description": "not found",
+      "required": false,
+      "headers": null,
+      "media": [
+       {
+        "type": "application/problem+json",
+        "schema": {
+         "raw": {
+          "type": "object"
+         },
+         "source": "https://golden.example.test/v30/openapi.json#/components/schemas/Problem",
+         "base": "https://golden.example.test/v30/openapi.json",
+         "version": "3.0.4"
+        },
+        "itemSchema": null,
+        "sequential": false,
+        "encoding": null,
+        "source": "https://golden.example.test/v30/openapi.json#/components/responses/NotFound/content/application~1problem+json",
+        "err": null
+       }
+      ],
+      "source": "https://golden.example.test/v30/openapi.json#/components/responses/NotFound",
+      "err": null
+     },
+     {
+      "key": "5XX",
+      "description": "server",
+      "required": false,
+      "headers": null,
+      "media": null,
+      "source": "https://golden.example.test/v30/openapi.json#/paths/~1pets~1%7BpetId%7D/get/responses/5XX",
+      "err": null
+     }
+    ],
+    "servers": [
+     {
+      "id": "server-0",
+      "url": "https://pets.example.test",
+      "name": "",
+      "description": "",
+      "variables": null,
+      "source": "https://golden.example.test/v30/openapi.json#/paths/~1pets~1%7BpetId%7D/servers/0",
+      "err": null
+     }
+    ],
+    "security": [
+     {
+      "key": "{\"oauth\":[\"r\"]}",
+      "schemes": [
+       {
+        "name": "oauth",
+        "scopes": [
+         "r"
+        ],
+        "type": "oauth2",
+        "description": "",
+        "in": "",
+        "paramName": "",
+        "scheme": "",
+        "bearerFormat": "",
+        "flows": [
+         {
+          "type": "implicit",
+          "authorizationURL": "https://auth.example.test/a",
+          "tokenURL": "",
+          "refreshURL": "",
+          "deviceAuthorizationURL": "",
+          "scopes": {
+           "r": "read"
+          }
+         },
+         {
+          "type": "password",
+          "authorizationURL": "",
+          "tokenURL": "/t",
+          "refreshURL": "/r",
+          "deviceAuthorizationURL": "",
+          "scopes": {}
+         },
+         {
+          "type": "clientCredentials",
+          "authorizationURL": "",
+          "tokenURL": "/cc",
+          "refreshURL": "",
+          "deviceAuthorizationURL": "",
+          "scopes": {
+           "w": "write"
+          }
+         },
+         {
+          "type": "authorizationCode",
+          "authorizationURL": "/ac",
+          "tokenURL": "/act",
+          "refreshURL": "",
+          "deviceAuthorizationURL": "",
+          "scopes": {}
+         }
+        ],
+        "openIdConnectURL": "",
+        "oauth2MetadataURL": "",
+        "deprecated": false,
+        "source": "https://golden.example.test/v30/openapi.json#/components/securitySchemes/oauth",
+        "err": null
+       }
+      ]
+     },
+     {
+      "key": "{\"oidc\":[]}",
+      "schemes": [
+       {
+        "name": "oidc",
+        "scopes": null,
+        "type": "openIdConnect",
+        "description": "",
+        "in": "",
+        "paramName": "",
+        "scheme": "",
+        "bearerFormat": "",
+        "flows": null,
+        "openIdConnectURL": "https://auth.example.test/.well-known/openid-configuration",
+        "oauth2MetadataURL": "",
+        "deprecated": false,
+        "source": "https://golden.example.test/v30/openapi.json#/components/securitySchemes/oidc",
+        "err": null
+       }
+      ]
+     },
+     {
+      "key": "{}",
+      "schemes": null
+     }
+    ],
+    "source": "https://golden.example.test/v30/openapi.json#/paths/~1pets~1%7BpetId%7D/get",
+    "err": null
+   },
+   {
+    "key": "putPet",
+    "id": "putPet",
+    "method": "PUT",
+    "path": "/pets/{petId}",
+    "summary": "",
+    "description": "",
+    "tags": null,
+    "deprecated": false,
+    "params": [
+     {
+      "key": "petId",
+      "name": "petId",
+      "in": "path",
+      "description": "",
+      "required": true,
+      "deprecated": false,
+      "style": "label",
+      "explode": true,
+      "explodeSet": true,
+      "allowReserved": false,
+      "allowEmptyValue": false,
+      "contentType": "",
+      "collectionFormat": "",
+      "schema": {
+       "raw": {
+        "type": "string"
+       },
+       "source": "https://golden.example.test/v30/openapi.json#/paths/~1pets~1%7BpetId%7D/parameters/0/schema",
+       "base": "https://golden.example.test/v30/openapi.json",
+       "version": "3.0.4"
+      },
+      "headers": null,
+      "source": "https://golden.example.test/v30/openapi.json#/paths/~1pets~1%7BpetId%7D/parameters/0",
+      "err": null
+     }
+    ],
+    "body": {
+     "key": "",
+     "description": "a pet",
+     "required": true,
+     "headers": null,
+     "media": [
+      {
+       "type": "application/json",
+       "schema": {
+        "raw": {
+         "type": "object",
+         "nullable": true,
+         "properties": {
+          "name": {
+           "type": "string"
+          },
+          "photo": {
+           "type": "string",
+           "format": "binary"
+          },
+          "meta": {
+           "type": "object"
+          }
+         }
+        },
+        "source": "https://golden.example.test/v30/openapi.json#/components/schemas/Pet",
+        "base": "https://golden.example.test/v30/openapi.json",
+        "version": "3.0.4"
+       },
+       "itemSchema": null,
+       "sequential": false,
+       "encoding": null,
+       "source": "https://golden.example.test/v30/openapi.json#/components/requestBodies/Pet/content/application~1json",
+       "err": null
+      }
+     ],
+     "source": "https://golden.example.test/v30/openapi.json#/components/requestBodies/Pet",
+     "err": null
+    },
+    "responses": [
+     {
+      "key": "default",
+      "description": "any",
+      "required": false,
+      "headers": null,
+      "media": null,
+      "source": "https://golden.example.test/v30/openapi.json#/paths/~1pets~1%7BpetId%7D/put/responses/default",
+      "err": null
+     }
+    ],
+    "servers": [
+     {
+      "id": "server-0",
+      "url": "https://pets.example.test",
+      "name": "",
+      "description": "",
+      "variables": null,
+      "source": "https://golden.example.test/v30/openapi.json#/paths/~1pets~1%7BpetId%7D/servers/0",
+      "err": null
+     }
+    ],
+    "security": [
+     {
+      "key": "{\"bearer\":[]}",
+      "schemes": [
+       {
+        "name": "bearer",
+        "scopes": null,
+        "type": "http",
+        "description": "",
+        "in": "",
+        "paramName": "",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "flows": null,
+        "openIdConnectURL": "",
+        "oauth2MetadataURL": "",
+        "deprecated": false,
+        "source": "https://golden.example.test/v30/openapi.json#/components/securitySchemes/bearer",
+        "err": null
+       }
+      ]
+     }
+    ],
+    "source": "https://golden.example.test/v30/openapi.json#/paths/~1pets~1%7BpetId%7D/put",
+    "err": null
+   },
+   {
+    "key": "formPet",
+    "id": "formPet",
+    "method": "POST",
+    "path": "/pets/{petId}",
+    "summary": "",
+    "description": "",
+    "tags": null,
+    "deprecated": false,
+    "params": [
+     {
+      "key": "petId",
+      "name": "petId",
+      "in": "path",
+      "description": "",
+      "required": true,
+      "deprecated": false,
+      "style": "label",
+      "explode": true,
+      "explodeSet": true,
+      "allowReserved": false,
+      "allowEmptyValue": false,
+      "contentType": "",
+      "collectionFormat": "",
+      "schema": {
+       "raw": {
+        "type": "string"
+       },
+       "source": "https://golden.example.test/v30/openapi.json#/paths/~1pets~1%7BpetId%7D/parameters/0/schema",
+       "base": "https://golden.example.test/v30/openapi.json",
+       "version": "3.0.4"
+      },
+      "headers": null,
+      "source": "https://golden.example.test/v30/openapi.json#/paths/~1pets~1%7BpetId%7D/parameters/0",
+      "err": null
+     }
+    ],
+    "body": {
+     "key": "",
+     "description": "",
+     "required": false,
+     "headers": null,
+     "media": [
+      {
+       "type": "application/x-www-form-urlencoded",
+       "schema": {
+        "raw": {
+         "type": "object",
+         "nullable": true,
+         "properties": {
+          "name": {
+           "type": "string"
+          },
+          "photo": {
+           "type": "string",
+           "format": "binary"
+          },
+          "meta": {
+           "type": "object"
+          }
+         }
+        },
+        "source": "https://golden.example.test/v30/openapi.json#/components/schemas/Pet",
+        "base": "https://golden.example.test/v30/openapi.json",
+        "version": "3.0.4"
+       },
+       "itemSchema": null,
+       "sequential": false,
+       "encoding": [
+        {
+         "key": "",
+         "name": "name",
+         "in": "",
+         "description": "",
+         "required": false,
+         "deprecated": false,
+         "style": "",
+         "explode": false,
+         "explodeSet": false,
+         "allowReserved": false,
+         "allowEmptyValue": false,
+         "contentType": "text/plain",
+         "collectionFormat": "",
+         "schema": {
+          "raw": {
+           "type": "string"
+          },
+          "source": "https://golden.example.test/v30/openapi.json#/components/schemas/Pet/properties/name",
+          "base": "https://golden.example.test/v30/openapi.json",
+          "version": "3.0.4"
+         },
+         "headers": null,
+         "source": "https://golden.example.test/v30/openapi.json#/paths/~1pets~1%7BpetId%7D/post/requestBody/content/application~1x-www-form-urlencoded/encoding/name",
+         "err": null
+        },
+        {
+         "key": "",
+         "name": "photo",
+         "in": "",
+         "description": "",
+         "required": false,
+         "deprecated": false,
+         "style": "",
+         "explode": false,
+         "explodeSet": false,
+         "allowReserved": false,
+         "allowEmptyValue": false,
+         "contentType": "application/octet-stream",
+         "collectionFormat": "",
+         "schema": {
+          "raw": {
+           "type": "string",
+           "format": "binary"
+          },
+          "source": "https://golden.example.test/v30/openapi.json#/components/schemas/Pet/properties/photo",
+          "base": "https://golden.example.test/v30/openapi.json",
+          "version": "3.0.4"
+         },
+         "headers": null,
+         "source": "https://golden.example.test/v30/openapi.json#/components/schemas/Pet/properties/photo",
+         "err": null
+        },
+        {
+         "key": "",
+         "name": "meta",
+         "in": "",
+         "description": "",
+         "required": false,
+         "deprecated": false,
+         "style": "form",
+         "explode": false,
+         "explodeSet": true,
+         "allowReserved": false,
+         "allowEmptyValue": false,
+         "contentType": "",
+         "collectionFormat": "",
+         "schema": {
+          "raw": {
+           "type": "object"
+          },
+          "source": "https://golden.example.test/v30/openapi.json#/components/schemas/Pet/properties/meta",
+          "base": "https://golden.example.test/v30/openapi.json",
+          "version": "3.0.4"
+         },
+         "headers": null,
+         "source": "https://golden.example.test/v30/openapi.json#/paths/~1pets~1%7BpetId%7D/post/requestBody/content/application~1x-www-form-urlencoded/encoding/meta",
+         "err": null
+        }
+       ],
+       "source": "https://golden.example.test/v30/openapi.json#/paths/~1pets~1%7BpetId%7D/post/requestBody/content/application~1x-www-form-urlencoded",
+       "err": null
+      },
+      {
+       "type": "multipart/form-data",
+       "schema": {
+        "raw": {
+         "type": "object",
+         "nullable": true,
+         "properties": {
+          "name": {
+           "type": "string"
+          },
+          "photo": {
+           "type": "string",
+           "format": "binary"
+          },
+          "meta": {
+           "type": "object"
+          }
+         }
+        },
+        "source": "https://golden.example.test/v30/openapi.json#/components/schemas/Pet",
+        "base": "https://golden.example.test/v30/openapi.json",
+        "version": "3.0.4"
+       },
+       "itemSchema": null,
+       "sequential": true,
+       "encoding": [
+        {
+         "key": "",
+         "name": "name",
+         "in": "",
+         "description": "",
+         "required": false,
+         "deprecated": false,
+         "style": "",
+         "explode": false,
+         "explodeSet": false,
+         "allowReserved": false,
+         "allowEmptyValue": false,
+         "contentType": "text/plain",
+         "collectionFormat": "",
+         "schema": {
+          "raw": {
+           "type": "string"
+          },
+          "source": "https://golden.example.test/v30/openapi.json#/components/schemas/Pet/properties/name",
+          "base": "https://golden.example.test/v30/openapi.json",
+          "version": "3.0.4"
+         },
+         "headers": null,
+         "source": "https://golden.example.test/v30/openapi.json#/components/schemas/Pet/properties/name",
+         "err": null
+        },
+        {
+         "key": "",
+         "name": "photo",
+         "in": "",
+         "description": "",
+         "required": false,
+         "deprecated": false,
+         "style": "",
+         "explode": false,
+         "explodeSet": false,
+         "allowReserved": false,
+         "allowEmptyValue": false,
+         "contentType": "image/png, image/jpeg",
+         "collectionFormat": "",
+         "schema": {
+          "raw": {
+           "type": "string",
+           "format": "binary"
+          },
+          "source": "https://golden.example.test/v30/openapi.json#/components/schemas/Pet/properties/photo",
+          "base": "https://golden.example.test/v30/openapi.json",
+          "version": "3.0.4"
+         },
+         "headers": [
+          {
+           "key": "",
+           "name": "X-Part",
+           "in": "header",
+           "description": "",
+           "required": false,
+           "deprecated": false,
+           "style": "",
+           "explode": false,
+           "explodeSet": false,
+           "allowReserved": false,
+           "allowEmptyValue": false,
+           "contentType": "",
+           "collectionFormat": "",
+           "schema": {
+            "raw": {
+             "type": "string"
+            },
+            "source": "https://golden.example.test/v30/openapi.json#/paths/~1pets~1%7BpetId%7D/post/requestBody/content/multipart~1form-data/encoding/photo/headers/X-Part/schema",
+            "base": "https://golden.example.test/v30/openapi.json",
+            "version": "3.0.4"
+           },
+           "headers": null,
+           "source": "https://golden.example.test/v30/openapi.json#/paths/~1pets~1%7BpetId%7D/post/requestBody/content/multipart~1form-data/encoding/photo/headers/X-Part",
+           "err": null
+          }
+         ],
+         "source": "https://golden.example.test/v30/openapi.json#/paths/~1pets~1%7BpetId%7D/post/requestBody/content/multipart~1form-data/encoding/photo",
+         "err": null
+        },
+        {
+         "key": "",
+         "name": "meta",
+         "in": "",
+         "description": "",
+         "required": false,
+         "deprecated": false,
+         "style": "",
+         "explode": false,
+         "explodeSet": false,
+         "allowReserved": false,
+         "allowEmptyValue": false,
+         "contentType": "application/json",
+         "collectionFormat": "",
+         "schema": {
+          "raw": {
+           "type": "object"
+          },
+          "source": "https://golden.example.test/v30/openapi.json#/components/schemas/Pet/properties/meta",
+          "base": "https://golden.example.test/v30/openapi.json",
+          "version": "3.0.4"
+         },
+         "headers": null,
+         "source": "https://golden.example.test/v30/openapi.json#/components/schemas/Pet/properties/meta",
+         "err": null
+        }
+       ],
+       "source": "https://golden.example.test/v30/openapi.json#/paths/~1pets~1%7BpetId%7D/post/requestBody/content/multipart~1form-data",
+       "err": null
+      }
+     ],
+     "source": "https://golden.example.test/v30/openapi.json#/paths/~1pets~1%7BpetId%7D/post/requestBody",
+     "err": null
+    },
+    "responses": [
+     {
+      "key": "200",
+      "description": "ok",
+      "required": false,
+      "headers": null,
+      "media": null,
+      "source": "https://golden.example.test/v30/openapi.json#/paths/~1pets~1%7BpetId%7D/post/responses/200",
+      "err": null
+     }
+    ],
+    "servers": [
+     {
+      "id": "server-0",
+      "url": "https://pets.example.test",
+      "name": "",
+      "description": "",
+      "variables": null,
+      "source": "https://golden.example.test/v30/openapi.json#/paths/~1pets~1%7BpetId%7D/servers/0",
+      "err": null
+     }
+    ],
+    "security": [
+     {
+      "key": "{\"cookieKey\":[]}",
+      "schemes": [
+       {
+        "name": "cookieKey",
+        "scopes": null,
+        "type": "apiKey",
+        "description": "",
+        "in": "cookie",
+        "paramName": "sid",
+        "scheme": "",
+        "bearerFormat": "",
+        "flows": null,
+        "openIdConnectURL": "",
+        "oauth2MetadataURL": "",
+        "deprecated": false,
+        "source": "https://golden.example.test/v30/openapi.json#/components/securitySchemes/cookieKey",
+        "err": null
+       }
+      ]
+     },
+     {
+      "key": "{\"ext\":[]}",
+      "schemes": [
+       {
+        "name": "ext",
+        "scopes": null,
+        "type": "apiKey",
+        "description": "external",
+        "in": "header",
+        "paramName": "X-Ext",
+        "scheme": "",
+        "bearerFormat": "",
+        "flows": null,
+        "openIdConnectURL": "",
+        "oauth2MetadataURL": "",
+        "deprecated": false,
+        "source": "https://golden.example.test/v30/security.json#/scheme",
+        "err": null
+       }
+      ]
+     }
+    ],
+    "source": "https://golden.example.test/v30/openapi.json#/paths/~1pets~1%7BpetId%7D/post",
+    "err": null
+   },
+   {
+    "key": "DELETE /pets/{petId}",
+    "id": "",
+    "method": "DELETE",
+    "path": "/pets/{petId}",
+    "summary": "",
+    "description": "",
+    "tags": null,
+    "deprecated": false,
+    "params": [
+     {
+      "key": "petId",
+      "name": "petId",
+      "in": "path",
+      "description": "",
+      "required": true,
+      "deprecated": false,
+      "style": "label",
+      "explode": true,
+      "explodeSet": true,
+      "allowReserved": false,
+      "allowEmptyValue": false,
+      "contentType": "",
+      "collectionFormat": "",
+      "schema": {
+       "raw": {
+        "type": "string"
+       },
+       "source": "https://golden.example.test/v30/openapi.json#/paths/~1pets~1%7BpetId%7D/parameters/0/schema",
+       "base": "https://golden.example.test/v30/openapi.json",
+       "version": "3.0.4"
+      },
+      "headers": null,
+      "source": "https://golden.example.test/v30/openapi.json#/paths/~1pets~1%7BpetId%7D/parameters/0",
+      "err": null
+     }
+    ],
+    "body": null,
+    "responses": [
+     {
+      "key": "204",
+      "description": "gone",
+      "required": false,
+      "headers": null,
+      "media": null,
+      "source": "https://golden.example.test/v30/openapi.json#/paths/~1pets~1%7BpetId%7D/delete/responses/204",
+      "err": null
+     }
+    ],
+    "servers": [
+     {
+      "id": "server-0",
+      "url": "https://pets.example.test",
+      "name": "",
+      "description": "",
+      "variables": null,
+      "source": "https://golden.example.test/v30/openapi.json#/paths/~1pets~1%7BpetId%7D/servers/0",
+      "err": null
+     }
+    ],
+    "security": [
+     {
+      "key": "{\"bearer\":[]}",
+      "schemes": [
+       {
+        "name": "bearer",
+        "scopes": null,
+        "type": "http",
+        "description": "",
+        "in": "",
+        "paramName": "",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "flows": null,
+        "openIdConnectURL": "",
+        "oauth2MetadataURL": "",
+        "deprecated": false,
+        "source": "https://golden.example.test/v30/openapi.json#/components/securitySchemes/bearer",
+        "err": null
+       }
+      ]
+     }
+    ],
+    "source": "https://golden.example.test/v30/openapi.json#/paths/~1pets~1%7BpetId%7D/delete",
+    "err": null
+   },
+   {
+    "key": "PATCH /pets/{petId}",
+    "id": "",
+    "method": "PATCH",
+    "path": "/pets/{petId}",
+    "summary": "",
+    "description": "",
+    "tags": null,
+    "deprecated": false,
+    "params": [
+     {
+      "key": "petId",
+      "name": "petId",
+      "in": "path",
+      "description": "",
+      "required": true,
+      "deprecated": false,
+      "style": "label",
+      "explode": true,
+      "explodeSet": true,
+      "allowReserved": false,
+      "allowEmptyValue": false,
+      "contentType": "",
+      "collectionFormat": "",
+      "schema": {
+       "raw": {
+        "type": "string"
+       },
+       "source": "https://golden.example.test/v30/openapi.json#/paths/~1pets~1%7BpetId%7D/parameters/0/schema",
+       "base": "https://golden.example.test/v30/openapi.json",
+       "version": "3.0.4"
+      },
+      "headers": null,
+      "source": "https://golden.example.test/v30/openapi.json#/paths/~1pets~1%7BpetId%7D/parameters/0",
+      "err": null
+     }
+    ],
+    "body": {
+     "key": "",
+     "description": "",
+     "required": false,
+     "headers": null,
+     "media": null,
+     "source": "https://golden.example.test/v30/openapi.json#/paths/~1pets~1%7BpetId%7D/patch/requestBody",
+     "err": {
+      "message": "openapi: unresolved reference \"bodies.json#/missing\": openapi: load https://golden.example.test/v30/bodies.json: no document at https://golden.example.test/v30/bodies.json",
+      "unresolved": true
+     }
+    },
+    "responses": [
+     {
+      "key": "204",
+      "description": "patched",
+      "required": false,
+      "headers": null,
+      "media": null,
+      "source": "https://golden.example.test/v30/openapi.json#/paths/~1pets~1%7BpetId%7D/patch/responses/204",
+      "err": null
+     }
+    ],
+    "servers": [
+     {
+      "id": "server-0",
+      "url": "https://pets.example.test",
+      "name": "",
+      "description": "",
+      "variables": null,
+      "source": "https://golden.example.test/v30/openapi.json#/paths/~1pets~1%7BpetId%7D/servers/0",
+      "err": null
+     }
+    ],
+    "security": [
+     {
+      "key": "{\"bearer\":[]}",
+      "schemes": [
+       {
+        "name": "bearer",
+        "scopes": null,
+        "type": "http",
+        "description": "",
+        "in": "",
+        "paramName": "",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "flows": null,
+        "openIdConnectURL": "",
+        "oauth2MetadataURL": "",
+        "deprecated": false,
+        "source": "https://golden.example.test/v30/openapi.json#/components/securitySchemes/bearer",
+        "err": null
+       }
+      ]
+     }
+    ],
+    "source": "https://golden.example.test/v30/openapi.json#/paths/~1pets~1%7BpetId%7D/patch",
+    "err": {
+     "message": "openapi: unresolved reference \"bodies.json#/missing\": openapi: load https://golden.example.test/v30/bodies.json: no document at https://golden.example.test/v30/bodies.json",
+     "unresolved": true
+    }
+   },
+   {
+    "key": "emptyContent",
+    "id": "emptyContent",
+    "method": "POST",
+    "path": "/empty",
+    "summary": "",
+    "description": "",
+    "tags": null,
+    "deprecated": false,
+    "params": null,
+    "body": {
+     "key": "",
+     "description": "",
+     "required": false,
+     "headers": null,
+     "media": null,
+     "source": "https://golden.example.test/v30/openapi.json#/paths/~1empty/post/requestBody",
+     "err": null
+    },
+    "responses": [
+     {
+      "key": "200",
+      "description": "ok",
+      "required": false,
+      "headers": null,
+      "media": [
+       {
+        "type": "application/x-ndjson",
+        "schema": {
+         "raw": {
+          "type": "object"
+         },
+         "source": "https://golden.example.test/v30/openapi.json#/paths/~1empty/post/responses/200/content/application~1x-ndjson/schema",
+         "base": "https://golden.example.test/v30/openapi.json",
+         "version": "3.0.4"
+        },
+        "itemSchema": null,
+        "sequential": true,
+        "encoding": null,
+        "source": "https://golden.example.test/v30/openapi.json#/paths/~1empty/post/responses/200/content/application~1x-ndjson",
+        "err": null
+       },
+       {
+        "type": "multipart/mixed",
+        "schema": null,
+        "itemSchema": null,
+        "sequential": true,
+        "encoding": null,
+        "source": "https://golden.example.test/v30/openapi.json#/paths/~1empty/post/responses/200/content/multipart~1mixed",
+        "err": null
+       }
+      ],
+      "source": "https://golden.example.test/v30/openapi.json#/paths/~1empty/post/responses/200",
+      "err": null
+     }
+    ],
+    "servers": [
+     {
+      "id": "server-1",
+      "url": "https://{region}.api.example.test/{base}",
+      "name": "",
+      "description": "regional",
+      "variables": [
+       {
+        "name": "region",
+        "description": "region",
+        "declared": true,
+        "default": "eu",
+        "defaultSet": true,
+        "enum": [
+         "eu",
+         "us"
+        ]
+       },
+       {
+        "name": "base",
+        "description": "",
+        "declared": true,
+        "default": "v1",
+        "defaultSet": true,
+        "enum": null
+       }
+      ],
+      "source": "https://golden.example.test/v30/openapi.json#/servers/0",
+      "err": null
+     },
+     {
+      "id": "server-2",
+      "url": "/relative",
+      "name": "",
+      "description": "",
+      "variables": null,
+      "source": "https://golden.example.test/v30/openapi.json#/servers/1",
+      "err": null
+     }
+    ],
+    "security": [
+     {
+      "key": "{\"bearer\":[]}",
+      "schemes": [
+       {
+        "name": "bearer",
+        "scopes": null,
+        "type": "http",
+        "description": "",
+        "in": "",
+        "paramName": "",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "flows": null,
+        "openIdConnectURL": "",
+        "oauth2MetadataURL": "",
+        "deprecated": false,
+        "source": "https://golden.example.test/v30/openapi.json#/components/securitySchemes/bearer",
+        "err": null
+       }
+      ]
+     }
+    ],
+    "source": "https://golden.example.test/v30/openapi.json#/paths/~1empty/post",
+    "err": null
+   }
+  ]
+ },
+ {
+  "edition": "3.1",
+  "version": "3.1.2",
+  "documents": [
+   "https://golden.example.test/v31/openapi.json",
+   "https://golden.example.test/v31/items.json",
+   "https://golden.example.test/v31/schemas.json"
+  ],
+  "operations": [
+   {
+    "key": "conflict",
+    "id": "conflict",
+    "method": "GET",
+    "path": "/items",
+    "summary": "",
+    "description": "",
+    "tags": null,
+    "deprecated": false,
+    "params": [
+     {
+      "key": "page",
+      "name": "page",
+      "in": "query",
+      "description": "",
+      "required": false,
+      "deprecated": false,
+      "style": "form",
+      "explode": true,
+      "explodeSet": false,
+      "allowReserved": false,
+      "allowEmptyValue": false,
+      "contentType": "",
+      "collectionFormat": "",
+      "schema": {
+       "raw": {
+        "type": "integer"
+       },
+       "source": "https://golden.example.test/v31/items.json#/parameters/0/schema",
+       "base": "https://golden.example.test/v31/items.json",
+       "dialect": "https://spec.openapis.org/oas/3.1/dialect/base",
+       "version": "3.1.2"
+      },
+      "headers": null,
+      "source": "https://golden.example.test/v31/items.json#/parameters/0",
+      "err": null
+     }
+    ],
+    "body": null,
+    "responses": null,
+    "servers": [
+     {
+      "id": "server-0",
+      "url": "https://api.example.test/v3",
+      "name": "",
+      "description": "",
+      "variables": null,
+      "source": "https://golden.example.test/v31/openapi.json#/servers/0",
+      "err": null
+     }
+    ],
+    "security": null,
+    "source": "https://golden.example.test/v31/openapi.json#/paths/~1items/get",
+    "err": {
+     "message": "the Path Item and its $ref target both define get"
+    }
+   },
+   {
+    "key": "addItem",
+    "id": "addItem",
+    "method": "POST",
+    "path": "/items",
+    "summary": "",
+    "description": "",
+    "tags": null,
+    "deprecated": false,
+    "params": [
+     {
+      "key": "page",
+      "name": "page",
+      "in": "query",
+      "description": "",
+      "required": false,
+      "deprecated": false,
+      "style": "form",
+      "explode": true,
+      "explodeSet": false,
+      "allowReserved": false,
+      "allowEmptyValue": false,
+      "contentType": "",
+      "collectionFormat": "",
+      "schema": {
+       "raw": {
+        "type": "integer"
+       },
+       "source": "https://golden.example.test/v31/items.json#/parameters/0/schema",
+       "base": "https://golden.example.test/v31/items.json",
+       "dialect": "https://spec.openapis.org/oas/3.1/dialect/base",
+       "version": "3.1.2"
+      },
+      "headers": null,
+      "source": "https://golden.example.test/v31/items.json#/parameters/0",
+      "err": null
+     }
+    ],
+    "body": {
+     "key": "",
+     "description": "",
+     "required": false,
+     "headers": null,
+     "media": [
+      {
+       "type": "text/plain",
+       "schema": {
+        "raw": {
+         "type": "string"
+        },
+        "source": "https://golden.example.test/v31/items.json#/post/requestBody/content/text~1plain/schema",
+        "base": "https://golden.example.test/v31/items.json",
+        "dialect": "https://spec.openapis.org/oas/3.1/dialect/base",
+        "version": "3.1.2"
+       },
+       "itemSchema": null,
+       "sequential": false,
+       "encoding": null,
+       "source": "https://golden.example.test/v31/items.json#/post/requestBody/content/text~1plain",
+       "err": null
+      }
+     ],
+     "source": "https://golden.example.test/v31/items.json#/post/requestBody",
+     "err": null
+    },
+    "responses": null,
+    "servers": [
+     {
+      "id": "server-0",
+      "url": "https://api.example.test/v3",
+      "name": "",
+      "description": "",
+      "variables": null,
+      "source": "https://golden.example.test/v31/openapi.json#/servers/0",
+      "err": null
+     }
+    ],
+    "security": null,
+    "source": "https://golden.example.test/v31/items.json#/post",
+    "err": null
+   },
+   {
+    "key": "getWidget",
+    "id": "getWidget",
+    "method": "GET",
+    "path": "/widgets/{id}",
+    "summary": "",
+    "description": "",
+    "tags": null,
+    "deprecated": false,
+    "params": [
+     {
+      "key": "id",
+      "name": "id",
+      "in": "path",
+      "description": "the widget id",
+      "required": true,
+      "deprecated": false,
+      "style": "simple",
+      "explode": false,
+      "explodeSet": false,
+      "allowReserved": false,
+      "allowEmptyValue": false,
+      "contentType": "",
+      "collectionFormat": "",
+      "schema": {
+       "raw": {
+        "$id": "https://schemas.example.test/id",
+        "type": "string",
+        "$defs": {
+         "x": {
+          "type": "integer"
+         }
+        }
+       },
+       "source": "https://golden.example.test/v31/openapi.json#/components/parameters/Id/schema",
+       "base": "https://schemas.example.test/id",
+       "dialect": "https://spec.openapis.org/oas/3.1/dialect/base",
+       "version": "3.1.2"
+      },
+      "headers": null,
+      "source": "https://golden.example.test/v31/openapi.json#/components/parameters/Id",
+      "err": null
+     }
+    ],
+    "body": null,
+    "responses": [
+     {
+      "key": "200",
+      "description": "the widget",
+      "required": false,
+      "headers": null,
+      "media": [
+       {
+        "type": "application/json",
+        "schema": {
+         "raw": {
+          "$ref": "#/components/schemas/Widget",
+          "description": "sibling"
+         },
+         "source": "https://golden.example.test/v31/openapi.json#/components/responses/Widget/content/application~1json/schema",
+         "base": "https://golden.example.test/v31/openapi.json",
+         "dialect": "https://spec.openapis.org/oas/3.1/dialect/base",
+         "version": "3.1.2",
+         "references": [
+          {
+           "at": "/$ref",
+           "keyword": "$ref",
+           "value": "#/components/schemas/Widget",
+           "uri": "https://golden.example.test/v31/openapi.json#/components/schemas/Widget",
+           "target": "https://golden.example.test/v31/openapi.json#/components/schemas/Widget"
+          }
+         ]
+        },
+        "itemSchema": null,
+        "sequential": false,
+        "encoding": null,
+        "source": "https://golden.example.test/v31/openapi.json#/components/responses/Widget/content/application~1json",
+        "err": null
+       }
+      ],
+      "source": "https://golden.example.test/v31/openapi.json#/components/responses/Widget",
+      "err": null
+     }
+    ],
+    "servers": [
+     {
+      "id": "server-0",
+      "url": "https://api.example.test/v3",
+      "name": "",
+      "description": "",
+      "variables": null,
+      "source": "https://golden.example.test/v31/openapi.json#/servers/0",
+      "err": null
+     }
+    ],
+    "security": [
+     {
+      "key": "{\"mtls\":[]}",
+      "schemes": [
+       {
+        "name": "mtls",
+        "scopes": null,
+        "type": "mutualTLS",
+        "description": "",
+        "in": "",
+        "paramName": "",
+        "scheme": "",
+        "bearerFormat": "",
+        "flows": null,
+        "openIdConnectURL": "",
+        "oauth2MetadataURL": "",
+        "deprecated": false,
+        "source": "https://golden.example.test/v31/openapi.json#/components/securitySchemes/mtls",
+        "err": null
+       }
+      ]
+     },
+     {
+      "key": "{\"bearer\":[],\"key\":[]}",
+      "schemes": [
+       {
+        "name": "bearer",
+        "scopes": null,
+        "type": "http",
+        "description": "",
+        "in": "",
+        "paramName": "",
+        "scheme": "Bearer",
+        "bearerFormat": "",
+        "flows": null,
+        "openIdConnectURL": "",
+        "oauth2MetadataURL": "",
+        "deprecated": false,
+        "source": "https://golden.example.test/v31/openapi.json#/components/securitySchemes/bearer",
+        "err": null
+       },
+       {
+        "name": "key",
+        "scopes": null,
+        "type": "apiKey",
+        "description": "query key",
+        "in": "query",
+        "paramName": "k",
+        "scheme": "",
+        "bearerFormat": "",
+        "flows": null,
+        "openIdConnectURL": "",
+        "oauth2MetadataURL": "",
+        "deprecated": false,
+        "source": "https://golden.example.test/v31/openapi.json#/components/securitySchemes/key",
+        "err": null
+       }
+      ]
+     }
+    ],
+    "source": "https://golden.example.test/v31/openapi.json#/paths/~1widgets~1%7Bid%7D/get",
+    "err": null
+   },
+   {
+    "key": "badSecurity",
+    "id": "badSecurity",
+    "method": "POST",
+    "path": "/widgets/{id}",
+    "summary": "",
+    "description": "",
+    "tags": null,
+    "deprecated": false,
+    "params": [
+     {
+      "key": "id",
+      "name": "id",
+      "in": "path",
+      "description": "the widget id",
+      "required": true,
+      "deprecated": false,
+      "style": "simple",
+      "explode": false,
+      "explodeSet": false,
+      "allowReserved": false,
+      "allowEmptyValue": false,
+      "contentType": "",
+      "collectionFormat": "",
+      "schema": {
+       "raw": {
+        "$id": "https://schemas.example.test/id",
+        "type": "string",
+        "$defs": {
+         "x": {
+          "type": "integer"
+         }
+        }
+       },
+       "source": "https://golden.example.test/v31/openapi.json#/components/parameters/Id/schema",
+       "base": "https://schemas.example.test/id",
+       "dialect": "https://spec.openapis.org/oas/3.1/dialect/base",
+       "version": "3.1.2"
+      },
+      "headers": null,
+      "source": "https://golden.example.test/v31/openapi.json#/components/parameters/Id",
+      "err": null
+     }
+    ],
+    "body": null,
+    "responses": [
+     {
+      "key": "200",
+      "description": "ok",
+      "required": false,
+      "headers": null,
+      "media": null,
+      "source": "https://golden.example.test/v31/openapi.json#/paths/~1widgets~1%7Bid%7D/post/responses/200",
+      "err": null
+     }
+    ],
+    "servers": [
+     {
+      "id": "server-0",
+      "url": "https://api.example.test/v3",
+      "name": "",
+      "description": "",
+      "variables": null,
+      "source": "https://golden.example.test/v31/openapi.json#/servers/0",
+      "err": null
+     }
+    ],
+    "security": null,
+    "source": "https://golden.example.test/v31/openapi.json#/paths/~1widgets~1%7Bid%7D/post",
+    "err": {
+     "message": "security is not an array of Security Requirement Objects mapping scheme names to arrays of strings"
+    }
+   },
+   {
+    "key": "TRACE /widgets/{id}",
+    "id": "",
+    "method": "TRACE",
+    "path": "/widgets/{id}",
+    "summary": "",
+    "description": "",
+    "tags": null,
+    "deprecated": false,
+    "params": [
+     {
+      "key": "id",
+      "name": "id",
+      "in": "path",
+      "description": "the widget id",
+      "required": true,
+      "deprecated": false,
+      "style": "simple",
+      "explode": false,
+      "explodeSet": false,
+      "allowReserved": false,
+      "allowEmptyValue": false,
+      "contentType": "",
+      "collectionFormat": "",
+      "schema": {
+       "raw": {
+        "$id": "https://schemas.example.test/id",
+        "type": "string",
+        "$defs": {
+         "x": {
+          "type": "integer"
+         }
+        }
+       },
+       "source": "https://golden.example.test/v31/openapi.json#/components/parameters/Id/schema",
+       "base": "https://schemas.example.test/id",
+       "dialect": "https://spec.openapis.org/oas/3.1/dialect/base",
+       "version": "3.1.2"
+      },
+      "headers": null,
+      "source": "https://golden.example.test/v31/openapi.json#/components/parameters/Id",
+      "err": null
+     }
+    ],
+    "body": null,
+    "responses": null,
+    "servers": [
+     {
+      "id": "server-0",
+      "url": "https://api.example.test/v3",
+      "name": "",
+      "description": "",
+      "variables": null,
+      "source": "https://golden.example.test/v31/openapi.json#/servers/0",
+      "err": null
+     }
+    ],
+    "security": null,
+    "source": "https://golden.example.test/v31/openapi.json#/paths/~1widgets~1%7Bid%7D/trace",
+    "err": null
+   },
+   {
+    "key": "stream",
+    "id": "stream",
+    "method": "POST",
+    "path": "/stream",
+    "summary": "",
+    "description": "",
+    "tags": null,
+    "deprecated": false,
+    "params": null,
+    "body": {
+     "key": "",
+     "description": "",
+     "required": true,
+     "headers": null,
+     "media": [
+      {
+       "type": "application/jsonl",
+       "schema": {
+        "raw": {
+         "type": "array"
+        },
+        "source": "https://golden.example.test/v31/openapi.json#/paths/~1stream/post/requestBody/content/application~1jsonl/schema",
+        "base": "https://golden.example.test/v31/openapi.json",
+        "dialect": "https://spec.openapis.org/oas/3.1/dialect/base",
+        "version": "3.1.2"
+       },
+       "itemSchema": null,
+       "sequential": true,
+       "encoding": null,
+       "source": "https://golden.example.test/v31/openapi.json#/paths/~1stream/post/requestBody/content/application~1jsonl",
+       "err": null
+      },
+      {
+       "type": "text/event-stream",
+       "schema": null,
+       "itemSchema": null,
+       "sequential": true,
+       "encoding": null,
+       "source": "https://golden.example.test/v31/openapi.json#/paths/~1stream/post/requestBody/content/text~1event-stream",
+       "err": null
+      }
+     ],
+     "source": "https://golden.example.test/v31/openapi.json#/paths/~1stream/post/requestBody",
+     "err": null
+    },
+    "responses": [
+     {
+      "key": "200",
+      "description": "events",
+      "required": false,
+      "headers": null,
+      "media": [
+       {
+        "type": "application/json-seq",
+        "schema": null,
+        "itemSchema": null,
+        "sequential": true,
+        "encoding": null,
+        "source": "https://golden.example.test/v31/openapi.json#/paths/~1stream/post/responses/200/content/application~1json-seq",
+        "err": null
+       },
+       {
+        "type": "text/event-stream",
+        "schema": null,
+        "itemSchema": null,
+        "sequential": true,
+        "encoding": null,
+        "source": "https://golden.example.test/v31/openapi.json#/paths/~1stream/post/responses/200/content/text~1event-stream",
+        "err": null
+       }
+      ],
+      "source": "https://golden.example.test/v31/openapi.json#/paths/~1stream/post/responses/200",
+      "err": null
+     }
+    ],
+    "servers": [
+     {
+      "id": "server-0",
+      "url": "https://api.example.test/v3",
+      "name": "",
+      "description": "",
+      "variables": null,
+      "source": "https://golden.example.test/v31/openapi.json#/servers/0",
+      "err": null
+     }
+    ],
+    "security": null,
+    "source": "https://golden.example.test/v31/openapi.json#/paths/~1stream/post",
+    "err": null
+   }
+  ]
+ },
+ {
+  "edition": "3.2",
+  "version": "3.2.1",
+  "documents": [
+   "https://golden.example.test/v32/openapi.json"
+  ],
+  "operations": [
+   {
+    "key": "qs",
+    "id": "qs",
+    "method": "GET",
+    "path": "/search",
+    "summary": "",
+    "description": "",
+    "tags": null,
+    "deprecated": false,
+    "params": [
+     {
+      "key": "qs",
+      "name": "qs",
+      "in": "querystring",
+      "description": "",
+      "required": false,
+      "deprecated": false,
+      "style": "",
+      "explode": false,
+      "explodeSet": false,
+      "allowReserved": false,
+      "allowEmptyValue": false,
+      "contentType": "application/x-www-form-urlencoded",
+      "collectionFormat": "",
+      "schema": {
+       "raw": {
+        "type": "object"
+       },
+       "source": "https://golden.example.test/v32/openapi.json#/paths/~1search/get/parameters/0/content/application~1x-www-form-urlencoded/schema",
+       "base": "https://golden.example.test/v32/self.json",
+       "dialect": "https://spec.openapis.org/oas/3.2/dialect/2025-09-17",
+       "version": "3.2.1"
+      },
+      "headers": null,
+      "source": "https://golden.example.test/v32/openapi.json#/paths/~1search/get/parameters/0",
+      "err": null
+     },
+     {
+      "key": "c",
+      "name": "c",
+      "in": "cookie",
+      "description": "",
+      "required": false,
+      "deprecated": false,
+      "style": "cookie",
+      "explode": true,
+      "explodeSet": false,
+      "allowReserved": false,
+      "allowEmptyValue": false,
+      "contentType": "",
+      "collectionFormat": "",
+      "schema": {
+       "raw": {
+        "type": "string"
+       },
+       "source": "https://golden.example.test/v32/openapi.json#/paths/~1search/get/parameters/1/schema",
+       "base": "https://golden.example.test/v32/self.json",
+       "dialect": "https://spec.openapis.org/oas/3.2/dialect/2025-09-17",
+       "version": "3.2.1"
+      },
+      "headers": null,
+      "source": "https://golden.example.test/v32/openapi.json#/paths/~1search/get/parameters/1",
+      "err": null
+     },
+     {
+      "key": "p",
+      "name": "p",
+      "in": "header",
+      "description": "",
+      "required": false,
+      "deprecated": false,
+      "style": "simple",
+      "explode": false,
+      "explodeSet": false,
+      "allowReserved": false,
+      "allowEmptyValue": false,
+      "contentType": "",
+      "collectionFormat": "",
+      "schema": {
+       "raw": {
+        "type": "string"
+       },
+       "source": "https://golden.example.test/v32/openapi.json#/paths/~1search/get/parameters/2/schema",
+       "base": "https://golden.example.test/v32/self.json",
+       "dialect": "https://spec.openapis.org/oas/3.2/dialect/2025-09-17",
+       "version": "3.2.1"
+      },
+      "headers": null,
+      "source": "https://golden.example.test/v32/openapi.json#/paths/~1search/get/parameters/2",
+      "err": null
+     }
+    ],
+    "body": null,
+    "responses": [
+     {
+      "key": "200",
+      "description": "ok",
+      "required": false,
+      "headers": null,
+      "media": null,
+      "source": "https://golden.example.test/v32/openapi.json#/paths/~1search/get/responses/200",
+      "err": null
+     }
+    ],
+    "servers": [
+     {
+      "id": "server-0",
+      "url": "https://api.example.test",
+      "name": "prod",
+      "description": "production",
+      "variables": null,
+      "source": "https://golden.example.test/v32/openapi.json#/servers/0",
+      "err": null
+     },
+     {
+      "id": "server-1",
+      "url": "https://staging.example.test",
+      "name": "staging",
+      "description": "",
+      "variables": null,
+      "source": "https://golden.example.test/v32/openapi.json#/servers/1",
+      "err": null
+     }
+    ],
+    "security": [
+     {
+      "key": "{\"https://golden.example.test/v32/self.json#/components/securitySchemes/device\":[\"s\"]}",
+      "schemes": [
+       {
+        "name": "https://golden.example.test/v32/self.json#/components/securitySchemes/device",
+        "scopes": [
+         "s"
+        ],
+        "type": "oauth2",
+        "description": "",
+        "in": "",
+        "paramName": "",
+        "scheme": "",
+        "bearerFormat": "",
+        "flows": [
+         {
+          "type": "deviceAuthorization",
+          "authorizationURL": "",
+          "tokenURL": "https://auth.example.test/token",
+          "refreshURL": "",
+          "deviceAuthorizationURL": "https://auth.example.test/device",
+          "scopes": {
+           "s": "scope"
+          }
+         }
+        ],
+        "openIdConnectURL": "",
+        "oauth2MetadataURL": "https://auth.example.test/.well-known/oauth-authorization-server",
+        "deprecated": true,
+        "source": "https://golden.example.test/v32/openapi.json#/components/securitySchemes/device",
+        "err": null
+       }
+      ]
+     },
+     {
+      "key": "{\"meta\":[]}",
+      "schemes": [
+       {
+        "name": "meta",
+        "scopes": null,
+        "type": "http",
+        "description": "",
+        "in": "",
+        "paramName": "",
+        "scheme": "digest",
+        "bearerFormat": "",
+        "flows": null,
+        "openIdConnectURL": "",
+        "oauth2MetadataURL": "",
+        "deprecated": false,
+        "source": "https://golden.example.test/v32/openapi.json#/components/securitySchemes/meta",
+        "err": null
+       }
+      ]
+     }
+    ],
+    "source": "https://golden.example.test/v32/openapi.json#/paths/~1search/get",
+    "err": null
+   },
+   {
+    "key": "search",
+    "id": "search",
+    "method": "QUERY",
+    "path": "/search",
+    "summary": "",
+    "description": "",
+    "tags": null,
+    "deprecated": false,
+    "params": null,
+    "body": {
+     "key": "",
+     "description": "",
+     "required": false,
+     "headers": null,
+     "media": [
+      {
+       "type": "application/json",
+       "schema": {
+        "raw": {
+         "type": "object",
+         "properties": {
+          "term": {
+           "type": "string"
+          }
+         }
+        },
+        "source": "https://golden.example.test/v32/openapi.json#/components/mediaTypes/Query/schema",
+        "base": "https://golden.example.test/v32/self.json",
+        "dialect": "https://spec.openapis.org/oas/3.2/dialect/2025-09-17",
+        "version": "3.2.1"
+       },
+       "itemSchema": null,
+       "sequential": false,
+       "encoding": null,
+       "source": "https://golden.example.test/v32/openapi.json#/components/mediaTypes/Query",
+       "err": null
+      }
+     ],
+     "source": "https://golden.example.test/v32/openapi.json#/paths/~1search/query/requestBody",
+     "err": null
+    },
+    "responses": [
+     {
+      "key": "200",
+      "description": "ok",
+      "required": false,
+      "headers": null,
+      "media": [
+       {
+        "type": "application/jsonl",
+        "schema": null,
+        "itemSchema": {
+         "raw": {
+          "type": "object"
+         },
+         "source": "https://golden.example.test/v32/openapi.json#/paths/~1search/query/responses/200/content/application~1jsonl/itemSchema",
+         "base": "https://golden.example.test/v32/self.json",
+         "dialect": "https://spec.openapis.org/oas/3.2/dialect/2025-09-17",
+         "version": "3.2.1"
+        },
+        "sequential": true,
+        "encoding": null,
+        "source": "https://golden.example.test/v32/openapi.json#/paths/~1search/query/responses/200/content/application~1jsonl",
+        "err": null
+       },
+       {
+        "type": "text/event-stream",
+        "schema": null,
+        "itemSchema": {
+         "raw": {
+          "type": "object",
+          "properties": {
+           "data": {
+            "type": "string"
+           }
+          }
+         },
+         "source": "https://golden.example.test/v32/openapi.json#/paths/~1search/query/responses/200/content/text~1event-stream/itemSchema",
+         "base": "https://golden.example.test/v32/self.json",
+         "dialect": "https://spec.openapis.org/oas/3.2/dialect/2025-09-17",
+         "version": "3.2.1"
+        },
+        "sequential": true,
+        "encoding": null,
+        "source": "https://golden.example.test/v32/openapi.json#/paths/~1search/query/responses/200/content/text~1event-stream",
+        "err": null
+       }
+      ],
+      "source": "https://golden.example.test/v32/openapi.json#/paths/~1search/query/responses/200",
+      "err": null
+     }
+    ],
+    "servers": [
+     {
+      "id": "server-0",
+      "url": "https://api.example.test",
+      "name": "prod",
+      "description": "production",
+      "variables": null,
+      "source": "https://golden.example.test/v32/openapi.json#/servers/0",
+      "err": null
+     },
+     {
+      "id": "server-1",
+      "url": "https://staging.example.test",
+      "name": "staging",
+      "description": "",
+      "variables": null,
+      "source": "https://golden.example.test/v32/openapi.json#/servers/1",
+      "err": null
+     }
+    ],
+    "security": null,
+    "source": "https://golden.example.test/v32/openapi.json#/paths/~1search/query",
+    "err": null
+   },
+   {
+    "key": "link",
+    "id": "link",
+    "method": "LINK",
+    "path": "/search",
+    "summary": "",
+    "description": "",
+    "tags": null,
+    "deprecated": false,
+    "params": null,
+    "body": null,
+    "responses": [
+     {
+      "key": "204",
+      "description": "linked",
+      "required": false,
+      "headers": null,
+      "media": null,
+      "source": "https://golden.example.test/v32/openapi.json#/paths/~1search/additionalOperations/LINK/responses/204",
+      "err": null
+     }
+    ],
+    "servers": [
+     {
+      "id": "server-0",
+      "url": "https://api.example.test",
+      "name": "prod",
+      "description": "production",
+      "variables": null,
+      "source": "https://golden.example.test/v32/openapi.json#/servers/0",
+      "err": null
+     },
+     {
+      "id": "server-1",
+      "url": "https://staging.example.test",
+      "name": "staging",
+      "description": "",
+      "variables": null,
+      "source": "https://golden.example.test/v32/openapi.json#/servers/1",
+      "err": null
+     }
+    ],
+    "security": null,
+    "source": "https://golden.example.test/v32/openapi.json#/paths/~1search/additionalOperations/LINK",
+    "err": null
+   },
+   {
+    "key": "",
+    "id": "",
+    "method": "POST",
+    "path": "/search",
+    "summary": "",
+    "description": "",
+    "tags": null,
+    "deprecated": false,
+    "params": null,
+    "body": null,
+    "responses": [
+     {
+      "key": "200",
+      "description": "forbidden",
+      "required": false,
+      "headers": null,
+      "media": null,
+      "source": "https://golden.example.test/v32/openapi.json#/paths/~1search/additionalOperations/POST/responses/200",
+      "err": null
+     }
+    ],
+    "servers": [
+     {
+      "id": "server-0",
+      "url": "https://api.example.test",
+      "name": "prod",
+      "description": "production",
+      "variables": null,
+      "source": "https://golden.example.test/v32/openapi.json#/servers/0",
+      "err": null
+     },
+     {
+      "id": "server-1",
+      "url": "https://staging.example.test",
+      "name": "staging",
+      "description": "",
+      "variables": null,
+      "source": "https://golden.example.test/v32/openapi.json#/servers/1",
+      "err": null
+     }
+    ],
+    "security": null,
+    "source": "https://golden.example.test/v32/openapi.json#/paths/~1search/additionalOperations/POST",
+    "err": {
+     "message": "forbidden additional method \"POST\""
+    }
+   },
+   {
+    "key": "Post /search",
+    "id": "",
+    "method": "Post",
+    "path": "/search",
+    "summary": "",
+    "description": "",
+    "tags": null,
+    "deprecated": false,
+    "params": null,
+    "body": null,
+    "responses": [
+     {
+      "key": "200",
+      "description": "ordinary",
+      "required": false,
+      "headers": null,
+      "media": null,
+      "source": "https://golden.example.test/v32/openapi.json#/paths/~1search/additionalOperations/Post/responses/200",
+      "err": null
+     }
+    ],
+    "servers": [
+     {
+      "id": "server-0",
+      "url": "https://api.example.test",
+      "name": "prod",
+      "description": "production",
+      "variables": null,
+      "source": "https://golden.example.test/v32/openapi.json#/servers/0",
+      "err": null
+     },
+     {
+      "id": "server-1",
+      "url": "https://staging.example.test",
+      "name": "staging",
+      "description": "",
+      "variables": null,
+      "source": "https://golden.example.test/v32/openapi.json#/servers/1",
+      "err": null
+     }
+    ],
+    "security": null,
+    "source": "https://golden.example.test/v32/openapi.json#/paths/~1search/additionalOperations/Post",
+    "err": null
+   },
+   {
+    "key": "upload",
+    "id": "upload",
+    "method": "POST",
+    "path": "/upload",
+    "summary": "",
+    "description": "",
+    "tags": null,
+    "deprecated": false,
+    "params": null,
+    "body": {
+     "key": "",
+     "description": "",
+     "required": false,
+     "headers": null,
+     "media": [
+      {
+       "type": "multipart/mixed",
+       "schema": null,
+       "itemSchema": null,
+       "sequential": true,
+       "encoding": [
+        {
+         "key": "",
+         "name": "0",
+         "in": "",
+         "description": "",
+         "required": false,
+         "deprecated": false,
+         "style": "",
+         "explode": false,
+         "explodeSet": false,
+         "allowReserved": false,
+         "allowEmptyValue": false,
+         "contentType": "application/json",
+         "collectionFormat": "",
+         "schema": null,
+         "headers": null,
+         "source": "https://golden.example.test/v32/openapi.json#/paths/~1upload/post/requestBody/content/multipart~1mixed/prefixEncoding/0",
+         "err": null
+        },
+        {
+         "key": "",
+         "name": "1",
+         "in": "",
+         "description": "",
+         "required": false,
+         "deprecated": false,
+         "style": "",
+         "explode": false,
+         "explodeSet": false,
+         "allowReserved": false,
+         "allowEmptyValue": false,
+         "contentType": "image/png",
+         "collectionFormat": "",
+         "schema": null,
+         "headers": [
+          {
+           "key": "",
+           "name": "X-Seq",
+           "in": "header",
+           "description": "",
+           "required": false,
+           "deprecated": false,
+           "style": "",
+           "explode": false,
+           "explodeSet": false,
+           "allowReserved": false,
+           "allowEmptyValue": false,
+           "contentType": "",
+           "collectionFormat": "",
+           "schema": {
+            "raw": {
+             "type": "integer"
+            },
+            "source": "https://golden.example.test/v32/openapi.json#/paths/~1upload/post/requestBody/content/multipart~1mixed/prefixEncoding/1/headers/X-Seq/schema",
+            "base": "https://golden.example.test/v32/self.json",
+            "dialect": "https://spec.openapis.org/oas/3.2/dialect/2025-09-17",
+            "version": "3.2.1"
+           },
+           "headers": null,
+           "source": "https://golden.example.test/v32/openapi.json#/paths/~1upload/post/requestBody/content/multipart~1mixed/prefixEncoding/1/headers/X-Seq",
+           "err": null
+          }
+         ],
+         "source": "https://golden.example.test/v32/openapi.json#/paths/~1upload/post/requestBody/content/multipart~1mixed/prefixEncoding/1",
+         "err": null
+        },
+        {
+         "key": "",
+         "name": "*",
+         "in": "",
+         "description": "",
+         "required": false,
+         "deprecated": false,
+         "style": "",
+         "explode": false,
+         "explodeSet": false,
+         "allowReserved": false,
+         "allowEmptyValue": false,
+         "contentType": "text/plain",
+         "collectionFormat": "",
+         "schema": null,
+         "headers": null,
+         "source": "https://golden.example.test/v32/openapi.json#/paths/~1upload/post/requestBody/content/multipart~1mixed/itemEncoding",
+         "err": null
+        }
+       ],
+       "source": "https://golden.example.test/v32/openapi.json#/paths/~1upload/post/requestBody/content/multipart~1mixed",
+       "err": null
+      },
+      {
+       "type": "multipart/form-data",
+       "schema": {
+        "raw": {
+         "type": "object",
+         "properties": {
+          "a": {
+           "type": "string"
+          }
+         }
+        },
+        "source": "https://golden.example.test/v32/openapi.json#/paths/~1upload/post/requestBody/content/multipart~1form-data/schema",
+        "base": "https://golden.example.test/v32/self.json",
+        "dialect": "https://spec.openapis.org/oas/3.2/dialect/2025-09-17",
+        "version": "3.2.1"
+       },
+       "itemSchema": null,
+       "sequential": true,
+       "encoding": [
+        {
+         "key": "",
+         "name": "a",
+         "in": "",
+         "description": "",
+         "required": false,
+         "deprecated": false,
+         "style": "",
+         "explode": false,
+         "explodeSet": false,
+         "allowReserved": false,
+         "allowEmptyValue": false,
+         "contentType": "text/plain",
+         "collectionFormat": "",
+         "schema": {
+          "raw": {
+           "type": "string"
+          },
+          "source": "https://golden.example.test/v32/openapi.json#/paths/~1upload/post/requestBody/content/multipart~1form-data/schema/properties/a",
+          "base": "https://golden.example.test/v32/self.json",
+          "dialect": "https://spec.openapis.org/oas/3.2/dialect/2025-09-17",
+          "version": "3.2.1"
+         },
+         "headers": null,
+         "source": "https://golden.example.test/v32/openapi.json#/paths/~1upload/post/requestBody/content/multipart~1form-data/encoding/a",
+         "err": null
+        },
+        {
+         "key": "",
+         "name": "extra",
+         "in": "",
+         "description": "",
+         "required": false,
+         "deprecated": false,
+         "style": "",
+         "explode": false,
+         "explodeSet": false,
+         "allowReserved": false,
+         "allowEmptyValue": false,
+         "contentType": "application/octet-stream",
+         "collectionFormat": "",
+         "schema": null,
+         "headers": null,
+         "source": "https://golden.example.test/v32/openapi.json#/paths/~1upload/post/requestBody/content/multipart~1form-data/encoding/extra",
+         "err": null
+        }
+       ],
+       "source": "https://golden.example.test/v32/openapi.json#/paths/~1upload/post/requestBody/content/multipart~1form-data",
+       "err": null
+      }
+     ],
+     "source": "https://golden.example.test/v32/openapi.json#/paths/~1upload/post/requestBody",
+     "err": null
+    },
+    "responses": [
+     {
+      "key": "200",
+      "description": "ok",
+      "required": false,
+      "headers": null,
+      "media": null,
+      "source": "https://golden.example.test/v32/openapi.json#/paths/~1upload/post/responses/200",
+      "err": null
+     }
+    ],
+    "servers": [
+     {
+      "id": "server-0",
+      "url": "https://api.example.test",
+      "name": "prod",
+      "description": "production",
+      "variables": null,
+      "source": "https://golden.example.test/v32/openapi.json#/servers/0",
+      "err": null
+     },
+     {
+      "id": "server-1",
+      "url": "https://staging.example.test",
+      "name": "staging",
+      "description": "",
+      "variables": null,
+      "source": "https://golden.example.test/v32/openapi.json#/servers/1",
+      "err": null
+     }
+    ],
+    "security": null,
+    "source": "https://golden.example.test/v32/openapi.json#/paths/~1upload/post",
+    "err": null
+   }
+  ]
+ }
+]

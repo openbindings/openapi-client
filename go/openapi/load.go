@@ -34,8 +34,9 @@ import (
 // Server or ServerID that matches no server, a Security or SecurityKey
 // that matches no alternative, a BaseURL without a scheme and host, with
 // userinfo, a query or a fragment, or set with Server or ServerID,
-// conflicting exact and name selectors, or a Header field that is always
-// refused.
+// conflicting exact and name selectors, a Header field that is always
+// refused, or a Redirects or DeepObjectArrays value that is none of its
+// constants.
 func Load(ctx context.Context, uri string, opts *Options) (*Client, error) {
 	var l Loader
 	return l.Load(ctx, uri, opts)

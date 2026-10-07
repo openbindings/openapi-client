@@ -59,6 +59,33 @@ type document struct {
 	mediaForms  sync.Map      // mediaUse to *mediaPlan, since the same target can govern different types
 	schemeNames memo[*scheme] // by the securitySchemes member a name selects
 	schemeForms memo[*scheme] // by the Security Scheme Object a reference reaches
+	schemeURIs  sync.Map      // schemeUse to the *scheme of a name no component declares
+	defects     sync.Map      // defectKey to the error the document keeps for that defect
+}
+
+// A defectKey is a defect of a node: its number (see value.id) and the text
+// of its error.
+type defectKey struct {
+	node int32
+	text string
+}
+
+// defect returns err, a defect of the node v, as the document's value for it:
+// the first error with that text found for v. Each build that describes or
+// compiles v, and each part v describes, such as every position an OpenAPI
+// 3.2 itemEncoding governs, therefore holds the very same Err, which a call
+// refused for that defect wraps, without pairing a plan's parts with the
+// descriptors published before it.
+func (d *document) defect(v value, err error) error {
+	if err == nil || !v.ok() {
+		return err
+	}
+	k := defectKey{v.id(), err.Error()}
+	if e, ok := d.defects.Load(k); ok {
+		return e.(error)
+	}
+	e, _ := d.defects.LoadOrStore(k, err)
+	return e.(error)
 }
 
 // A memo keeps what each node of a document compiles to.
@@ -84,8 +111,9 @@ var methods = [...]struct{ name, upper string }{
 }
 
 // An entry is an indexed operation, or a Paths entry that cannot be read.
-// Its descriptor and plan are compiled on first use.
 type entry struct {
+	cell // its descriptor and plan
+
 	additionalLevel *level
 	forbidden       bool
 	m               int8 // the method, an index into methods; -1 for a Paths entry that cannot be read
@@ -96,15 +124,40 @@ type entry struct {
 	levels          *level   // the Path Item chain
 	sum             *summary // what its levels define, shared with every chain that defines the same
 	err             error    // why the entry cannot be read, or its method is defined twice
-	group           *group   // the entries sharing its Operation Object and inherited fields, or nil
-	op              atomic.Pointer[operation]
+	group           *cell    // what its Operation Object compiles to for every entry reaching it through one Path Item chain, or nil
 }
 
-// A group is the entries of several Paths entries that reach one Operation
-// Object through one Path Item chain, and what it compiles to for all of
-// them.
-type group struct {
-	op atomic.Pointer[operation]
+// A cell holds what an entry, or the shape its group shares, compiles to:
+// its descriptor, published once by whichever of describing and compiling
+// comes first, and its plan, built on first use and bound to that
+// descriptor. Describing and calling therefore report the same values in
+// either order, and describing alone keeps no plan.
+type cell struct {
+	desc atomic.Pointer[Operation]
+	op   atomic.Pointer[operation]
+}
+
+// describe returns the cell's descriptor, building one without a plan when
+// none is published.
+func (c *cell) describe(build func(plan bool) *operation) *Operation {
+	if d := c.desc.Load(); d != nil {
+		return d
+	}
+	c.desc.CompareAndSwap(nil, build(false).Operation)
+	return c.desc.Load()
+}
+
+// compile returns the cell's plan, building it on first use. A plan built
+// once its descriptor is published is still private, and is bound to that
+// descriptor before it is published in turn.
+func (c *cell) compile(build func(plan bool) *operation) *operation {
+	return loadOrMake(&c.op, func() *operation {
+		o := build(true)
+		if !c.desc.CompareAndSwap(nil, o.Operation) {
+			o.bind(c.desc.Load())
+		}
+		return o
+	})
 }
 
 // A level is one Path Item of a chain: the Paths entry, then each $ref
@@ -168,10 +221,12 @@ func (s *summary) add(l *level) *summary {
 	return sum
 }
 
-// compile completes the entry's descriptor and plan: the first published.
-func (e *entry) compile() *operation {
-	return loadOrMake(&e.op, e.build)
-}
+// compile returns the entry's plan, which reports the descriptor describe
+// returns.
+func (e *entry) compile() *operation { return e.cell.compile(e.build) }
+
+// describe returns the entry's descriptor, building no plan.
+func (e *entry) describe() *Operation { return e.cell.describe(e.build) }
 
 // loadOrMake returns p's value, made by build and stored if p has none yet,
 // the first value stored being kept.
@@ -550,7 +605,12 @@ func (d *document) index(ctx context.Context) error {
 	d.byID, d.byRoute, d.broken = map[string]*entry{}, map[route]*entry{}, map[string]*entry{}
 	var targets map[int32]link
 	var groups map[*summary]int // first contiguous entries sharing a summary
-	for path, item := range d.root().get("paths").members() {
+	paths := d.root().get("paths")
+	if bundled(paths) { // listed once, as Operations says
+		d.entries = append(d.entries, &entry{doc: d, m: -1, levels: &level{v: paths, ptr: "/paths"}, err: errBundle})
+		return nil
+	}
+	for path, item := range paths.members() {
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("openapi: %w", err)
 		}
@@ -586,19 +646,27 @@ func (d *document) index(ctx context.Context) error {
 			if shared {
 				original := d.entries[first]
 				if original.group == nil {
-					original.group = new(group)
+					original.group = new(cell)
 				}
 				e.group = original.group
 				first++
 			}
 		}
-		if sum != nil && sum.at[additionalField] != nil {
-			l := sum.at[additionalField]
-			for name, n := range l.v.get("additionalOperations").members() {
+		if sum == nil || sum.at[additionalField] == nil {
+			continue
+		}
+		l := sum.at[additionalField]
+		if ops := l.v.get("additionalOperations"); bundled(ops) { // listed once, as Operations says
+			d.entries = append(d.entries, &entry{doc: d, path: path, m: -1, levels: &level{v: ops, ptr: l.ptr + "/additionalOperations"}, err: errBundle})
+			if shared {
+				first++ // the group's first path lists the same
+			}
+		} else {
+			for name, n := range ops.members() {
 				if n.kind() != '{' {
 					continue
 				}
-				e := &entry{doc: d, path: path, id: n.str("operationId"), node: n, levels: levels, sum: sum, additionalLevel: l}
+				e := &entry{doc: d, path: path, id: operationID(n), node: n, levels: levels, sum: sum, additionalLevel: l}
 				e.forbidden = !isToken(name) || slices.ContainsFunc(methods[:], func(m struct{ name, upper string }) bool { return m.upper == name })
 				if e.forbidden {
 					e.err = fmt.Errorf("forbidden additional method %q", name)
@@ -609,7 +677,7 @@ func (d *document) index(ctx context.Context) error {
 				if shared {
 					original := d.entries[first]
 					if original.group == nil {
-						original.group = new(group)
+						original.group = new(cell)
 					}
 					e.group = original.group
 					first++
@@ -624,12 +692,21 @@ func (d *document) index(ctx context.Context) error {
 // which sum summarizes.
 func (d *document) addOperation(path string, m int, levels *level, sum *summary) *entry {
 	n := sum.at[m].v.get(methods[m].name)
-	e := &entry{doc: d, path: path, id: n.str("operationId"), m: int8(m), node: n, levels: levels, sum: sum}
+	e := &entry{doc: d, path: path, id: operationID(n), m: int8(m), node: n, levels: levels, sum: sum}
 	if sum.dup&(1<<m) != 0 {
 		e.err = fmt.Errorf("the Path Item and its $ref target both define %s", methods[m].name)
 	}
 	d.recordOperation(e)
 	return e
+}
+
+// operationID returns the operationId of the Operation Object n, which has
+// none that can be read when it is written as a reference.
+func operationID(n value) string {
+	if bundled(n) {
+		return ""
+	}
+	return n.str("operationId")
 }
 
 func (d *document) recordOperation(e *entry) {
@@ -838,10 +915,17 @@ func (d *document) checkNames(ctx context.Context, cfg *config, re *RequestError
 	media := cfg.MediaType == "" || cfg.mediaTypeErr != nil
 	unused := maps.Clone(cfg.Variables)
 	check := func(list value) {
+		if bundled(list) { // described as one server (see parseServers)
+			serverID = serverID || idOf(list) == cfg.ServerID
+			return
+		}
 		for _, s := range list.members() {
+			serverID = serverID || idOf(s) == cfg.ServerID
+			if bundled(s) {
+				continue // described with no URL or name, and no variables
+			}
 			u := s.str("url")
 			server = server || u == cfg.Server || s.t.edition == 32 && s.str("name") == cfg.Server
-			serverID = serverID || idOf(s) == cfg.ServerID
 			if len(unused) > 0 {
 				_, names, _ := splitTemplate(u)
 				for _, name := range names {
@@ -878,7 +962,7 @@ func (d *document) checkNames(ctx context.Context, cfg *config, re *RequestError
 		for l := e.levels; l != nil && first(l.v); l = l.next { // a level checked has its rest checked
 			check(l.v.get("servers"))
 		}
-		if !first(e.node) {
+		if !first(e.node) || bundled(e.node) {
 			continue
 		}
 		check(e.node.get("servers"))
@@ -888,7 +972,7 @@ func (d *document) checkNames(ctx context.Context, cfg *config, re *RequestError
 				server = server || s.URL == cfg.Server
 				serverID = serverID || s.ID == cfg.ServerID
 			}
-			if o.Body != nil {
+			if o.Body != nil && o.Body.Err == nil { // consumes written as a reference offers no type
 				media = media || match(o.body, o.Body.Media, cfg.mediaType, true) != nil
 			}
 		}
@@ -903,6 +987,9 @@ func (d *document) checkNames(ctx context.Context, cfg *config, re *RequestError
 			body, _, _, err := d.follow(rb, "")
 			if err != nil || !first(body) {
 				continue
+			}
+			if content := body.get("content"); bundled(content) {
+				continue // its media types are in a document to bundle first
 			}
 			for typ := range body.get("content").members() {
 				m, ok := parseMedia(typ)

@@ -1,6 +1,7 @@
 package openapi
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -86,11 +87,30 @@ func stylesApply(m parsedMedia) bool {
 	return isForm(m) || strings.EqualFold(m.full, "multipart/form-data")
 }
 
+// byStyle reports whether a field whose Encoding Object is e, in a body of
+// media type m, is written by e's style, explode and allowReserved, by RFC
+// 6570, in place of its content type: e sets one of them, and they apply
+// under m (see stylesApply), as in OpenAPI 3.0 they do under form-urlencoded
+// alone. A field so written takes no Part. newField records it as the
+// field's styled, which the writers follow.
+func byStyle(e value, m parsedMedia) bool {
+	if !e.ok() || !stylesApply(m) || e.t.edition == 30 && isMultipart(m) {
+		return false
+	}
+	return e.get("style").ok() || e.get("explode").ok() || e.get("allowReserved").ok()
+}
+
+// formData is multipart/form-data, parsed.
+var formData = parsedMedia{"multipart/form-data", "multipart", "form-data", ""}
+
 // encodingOf compiles the fields of a form or multipart body whose schema is
 // s, at src, with the Encoding Objects of encodings, at esrc, under the media
 // type or range m, and describes them: the properties s and the schemas its
 // $ref and allOf reach declare, then the names only encodings has.
 func (d *document) encodingOf(s []value, src string, encodings value, esrc string, m parsedMedia, edition int) (*formEncoding, []*Param) {
+	if bundled(encodings) { // the part holding it reports it
+		encodings = value{}
+	}
 	fields := map[string]*field{}
 	var names []string
 	var first []*Schema
@@ -282,11 +302,13 @@ func (d *document) own(v value) (shape, []kid) {
 	return s, kids
 }
 
-// The facts of a schema node are what it compiles to, each once: its shape,
-// and the default media types of a field it alone types.
+// The facts of a node are what it compiles to, each once: a schema's shape,
+// and the default media types of a field it alone types, and whether an
+// Encoding or Media Type Object holds a value written as a reference.
 type facts struct {
-	shape atomic.Pointer[shape]
-	set   atomic.Uint32 // the mediaSet, with bit 8 set once known
+	shape   atomic.Pointer[shape]
+	set     atomic.Uint32 // the mediaSet, with bit 8 set once known
+	bundled atomic.Uint32 // what holdsBundled found, once known
 }
 
 // factsPage is how many nodes' facts are made at a time.
@@ -641,6 +663,26 @@ func (d *document) newField(name string, schema *Schema, roots []value, e value,
 		p.Source = src
 	}
 	multipart := isMultipart(m)
+	if bundled(e) { // none of it is read
+		p.Err, f.err, f.style = errBundle, errBundle, &noStyle
+		return f, p
+	}
+	// Under multipart its headers are described as Params of their own,
+	// unless its style writes it as a named field (see Param.Headers); each
+	// such Param reports what its Header Object holds, so its check here
+	// leaves them out.
+	describesHeaders := multipart && (whole || !byStyle(e, m))
+	if d.holdsBundled(e, encodingKind, !describesHeaders, !describesHeaders) {
+		p.Err, f.err, f.style = errBundle, errBundle, &noStyle
+		if h := e.get("headers"); describesHeaders && !bundled(h) { // what it holds lies elsewhere
+			p.Headers = d.headers(h, src+"/headers")
+		}
+		return f, p
+	}
+	// RFC 6570 fields apply under form-urlencoded and multipart/form-data, and
+	// then contentType is ignored; a range of multipart types may be either
+	// (OpenAPI 3.1.2 section 4.8.15.1.2), its form-data calls written by them.
+	f.styled = byStyle(e, m) || multipart && m.sub == "*" && byStyle(e, formData)
 	var style, explode, reserved, ctype value
 	for k, v := range e.members() {
 		switch k {
@@ -653,27 +695,25 @@ func (d *document) newField(name string, schema *Schema, roots []value, e value,
 		case "contentType":
 			ctype = v
 		case "headers":
-			if multipart {
+			if describesHeaders {
 				p.Headers = d.headers(v, src+"/headers")
 			}
 		}
 	}
-	// RFC 6570 fields apply under form-urlencoded and multipart/form-data, and
-	// then contentType is ignored; a range of multipart types may be either
-	// (OpenAPI 3.1.2 section 4.8.15.1.2).
 	f.style = &noStyle
-	if e.ok() && e.t.edition == 30 && multipart {
-		style, explode, reserved = value{}, value{}, value{}
-	}
-	if f.styled = (style.ok() || explode.ok() || reserved.ok()) && (stylesApply(m) || multipart && m.sub == "*"); f.styled {
+	if f.styled {
 		p.Style, p.AllowReserved = style.string(), reserved.kind() == 't' && !multipart
 		if p.Style == "" {
 			p.Style = "form"
 		}
 		f.param = compileStyle(p, "query", explode)
-		if stylesApply(m) {
-			return f, p
-		}
+		p.Err = d.defect(e, p.Err)
+	}
+	// Under form-urlencoded and multipart/form-data the style writes every
+	// value of a named field, which so takes no type (see Param.ContentType),
+	// but a positional part given as a Part takes one its Encoding lists.
+	if f.styled && stylesApply(m) && !whole {
+		return f, p
 	}
 	if f.listed = ctype.ok(); !f.listed {
 		var set mediaSet
@@ -689,26 +729,350 @@ func (d *document) newField(name string, schema *Schema, roots []value, e value,
 		}
 		p.ContentType, f.class = strings.Join(f.types, ", "), f.parsed[0].class()
 		f.plain = len(f.parsed) == 1 && !f.styled && !isForm(f.parsed[0])
+	} else {
+		p.ContentType = ctype.string()
+		for _, t := range mediaList(p.ContentType) {
+			m, ok := parseMedia(t)
+			if !ok {
+				f.err = d.defect(e, fmt.Errorf("contentType %q is not a list of media types or ranges", p.ContentType))
+				break
+			}
+			f.types, f.parsed, f.class = append(f.types, t), append(f.parsed, m), m.class()
+		}
+		f.plain = len(f.parsed) == 1 && f.parsed[0].concrete() && !f.styled && f.err == nil && !isForm(f.parsed[0])
+	}
+	if !f.listed {
 		return f, p
 	}
-	p.ContentType = ctype.string()
-	for _, t := range mediaList(p.ContentType) {
-		m, ok := parseMedia(t)
-		if !ok {
-			f.err = fmt.Errorf("contentType %q is not a list of media types or ranges", p.ContentType)
-			break
-		}
-		f.types, f.parsed, f.class = append(f.types, t), append(f.parsed, m), m.class()
-	}
-	f.plain = len(f.parsed) == 1 && f.parsed[0].concrete() && !f.styled && f.err == nil && !isForm(f.parsed[0])
 	if p.Err == nil {
-		if p.Err = f.err; f.styled && f.err != nil { // a range, whose style applies to form-data calls, which ignore contentType
+		if p.Err = f.err; f.styled && f.err != nil { // values its style writes, which ignore contentType: a range's form-data calls, or a positional part's
 			sp := *p
 			sp.Err = nil
 			f.Param = &sp
 		}
 	}
 	return f, p
+}
+
+// bundledEncoding reports whether the Encoding Object e is written as a
+// reference or holds a value so written, at any depth (see holdsBundled). The
+// fields of a nested part ask it again of the Encoding Objects their own
+// field's walk passed, so its answer is kept.
+func (d *document) bundledEncoding(e value) bool {
+	return bundled(e) || d.holdsBundled(e, encodingKind, true, true)
+}
+
+// holdsBundled reports whether v, an Encoding Object (k encodingKind), a
+// Media Type Object (mediaKind) or a Header Object (parameterKind), holds a
+// value written as a reference among the objects it declares for encoding
+// values: an encoding map, prefixEncoding list or itemEncoding, a headers
+// map, a content map, and the Encoding, Header and Media Type Objects in
+// them, at any depth. Such a value counts whatever media type, style or
+// edition makes of it (see Operation), so it asks nothing of them: it reads
+// the members the edition defines, as discovery does (see modelSlot), which
+// no extension is. A Reference Object among them, as a Header Object, or in
+// OpenAPI 3.2 a Media Type Object, may be, is followed as descriptions
+// follow it, within the documents loaded: it counts when its target lies
+// inside a value written as a reference or holds one. Without headers, the
+// Header Objects of v's own headers map that a Param describes (see
+// headerDescribed) are left out, as each reports what it holds.
+//
+// An object holding Encoding Objects, in its own maps or in its Header
+// Objects' content, is read again whenever an object holding it is, and a
+// reference target whenever a Reference Object leads to it, so their
+// answers are kept: that of v, with keep, for a v that may be asked again,
+// and those of the Encoding Objects so holding others and the targets the
+// walk reads. Every other object is read only as part of one of those, once
+// for each, so the walks of a document are together linear in what they
+// read.
+//
+// It reads the Encoding Objects and reference targets v reaches one at a
+// time, without recursion, as references may form long chains and cycles:
+// the strongly connected components of what reaches what are found as it
+// goes (Tarjan's algorithm), and none of them holds such a value unless
+// the walk finds one, which ends it.
+func (d *document) holdsBundled(v value, k kind, keep, headers bool) bool {
+	if !v.ok() {
+		return false
+	}
+	if keep = keep && headers; keep {
+		if got, known := d.knownBundled(v.id(), bundleShift(k)); known {
+			return got
+		}
+	}
+	w := bundleWalk{d: d}
+	found, holder, kids := w.scan(v, k, headers, nil)
+	return w.run(v, k, keep && holder, found, kids)
+}
+
+// headersBundled reports whether the headers map h holds a value written as
+// a reference (see holdsBundled) in a Header Object that no Param describes
+// (see headerDescribed), as headers leaves Content-Type out.
+func (d *document) headersBundled(h value) bool {
+	w := bundleWalk{d: d}
+	found, _, kids := w.slot(h, slot{parameterKind, '{'}, false, nil)
+	return w.run(value{}, 0, false, found, kids)
+}
+
+// run ends the walk w that began at v, of kind k, whose answer is kept with
+// keep, and found, or else read kids: the Encoding Objects and reference
+// targets v holds.
+func (w *bundleWalk) run(v value, k kind, keep, found bool, kids []bundleKid) bool {
+	d := w.d
+	switch {
+	case found || len(kids) == 0:
+		if keep {
+			d.keepBundled(v.id(), bundleShift(k), found)
+		}
+		return found
+	}
+	w.push(v, k, keep, kids)
+	for len(w.path) > 0 {
+		i := w.path[len(w.path)-1]
+		if n := &w.nodes[i]; n.next < len(n.kids) {
+			kid := n.kids[n.next]
+			n.next++
+			id, shift := kid.v.id(), bundleShift(kid.k)
+			key := uint64(id)<<3 | uint64(shift)
+			if got, known := d.knownBundled(id, shift); known {
+				if got {
+					return w.found()
+				}
+				continue
+			}
+			if m, ok := w.seen[key]; ok { // a target being read, to which a cycle leads back
+				n.low = min(n.low, w.nodes[m].index)
+				continue
+			}
+			found, holder, kids := w.scan(kid.v, kid.k, true, nil)
+			keep := kid.target || holder
+			if found || len(kids) == 0 {
+				if keep {
+					d.keepBundled(id, shift, found)
+				}
+				if found {
+					return w.found()
+				}
+				continue
+			}
+			if kid.target {
+				if w.seen == nil {
+					w.seen = map[uint64]int{}
+				}
+				w.seen[key] = len(w.nodes)
+			}
+			w.push(kid.v, kid.k, keep, kids)
+			continue
+		}
+		n := w.nodes[i]
+		if w.path = w.path[:len(w.path)-1]; len(w.path) > 0 {
+			p := &w.nodes[w.path[len(w.path)-1]]
+			p.low = min(p.low, n.low)
+		}
+		if n.low == n.index { // the root of a component, all of which the walk has read: none holds such a value
+			for {
+				m := w.scc[len(w.scc)-1]
+				w.scc = w.scc[:len(w.scc)-1]
+				if mn := &w.nodes[m]; mn.keep {
+					d.keepBundled(mn.v.id(), bundleShift(mn.k), false)
+				}
+				if m == i {
+					break
+				}
+			}
+		}
+	}
+	return false
+}
+
+// A bundleWalk is one walk of holdsBundled: the objects it reads that hold
+// others, in the order read, the path to the one being read, those whose
+// component is not yet known, and the reference targets among them.
+type bundleWalk struct {
+	d     *document
+	nodes []bundleNode
+	path  []int
+	scc   []int
+	seen  map[uint64]int // node by id and kind, for each reference target, which a cycle may reach again
+}
+
+// A bundleNode is an object holdsBundled reads that holds others: what it
+// holds, the next of them to read, and its place in the walk.
+type bundleNode struct {
+	v          value
+	k          kind
+	keep       bool // its answer is kept
+	kids       []bundleKid
+	next       int
+	index, low int
+}
+
+// A bundleKid is an object a bundleNode holds: an Encoding Object, or the
+// target of a Reference Object.
+type bundleKid struct {
+	v      value
+	k      kind
+	target bool
+}
+
+func (w *bundleWalk) push(v value, k kind, keep bool, kids []bundleKid) {
+	i := len(w.nodes)
+	w.nodes = append(w.nodes, bundleNode{v: v, k: k, keep: keep, kids: kids, index: i, low: i})
+	w.path, w.scc = append(w.path, i), append(w.scc, i)
+}
+
+// found ends the walk with a value written as a reference, which every
+// object on the path to it holds.
+func (w *bundleWalk) found() bool {
+	for _, i := range w.path {
+		if n := &w.nodes[i]; n.keep {
+			w.d.keepBundled(n.v.id(), bundleShift(n.k), true)
+		}
+	}
+	return true
+}
+
+// scan reads v, an object of kind k, up to the Encoding Objects and
+// reference targets it holds, which it adds to kids: it reports a value
+// written as a reference it holds itself, and whether it holds Encoding
+// Objects, directly or in its Header and Media Type Objects, which it reads
+// itself, as they nest no deeper than a Header Object's content. Without
+// headers, the Header Objects of v's own headers map that a Param describes
+// are left out.
+func (w *bundleWalk) scan(v value, k kind, headers bool, kids []bundleKid) (found, holder bool, _ []bundleKid) {
+	for name, x := range v.members() {
+		s, ok := modelSlot(k, name, v.t.edition)
+		if !ok || s.k != encodingKind && s.k != mediaKind && s.k != parameterKind { // its schemas and examples
+			continue
+		}
+		var h bool
+		found, h, kids = w.slot(x, s, headers, kids)
+		if holder = holder || h; found {
+			break
+		}
+	}
+	return found, holder, kids
+}
+
+// slot reads x, which a slot s of the model holds (see modelSlot), as scan
+// reads an object.
+func (w *bundleWalk) slot(x value, s slot, headers bool, kids []bundleKid) (found, holder bool, _ []bundleKid) {
+	if s.how != '1' && bundled(x) { // a map or list, never a reference
+		return true, false, kids
+	}
+	holder = s.k == encodingKind && x.hasMembers()
+	for name, e := range x.members() {
+		if s.how == '1' {
+			e = x
+		}
+		switch ref, _, _ := reference(e); {
+		case s.k == parameterKind && !headers && headerDescribed(name, x.t.edition):
+		case !ref.ok() && s.k == encodingKind:
+			kids = append(kids, bundleKid{v: e, k: encodingKind})
+		case !ref.ok():
+			var h bool
+			found, h, kids = w.scan(e, s.k, true, kids)
+			holder = holder || h
+		case !referenceObject(s.k, e.t.edition):
+			found = true
+		default:
+			t, _, _, err := w.d.follow(e, "")
+			found = errors.Is(err, errBundle) // a target inside a value written as a reference
+			if err == nil {
+				kids = append(kids, bundleKid{t, s.k, true})
+			}
+		}
+		if found || s.how == '1' {
+			break
+		}
+	}
+	return found, holder, kids
+}
+
+// headerDescribed reports whether the Header Object named name, in a headers
+// map of an object of the given edition, is described by a Param of its own
+// where headers describes the map: all but Content-Type, which OpenAPI 3
+// ignores there.
+func headerDescribed(name string, edition int) bool {
+	return edition == 20 || !strings.EqualFold(name, "Content-Type")
+}
+
+// knownBundled returns what holdsBundled kept of node id as an object of the
+// kind at shift, if anything, without making its facts.
+func (d *document) knownBundled(id int32, shift int) (found, known bool) {
+	if p := d.pages[id/factsPage].Load(); p != nil {
+		got := p[id%factsPage].bundled.Load() >> shift
+		return got&2 != 0, got&1 != 0
+	}
+	return false, false
+}
+
+// keepBundled keeps what holdsBundled found of node id as an object of the
+// kind at shift.
+func (d *document) keepBundled(id int32, shift int, found bool) {
+	d.facts(id).bundled.Or(bundleBits(found) << shift)
+}
+
+// bundleShift is where a node's facts keep what holdsBundled found of it as
+// an object of kind k: two bits, known and the answer.
+func bundleShift(k kind) int {
+	switch k {
+	case mediaKind:
+		return 2
+	case parameterKind:
+		return 4
+	}
+	return 0
+}
+
+// bundleBits is what holdsBundled keeps for an answer.
+func bundleBits(found bool) uint32 {
+	if found {
+		return 3
+	}
+	return 1
+}
+
+// bundledMedia reports whether the Media Type Object v, at src, holds a value
+// written as a reference among its Encoding Objects (see holdsBundled) that
+// no Param of described, those describing its parts, reports: an encoding
+// map or prefixEncoding list so written, or an Encoding Object that is or
+// holds one and whose part none describes. None is described under a type
+// whose parts the client does not describe, or in a response, and the
+// encoding map's entries are not in a positional multipart body. Its
+// answer is kept when v is shared.
+func (d *document) bundledMedia(v value, src string, described []*Param, shared bool) bool {
+	if found := d.holdsBundled(v, mediaKind, shared, true); !found || len(described) == 0 {
+		return found
+	}
+	sources := make(map[string]bool, len(described))
+	for _, p := range described {
+		sources[p.Source] = true
+	}
+	for name, x := range v.members() {
+		s, ok := modelSlot(mediaKind, name, v.t.edition)
+		at := src + "/" + name
+		switch {
+		case !ok || s.k != encodingKind:
+		case s.how == '1':
+			if !sources[at] && d.bundledEncoding(x) {
+				return true
+			}
+		case bundled(x):
+			return true
+		default:
+			i := 0
+			for key, e := range x.members() {
+				if s.how == '[' {
+					key = fmt.Sprint(i)
+				}
+				if i++; !sources[at+"/"+token(key)] && d.bundledEncoding(e) {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // mediaList splits a comma-separated list of media types, a comma inside a
@@ -734,14 +1098,21 @@ func mediaList(s string) []string {
 func (d *document) headers(h value, src string) []*Param {
 	var list []*Param
 	for name, v := range h.members() {
-		if strings.EqualFold(name, "Content-Type") && h.t.edition != 20 {
+		if !headerDescribed(name, h.t.edition) {
 			continue
 		}
-		t, at, desc, err := d.follow(v, src+"/"+token(name))
+		at := src + "/" + token(name)
+		if h.t.edition == 20 && bundled(v) { // a Swagger 2.0 Header Object is never a reference
+			list = append(list, &Param{Name: name, In: "header", Source: at, Err: errBundle})
+			continue
+		}
+		t, at, desc, err := d.follow(v, at)
 		p := &Param{Name: name, In: "header", Description: desc, Source: at, Err: err}
 		if err == nil {
 			p.Required, p.Deprecated, p.Schema = t.flag("required"), t.flag("deprecated"), d.schema(t.get("schema"), at, "/schema")
-			if content := t.get("content"); content.ok() {
+			if content := t.get("content"); bundled(content) {
+				p.Err = errBundle
+			} else if content.ok() {
 				n := 0
 				for typ, m := range content.members() {
 					n++
@@ -749,6 +1120,11 @@ func (d *document) headers(h value, src string) []*Param {
 					mat := at + "/content/" + token(typ)
 					if m.t.edition == 32 {
 						m, mat, _, p.Err = d.follow(m, mat)
+					} else if bundled(m) { // a Reference Object only from OpenAPI 3.2: none of it is read
+						m, p.Err = value{}, errBundle
+					}
+					if d.holdsBundled(m, mediaKind, true, true) { // the header is the nearest part holding it, and many may share it
+						p.Err = errBundle
 					}
 					p.Schema = d.schema(m.get("schema"), mat, "/schema")
 				}
@@ -775,7 +1151,7 @@ func (f *field) media(mt string) (string, parsedMedia, class, error) {
 		if len(f.parsed) == 1 && f.parsed[0].concrete() {
 			return f.types[0], f.parsed[0], f.class, nil
 		}
-		return "", parsedMedia{}, 0, fmt.Errorf("the field offers %s; select one with Part.MediaType", f.ContentType)
+		return "", parsedMedia{}, 0, fmt.Errorf("the field offers %s; select one with Part.MediaType", strings.Join(f.types, ", "))
 	}
 	m, ok := parseMedia(mt)
 	switch {
@@ -798,24 +1174,27 @@ type fieldValue struct {
 }
 
 // value resolves v, a value of f named name at at, in a form body or else a
-// part, recording why it cannot be sent: its Part's problems, a name a part
-// cannot carry, f's Err, and its media type's problems. ok is false when
-// nothing is to be sent.
+// part, recording why it cannot be sent: f's Err first, as the field's own
+// defect, then its Part's problems, a name a part cannot carry, and its media
+// type's problems. ok is false when nothing is to be sent.
 func (f *field) value(v any, name string, at key, form bool, re *RequestError) (fieldValue, bool) {
-	v, pt, ok := part(v, at, form, re)
-	if !ok {
-		return fieldValue{}, false
+	v, pt, err := part(v, form)
+	if err == nil && pt != nil && null(v) {
+		return fieldValue{}, false // a Part whose content is null is omitted
 	}
-	mt, m, k, err := f.media(pt.mediaType())
 	switch {
+	case f.err != nil:
+		re.input(at.String(), cmp.Or(f.Err, f.err)) // the Err it describes, which may be its style's
+	case err != nil:
+		re.input(at.String(), err)
 	case !form && !quotable(name):
 		re.input(at.String(), errors.New("a part name cannot hold a control character other than a tab"))
-	case f.err != nil:
-		re.input(at.String(), f.err)
-	case err != nil:
-		re.setting(at.String(), err)
 	default:
-		return fieldValue{v, pt, mt, m, k}, true
+		mt, m, k, err := f.media(pt.mediaType())
+		if err == nil {
+			return fieldValue{v, pt, mt, m, k}, true
+		}
+		re.setting(at.String(), err)
 	}
 	return fieldValue{}, false
 }
@@ -1054,10 +1433,10 @@ func null(v any) bool {
 	return false
 }
 
-// part returns the content of v, a field's value, its Part, if it is one or
-// a non-nil *Part, and whether to send it, recording at at why the Part
-// cannot be used; form refuses what applies only to parts.
-func part(v any, at key, form bool, re *RequestError) (any, *Part, bool) {
+// part returns the content of v, a field's value, and its Part, if it is one
+// or a non-nil *Part, or why the Part cannot be used; form refuses what
+// applies only to parts.
+func part(v any, form bool) (any, *Part, error) {
 	var pt *Part
 	switch p := v.(type) {
 	case Part:
@@ -1065,7 +1444,7 @@ func part(v any, at key, form bool, re *RequestError) (any, *Part, bool) {
 	case *Part:
 		pt = p
 	default:
-		return v, nil, true
+		return v, nil, nil
 	}
 	err := checkHeader(pt.Header)
 	switch {
@@ -1076,11 +1455,7 @@ func part(v any, at key, form bool, re *RequestError) (any, *Part, bool) {
 	case !quotable(pt.Filename):
 		err = errors.New("a filename cannot hold a control character other than a tab")
 	}
-	if err != nil {
-		re.input(at.String(), err)
-		return nil, nil, false
-	}
-	return pt.Content, pt, !null(pt.Content)
+	return pt.Content, pt, err
 }
 
 // quotable reports whether a quoted-string can carry s: no control

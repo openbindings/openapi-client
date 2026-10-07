@@ -281,8 +281,8 @@ func modelSlot(k kind, name string, edition int) (slot, bool) {
 				return slot{parameterKind, '{'}, true
 			case "responses":
 				return slot{responseKind, '{'}, true
-			case "securityDefinitions":
-				return slot{refKind, '{'}, true
+			case "securityDefinitions": // Security Scheme Objects, which are never references in Swagger 2.0
+				return slot{dataKind, '{'}, true
 			}
 			return slot{}, false
 		case operationKind:
@@ -308,9 +308,9 @@ func modelSlot(k kind, name string, edition int) (slot, bool) {
 			if name == "schema" {
 				return slot{schemaKind, '1'}, true
 			}
-			if name != "headers" {
-				return slot{}, false
-			}
+			// A Swagger 2.0 Header Object is never a reference, and holds
+			// only Items Objects.
+			return slot{itemsKind, '{'}, name == "headers"
 		}
 	}
 	if edition <= 30 {
@@ -413,6 +413,9 @@ type want struct {
 // the discovery reads the rest one reader at a time.
 type reader struct {
 	d       *document
+	ctx     context.Context // what cancels reading: the load's, or, completing a schema graph after Load, nothing (see schemaGraph)
+	visits  int             // the nodes visited, by which ctx is checked as parsing checks it
+	stopped bool            // ctx is done, and nothing more is read
 	t       *tree
 	ids     map[string]*claim // by identifier
 	claimed []string          // the identifiers the discovery has not taken
@@ -506,7 +509,7 @@ func (d *document) discover(ld *loading) error {
 	defer ld.close()
 	dc := &discovery{document: d, ld: ld, readers: map[*tree]*reader{}, wants: map[string][]want{}, asked: map[string]bool{}}
 	d.named = map[string]*tree{}
-	dc.add(d.tree, ld.entry, d.newReader(d.tree, rootKind))
+	dc.add(d.tree, ld.entry, d.newReader(ld.ctx, d.tree, rootKind))
 	for {
 		dc.drain()
 		var wave []fetch
@@ -549,6 +552,9 @@ func (d *document) discover(ld *loading) error {
 				}
 			}
 		}
+	}
+	if err := ld.ctx.Err(); err != nil { // a reader may have stopped short
+		return fmt.Errorf("openapi: %w", err)
 	}
 	for k := range dc.refused {
 		if dc.wants[k[0]] != nil { // no referrer may retrieve it
@@ -674,7 +680,7 @@ func (dc *discovery) read(f fetch, buf []byte, scratch *reader) (*reader, error)
 	}
 	t.setEdition(dc.tree.edition)
 	k := t.kind()
-	r := dc.newReader(t, k)
+	r := dc.newReader(dc.ld.ctx, t, k)
 	if cap(scratch.queue) > 0 {
 		r.queue = append(scratch.queue[:0], r.queue...)
 	}
@@ -694,11 +700,11 @@ func (dc *discovery) read(f fetch, buf []byte, scratch *reader) (*reader, error)
 // newReader returns a reader of t, whose root is a k node, with the root to
 // read when t holds what discovery needs throughout: an identifier, or, in
 // an OpenAPI document, a reference that may reach another document.
-func (d *document) newReader(t *tree, k kind) *reader {
+func (d *document) newReader(ctx context.Context, t *tree, k kind) *reader {
 	if t.edition == 0 {
 		t.setEdition(d.tree.edition)
 	}
-	r := &reader{d: d, t: t}
+	r := &reader{d: d, ctx: ctx, t: t}
 	if k == rootKind && t.edition >= 31 {
 		r.dialect = t.root().get("jsonSchemaDialect").string()
 	}
@@ -1024,7 +1030,10 @@ func (r *reader) open(n value, k kind, base *url.URL, ptr *documentPath, uri, di
 	case err != nil:
 		return
 	case frag != "" && frag[0] == '/':
-		n, base, dialect, provisional, inferred = descend(n, k, frag, base, dialect, inferred)
+		var through bool
+		if n, base, dialect, provisional, inferred, through = descend(n, k, frag, base, dialect, inferred); through {
+			return // not followed before bundling (see pointerCheck)
+		}
 	case frag != "":
 		c := r.ids[uri+"#"+frag]
 		if c == nil {
@@ -1079,11 +1088,15 @@ func (r *reader) open(n value, k kind, base *url.URL, ptr *documentPath, uri, di
 	r.queue = append(r.queue, it)
 }
 
-// drain reads every item queued.
+// drain reads every item queued, stopping when the load's context is done.
 func (r *reader) drain() {
 	for n := len(r.queue); n > 0; n = len(r.queue) {
 		it := r.queue[n-1]
 		r.queue = r.queue[:n-1]
+		if r.stopped {
+			r.queue = r.queue[:0] // nothing more is read, so nothing is left to read
+			return
+		}
 		r.at, r.inferred = it.ptr, r.dependent[it.v.i]
 		r.visit(it.v, it.k, it.base, it.dialect)
 	}
@@ -1092,7 +1105,10 @@ func (r *reader) drain() {
 // visit reads v as a k node whose base outside it is base: its identifiers,
 // its references, and the nodes it holds.
 func (r *reader) visit(v value, k kind, base *url.URL, effective string) {
-	if r.seen[v.i]&(2<<(2*k)) != 0 || k == anyKind && (v.contextKinds() != 0 || r.seen[v.i]&(3<<(2*schemaKind)) != 0) {
+	if r.visits++; r.visits&0xffff == 0 && r.ctx.Err() != nil {
+		r.stopped = true // the load reports the context's error
+	}
+	if r.stopped || r.seen[v.i]&(2<<(2*k)) != 0 || k == anyKind && (v.contextKinds() != 0 || r.seen[v.i]&(3<<(2*schemaKind)) != 0) {
 		return
 	}
 	r.seen[v.i] |= 2 << (2 * k)
@@ -1201,11 +1217,16 @@ func (r *reader) visit(v value, k kind, base *url.URL, effective string) {
 	case referenceObject(k, r.t.edition) && ref.kind() == '"': // a Reference Object
 		r.reference(ref, k, base)
 		return
+	case k != rootKind && ref.kind() == '"':
+		return // written as a reference where the edition defines none: bundling replaces it whole
 	}
-	if r.t.edition == 32 && (k == rootKind || k == operationKind) {
-		for _, req := range v.get("security").members() {
+	if sec := v.get("security"); r.t.edition == 32 && (k == rootKind || k == operationKind) && sec.kind() == '[' {
+		for _, req := range sec.members() {
+			if bundled(req) {
+				continue // a requirement written as a reference names nothing before bundling
+			}
 			for name := range req.members() {
-				if !r.d.schemeComponent(name, r.t).ok() {
+				if v, err := r.d.schemeComponent(name, r.t); err == nil && !v.ok() {
 					r.referenceText(name, refKind, base)
 				}
 			}
@@ -1226,7 +1247,10 @@ func (r *reader) visit(v value, k kind, base *url.URL, effective string) {
 		case callbackKind:
 			s, ok = slot{pathItemKind, '1'}, !strings.HasPrefix(name, "x-")
 		}
-		if ok {
+		// A map or list an OpenAPI object holds is never a reference, so one
+		// written as a reference is replaced whole by bundling; a schema's
+		// keywords keep JSON Schema's rules.
+		if ok && (s.how == '1' || lookup == schemaKind || !bundled(m)) {
 			r.into(name, m, s.k, s.how, base, effective)
 		}
 	}
@@ -1361,22 +1385,97 @@ func (r *reader) referenceValue(ref value, text string, k kind, base *url.URL) {
 	}
 }
 
+// A pointerCheck follows a JSON Pointer through the object model to tell
+// whether it passes through a value written as a reference where the edition
+// defines none (see bundled): an object of a kind that is never a Reference
+// Object or Path Item, or a map or list an OpenAPI object holds. Bundling
+// replaces such a value whole, so nothing inside it can be reached before
+// then. It stops checking where the pointer enters a schema, whose content
+// keeps JSON Schema's own rules, or data the object model does not describe.
+type pointerCheck struct {
+	k   kind
+	how byte // '1' when the node is a k node, or the list or map of them it is
+	on  bool
+}
+
+func newPointerCheck(k kind) pointerCheck {
+	return pointerCheck{k, '1', modeled(k)}
+}
+
+// modeled reports whether a k node is an OpenAPI object, as opposed to
+// schema content or data.
+func modeled(k kind) bool {
+	return k != schemaKind && k != schemaIDsKind && k != anyKind && k != dataKind
+}
+
+// leave reports whether v, which the pointer leaves for its member name,
+// is such a value, and moves to the member. A map or list an OpenAPI object
+// holds is checked whatever it holds, such as the Schema Objects of
+// components.schemas; checking stops once the pointer steps into a member
+// that is schema content, data or an extension.
+func (c *pointerCheck) leave(v value, name string) bool {
+	if !c.on {
+		return false
+	}
+	if c.how != '1' && bundled(v) || c.how == '1' && c.k != rootKind && c.k != pathItemKind && !referenceObject(c.k, v.t.edition) && bundled(v) {
+		return true
+	}
+	switch {
+	case (c.how == 'x' || c.how == '1' && c.k == callbackKind) && strings.HasPrefix(name, "x-"):
+		c.on = false // an extension
+	case c.how != '1':
+		c.how, c.on = '1', modeled(c.k) // the member or item, a k node
+	case c.k == callbackKind:
+		c.k = pathItemKind
+	default:
+		s, ok := modelSlot(c.k, name, v.t.edition)
+		c.k, c.how = s.k, s.how
+		c.on = ok && (s.how != '1' || modeled(s.k))
+	}
+	return false
+}
+
+// pointTo returns the node the JSON Pointer ptr names under v, a k node, and
+// whether ptr passes through a value written as a reference (see
+// pointerCheck).
+func pointTo(v value, k kind, ptr string) (value, bool) {
+	c := newPointerCheck(k)
+	for ptr != "" && v.ok() {
+		tok, rest, ok := nextToken(ptr)
+		if !ok {
+			return value{}, false
+		}
+		next := v.step(tok)
+		if name, _ := unescapeToken(tok); c.leave(v, name) {
+			return next, true
+		}
+		v, ptr = next, rest
+	}
+	return v, false
+}
+
 // descend returns the node the JSON Pointer ptr names under v, a k node
 // whose base outside it is base, and the base outside that node: the $id of
-// each schema on the way sets it.
-func descend(v value, k kind, ptr string, base *url.URL, dialect string, inferred bool) (value, *url.URL, string, bool, bool) {
+// each schema on the way sets it. It also reports whether ptr passes through
+// a value written as a reference (see pointerCheck).
+func descend(v value, k kind, ptr string, base *url.URL, dialect string, inferred bool) (value, *url.URL, string, bool, bool, bool) {
 	scope := documentScope{kinds: 1 << k, base: base, dialect: dialect, inferred: inferred}
+	c := newPointerCheck(k)
 	for ptr != "" && v.ok() {
 		scope = scope.enter(v)
 		tok, rest, ok := nextToken(ptr)
 		if !ok {
-			return value{}, scope.base, scope.dialect, scope.provisional, scope.inferred
+			return value{}, scope.base, scope.dialect, scope.provisional, scope.inferred, false
 		}
 		name, _ := unescapeToken(tok)
 		scope = scope.child(name, v.t.edition)
-		v, ptr = v.step(tok), rest
+		next := v.step(tok)
+		if c.leave(v, name) {
+			return next, scope.base, scope.dialect, scope.provisional, scope.inferred, true
+		}
+		v, ptr = next, rest
 	}
-	return v, scope.base, scope.dialect, scope.provisional, scope.inferred
+	return v, scope.base, scope.dialect, scope.provisional, scope.inferred, false
 }
 
 // documentScope follows physical ancestry through the same object model used
@@ -1720,7 +1819,14 @@ func (d *document) targetNode(t *tree, text, uri, frag string) (locatedNode, err
 	switch {
 	case frag == "":
 	case frag[0] == '/':
-		if n.v = n.v.at(frag); !n.v.ok() {
+		k := schemaKind // a resource an identifier names is schema content
+		if n.v.i == 0 {
+			k = n.v.t.kind()
+		}
+		var through bool
+		if n.v, through = pointTo(n.v, k, frag); through {
+			return locatedNode{}, errBundle
+		} else if !n.v.ok() {
 			return locatedNode{}, fmt.Errorf("%w %q: no such node", ErrUnresolved, safeURI(text))
 		}
 		n.suffix = frag

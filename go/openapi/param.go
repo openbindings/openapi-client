@@ -1,6 +1,7 @@
 package openapi
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"io"
@@ -17,7 +18,7 @@ type style struct {
 	delim             string // between the items of a value not exploded
 	named             bool
 	composite         bool // it takes only an array or object
-	deep              bool // deepObject: it takes only an object, which may nest
+	deep              bool // deepObject: it takes an object, which may nest, or an array as DeepObjectArrays allows
 }
 
 var styles = map[string]*style{
@@ -43,9 +44,15 @@ const maxLength = 1 << 20
 var (
 	errNested     = errors.New("the style cannot serialize a nested array or object")
 	errComposite  = errors.New("the style takes an array or object")
-	errDeepObject = errors.New("the deepObject style takes an object without arrays")
+	errDeepObject = errors.New("the deepObject style cannot serialize a primitive")
+	errDeepArray  = errors.New("the deepObject value holds an array that Options.DeepObjectArrays does not write")
 	errTooLong    = errors.New("the value would take the request target or header field past 1 MiB")
 )
+
+// errDeepArrays is the setting that would write an array errDeepArray
+// refuses: the caller knows its server's convention, which OpenAPI leaves
+// undefined.
+var errDeepArrays = errors.New("says how a deepObject value writes an array, which OpenAPI leaves undefined: BracketArrays writes scalar items, IndexArrays any item")
 
 // writeParam writes the value v given for p into b, after lead unless it
 // writes nothing, recording in re why it cannot. It reports whether v was
@@ -56,19 +63,19 @@ func (c *Client) writeParam(b *strings.Builder, lead string, p *param, v any, re
 		before := b.Len()
 		given, err := c.writeLegacy(b, lead, p, v, false)
 		if err != nil {
-			re.input(p.Key, err)
+			re.input(p.Key, cmp.Or(p.Err, err)) // a defective parameter is refused for its Err
 			return false, false
 		}
 		return given, b.Len() != before
 	}
 	if p.ContentType == "" {
-		e := emitter{param: p, b: b, lead: lead, limit: maxLength}
+		e := emitter{param: p, b: b, lead: lead, limit: maxLength, arrays: c.cfg.DeepObjectArrays}
 		given, err := e.write(c.doc, v)
 		if err == nil && e.n > 0 && b.Len() > maxLength { // an item escaped past it
 			err = errTooLong
 		}
 		if err != nil {
-			re.input(p.Key, err)
+			re.input(p.Key, cmp.Or(p.Err, err))
 			return false, false
 		}
 		return given, e.n > 0
@@ -157,11 +164,12 @@ func jsonText(s string) string {
 // once the value proves defined.
 type emitter struct {
 	*param
-	b     *strings.Builder
-	lead  string
-	limit int  // the most bytes b may hold, or 0 for no bound, as in a body
-	n     int  // the items or members written
-	held  bool // the first item of a named value not exploded was "", and whether "=" follows it depends on a second
+	b      *strings.Builder
+	lead   string
+	limit  int              // the most bytes b may hold, or 0 for no bound, as in a body
+	arrays DeepObjectArrays // how deepObject writes an array
+	n      int              // the items or members written
+	held   bool             // the first item of a named value not exploded was "", and whether "=" follows it depends on a second
 }
 
 // write writes v, reporting whether it is defined. A value it gives
@@ -176,8 +184,8 @@ func (e *emitter) write(d *document, v any) (bool, error) {
 	case bool:
 		return e.primitive(strconv.FormatBool(v))
 	case []string:
-		if len(v) > 0 && e.deep {
-			return false, errDeepObject
+		if e.deep {
+			break // written as JSON data, below
 		}
 		for _, s := range v {
 			if err := e.item(jsonText(s)); err != nil {
@@ -194,13 +202,18 @@ func (e *emitter) write(d *document, v any) (bool, error) {
 	switch k := s[0]; {
 	case k == 'n':
 		return false, nil
-	case k == '{' && e.deep:
-		if err := e.object(r, nil, 0); err != nil {
+	case k == '{' && e.deep, k == '[' && e.deep && (e.arrays == BracketArrays || e.arrays == IndexArrays):
+		defined, err := e.pairs(r, nil, 0)
+		if err != nil {
 			return false, err
 		}
-		return e.end(0)
+		items := 0 // a defined value is given though it writes no pair (RFC 6570 section 2.3)
+		if defined {
+			items = 1
+		}
+		return e.end(items)
 	case k == '[' && e.deep && s[1] != ']':
-		return false, errDeepObject
+		return false, cmp.Or(e.Err, errDeepArray)
 	case k == '[' || k == '{':
 		items := 0 // a list's, which is defined if it has any (RFC 6570 section 2.3)
 		err = r.each(func(name string) error {
@@ -337,28 +350,44 @@ func (e *emitter) end(items int) (bool, error) {
 	return e.n > 0 || items > 0, err
 }
 
-// object writes the members of the object at the read position as
-// deepObject pairs, path holding the names of the objects around them, n
-// bytes long.
-func (e *emitter) object(r *jsonReader, path []string, n int) error {
-	return r.each(func(name string) error {
-		switch r.s[r.i] {
-		case 'n':
+// pairs writes the members of the object, or the items of the array, at the
+// read position as deepObject pairs, path holding the suffixes after the
+// name that lead to it, n bytes long, and reports whether the value is
+// defined, as jsonReader.skip does. An item's suffix is "" under
+// BracketArrays, its index under IndexArrays, counting only the items that
+// write a pair.
+func (e *emitter) pairs(r *jsonReader, path []string, n int) (defined bool, err error) {
+	array, written := r.s[r.i] == '[', 0
+	defined = array && r.s[r.i+1] != ']' // a list with items is defined though none of them be
+	err = r.each(func(name string) error {
+		if array && e.arrays == IndexArrays {
+			name = strconv.Itoa(written)
+		}
+		switch c := r.s[r.i]; {
+		case c == 'n':
 			r.i += len("null")
 			return nil
-		case '[':
-			if r.s[r.i+1] != ']' {
-				return errDeepObject
+		case (c == '[' || c == '{') && (!array && (c == '{' || e.arrays == BracketArrays) || e.arrays == IndexArrays):
+			before := e.n
+			d, err := e.pairs(r, append(path, name), n+len(name))
+			if err != nil {
+				return err
 			}
-			r.i += len("[]")
+			if defined = defined || d; e.n > before {
+				written++
+			}
 			return nil
-		case '{':
-			return e.object(r, append(path, name), n+len(name))
+		case c == '[' || c == '{': // an array, or an array's object item, the setting does not write
+			if r.skip() { // the refusal applies to a defined value only
+				return cmp.Or(e.Err, errDeepArray)
+			}
+			return nil
 		}
 		v := r.scalar()
 		if err := e.next(n+len(name)+len(v), false); err != nil {
 			return err
 		}
+		defined, written = true, written+1
 		e.b.WriteString(e.name)
 		for _, k := range path {
 			e.b.WriteString("%5B")
@@ -371,6 +400,7 @@ func (e *emitter) object(r *jsonReader, path []string, n int) error {
 		escapeTo(e.b, v, e.set)
 		return nil
 	})
+	return defined, err
 }
 
 // A jsonReader reads JSON text as encoding/json writes it: valid, with no

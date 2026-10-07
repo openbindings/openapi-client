@@ -183,6 +183,14 @@ type Options struct {
 	// that allows empty values as its name alone (?flag), instead of the
 	// default, its name and an equals sign (?flag=).
 	NameOnlyEmpty bool
+
+	// DeepObjectArrays says how the deepObject style writes an array inside
+	// its value, which OpenAPI leaves undefined, wherever the client writes
+	// a value in that style. An array it does not write, every array when it
+	// is zero, is refused at the value's key in RequestError.Inputs, and
+	// RequestError.Settings names "Options.DeepObjectArrays". See
+	// [DeepObjectArrays].
+	DeepObjectArrays DeepObjectArrays
 }
 
 // A Codec encodes values to, and decodes them from, one media type. The
@@ -229,6 +237,21 @@ type Redirects int
 const (
 	FollowNone Redirects = iota // follow none (the default)
 	FollowAll                   // follow every eligible 3xx
+)
+
+// DeepObjectArrays says how the deepObject style writes an array inside its
+// value, which OpenAPI leaves undefined, so that a caller states the
+// convention its server reads rather than the client guessing one. Each
+// item takes the array's name with a suffix; a member of an object item
+// adds [member] after it. Indexes number the items written, from 0, so an
+// item skipped as undefined takes none. Brackets and member names are
+// percent-encoded as the rest of the name is.
+type DeepObjectArrays int
+
+const (
+	RefuseArrays  DeepObjectArrays = iota // refuse an array (the default)
+	BracketArrays                         // a[]=1&a[]=2; an item that is an object or array is refused
+	IndexArrays                           // a[0]=1&a[1]=2, and a[0][b]=x for an object item
 )
 
 // With returns a Client that shares c's document, with c's Options changed
@@ -334,7 +357,8 @@ type Input struct {
 	//     one part per element, in order: each a one-property object, whose
 	//     property names the part and whose value is its content, encoded as
 	//     that position's Encoding says, or a Part whose Header gives
-	//     Content-Disposition.
+	//     Content-Disposition, which takes a type its Encoding lists (see
+	//     Part.MediaType) even where that Encoding sets a style.
 	//   - For any other OpenAPI 3.2 multipart media type, Body may instead be
 	//     a slice, or an iterator as for a sequential type, one part per
 	//     element, in order, whether or not the type declares prefixEncoding
@@ -398,7 +422,9 @@ type Input struct {
 	// Inputs["Input.Body"], and a missing required Swagger 2.0 formData field
 	// in a structured form body at "Input.Body" followed by its pointer, as the
 	// parameter it is. A pre-encoded body bypasses those field checks. The
-	// client never closes a reader it is given.
+	// client never closes a reader it is given. A body for an operation that
+	// takes none is refused at Inputs["Input.Body"]; to send one anyway,
+	// Prepare the call and set the body on Request.HTTP.
 	Body any
 
 	// MediaType is the body's media type: a concrete type matching one the
@@ -783,7 +809,7 @@ func (r *Response) WaitRequest(ctx context.Context) error {
 // It does no work beyond the lookup.
 func OperationFromContext(ctx context.Context) *Operation {
 	if o, ok := ctx.Value(operationKey{}).(*operation); ok {
-		return &o.Operation
+		return o.Operation
 	}
 	return nil
 }

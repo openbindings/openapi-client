@@ -2,6 +2,7 @@ package openapi_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -80,7 +81,27 @@ func TestEditionsLegacySchemaReferenceSiblingDiscovery(t *testing.T) {
 
 // Swagger Schema Object 6.4.18 supports items/allOf/properties/
 // additionalProperties, but not the later oneOf/anyOf/not vocabulary. The
-// distinct Items Object 6.4.10 only nests Items and is not a Reference Object.
+// distinct Items Object 6.4.10 only nests Items and is not a Reference
+// Object, so a $ref in one marks a document meant to be bundled (describe.go,
+// Operation: "It makes the nearest part holding that object unusable: the
+// Err of that ... Param ... says the document must be bundled first, and
+// does not wrap ErrUnresolved"). Such a $ref is never retrieved (load.go,
+// Loader: the references followed are those in Reference Objects, Path
+// Items and Schema Objects), and neither is one inside an Items member the
+// Items Object does not define.
+//
+// The parameter stays optional and known: describe.go, Operation.Err: "A
+// defect in an optional part is reported on that part instead, and fails a
+// call only when the call uses it". A value for it is one built-in
+// serialization cannot use (describe.go, Param.Err), refused at its key
+// (errors.go, RequestError.Inputs: "a value its style cannot serialize ...
+// The key is the Param.Key"; doc.go, Styles: "Each is refused at the
+// parameter's key, with Param.Err set where the document alone decides
+// it"), and a writer may still supply it (Param.Err: "A parameter with Err
+// set can be supplied by Input.ParamWriters when its Key is known").
+// Nested Items without a $ref serialize by their own collectionFormat
+// first (doc.go, Swagger 2.0 arrays: "a nested items array by its own
+// first").
 func TestEditionsSwaggerSchemaAndItemsSubset(t *testing.T) {
 	var mu sync.Mutex
 	hits := map[string]int{}
@@ -95,7 +116,15 @@ func TestEditionsSwaggerSchemaAndItemsSubset(t *testing.T) {
 	}}
 	schema := `{"type":"object","allOf":[{"$ref":"real-allof.json"}],"items":{"$ref":"real-items.json"},"properties":{"p":{"$ref":"real-property.json"}},"additionalProperties":{"$ref":"real-additional.json"},"oneOf":[{"$ref":"never-oneof.json"}],"anyOf":[{"$ref":"never-anyof.json"}],"not":{"$ref":"never-not.json"},"$defs":{"X":{"$ref":"never-defs.json"}},"$dynamicRef":"never-dynamic.json","discriminator":{"mapping":{"x":"never-mapping.json"}}}`
 	doc := editionPost("2.0", "application/json", schema)
-	doc = strings.Replace(doc, `"parameters":[`, `"parameters":[{"name":"q","in":"query","type":"array","items":{"type":"array","collectionFormat":"pipes","$ref":"never-outer-items.json","items":{"type":"string","$ref":"never-inner-items.json","allOf":[{"$ref":"never-item-allof.json"}]}}},`, 1)
+	params := []string{
+		// $ref in the outer and the inner Items Object.
+		`{"name":"q","in":"query","type":"array","items":{"type":"array","collectionFormat":"pipes","$ref":"never-outer-items.json","items":{"type":"string","$ref":"never-inner-items.json","allOf":[{"$ref":"never-item-allof.json"}]}}}`,
+		// $ref in the innermost Items Object only.
+		`{"name":"deep","in":"query","type":"array","items":{"type":"array","items":{"type":"string","$ref":"never-deep-items.json"}}}`,
+		// Nested Items Objects with no $ref.
+		`{"name":"n","in":"query","type":"array","items":{"type":"array","collectionFormat":"pipes","items":{"type":"string"}}}`,
+	}
+	doc = strings.Replace(doc, `"parameters":[`, `"parameters":[`+strings.Join(params, ",")+`,`, 1)
 	c, err := l.Parse(t.Context(), []byte(doc), testDocURI, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -108,9 +137,48 @@ func TestEditionsSwaggerSchemaAndItemsSubset(t *testing.T) {
 			t.Errorf("missing supported reference %s", name)
 		}
 	}
-	req := mustPrepare(t, c, "POST /x", &openapi.Input{Params: map[string]any{"q": [][]string{{"a", "b"}, {"c", "d"}}}, Body: map[string]int{"n": 1}})
-	if got := req.HTTP.URL.RawQuery; got != "q=a%7Cb,c%7Cd" {
+
+	op := mustOp(t, c, "POST /x")
+	if op.Err != nil {
+		t.Errorf("Operation.Err = %v; want the defect on the parameter alone", op.Err)
+	}
+	for _, name := range []string{"q", "deep"} {
+		p := paramByName(op.Params, name)
+		if p == nil {
+			t.Fatalf("no parameter %q", name)
+		}
+		if !mentionsBundling(p.Err) || errors.Is(p.Err, openapi.ErrUnresolved) {
+			t.Errorf("%s: Param.Err = %v; want it to say the document must be bundled first, without ErrUnresolved", name, p.Err)
+		}
+	}
+	if n := paramByName(op.Params, "n"); n == nil || n.Err != nil || n.CollectionFormat != "csv" {
+		t.Errorf("parameter n %+v; want usable, csv by default", n)
+	}
+
+	body := map[string]int{"n": 1}
+	for _, name := range []string{"q", "deep"} {
+		_, err = c.Prepare(op.Key, &openapi.Input{Params: map[string]any{name: [][]string{{"a", "b"}, {"c", "d"}}}, Body: body})
+		re := asRequestError(t, err)
+		wantKeys(t, "Inputs", re.Inputs, true, name)
+		if p := paramByName(op.Params, name); !errors.Is(re.Inputs[name], p.Err) {
+			t.Errorf("%s: Inputs[%q] = %v; want its Param.Err", name, name, re.Inputs[name])
+		}
+	}
+
+	req := mustPrepare(t, c, op.Key, &openapi.Input{Params: map[string]any{"n": [][]string{{"a", "b"}, {"c", "d"}}}, Body: body})
+	if got := req.HTTP.URL.RawQuery; got != "n=a%7Cb,c%7Cd" {
 		t.Errorf("Items serialization %q", got)
+	}
+	req = mustPrepare(t, c, op.Key, &openapi.Input{
+		Params: map[string]any{"n": [][]string{{"a"}}},
+		ParamWriters: map[string]func(*http.Request) error{"q": func(r *http.Request) error {
+			r.URL.RawQuery += "&q=written"
+			return nil
+		}},
+		Body: body,
+	})
+	if got := req.HTTP.URL.RawQuery; got != "n=a&q=written" {
+		t.Errorf("query with a writer for q %q", got)
 	}
 }
 

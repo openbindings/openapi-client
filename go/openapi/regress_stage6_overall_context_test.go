@@ -67,7 +67,11 @@ func TestStage6WholePositionalArrayDefaults(t *testing.T) {
 
 // Encoding styles apply under multipart/form-data, override contentType, and
 // use the established unescaped multipart style serializer. Other multipart
-// types retain content encoding. Headers remain public descriptors.
+// types retain content encoding. Headers remain public descriptors. A styled
+// positional part still describes the contentType its Encoding lists
+// (describe.go, Param.ContentType: empty for a styled field "except for an
+// OpenAPI 3.2 positional part, which may still be given as a Part of a type
+// its Encoding lists").
 func TestStage6PositionalEncodingContext(t *testing.T) {
 	enc := `{"style":"form","explode":false,"contentType":"application/json","headers":{"X-Part":{"description":"part header","schema":{"type":"string"}},"Content-Type":{"schema":{}}}}`
 	for _, media := range []string{"multipart/form-data", "multipart/mixed"} {
@@ -83,7 +87,7 @@ func TestStage6PositionalEncodingContext(t *testing.T) {
 				if len(p.Headers) != 1 || p.Headers[0].Name != "X-Part" || p.Headers[0].Source != p.Source+"/headers/X-Part" || p.Headers[0].Description != "part header" {
 					t.Errorf("declared headers %+v", p.Headers)
 				}
-				if media == "multipart/form-data" && (p.Style != "form" || p.ContentType != "" || p.Explode) {
+				if media == "multipart/form-data" && (p.Style != "form" || p.ContentType != "application/json" || p.Explode) {
 					t.Errorf("styled descriptor %+v", p)
 				}
 				for _, value := range []any{"hello", []string{"a b", "c"}, []byte("hi")} {

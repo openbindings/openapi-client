@@ -36,8 +36,16 @@ func record(m *map[string]error, key string, err error) {
 }
 
 func (e *RequestError) setting(key string, err error) { record(&e.Settings, key, err) }
-func (e *RequestError) input(key string, err error)   { record(&e.Inputs, key, err) }
 func (e *RequestError) fail(err error)                { e.Err = errors.Join(e.Err, err) }
+
+// input records err at key in Inputs, and an array the deepObject setting
+// does not write in Settings as well, since the setting would write it.
+func (e *RequestError) input(key string, err error) {
+	record(&e.Inputs, key, err)
+	if errors.Is(err, errDeepArray) {
+		e.setting("Options.DeepObjectArrays", errDeepArrays)
+	}
+}
 
 // refused returns e as an error when it holds a problem.
 func (e *RequestError) refused() error {
@@ -587,13 +595,16 @@ func (c *Client) body(o *operation, in *Input, h http.Header, re *RequestError) 
 	switch {
 	case o.Body == nil:
 		if in.Body != nil {
-			re.input("Input.Body", errors.New("the operation takes no request body"))
+			re.input("Input.Body", errors.New("the operation takes no request body; to send one anyway, Prepare the call and set it on Request.HTTP"))
 		}
 		return payload{}, nil
 	case in.Body == nil:
 		if o.Body.Required {
 			re.input("Input.Body", errors.New("the operation requires a request body"))
 		}
+		return payload{}, nil
+	case o.Body.Err != nil: // a defect of the request body refuses only the calls that send one
+		re.input("Input.Body", o.Body.Err)
 		return payload{}, nil
 	}
 	typ, m, md := c.mediaType(o, in, re)
@@ -686,7 +697,7 @@ func (c *Client) mediaType(o *operation, in *Input, re *RequestError) (string, p
 	}
 	if typ == "" {
 		switch {
-		case len(declared) == 1 && declared[0].Err != nil && !errors.Is(declared[0].Err, ErrUnresolved):
+		case len(declared) == 1 && keyErr(declared[0]):
 			re.setting("Input.MediaType", mediaErr(declared[0]))
 		case len(declared) == 1 && o.body[0].concrete():
 			return declared[0].Type, o.body[0], declared[0]
@@ -706,12 +717,18 @@ func (c *Client) mediaType(o *operation, in *Input, re *RequestError) (string, p
 		case md == nil:
 			re.setting("Input.MediaType", fmt.Errorf("the operation does not declare %s", typ))
 			return "", parsedMedia{}, nil
-		case md.Err != nil && !errors.Is(md.Err, ErrUnresolved):
+		case keyErr(md):
 			re.setting("Input.MediaType", mediaErr(md))
 			return "", parsedMedia{}, nil
 		}
 	}
 	return typ, m, md
+}
+
+// keyErr reports whether md's Err leaves its media type unusable, rather than
+// only the Media Type Object a reference or a bundler was to supply.
+func keyErr(md *Media) bool {
+	return md.Err != nil && !errors.Is(md.Err, ErrUnresolved) && md.Err != errBundle
 }
 
 // mediaErr is the refusal of a call that the declared media type md, whose

@@ -66,6 +66,9 @@ func newConfig(o Options, parent *config) *config {
 	if o.Redirects != FollowNone && o.Redirects != FollowAll {
 		refuse("Options.Redirects", fmt.Errorf("unknown value %d", o.Redirects))
 	}
+	if o.DeepObjectArrays < RefuseArrays || o.DeepObjectArrays > IndexArrays {
+		refuse("Options.DeepObjectArrays", fmt.Errorf("unknown value %d", o.DeepObjectArrays))
+	}
 	if o.BaseURL != "" {
 		u, err := url.Parse(o.BaseURL)
 		switch {

@@ -80,6 +80,7 @@ type yamlWriter struct {
 	nodes              []node
 	escapes            []uint32
 	names              []string // the keys of the mappings being written
+	bigRefs            []int32  // see tree
 	named              map[*yaml.Node]*written
 	added, addedBytes  int64 // what aliases added
 	maxAdded, maxBytes int64
@@ -89,12 +90,15 @@ type yamlWriter struct {
 }
 
 // A written is what a node an alias names was written as: its nodes, its
-// text, and how many levels it nests, once written.
+// text, the entries of bigRefs that are its objects, and how many levels it
+// nests, once written. Its objects are recorded while it is written, and
+// only they are, so they are the entries recorded in that time.
 type written struct {
-	first, next int32
-	start, end  int
-	levels      int
-	done        bool
+	first, next       int32
+	start, end        int
+	firstRef, nextRef int
+	levels            int
+	done              bool
 }
 
 // yamlTree writes root, the root node of the YAML document read from src (see
@@ -107,8 +111,9 @@ func yamlTree(ctx context.Context, root *yaml.Node, src, uri string, unit, size 
 	if _, err := w.value(root, 1, 0); err != nil {
 		return nil, err
 	}
+	slices.Sort(w.bigRefs)
 	return &tree{src: w.b.String(), nodes: w.nodes, escapes: w.escapes, decoded: make([]atomic.Pointer[string], len(w.escapes)),
-		reaches: w.reaches, declares: w.declares, editionRefs: w.editionRefs, dialects: w.dialects}, nil
+		bigRefs: w.bigRefs, reaches: w.reaches, declares: w.declares, editionRefs: w.editionRefs, dialects: w.dialects}, nil
 }
 
 // count returns the nodes of n, each alias one, noting the nodes aliases
@@ -138,7 +143,7 @@ func (w *yamlWriter) value(n *yaml.Node, depth int, name uint32) (int, error) {
 	at, levels := len(w.nodes), 1
 	a := w.named[n]
 	if a != nil {
-		a.first, a.start = int32(at), w.b.Len()
+		a.first, a.start, a.firstRef = int32(at), w.b.Len(), len(w.bigRefs)
 	}
 	w.nodes = append(w.nodes, node{start: uint32(w.b.Len()), name: name})
 	switch n.Kind {
@@ -169,7 +174,7 @@ func (w *yamlWriter) value(n *yaml.Node, depth int, name uint32) (int, error) {
 	}
 	w.nodes[at].next = uint32(len(w.nodes))
 	if a != nil {
-		a.next, a.end, a.levels, a.done = int32(len(w.nodes)), w.b.Len(), levels, true
+		a.next, a.end, a.nextRef, a.levels, a.done = int32(len(w.nodes)), w.b.Len(), len(w.bigRefs), levels, true
 	}
 	return levels, nil
 }
@@ -196,7 +201,7 @@ func (w *yamlWriter) sequence(n *yaml.Node, depth int) (int, error) {
 // mapping writes the mapping n, at level depth, each key as the string it
 // spells, returning how many levels it nests.
 func (w *yamlWriter) mapping(n *yaml.Node, depth int) (int, error) {
-	levels, base := 1, len(w.names)
+	levels, base, self, ref := 1, len(w.names), int32(len(w.nodes)-1), -1 // ref: the node of its $ref member's value
 	defer func() { w.names = w.names[:base] }()
 	var seen map[string]bool // the keys of a mapping with many
 	w.b.WriteByte('{')
@@ -235,6 +240,9 @@ func (w *yamlWriter) mapping(n *yaml.Node, depth int) (int, error) {
 		}
 		w.b.WriteByte(':')
 		start := w.b.Len()
+		if key.Value == "$ref" {
+			ref = len(w.nodes)
+		}
 		l, err := w.value(v, depth+1, uint32(at))
 		if err != nil {
 			return 0, err
@@ -244,6 +252,9 @@ func (w *yamlWriter) mapping(n *yaml.Node, depth int) (int, error) {
 		}
 	}
 	w.b.WriteByte('}')
+	if seen != nil && ref >= 0 && w.b.String()[w.nodes[ref].start] == '"' {
+		w.bigRefs = append(w.bigRefs, self) // see bundled
+	}
 	return levels, nil
 }
 
@@ -276,6 +287,9 @@ func (w *yamlWriter) alias(n *yaml.Node, depth int, name uint32) (int, error) {
 		}
 		m.next += uint32(at - a.first)
 		w.nodes = append(w.nodes, m)
+	}
+	for i := a.firstRef; i < a.nextRef; i++ { // so an alias costs what it copies
+		w.bigRefs = append(w.bigRefs, w.bigRefs[i]+at-a.first) // the copy is such an object too
 	}
 	w.nodes[at].name = name
 	i, _ := slices.BinarySearch(w.escapes, uint32(a.start))
