@@ -533,8 +533,9 @@ func TestBundlePartsFailOnlyWhenUsed(t *testing.T) {
 
 // The loader follows only the references its documentation lists (load.go,
 // Loader: "The references followed are $ref in Reference Objects, Path
-// Items and Schema Objects, $dynamicRef, Discriminator mapping and
-// defaultMapping values ..., and OpenAPI 3.2 security requirement URIs"),
+// Items and Schema Objects, $dynamicRef, the values of a Discriminator
+// mapping written as an object and a defaultMapping value, ..., and OpenAPI
+// 3.2 security requirement URIs"),
 // so a $ref where the edition defines no Reference Object is never
 // retrieved: none of the files the bundling cases name is asked of Fetch,
 // whether or not it exists. In OpenAPI 3.2 a Media Type Object written as a

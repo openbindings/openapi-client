@@ -123,7 +123,7 @@ type Operation struct {
 	// Body describes the request body, or is nil when the operation takes
 	// none, as for an OpenAPI 3.0 GET (see Bodies by method in the package
 	// documentation). In Swagger 2.0 it comes from the body parameter, or
-	// from the formData parameters.
+	// from the formData parameters; in OpenAPI 3.x, only from requestBody.
 	Body *Message
 
 	// Responses lists the declared responses, in document order.
@@ -156,8 +156,10 @@ type Operation struct {
 	// Objects each mapping names to arrays of strings; or, written as a
 	// reference where the edition defines none, the Operation or Responses
 	// Object, a parameters list that applies to it, or another value whose
-	// nearest part is the operation, which marks a document meant to be
-	// bundled first (see Operation). A required
+	// nearest part is the operation, which marks a document meant to be bundled
+	// first (see Operation); or a Swagger 2.0 body or formData parameter that
+	// an OpenAPI 3.x operation reaches, as through a $ref into a Swagger
+	// document, since such an operation has no place for one. A required
 	// parameter with a known Key but unsupported serialization has its own
 	// Param.Err, which Input.ParamWriters may bypass. Calling an operation with
 	// Err set returns a *RequestError wrapping Err. A defect in an optional

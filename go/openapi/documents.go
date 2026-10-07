@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"iter"
 	"math"
 	"net/http"
 	"net/url"
@@ -233,6 +234,16 @@ var model = [...]map[string]slot{
 // componentName matches what a Discriminator mapping value that could be a
 // component name looks like (OpenAPI 3.1.2 section 4.8.7).
 var componentName = regexp.MustCompile(`^[a-zA-Z0-9.\-_]+$`)
+
+// mappingValues yields the entries of m, a Discriminator Object's mapping,
+// which OpenAPI defines as a map of strings, and none unless m is written as
+// an object. Discovery and Schema.References both read a mapping through it.
+func mappingValues(m value) iter.Seq2[string, value] {
+	if m.kind() != '{' {
+		return func(func(string, value) bool) {}
+	}
+	return m.members()
+}
 
 // kind returns what discovery reads the root of t as: the OpenAPI Object of
 // an OpenAPI document, or a node of another document.
@@ -1203,7 +1214,7 @@ func (r *reader) visit(v value, k kind, base *url.URL, effective string) {
 					r.reference(m, k, base)
 				}
 			}
-			for _, m := range disc.get("mapping").members() {
+			for _, m := range mappingValues(disc.get("mapping")) {
 				if r.t.edition == 20 {
 					break
 				}
