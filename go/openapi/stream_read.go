@@ -190,91 +190,58 @@ func multipartItems[T any](x *exchange, r *Response, ct parsedMedia, bound int64
 }
 
 // mime/multipart can report EOF both for a closing delimiter and for an
-// empty, truncated header block. Recognize the close delimiter's line with
+// empty, truncated header block. Recognize closing delimiter lines with
 // constant storage so those outcomes remain distinct, even with epilogues
 // and arbitrarily fragmented reads. The MIME reader still parses all parts.
-// The close delimiter's line is the first closing delimiter line that
-// mime/multipart's framing reaches: after CRLF once the first delimiter line
-// has ended in CRLF, after any LF once it has ended in LF alone, and before
-// it, at the start of the body, after CRLF, or ending in CRLF. The body ends
-// at that line's line break, and an LF alone there is left out, since
-// mime/multipart takes the line at EOF without one: so in a body framed with
-// CRLF the line may end in LF alone.
 type multipartEnding struct {
 	io.Reader
-	marker  string // the closing delimiter: "--", the boundary, "--"
-	matched int    // the bytes of marker that begin the line, or -1
-	prev    byte   // the last byte read
-	lone    bool   // the line follows an LF alone
-	pad, cr bool   // padding, and a CR, after the delimiter or marker
-	breaks  byte   // '\r' or '\n' as the first delimiter line ended in CRLF or LF alone; 0 before it
-	done    bool   // the close delimiter's line has ended
+	marker    string
+	matched   int
+	cr, ended bool
 }
 
 func (r *multipartEnding) complete() bool {
-	return r.done || r.matched == len(r.marker) && !r.cr
-}
-
-// alone reports whether the LF at p[k] follows no CR.
-func (r *multipartEnding) alone(p []byte, k int) bool {
-	if k == 0 {
-		return r.prev != '\r'
-	}
-	return p[k-1] != '\r'
+	return r.ended || r.matched == len(r.marker) && !r.cr
 }
 
 func (r *multipartEnding) Read(p []byte) (int, error) {
-	if r.done {
-		return 0, io.EOF
-	}
 	n, err := r.Reader.Read(p)
+	if r.ended {
+		return n, err
+	}
 	for i := 0; i < n; {
 		if r.matched < 0 {
 			// Skip ordinary header/payload bytes in bulk; only a line
-			// starting with two hyphens can be a delimiter line.
+			// starting with two hyphens can be a closing delimiter.
 			j := bytes.Index(p[i:n], []byte("\n--"))
 			if j < 0 {
 				if p[n-1] == '\n' {
-					r.matched, r.pad, r.cr, r.lone = 0, false, false, r.alone(p, n-1)
+					r.matched, r.cr = 0, false
 				} else if n-i >= 2 && p[n-2] == '\n' && p[n-1] == '-' {
-					r.matched, r.pad, r.cr, r.lone = 1, false, false, r.alone(p, n-2)
+					r.matched, r.cr = 1, false
 				}
 				break
 			}
-			r.matched, r.pad, r.cr, r.lone = 2, false, false, r.alone(p, i+j)
 			i += j + 3
+			r.matched, r.cr = 2, false
 			continue
 		}
 		c := p[i]
 		i++
-		ending := r.matched == len(r.marker) || r.matched == len(r.marker)-2 // the line so far is a closing delimiter or a delimiter
-		switch {
-		case c == '\n' && r.matched == len(r.marker) && (!r.lone || r.breaks == '\n' || r.breaks == 0 && r.cr):
-			r.done = true
-			if !r.cr {
-				i--
+		if c == '\n' {
+			if r.matched == len(r.marker) {
+				r.ended = true
+				break
 			}
-			return i, io.EOF
-		case c == '\n':
-			if r.breaks == 0 && r.matched == len(r.marker)-2 {
-				r.breaks = '\n'
-				if r.cr {
-					r.breaks = '\r'
-				}
-			}
-			r.matched, r.pad, r.cr, r.lone = 0, false, false, r.alone(p, i-1)
-		case r.matched >= 0 && r.matched < len(r.marker) && !r.pad && !r.cr && c == r.marker[r.matched]:
+			r.matched, r.cr = 0, false
+		} else if r.matched >= 0 && r.matched < len(r.marker) && c == r.marker[r.matched] {
 			r.matched++
-		case ending && !r.cr && (c == ' ' || c == '\t'):
-			r.pad = true
-		case ending && !r.cr && c == '\r':
+		} else if r.matched == len(r.marker) && !r.cr && (c == ' ' || c == '\t') {
+		} else if r.matched == len(r.marker) && !r.cr && c == '\r' {
 			r.cr = true
-		default:
+		} else {
 			r.matched = -1
 		}
-	}
-	if n > 0 {
-		r.prev = p[n-1]
 	}
 	return n, err
 }
