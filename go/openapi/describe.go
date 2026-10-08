@@ -6,19 +6,26 @@ import "encoding/json"
 // paths as listed, within a path the methods in the order get, put, post,
 // delete, options, head, patch, trace, query, then additional operations as
 // listed. Operations that cannot be called are included, with Err set. So are
-// three defects that are not operations, each with an empty Key and its own
-// location as Source: a Paths entry that cannot be read, because its key does
-// not begin with "/" or its $ref cannot be followed, listed once with its Path
-// and Err and no Method; a Paths Object written as a reference (see Operation),
-// listed once with an empty Path, or a Path Item's additionalOperations map so
-// written, listed once for each Paths entry that reaches it, with that entry's
-// Path, each with no Method and an Err saying the document must be bundled
-// first; and an OpenAPI 3.2 additional operation whose method is not a token or
-// is exactly GET, PUT, POST, DELETE, OPTIONS, HEAD, PATCH, TRACE or QUERY,
-// which OpenAPI forbids. Methods are compared exactly, so an additional
-// operation "Post" is an ordinary one, "Post /path". An extension (an
-// x- member) of the Paths Object is not listed. Webhooks and callbacks describe
-// requests the server sends and are not operations of the Client.
+// these defects, which are not operations, each with an empty Key, its own
+// location as Source, and Err set:
+//
+//   - a Paths entry that cannot be read, because its key does not begin with
+//     "/" or its $ref cannot be followed: listed once, with its Path and no
+//     Method;
+//   - a Paths Object written as a reference (see Operation): listed once,
+//     with no Path or Method, and an Err saying the document must be bundled
+//     first;
+//   - an OpenAPI 3.2 additionalOperations map written as a reference: listed,
+//     with the same Err, once for each Paths entry whose nearest such map it
+//     is (see Operation), with that entry's Path and no Method;
+//   - an OpenAPI 3.2 additional operation whose method is not a token or is
+//     exactly GET, PUT, POST, DELETE, OPTIONS, HEAD, PATCH, TRACE or QUERY,
+//     which OpenAPI forbids: listed with its Path and Method.
+//
+// Methods are compared exactly, so an additional operation "Post" is an
+// ordinary one, "Post /path". An extension (an x- member) of the Paths Object
+// is not listed. Webhooks and callbacks describe requests the server sends and
+// are not operations of the Client.
 //
 // The slice is new on each call; the Operations it points to are shared by
 // every caller and must not be modified. Listing them does no schema work.
@@ -79,31 +86,33 @@ func (c *Client) Operation(key string) (*Operation, error) {
 // looked up in a Components Object or scheme map written as a reference has an
 // empty Source (see SchemeLookup).
 //
-// A value written as a reference, an object whose $ref member is a string,
-// where the edition defines no Reference Object, such as an Operation Object, a
-// headers or encoding map, or a parameters or servers list written as a
-// reference to another file, marks a document meant to be bundled before use.
-// It makes the nearest part holding that value unusable: the Err of that
-// Operation, Param, Message, Media, Server or SecurityScheme says the document
-// must be bundled first, and does not wrap ErrUnresolved. A parameters list so
-// written makes every operation it applies to unusable, and a servers list so
-// written is described as one Server with that Err, which Options.BaseURL can
-// replace as it can any unusable server. In Swagger 2.0, consumes so written
-// makes the request body unusable, produces each response, and schemes is
-// described as a servers list is; and an entry of its root parameters or
-// responses map, which holds Parameter or Response Objects only, is such a
-// value when written as a reference: a parameter entry makes each operation
-// that uses it unusable, since the parameter's identity cannot be read, and a
-// response entry each response that uses it. Bundling replaces such a value
-// whole, so its other members are not read, and a reference whose target lies
-// inside it cannot be followed before bundling either. Such a reference in a
-// schema has an Err saying the document must be bundled first (see
+// A value written as a reference, an object whose $ref member is a string
+// where an object, list or map belongs but the edition defines no Reference
+// Object, such as an Operation Object, a headers or encoding map, or a
+// parameters or servers list written as a reference to another file, marks a
+// document meant to be bundled before use. It makes the nearest part holding
+// that value unusable: the Err of that Operation, Param, Message, Media, Server
+// or SecurityScheme says the document must be bundled first, a cause that does
+// not wrap ErrUnresolved. A parameters list so written makes every operation it
+// applies to unusable, and a servers list so written is described as one Server
+// with that Err, which Options.BaseURL can replace as it can any unusable
+// server. In Swagger 2.0, consumes so written makes the request body unusable,
+// produces each response, and schemes is described as a servers list is; and
+// an entry of its root parameters or responses map, which holds Parameter or
+// Response Objects only, is such a value when written as a reference: a
+// parameter entry makes each operation that uses it unusable, since the
+// parameter's identity cannot be read, and a response entry each response that
+// uses it. Bundling replaces such a value whole, so its other members are not
+// read, and a reference whose target lies inside it cannot be followed before
+// bundling either. Such a reference in a schema has an Err saying the document
+// must be bundled first, which does not wrap ErrUnresolved (see
 // Schema.References); any other makes its own nearest part unusable the same
-// way. Neither Err wraps ErrUnresolved. A value so written makes its part
-// unusable even where OpenAPI says the value is ignored, such as an encoding
-// under a JSON media type or an Encoding Object's headers for a field written
-// by its style, since the document still needs bundling. Extension values and
-// examples are not such values. In a map of objects a member named $ref whose
+// way. A value so written makes its part unusable even where OpenAPI says the
+// value is ignored, such as an encoding under a JSON media type or an Encoding
+// Object's headers for a field written by its style, since the document still
+// needs bundling. Extension values, examples, info, tags, externalDocs,
+// webhooks, callbacks and links are not such values, and a reference inside
+// one makes no part unusable. In a map of objects a member named $ref whose
 // value is an object is an entry like any other, such as a header named $ref;
 // in a map of strings, such as OAuth scopes, a string $ref member is a
 // reference.
@@ -168,9 +177,11 @@ type Operation struct {
 	// defect. It is set by each of these defects, any one of which prevents
 	// building a request:
 	//
-	//   - a parameter or request body reference that cannot be followed, or a
-	//     parameter whose in field is absent, empty or not a string, as then
-	//     the parameter's identity or the body's requiredness cannot be known;
+	//   - a reference that cannot be followed to a parameter, or to the
+	//     request body of an operation that takes one (see Bodies by method
+	//     in the package documentation), or a parameter whose in field is
+	//     absent, empty or not a string, as then the parameter's identity or
+	//     the body's requiredness cannot be known;
 	//   - a Path Item field that both the Path Item and its $ref target
 	//     define (see Operation);
 	//   - a path template that has an unclosed { or names a parameter that no
@@ -180,10 +191,10 @@ type Operation struct {
 	//   - a security value, the operation's or the root's it inherits, that
 	//     is not an array of Security Requirement Objects each mapping names
 	//     to arrays of strings;
-	//   - written as a reference where the edition defines none, the
-	//     Operation or Responses Object, a parameters list that applies to
-	//     it, or another value whose nearest part is the operation, which
-	//     marks a document meant to be bundled first (see Operation);
+	//   - a value written as a reference where the edition defines none (see
+	//     Operation): the Operation Object, its Responses Object, a
+	//     parameters list that applies to it, or another value whose nearest
+	//     part is the operation, such as its security value;
 	//   - in Swagger 2.0, two or more body parameters, or body and formData
 	//     parameters together;
 	//   - a Swagger 2.0 body or formData parameter that an OpenAPI 3.x
@@ -198,8 +209,8 @@ type Operation struct {
 	// whether or not the operation was described first. Wherever an Err's
 	// cause is a reference that could not be resolved, it wraps
 	// [ErrUnresolved], and the retrieval error when retrieving a document
-	// failed; a reference that cannot be followed before bundling is not one
-	// (see Operation).
+	// failed. A reference that cannot be followed before bundling does not
+	// count as unresolved (see Operation).
 	Err error
 }
 
@@ -374,7 +385,7 @@ type Media struct {
 	// OpenAPI 3.2, it describes the parts: those of prefixEncoding in order,
 	// named "0", "1" and so on, then that of itemEncoding, named "*". It is
 	// empty for a declared range other than multipart/*, such as */* or
-	// application/*, and for an OpenAPI 3.x response's Media.
+	// application/*, and for a response's Media in every edition.
 	Encoding []*Param
 
 	// Source is where the media type is declared: the absolute URI of its
@@ -384,16 +395,18 @@ type Media struct {
 	Source string
 
 	// Err is why the media type declaration itself cannot govern a
-	// structured body, such as an invalid media key or an unreadable Media
-	// Type reference, or an encoding map or prefixEncoding list written as a
-	// reference, or an entry of one that no Encoding Param describes written
-	// as or holding one (see Operation), under any media type, which leaves
-	// no Encoding Param to report it.
+	// structured body, such as a media key that is not a valid media type;
+	// a form or multipart request body's key that holds an invalid or
+	// repeated boundary parameter; an unreadable Media Type reference; or an
+	// encoding map or prefixEncoding list written as a reference, or an entry
+	// of one that no Encoding Param describes written as or holding one (see
+	// Operation), under any media type, which leaves no Encoding Param to
+	// report it.
 	// Any other schema or Encoding defect that affects structured value
 	// encoding does not set Media.Err: it is reported by Schema.References or
 	// the relevant Encoding Param.Err. A pre-encoded []byte or io.Reader body
 	// is checked against neither, nor against this Err unless the media key
-	// is invalid (see Input.MediaType).
+	// causes it (see Input.MediaType).
 	Err error
 }
 
@@ -425,7 +438,8 @@ type Server struct {
 	// resolves against.
 	Source string
 
-	// Err is why the server cannot be used, or nil.
+	// Err is why the document alone makes the server unusable, or nil (see
+	// URL in the package documentation).
 	Err error
 }
 

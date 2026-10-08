@@ -90,12 +90,11 @@ func (e *Error) Unwrap() []error {
 // referenced nested $defs entry becomes a Defs entry, and an unreferenced one
 // is dropped. A schema written at #/components/schemas/NAME of the entry
 // document, or #/definitions/NAME in Swagger 2.0, has the key NAME when NAME
-// contains no "#"; any other key is the schema's Source as a URI reference
-// relative to the entry document's URI taken as written, so that a "." or ".."
-// segment in that URI's path can give a key that does not resolve to the
-// Source. In a reference, a key is escaped as a JSON Pointer token and then as
-// RFC 3986 section 3.5 requires of a fragment. The same input gives the same
-// output.
+// contains no "#"; any other key is the schema's Source written as a URI
+// reference relative to the entry document's URI, so that the key resolves
+// against that URI to the Source. In a reference, a key is escaped as a JSON
+// Pointer token and then as RFC 3986 section 3.5 requires of a fragment. The
+// same input gives the same output.
 //
 // Each schema, the Root and every Defs entry, is read under its own
 // openapi.Schema.Version. In OpenAPI 3.1 and 3.2, readOnly and writeOnly are
@@ -112,21 +111,22 @@ func (e *Error) Unwrap() []error {
 // properties and in the properties of every schema the object reaches through
 // allOf.
 //
-// In Swagger 2.0 and OpenAPI 3.0, members beside a reported $ref are dropped.
-// type: string with format: binary loses both keywords, and Swagger 2.0
-// type: file loses its type and any format other than byte; format: byte
-// becomes contentEncoding: base64, which replaces any contentEncoding the
-// schema has. A boolean exclusiveMinimum or exclusiveMaximum that is true
-// becomes exclusiveMinimum or exclusiveMaximum with the value of minimum or
-// maximum, which is removed; one that is false or has no bound is removed. In
-// OpenAPI 3.0, nullable is removed and, where the schema then has a type, true
-// adds "null" to it as a type list unless it already allows null; enum is
-// unchanged. A keyword that the edition's Schema Object does not define and
-// that JSON Schema 2020-12 treats as an applicator or an assertion, such as
-// oneOf in Swagger 2.0 or const in OpenAPI 3.0, is removed with an Issue, since
-// it has no meaning in the authored edition. So are contentSchema, whose schema
-// those editions do not define, and items written as an array, a form neither
-// edition defines. Every other keyword is kept as an annotation. Project never
+// A Swagger 2.0 or OpenAPI 3.0 schema is also translated: members beside a
+// reported $ref are dropped; type: string with format: binary loses both
+// keywords, and Swagger 2.0 type: file loses its type and any format other
+// than byte; and format: byte becomes contentEncoding: base64, which replaces
+// any contentEncoding the schema has. A boolean exclusiveMinimum or
+// exclusiveMaximum that is true becomes exclusiveMinimum or exclusiveMaximum
+// with the value of minimum or maximum, which is removed; one that is false or
+// has no bound is removed. In OpenAPI 3.0, nullable is removed and, where the
+// schema then has a type, true adds "null" to it as a type list unless it
+// already allows null; enum is unchanged. A keyword that the edition's Schema
+// Object does not define and that JSON Schema 2020-12 treats as an applicator
+// or an assertion, such as oneOf in Swagger 2.0 or const in OpenAPI 3.0, is
+// removed with an Issue, since it has no meaning in the authored edition. So
+// are contentSchema, whose schema those editions do not define, and items
+// written as an array, a form neither edition defines. Every other keyword is
+// kept, as an annotation where the edition does not define it. Project never
 // validates an instance, invents a fact or repairs a schema.
 //
 // Project returns an *Error, and with it the Projection, when part of the
