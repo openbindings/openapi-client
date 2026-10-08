@@ -110,12 +110,14 @@ func (c *Client) Operation(key string) (*Operation, error) {
 // way. A value so written makes its part unusable even where OpenAPI says the
 // value is ignored, such as an encoding under a JSON media type or an Encoding
 // Object's headers for a field written by its style, since the document still
-// needs bundling. Extension values, examples, info, tags, externalDocs,
-// webhooks, callbacks and links are not such values, and a reference inside
-// one makes no part unusable. In a map of objects a member named $ref whose
-// value is an object is an entry like any other, such as a header named $ref;
-// in a map of strings, such as OAuth scopes, a string $ref member is a
-// reference.
+// needs bundling. The client reads no webhooks, callbacks, links or examples
+// for an operation, so none makes a part unusable, whatever is written there,
+// unless a reference the client follows leads into it. Extension values are
+// not such values, nor are values that only document the API and in which the
+// edition defines no Reference Object, such as info, tags, externalDocs and
+// example values. In a map of objects a member named $ref whose value is an
+// object is an entry like any other, such as a header named $ref; in a map of
+// strings, such as OAuth scopes, a string $ref member is a reference.
 type Operation struct {
 	// Key addresses this operation in Call, Stream, Prepare and
 	// Client.Operation: its operationId when that names this operation
@@ -382,9 +384,9 @@ type Media struct {
 	// document order, each in the place of its first declaration, then those
 	// that only declare an Encoding Object, in the encoding map's order, and in
 	// Swagger 2.0 every formData parameter. For a positional multipart type in
-	// OpenAPI 3.2, it describes the parts: those of prefixEncoding in order,
-	// named "0", "1" and so on, then that of itemEncoding, named "*". It is
-	// empty for a declared range other than multipart/*, such as */* or
+	// OpenAPI 3.2, it describes the top-level parts: those of prefixEncoding in
+	// order, named "0", "1" and so on, then that of itemEncoding, named "*". It
+	// is empty for a declared range other than multipart/*, such as */* or
 	// application/*, and for a response's Media in every edition.
 	Encoding []*Param
 
@@ -395,18 +397,18 @@ type Media struct {
 	Source string
 
 	// Err is why the media type declaration itself cannot govern a
-	// structured body, such as a media key that is not a valid media type;
-	// an OpenAPI 3.x request body's form or multipart key that holds an
-	// invalid or repeated boundary parameter; an unreadable Media Type
-	// reference; or an encoding map or prefixEncoding list written as a
-	// reference, or an entry of one that no Encoding Param describes written
-	// as or holding one (see Operation), under any media type, which leaves no
-	// Encoding Param to report it.
-	// Any other schema or Encoding defect that affects structured value
-	// encoding does not set Media.Err: it is reported by Schema.References or
-	// the relevant Encoding Param.Err. A pre-encoded []byte or io.Reader body
-	// is checked against neither, nor against this Err unless the media key
-	// causes it (see Input.MediaType).
+	// structured body, such as a content key, or a Swagger 2.0 consumes or
+	// produces entry, that is not a valid media type; an OpenAPI 3.x request
+	// body's form or multipart content key that holds an invalid or repeated
+	// boundary parameter; an unreadable Media Type reference; or an encoding
+	// map or prefixEncoding list written as a reference, or an entry of one or
+	// an itemEncoding that no Encoding Param describes written as or holding
+	// one (see Operation), under any media type, which leaves no Encoding
+	// Param to report it. Any other schema or Encoding defect that affects
+	// structured value encoding does not set Media.Err: it is reported by
+	// Schema.References or the relevant Encoding Param.Err. A pre-encoded
+	// []byte or io.Reader body is checked against neither, nor against this
+	// Err unless its key causes it (see Input.MediaType).
 	Err error
 }
 
@@ -740,8 +742,9 @@ func (s *Schema) Source() string {
 // Source's document, or, in OpenAPI 3.1 and 3.2, the nearest $id at or above
 // the schema, its own $id included, resolved against the base outside it (see
 // Schema for other dialects, and Loader for a referenced document that declares
-// no edition). An $id that net/url cannot parse, or that has a non-empty
-// fragment, which JSON Schema 2020-12 forbids, is ignored.
+// no edition). An $id that net/url cannot parse, that has a non-empty fragment,
+// which JSON Schema 2020-12 forbids, or that supplies no base (see
+// Loader.Parse) is ignored.
 func (s *Schema) Base() string {
 	if n := s.schemaNode(); n != nil {
 		return n.base.String()

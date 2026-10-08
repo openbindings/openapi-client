@@ -93,7 +93,8 @@ func (e *Error) Unwrap() []error {
 // contains no "#"; any other key is the schema's Source written as a URI
 // reference relative to the entry document's URI, so that the key resolves
 // against that URI to the Source. In a reference, a key is escaped as a JSON
-// Pointer token and then as RFC 3986 section 3.5 requires of a fragment. The same input gives the same output.
+// Pointer token and then as RFC 3986 section 3.5 requires of a fragment. The
+// same input gives the same output.
 //
 // Each schema, the Root and every Defs entry, is read under its own
 // openapi.Schema.Version. In OpenAPI 3.1 and 3.2, readOnly and writeOnly are
@@ -124,9 +125,9 @@ func (e *Error) Unwrap() []error {
 // or an assertion, such as oneOf in Swagger 2.0 or const in OpenAPI 3.0, is
 // removed with an Issue, since it has no meaning in the authored edition. So
 // are contentSchema, whose schema those editions do not define, and items
-// written as an array, a form neither edition defines. Every other keyword is
-// kept, as an annotation where the edition does not define it. Project never
-// validates an instance, invents a fact or repairs a schema.
+// written as an array, a form neither edition defines. The translation changes
+// no other keyword. Project never validates an instance, invents a fact or
+// repairs a schema.
 //
 // Project returns an *Error, and with it the Projection, when part of the
 // schema cannot be carried: a reference that cannot be resolved, or that
