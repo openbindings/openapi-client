@@ -42,6 +42,7 @@ type param struct {
 	required bool
 	dotted   bool // whether its Key is its location and name joined by a dot
 	cookie32 bool
+	whole    bool          // an OpenAPI 3.2 querystring parameter, the whole query
 	idHash   uint32        // a hash of its identity, by location and name (see find)
 	nameHash uint32        // and of its name alone
 	field    string        // a header parameter's canonical field name
@@ -249,7 +250,7 @@ func (e *entry) shape(plan bool) *operation {
 		if p.In == "query" {
 			queries++
 		}
-		if p.In == "querystring" {
+		if p.whole {
 			wholes++
 		}
 	}
@@ -574,6 +575,7 @@ func (d *document) newParam(t value, at string) param {
 		}
 	}
 	pp.cookie32 = p.In == "cookie" && t.t.edition == 32
+	pp.whole = p.In == "querystring" && t.t.edition == 32
 	pp.required = p.Required || p.In == "path"
 	switch {
 	case p.In == "cookie" && p.Style == "form":
@@ -1089,7 +1091,10 @@ func newServer(s *Server, declared value, t *tree) *server {
 		sv.vars = append(sv.vars, urlVar{index: j})
 	}
 	at := make([]int, len(sv.vars)) // where each default falls
-	defaults := sv.substitute(func(i, pos int) string { at[i] = pos; return s.Variables[sv.vars[i].index].Default })
+	defaults := sv.substitute(func(i int, before string) string {
+		at[i] = len(before)
+		return s.Variables[sv.vars[i].index].Default
+	})
 	colon, authority, path := urlParts(defaults)
 	for i := range sv.vars {
 		a, b := at[i], at[i]+len(s.Variables[sv.vars[i].index].Default)
@@ -1105,39 +1110,51 @@ func newServer(s *Server, declared value, t *tree) *server {
 		}
 	}
 	// Only a defect no value can repair makes the server unusable for good:
-	// a query or fragment in its text, or userinfo in its authority.
-	literal := sv.substitute(func(int, int) string { return "x" })
-	_, authority, path = urlParts(literal)
-	if len(sv.vars) == 0 {
-		if _, err := t.resolveServerURL(literal); err != nil {
+	// one the defaults leave that remains with each variable holding a value
+	// that cannot itself cause one.
+	ep, err := t.resolveServerURL(defaults)
+	if err != nil {
+		harmless := sv.substitute(func(i int, before string) string { return sv.vars[i].part.harmless(before) })
+		if _, err := t.resolveServerURL(harmless); err != nil {
 			s.Err = fmt.Errorf("server URL %q cannot be used: %w", s.URL, err)
 		}
-	} else if strings.ContainsAny(literal, "?#") || authority >= 0 && strings.Contains(literal[authority:path], "@") ||
-		strings.HasPrefix(sv.text[0], "/") && !t.httpBase() {
-		s.Err = fmt.Errorf("server URL %q cannot be used whatever its variables' values", s.URL)
 	}
 	if enumErr != nil && (s.Err == nil || enumErr == errBundle) {
 		s.Err = enumErr
 	}
-	if s.Err == nil && !slices.ContainsFunc(s.Variables, func(v Variable) bool { return !v.DefaultSet }) {
-		if ep, err := t.resolveServerURL(defaults); err == nil {
-			sv.fixed = &ep
-		}
+	if s.Err == nil && err == nil && !slices.ContainsFunc(s.Variables, func(v Variable) bool { return !v.DefaultSet }) {
+		sv.fixed = &ep
 	}
 	return sv
 }
 
 // substitute returns the server URL with the ith variable of its template
-// replaced by value(i, at), at being where the value begins.
-func (s *server) substitute(value func(i, at int) string) string {
+// replaced by value(i, before), before being the URL up to the value.
+func (s *server) substitute(value func(i int, before string) string) string {
 	var b strings.Builder
 	for i, t := range s.text {
 		b.WriteString(t)
 		if i < len(s.vars) {
-			b.WriteString(value(i, b.Len()))
+			b.WriteString(value(i, b.String()))
 		}
 	}
 	return b.String()
+}
+
+// harmless returns a value for a variable in the part p, after the URL
+// before, that cannot itself make the URL unusable: nothing in a port, a URL
+// that leaves the rest in its path for a whole URL, and otherwise letters
+// that are hex digits too, so that a "%" before them begins a triple.
+func (p urlPart) harmless(before string) string {
+	switch p {
+	case wholeURL:
+		return "ab://ab/"
+	case inAuthority, authorityOrPath:
+		if _, authority, _ := urlParts(before); strings.LastIndexByte(before, ':') > max(authority, strings.LastIndexByte(before, ']')) {
+			return "" // a port holds only digits
+		}
+	}
+	return "ab"
 }
 
 // urlParts returns where the scheme of the URL reference u ends, at its

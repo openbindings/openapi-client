@@ -241,6 +241,25 @@ func (t noFollow) transport() http.RoundTripper {
 	return t.rt
 }
 
+// followParsed is the Transport of the http.Client the loader retrieves
+// with: noFollow, but moving back each Location that url.Parse accepts, so
+// that the http.Client follows that redirect, and holding only one it
+// rejects, which the http.Client would report quoting it whole, userinfo and
+// query included. The http.Client then returns that response, which the
+// loader reports without the Location.
+type followParsed struct{ noFollow }
+
+func (t followParsed) RoundTrip(r *http.Request) (*http.Response, error) {
+	resp, err := t.noFollow.RoundTrip(r)
+	if err == nil {
+		// The first, as the http.Client reads it; none, or an empty one, parses too.
+		if _, perr := url.Parse(resp.Header.Get(heldLocation)); perr == nil {
+			move(resp.Header, heldLocation, "Location")
+		}
+	}
+	return resp, err
+}
+
 // tenRedirects is net/http's default CheckRedirect.
 func tenRedirects(_ *http.Request, via []*http.Request) error {
 	if len(via) >= 10 {

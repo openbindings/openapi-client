@@ -196,7 +196,16 @@ func varDoc(url string, defaults map[string]string) string {
 // spans "://" ... supplies a whole URL and is not restricted. ... Otherwise a
 // value may change only its own part". Each refusal is keyed
 // Options.Variables["<name>"] (at Load or at the call), and nothing is sent,
-// to the document's host or to the host a value names.
+// to the document's host or to the host a value names. A variable whose
+// default leaves it in the path of a URL with no authority can never supply
+// one, "in the path, a value may not change the scheme or authority", so the
+// document alone makes that server unusable: its Server.Err is set (describe.go,
+// Server.Err: "Err is why the document alone makes the server unusable"), and,
+// as the operation's one server keys no variable, the call keys only
+// Options.BaseURL (doc.go, Configuration: Settings keys such variables "in each
+// server whose Err is nil, never in one whose Err is set ... If neither is
+// set, Settings also keys Options.BaseURL, unless the operation has one server
+// and one of its variables is keyed").
 func TestServerVariablesRestrictedByPart(t *testing.T) {
 	home, evil := newWire(t, nil), newWire(t, nil)
 	evilHost := evil.hostport()
@@ -207,8 +216,6 @@ func TestServerVariablesRestrictedByPart(t *testing.T) {
 		// authority (RFC 3986 section 4.2).
 		{"relative path makes //", "/{tenant}/api", "tenant", "acme", "/" + evilHost},
 		{"relative path makes // with a path", "/{tenant}/api", "tenant", "acme", "/" + evilHost + "/x"},
-		{"after the scheme's colon", "http:{rest}", "rest", "acme", "//" + evilHost},
-		{"second / of //", "http:/{x}", "x", "acme", "/" + evilHost},
 		// p's default "http" lies in the scheme "https": the value must leave a
 		// valid scheme (RFC 3986 section 3.1).
 		{"scheme part", "{p}s://api.example.test", "p", "http", "https://127.0.0.1:1/v1/"},
@@ -237,6 +244,34 @@ func TestServerVariablesRestrictedByPart(t *testing.T) {
 			resp, err := c.Call(t.Context(), "op", nil, nil)
 			re := refusedSince(t, home, before, resp, err)
 			wantKeys(t, "Settings", re.Settings, false, key)
+			if evil.count() != evilBefore {
+				t.Errorf("the request reached the host the value names")
+			}
+		})
+	}
+
+	// The default leaves each variable in the path of a URL with no
+	// authority, so no value can supply one.
+	unusable := []struct {
+		name, url, variable, deflt, value string
+	}{
+		{"after the scheme's colon", "http:{rest}", "rest", "acme", "//" + evilHost},
+		{"second / of //", "http:/{x}", "x", "acme", "/" + evilHost},
+	}
+	for _, tt := range unusable {
+		t.Run("refused: "+tt.name, func(t *testing.T) {
+			doc := expand(varDoc(tt.url, map[string]string{tt.variable: tt.deflt}), home.URL)
+			before, evilBefore := home.count(), evil.count()
+			c, err := openapi.Parse(t.Context(), []byte(doc), home.URL+"/openapi.json", &openapi.Options{Variables: map[string]string{tt.variable: tt.value}})
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			if s := mustOp(t, c, "op").Servers[0]; s.Err == nil {
+				t.Errorf("Server.Err = nil for %s, which no value can make usable", s.URL)
+			}
+			resp, err := c.Call(t.Context(), "op", nil, nil)
+			re := refusedSince(t, home, before, resp, err)
+			wantKeys(t, "Settings", re.Settings, true, "Options.BaseURL")
 			if evil.count() != evilBefore {
 				t.Errorf("the request reached the host the value names")
 			}

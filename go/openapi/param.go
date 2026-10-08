@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -83,7 +84,7 @@ func (c *Client) writeParam(b *strings.Builder, lead string, p *param, v any, re
 	if _, raw := v.([]byte); !raw && c.cfg.codecsErr != nil {
 		re.setting("Options.Codecs", c.cfg.codecsErr)
 	}
-	form := p.In == "querystring" && isForm(*p.media)
+	form := p.whole && isForm(*p.media)
 	if form {
 		x := c.doc.datum(v)
 		if x.null {
@@ -114,7 +115,7 @@ func (c *Client) writeParam(b *strings.Builder, lead string, p *param, v any, re
 		re.input(p.Key, err)
 		return false, false
 	}
-	if p.In == "querystring" && s == "" {
+	if p.whole && s == "" {
 		return false, false
 	}
 	b.WriteString(lead)
@@ -513,14 +514,30 @@ func unhex(c byte) byte {
 }
 
 // runWriters calls the call's parameter writers with req in parameter
-// order, then refuses each path parameter whose {name} token a writer left
+// order, refusing each that leaves a header field with a value HTTP cannot
+// carry, then refuses each path parameter whose {name} token a writer left
 // unresolved.
 func (o *operation) runWriters(req *http.Request, writers map[string]func(*http.Request) error, re *RequestError) {
+	// check refuses at key, unless it is empty, each field newly found with
+	// a value HTTP cannot carry.
+	bad := map[string]bool{}
+	check := func(key string) {
+		for k, vs := range req.Header {
+			if !bad[k] && slices.ContainsFunc(vs, func(v string) bool { return !validFieldValue(v) }) {
+				bad[k] = true
+				if key != "" {
+					re.input(key, fmt.Errorf("field %s has a value HTTP cannot carry", label(k)))
+				}
+			}
+		}
+	}
+	check("") // a field the client set so is no writer's doing
 	for i := range o.params {
 		if p := &o.params[i]; p.In != "" && writers[p.Key] != nil {
 			if err := writers[p.Key](req); err != nil {
 				re.input(p.Key, err)
 			}
+			check(p.Key)
 		}
 	}
 	u := req.URL

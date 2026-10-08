@@ -327,6 +327,7 @@ func (ld *loading) retrieve(uri string, froms []string, buf []byte) (string, str
 		if next == nil {
 			next = tenRedirects
 		}
+		c.Transport = followParsed{noFollow{c.Transport}}
 		c.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 			to := *req.URL
 			to.Fragment, to.RawFragment = "", ""
@@ -349,7 +350,10 @@ func (ld *loading) retrieve(uri string, froms []string, buf []byte) (string, str
 					to.Fragment, to.RawFragment = "", ""
 					final, base = to.String(), &to
 				}
-				if resp.StatusCode/100 != 2 {
+				switch {
+				case resp.Header[heldLocation] != nil:
+					err = errors.New(status(resp.StatusCode) + " with a Location that cannot be parsed (RFC 3986)")
+				case resp.StatusCode/100 != 2:
 					err = errors.New(status(resp.StatusCode))
 				}
 			}
@@ -1004,7 +1008,7 @@ func (d *document) checkNames(ctx context.Context, cfg *config, re *RequestError
 				serverID = serverID || s.ID == cfg.ServerID
 			}
 			if o.Body != nil && o.Body.Err == nil { // consumes written as a reference offers no type
-				media = media || match(o.body, o.Body.Media, cfg.mediaType, true) != nil
+				media = media || match(o.body, o.Body.Media, cfg.mediaType, keyErr) != nil
 			}
 		}
 		none := free
@@ -1025,7 +1029,8 @@ func (d *document) checkNames(ctx context.Context, cfg *config, re *RequestError
 			for typ := range body.get("content").members() {
 				m, ok := parseMedia(typ)
 				_, covers := m.covers(cfg.mediaType)
-				media = media || ok && covers
+				_, _, err := m.boundary() // invalid or repeated, it causes a form or multipart Media's Err
+				media = media || ok && covers && (err == nil || !isForm(m) && !isMultipart(m))
 			}
 		}
 	}

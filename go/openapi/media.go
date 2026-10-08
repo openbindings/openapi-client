@@ -13,13 +13,17 @@ type parsedMedia struct {
 
 var octetStream = parsedMedia{"application/octet-stream", "application", "octet-stream", ""}
 
-// parseMedia parses s, reporting whether it is a media type or range.
+// parseMedia parses s, reporting whether it is a media type or range; when
+// it is not, the result is the zero parsedMedia, which covers no type.
 func parseMedia(s string) (parsedMedia, bool) {
 	full, params, _ := strings.Cut(s, ";")
 	full = trimOWS(full)
 	typ, sub, ok := strings.Cut(full, "/")
 	m := parsedMedia{full, typ, sub, params}
-	return m, ok && isToken(typ) && isToken(sub) && (typ != "*" || sub == "*") && m.eachParam(nil)
+	if !ok || !isToken(typ) || !isToken(sub) || typ == "*" && sub != "*" || !m.eachParam(nil) {
+		return parsedMedia{}, false
+	}
+	return m, true
 }
 
 func (m parsedMedia) concrete() bool { return m.typ != "*" && m.sub != "*" }
@@ -168,16 +172,16 @@ func (m parsedMedia) covers(t parsedMedia) (specificity [2]int, ok bool) {
 }
 
 // match returns the Media of ms, parsed as declared, that t matches most
-// specifically, or nil when none does or several tie; with errs, one whose
-// Err is set may be it.
-func match(declared []parsedMedia, ms []*Media, t parsedMedia, errs bool) *Media {
+// specifically, or nil when none does or several tie, leaving out each for
+// which skip, if not nil, reports true.
+func match(declared []parsedMedia, ms []*Media, t parsedMedia, skip func(*Media) bool) *Media {
 	var best *Media
 	var bestSpec [2]int
 	tie := false
 	for i, m := range declared {
 		spec, ok := m.covers(t)
 		switch {
-		case !ok || !errs && ms[i].Err != nil:
+		case !ok || skip != nil && skip(ms[i]):
 		case best == nil || spec[0] > bestSpec[0] || spec[0] == bestSpec[0] && spec[1] > bestSpec[1]:
 			best, bestSpec, tie = ms[i], spec, false
 		case spec == bestSpec:

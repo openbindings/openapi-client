@@ -305,7 +305,7 @@ func (x *exchange) send(req *http.Request) (*Response, parsedMedia, error) {
 	if d := x.op.declaration(resp.StatusCode); d != nil {
 		r.Declaration = d.Message
 		if ok {
-			r.Media = match(d.media, d.Message.Media, ct, false)
+			r.Media = match(d.media, d.Message.Media, ct, func(m *Media) bool { return m.Err != nil })
 		}
 	}
 	if !ok {

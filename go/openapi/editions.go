@@ -282,7 +282,7 @@ func (o *operation) swaggerBody(n value) error {
 	if len(list) == 0 {
 		list = []string{""}
 	}
-	c := o.doc.swaggerContent(schema, list, src)
+	c := o.doc.swaggerContent(schema, list, src, true)
 	if encoding != nil {
 		for i, md := range c.media {
 			md.Encoding = params
@@ -297,7 +297,9 @@ func (o *operation) swaggerBody(n value) error {
 	return nil
 }
 
-func (d *document) swaggerContent(schema *Schema, types []string, src string) *content {
+// swaggerContent describes schema, at src, under each of types, for a
+// request body when request.
+func (d *document) swaggerContent(schema *Schema, types []string, src string, request bool) *content {
 	c := &content{source: src}
 	if len(types) == 0 {
 		types = []string{""}
@@ -314,7 +316,7 @@ func (d *document) swaggerContent(schema *Schema, types []string, src string) *c
 		}
 		md.Sequential = pm.class() == sequentialClass || isMultipart(pm)
 		var enc *formEncoding
-		if schema != nil && (isForm(pm) || isMultipart(pm) || pm.typ == "*" || pm.sub == "*" && strings.EqualFold(pm.typ, "application")) {
+		if request && schema != nil && (isForm(pm) || isMultipart(pm) || pm.typ == "*" || pm.sub == "*" && strings.EqualFold(pm.typ, "application")) {
 			enc, md.Encoding = d.encodingOf([]value{schema.v}, schema.Source(), value{}, "", pm, schema.v.t.edition)
 		} else {
 			enc = noFields
@@ -337,7 +339,7 @@ func (d *document) swaggerResponse(v value, src string, produces value) (*Messag
 	}
 	c := &content{source: at}
 	if schema := d.schema(t.get("schema"), at, "/schema"); schema != nil {
-		c = d.swaggerContent(schema, produces.strs(), at)
+		c = d.swaggerContent(schema, produces.strs(), at, false)
 	}
 	h := t.get("headers")
 	if bundled(h) || bundled(produces) { // produces so written makes each response unusable

@@ -2,6 +2,7 @@ package openapi
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -490,7 +491,7 @@ func (c *Client) resolve(s *server, setting string, re *RequestError) (endpoint,
 		value string
 	}
 	var values []span // the values given
-	u := s.substitute(func(i, at int) string {
+	u := s.substitute(func(i int, before string) string {
 		v := s.Variables[s.vars[i].index]
 		value, given := cfg.Variables[v.Name]
 		switch {
@@ -501,7 +502,7 @@ func (c *Client) resolve(s *server, setting string, re *RequestError) (endpoint,
 		case value != v.Default && v.Enum != nil && !slices.Contains(v.Enum, value):
 			refuse(v.Name, fmt.Errorf("the value is not one of the variable's enum %q", v.Enum))
 		default:
-			values = append(values, span{i, at, value})
+			values = append(values, span{i, len(before), value})
 		}
 		return value
 	})
@@ -582,8 +583,9 @@ func (t *tree) resolveServerURL(s string) (endpoint, error) {
 		u = t.base.ResolveReference(u)
 		path = escape(u.EscapedPath(), pathSet)
 	}
-	if u.Host == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || strings.Contains(s, "#") {
-		return endpoint{}, errors.New("it has no host, or has userinfo, a query or a fragment")
+	_, portErr := strconv.ParseUint(cmp.Or(u.Port(), "0"), 10, 16) // a TCP port is 16 bits
+	if u.Hostname() == "" || portErr != nil || u.User != nil || u.RawQuery != "" || u.ForceQuery || strings.Contains(s, "#") {
+		return endpoint{}, errors.New("it has no host, or has a port above 65535, userinfo, a query or a fragment")
 	}
 	return endpoint{u.Scheme, u.Host, path}, nil
 }
@@ -708,11 +710,13 @@ func (c *Client) mediaType(o *operation, in *Input, re *RequestError) (string, p
 		re.setting("Options.MediaType", cfg.mediaTypeErr)
 	}
 	typ := in.MediaType
-	if typ == "" && cfg.MediaType != "" && cfg.mediaTypeErr == nil && match(o.body, declared, cfg.mediaType, true) != nil {
+	if typ == "" && cfg.MediaType != "" && cfg.mediaTypeErr == nil && match(o.body, declared, cfg.mediaType, keyErr) != nil {
 		typ = cfg.MediaType
 	}
 	if typ == "" {
 		switch {
+		case len(declared) == 0: // an empty content map, to which Options.MediaType does not apply
+			re.setting("Input.MediaType", errors.New("the request body declares no media type; select one with Input.MediaType"))
 		case len(declared) == 1 && keyErr(declared[0]):
 			re.setting("Input.MediaType", mediaErr(declared[0]))
 		case len(declared) == 1 && o.body[0].concrete():
@@ -729,7 +733,7 @@ func (c *Client) mediaType(o *operation, in *Input, re *RequestError) (string, p
 	}
 	var md *Media
 	if len(declared) > 0 {
-		switch md = match(o.body, declared, m, true); {
+		switch md = match(o.body, declared, m, nil); {
 		case md == nil:
 			re.setting("Input.MediaType", fmt.Errorf("the operation does not declare %s", label(typ)))
 			return "", parsedMedia{}, nil

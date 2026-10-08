@@ -270,7 +270,7 @@ func readPart(p *multipart.Part, bound int64) ([]byte, bool, error) {
 	var opaque bool
 	switch strings.ToLower(strings.TrimSpace(p.Header.Get("Content-Transfer-Encoding"))) {
 	case "base64":
-		r = base64.NewDecoder(base64.StdEncoding, mimeBase64{source})
+		r = base64.NewDecoder(base64.StdEncoding, &mimeBase64{Reader: source})
 	case "quoted-printable":
 		r = quotedprintable.NewReader(source)
 	case "", "7bit", "8bit", "binary":
@@ -293,17 +293,31 @@ func readPart(p *multipart.Part, bound int64) ([]byte, bool, error) {
 
 // MIME base64 ignores SP and HTAB in addition to the standard decoder's
 // CR/LF handling. Filter in place before decoding and decoded-byte limiting.
-type mimeBase64 struct{ io.Reader }
+// Padding ends the data (RFC 4648 section 4), but the standard decoder
+// accepts data after it that a later read gives, so the filter refuses that
+// data itself.
+type mimeBase64 struct {
+	io.Reader
+	padded bool
+}
 
-func (r mimeBase64) Read(p []byte) (int, error) {
+var errPadding = errors.New("base64 data after its padding")
+
+func (r *mimeBase64) Read(p []byte) (int, error) {
 	for {
 		n, err := r.Reader.Read(p)
 		used := 0
 		for _, c := range p[:n] {
-			if c != ' ' && c != '\t' {
-				p[used] = c
-				used++
+			switch {
+			case c == ' ' || c == '\t':
+				continue
+			case c == '=':
+				r.padded = true
+			case r.padded && c != '\r' && c != '\n':
+				return 0, errPadding
 			}
+			p[used] = c
+			used++
 		}
 		if used > 0 || n == 0 || err != nil {
 			return used, err

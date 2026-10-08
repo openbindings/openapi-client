@@ -155,20 +155,20 @@ func Items[T any](r *Response) iter.Seq2[T, error] {
 		}
 		_, raw := any(&zero).(*[]byte)
 		_, part := any(&zero).(**multipart.Part)
-		if !raw && !part {
-			if x.cfg.codecsErr != nil { // as Response.Decode reports it, the body left unread
-				yield(zero, invalidDecodeError(r, fmt.Errorf("Options.Codecs: %w", x.cfg.codecsErr)))
-				return
-			}
+		ct := mediaOf(r.Header)
+		if !raw && !part && x.cfg.codecsErr != nil { // as Response.Decode reports it, the body left unread
+			yield(zero, invalidDecodeError(r, fmt.Errorf("Options.Codecs: %w", x.cfg.codecsErr)))
+			return
+		}
+		if !raw && !(part && isMultipart(ct)) {
 			if err := contentCoding(r.Header); err != nil {
 				yield(zero, err)
 				return
 			}
 		}
-		ct := mediaOf(r.Header)
 		bound := limit(x.cfg.MaxItemBytes, 16<<20)
 		switch {
-		case strings.EqualFold(ct.typ, "multipart"):
+		case isMultipart(ct):
 			multipartItems(x, r, ct, bound, yield)
 		case ct.class() == sequentialClass:
 			f := newSequenceReader(r.Body, sequenceOf(ct), bound)
@@ -286,9 +286,12 @@ type Event struct {
 // decodeItem gives raw targets their own bytes; every value failure is local
 // to this item, while framing and read failures remain terminal.
 func decodeItem(cfg *config, ct parsedMedia, data []byte, out any) error {
-	if p, ok := out.(*[]byte); ok {
+	switch p := out.(type) {
+	case *[]byte:
 		*p = append([]byte{}, data...)
 		return nil
+	case **multipart.Part: // multipartItems yields a multipart body's parts itself
+		return badItem(errors.New("a *multipart.Part item needs a multipart body"))
 	}
 	if err := cfg.decodeData(ct, nil, data, out); err != nil {
 		return badItem(err)
@@ -318,9 +321,16 @@ func readFailed(err error) error {
 	return &readError{err}
 }
 
+// contentCoding reports a coding other than identity in any element of any
+// Content-Encoding field line of h, which RFC 9110 section 5.3 reads as one
+// list.
 func contentCoding(h http.Header) error {
-	if coding := h["Content-Encoding"]; len(coding) > 0 && coding[0] != "" && !strings.EqualFold(coding[0], "identity") {
-		return errors.New("cannot decode a body with non-identity Content-Encoding")
+	for _, line := range h["Content-Encoding"] {
+		for coding := range strings.SplitSeq(line, ",") {
+			if coding = strings.Trim(coding, " \t"); coding != "" && !strings.EqualFold(coding, "identity") {
+				return errors.New("cannot decode a body with non-identity Content-Encoding")
+			}
+		}
 	}
 	return nil
 }

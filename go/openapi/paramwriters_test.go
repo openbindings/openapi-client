@@ -2,6 +2,7 @@ package openapi_test
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"slices"
@@ -330,5 +331,41 @@ func TestFlowParameterWriter(t *testing.T) {
 	}
 	if got := w.last(t).RequestURI; got != "/pets/search?limit=10&filter%5Bname%5D=Rex" {
 		t.Errorf("request target %q, want /pets/search?limit=10&filter%%5Bname%%5D=Rex", got)
+	}
+}
+
+// A header field value a writer sets is checked as every other header
+// field value is: one with an ASCII control character other than a tab, or
+// with leading or trailing whitespace, refuses the call before sending, at
+// the writer's Inputs key, whichever field it sets; a tab inside is sent.
+// doc.go, Fixed rules, Header fields: "a field value, a header parameter's
+// included, may hold no ASCII control character but a tab and no leading or
+// trailing whitespace, which HTTP would strip ... any other breach of these
+// rules is refused at the key of what gave it"; errors.go,
+// RequestError.Inputs: it holds "a value its style cannot serialize or a
+// header cannot carry (see Header fields in the package documentation) ... a
+// ParamWriters failure or conflict", keyed by "the Param.Key".
+func TestParamWritersHeaderValuesChecked(t *testing.T) {
+	w := newWire(t, nil)
+	c := parseFor(t, w, doc31(writerDoc), nil)
+	setter := func(field, value string) func(*http.Request) error {
+		return func(r *http.Request) error { r.Header.Set(field, value); return nil }
+	}
+	for _, value := range []string{"a\nb", "a\rb", "a\x00b", "a\x1fb", "a\x7fb", " lead", "trail ", "\tlead", "trail\t"} {
+		for _, tt := range []struct{ key, field string }{
+			{"X-H", "X-H"},           // the writer's own header parameter
+			{"query.dup", "X-Other"}, // a field a query parameter's writer sets
+		} {
+			t.Run(fmt.Sprintf("%s sets %s to %q", tt.key, tt.field, value), func(t *testing.T) {
+				before := w.count()
+				resp, err := c.Call(t.Context(), "keys", &openapi.Input{ParamWriters: writers{tt.key: setter(tt.field, value)}}, nil)
+				re := refusedSince(t, w, before, resp, err)
+				wantKeys(t, "Inputs", re.Inputs, true, tt.key)
+			})
+		}
+	}
+	mustCall(t, c, "keys", &openapi.Input{ParamWriters: writers{"X-H": setter("X-H", "a\tb c")}}, nil)
+	if v := w.last(t).Header.Values("X-H"); !slices.Equal(v, []string{"a\tb c"}) {
+		t.Errorf("X-H = %q, want [a\\tb c]", v)
 	}
 }
