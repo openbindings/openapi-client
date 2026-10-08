@@ -92,9 +92,9 @@ func (e *Error) Unwrap() []error {
 // document, or #/definitions/NAME in Swagger 2.0, has the key NAME when NAME
 // contains no "#"; any other key is the schema's Source written as a URI
 // reference relative to the entry document's URI, so that the key resolves
-// against that URI to the Source. In a reference, a key is escaped as a JSON
-// Pointer token and then as RFC 3986 section 3.5 requires of a fragment. The
-// same input gives the same output.
+// against that URI to the Source, its dot segments removed. In a reference, a
+// key is escaped as a JSON Pointer token and then as RFC 3986 section 3.5
+// requires of a fragment. The same input gives the same output.
 //
 // Each schema, the Root and every Defs entry, is read under its own
 // openapi.Schema.Version. In OpenAPI 3.1 and 3.2, readOnly and writeOnly are
