@@ -76,7 +76,7 @@ type RequestError struct {
 	// Configuration in the package documentation). A body's media type is keyed
 	// "Input.MediaType" when it is undetermined, is not a concrete media type,
 	// is one the operation does not declare, or is declared under a key that
-	// causes its Media.Err (see Media.Err); a body that any other Media.Err
+	// causes its Media.Err (see Input.MediaType); a body that any other Media.Err
 	// refuses is keyed in Inputs. A header field that a supplied header
 	// parameter or the credential sets is keyed by the Header that set it.
 	// Several security alternatives with none selected, or an Options.Security

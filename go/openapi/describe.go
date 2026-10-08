@@ -396,12 +396,12 @@ type Media struct {
 
 	// Err is why the media type declaration itself cannot govern a
 	// structured body, such as a media key that is not a valid media type;
-	// a form or multipart request body's key that holds an invalid or
-	// repeated boundary parameter; an unreadable Media Type reference; or an
-	// encoding map or prefixEncoding list written as a reference, or an entry
-	// of one that no Encoding Param describes written as or holding one (see
-	// Operation), under any media type, which leaves no Encoding Param to
-	// report it.
+	// an OpenAPI 3.x request body's form or multipart key that holds an
+	// invalid or repeated boundary parameter; an unreadable Media Type
+	// reference; or an encoding map or prefixEncoding list written as a
+	// reference, or an entry of one that no Encoding Param describes written
+	// as or holding one (see Operation), under any media type, which leaves no
+	// Encoding Param to report it.
 	// Any other schema or Encoding defect that affects structured value
 	// encoding does not set Media.Err: it is reported by Schema.References or
 	// the relevant Encoding Param.Err. A pre-encoded []byte or io.Reader body
