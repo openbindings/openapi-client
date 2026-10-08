@@ -311,8 +311,9 @@
 //     key, and makes a server URL unusable and Options.BaseURL refused.
 //     URL.Path holds the path decoded. After substitution, a server URL that
 //     url.Parse refuses, such as one whose port holds anything but digits,
-//     cannot be used either, nor can one with no host, userinfo, a query or a
-//     fragment (Server.Err, where the document alone decides it). An empty
+//     cannot be used either, nor can one with no host, a port above 65535,
+//     userinfo, a query or a fragment (Server.Err, where the document alone
+//     decides it). An empty
 //     servers array on a path item or operation, and an empty Swagger 2.0
 //     schemes list, are read as absent, as OpenAPI says of the root's servers.
 //     In Swagger 2.0, as 2.0 says, a missing host is the host and port as

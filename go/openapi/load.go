@@ -159,14 +159,14 @@ func Parse(ctx context.Context, content []byte, uri string, opts *Options) (*Cli
 // holding it. Security requirement names resolve as [SchemeLookup] says.
 type Loader struct {
 	// Fetch, if set, retrieves each document the loader needs in place of the
-	// default (http and https with the Options' HTTPClient, file URLs from
-	// disk). A uri given to Load as a file path reaches Fetch as the file URL
-	// of its absolute path (filepath.Abs), the URI under which the default
-	// reads it, and any other reaches it as it is, whatever its scheme, unless
-	// Load refuses it. It returns the content, which the loader closes, and the
-	// URI it was finally retrieved from after any redirects, which, in the form
-	// Loader gives the URI requested, names that document and becomes its
-	// base; an empty final means uri. The loader may call Fetch from
+	// default (http and https with the Options' HTTPClient, file URLs from disk).
+	// A uri given to Load as a file path reaches Fetch as the file URL of its
+	// absolute path (filepath.Abs), the URI under which the default reads it, and
+	// any other reaches it in the form Loader gives the URI requested, whatever
+	// its scheme, unless Load refuses it. It returns the content, which the loader
+	// closes, and the URI it was finally retrieved from after any redirects,
+	// which, in the form Loader gives the URI requested, names that document and
+	// becomes its base; an empty final means uri. The loader may call Fetch from
 	// several goroutines at once, so that a document split into several files
 	// loads in parallel.
 	//
