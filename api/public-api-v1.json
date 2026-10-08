@@ -2,6 +2,6 @@
   "format": "openbindings.openapi-client-public-api@1",
   "typescriptDeclarationSha256": "5358b23e3af1e395b1f2478c0bbb89df2173d09d35b85f513e29ffd89e21cc4d",
   "typescriptProviderDeclarationSha256": "f44e0def6f344499619b7ce089aa235bf5768c8f051d000d4f07040afa185582",
-  "goDocumentationSha256": "c81b4b7571611fb648ceb886a1842a8f59fd62eb9dfe8f7329f70e189e3ecc0a",
-  "goSchema2020DocumentationSha256": "ccf8de4380cc543131a69b6826ca4a02580451520c31c3e69ac40ad71b231582"
+  "goDocumentationSha256": "a19de4889bde4f2d5c0cfa6cc7d60f3e79d3bb01fa58d6d3e0a9f6476a16d51e",
+  "goSchema2020DocumentationSha256": "2ce3d178b27df5c3beae2bfa1ccdcc34c585038b125144621543c0655f4ed61d"
 }
