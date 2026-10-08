@@ -227,8 +227,8 @@ type Param struct {
 	// ContentType is the media type the value is serialized with when it is
 	// described by content rather than by schema and style, or, for a form
 	// or multipart field, its effective contentType: its Encoding's, which
-	// may be a comma-separated list or a range, or else the default the
-	// client uses (see the package documentation). Under
+	// may be a range or a comma-separated list (see Response.Media), or else
+	// the default the client uses (see the package documentation). Under
 	// application/x-www-form-urlencoded and multipart/form-data it is empty
 	// for a field whose Encoding sets style, explode or allowReserved, which
 	// OpenAPI says makes contentType ignored there, except for an OpenAPI 3.2
@@ -565,9 +565,11 @@ type Flow struct {
 // standalone JSON Schema 2020-12 schema.
 //
 // A handle is the schema where it is used. In OpenAPI 3.1 and 3.2 it stays
-// at that site, whether or not a $ref there has siblings. In Swagger 2.0
-// and OpenAPI 3.0, whose references ignore their siblings, it follows $ref
-// to a schema that is not only a $ref; when it cannot, it stays at the
+// at that site, whether or not a $ref there has siblings, so references
+// resolve one at a time, a cycle of them included. In Swagger 2.0 and OpenAPI
+// 3.0, whose references ignore their siblings, it follows a chain of schemas
+// written as references (see Operation) to the first schema that is not one;
+// when it cannot, as when the chain leads back into itself, it stays at the
 // site, and References reports the Err. Source identifies the resulting
 // handle in either case.
 //

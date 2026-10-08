@@ -32,9 +32,11 @@ var ErrNoOperation = errors.New("openapi: no such operation")
 // for an entry document), or an error naming the refused URI when admission
 // refused it, so a caller can tell a fixable fetch or admission (see
 // Loader.Origins, Loader.AllowReference and Loader.Fetch) from a broken
-// document. Its text shows no userinfo that a reference, a redirect's Location
-// or the URL of a *url.Error gives, though each cause is still wrapped
-// unchanged; any other text of an error from Loader.Fetch is shown as it is.
+// document. Where the client names a URI, a reference or a redirect's Location
+// included, it omits userinfo and query. A retrieval error that is or wraps a
+// *url.Error is shown as that *url.Error, each URL without userinfo or query,
+// though it is still wrapped unchanged, and any other, such as a Loader.Fetch
+// error that wraps no *url.Error, is shown as it is.
 var ErrUnresolved = errors.New("openapi: unresolved reference")
 
 // A RequestError is an API call refused before it was sent, or Options

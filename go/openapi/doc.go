@@ -171,7 +171,7 @@
 // URL. The one exception is an error from retrieving a document, the entry
 // document included, that is or wraps a *url.Error: it is shown as that
 // *url.Error, each URL without userinfo or query, though it is still wrapped
-// unchanged (see ErrUnresolved).
+// unchanged (for a referenced document, see ErrUnresolved).
 //
 // # Configuration when the document is incomplete
 //

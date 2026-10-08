@@ -55,7 +55,7 @@ type Issue struct {
 // that is unresolved or unreported, whose Err is the reference's own Err where
 // openapi.Schema.References reports one; a $dynamicRef, for dynamic scope; a
 // keyword removed as Project describes; or, for a resource in another dialect,
-// its $schema, or its root when it has none.
+// its $schema or, when it has none, its root.
 type Error struct {
 	Issues []Issue
 }

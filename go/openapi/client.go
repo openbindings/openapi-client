@@ -532,7 +532,10 @@ type Part struct {
 	// Content is the part's value: a []byte or an io.Reader for raw content, a
 	// string, or any other value, encoded by MediaType. A nil Content, or one
 	// whose JSON data is null, omits the part, as a null property is omitted,
-	// whatever the part's media type.
+	// whatever the part's media type. In an OpenAPI 3.2 multipart/form-data
+	// list, which takes a Part only when its Header gives Content-Disposition
+	// (see Input.Body), a Part without one is refused at its key whatever its
+	// Content.
 	Content any
 
 	// MediaType is the part's Content-Type: a concrete type matching, by the
