@@ -9,7 +9,7 @@ import (
 )
 
 // doc.go, Values: "A form or multipart property or array item, or a positional
-// part, whose JSON data is null is omitted, whatever its serialization or
+// part ..., whose JSON data is null is omitted, whatever its serialization or
 // media type, a form, multipart or sequential one included"; client.go,
 // Part.Content: "A nil Content, or one whose JSON data is null, omits the
 // part, as a null property is omitted, whatever the part's media type". JSON
@@ -84,7 +84,7 @@ func TestJSONNullPositionalPartOmitted(t *testing.T) {
 // doc.go, Fixed rules, Querystring: "Under
 // application/x-www-form-urlencoded its value is an object written by the
 // form-body rules ..., and a value whose JSON data is null is undefined ...
-// An undefined value or an empty result sends no query. A query credential
+// An undefined value or an empty result sends no query ... A query credential
 // follows, joined by "&" to any query." A typed-nil map, a nil *struct, a nil
 // []any and json.RawMessage("null") send no query and are not refused; a
 // query credential then forms the query alone.

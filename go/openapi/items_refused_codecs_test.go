@@ -10,13 +10,14 @@ import (
 )
 
 // client.go, Options.Codecs: "A key Load would refuse, given through
-// Client.With, ... Unless the response has no body (see Client.Call), it also
-// makes Response.Decode and StatusError.Decode into such a pointer return a
-// *DecodeError naming Options.Codecs, and Items, for a T other than []byte or
-// *multipart.Part, yield such an error, not wrapping ErrItem, as its only
-// result." Items yields it for JSON Lines, for a multipart body's parts and
-// for a body read as one item, and yields no item decoded with the built-in
-// rules; a []byte or *multipart.Part T bypasses codecs and gets every item.
+// Client.With, ... With such a key, when the response has a body (see
+// Client.Call), decoding it into such a pointer with Response.Decode, or with
+// StatusError.Decode when its Err is nil, returns a *DecodeError naming
+// Options.Codecs, and Items, for a T other than []byte or *multipart.Part,
+// yields that error as its only result, not wrapping ErrItem." Items yields it
+// for JSON Lines, for a multipart body's parts and for a body read as one item,
+// and yields no item decoded with the built-in rules; a []byte or
+// *multipart.Part T bypasses codecs and gets every item.
 func TestItemsReportsRefusedCodecsKey(t *testing.T) {
 	const mixed = "--B\r\nContent-Type: application/json\r\n\r\n{\"a\":1}\r\n--B\r\nContent-Type: application/json\r\n\r\n{\"a\":2}\r\n--B--\r\n"
 	for _, tc := range []struct {

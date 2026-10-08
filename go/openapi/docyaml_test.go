@@ -48,7 +48,7 @@ func yamlValue(t testing.TB, tail, fragment string) []byte {
 // Core schema scalars, YAML 1.2.2 section 10.3.2: null, booleans, integers
 // in base 10, 8 (0o) and 16 (0x), floats, and everything else a string.
 // load.go, Loader: "yes and no stay strings", "Numbers keep the exact value
-// written"; client.go, Document: "a YAML document converted as the client
+// written"; load.go, Client.Document: "a YAML document converted as the client
 // read it". Each number is compared by its exact value, however the client
 // spells it in JSON.
 func TestYAMLCoreScalars(t *testing.T) {
@@ -304,7 +304,7 @@ func aliasDoc(k, filler, m int) []byte {
 }
 
 // load.go, Loader: "A document whose aliases would add more than 1,000,000
-// nodes, or more than 100 times its own node count ... is rejected too"
+// nodes, more than 100 times its own node count, ... is rejected too"
 // (RFC 9512 section 4.2 asks for such a bound). The cases keep a wide
 // margin on either side of each bound, so they hold however nodes are
 // counted (keys included or not, the alias node itself or not).
@@ -342,10 +342,13 @@ func TestYAMLAliasBounds(t *testing.T) {
 	}
 }
 
-// An exponential alias document (the "billion laughs" shape RFC 9512
-// section 4.2 describes) is rejected, at a cost the bound sets: its own
-// nodes number about 120, so the aliases it may add before rejection number
-// at most about 12,000, and rejecting it allocates little.
+// Regression check, not contract: the 32 MiB figure for what rejecting it
+// allocates. The rest is contract: an exponential alias document (the "billion
+// laughs" shape RFC 9512 section 4.2 describes) is rejected by what its
+// aliases would add (load.go, Loader: "A document whose aliases would add more
+// than 1,000,000 nodes, more than 100 times its own node count, ... is
+// rejected too"): its own nodes number about 120, so the aliases it may add
+// before rejection number at most about 12,000.
 func TestYAMLAliasBomb(t *testing.T) {
 	if !inChild(t) { // a loader that expands it would exhaust memory
 		return
@@ -456,9 +459,9 @@ func TestDocumentNumbersExact(t *testing.T) {
 }
 
 // load.go, Parse: "The content is JSON or YAML text"; Load reads YAML from
-// a file and over http too. client.go, Document: "a YAML document converted
-// as the client read it". A YAML document describes what the same JSON
-// document describes: the same operations, parameters, Sources and calls.
+// a file and over http too. load.go, Client.Document: "a YAML document
+// converted as the client read it". A YAML document describes what the same
+// JSON document describes: the same operations, parameters, Sources and calls.
 // describe.go, Message.Key: a response's key "a code such as "404"": an
 // unquoted 200 is the key "200".
 func TestYAMLDocumentLoads(t *testing.T) {
@@ -541,7 +544,7 @@ paths:
 
 // A YAML document and the JSON document it was written from describe the
 // same Client: every descriptor equal, Sources included, and Document the
-// same JSON (load.go, Loader; client.go, Document). The YAML is the tests'
+// same JSON (load.go, Loader and Client.Document). The YAML is the tests'
 // own block and flow writing of testdata/pets.json and of a synthetic
 // document, in several scalar styles.
 func TestYAMLSameAsJSON(t *testing.T) {

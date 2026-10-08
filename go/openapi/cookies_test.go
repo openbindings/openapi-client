@@ -10,14 +10,16 @@ import (
 
 // Cookie parameters in OpenAPI 3.1: style form (OAS 3.1.2 section
 // 4.8.12.2.2: the default "for "cookie" - "form""; explode true by default),
-// written into one field (doc.go, Fixed rules, Cookies: "one Cookie field,
-// pairs joined by "; ", parameters in declared order"; OAS 3.1.2 Appendix
-// D.1: the form "?" prefix is stripped, and name=value pairs in cookies "are
-// delimited by a semicolon followed by a space character rather than &";
-// RFC 6265 section 4.2.1: cookie-string = cookie-pair *( ";" SP
-// cookie-pair )), with values and names percent-encoded (doc.go, Fixed
-// rules, Percent-encoding: "path, query and cookie values ... and parameter
-// and member names encode every byte outside RFC 3986's unreserved set").
+// written into one field (doc.go, Fixed rules, Cookies: "one Cookie field
+// holding, joined by "; ", the parameters in declared order"; OAS 3.1.2
+// Appendix D.1: the form "?" prefix is stripped, and name=value pairs in
+// cookies "are delimited by a semicolon followed by a space character rather
+// than &"; RFC 6265 section 4.2.1: cookie-string = cookie-pair *( ";" SP
+// cookie-pair )), with values and names percent-encoded (doc.go, Fixed rules,
+// Percent-encoding: "path and query values (content-serialized ones included,
+// application/x-www-form-urlencoded too), form-style cookie values, and
+// parameter and member names encode every byte outside RFC 3986's unreserved
+// set as %XX in uppercase hex").
 
 const cookieDoc = `"/c":{
 	"parameters":[{"name":"a","in":"cookie","schema":{}}],
@@ -128,7 +130,7 @@ func TestCookieFieldConflicts(t *testing.T) {
 // character is percent-encoded, not refused (doc.go, Fixed rules,
 // Percent-encoding: form-style cookie values "encode every byte outside RFC
 // 3986's unreserved set"; only "a cookie value written as given that holds a
-// ";" or a control character is refused").
+// ";" or an ASCII control character is refused").
 func TestCookieValuesEncoded(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, doc31(cookieDoc), nil)

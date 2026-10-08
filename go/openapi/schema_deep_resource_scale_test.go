@@ -13,11 +13,10 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// The first Schema lookup in a deeply nested schema resource costs time and
-// bytes linear in its depth, as a read costs O(size of what it returns or
-// compares) (Client.Schema; Schema.Source, Base, Raw and References; JSON
-// Schema 2020-12 core section 8.2.1, $id). Fixture generation and
-// validation use only public values.
+// The first Schema lookup in a deeply nested schema resource (JSON Schema
+// 2020-12 core section 8.2.1, $id), through Client.Schema and Schema.Source,
+// Base, Raw and References. Fixture generation and validation use only public
+// values.
 const deepResourceEntry = "https://nested-cost.example.test/openapi.json"
 const deepResourceRoot = deepResourceEntry + "#/components/schemas/S"
 
@@ -95,6 +94,8 @@ func TestSchemaDeepResourceLookupWorkload(t *testing.T) {
 	}
 }
 
+// Regression check, not contract: the first Schema lookup in a deeply nested
+// schema resource costs time and bytes linear in its depth.
 func TestSchemaFirstDeepResourceLookupScale(t *testing.T) {
 	for _, nested := range []bool{false, true} {
 		name := "FixedBase"

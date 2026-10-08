@@ -1,35 +1,36 @@
 package openapi_test
 
 import (
-	"errors"
 	"testing"
 
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
 // Request-body descriptors. describe.go, Media.Encoding: "Encoding describes
-// the fields of form or multipart content, as Params whose Name is the
-// field, each with its effective ContentType: the properties the schema
-// lists at its top level (after following $ref), in document order, then
-// those that only declare an Encoding Object, in the encoding map's order".
-// Param: "a field of a form or multipart body ... (In and Key are empty)";
-// Style "as declared or as OpenAPI defaults it ..., or empty when the value
-// is serialized by ContentType instead"; Explode "the effective explode
-// (true for deepObject, which ignores the field), and ExplodeSet whether the
-// document writes it"; AllowReserved "the effective allowReserved: false
-// where the edition or the media type ignores it, as for a
-// multipart/form-data field"; ContentType "for a form or multipart field,
-// its effective contentType: its Encoding's, which may be a comma-separated
-// list or a range, or else the default the client uses ... Under
-// application/x-www-form-urlencoded and multipart/form-data it is empty for
-// a field whose Encoding sets style, explode or allowReserved, which OpenAPI
-// says makes contentType ignored there"; Headers "the header fields a multipart field's Encoding
-// declares for its part, except Content-Type, which OpenAPI ignores there";
-// Source "a JSON Pointer to its ... Encoding Object"; Err "why built-in
-// serialization cannot use the value". Media.Err: "A schema or Encoding
-// defect that affects structured value encoding does not set Media.Err: it
-// is reported by ... the relevant Encoding Param.Err." Media.ItemSchema: "in
-// OpenAPI 3.2, the schema of each item of sequential content, or nil". OAS
+// the fields of form or multipart content, as Params whose Name is the field,
+// each with its effective ContentType: the properties the schema lists at its
+// top level, in document order, then those the schemas it reaches by $ref and
+// allOf list, depth first in document order, each in the place of its first
+// declaration, then those that only declare an Encoding Object, in the
+// encoding map's order". Param: "a field of a form or multipart body ... (In
+// and Key are empty)"; Style "as declared or as OpenAPI defaults it ..., or
+// empty when the value is serialized by ContentType instead"; Explode "the
+// effective explode (true for deepObject, which ignores the field), and
+// ExplodeSet whether the document writes it"; AllowReserved "the effective
+// allowReserved: false where the edition or the media type ignores it, as for
+// a multipart/form-data field"; ContentType "for a form or multipart field,
+// its effective contentType: its Encoding's, which may be a range or a
+// comma-separated list (see Response.Media), or else the default the client
+// uses ... Under application/x-www-form-urlencoded and multipart/form-data it
+// is empty for a field whose Encoding sets style, explode or allowReserved,
+// which OpenAPI says makes contentType ignored there"; Headers "the header
+// fields a multipart field's Encoding declares for its part, except
+// Content-Type, which OpenAPI ignores there"; Source "a JSON Pointer to its
+// ... Encoding Object"; Err "why built-in serialization cannot use the
+// value". Media.Err: "Any other schema or Encoding defect that affects
+// structured value encoding does not set Media.Err: it is reported by
+// Schema.References or the relevant Encoding Param.Err." Media.ItemSchema:
+// "in OpenAPI 3.2, the schema of each item of sequential content, or nil". OAS
 // 3.1.2 section 4.8.14.1, encoding: "The encoding field SHALL only apply to
 // Request Body Objects, and only when the media type is multipart or
 // application/x-www-form-urlencoded"; section 4.8.15.1.1, headers:
@@ -225,9 +226,8 @@ func TestEncodingDescriptorsFromEncoding(t *testing.T) {
 
 // RFC 6570 fields: effective style, explode and allowReserved, as for
 // query parameters (OAS 3.1.2 section 4.8.15.1.2; describe.go, Param);
-// defects on the field's Err, never Media.Err, and never a "not
-// implemented" (an undefined combination is a defect of the document);
-// headers ignored outside multipart.
+// defects on the field's Err, never Media.Err (an undefined combination is a
+// defect of the document); headers ignored outside multipart.
 func TestEncodingDescriptorStyles(t *testing.T) {
 	c := parseAt(t, doc31(descPaths, descComponents), "https://api.example.test", testDocURI, nil)
 	op := mustOp(t, c, "styles")
@@ -258,7 +258,7 @@ func TestEncodingDescriptorStyles(t *testing.T) {
 		}
 	}
 	for _, name := range []string{"bad1", "bad2", "badct"} {
-		if e := byName[name]; e == nil || e.Err == nil || errors.Is(e.Err, errors.ErrUnsupported) {
+		if e := byName[name]; e == nil || e.Err == nil {
 			t.Errorf("%s: Err = %v, want the document's defect", name, e)
 		}
 	}

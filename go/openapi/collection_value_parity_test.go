@@ -120,9 +120,11 @@ func TestSwaggerRequestBodyFieldNoMediaPreference(t *testing.T) {
 	}
 }
 
-// Values requires serialization to stop at the 1 MiB request-target limit.
-// Reuse TestRequestSizeLimit's established 16 MiB refusal allocation ceiling,
-// with 32 MiB of would-be output from a prebuilt, physically small value.
+// Regression check, not contract: TestRequestSizeLimit's 16 MiB refusal
+// allocation ceiling, with 32 MiB of would-be output from a prebuilt,
+// physically small value. The stop is contract: doc.go, Values: a parameter
+// that would take the request target past 1 MiB "is refused at its key, and
+// its serialization stops there".
 // This measures allocation only, not time: it distinguishes bounded rejection
 // from emitting the entire repeated field before noticing the limit.
 func TestQuerystringStopsAtTargetLimit(t *testing.T) {
@@ -146,9 +148,10 @@ func TestQuerystringStopsAtTargetLimit(t *testing.T) {
 	}
 }
 
-// The same Values stop rule applies within a collection element, not only
-// between elements. Build the 32 MiB scalar before measuring Prepare and
-// reuse TestRequestSizeLimit's 16 MiB refusal allocation ceiling.
+// Regression check, not contract: TestRequestSizeLimit's 16 MiB refusal
+// allocation ceiling. The stop is contract, and applies within a collection
+// element, not only between elements (doc.go, Values: "its serialization
+// stops there"). The 32 MiB scalar is built before Prepare is measured.
 func TestCollectionStopsWithinOversizedElement(t *testing.T) {
 	c := editionClient(t, editionDoc("2.0", `"/x":{"get":{"parameters":[{"name":"p","in":"query","type":"array","items":{"type":"string"},"collectionFormat":"csv"}]}}`), nil)
 	mustOp(t, c, "GET /x")

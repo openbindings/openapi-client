@@ -32,9 +32,10 @@ func (r *streamRepeated) Read(p []byte) (int, error) {
 	return n, nil
 }
 
-// Streams do bounded current-item work and have linear hostile-input costs.
-// Use the established best-of-five 12x time / 8x allocated-byte rule for
-// fourfold input. No result list or full repeated stream is retained.
+// Regression check, not contract: streams do bounded current-item work and have
+// linear hostile-input costs. Use the established best-of-five 12x time / 8x
+// allocated-byte rule for fourfold input. No result list or full repeated
+// stream is retained.
 func TestStreamFramingCostLinear(t *testing.T) {
 	for _, tc := range []struct {
 		name, ct, frame string
@@ -114,9 +115,13 @@ func TestStreamFramingCostLinear(t *testing.T) {
 	}
 }
 
-// A hostile Content-Length must not cause eager body allocation. The
-// amount of readable data and work is fixed while the declaration grows
-// from 1 GiB to 16 GiB; this also exercises 32-bit hosts safely.
+// A hostile Content-Length must not cause eager body allocation: doc.go,
+// Outcomes: "Even with no bound, the length a response body or retrieved
+// document declares reserves no more than about 1 MiB in advance; the rest is
+// allocated as its bytes arrive." The amount of readable data and work is
+// fixed while the declaration grows from 1 GiB to 16 GiB; this also exercises
+// 32-bit hosts safely. The test checks more than that bound: allocation does
+// not grow with the declaration at all.
 func TestStreamDeclaredLengthNoPreallocation(t *testing.T) {
 	wantFlat(t, "declared response length", 1024, func(n int) func() {
 		c := streamClient(t, "3.1.2", streamRT(func(req *http.Request) (*http.Response, error) {

@@ -9,22 +9,21 @@ import (
 )
 
 // Parameters across editions. load.go, Loader: "An OpenAPI document uses the
-// edition declared at its root." describe.go, Operation.Params holds "no
-// header parameter that OpenAPI 3.x tells clients to ignore (Accept,
-// Content-Type, Authorization, matched without regard to case)", while "A
-// Swagger 2.0 Content-Type header parameter is listed" and "A Swagger 2.0
-// Accept parameter's value is sent as the Accept field". So whether a header
-// parameter is dropped follows the edition of the document the parameter is
-// written in, not the operation's. A dropped parameter is not declared: a
-// value for it refuses the call (client.go, Input.Params: "A key the
-// operation does not declare ... refuses the call"), and a value written as
-// a reference in it is held by nothing nearer than the operation
-// (Operation.Err: "another value whose nearest part is the operation"). An
-// operation's own parameter still overrides an inherited one with the same
-// location and name (doc.go, Order), whatever the editions. The harness, and
-// the checks of each call in both orders and of nothing more being fetched
-// than the documents referenced, are those of bundlevalues_test.go and
-// describeorder_test.go.
+// edition declared at its root." describe.go, Operation.Params holds "no header
+// parameter that OpenAPI 3.x tells clients to ignore (Accept, Content-Type,
+// Authorization, matched without regard to case)", while "A Swagger 2.0
+// Content-Type header parameter is listed" and "A Swagger 2.0 Accept
+// parameter's value is sent as the Accept field". So whether a header parameter
+// is dropped follows the edition of the document the parameter is written in,
+// not the operation's. A dropped parameter is not declared: a value for it
+// refuses the call (client.go, Input.Params: "A key the operation does not
+// declare ... refuses the call"), and a value written as a reference in it is
+// held by nothing nearer than the operation (Operation.Err: "another value
+// whose nearest part is the operation"). An operation's own parameter still
+// overrides an inherited one, "one with the same location and name" (doc.go,
+// Fixed rules, Order), whatever the editions. The harness, and the checks of
+// each call in both orders and of nothing more being fetched than the documents
+// referenced, are those of bundlevalues_test.go and describeorder_test.go.
 
 // v3Parameters is an OpenAPI 3.1.0 document of components.parameters: a
 // required Authorization header, and an Accept whose content's encoding map

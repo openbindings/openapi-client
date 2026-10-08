@@ -234,12 +234,12 @@ func refsInto(n int, escape string) []byte {
 	return []byte(b.String())
 }
 
-// The member index covers objects with escaped names (decoded once, sorted
-// by decoded name), and an array index is found by position, not by a walk.
-// Reference resolution stays linear. Decoding every escaped name again at
-// each lookup would show in allocations, so that case is checked on them;
-// the others would be quadratic in time only, and their sizes are where a
-// quadratic implementation takes 16x.
+// Regression check, not contract: the member index covers objects with escaped
+// names (decoded once, sorted by decoded name), and an array index is found by
+// position, not by a walk. Reference resolution stays linear. Decoding every
+// escaped name again at each lookup would show in allocations, so that case is
+// checked on them; the others would be quadratic in time only, and their sizes
+// are where a quadratic implementation takes 16x.
 func TestReferenceLookupScales(t *testing.T) {
 	wantLinear(t, "one escaped member name", 4000, func(n int) func() { return parseDoc(t, refsInto(n, "one"), nil) })
 	wantLinearAllocs(t, "every member name escaped", 250, func(n int) func() { return parseDoc(t, refsInto(n, "all"), nil) })
@@ -339,11 +339,12 @@ func retainedBy(f func() any) int64 {
 	return int64(after.HeapAlloc) - int64(before.HeapAlloc)
 }
 
-// Path Item and Reference Object chains are resolved once per document with
-// shared tails, so Paths entries or operations that share one long chain cost
-// time and retained memory linear in the input, at Load, with Options.Server
-// or Options.MediaType set (whose checks follow the chains), and at first
-// use; and those checks honor ctx (Load: "ctx bounds the whole load").
+// Regression check, not contract: Path Item and Reference Object chains are
+// resolved once per document with shared tails, so Paths entries or operations
+// that share one long chain cost time and retained memory linear in the input,
+// at Load, with Options.Server or Options.MediaType set (whose checks follow
+// the chains), and at first use. That those checks honor ctx is contract
+// (load.go, Load: "ctx bounds the whole load, reading and parsing included").
 func TestSharedReferenceChainsScale(t *testing.T) {
 	wantLinear(t, "Paths entries sharing a Path Item chain, Load", 150, func(n int) func() {
 		return parseDoc(t, pathChainFanIn(n, false), nil)
@@ -392,10 +393,10 @@ func TestSharedReferenceChainsScale(t *testing.T) {
 	})
 }
 
-// An escaped string is decoded once per node and shared, so a shared escaped
-// description read by many operations is kept once: after Operations(), the
-// escaped document retains no more than the same document unescaped plus two
-// copies of the description.
+// Regression check, not contract: an escaped string is decoded once per node
+// and shared, so a shared escaped description read by many operations is kept
+// once: after Operations(), the escaped document retains no more than the same
+// document unescaped plus two copies of the description.
 func TestSharedEscapedDescriptionRetainedOnce(t *testing.T) {
 	const refs = 200
 	const descLen = 256 << 10
@@ -453,10 +454,10 @@ func padded(pad, n int, refs bool) []byte {
 	return []byte(b.String())
 }
 
-// A node stores its member name's offset, so reading a name costs the name,
-// not the whitespace around the colon. A document whose whitespace and
-// entries both grow four times costs four times as much, at Load and in
-// Operations().
+// Regression check, not contract: a node stores its member name's offset, so
+// reading a name costs the name, not the whitespace around the colon. A
+// document whose whitespace and entries both grow four times costs four times
+// as much, at Load and in Operations().
 func TestWhitespaceAroundMemberNamesScales(t *testing.T) {
 	wantLinear(t, "Load, references resolved from the root", 2, func(k int) func() {
 		return parseDoc(t, padded(k*16<<10, k*250, true), nil)

@@ -13,15 +13,19 @@ import (
 )
 
 // A $ref where the edition defines no Reference Object. describe.go,
-// Operation: "A $ref member in an object where the edition defines no
-// Reference Object, such as an Operation Object or a headers map written as
-// a reference to another file, marks a document meant to be bundled before
-// use. It makes the nearest part holding that object unusable: the Err of
-// that Operation, Param, Message, Media, Server or SecurityScheme says the
-// document must be bundled first. Extension values and examples are not
-// such objects." Operation.Err: "Calling an operation with Err set returns
-// a *RequestError wrapping Err. A defect in an optional part is reported on
-// that part instead, and fails a call only when the call uses it."
+// Operation: "A value written as a reference, an object whose $ref member is a
+// string where an object, list or map belongs but the edition defines no
+// Reference Object, such as an Operation Object, a headers or encoding map, or
+// a parameters or servers list written as a reference to another file, marks a
+// document meant to be bundled before use. It makes the nearest part holding
+// that value unusable: the Err of that Operation, Param, Message, Media, Server
+// or SecurityScheme says the document must be bundled first, a cause that does
+// not wrap ErrUnresolved." "Extension values are not such values, nor are
+// values that only document the API and in which the edition defines no
+// Reference Object, such as info, tags, externalDocs and example values".
+// Operation.Err: "Calling an operation with Err set returns a *RequestError
+// wrapping Err. A defect in an optional part is reported on that part instead,
+// and fails a call only when the call uses it".
 //
 // Where each edition defines a Reference Object, from its field tables
 // (a Path Item's own $ref field aside, which every edition defines):
@@ -257,9 +261,10 @@ func bundleParts(version string) []bundlePart {
 			}
 			return q.Err, map[string]error{"Operation": op.Err, "param r": r.Err}, true
 		}},
-		// describe.go, Media.Err: "A schema or Encoding defect that
+		// describe.go, Media.Err: "Any other schema or Encoding defect that
 		// affects structured value encoding does not set Media.Err: it is
-		// reported by ... the relevant Encoding Param.Err".
+		// reported by Schema.References or the relevant Encoding
+		// Param.Err."
 		bundlePart{"Encoding Object", "encodingRef", func(op *openapi.Operation) (error, map[string]error, bool) {
 			if op.Body == nil || len(op.Body.Media) != 1 {
 				return nil, nil, false
@@ -341,8 +346,8 @@ func mentionsBundling(err error) bool {
 
 // Each part's Err says the document must be bundled, does not wrap
 // ErrUnresolved (describe.go, Operation: "says the document must be bundled
-// first, and does not wrap ErrUnresolved"), has the same text whether or
-// not the referenced file loads, and the parts holding it stay usable.
+// first, a cause that does not wrap ErrUnresolved"), has the same text whether
+// or not the referenced file loads, and the parts holding it stay usable.
 func TestBundleDiagnostics(t *testing.T) {
 	for _, version := range editionVersions {
 		t.Run(version, func(t *testing.T) {
@@ -482,7 +487,7 @@ func TestBundlePartsFailOnlyWhenUsed(t *testing.T) {
 					)
 					if version != "3.2.1" {
 						// describe.go, Media.Err: "A pre-encoded []byte or
-						// io.Reader body is checked against neither."
+						// io.Reader body is checked against neither".
 						calls = append(calls,
 							call{"Media Type Object: a structured body", "mediaRef", &openapi.Input{Body: map[string]any{"a": 1}}, nil, true},
 							call{"Media Type Object: a pre-encoded body", "mediaRef", &openapi.Input{Body: []byte(`{"a":1}`)}, nil, false},

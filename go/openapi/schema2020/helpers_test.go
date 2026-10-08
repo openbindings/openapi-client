@@ -1172,8 +1172,9 @@ func (ck *checker) run(s *openapi.Schema) {
 // checkKey checks a key against its Source (Project: "A schema written at
 // #/components/schemas/NAME of the entry document, or #/definitions/NAME
 // in Swagger 2.0, has the key NAME when NAME contains no "#"; any other key
-// is the schema's Source as a URI reference relative to the entry
-// document's URI").
+// is the schema's Source written as a URI reference relative to the entry
+// document's URI, so that the key resolves against that URI to the
+// Source").
 func (ck *checker) checkKey(key, src string) {
 	ck.t.Helper()
 	entry := ck.c.DocumentURIs()[0]
@@ -1356,7 +1357,7 @@ func (ck *checker) checkIssues() {
 
 // checkEffect checks that the keyword an Issue names contributes nothing
 // to o (Project: "a reference or removed keyword is dropped, with its
-// mapping entry for a mapping value; a resource in another dialect becomes
+// mapping entry for a mapping value; a resource in another dialect ... becomes
 // true ... and a schema left with no keywords becomes true").
 func (ck *checker) checkEffect(o output, at string, tokens []string) {
 	ck.t.Helper()
@@ -1415,9 +1416,9 @@ func (ck *checker) checkEffect(o output, at string, tokens []string) {
 }
 
 // checkModern checks an OpenAPI 3.1 or 3.2 schema against its authored Raw
-// (Project: "every direction gives the same output, which equals the
-// authored schema apart from the rewritten references and the removed
-// identifiers"), less what its Issues drop.
+// (Project: "such a schema is written the same in every direction: as
+// authored, apart from the rewritten references, the keywords removed above
+// and the losses Issues report"), less what its Issues drop.
 func (ck *checker) checkModern(o output) {
 	ck.t.Helper()
 	want, emptied, ok := ck.modernExpected(o.handle)

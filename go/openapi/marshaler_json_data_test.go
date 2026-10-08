@@ -55,7 +55,7 @@ func partTree(t testing.TB, ctype string, body []byte, indent string) string {
 // property whose value is an array sends one field or part per item under the
 // property's name ..., each item taking the property's content type"; "A part
 // whose media type is multipart is encoded, one level deep, from an object or
-// slice by its Encoding's own encoding, prefixEncoding or itemEncoding";
+// list by its Encoding's own encoding, prefixEncoding or itemEncoding";
 // doc.go, Values: a property "whose JSON data is null is omitted". In an
 // OpenAPI 3.2 multipart/form-data body, a json.RawMessage and a value whose
 // MarshalJSON returns the same JSON, given to a property whose Encoding
@@ -113,11 +113,11 @@ form-data; name="l" | multipart/mixed
 
 // doc.go, Values: "The client first converts a value to JSON data as
 // encoding/json would (struct tags, MarshalJSON, TextMarshaler map keys), then
-// serializes that data as the document says", and "a positional part, whose
-// JSON data is null is omitted"; client.go, Input.Body: "A part whose media
-// type is multipart is encoded, one level deep, from an object or slice by its
-// Encoding's own encoding, prefixEncoding or itemEncoding". In an OpenAPI 3.2
-// positional multipart/mixed body whose first two positions are
+// serializes that data as the document says", and "a positional part ...,
+// whose JSON data is null is omitted"; client.go, Input.Body: "A part whose
+// media type is multipart is encoded, one level deep, from an object or list
+// by its Encoding's own encoding, prefixEncoding or itemEncoding". In an
+// OpenAPI 3.2 positional multipart/mixed body whose first two positions are
 // multipart/mixed, a json.RawMessage and a value whose MarshalJSON returns the
 // same JSON are sent as that JSON data is: null leaves no part, an object's
 // members are named nested parts, and an array's items are positional nested
@@ -237,13 +237,13 @@ func TestSequentialNullBodyHasNoItems(t *testing.T) {
 }
 
 // client.go, Input.Body, of "any other OpenAPI 3.2 multipart media type":
-// "Under these types and OpenAPI 3.2 multipart/form-data, a Body whose JSON
+// "Under these types and OpenAPI 3.2 multipart/form-data, ... a Body whose JSON
 // data is null, as a nil slice's is, has no parts: it is the close delimiter
 // alone"; doc.go, Values: "a typed nil, such as a nil pointer or map, is a
 // value, which encoding/json writes as null". As a multipart/mixed or
-// multipart/form-data body, a json.RawMessage "null", a value whose
-// MarshalJSON returns null, and a nil pointer send what a nil slice, the
-// control, sends: the close delimiter alone, "--B--" CRLF for boundary B.
+// multipart/form-data body, a json.RawMessage "null", a value whose MarshalJSON
+// returns null, and a nil pointer send what a nil slice, the control, sends:
+// the close delimiter alone, "--B--" CRLF for boundary B.
 func TestPositionalMultipartNullBodyHasNoParts(t *testing.T) {
 	c := editionClient(t, editionDoc("3.2.1", `"/x":{"post":{"requestBody":{"content":{
 		"multipart/mixed":{"schema":{"type":"array","items":{"type":"string"}}},
@@ -272,7 +272,7 @@ func TestPositionalMultipartNullBodyHasNoParts(t *testing.T) {
 }
 
 // client.go, Input.Body: for a sequential media type, "a non-nil pointer to a
-// slice or array sends what that slice or array sends", and so under "these
+// list sends what the list it points to sends", and so under "these
 // types and OpenAPI 3.2 multipart/form-data", these being "any other OpenAPI
 // 3.2 multipart media type"; each element of a sequential body is "encoded as
 // that value on its own would be". As a multipart/mixed, multipart/form-data,
@@ -320,7 +320,7 @@ func TestListBodyPointerSendsItsList(t *testing.T) {
 }
 
 // doc.go, Values: "A form or multipart property or array item, or a
-// positional part, whose JSON data is null is omitted, whatever its
+// positional part ..., whose JSON data is null is omitted, whatever its
 // serialization or media type"; client.go, Part.Content: "A nil Content, or
 // one whose JSON data is null, omits the part ... whatever the part's media
 // type". encoding/json follows pointers and interfaces, so a pointer to a
@@ -693,8 +693,8 @@ type withMarshaler struct {
 // that value on its own would be". On its own the element is the bare nil
 // *nilReceiver, which json.Marshal writes as null, so as a JSON Lines item it
 // is null, and as an OpenAPI 3.2 positional multipart/mixed part, whose JSON
-// data is null, it is omitted (doc.go, Values: "a positional part, whose JSON
-// data is null is omitted").
+// data is null, it is omitted (doc.go, Values: "a positional part ..., whose
+// JSON data is null is omitted").
 func TestNilReceiverInsideValueSent(t *testing.T) {
 	c := editionClient(t, editionDoc("3.2.1", `
 		"/f":{"post":{"requestBody":{"content":{"application/x-www-form-urlencoded":{

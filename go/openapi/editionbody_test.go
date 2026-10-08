@@ -166,8 +166,13 @@ func TestEditionsSwaggerFile(t *testing.T) {
 }
 
 // OAS 3.0.4 Encoding default types; later minor lines use the latest patch
-// semantics. In particular a 3.0 string binary schema selects octets, while
-// a 3.1/3.2 untyped schema uses application/octet-stream (doc.go Values).
+// semantics (doc.go, Configuration: the default is read "by the Encoding
+// Object's table of defaults in the schema's edition"). In particular a 3.0
+// string binary schema selects octets, while a 3.1/3.2 untyped schema uses
+// application/octet-stream: "Where they allow every type, or none but null,
+// it is application/octet-stream in OpenAPI 3.1 and 3.2, as for a string with
+// a contentEncoding, and text/plain in 3.0, whose table gives no default for
+// it; in 3.0 a string with format binary or byte is application/octet-stream."
 func TestEditionsMultipartDefaults(t *testing.T) {
 	for _, version := range []string{"3.0.4", "3.1.2", "3.2.1"} {
 		t.Run(version, func(t *testing.T) {

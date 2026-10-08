@@ -89,24 +89,26 @@ func sharedTargetDoc(n, k int, types bool) []byte {
 		`"components":{"schemas":{"T":` + target + `}}}`)
 }
 
-// First use is linear in the document however many fields share a target, a
-// shape being computed once per node and reused by every field, operation and
-// nested part that reaches it. Each case grows the fields and what they share
-// together, from 250 to 1,000: n form and multipart properties each a $ref to
-// one schema with n allOf members, and n operations whose body schema is a
-// $ref to one schema with n allOf members. An earlier implementation walked
-// the n members for each property or operation: sixteen times the work.
+// Regression check, not contract: first use is linear in the document however
+// many fields share a target, a shape being computed once per node and reused
+// by every field, operation and nested part that reaches it. Each case grows
+// the fields and what they share together, from 250 to 1,000: n form and
+// multipart properties each a $ref to one schema with n allOf members, and n
+// operations whose body schema is a $ref to one schema with n allOf members. An
+// earlier implementation walked the n members for each property or operation:
+// sixteen times the work.
 func TestSharedSchemaTargetsFirstUseLinear(t *testing.T) {
 	wantLinear(t, "properties sharing a $ref to allOf members", 250, func(n int) func() { return timedOperations(t, fanoutDoc(n, n)) })
 	wantLinear(t, "operations sharing a $ref to allOf members", 250, func(n int) func() { return timedOperations(t, sharedAllOfDoc(n, n)) })
 }
 
-// Keywords are read by keyed lookup, never by scanning every member, and a
-// shape is computed once per node, so the cost of each of 2,000 properties
-// sharing a target does not depend on the target's size: a target with 250 or
-// 4,000 extension members, or a type array of 250 or 4,000 entries, costs the
-// same per property (wantFlat: at most 3 times at 16 times the size).
-// Previously every property scanned every member and every type entry.
+// Regression check, not contract: keywords are read by keyed lookup, never by
+// scanning every member, and a shape is computed once per node, so the cost of
+// each of 2,000 properties sharing a target does not depend on the target's
+// size: a target with 250 or 4,000 extension members, or a type array of 250 or
+// 4,000 entries, costs the same per property (wantFlat: at most 3 times at 16
+// times the size). Previously every property scanned every member and every
+// type entry.
 func TestSharedSchemaTargetCostIndependentOfSize(t *testing.T) {
 	wantFlat(t, "a target with many keys", 250, func(k int) func() { return timedOperations(t, sharedTargetDoc(2000, k, false)) })
 	wantFlat(t, "a target with a long type array", 250, func(k int) func() { return timedOperations(t, sharedTargetDoc(2000, k, true)) })
@@ -156,11 +158,12 @@ func nestedAllOfDoc(k int, ctype string) []byte {
 		`"Arr":{"type":"array","items":{"$ref":"#/components/schemas/Obj"},"allOf":[` + emptyMembers(k) + `]}}}}`)
 }
 
-// A call never computes a closure: a nested part's or form-typed field's
-// encoding is looked up before any shape is computed. A warm call whose field,
-// a nested multipart part or a form-typed part, holds n items, its schema
-// reaching n allOf members, costs linear in n (previously each item computed
-// the field's closure over the n members on every call).
+// Regression check, not contract: a call never computes a closure: a nested
+// part's or form-typed field's encoding is looked up before any shape is
+// computed. A warm call whose field, a nested multipart part or a form-typed
+// part, holds n items, its schema reaching n allOf members, costs linear in n
+// (previously each item computed the field's closure over the n members on
+// every call).
 func TestNestedPartWarmPrepareLinear(t *testing.T) {
 	for _, ctype := range []string{"multipart/mixed", "application/x-www-form-urlencoded"} {
 		wantLinear(t, ctype+" items, warm Prepare", 250, func(n int) func() {

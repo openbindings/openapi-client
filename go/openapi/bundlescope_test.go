@@ -13,8 +13,13 @@ import (
 
 // Where the rule for values written as references reaches, and what it costs.
 // describe.go, Operation: "a reference whose target lies inside it cannot be
-// followed before bundling either: it makes its own nearest part unusable
-// the same way. Extension values and examples are not such values." The
+// followed before bundling either. Such a reference in a schema has an Err
+// saying the document must be bundled first, which does not wrap
+// ErrUnresolved (see Schema.References); any other makes its own nearest part
+// unusable the same way ... The client reads no webhooks, callbacks, links or
+// examples for an operation, so none makes a part unusable, whatever is
+// written there, unless a reference the client follows leads into it.
+// Extension values are not such values". The
 // harness, and the checks of each call in both orders and of nothing being
 // fetched, are those of bundlevalues_test.go.
 
@@ -56,13 +61,14 @@ func largeMapLoader(doc []byte) *openapi.Loader {
 	}}
 }
 
-// Following a reference into a map is a lookup of its member: its cost must
-// not grow with the members the map holds, whether their names sort above
-// or below "$ref", in describing (Client.Operations) or in loading (load.go,
-// Loader: references "are followed"). With the operations fixed, sixteen
+// Regression check, not contract: following a reference into a map is a lookup
+// of its member: its cost must not grow with the members the map holds, whether
+// their names sort above or below "$ref", in describing (Client.Operations) or
+// in loading (load.go, Loader: "The references followed are $ref in Reference
+// Objects, Path Items and Schema Objects"). With the operations fixed, sixteen
 // times the members must cost about the same (wantFlat, the convention of
-// scaling_test.go; only parsing the larger map grows, and it is small
-// beside the references).
+// scaling_test.go; only parsing the larger map grows, and it is small beside
+// the references).
 func TestBundleCostLargeMap(t *testing.T) {
 	const operations = 4000
 	for _, prefix := range []string{"P", "!P"} {
@@ -81,9 +87,10 @@ func TestBundleCostLargeMap(t *testing.T) {
 	}
 }
 
-// load.go, Load: "ctx bounds the whole load, reading and parsing included".
-// A context canceled while the load is under way, here when the other
-// document is retrieved, ends it with the context's error and no Client.
+// load.go, Load: "ctx bounds the whole load, reading and parsing included:
+// when it is done before the load completes, Load returns no Client and an
+// error that matches ctx.Err() with errors.Is". A context canceled while the
+// load is under way, here when the other document is retrieved, ends it so.
 func TestBundleCostLoadCanceled(t *testing.T) {
 	doc := largeMapDoc(16000, 4000, "P", true)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -191,7 +198,7 @@ func TestBundleScopeSecurityRequirement(t *testing.T) {
 	})
 }
 
-// "Extension values and examples are not such values": a Callback Object's,
+// "Extension values are not such values": a Callback Object's,
 // or the Paths Object's, extension member is data, so an object inside it
 // whose $ref member is a string marks nothing, and a parameter reference into
 // its other members is followed as before. Nothing is retrieved.

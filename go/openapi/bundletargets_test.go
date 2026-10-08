@@ -11,10 +11,12 @@ import (
 // reference, scopes, and encodings that do not apply. describe.go,
 // Operation: "Bundling replaces such a value whole, so its other members are
 // not read, and a reference whose target lies inside it cannot be followed
-// before bundling either: it makes its own nearest part unusable the same
-// way. ... In a map of objects a member named $ref whose value is an object
-// is an entry like any other, such as a header named $ref; in a map of
-// strings, such as OAuth scopes, a string $ref member is a reference."
+// before bundling either. Such a reference in a schema has an Err saying the
+// document must be bundled first, which does not wrap ErrUnresolved (see
+// Schema.References); any other makes its own nearest part unusable the same
+// way ... In a map of objects a member named $ref whose value is an object is
+// an entry like any other, such as a header named $ref; in a map of strings,
+// such as OAuth scopes, a string $ref member is a reference."
 //
 // The harness, and the checks of each call in both orders and of nothing
 // being fetched, are those of bundlevalues_test.go.
@@ -134,8 +136,9 @@ func TestBundleTargetsSiblingsNotRead(t *testing.T) {
 }
 
 // load.go, Load fails "with a *RequestError, on Options the document cannot
-// use: ... a Variables name no server URL uses, a MediaType no operation
-// declares, ... a Server or ServerID that matches no server, a Security or
+// use: ... a Variables name no server URL uses, a MediaType that no
+// operation's request body Media matches (see Options.MediaType), ... a Server
+// or ServerID that matches no server, a Security or
 // SecurityKey that matches no alternative", and a setting the document cannot
 // use is keyed by its field (errors.go, RequestError.Settings). Members beside
 // a reference are not read, so a server URL, a variable, or a media type
@@ -193,11 +196,11 @@ func TestBundleTargetsRootSecurity(t *testing.T) {
 // not read, so a reference to "#/components/..." has its target inside it
 // and cannot be followed before bundling: a parameter reference, whose
 // identity cannot then be known, makes the Operation unusable (describe.go,
-// Operation.Err: "an unresolvable parameter ... reference, whose identity
-// and requiredness cannot be known"), and a security requirement naming a
-// scheme among those members makes its SecurityScheme unusable; neither Err
-// wraps ErrUnresolved, and the schema reference inside the unread parameter
-// is never retrieved.
+// Operation.Err: "a reference that cannot be followed to a parameter ... as
+// then the parameter's identity ... cannot be known"), and a
+// security requirement naming a scheme among those members makes its
+// SecurityScheme unusable; neither Err wraps ErrUnresolved, and the schema
+// reference inside the unread parameter is never retrieved.
 func TestBundleTargetsComponentsObject(t *testing.T) {
 	var cases []shapeCase
 	for _, v := range []string{"3.0.4", "3.1.2"} {
@@ -228,8 +231,8 @@ func TestBundleTargetsComponentsObject(t *testing.T) {
 // SchemeLookup). When the Components Object, or its securitySchemes map
 // alone, is written as a reference, where the name would be looked up
 // cannot be read before bundling, so the lookup's target lies inside a value
-// written as a reference and "cannot be followed before bundling either: it
-// makes its own nearest part unusable the same way" (describe.go,
+// written as a reference and "cannot be followed before bundling either. ...
+// any other makes its own nearest part unusable the same way" (describe.go,
 // Operation). The SecurityScheme's Err says to bundle, and the name is not
 // read as a URI reference, so nothing is fetched. A call is refused at the
 // scheme's credential wrapping that Err, and FromTransport satisfies it.

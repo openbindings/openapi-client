@@ -157,10 +157,10 @@ func hopMethod(status int, method string) (string, bool) {
 // (RFC 9110 section 15.4, item 5: "If the request method has been changed
 // to GET or HEAD, remove content-specific header fields, including ...
 // Content-Language ... Content-Type, Content-Length"); "On a hop within the
-// origin, header and cookie credentials are placed again; a query
-// credential goes only on the request the client builds, never onto a
-// Location." credential.go, SecretFunc: f is called for "each redirect hop
-// on which Redirects says credentials are placed again".
+// origin, header, query and cookie credentials are placed again, a query
+// credential after the Location's own query." credential.go, SecretFunc: f is
+// called for "each redirect hop on which Redirects says credentials are placed
+// again".
 func TestRedirectMethodsAndBodies(t *testing.T) {
 	for _, status := range []int{301, 302, 303, 307, 308} {
 		for key, method := range redirKeys {
@@ -215,8 +215,8 @@ func TestRedirectMethodsAndBodies(t *testing.T) {
 // not followed is the outcome, a *StatusError";
 // Options.Redirects: "zero means none"; "a hop that must resend a body that
 // cannot be sent again (see Input.Body) is not followed". client.go,
-// Input.Body: "Any other reader, such as a pipe or os.Stdin ... is read
-// once."
+// Input.Body: "Any other reader, such as a pipe or an os.Stdin that is not a
+// regular file, is read once".
 func TestRedirectStatusesNotFollowed(t *testing.T) {
 	notFollowed := func(t *testing.T, opts *openapi.Options, key string, in *openapi.Input, status int, loc func(b *wire) string) {
 		t.Helper()
@@ -289,14 +289,13 @@ func TestRedirectStatusesNotFollowed(t *testing.T) {
 	})
 }
 
-// client.go, Redirects: "On a hop to another origin (scheme, host and port),
-// the client removes the credentials it added and any header a security
+// client.go, Redirects: "On a hop to another origin (scheme, host and port,
+// ...), the client removes the credentials it added and any header a security
 // scheme placed, the Authorization and Cookie fields (cookie parameters
 // included), all header parameters, and every field supplied through
-// Options.Header, Input.Header, or an edit to Request.HTTP.Header. Generated
-// fields needed to describe a replayed body, such as Content-Type and
-// Content-Length, are rebuilt ... a query credential goes only on the request
-// the client builds, never onto a Location"; "The client adds no Referer",
+// Options.Header, Input.Header, or an edit to Request.HTTP.Header. ...
+// Generated fields needed to describe a replayed body, such as Content-Type
+// and Content-Length, are rebuilt"; "The client adds no Referer",
 // and a caller's Referer is a caller field like any other. The second origin
 // is a raw listener, so every byte of the hop is checked.
 func TestRedirectCrossOriginStrips(t *testing.T) {
@@ -419,9 +418,9 @@ func TestRedirectStrippingIsSticky(t *testing.T) {
 }
 
 // client.go, Redirects: "The HTTPClient's CheckRedirect is still consulted on
-// every hop the client follows, after the client applies the rules below and
-// before it places credentials on the hop, and can restore a field the caller
-// deliberately wants to forward ... CheckRedirect may restore a field
+// every hop the client follows, after the client applies the other rules here
+// and before it places credentials on the hop, and can restore a field the
+// caller deliberately wants to forward ... CheckRedirect may restore a field
 // intentionally, such as Range or Accept". CheckRedirect sees each hop after
 // stripping and before credentials are placed (the unsigned view Prepare
 // gives), and ErrUseLastResponse and errors follow net/http's meanings: an
@@ -789,11 +788,11 @@ func TestFromTransportSeesEveryHop(t *testing.T) {
 	}
 }
 
-// credential.go, SecretFunc: "On a redirect hop the first request has
-// already been sent, so an error or an empty secret ends the call with a
-// *url.Error wrapping f's error, along with the last response, its body
-// closed". An empty secret on a hop ends the call as an error does, with a
-// *url.Error and no hop sent.
+// credential.go, SecretFunc: "On a redirect hop the first request has already
+// been sent, so an error or an empty secret ends the call with a *url.Error
+// naming the scheme, and wrapping f's error if it returned one, along with the
+// last response, its body closed". An empty secret on a hop ends the call as an
+// error does, with a *url.Error and no hop sent.
 func TestSecretFuncFailsOnHop(t *testing.T) {
 	errHop := errors.New("token refresh failed")
 	for name, answer := range map[string]func(int64) (string, error){

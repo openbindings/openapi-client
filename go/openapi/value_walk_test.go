@@ -24,8 +24,9 @@ import (
 // of an addressable struct or array, at any depth), not only at a field's own
 // type; a map type whose key json refuses is refused as json refuses it, never
 // walked (its keys never reach mapKey). Dereferences never end the walk:
-// doc.go's Values counts levels "in the JSON encoding/json writes", and
-// pointers add none, so a chain of pointers around a reader is walked to the
+// doc.go's Values counts the levels of "a value whose JSON, a MarshalJSON's
+// output included, nests deeper than 1,000 levels", to which pointers add
+// none, so a chain of pointers around a reader is walked to the
 // reader and refused. Past 1,000 dereferences on one path the walk records the
 // pointers on that path, as encoding/json does past its own 1,000
 // (startDetectingCyclesAfter), and a repeat ends the whole walk: the value is
@@ -174,11 +175,13 @@ func derefChain(v any, n int) any {
 
 // Dereferences never end the walk, so a chain of pointers around a reader is
 // walked to the reader and refused (client.go, Input.Body: "A Part or
-// io.Reader inside a JSON value is refused with an Inputs entry at its place
-// in Body"; pointers add no JSON Pointer token). A reader or Part behind 1,200
-// and 3,000 dereferences, a non-cyclic chain of *any, is refused at its key in
-// JSON, form and multipart bodies, and nothing is sent: previously the walk
-// gave up past 1,000 dereferences and encoding/json wrote the reader as {}.
+// io.Reader inside a value the client encodes with encoding/json is refused
+// at an Inputs key that begins "Input.Body""; errors.go, RequestError.Inputs:
+// "followed by a JSON Pointer to the part of Body concerned"; pointers add no
+// JSON Pointer token). A reader or Part behind 1,200 and 3,000 dereferences, a
+// non-cyclic chain of *any, is refused at its key in JSON, form and multipart
+// bodies, and nothing is sent: previously the walk gave up past 1,000
+// dereferences and encoding/json wrote the reader as {}.
 func TestReaderBehindManyDereferencesRefused(t *testing.T) {
 	w, c := walkClient(t)
 	for _, hidden := range []struct {
@@ -655,10 +658,10 @@ func jsonMembersOf(t *testing.T, b []byte) []jsonMember {
 
 // fieldsOf is what a form or multipart body whose every field is JSON
 // carries for the JSON object b (doc.go, Values: "A form or multipart
-// property or array item whose JSON data is null is omitted"; client.go,
-// Input.Body: "a property whose value is an array sends one field or part
-// per item under the property's name"): each member's JSON text, an array
-// one per item, null left out.
+// property or array item, or a positional part ..., whose JSON data is null
+// is omitted"; client.go, Input.Body: "a property whose value is an array sends
+// one field or part per item under the property's name"): each member's JSON
+// text, an array one per item, null left out.
 func fieldsOf(t *testing.T, b []byte) []jsonMember {
 	t.Helper()
 	var out []jsonMember
@@ -759,7 +762,7 @@ func jwFieldsDoc(names []string) string {
 // writes it:
 //
 //   - a JSON body is json.Marshal's bytes (doc.go, Values: "a JSON type is
-//     written as encoding/json writes the value");
+//     written as json.Marshal writes the value");
 //   - a form or multipart body whose fields are JSON carries, field by field,
 //     the JSON data json.Marshal gives each property (doc.go, Values: "The
 //     client first converts a value to JSON data as encoding/json would"),

@@ -259,9 +259,10 @@ func BenchmarkFirstUseFormsParallel(b *testing.B) {
 	benchFirstUseForms(b, runtime.GOMAXPROCS(0))
 }
 
-// Part.Header's field names are checked through a set of canonical names,
-// so a part with many header fields costs time linear in their number, not
-// the quadratic cost of comparing every name with every other.
+// Regression check, not contract: Part.Header's field names are checked through
+// a set of canonical names, so a part with many header fields costs time linear
+// in their number, not the quadratic cost of comparing every name with every
+// other.
 func TestPartHeaderCheckScales(t *testing.T) {
 	c := parseAt(t, mpDoc(), "https://api.example.test", testDocURI, nil)
 	wantLinear(t, "Prepare", 500, func(n int) func() {

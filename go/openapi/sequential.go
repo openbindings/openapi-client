@@ -323,9 +323,10 @@ func iterator(v any) iter.Seq2[any, error] {
 }
 
 // items is an iterator body, read once: the iterator runs as the body is
-// read, on the reader's goroutine, each item it yields encoded and framed
-// then, and stops, its yield returning false, once the body is closed and
-// no Read is in flight.
+// read, on the goroutine iter.Pull2 gives it, in step with the reader, each
+// item it yields encoded and framed then on the reader's goroutine, and
+// stops, its yield returning false, once the body is closed and no Read is
+// in flight.
 type items struct {
 	w   *itemWriter
 	seq iter.Seq2[any, error]

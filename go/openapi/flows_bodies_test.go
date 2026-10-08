@@ -51,10 +51,13 @@ func tempFile(t *testing.T, name, content string) *os.File {
 	return f
 }
 
-// Scenario 6a: a file part with the caller's filename and type, a byte
-// slice named after its property and typed by the Encoding, other fields as
-// text; the file "streamed from disk when the request is sent, and read
-// afresh if a redirect or a retry sends it again" (here a 307).
+// Scenario 6a: a file part with the caller's filename and type, a byte slice
+// named after its property and typed by the Encoding, other fields as text;
+// the file read as it is sent and again when a 307 resends it (doc.go, Fixed
+// rules, Form bodies: "each reader in a part, a regular file included, is read
+// as it is sent, and again on each replay"; client.go, Input.Body: a body can
+// be sent again when every source in it can, "an *os.File that Stat reports to
+// be a regular file, from its offset when the call is prepared").
 func TestFlowFilesUpload(t *testing.T) {
 	w := newWire(t, func(rw http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/folders/") {

@@ -21,7 +21,7 @@ import (
 // The upload state machine, with the body-rewind and blocking-wait paths. The
 // contract: client.go, Response.WaitRequest ("It reports on the last of them:
 // nil when its body was consumed completely (read to EOF, or, for a body of
-// known length, read to that length), or the encoding, iterator, read,
+// known length, read to that length, ...), or the encoding, iterator, read,
 // premature-close or cancellation error that stopped it. It returns nil when
 // no request carried a body"), Call ("Call drains a successful response and
 // waits for complete consumption of its request body before closing the
@@ -209,8 +209,10 @@ func (rt *slowRT) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 // The blocking-wait path: WaitRequest blocks while a slow transport is still
-// reading, returning nil only once the body can have reached EOF; "A
-// cancellation of ctx ends only this wait".
+// reading, returning nil only once the body can have reached EOF; "When ctx
+// ends first, WaitRequest returns an error matching ctx.Err() and
+// context.Cause(ctx), and that ends only this wait" (client.go,
+// Response.WaitRequest).
 func TestWaitRequestBlocksUntilConsumed(t *testing.T) {
 	const payload = `{"k":"abcdefgh"}`
 	for name, body := range map[string]func() any{
@@ -340,7 +342,7 @@ func TestCallBoundedDiscardClosesBeforeWait(t *testing.T) {
 
 // client.go, Input: "Call has stopped reading its body when it returns,
 // provided a reader body returns from Read when the call's context ends or its
-// connection closes." A peer that answers without reading the body and closes:
+// connection closes". A peer that answers without reading the body and closes:
 // Call reports the incomplete upload, and the reader is not read after Call
 // returns.
 func TestCallStopsReadingBody(t *testing.T) {

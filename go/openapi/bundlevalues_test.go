@@ -14,23 +14,25 @@ import (
 
 // Values written as a reference where the edition defines no Reference
 // Object. describe.go, Operation: "A value written as a reference, an object
-// whose $ref member is a string, where the edition defines no Reference
-// Object, such as an Operation Object, a headers or encoding map, or a
-// parameters or servers list written as a reference to another file, marks
-// a document meant to be bundled before use. It makes the nearest part
-// holding that value unusable: the Err of that Operation, Param, Message,
-// Media, Server or SecurityScheme says the document must be bundled first,
-// and does not wrap ErrUnresolved. A parameters list so written makes every
-// operation it applies to unusable, and a servers list so written is
-// described as one Server with that Err, which Options.BaseURL can replace
-// as it can any unusable server. Extension values and examples are not such
-// values, and in a map of objects a member named $ref whose value is an
-// object is an entry like any other, such as a header named $ref."
+// whose $ref member is a string where an object, list or map belongs but the
+// edition defines no Reference Object, such as an Operation Object, a headers
+// or encoding map, or a parameters or servers list written as a reference to
+// another file, marks a document meant to be bundled before use. It makes the
+// nearest part holding that value unusable: the Err of that Operation, Param,
+// Message, Media, Server or SecurityScheme says the document must be bundled
+// first, a cause that does not wrap ErrUnresolved. A parameters list so
+// written makes every operation it applies to unusable, and a servers list so
+// written is described as one Server with that Err, which Options.BaseURL can
+// replace as it can any unusable server ... Extension values are not such
+// values, nor are values that only document the API and in which the edition
+// defines no Reference Object, such as info, tags, externalDocs and example
+// values. In a map of objects a member named $ref whose value is an
+// object is an entry like any other, such as a header named $ref".
 //
-// Operation.Err lists among its causes, "written as a reference where the
-// edition defines none, the Operation or Responses Object, a parameters list
-// that applies to it, or another value whose nearest part is the
-// operation", and says "Calling an operation
+// Operation.Err lists among its causes, "a value written as a reference where
+// the edition defines none (see Operation): the Operation Object, its Responses
+// Object, a parameters list that applies to it, or another value whose nearest
+// part is the operation", and says "Calling an operation
 // with Err set returns a *RequestError wrapping Err. A defect in an optional
 // part is reported on that part instead, and fails a call only when the call
 // uses it, the *RequestError then wrapping that part's Err, whether or not
@@ -221,12 +223,13 @@ func TestBundleValuesContentMapValue(t *testing.T) {
 // references (OAS 3.x Media Type Object: encoding is "Map[string, Encoding
 // Object]", prefixEncoding "[Encoding Object]"). Written as one, it sets
 // Media.Err (describe.go, Media.Err: "an encoding map or prefixEncoding list
-// written as a reference (see Operation), which leaves no Encoding Param to
-// report it"), and Media.Encoding names no field "$ref" and no part "0"
-// (Media.Encoding: the parts are "those of prefixEncoding in order"). A
-// structured body is checked against Media.Err and refused at the body
-// (client.go, Input.Body: a pre-encoded body is not checked "against a
-// Media.Err"), and a pre-encoded body is sent under that Media.
+// written as a reference ... (see Operation), under any media type, which
+// leaves no Encoding Param to report it"), and Media.Encoding names no field
+// "$ref" and no part "0" (Media.Encoding: the parts are "those of
+// prefixEncoding in order"). A structured body is checked against Media.Err and
+// refused at the body (client.go, Input.Body: a pre-encoded body is not checked
+// "against ... a Media.Err its key does not cause"), and a pre-encoded body
+// is sent under that Media.
 func TestBundleValuesEncodingMap(t *testing.T) {
 	var cases []shapeCase
 	check := func(t *testing.T, op *openapi.Operation) {
@@ -397,7 +400,7 @@ func TestBundleValuesPositionalItemEncoding(t *testing.T) {
 // undefined are undefined", and only those, so [null] is defined, and so is
 // an object with a member [null]; "an undefined required one is missing", a
 // defined one is not. doc.go, Styles: "the refusals here apply to defined
-// values ... and so are an array in a deepObject value unless
+// values ... and so are an array as or in a deepObject value unless
 // Options.DeepObjectArrays says how to write it"; client.go,
 // Options.DeepObjectArrays: such an array "is refused at the value's key in
 // RequestError.Inputs, and RequestError.Settings names
@@ -625,10 +628,12 @@ func TestBundleValuesNarrowParts(t *testing.T) {
 	runShapeCases(t, cases)
 }
 
-// describe.go, Operations: listed with an empty Key are "a Paths Object, or
-// a Path Item's additionalOperations map, written as a reference (see
-// Operation), listed once with the Path it is under, empty for a Paths
-// Object, and an Err saying the document must be bundled first". The Path
+// describe.go, Operations: listed with an empty Key are "a Paths Object
+// written as a reference (see Operation): listed once, with no Path or Method,
+// and an Err saying the document must be bundled first" and "an OpenAPI 3.2
+// additionalOperations map written as a reference: listed, with the same Err,
+// once for each Paths entry whose nearest such map it is (see Operation), with
+// that entry's Path and no Method". The Path
 // Item's other operations are listed and called as usual.
 func TestBundleValuesListedEntries(t *testing.T) {
 	// listed returns the entries of c with an empty Key.

@@ -15,7 +15,7 @@ import (
 
 // load.go, Loader.Fetch: "A uri given to Load as a file path reaches Fetch as
 // the file URL of its absolute path (filepath.Abs), the URI under which the
-// default reads it." A relative path, an absolute one and one holding a space
+// default reads it". A relative path, an absolute one and one holding a space
 // reach Fetch as the file URL the zero Loader names the same file by
 // (Client.DocumentURIs), and that URL, as Fetch's empty final, is the
 // document's base; nothing reaches Fetch as a path.

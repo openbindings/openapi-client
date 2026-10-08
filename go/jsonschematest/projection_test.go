@@ -533,8 +533,8 @@ func TestEmptiedRequired(t *testing.T) {
 	verdicts(t, "2.0 Request", compiled(t, "2.0", schemas, "Token", schema2020.Request), []string{`{}`}, []string{`{"id":"1"}`})
 }
 
-// Project: binary and file translation comes first ("format: binary with
-// type: string ... lose both keywords"), and nullable adds "null" only
+// Project: binary and file translation comes first ("type: string with
+// format: binary loses both keywords"), and nullable adds "null" only
 // "where the schema then has a type"; format: byte "becomes
 // contentEncoding: base64" whatever the type.
 func TestBinaryNullableAndByteTypes(t *testing.T) {
@@ -606,10 +606,10 @@ func TestNullableTypeLists(t *testing.T) {
 	verdicts(t, "nullable list with null", s, []string{`null`, `"x"`}, []string{`1`})
 }
 
-// Project: a reference "that openapi.Schema.References does not report
-// (such as a $ref in a Swagger 2.0 items object, or one that is not a
-// string)" is removed with an Issue, so the output compiles and the lost
-// part accepts anything.
+// Project: a reference "that openapi.Schema.References does not report for the
+// schema holding it (such as a $ref in a Swagger 2.0 items object, or one that
+// is not a string), which is removed alone", is removed with an Issue, so the
+// output compiles and the lost part accepts anything.
 func TestUnreportedReferencesCompile(t *testing.T) {
 	c := parse(t, `{"swagger":"2.0","info":{"title":"T","version":"1"},"paths":{"/x":{"get":{"parameters":[
 		{"name":"q","in":"query","type":"array","maxItems":2,"items":{"$ref":"#/definitions/D"}}],"responses":{"204":{"description":"none"}}}}},

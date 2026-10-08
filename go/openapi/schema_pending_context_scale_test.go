@@ -244,11 +244,13 @@ func TestSchemaPendingContextWorkload(t *testing.T) {
 	}
 }
 
-// The established five-trial, 12x-time/8x-byte gate uses 4x payloads. Fanout
-// keeps one Parameter and one route; SequentialContexts grows Parameters and
-// route length 4x too (four Parameters per carrier). ParseOnly measures full
-// loading/discovery; GraphOnly excludes Parse and its retained state, measuring
-// the cold public batch alone. It does not claim loading/retention is free.
+// Regression check, not contract: pending reference contexts cost time and
+// bytes linear in the document, under the established five-trial,
+// 12x-time/8x-byte gate with 4x payloads. Fanout keeps one Parameter and one
+// route; SequentialContexts grows Parameters and route length 4x too (four
+// Parameters per carrier). ParseOnly measures full loading/discovery; GraphOnly
+// excludes Parse and its retained state, measuring the cold public batch alone.
+// It does not claim loading/retention is free.
 func TestSchemaPendingContextScale(t *testing.T) {
 	ctx := t.Context()
 	for _, sequential := range []bool{false, true} {

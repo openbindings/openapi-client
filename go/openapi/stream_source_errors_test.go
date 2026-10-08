@@ -40,6 +40,14 @@ type sourceFailure struct{ text string }
 
 func (e *sourceFailure) Error() string { return e.text }
 
+// stream.go, Items: "Body is not read again after a non-EOF read error, which
+// discards an unfinished item, but completed items read with that error are
+// yielded first", and "Any other error (a read failure, the context's error,
+// an item over Options.MaxItemBytes) is yielded last"; Events: "Errors, and
+// closing Body, are as for Items". A read error ends the iteration even when
+// it wraps ErrItem, is passed on as it is (doc.go, Outcomes: errors made by
+// the caller's own code "are passed on as they are, and their text is
+// included as it is"), and Body is closed.
 func TestItemsSourceReadErrorEndsIteration(t *testing.T) {
 	for _, tc := range []struct {
 		name, ct, completed, partial string

@@ -13,10 +13,11 @@ import (
 // bundled before use]: a parameter entry makes each operation that uses it
 // unusable, since the parameter's identity cannot be read, and a response
 // entry each response that uses it"; such an Err "says the document must be
-// bundled first, and does not wrap ErrUnresolved", and calling an operation
-// with Err set "returns a *RequestError wrapping Err". A Reference Object
-// that names an entry, the ordinary Swagger 2.0 reference, still resolves,
-// whether or not another entry is written as a reference to the same target.
+// bundled first, a cause that does not wrap ErrUnresolved", and calling an
+// operation with Err set "returns a *RequestError wrapping Err". A Reference
+// Object that names an entry, the ordinary Swagger 2.0 reference, still
+// resolves, whether or not another entry is written as a reference to the same
+// target.
 func TestSwaggerDefinitionEntryWrittenAsReference(t *testing.T) {
 	doc := editionDoc("2.0", `
 		"/p":{"get":{"operationId":"p","parameters":[{"$ref":"#/parameters/P"}],"responses":{"200":{"description":"ok"}}}},

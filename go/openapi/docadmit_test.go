@@ -98,9 +98,10 @@ func TestDefaultBoundaryAndOrigins(t *testing.T) {
 // load.go, Loader.AllowReference: references may reach "the entry
 // document's original origin": when the entry's own retrieval is
 // redirected to another origin, that origin is the entry's base (Fetch:
-// the final URI "becomes that document's base") but not its original
-// origin, so a relative reference resolved against it is refused unless
-// Origins lists it, and the original origin stays admitted.
+// the final URI "names that document and is its base unless an OpenAPI 3.2
+// $self sets one") but not its original origin, so a relative reference
+// resolved against it is refused unless Origins lists it, and the original
+// origin stays admitted.
 func TestEntryOriginalOrigin(t *testing.T) {
 	a, b := newSite(t), newSite(t)
 	a.handle("/openapi.json", redirect(http.StatusFound, b.uri("/spec/openapi.json")))
@@ -123,10 +124,10 @@ func TestEntryOriginalOrigin(t *testing.T) {
 	admittedRef(t, c, "original")
 }
 
-// load.go, Loader.AllowReference: "For a file entry, references may reach
-// only files under the entry file's directory"; with nil, "http and https
-// references may reach the entry document's original origin and Origins",
-// so an http entry cannot reach a file, nor a file entry an http document.
+// load.go, Loader.AllowReference: "With nil, http and https references may
+// reach the entry document's original origin and Origins. For a file entry,
+// file references may reach only files under the entry file's directory", so
+// an http entry cannot reach a file, nor a file entry an http document.
 // A callback that admits them replaces that boundary.
 func TestHTTPAndFileCrossings(t *testing.T) {
 	dir := t.TempDir()
@@ -254,13 +255,14 @@ func TestOriginsWithAllowReferenceRefused(t *testing.T) {
 }
 
 // load.go, Loader.AllowReference: "The default retrieval checks every
-// redirect hop"; Fetch: the final URI "becomes that document's base";
-// AllowReference's to is "the resolved absolute URI requested, or a
-// redirect hop/final URI. It is called before the fetch or hop". A hop to
-// another origin is refused, and that origin receives nothing, even when a
-// later hop would come back; Origins admits it; a document's base and
-// retrieval URI are where it was finally retrieved from; a redirect loop
-// is a retrieval failure (net/http's client stops after 10 requests).
+// redirect hop"; Fetch: the final URI "names that document and is its base
+// unless an OpenAPI 3.2 $self sets one"; AllowReference's to is "the resolved
+// absolute URI requested, or a redirect hop/final URI. It is called before the
+// fetch or hop". A hop to another origin is refused, and that origin receives
+// nothing, even when a later hop would come back; Origins admits it; a
+// document's base and retrieval URI are where it was finally retrieved from; a
+// redirect loop is a retrieval failure (net/http's client stops after 10
+// requests).
 func TestRedirectHopsChecked(t *testing.T) {
 	a, cc := newSite(t), newSite(t)
 	a.put("/openapi.json", entry31(paramOps(map[string]string{"away": "b.json#/P", "back": "r1.json#/P", "same": "moved.json#/P", "loop": "l1.json#/P"})))
@@ -326,9 +328,10 @@ func TestRedirectHopsChecked(t *testing.T) {
 // load.go, Loader.Fetch: "Fetch, if set, retrieves each document the loader
 // needs in place of the default ... It returns the content, which the loader
 // closes, and the URI it was finally retrieved from after any redirects,
-// which becomes that document's base; an empty final means uri ... The
-// loader checks the requested URI before Fetch and checks the final URI it
-// returns." Fetch is called once for each document, the entry included.
+// which, in the form Loader gives the URI requested, names that document and
+// is its base unless an OpenAPI 3.2 $self sets one; an empty final means uri
+// ... The loader checks the requested URI before Fetch and checks the final URI
+// it returns." Fetch is called once for each document, the entry included.
 func TestFetch(t *testing.T) {
 	const base = "https://docs.example.test/"
 	m := newMemFetch(map[string]string{
@@ -532,8 +535,8 @@ func fileURI(path string) string {
 	return (&url.URL{Scheme: "file", Path: path}).String()
 }
 
-// load.go, Loader.AllowReference: "For a file entry, references may reach
-// only files under the entry file's directory, after cleaning paths and
+// load.go, Loader.AllowReference: "For a file entry, file references may
+// reach only files under the entry file's directory, after cleaning paths and
 // resolving symlinks; Origins does not enlarge that file boundary" (RFC 8089
 // file URLs; RFC 3986 section 5.2.4 removes dot segments). Inside: a
 // subdirectory, a path that leaves and comes back, a symlink to a file

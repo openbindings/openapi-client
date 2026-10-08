@@ -7,7 +7,8 @@ import (
 )
 
 // Loader gives versionless targets their reference context (load.go, Loader:
-// "its object type comes from the reference's context"); unknown fields on
+// "its object types come from the contexts of the references that reach
+// it"); unknown fields on
 // known non-schema OpenAPI objects do not create schema scope. OAS Parameter
 // Object makes example instance data. A document-root $schema cue is not an
 // explicit Schema reference. Standalone-root positives remain in

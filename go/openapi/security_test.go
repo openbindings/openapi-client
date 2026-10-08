@@ -58,9 +58,9 @@ func TestAnonymousSecurity(t *testing.T) {
 // doc.go, Configuration: "One security alternative selects itself. Several
 // require Options.Security, Options.SecurityKey or Input.Security,
 // including an anonymous alternative." errors.go, RequestError.Settings:
-// "Several security alternatives with none selected are keyed
+// "Several security alternatives with none selected ... are keyed
 // "Options.Security", the error naming Options.SecurityKey and
-// Input.Security too."
+// Input.Security too".
 func TestSeveralAlternativesNeedASelection(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, securityDoc, nil)

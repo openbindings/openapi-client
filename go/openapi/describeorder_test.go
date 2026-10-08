@@ -20,7 +20,8 @@ import (
 //   - client.go, Response.Declaration: "It is the same immutable descriptor
 //     Operation.Responses exposes." Response.Media: "It is the same
 //     immutable descriptor Declaration.Media exposes."
-//   - client.go, OperationFromContext: "returns the operation being sent";
+//   - client.go, OperationFromContext: "returns the operation of a request
+//     that Prepare built or that a call sends";
 //     Request.HTTP: "Its context carries the operation for
 //     OperationFromContext".
 //   - describe.go, Operations: "the Operations it points to are shared by
@@ -31,12 +32,14 @@ import (
 //     operation; Settings and Inputs, for what the caller must supply or
 //     correct".
 //   - client.go, Input.Body: a pre-encoded body is not checked "against a
-//     Media.Err, a field's Param.Err or required formData fields", so a
-//     structured body is checked against the field's Param.Err; describe.go,
+//     field's Param.Err, required formData fields, or a Media.Err its key
+//     does not cause", so a structured body is checked against the field's
+//     Param.Err; describe.go,
 //     Param.Err: "Err is why built-in serialization cannot use the value";
 //     Media.Err: an Encoding defect "is reported by ... the relevant
 //     Encoding Param.Err".
-//   - describe.go, Server.Err: "why the server cannot be used";
+//   - describe.go, Server.Err: "why the document alone makes the server
+//     unusable";
 //     SecurityScheme.Err: "why the scheme cannot be used ... Alternatives
 //     that use it can be applied only when FromTransport satisfies it."
 //

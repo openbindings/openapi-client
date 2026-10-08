@@ -77,14 +77,18 @@ func TestFieldMediaTypesThatCannotEncodeObject(t *testing.T) {
 	refusedAt(t, w, c, "mp", &openapi.Input{Body: map[string]any{"l": obj}}, false, "Input.Body/l")
 }
 
-// A form field's reader read once is streamed as the body is read (doc.go,
-// Fixed rules, Form bodies: "A body holding a reader that can be read only
-// once is encoded as the transport reads it"), and its read error aborts the
-// body and is reported by Call (client.go, Input.Body: an error "aborts the
-// body and is reported by Call or Response.WaitRequest"). A
-// replayable reader is read when the call is prepared, and its read error
-// refuses the call, kept for errors.As: an *os.File opened only
-// for writing.
+// In an application/x-www-form-urlencoded body, a field's reader that can be
+// read only once is streamed as the body is read, and a replayable one is read
+// when the call is prepared (doc.go, Fixed rules, Form bodies: "In an
+// application/x-www-form-urlencoded body, a field's reader that can be sent
+// again is read into memory when the call is prepared, and one that can be
+// read only once is encoded as the transport reads it"). The read-once
+// reader's error fails the call (client.go, Client.Call: "If request-body
+// consumption fails, the error wraps its cause"); the replayable reader's, an
+// *os.File opened only for writing, refuses it, kept for errors.As (errors.go,
+// RequestError.Inputs: "An error with a cause, such as encoding/json's, a
+// codec's, a reader's or a ParamWriters function's error, or that Message.Err
+// or Media.Err, wraps it, for errors.Is and errors.As").
 func TestFormFieldReaderErrors(t *testing.T) {
 	w, c := contractLineClient(t)
 	errRead := errors.New("the disk went away")
@@ -162,8 +166,9 @@ type nullJSON struct{}
 
 func (nullJSON) MarshalJSON() ([]byte, error) { return []byte("null"), nil }
 
-// doc.go, Values: "A form or multipart property or array item whose JSON
-// data is null is omitted, whatever its serialization": JSON data null from
+// doc.go, Values: "A form or multipart property or array item, or a
+// positional part ..., whose JSON data is null is omitted, whatever its
+// serialization or media type": JSON data null from
 // a json.RawMessage under a JSON field, and from a MarshalJSON under a text
 // field.
 func TestNullJSONFieldsOmitted(t *testing.T) {
@@ -195,11 +200,11 @@ func TestNestedBoundaryHoldingOuterRefused(t *testing.T) {
 	}
 }
 
-// Input.MediaType: a boundary is "checked", and "Two boundary parameters are
-// refused"; a part's media type problem is at its key in Settings (errors.go,
-// RequestError.Settings: "for a part's media type, "Input.Body" followed by
-// the part's JSON Pointer"). A nested multipart Part.MediaType with an invalid
-// boundary, or two, is refused.
+// Input.MediaType: a boundary is "checked", and "Two boundary parameters in a
+// multipart type are refused"; a part's media type problem is at its key in
+// Settings (errors.go, RequestError.Settings: "for a part's media type,
+// "Input.Body" followed by the part's JSON Pointer"). A nested multipart
+// Part.MediaType with an invalid boundary, or two, is refused.
 func TestPartBoundaryRefused(t *testing.T) {
 	w, c := contractLineClient(t)
 	for _, mt := range []string{`multipart/mixed; boundary="a "`, "multipart/mixed; boundary=a; boundary=b", `multipart/mixed; boundary="a@b"`} {
@@ -243,8 +248,11 @@ func TestArrayWithoutItemsDefaultsToOctetStream(t *testing.T) {
 	})
 }
 
-// client.go, Input.Body: "For form and multipart media, Body is an object (a
-// map or a struct)"; a typed nil body is a value (doc.go, Values: "a typed
+// client.go, Input.Body: "For form and multipart media, Body is an object
+// whose properties are the fields: a value whose JSON data is an object, such
+// as a struct, a non-nil map or a non-nil pointer to either, but not a Part, a
+// non-nil *Part, or a pointer to either or to a reader, which is refused at
+// Inputs["Input.Body"]"; a typed nil body is a value (doc.go, Values: "a typed
 // nil, such as a nil pointer or map, is a value, which encoding/json writes as
 // null"), and null is no object. A typed nil pointer to a struct, a pointer to
 // a *Part and a pointer to a reader are refused at Input.Body.
@@ -299,13 +307,13 @@ func TestWaitRequestWithoutRequest(t *testing.T) {
 }
 
 // The error types' Error methods describe a value with no Response, as a
-// caller may build one, without failing.
+// caller may build one, without failing: no panic, and some text.
 func TestErrorTypesWithoutResponse(t *testing.T) {
 	for _, err := range []error{&openapi.StatusError{}, &openapi.DecodeError{}} {
 		var msg string
 		noPanic(t, fmt.Sprintf("%T.Error", err), func() { msg = err.Error() })
-		if !strings.HasPrefix(msg, "openapi: ") {
-			t.Errorf("%T.Error() = %q", err, msg)
+		if msg == "" {
+			t.Errorf("%T.Error() is empty", err)
 		}
 	}
 }
@@ -410,12 +418,12 @@ func TestLoadEndsWithContextAtEveryCheck(t *testing.T) {
 }
 
 // load.go, Loader: references resolve as RFC 3986 and RFC 6901 say, and
-// errors.go, ErrUnresolved "is wrapped by the Err of a part whose defect is
-// a reference that cannot be resolved": a $ref that is no URI reference,
-// a fragment that is no JSON Pointer or whose
-// percent-encoding is invalid cannot be resolved; one that
-// names the document by its own URI resolves (load.go: "A reference resolves
-// first to what loaded documents identify: a document by its retrieval URI").
+// errors.go, ErrUnresolved "is wrapped by the Err of a part, or of a
+// SchemaReference, whose defect is a reference that cannot be resolved": a $ref
+// that is no URI reference, a fragment that is no JSON Pointer or whose
+// percent-encoding is invalid cannot be resolved; one that names the document
+// by its own URI resolves (load.go: "A reference resolves first to what loaded
+// documents identify: a document by its retrieval URI").
 func TestReferenceFormsUnresolved(t *testing.T) {
 	c := parseAt(t, doc31(`"/x":{"get":{"operationId":"x","parameters":[
 		{"$ref":"%zz"},{"$ref":"#plain-name"},{"$ref":"#/components/parameters/a%zz"},
@@ -437,11 +445,12 @@ func TestReferenceFormsUnresolved(t *testing.T) {
 
 // describe.go, Operation: a Path Item's field "on both sides, which OpenAPI
 // leaves undefined, sets Err on each operation whose request it affects ...
-// every operation that uses the parameters or servers"; a
-// path template with an unclosed "{" is a defect of its operation;
-// a Paths key that does not begin with "/" is an
-// entry listed only to report it (describe.go, Operation.Key), which does
-// not upset Load's check of Options.MediaType.
+// every operation that uses the parameters or servers"; a path template with
+// an unclosed "{" is a defect of its operation; and a Paths key that does not
+// begin with "/" is listed only to report it (describe.go, Client.Operations:
+// "a Paths entry that cannot be read, because its key does not begin with "/"
+// or its $ref cannot be followed: listed once, with its Path and no Method"),
+// which does not upset Load's check of Options.MediaType.
 func TestPathItemDefectsReported(t *testing.T) {
 	c := parseAt(t, doc31(`
 		"nope":{"get":{"operationId":"nope"}},
@@ -499,9 +508,12 @@ func TestParameterLengthBound(t *testing.T) {
 }
 
 // doc.go, Fixed rules, Styles: a style OpenAPI does not define for its
-// location, such as spaceDelimited exploded, is the parameter's Err, and a
-// call that gives the parameter is refused at its key, its items defined or
-// not.
+// location, such as spaceDelimited exploded, is refused: "Each is refused at
+// the parameter's key, with Param.Err set where the document alone decides
+// it", and "the refusals here apply to defined values". doc.go, Values: "An
+// array whose items are all undefined is itself defined, as RFC 6570 section
+// 2.3 says, and is refused where [""] would be". So a call that gives the
+// parameter [nil], as one that gives it ["a"], is refused at its key.
 func TestUndefinedStyleRefusesUndefinedItems(t *testing.T) {
 	w, c := contractLineClient(t)
 	if p := param(t, mustOp(t, c, "params"), 3); p.Err == nil {
@@ -572,9 +584,10 @@ func TestCallerGetBodyFailure(t *testing.T) {
 
 // client.go, Response.Decode: it "reads r's open Body into out, using Call's
 // target, codec, empty-body and MaxBodyBytes rules for any HTTP status", for
-// a Response the client did not make too; and "A missing,
+// a Response the client did not make too; and Client.Call: "A missing,
 // repeated or unparsable Content-Type is treated as
-// application/octet-stream, which a *any receives as a []byte".
+// application/octet-stream, which, unless Options.Codecs has a codec for it, a
+// *any receives as a []byte".
 func TestDecodeForeignResponse(t *testing.T) {
 	foreign := func(ct, body string) *openapi.Response {
 		return &openapi.Response{Response: &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {ct}},
@@ -590,15 +603,16 @@ func TestDecodeForeignResponse(t *testing.T) {
 	}
 }
 
-// client.go, Call: "An empty body is a success for every out, except that a
-// JSON or XML type decoded into a pointer is a *DecodeError ... An empty text
-// body decodes as "", an empty sequential body as an empty array, and any
-// other empty body into a *any as an empty []byte": an empty body under a type
-// with a caller's codec, an empty JSON Lines body,
-// and an empty image into a typed pointer.
-// Call decodes a nonempty sequential body as a JSON array
-// of its items (client.go, Call: "a sequential type, as a JSON array of its
-// items").
+// client.go, Call, for an empty body decoded into a pointer: "Otherwise it
+// leaves out as it was under a JSON or XML type, or a type with a caller's
+// codec, which is not called; under any other type, it decodes as "" into a
+// *string or *any for a text/* type, as an empty array for a sequential type
+// (a *DecodeError for an out that cannot hold one), and as an empty []byte
+// into a *any for any other type, leaving any other out as it was": an empty
+// body under a type with a caller's codec, an empty JSON Lines body, and an
+// empty image into a typed pointer. Call decodes a nonempty sequential body as
+// a JSON array of its items (client.go, Call: "a sequential type, as a JSON
+// array of its items").
 func TestEmptyAndSequentialResponseBodies(t *testing.T) {
 	var ct, body string
 	w := newWire(t, func(rw http.ResponseWriter, r *http.Request) { typedAnswer(200, ct, body)(rw, r) })
@@ -710,8 +724,10 @@ func TestDecodeErrorJoinsUploadError(t *testing.T) {
 	}
 }
 
-// doc.go, Outcomes: "When the call's context is done before the call
-// completes, the error matches ctx.Err()", and its text says so.
+// Regression check, not contract: the error text names the context's error.
+// doc.go, Outcomes promises only the match: "An error a call returns because
+// its context ended matches both ctx.Err() and context.Cause(ctx) with
+// errors.Is".
 func TestContextErrorTextNamesCause(t *testing.T) {
 	_, c := contractLineClient(t)
 	ctx, cancel := context.WithCancel(t.Context())
@@ -736,8 +752,9 @@ func TestEmptyReplayablePart(t *testing.T) {
 	})
 }
 
-// errors.go, ErrUnresolved: wrapped by "the Err of a part whose defect is a
-// reference that cannot be resolved", a Security Scheme Object's included.
+// errors.go, ErrUnresolved: wrapped by "the Err of a part, or of a
+// SchemaReference, whose defect is a reference that cannot be resolved", a
+// Security Scheme Object's included.
 func TestUnresolvableSecurityScheme(t *testing.T) {
 	c := parseAt(t, doc31(`"/x":{"get":{"operationId":"x","security":[{"s":[]}]}}`,
 		`"components":{"securitySchemes":{"s":{"$ref":"#/components/securitySchemes/nope"}}}`), "https://api.example.test", testDocURI, nil)
@@ -746,8 +763,9 @@ func TestUnresolvableSecurityScheme(t *testing.T) {
 	}
 }
 
-// client.go, Input.Body: a sequential body is "a slice, an iter.Seq, or an
-// iter.Seq2 whose second value is an error"; a nil iterator is refused, the
+// client.go, Input.Body: a sequential body is "a list, an iter.Seq, or an
+// iter.Seq2 whose second value is an error"; "A nil iterator is refused at
+// Inputs["Input.Body"]", the
 // fast path's iter.Seq[any] included, and a function of
 // another shape is no iterator.
 func TestSequentialBodyIteratorShapes(t *testing.T) {
@@ -790,7 +808,7 @@ func TestIteratorBodyReadAfterClose(t *testing.T) {
 	awaitStopped(t, stopped, "the iterator")
 }
 
-// client.go, Client.Document: "With a JSON Pointer fragment ... it returns a
+// load.go, Client.Document: "With a JSON Pointer fragment ... it returns a
 // copy of only that node, or nil when there is none": a node that ends in
 // false, and pointers that name no node: an array index out of
 // range, with a leading zero or negative, into a scalar, a fragment that
@@ -879,10 +897,12 @@ func (rt cancelThenRead) RoundTrip(r *http.Request) (*http.Response, error) {
 	return nil, errGaveUp
 }
 
-// doc.go, Outcomes: "When the call's context is done before the call
-// completes, the error matches ctx.Err()", the transport's own error kept;
-// and a body read after the context ended reports the
-// context's error.
+// doc.go, Outcomes: "An error a call returns because its context ended
+// matches both ctx.Err() and context.Cause(ctx) with errors.Is", even with a
+// transport that ignores the request's context and
+// then fails; the transport's own error is kept, its text included.
+// Regression check, not contract: a read of the request body after the
+// context ended reports the context's error.
 func TestContextEndsDuringUpload(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	rt := cancelThenRead{cancel: cancel, read: make(chan error, 1)}
@@ -975,8 +995,9 @@ func TestSecretFuncOfNilIsNoCredential(t *testing.T) {
 	}
 }
 
-// client.go, Input.Body: an iterator "runs on a goroutine of the transport;
-// its yield returns false once the body is no longer wanted". A prepared
+// client.go, Input.Body: an iterator "runs on a goroutine of its own, in step
+// with the transport's reads, from the transport's first Read of the body, so
+// a body closed unread never runs it". A prepared
 // iterator body that is closed and then read never starts the iterator: the
 // read fails. Its GetBody is nil, an iterator being read once.
 func TestClosedIteratorBodyNeverStarts(t *testing.T) {
@@ -1005,15 +1026,17 @@ func TestClosedIteratorBodyNeverStarts(t *testing.T) {
 }
 
 // load.go, Load: "Any other defect ... is reported on the part it reaches, in
-// its Err, or ignored where nothing depends on it". A tags value or a server
-// variable's enum that is an object instead of an array lists nothing
-// (describe.go: Variable.Enum "is nil when none is declared"), the enum also
-// making its server unusable (see TestServerVariableEnumShapes); a security
-// requirement whose scopes are an object is a defect of each operation it
-// reaches (Operation.Err, with no alternative listed), and Load does not take
-// an Options.SecurityKey naming the scopes that object holds as an alternative
-// (client.go, Options.SecurityKey: "A key that names no alternative ... is
-// refused by Load"). Previously the object's string values were listed.
+// its Err, or ignored where nothing depends on it". A tags value that is an
+// object instead of an array lists nothing, and so does a server variable's
+// enum, which also makes its server unusable (describe.go, Variable.Enum: "An
+// enum written as anything but an array of strings, a variable's values being
+// strings, makes the server unusable (Server.Err)" and "Enum is nil for
+// either"; see TestServerVariableEnumShapes); a security requirement whose
+// scopes are an object is a defect of each operation it reaches (Operation.Err,
+// with no alternative listed), and Load does not take an Options.SecurityKey
+// naming the scopes that object holds as an alternative (client.go,
+// Options.SecurityKey: "A key that names no alternative ... is refused by
+// Load").
 func TestObjectsWhereArraysBelong(t *testing.T) {
 	doc := func(scopes string) string {
 		return `{"openapi":"3.1.0","info":{"title":"t","version":"1"},

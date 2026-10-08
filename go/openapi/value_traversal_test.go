@@ -321,12 +321,14 @@ func TestCyclicValuesRefused(t *testing.T) {
 	}
 }
 
-// The depth walk runs before every client encoding, in every class: an
-// object 50,000 levels deep is refused at its key under text, octet-stream,
-// a form text field, a multipart text part and an event stream item, without
-// encoding it first (doc.go, Values: a value "nested deeper than 1,000
-// levels ... is refused at its key"; json.Marshal of it allocates several
-// megabytes): each refusal allocates under 1 MiB.
+// Regression check, not contract: each refusal allocates under 1 MiB, the
+// depth walk running before every client encoding, in every class, so the
+// value is not encoded first (json.Marshal of it allocates several megabytes).
+// The rest is contract: an object 50,000 levels deep is refused at its key
+// under text, octet-stream, a form text field, a multipart text part and an
+// event stream item (doc.go, Values: a value whose JSON "nests deeper than
+// 1,000 levels" is refused "at the key of the body, field, part, sequential
+// item or parameter that is or holds it").
 func TestDepthLimitInEveryEncodingClass(t *testing.T) {
 	_, c := valuesClient(t)
 	deep := nestMap(50000, "x")
@@ -428,9 +430,10 @@ func TestTypedNilReaderFromIteratorIsNull(t *testing.T) {
 
 // A Part, or a non-nil *Part, as the whole form or multipart Body is refused
 // at Input.Body (client.go, Input.Body: "For form and multipart media, Body
-// is an object (a map or a struct)"; errors.go, RequestError.Inputs: "a
-// reader or Part where the media type cannot carry one"), never sent as an
-// empty body.
+// is an object whose properties are the fields: a value whose JSON data is an
+// object, ... but not a Part, a non-nil *Part, or a pointer to either or to a
+// reader, which is refused at Inputs["Input.Body"]"), never sent as an empty
+// body.
 func TestPartAsWholeBodyRefused(t *testing.T) {
 	w, c := valuesClient(t)
 	for _, key := range []string{"bareForm", "bareMp"} {
@@ -443,8 +446,8 @@ func TestPartAsWholeBodyRefused(t *testing.T) {
 	}
 }
 
-// "A field an Encoding style serializes takes JSON data, so a []byte there
-// is a base64 string and a Part or reader is refused" (client.go,
+// "A field an Encoding style ... serializes, ... takes JSON data, ... so a
+// []byte there is a base64 string and a Part or reader is refused" (client.go,
 // Input.Body): in a form body the base64 is percent-encoded as any RFC 6570
 // value; in a multipart part it is sent as it is.
 func TestStyledFieldTakesJSONData(t *testing.T) {

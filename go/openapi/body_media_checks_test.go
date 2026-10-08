@@ -65,17 +65,21 @@ func TestFieldNumberWithIntegerIsInteger(t *testing.T) {
 	checkParts(t, parts, want)
 }
 
-// The refusal stays keyed Input.MediaType (errors.go, RequestError.Settings:
-// "an undetermined or unusable request media type"), but its error is true:
-// when the Media that would govern the call (the most specific declared key
-// covering its type, or the sole declared one when none is given) has an
-// Err, the refusal wraps that Err with the Media's Source; when nothing
-// covers the type, the text names the type as given, parameters included
-// (client.go, Input.MediaType: "A boundary in the declared content key is
-// used and checked the same way; an invalid one is the Media's Err"; OAS
-// 3.1.2 section 4.8.13: "only the most specific key is applicable"). Before
-// the fix the refusal said the operation offers no single concrete media
-// type, or does not declare multipart/form-data, and dropped the parameters.
+// Regression check, not contract: the refusal's text names the Media's
+// Source, or, when nothing covers the type, the type as given, parameters
+// included. The rest is contract: the refusal is keyed Input.MediaType
+// (errors.go, RequestError.Settings: a body's media type is keyed
+// "Input.MediaType" when it "is declared under a key that causes its
+// Media.Err (see Input.MediaType)"), and when the Media that would govern the
+// call (the most specific declared key covering its type, or the sole declared
+// one when none is given) has an Err, the refusal wraps that Err (client.go,
+// Input.MediaType: "A boundary in a request body's declared content key is
+// used and checked the same way"; describe.go, Media.Err: "an OpenAPI 3.x
+// request body's form or multipart content key that holds an invalid or
+// repeated boundary parameter"; describe.go, Operation.Err: a part's defect
+// "fails a call only when the call uses it, the *RequestError then wrapping
+// that part's Err"; OAS 3.1.2 section 4.8.13: "only the most specific key is
+// applicable").
 func TestDeclaredBoundaryRefusalNamesTheMedia(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, doc31(`
@@ -154,14 +158,14 @@ func TestRangeStyleErrorOnlyWhereStylesApply(t *testing.T) {
 	wantAnyKey(t, "Inputs", re.Inputs, "Input.Body/y", "Input.Body/y/0")
 }
 
-// An event-stream refusal says what is wrong (a line break in event or id, a
-// NUL in id, nesting past 1,000 levels), as retry's does, each at
-// Input.Body/<i> (client.go, Input.Body: "a line break in event or id, a NUL
-// in id ... is an item that cannot be encoded"; doc.go, Values: "nested
-// deeper than 1,000 levels ... is refused at its key"). The text is checked
-// for the documentation's own words for each problem. Before the fix every
-// one said only that an item is an Event or an object of data, event and id
-// strings and a retry integer.
+// Regression check, not contract: an event-stream refusal's text says what is
+// wrong (a line break in event or id, a NUL in id, nesting past 1,000
+// levels), in the documentation's own words for each problem. The rest is
+// contract: each is refused at Input.Body/<i> (client.go, Input.Body: "a line
+// break in event or id, a NUL in id ... is an item that cannot be encoded";
+// doc.go, Values: a value whose JSON "nests deeper than 1,000 levels" is
+// refused "at the key of the body, field, part, sequential item or parameter
+// that is or holds it").
 func TestEventStreamRefusalsNameTheProblem(t *testing.T) {
 	_, c := walkClient(t)
 	for _, tt := range []struct {
@@ -202,7 +206,7 @@ func (*ptrMarshalerElem) MarshalJSON() ([]byte, error) { return []byte(`"ptr"`),
 
 // Under JSON Lines and JSON text sequences, a slice and an iterator of the
 // same values send the same items (client.go, Input.Body: "each element is
-// one item, encoded as that value on its own would be, so a slice and an
+// one item, encoded as that value on its own would be, so a list and an
 // iterator yielding the same values send the same bytes"), each
 // json.Marshal of the item on its own. A pointer-receiver MarshalJSON of the
 // element type does not apply to a slice's items, as it does not to an
@@ -253,8 +257,8 @@ func TestSequentialSliceAndIteratorSendSameItems(t *testing.T) {
 // type other than multipart/form-data, each part is "a value encoded by that
 // part's media type as that value on its own would be, so a list and an
 // iterator yielding the same values send the same parts"; doc.go, Values: "a
-// positional part, whose JSON data is null is omitted". An element is taken on
-// its own, as the value its list holds, whatever the list's element type: a
+// positional part ..., whose JSON data is null is omitted". An element is taken
+// on its own, as the value its list holds, whatever the list's element type: a
 // json.Marshaler element holding a nil pointer is that nil pointer, which
 // json.Marshal writes as null; an encoding.TextMarshaler element whose value
 // also has MarshalJSON is written by MarshalJSON; and an element whose pointer

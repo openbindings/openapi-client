@@ -8,17 +8,18 @@ import (
 )
 
 // Directions. Project: "In OpenAPI 3.1 and 3.2, readOnly and writeOnly
-// are annotations, so every direction gives the same output, which equals
-// the authored schema apart from the rewritten references and the removed
-// identifiers. In OpenAPI 3.0, a Request projection removes each readOnly
-// property from required, and a Response projection each writeOnly one. In
-// Swagger 2.0, whose readOnly properties must not be sent, a Request
-// projection removes each readOnly property from required and replaces its
-// schema with false. A required list left empty is removed. A property is
-// readOnly or writeOnly when any declaration of it says so at the root of
-// its schema, after following $ref; its declarations are those in the
-// object's properties and in the properties of every schema the object
-// reaches through allOf."
+// are annotations, so such a schema is written the same in every direction:
+// as authored, apart from the rewritten references, the keywords removed
+// above and the losses Issues report. A Defs entry it reaches in a Swagger
+// 2.0 or OpenAPI 3.0 document follows that edition. In OpenAPI 3.0, a
+// Request projection removes each readOnly property from required, and a
+// Response projection each writeOnly one. In Swagger 2.0, whose readOnly
+// properties must not be sent, a Request projection removes each readOnly
+// property from required and replaces its schema with false. A required list
+// left empty is removed. A property is readOnly or writeOnly when any
+// declaration of it says so at the root of its schema, after following $ref;
+// its declarations are those in the object's properties and in the properties
+// of every schema the object reaches through allOf."
 //
 // OAS 3.0.4 section 4.7.24.2 (readOnly: "SHOULD NOT be sent as part of the
 // request ... the required will take effect on the response only"; and
@@ -294,13 +295,13 @@ func TestProjectDirectionAllOfChain(t *testing.T) {
 	}
 }
 
-// Each declaration is read under its own edition (Project: "Schemas are
-// read under their openapi.Schema.Version"). An OpenAPI 3.0 object reaching
-// an OpenAPI 3.1 schema through allOf finds readOnly and writeOnly beside a
-// $ref there, and properties beside a $ref in an allOf member there, since
-// 3.1 does not ignore members beside $ref; the same schemas in an OpenAPI
-// 3.0 document are references only (OAS 3.0.4 section 4.7.23), and declare
-// nothing.
+// Each declaration is read under its own edition (Project: "Each schema, the
+// Root and every Defs entry, is read under its own openapi.Schema.Version").
+// An OpenAPI 3.0 object reaching an OpenAPI 3.1 schema through allOf finds
+// readOnly and writeOnly beside a $ref there, and properties beside a $ref in
+// an allOf member there, since 3.1 does not ignore members beside $ref; the
+// same schemas in an OpenAPI 3.0 document are references only (OAS 3.0.4
+// section 4.7.23), and declare nothing.
 func TestProjectDirectionMixedEditionSiblings(t *testing.T) {
 	models := func(version string) string {
 		return `{"openapi":"` + version + `","info":{"title":"M","version":"1"},"paths":{},"components":{"schemas":{

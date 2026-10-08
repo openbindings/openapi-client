@@ -209,7 +209,7 @@ func (g *fuzzGen) document() jnode {
 // input chooses, describes the same Client as the JSON (every descriptor)
 // and Document is the same JSON, numbers by exact value (load.go, Loader:
 // the Core schema's reading, "Numbers keep the exact value written";
-// client.go, Document: "a YAML document converted as the client read
+// load.go, Client.Document: "a YAML document converted as the client read
 // it"). The member order is the document's in both.
 func FuzzYAMLEquivalence(f *testing.F) {
 	for _, seed := range []string{"", "\x00", "\x01\x02\x03\x04\x05\x06\x07\x08", "\xff\xfe\xfd\xfc\xfb\xfa", "seed with words in it",
@@ -274,12 +274,14 @@ var fuzzYAMLSeeds = []string{
 	yamlHead + "x-v: \"a\xffb\"\n",
 }
 
-// FuzzYAMLRobustness: any input, YAML or not, is read or rejected without
-// a panic, in bounded time and memory (load.go, Loader: aliases add at most
-// 1,000,000 nodes, 100 times the document's own node count and 100 times
-// its own size in bytes, and nesting stops at 1,000 levels, so an input of
-// at most 4 KiB grows by at most 400 KB); a document that loads describes
-// its operations, and Document is JSON.
+// Regression check, not contract: each input takes at most 10 s and allocates
+// at most 256 MiB, a budget the bounds allow (load.go, Loader: aliases add at
+// most 1,000,000 nodes, 100 times the document's own node count and 100 times
+// its own size in bytes, and nesting stops at 1,000 levels, so an input of at
+// most 4 KiB grows by at most 400 KB). The rest is contract: any input, YAML
+// or not, is read or rejected with an error, never a panic; a document that
+// loads describes its operations, and its Document is JSON (load.go, Loader:
+// "Document and Raw are JSON").
 func FuzzYAMLRobustness(f *testing.F) {
 	for _, seed := range fuzzYAMLSeeds {
 		f.Add([]byte(seed))

@@ -8,17 +8,24 @@ import (
 	"strings"
 )
 
-// Load reads the document at uri, and every document its references reach,
-// and returns a Client for it that uses opts. The uri is an http or https
-// URL, a file URL, or a file path. A uri with a fragment is refused, as is
-// one with userinfo, which RFC 9110 section 4.2.4 forbids a sender to
-// generate (supply credentials through HTTPClient or Loader.Fetch), and a
-// file URL naming a host other than localhost. ctx bounds the whole load,
-// reading and parsing included: when it is done before the load completes, Load
-// returns no Client and an error that matches ctx.Err() with errors.Is, and
-// also context.Cause(ctx), even while a referenced document, whose failure
-// would otherwise disable only what reaches it, is being read. A nil opts means
-// the defaults. The Client keeps a copy of opts, its maps included, so changing
+// Load reads the document at uri, and every document its references reach, and
+// returns a Client for it that uses opts. The uri is an http or https URL, a
+// file URL, or a file path. Load requests a URL in the form Loader gives the
+// URI requested for a reference, and a file path as the file URL of its
+// absolute path. The URI the document is finally retrieved from, after any
+// redirects, names it, in the form Loader gives the URI requested. A uri that
+// begins with a URI scheme (RFC 3986 section 3.1), even a one-letter one, is a
+// URI, never a path, except for a drive letter on Windows, and is refused
+// unread if net/url cannot parse it. A uri with a fragment is refused, as is
+// one with userinfo, which RFC 9110 section 4.2.4 forbids a sender to generate
+// (supply credentials through HTTPClient or Loader.Fetch), one with leading or
+// trailing whitespace, and a file URL naming a host other than localhost,
+// compared without regard to case. ctx bounds the whole load, reading and
+// parsing included: when it is done before the load completes, Load returns no
+// Client and an error that matches ctx.Err() with errors.Is, and also
+// context.Cause(ctx), even while a referenced document, whose failure would
+// otherwise disable only what reaches it, is being read. A nil opts means the
+// defaults. The Client keeps a copy of opts, its maps included, so changing
 // them afterwards has no effect. Load uses the zero [Loader].
 //
 // Load fails when the document is unusable as a whole: it cannot be
@@ -33,13 +40,14 @@ import (
 // use: a Credentials name the document never uses, an empty static
 // credential, or a credential its schemes cannot use (see Credentials in
 // the package documentation), a Variables name no server URL uses, a
-// MediaType no operation declares, a Codecs key Options.Codecs refuses, a
-// Server or ServerID that matches no server, a Security or SecurityKey
-// that matches no alternative, a BaseURL without a scheme and host, with
-// userinfo, a query or a fragment, or set with Server or ServerID,
-// conflicting exact and name selectors, a Header field that is always
-// refused, or a Redirects or DeepObjectArrays value that is none of its
-// constants.
+// MediaType that no operation's request body Media matches (see
+// Options.MediaType), a Codecs key Options.Codecs refuses, a Server or
+// ServerID that matches no server, a Security or SecurityKey that matches
+// no alternative, a BaseURL that is not a URL with a scheme and a non-empty
+// host, or that has a port above 65535, userinfo, a query or a fragment, or
+// is set with Server or ServerID, conflicting exact and name selectors, a
+// Header field that is always refused, or a Redirects or DeepObjectArrays
+// value that is none of its constants.
 func Load(ctx context.Context, uri string, opts *Options) (*Client, error) {
 	var l Loader
 	return l.Load(ctx, uri, opts)
@@ -48,12 +56,16 @@ func Load(ctx context.Context, uri string, opts *Options) (*Client, error) {
 // Parse returns a Client for a document the caller already holds, such as one
 // embedded with go:embed, using the zero [Loader], and fails as Load does. The
 // content is JSON or YAML text. The uri, if not empty, is the absolute URI,
-// without a fragment, the document is meant to live at, which stands for the
-// URI it was retrieved from and is never fetched itself. With an empty uri, the
-// document may reference only itself, a call whose server URL is relative needs
-// Options.BaseURL, and Sources name the document by a "urn:uuid:" URI derived
-// from the content (a name-based UUID, RFC 9562 version 5), so Sources and
-// $defs keys are the same on every run.
+// without a fragment, that the document is meant to live at: taken in the form
+// Loader gives the URI requested, it stands for the URI the document was
+// retrieved from, and it is never fetched. A relative uri, or one net/url
+// cannot parse, is refused, as is one Load refuses for its form: with a
+// fragment, userinfo, or leading or trailing whitespace, or a file URL naming a
+// host other than localhost. With an empty uri, the document may reference only
+// itself, a call whose server URL is relative needs Options.BaseURL, and
+// Sources name the document by a "urn:uuid:" URI derived from the content (a
+// name-based UUID, RFC 9562 version 5), so Sources and $defs keys are the same
+// on every run.
 func Parse(ctx context.Context, content []byte, uri string, opts *Options) (*Client, error) {
 	var l Loader
 	return l.Parse(ctx, content, uri, opts)
@@ -90,49 +102,83 @@ func Parse(ctx context.Context, content []byte, uri string, opts *Options) (*Cli
 //
 // An OpenAPI document uses the edition declared at its root. A referenced
 // document with neither an openapi nor a swagger field uses the entry
-// document's edition; its object type comes from the reference's context.
+// document's edition; its object types come from the contexts of the references
+// that reach it, so its root is not read as an OpenAPI Object, and a $self
+// member there neither sets its base nor names it.
 //
-// If retrieval based on an inferred schema resource later reveals that the
-// resource is instance data, references whose scope depends on that inference
-// are unresolvable. The documents already retrieved remain available, and parts
-// independent of that inference remain usable.
+// In a referenced document that declares no edition, a reference's JSON Pointer
+// to a schema may pass through objects that have no type, neither from a
+// reference nor from an object that holds them. In OpenAPI 3.1 and 3.2, the
+// first of these on the pointer's path that has $id, $anchor or $dynamicAnchor,
+// or is the document's root and has $schema, is inferred to be a schema, and
+// what lies below it is read as that schema's contents: its $schema and $id set
+// the Dialect and Base of the schemas within it, and so the URIs their
+// references resolve to. The loader infers nothing until it has followed every
+// reference it can without inference, through any chain of documents, and a
+// type those establish outweighs these cues. If a document retrieved because of
+// an inference then shows that the inferred schema is not one, as when it is a
+// Parameter or a Parameter's example, every reference whose base or target
+// depends on that inference, in any document, is unresolvable, and none is
+// resolved again under the corrected types. The documents already retrieved
+// remain available, and parts independent of that inference remain usable.
 //
 // The references followed are $ref in Reference Objects, Path Items and Schema
 // Objects, $dynamicRef, the values of a Discriminator mapping written as an
 // object and a defaultMapping value, where they are not component names (a
 // value that could be a component name is read as one, as OpenAPI recommends,
 // and never fetched), and OpenAPI 3.2 security requirement URIs, anywhere in a
-// document, webhooks and callbacks included; operationRef and externalValue are
-// not retrieved. They resolve against each document's base: its OpenAPI 3.2
-// $self, itself resolved first against the URI the document was retrieved from
-// when relative, or else that URI. Inside a 3.1 or 3.2 schema, the nearest $id
-// sets the base, as JSON Schema 2020-12 says (see Schema for other dialects). A
+// document, webhooks and callbacks included, but none inside a schema resource
+// of another dialect (see Schema); operationRef and externalValue are not
+// retrieved. They resolve against each document's base: its OpenAPI 3.2 $self,
+// itself resolved first against the URI the document was retrieved from when
+// relative, or else that URI. Inside a 3.1 or 3.2 schema, the nearest $id sets
+// the base, as JSON Schema 2020-12 says (see Schema for other dialects). A
 // fragment is percent-decoded as UTF-8 before it is read as a JSON Pointer or a
-// plain name.
+// plain name. The URI requested, which AllowReference and Fetch receive, is the
+// resolved reference without its fragment, its scheme in lowercase. Against a
+// base with no authority, such as file:/api/openapi.json, a reference without
+// one resolves to a URI without one, such as file:/api/other.json. An opaque
+// URI, one whose scheme's colon is not followed by "/", such as a urn: URI, is
+// otherwise kept as written. Any other has its dot segments removed, as RFC
+// 3986 section 5.2 says, and its query kept as written; elsewhere in it, each
+// character a URI cannot hold there, such as a space, a non-ASCII character or
+// "<", is percent-encoded, as UTF-8, and every other character, each %XX
+// triple included, is kept as written. The query of the URI requested, or the
+// whole of an opaque one, keeps a "%" that begins no %XX triple, but an ASCII
+// control character there makes the reference unresolvable, as such a "%"
+// does anywhere else in the reference.
 //
 // A reference resolves first to what loaded documents identify: a document by
 // its retrieval URI (and the URI requested, when a redirect led there) or 3.2
 // $self, a schema by $id, a plain name by $anchor or $dynamicAnchor. This is
 // decided once every document reached is parsed. Only a URI no loaded document
 // identifies is admitted and fetched, and the fetched document is then searched
-// the same way. A reference to a URI with userinfo or with leading or trailing
-// whitespace, or to a file URL naming a host other than localhost, is
-// unresolvable and never fetched, as Load refuses such a uri. A URI claimed by
-// two different documents or schemas is unresolvable, and the error names both;
-// a document's URI and the $id of the schema at its root claim one schema. A
-// reference that names a 3.2 document by the URI it was retrieved from rather
-// than its $self, or that reaches a schema by a JSON Pointer crossing a nearer
-// $id, still resolves; it stays visible as written where it is written, in a
-// Schema's Raw or in Document at the Source of the object holding it. Security
-// requirement names resolve as [SchemeLookup] says.
+// the same way. A reference is unresolvable and never fetched, even when a
+// loaded document or schema identifies the URI requested for it, if that URI
+// has userinfo or trailing whitespace (which only a query or an opaque URI
+// keeps), or is a file URL naming a host other than localhost, as Load refuses
+// such a uri. Whatever AllowReference says, so is one whose retrieval a
+// redirect would take to such a URI; the default retrieval never requests that
+// hop, and a final URI that Fetch returns, which must be absolute, is refused
+// for what Load refuses in a uri. A URI claimed by two different documents or
+// schemas is unresolvable, and the error names both; a document's URI and the
+// $id of the schema at its root claim one schema. A reference that names a 3.2
+// document by the URI it was retrieved from rather than its $self, or that
+// reaches a schema by a JSON Pointer crossing a nearer $id, still resolves; it
+// stays visible as written where it is written, in a Schema's Raw or in
+// Document at the Source of the object holding it. Security requirement names
+// resolve as [SchemeLookup] says.
 type Loader struct {
 	// Fetch, if set, retrieves each document the loader needs in place of the
 	// default (http and https with the Options' HTTPClient, file URLs from
 	// disk). A uri given to Load as a file path reaches Fetch as the file URL
 	// of its absolute path (filepath.Abs), the URI under which the default
-	// reads it. It returns the content, which the loader closes, and the URI it
-	// was finally retrieved from after any redirects, which becomes that
-	// document's base; an empty final means uri. The loader may call Fetch from
+	// reads it, and any other reaches it in the form Loader gives the URI
+	// requested, whatever its scheme, unless Load refuses it. It returns the
+	// content, which the loader closes, and the URI it was finally retrieved
+	// from after any redirects, which, in the form Loader gives the URI
+	// requested, names that document and is its base unless an OpenAPI 3.2
+	// $self sets one; an empty final means uri. The loader may call Fetch from
 	// several goroutines at once, so that a document split into several files
 	// loads in parallel.
 	//
@@ -182,16 +228,20 @@ type Loader struct {
 	SchemeLookup SchemeLookup
 }
 
-// A SchemeLookup says where the component names that a security
-// requirement in a referenced document uses are looked up; it governs
-// component names only. OpenAPI allows two readings, the entry document
-// and the document holding the requirement; SchemesInEntry and
-// SchemesInReferrer each follow one exactly. The default,
-// SchemesInEntryFirst, looks in the entry document, then, for a name it
-// does not define, in the referring one. In OpenAPI 3.2, a name that is not
-// a component name where it is looked up is a URI reference to a Security
+// A SchemeLookup says where the component names that a security requirement in
+// a referenced document uses are looked up; it governs component names only.
+// OpenAPI allows two readings, the entry document and the document holding the
+// requirement; SchemesInEntry and SchemesInReferrer each follow one exactly.
+// The default, SchemesInEntryFirst, looks in the entry document, then, for a
+// name it does not define, in the referring one. In OpenAPI 3.2, a name that is
+// not a component name where it is looked up is a URI reference to a Security
 // Scheme Object, resolved against the base of the document holding the
-// requirement; in earlier editions it is a defect of the requirement.
+// requirement; in earlier editions it is a defect of the requirement. Where the
+// Components Object or its securitySchemes map (in Swagger 2.0,
+// securityDefinitions) is written as a reference, a name looked up there is
+// taken to be one of its component names, never a URI, and is looked up nowhere
+// else: the SecurityScheme's Err says the document must be bundled first (see
+// Operation).
 type SchemeLookup int
 
 const (
@@ -216,9 +266,13 @@ func (l *Loader) Load(ctx context.Context, uri string, opts *Options) (*Client, 
 
 // Parse returns a Client for content as the package's Parse function does,
 // with l's settings, which govern the documents its references reach. With
-// an empty uri, absolute external references can be fetched only when
-// AllowReference admits them; relative external references have no base
-// unless an OpenAPI 3.2 absolute $self supplies one.
+// an empty uri, a document is fetched only when Origins or AllowReference
+// admits it. In the content, a relative reference other than a fragment-only
+// one then resolves only against an absolute base the content supplies: an
+// OpenAPI 3.2 $self or, inside a 3.1 or 3.2 schema, an $id. A relative $self,
+// or a relative $id with no such base outside it, supplies none, as if it were
+// absent, so a fragment-only reference it would govern resolves against the
+// document; a reference left with no base is unresolvable and never fetched.
 func (l *Loader) Parse(ctx context.Context, content []byte, uri string, opts *Options) (*Client, error) {
 	ld, err := l.start(ctx, uri, opts)
 	if err != nil {
@@ -258,14 +312,15 @@ func (c *Client) DocumentURIs() []string {
 // Document returns a copy of the document loaded from uri, as JSON (a YAML
 // document converted as the client read it), or nil when no document was
 // loaded from uri. An empty uri means the entry document. A document is
-// named by the URI it was retrieved from (for Parse, the uri given or the
-// one derived from the content), which is what the descriptions' Source
-// fields name; Document also accepts an OpenAPI 3.2 document's $self, as
-// resolved. With a JSON Pointer fragment, as any Source has, it returns a
-// copy of only that node, or nil when there is none; a Reference Object
-// there is returned as written, and resolves against its document's base.
-// Without one, each call copies the whole document, so call it once per
-// document and keep the result.
+// named by the URI it was finally retrieved from, in the form Loader gives
+// the URI requested (for Parse, the uri given, in that form, or the one
+// derived from the content), which is what the descriptions' Source fields
+// name; Document also accepts an OpenAPI 3.2 document's $self, as resolved.
+// With a JSON Pointer fragment, as any Source has, it returns a copy of only
+// that node, or nil when there is none; a Reference Object there is returned
+// as written, and resolves against its document's base. Without one, each
+// call copies the whole document, so call it once per document and keep the
+// result.
 //
 // A YAML document's JSON has no insignificant whitespace, its members in the
 // order written and its strings as encoding/json writes them without HTML

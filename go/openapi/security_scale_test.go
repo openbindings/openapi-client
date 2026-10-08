@@ -106,9 +106,9 @@ func warmClient(t *testing.T, doc []byte, opts *openapi.Options) *openapi.Client
 	return c
 }
 
-// An operation with many alternatives: compiling it, Load's checks of
-// Credentials and Options.Security, and selecting the last alternative by
-// key cost time linear in the alternatives.
+// Regression check, not contract: an operation with many alternatives:
+// compiling it, Load's checks of Credentials and Options.Security, and
+// selecting the last alternative by key cost time linear in the alternatives.
 func TestManyAlternativesScale(t *testing.T) {
 	wantLinear(t, "Operations(), first use", 500, func(n int) func() {
 		return timedOperations(t, manyAlternatives(n))
@@ -142,11 +142,14 @@ func TestManyAlternativesScale(t *testing.T) {
 	})
 }
 
-// One alternative with many schemes, and a scheme with many scopes:
-// compiling the key, checking that no two schemes set one field, and
-// placing every credential are linear (a pairwise destination check would
-// be quadratic in time, and building the query by repeated concatenation
-// quadratic in bytes).
+// Regression check, not contract: for one alternative with many schemes, and
+// a scheme with many scopes, compiling the key, checking that no two schemes
+// set one field, and placing every credential are linear (a pairwise
+// destination check would be quadratic in time, and building the query by
+// repeated concatenation quadratic in bytes). That the call places every
+// credential, query credentials in the order the alternative lists their
+// schemes, is contract (doc.go, Credentials: "Query and cookie credentials go
+// last, in the order the alternative lists their schemes").
 func TestManySchemesScale(t *testing.T) {
 	creds := func(n int) map[string]openapi.Credential {
 		m := map[string]openapi.Credential{"o": openapi.Secret("tok")}
@@ -184,9 +187,9 @@ func TestManySchemesScale(t *testing.T) {
 	}
 }
 
-// Many operations sharing root security, and as many listing their own:
-// Load's checks, first use of every operation, and a call to each are
-// linear in the operations.
+// Regression check, not contract: many operations sharing root security, and as
+// many listing their own: Load's checks, first use of every operation, and a
+// call to each are linear in the operations.
 func TestSharedSecurityScale(t *testing.T) {
 	opts := func() *openapi.Options {
 		o := memOptions(map[string]openapi.Credential{"k": openapi.Secret("kv"), "o": openapi.Secret("tok")})
@@ -232,10 +235,10 @@ func chainRT(hops int) *memRT {
 	}}
 }
 
-// A long same-origin redirect chain carrying credentials, with a caller's
-// CheckRedirect that allows it: following it, placing credentials on every
-// hop, and removing them from every request reachable from Response.Request
-// cost linearly in the hops.
+// Regression check, not contract: a long same-origin redirect chain carrying
+// credentials, with a caller's CheckRedirect that allows it: following it,
+// placing credentials on every hop, and removing them from every request
+// reachable from Response.Request cost linearly in the hops.
 func TestRedirectChainScale(t *testing.T) {
 	doc := []byte(expand(doc31(`"/h0":{"post":{"operationId":"p","requestBody":{"content":{"application/json":{}}}}}`,
 		`"security":[{"key_h":[],"key_q":[],"bearer":[]}]`,

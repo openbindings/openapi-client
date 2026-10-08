@@ -63,12 +63,12 @@ func TestMissingEmptyOrZeroCredential(t *testing.T) {
 // static credential, or a credential its schemes cannot use". doc.go,
 // Credentials: "Load refuses a Credentials name the document never uses, as
 // a likely misspelling, an empty static credential (Secret(""), Basic("",
-// "") or the zero Credential), and a Basic credential for a name none of
+// "") or the zero Credential), a Basic credential for a name none of
 // whose schemes is http basic, and any credential but FromTransport for a
 // name all of whose schemes are mutualTLS"; "A credential value its
 // destination cannot carry is refused at Options.Credentials["name"]: by
 // Load for a static credential ... Such a value is a header field value with
-// a control character other than a tab, or with leading or trailing
+// an ASCII control character other than a tab, or with leading or trailing
 // whitespace". errors.go, RequestError.Settings: keyed
 // Options.Credentials[<name>], the name quoted as strconv.Quote does.
 func TestLoadRefusesCredentials(t *testing.T) {
@@ -126,8 +126,8 @@ func TestLoadRefusesCredentials(t *testing.T) {
 }
 
 // credential.go, Basic: "A username containing a colon, or either value
-// containing a control character, is refused as the package doc's
-// Credentials section says of every credential value" (RFC 7617 section 2:
+// containing an ASCII control character, is a value RFC 7617 forbids, refused
+// as the package documentation says under Credentials" (RFC 7617 section 2:
 // "a user-id containing a colon character is invalid", and user-id and
 // password "MUST NOT contain any control characters", CTL in RFC 5234:
 // %x00-1F / %x7F); doc.go, Credentials: such a value is refused "at
@@ -168,8 +168,8 @@ func TestBasicRefusals(t *testing.T) {
 }
 
 // doc.go, Percent-encoding: "an apiKey sent in a cookie, [is] written as
-// given too; a cookie value written as given that holds a ";" or a control
-// character is refused."
+// given too; a cookie value written as given that holds a ";" or an ASCII
+// control character is refused."
 func TestCookieCredentialRefused(t *testing.T) {
 	w := newWire(t, nil)
 	c := credClient(t, w, nil)
@@ -262,14 +262,15 @@ func TestAlternativeSettingOneFieldTwice(t *testing.T) {
 // doc.go, Credentials: "Bearer tokens (http bearer, oauth2, openIdConnect)
 // and Basic credentials are sent only over https or wss, as RFC 6750
 // requires and RFC 7617 advises, or to a loopback host, where they do not
-// leave the machine: a loopback IP address, an IPv4-mapped one included, or
-// the name localhost written exactly so, the one name
-// http.ProxyFromEnvironment never sends through a proxy. Other names, such
-// as those under .localhost, can be proxied or resolved elsewhere, so they
-// are not loopback here. A call that would send one over plain http or ws to
-// any other host is refused. ... A URL scheme other than http, https, ws or
-// wss requires FromTransport for these credentials. API keys, which no RFC
-// governs, are not restricted by this rule." errors.go, RequestError.Err: "a
+// leave the machine: a loopback IP address as net/netip parses one (so 127.1
+// is a name), an IPv4-mapped one included, or the name localhost written
+// exactly so, the one name http.ProxyFromEnvironment never sends through a
+// proxy. Other names, such as those under .localhost, can be proxied or
+// resolved elsewhere, so they are not loopback here. A call that would send
+// one over plain http or ws to any other host is refused. ... A URL scheme
+// other than http, https, ws or wss requires FromTransport for these
+// credentials. Neither rule restricts API keys, which no RFC governs, or http
+// schemes other than bearer and basic." errors.go, RequestError.Err: "a
 // bearer or Basic credential that would go over plain http or ws". Loopback
 // addresses are 127.0.0.0/8 and ::1 (RFC 6890, RFC 4291 section 2.5.3);
 // "127.1" is not a loopback literal (RFC 3986 section 3.2.2's IPv4address
@@ -441,10 +442,10 @@ func TestPlainHTTPOtherHTTPScheme(t *testing.T) {
 
 // doc.go, Credentials: "A credential value its destination cannot carry is
 // refused at Options.Credentials["name"]: by Load for a static credential
-// (by each call, for a Client from Client.With), by the call for a source's.
-// Such a value is a header field value with a control character other than a
-// tab, or with leading or trailing whitespace". The call is refused before
-// anything is sent.
+// (by each call, for a Client from Client.With), by the call for a credential
+// source's. Such a value is a header field value with an ASCII control
+// character other than a tab, or with leading or trailing whitespace". The
+// call is refused before anything is sent.
 func TestHeaderUnsafeCredentialRefused(t *testing.T) {
 	values := map[string]string{
 		"CR":                  "hu-3Kl\rX",

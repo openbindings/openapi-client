@@ -54,20 +54,20 @@ func prepared(t *testing.T, c *openapi.Client, key string, in *openapi.Input) (s
 }
 
 // doc.go, Values: "The client first converts a value to JSON data as
-// encoding/json would ..., then serializes that data as the document says",
-// and "The JSON data of a value encoding/json writes by its MarshalText, such
-// as a net.IP, is a string, whatever its Go kind"; client.go, Input.Body: "Any
-// other type, a named byte-slice type included, is a value for the codec", and
-// in a positional multipart body each element is "a []byte, an io.Reader, a
-// Part, or a value encoded by that part's media type"; "A part whose media
-// type is multipart is encoded, one level deep, from an object or slice"; "For
-// form and multipart media, Body is an object (a map or a struct)", and in
-// OpenAPI 3.2 "may instead be a slice". So a net.IP and a commaList are sent,
-// or refused, exactly as their string, the control, is: as a positional
-// element, one text/plain part of the string, one application/json part of it
-// as a JSON string, and a multipart part refused at its place; as a whole
-// positional multipart/mixed or multipart/form-data body, neither an object
-// nor a slice, refused at Input.Body.
+// encoding/json would ..., then serializes that data as the document says", and
+// "The JSON data of a value encoding/json writes by its MarshalText, such as a
+// net.IP, is a string, whatever its Go kind"; client.go, Input.Body: "Any other
+// type, a named byte-slice type included, is a value for the codec", and in a
+// positional multipart body each element is "a []byte, an io.Reader, a Part, or
+// a value encoded by that part's media type"; "A part whose media type is
+// multipart is encoded, one level deep, from an object or list"; "For form and
+// multipart media, Body is an object whose properties are the fields", and in
+// OpenAPI 3.2 "may instead be a list". So a net.IP and a commaList are sent, or
+// refused, exactly as their string, the control, is: as a positional element,
+// one text/plain part of the string, one application/json part of it as a JSON
+// string, and a multipart part refused at its place; as a whole positional
+// multipart/mixed or multipart/form-data body, neither an object nor a slice,
+// refused at Input.Body.
 func TestTextMarshalerPartIsOneString(t *testing.T) {
 	c := editionClient(t, editionDoc("3.2.1", textMarshalerDoc), nil)
 	for _, tv := range textValues {
@@ -106,7 +106,7 @@ func TestTextMarshalerPartIsOneString(t *testing.T) {
 
 // doc.go, Values: "The JSON data of a value encoding/json writes by its
 // MarshalText, such as a net.IP, is a string, whatever its Go kind"; client.go,
-// Input.Body: "For a sequential media type ..., Body is a slice, an iter.Seq,
+// Input.Body: "For a sequential media type ..., Body is a list, an iter.Seq,
 // or an iter.Seq2 whose second value is an error, of any element type; each
 // element is one item, encoded as that value on its own would be". So a net.IP
 // and a commaList are sent, or refused, exactly as their string, the control,

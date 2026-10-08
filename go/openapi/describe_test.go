@@ -573,9 +573,11 @@ func TestServersDescriptor(t *testing.T) {
 	}
 }
 
-// describe.go, Server.Err and doc.go, Fixed rules, URL: "A server URL with
-// userinfo, a query or a fragment after substitution cannot be used either
-// (Server.Err, where the document alone decides it)."
+// describe.go, Server.Err and doc.go, Fixed rules, URL: "After substitution,
+// a server URL that url.Parse refuses ... cannot be used either, nor can one
+// whose host is empty, with or without a port, whose port is above 65535, or
+// that has userinfo, a query or a fragment (Server.Err, where the document
+// alone decides it)".
 func TestServerErrUnusableURL(t *testing.T) {
 	doc := `{"openapi":"3.1.0","info":{"title":"t","version":"1"},"servers":[
 		{"url":"https://api.example.test/v1"},
@@ -672,7 +674,7 @@ func TestSecurityDescriptor(t *testing.T) {
 // exactly as written; Base from the nearest $id, resolved against the base
 // outside it; Dialect from $schema at a schema resource root, else
 // jsonSchemaDialect, else OpenAPI's default dialect; in a resource that
-// declares another dialect, "identifiers are not interpreted, Base is the
+// declares another dialect, "identifiers are not interpreted, ... Base is the
 // base outside the resource".
 func TestSchemaHandles(t *testing.T) {
 	const uri = "https://pets.example.test/specs/openapi.json"

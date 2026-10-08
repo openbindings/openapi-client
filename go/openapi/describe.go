@@ -6,16 +6,26 @@ import "encoding/json"
 // paths as listed, within a path the methods in the order get, put, post,
 // delete, options, head, patch, trace, query, then additional operations as
 // listed. Operations that cannot be called are included, with Err set. So are
-// three defects that are not operations, each with an empty Key: a Paths entry
-// whose $ref cannot be read, listed once with its Path and Err; a Paths Object,
-// or a Path Item's additionalOperations map, written as a reference (see
-// Operation), listed once with the Path it is under, empty for a Paths Object,
-// and an Err saying the document must be bundled first; and an OpenAPI 3.2
-// additional operation whose method is exactly GET, PUT, POST, DELETE, OPTIONS,
-// HEAD, PATCH, TRACE or QUERY, which OpenAPI forbids. Methods are compared
-// exactly, so an additional operation "Post" is an ordinary one, "Post /path".
-// Webhooks and callbacks describe requests the server sends and are not
-// operations of the Client.
+// these defects, which are not operations, each with an empty Key, its own
+// location as Source, and Err set:
+//
+//   - a Paths entry that cannot be read, because its key does not begin with
+//     "/" or its $ref cannot be followed: listed once, with its Path and no
+//     Method;
+//   - a Paths Object written as a reference (see Operation): listed once,
+//     with no Path or Method, and an Err saying the document must be bundled
+//     first;
+//   - an OpenAPI 3.2 additionalOperations map written as a reference: listed,
+//     with the same Err, once for each Paths entry whose nearest such map it
+//     is (see Operation), with that entry's Path and no Method;
+//   - an OpenAPI 3.2 additional operation whose method is not a token or is
+//     exactly GET, PUT, POST, DELETE, OPTIONS, HEAD, PATCH, TRACE or QUERY,
+//     which OpenAPI forbids: listed with its Path and Method.
+//
+// Methods are compared exactly, so an additional operation "Post" is an
+// ordinary one, "Post /path". An extension (an x- member) of the Paths Object
+// is not listed. Webhooks and callbacks describe requests the server sends and
+// are not operations of the Client.
 //
 // The slice is new on each call; the Operations it points to are shared by
 // every caller and must not be modified. Listing them does no schema work.
@@ -30,16 +40,17 @@ func (c *Client) Operations() []*Operation {
 	return ops
 }
 
-// Operation describes the operation named key, by the rules Call uses. When no
-// operation has that key, it returns an error wrapping ErrNoOperation; when
-// several share it as their operationId, the error wraps ErrNoOperation too and
-// names those operations, each once by its Operation.Key, and no other, and
-// each is still reached by its Key. An operation that exists but cannot be
-// called is returned with Err set, and so is the entry for a Paths entry that
-// cannot be read, for a key with any method and that path; calling with the
-// same key is refused with an error wrapping that Err. A method-and-path key
-// always reaches the fixed method, never the forbidden additional operation of
-// the same method (see Client.Operations).
+// Operation describes the operation named key, by the rules Call uses, and
+// returns the same *Operation Client.Operations lists. When no operation has
+// that key, it returns an error wrapping ErrNoOperation; when several share it
+// as their operationId, the error wraps ErrNoOperation too and names those
+// operations, each once by its Operation.Key, and no other, and each is still
+// reached by its Key. An operation that exists but cannot be called is returned
+// with Err set, and so is the entry for a Paths entry whose $ref cannot be
+// followed, for a method-and-path key with that path and any method; calling
+// with the same key is refused with an error wrapping that Err. A
+// method-and-path key always reaches the fixed method, never the forbidden
+// additional operation of the same method (see Client.Operations).
 func (c *Client) Operation(key string) (*Operation, error) {
 	e, err := c.doc.lookup(key)
 	if err != nil {
@@ -54,52 +65,59 @@ func (c *Client) Operation(key string) (*Operation, error) {
 // Security. Inherited declarations (path-level parameters, the entry
 // document's root servers, and root security) are already applied.
 //
-// The descriptions follow references. A Path Item's $ref and the Path
-// Item's own fields are read together: a field on one side only is used,
-// and a field on both sides, which OpenAPI leaves undefined, sets Err on
-// each operation whose request it affects (that method's operation, or
-// every operation that uses the parameters or servers), except that the
-// Path Item's own summary and description win. For additionalOperations,
-// the nearest map supplies the operations and a duplicate field sets Err
-// on each of them. In OpenAPI 3.1 and 3.2,
-// where a parameter, request body, response, header or security scheme, or
-// in 3.2 a media type, is a Reference Object that gives a description, that
-// description replaces the target's, the Reference Object nearest the use
-// site winning, while Source still names the target; in Swagger 2.0 and OpenAPI
-// 3.0, a Reference Object's siblings are ignored. A part written as a Reference
-// Object that cannot be resolved has that Reference Object's location as its
-// Source, a header's included, and a security scheme's whether its requirement
-// names it by component name or by an OpenAPI 3.2 URI; a scheme whose name in
-// an OpenAPI 3.2 requirement is neither a component name nor a URI that can be
-// resolved has that Security Requirement Object's location as its Source.
+// The descriptions follow references. A Path Item's $ref and the Path Item's
+// own fields are read together: a field on one side only is used, and a field
+// on both sides, which OpenAPI leaves undefined, sets Err on each operation
+// whose request it affects (that method's operation, which is then the
+// referring Path Item's own, or every operation that uses the parameters or
+// servers), except that the Path Item's own summary and description win. For
+// additionalOperations, the nearest map supplies the operations and a duplicate
+// field sets Err on each of them. In OpenAPI 3.1 and 3.2, where a parameter,
+// request body, response, header or security scheme, or in 3.2 a media type, is
+// a Reference Object that gives a description, that description replaces the
+// target's, the Reference Object nearest the use site winning, while Source
+// still names the target; in Swagger 2.0 and OpenAPI 3.0, a Reference Object's
+// siblings are ignored. A part written as a Reference Object that cannot be
+// resolved has that Reference Object's location as its Source, a header's
+// included, and a security scheme's whether its requirement names it by
+// component name or by an OpenAPI 3.2 URI; a scheme whose name in an OpenAPI
+// 3.2 requirement is neither a component name nor a URI that can be resolved
+// has that Security Requirement Object's location as its Source. A scheme
+// looked up in a Components Object or scheme map written as a reference has an
+// empty Source (see SchemeLookup).
 //
-// A value written as a reference, an object whose $ref member is a string,
-// where the edition defines no Reference Object, such as an Operation Object, a
-// headers or encoding map, or a parameters or servers list written as a
-// reference to another file, marks a document meant to be bundled before use.
-// It makes the nearest part holding that value unusable: the Err of that
-// Operation, Param, Message, Media, Server or SecurityScheme says the document
-// must be bundled first, and does not wrap ErrUnresolved. A parameters list so
-// written makes every operation it applies to unusable, and a servers list so
-// written is described as one Server with that Err, which Options.BaseURL can
-// replace as it can any unusable server. In Swagger 2.0, consumes so written
-// makes the request body unusable, produces each response, and schemes is
-// described as a servers list is; and an entry of its root parameters or
-// responses map, which holds Parameter or Response Objects only, is such a
-// value when written as a reference: a parameter entry makes each operation
-// that uses it unusable, since the parameter's identity cannot be read, and a
-// response entry each response that uses it. Bundling replaces such a value
-// whole, so its other members are not read, and a reference whose target lies
-// inside it cannot be followed before bundling either: it makes its own nearest
-// part unusable the same way, and a schema's reference reports it as that
-// reference's Err (see Schema.References). A value so written makes its part
-// unusable even where OpenAPI says the value is ignored, such as an encoding
-// under a JSON media type or an Encoding Object's headers for a field written
-// by its style, since the document still needs bundling. Extension values and
-// examples are not such values. In a map of objects a member named $ref whose
-// value is an object is an entry like any other, such as a header named $ref;
-// in a map of strings, such as OAuth scopes, a string $ref member is a
-// reference.
+// A value written as a reference, an object whose $ref member is a string
+// where an object, list or map belongs but the edition defines no Reference
+// Object, such as an Operation Object, a headers or encoding map, or a
+// parameters or servers list written as a reference to another file, marks a
+// document meant to be bundled before use. It makes the nearest part holding
+// that value unusable: the Err of that Operation, Param, Message, Media, Server
+// or SecurityScheme says the document must be bundled first, a cause that does
+// not wrap ErrUnresolved. A parameters list so written makes every operation it
+// applies to unusable, and a servers list so written is described as one Server
+// with that Err, which Options.BaseURL can replace as it can any unusable
+// server. In Swagger 2.0, consumes so written makes the request body unusable,
+// produces each response, and schemes is described as a servers list is; and
+// an entry of its root parameters or responses map, which holds Parameter or
+// Response Objects only, is such a value when written as a reference: a
+// parameter entry makes each operation that uses it unusable, since the
+// parameter's identity cannot be read, and a response entry each response that
+// uses it. Bundling replaces such a value whole, so its other members are not
+// read, and a reference whose target lies inside it cannot be followed before
+// bundling either. Such a reference in a schema has an Err saying the document
+// must be bundled first, which does not wrap ErrUnresolved (see
+// Schema.References); any other makes its own nearest part unusable the same
+// way. A value so written makes its part unusable even where OpenAPI says the
+// value is ignored, such as an encoding under a JSON media type or an Encoding
+// Object's headers for a field written by its style, since the document still
+// needs bundling. The client reads no webhooks, callbacks, links or examples
+// for an operation, so none makes a part unusable, whatever is written there,
+// unless a reference the client follows leads into it. Extension values are
+// not such values, nor are values that only document the API and in which the
+// edition defines no Reference Object, such as info, tags, externalDocs and
+// example values. In a map of objects a member named $ref whose value is an
+// object is an entry like any other, such as a header named $ref; in a map of
+// strings, such as OAuth scopes, a string $ref member is a reference.
 type Operation struct {
 	// Key addresses this operation in Call, Stream, Prepare and
 	// Client.Operation: its operationId when that names this operation
@@ -136,7 +154,8 @@ type Operation struct {
 	// from the formData parameters; in OpenAPI 3.x, only from requestBody.
 	Body *Message
 
-	// Responses lists the declared responses, in document order.
+	// Responses lists the declared responses, in document order, but no
+	// extension (an x- member) of the Responses Object.
 	Responses []*Message
 
 	// Servers lists the effective servers, in document order. In Swagger
@@ -155,29 +174,45 @@ type Operation struct {
 	// Client.Document.
 	Source string
 
-	// Err is why the operation cannot be called, or nil. It is set by a defect
-	// without which no request can be built: an unresolvable operation or path
-	// reference; an unresolvable parameter or request body reference, whose
-	// identity and requiredness cannot be known, and whose part's Source is the
-	// reference's own location; a Path Item field that both the Path Item and
-	// its $ref target define (see Operation); a path template that does not
-	// match any knowable parameter key; or a security value, the operation's or
-	// the root's it inherits, that is not an array of Security Requirement
-	// Objects each mapping names to arrays of strings; or, written as a
-	// reference where the edition defines none, the Operation or Responses
-	// Object, a parameters list that applies to it, or another value whose
-	// nearest part is the operation, which marks a document meant to be bundled
-	// first (see Operation); or a Swagger 2.0 body or formData parameter that
-	// an OpenAPI 3.x operation reaches, as through a $ref into a Swagger
-	// document, since such an operation has no place for one. A required
-	// parameter with a known Key but unsupported serialization has its own
-	// Param.Err, which Input.ParamWriters may bypass. Calling an operation with
-	// Err set returns a *RequestError wrapping Err. A defect in an optional
-	// part is reported on that part instead, and fails a call only when the
-	// call uses it, the *RequestError then wrapping that part's Err, whether or
-	// not the operation was described first. Wherever an Err's cause is a
-	// reference that could not be resolved, it wraps [ErrUnresolved], and the
-	// retrieval error when retrieving a document failed.
+	// Err is why the operation cannot be called, or nil. For an entry listed
+	// only to report a defect (see Client.Operations), it includes that
+	// defect. It is set by each of these defects, any one of which prevents
+	// building a request:
+	//
+	//   - a reference that cannot be followed to a parameter, or to the
+	//     request body of an operation that takes one (see Bodies by method
+	//     in the package documentation), or a parameter whose in field is
+	//     absent, empty or not a string, as then the parameter's identity or
+	//     the body's requiredness cannot be known;
+	//   - a Path Item field that both the Path Item and its $ref target
+	//     define (see Operation);
+	//   - a path template that has an unclosed { or names a parameter that no
+	//     path parameter declares;
+	//   - a querystring parameter beside another query or querystring
+	//     parameter;
+	//   - a security value, the operation's or the root's it inherits, that
+	//     is not an array of Security Requirement Objects each mapping names
+	//     to arrays of strings;
+	//   - a value written as a reference where the edition defines none (see
+	//     Operation): the Operation Object, its Responses Object, a
+	//     parameters list that applies to it, or another value whose nearest
+	//     part is the operation, such as its security value;
+	//   - in Swagger 2.0, two or more body parameters, or body and formData
+	//     parameters together;
+	//   - a Swagger 2.0 body or formData parameter that an OpenAPI 3.x
+	//     operation reaches, as through a $ref into a Swagger document, since
+	//     such an operation has no place for one.
+	//
+	// A required parameter with a known Key but unsupported serialization has
+	// its own Param.Err, which Input.ParamWriters may bypass. Calling an
+	// operation with Err set returns a *RequestError wrapping Err. A defect in
+	// an optional part is reported on that part instead, and fails a call only
+	// when the call uses it, the *RequestError then wrapping that part's Err,
+	// whether or not the operation was described first. Wherever an Err's
+	// cause is a reference that could not be resolved, it wraps
+	// [ErrUnresolved], and the retrieval error when retrieving a document
+	// failed. A reference that cannot be followed before bundling does not
+	// count as unresolved (see Operation).
 	Err error
 }
 
@@ -224,8 +259,8 @@ type Param struct {
 	// ContentType is the media type the value is serialized with when it is
 	// described by content rather than by schema and style, or, for a form
 	// or multipart field, its effective contentType: its Encoding's, which
-	// may be a comma-separated list or a range, or else the default the
-	// client uses (see the package documentation). Under
+	// may be a range or a comma-separated list (see Response.Media), or else
+	// the default the client uses (see the package documentation). Under
 	// application/x-www-form-urlencoded and multipart/form-data it is empty
 	// for a field whose Encoding sets style, explode or allowReserved, which
 	// OpenAPI says makes contentType ignored there, except for an OpenAPI 3.2
@@ -240,28 +275,40 @@ type Param struct {
 	CollectionFormat string
 
 	// Schema is the value's schema: the declared schema, the schema of the
-	// single content entry, or, for a Swagger 2.0 parameter, one made from
-	// every schema field it declares (type, format, items, default, enum,
-	// bounds, multipleOf, pattern and uniqueItems). It is nil when none is
-	// declared, and then any value is accepted.
+	// single content entry, or, for a Swagger 2.0 parameter or response header,
+	// one made from every schema field it declares (type, format, items,
+	// default, enum, bounds, multipleOf, pattern and uniqueItems). It is nil
+	// when none is declared, and then any value is accepted.
 	Schema *Schema
 
-	// Headers lists the header fields a multipart field's Encoding declares
-	// for its part, except Content-Type, which OpenAPI ignores there. A field
-	// written by its style takes no Part (see Input.Body), so the headers its
-	// Encoding declares are never read.
+	// Headers lists, in document order, the header fields a multipart field's
+	// Encoding declares for its part, except Content-Type, which OpenAPI
+	// ignores there. A field written by its style takes no Part (see
+	// Input.Body), so the headers its Encoding declares are never read.
 	Headers []*Param
 
-	// Source is where the value is declared: the absolute URI of its
-	// document, with a JSON Pointer to its Parameter, Header or Encoding
-	// Object as the fragment. See Client.Document.
+	// Source is where the value is declared: the absolute URI of its document,
+	// with a JSON Pointer to its Parameter, Header or Encoding Object as the
+	// fragment, or, for a form or multipart field that a schema property
+	// declares and no Encoding Object describes, its Schema's Source: that of
+	// the property that first declares it (see Media.Encoding) or, in Swagger
+	// 2.0 and OpenAPI 3.0, of the schema that property's reference leads to
+	// (see Schema). See Client.Document.
 	Source string
 
 	// Err is why built-in serialization cannot use the value, or nil. A
-	// parameter with Err set can be supplied by Input.ParamWriters when
-	// its Key is known; otherwise a required one refuses the call. A
-	// pre-encoded body is never checked against a field's Err (see
-	// Input.Body).
+	// parameter with Err set can be supplied by Input.ParamWriters when its Key
+	// is known; otherwise a required one refuses the call. A pre-encoded body
+	// is never checked against a field's Err (see Input.Body). In OpenAPI 3.1
+	// and 3.2, under the range multipart/*, a field whose Encoding sets style,
+	// explode or allowReserved is written by them in a multipart/form-data
+	// call, its contentType ignored, and by its contentType in a call of any
+	// other multipart type: an Err from either refuses only the calls that use
+	// it. Under an OpenAPI 3.2 querystring parameter's form content, whose
+	// fields no Param describes, a defect in a field's Encoding Object is not
+	// the parameter's Err, unless it is a value written as a reference (see
+	// Operation): it refuses, at the parameter's key, only a value that uses
+	// that field.
 	Err error
 }
 
@@ -291,12 +338,13 @@ type Message struct {
 	// with the form types among them; where the operation declares none,
 	// one Media with an empty Type holds it. Swagger 2.0 formData whose
 	// consumes names no form type also has an empty Type; Input.MediaType
-	// selects a concrete form type for the call.
+	// or Options.MediaType selects a concrete form type for the call.
 	Media []*Media
 
-	// Source is where the request body or response is declared: the
-	// absolute URI of its document, with a JSON Pointer as the fragment.
-	// See Client.Document.
+	// Source is where the request body or response is declared: the absolute
+	// URI of its document, with a JSON Pointer as the fragment; in Swagger 2.0,
+	// a body parameter's location for a body, and empty for formData, which no
+	// one object declares. See Client.Document.
 	Source string
 
 	// Err is why the request body or response cannot be used, or nil, as
@@ -311,8 +359,9 @@ type Media struct {
 	// Type is the media type or range as declared, such as
 	// "application/json" or "image/*". It is empty where a Swagger 2.0
 	// operation declares no consumes or produces; such a Media matches any
-	// type, as */* would. A body sent under it requires a concrete
-	// Input.MediaType.
+	// type, as */* would, except that formData takes only a form type (see
+	// Input.MediaType). A body sent under it requires a concrete
+	// Input.MediaType or Options.MediaType.
 	Type string
 
 	// Schema is the content's schema, or nil when none is declared. For
@@ -329,33 +378,38 @@ type Media struct {
 	// the package documentation), or a range that covers only such types.
 	Sequential bool
 
-	// Encoding describes the fields of form or multipart content, as
-	// Params whose Name is the field, each with its effective ContentType:
-	// the properties the schema lists at its top level, in document order,
-	// then those the schemas it reaches by $ref and allOf list, depth first
-	// in document order, each in the place of its first declaration, then
-	// those that only declare an Encoding Object, in the encoding map's
-	// order, and in Swagger 2.0 every formData parameter. For a positional
-	// multipart type in OpenAPI 3.2, it describes the parts: those of
-	// prefixEncoding in order, named "0", "1" and so on, then that of
-	// itemEncoding, named "*".
+	// Encoding describes the fields of form or multipart content, as Params
+	// whose Name is the field, each with its effective ContentType: the
+	// properties the schema lists at its top level, in document order, then
+	// those the schemas it reaches by $ref and allOf list, depth first in
+	// document order, each in the place of its first declaration, then those
+	// that only declare an Encoding Object, in the encoding map's order, and in
+	// Swagger 2.0 every formData parameter. For a positional multipart type in
+	// OpenAPI 3.2, it describes the top-level parts: those of prefixEncoding in
+	// order, named "0", "1" and so on, then that of itemEncoding, named "*". It
+	// is empty for a declared range other than multipart/*, such as */* or
+	// application/*, and for a response's Media in every edition.
 	Encoding []*Param
 
 	// Source is where the media type is declared: the absolute URI of its
-	// document, with a JSON Pointer to its Media Type Object as the
-	// fragment. See Client.Document.
+	// document, with a JSON Pointer to its Media Type Object as the fragment;
+	// in Swagger 2.0, which has none, the body parameter's or response's
+	// location, and empty for formData. See Client.Document.
 	Source string
 
 	// Err is why the media type declaration itself cannot govern a
-	// structured body, such as an invalid media key or an unreadable Media
-	// Type reference, or an encoding map or prefixEncoding list written as a
-	// reference, or an entry of one that no Encoding Param describes written
-	// as or holding one (see Operation), under any media type, which leaves
-	// no Encoding Param to report it.
-	// Any other schema or Encoding defect that affects structured value
-	// encoding does not set Media.Err: it is reported by Schema.References or
-	// the relevant Encoding Param.Err. A pre-encoded
-	// []byte or io.Reader body is checked against neither (see Input.Body).
+	// structured body, such as a content key, or a Swagger 2.0 consumes or
+	// produces entry, that is not a valid media type; an OpenAPI 3.x request
+	// body's form or multipart content key that holds an invalid or repeated
+	// boundary parameter; an unreadable Media Type reference; or an encoding
+	// map or prefixEncoding list written as a reference, or an entry of one or
+	// an itemEncoding that no Encoding Param describes written as or holding
+	// one (see Operation), under any media type, which leaves no Encoding
+	// Param to report it. Any other schema or Encoding defect that affects
+	// structured value encoding does not set Media.Err: it is reported by
+	// Schema.References or the relevant Encoding Param.Err. A pre-encoded
+	// []byte or io.Reader body is checked against neither, nor against this
+	// Err unless its key causes it (see Input.MediaType).
 	Err error
 }
 
@@ -387,7 +441,8 @@ type Server struct {
 	// resolves against.
 	Source string
 
-	// Err is why the server cannot be used, or nil.
+	// Err is why the document alone makes the server unusable, or nil (see
+	// URL in the package documentation).
 	Err error
 }
 
@@ -411,7 +466,8 @@ type Variable struct {
 	// written as anything but an array of strings, a variable's values being
 	// strings, makes the server unusable (Server.Err), and one written as a
 	// reference marks a document meant to be bundled first (see Operation).
-	// What it permits is on Options.Variables.
+	// Enum is nil for either, even for an array only some of whose items are
+	// strings. What it permits is on Options.Variables.
 	Enum []string
 }
 
@@ -465,8 +521,10 @@ type SecurityScheme struct {
 	// Options.Credentials: a component name or, in OpenAPI 3.2, a URI.
 	Name string
 
-	// Scopes lists the OAuth 2.0 or OpenID Connect scopes, or the roles,
-	// that this alternative requires. The client never checks them.
+	// Scopes lists the OAuth 2.0 or OpenID Connect scopes, or the roles, that
+	// this alternative requires, as the requirement writes them, in its order
+	// and with any repeats (SecurityRequirement.Key sorts them and drops
+	// repeats). The client never checks them.
 	Scopes []string
 
 	// Type is "apiKey", "http", "mutualTLS", "oauth2" or "openIdConnect". A
@@ -484,7 +542,9 @@ type SecurityScheme struct {
 	Scheme       string
 	BearerFormat string
 
-	// Flows lists, for Type "oauth2", the declared flows.
+	// Flows lists, for Type "oauth2", the declared flows, in document order,
+	// each with the fields it has, even when Err is set; a flow written as a
+	// reference, or as anything but an object, is left out.
 	Flows []Flow
 
 	// OpenIDConnectURL is, for Type "openIdConnect", the discovery URL.
@@ -502,12 +562,19 @@ type SecurityScheme struct {
 	// fragment. It tells which document a scheme name was found in. It is
 	// empty for a scheme the document never declares, but in OpenAPI 3.2 it
 	// is then the location of the Security Requirement Object that writes
-	// the name (see Operation).
+	// the name (see Operation). It is empty too for a scheme looked up in a
+	// Components Object or scheme map written as a reference (see
+	// SchemeLookup).
 	Source string
 
 	// Err is why the scheme cannot be used, or nil: a defective or missing
-	// declaration. Alternatives that use it can be applied only when
-	// FromTransport satisfies it.
+	// declaration, such as an apiKey sent in a header field whose name is not
+	// an RFC 9110 token or is Content-Type, Cookie, Host, Content-Length,
+	// Transfer-Encoding, Trailer, Connection, Keep-Alive, Proxy-Connection or
+	// Upgrade, matched without regard to case; an apiKey sent in a cookie whose
+	// name is not an RFC 6265 token; or an http scheme that is not an RFC 9110
+	// token. Alternatives that use it can be applied only when FromTransport
+	// satisfies it.
 	Err error
 }
 
@@ -532,22 +599,35 @@ type Flow struct {
 	Scopes map[string]string
 }
 
-// A Schema is a lazy handle to one Schema Object. Describing operations does
-// no schema work. Raw, Source, Base, Dialect and References expose its authored
-// meaning and resolved references. A caller may build its own schema view
-// from this authored graph without changing how an operation is called;
-// package schema2020 builds one, a standalone JSON Schema 2020-12 schema.
+// A Schema is a lazy handle to one Schema Object. Describing operations does no
+// schema work. Raw, Source, Base, Dialect and References expose its authored
+// meaning and resolved references. Its methods are safe to call concurrently. A
+// caller may build its own schema view from this authored graph without
+// changing how an operation is called; package schema2020 builds one, a
+// standalone JSON Schema 2020-12 schema.
 //
 // A handle is the schema where it is used. In OpenAPI 3.1 and 3.2 it stays
-// at that site, whether or not a $ref there has siblings. In Swagger 2.0
-// and OpenAPI 3.0, whose references ignore their siblings, it follows $ref
-// to a schema that is not only a $ref; when it cannot, it stays at the
+// at that site, whether or not a $ref there has siblings, so references
+// resolve one at a time, a cycle of them included. In Swagger 2.0 and OpenAPI
+// 3.0, whose references ignore their siblings, it follows a chain of schemas
+// written as references (see Operation) to the first schema that is not one;
+// when it cannot, as when the chain leads back into itself, it stays at the
 // site, and References reports the Err. Source identifies the resulting
 // handle in either case.
 //
-// Identifiers and references are read as JSON Schema 2020-12 and OpenAPI's
-// dialects define them. In a schema resource that declares another
-// dialect, identifiers are not interpreted, Base is the base outside the
+// In OpenAPI 3.1 and 3.2, identifiers and references are read as JSON Schema
+// 2020-12 and OpenAPI's dialects define them in a schema resource whose dialect
+// is one of these, each URI compared exactly:
+//   - https://json-schema.org/draft/2020-12/schema
+//   - https://spec.openapis.org/oas/3.1/dialect/base
+//   - https://spec.openapis.org/oas/3.1/dialect/2024-10-25
+//   - https://spec.openapis.org/oas/3.1/dialect/2024-11-10
+//   - https://spec.openapis.org/oas/3.2/dialect/2025-09-17
+//   - https://spec.openapis.org/oas/3.2/dialect/2026-02-26
+//
+// In a 3.1 or 3.2 schema resource whose dialect, by its $schema or its
+// document's jsonSchemaDialect, is any other, identifiers are not interpreted,
+// its references are neither followed nor fetched, Base is the base outside the
 // resource, and References returns an error.
 type Schema struct {
 	legacy    bool
@@ -557,13 +637,16 @@ type Schema struct {
 	src, sub  string // its Source: that of the object it belongs to, and the rest
 }
 
-// Schema returns the Schema Object identified by an absolute URI in the
-// loaded graph, including a JSON Pointer, $anchor or $id resource URI. It
-// never fetches a document. A URI outside the loaded graph, one claimed by
-// multiple distinct schemas, or one whose target is not a Schema Object,
-// returns an error rather than selecting one. This lets generators
-// follow authored references without reimplementing document retrieval and
-// URI resolution. It is safe to call concurrently.
+// Schema returns the Schema Object identified by an absolute URI in the loaded
+// graph, including a JSON Pointer, $anchor or $id resource URI. It never
+// fetches a document. A URI outside the loaded graph, one claimed by multiple
+// distinct schemas, or one whose target is not a Schema Object, returns an
+// error rather than selecting one. Every error it returns wraps ErrUnresolved,
+// except one saying the document must be bundled first; for a URI a reference
+// names but could not reach, the error reads as that reference's Err does and
+// wraps the same errors. This lets generators follow authored references
+// without reimplementing document retrieval and URI resolution. It is safe to
+// call concurrently.
 func (c *Client) Schema(uri string) (*Schema, error) {
 	return c.doc.schemaURI(uri)
 }
@@ -657,9 +740,12 @@ func (s *Schema) Source() string {
 }
 
 // Base is the base URI that the references in Raw resolve against: that of
-// Source's document, or, in OpenAPI 3.1 and 3.2, the nearest $id at or
-// above the schema, its own $id included, resolved against the base outside
-// it (see Schema for other dialects).
+// Source's document, or, in OpenAPI 3.1 and 3.2, the nearest $id at or above
+// the schema, its own $id included, resolved against the base outside it (see
+// Schema for other dialects, and Loader for a referenced document that declares
+// no edition). An $id that net/url cannot parse, that has a non-empty fragment,
+// which JSON Schema 2020-12 forbids, or that supplies no base (see
+// Loader.Parse) is ignored.
 func (s *Schema) Base() string {
 	if n := s.schemaNode(); n != nil {
 		return n.base.String()

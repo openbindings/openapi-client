@@ -30,8 +30,9 @@ import (
 // An iterator that honors its yield result then stops, but a caller's arbitrary
 // io.Reader may remain blocked in Read; use a source that responds to
 // cancellation for long-running uploads. ctx bounds the whole stream:
-// cancelling it before the headers arrive is an error from Stream, and after
-// them it is observable from WaitRequest and from an affected response read.
+// cancelling it before the headers arrive is an error from Stream when the
+// transport honors the request's context, as net/http's does, and after them
+// it is observable from WaitRequest and from an affected response read.
 func (c *Client) Stream(ctx context.Context, key string, in *Input) (*Response, error) {
 	o, err := c.operation(key)
 	if err != nil {
@@ -59,9 +60,9 @@ func (r *Request) Stream(ctx context.Context) (*Response, error) {
 }
 
 // ErrItem is wrapped by an error that concerns one item alone: the item was
-// malformed, or did not decode into the type asked for. Items yields such
-// an error in the item's place and goes on; any other error ends the
-// iteration.
+// malformed, or did not decode into the type asked for. Items yields such an
+// error in the item's place and goes on, unless the call's context has ended
+// (see Items); any other error ends the iteration.
 var ErrItem = errors.New("openapi: bad item")
 
 // Items returns the items of r's open body as they arrive, each decoded
@@ -69,47 +70,77 @@ var ErrItem = errors.New("openapi: bad item")
 //
 //   - application/jsonl and application/x-ndjson: one JSON value per line;
 //     blank lines are skipped.
-//   - application/json-seq and any +json-seq type: one per RFC 7464 record.
-//     A record holding a top-level number, true, false or null not followed
-//     by whitespace, which may be truncated, is dropped and reported: an
-//     ErrItem here, a *DecodeError from Call.
+//   - application/json-seq and any +json-seq type: one per RFC 7464 record,
+//     which is one JSON text and ends at the first LF after that text, or else
+//     at the next RS; a []byte item is the record's bytes after its RS.
+//     Whitespace after the LF is skipped. Any other text before the next RS,
+//     and any text at all before the first RS, is a malformed record of its
+//     own, as is a record holding a top-level number, true, false or null not
+//     followed by whitespace, which may be truncated. A malformed record is
+//     dropped and reported, an ErrItem here and a *DecodeError from Call, and
+//     reading goes on at the next RS. Under a text/* type whose items have
+//     no caller's codec, a T of any or string receives each record's bytes
+//     as text, as Call takes a text/* body, so a record that is not a JSON
+//     text is yielded, not reported; the malformed records above (text
+//     outside a record, a truncated scalar) are still dropped and reported.
 //   - text/event-stream: one per dispatched event, as the JSON object
 //     OpenAPI 3.2 defines for it, whose members are only the fields the
 //     event set: "data", "event" and "id" as strings, "retry" as a number.
 //     T is the type the operation's itemSchema describes; to decode each
-//     event's data instead, use [Events]. Dispatch and field presence are
-//     as for Events, but retry is a JSON integer without Event.Retry's
+//     event's data instead, use [Events]. Dispatch, decoding and field presence
+//     are as for Events, but retry is a JSON integer without Event.Retry's
 //     time.Duration range restriction.
-//   - multipart types: one per part, decoded by the part's own
-//     Content-Type as Call decodes a body, text/plain where it has none
-//     (message/rfc822 in multipart/digest), after any base64 or
-//     quoted-printable Content-Transfer-Encoding is removed. An unknown
-//     transfer encoding makes the effective type application/octet-stream
-//     and leaves its bytes encoded, as RFC 2045 requires. With T =
-//     *multipart.Part, each item is the part as mime/multipart's NextPart
-//     returns it, its body read as it arrives and valid until the next
-//     iteration. Nested multipart bodies are decoded as Call decodes them,
-//     without flattening their parts.
+//   - multipart types: one per part, decoded by the part's own Content-Type as
+//     Call decodes a body, text/plain where it has none (message/rfc822 in
+//     multipart/digest), after any base64 or quoted-printable
+//     Content-Transfer-Encoding is removed; base64 is read with its padding
+//     required, ignoring only spaces, tabs, CR and LF, so any other character
+//     outside its alphabet, or missing, incomplete or misplaced padding, makes
+//     the part an ErrItem. An unknown transfer encoding makes the effective
+//     type application/octet-stream and leaves its bytes encoded, as RFC 2045
+//     requires. With T = *multipart.Part, each item is the part as
+//     mime/multipart's NextPart returns it, its body read as it arrives and
+//     valid until the next iteration. Nested multipart bodies are decoded as
+//     Call decodes them, without flattening their parts. The body is framed
+//     as RFC 2046 says, except for line breaks. A header line may end in LF
+//     alone. If the delimiter line that opens the first part ends in LF
+//     alone, LF alone replaces CRLF before and after each delimiter; if it
+//     ends in CRLF, the close delimiter's line may still end in LF alone. A
+//     body that holds only a close delimiter line has no parts. A body that
+//     cannot be framed, as with no delimiter, a malformed part header, or an
+//     end before the close delimiter, ends the iteration with an error that
+//     is not an ErrItem, wrapping mime/multipart's where it gives one.
 //   - any other media type: the whole body, as one item.
 //
-// The media type is the response's Content-Type, read as Call reads it, so
-// a T of any receives a body without one as one []byte.
-// An empty body yields no items. Items decode as Call decodes, so with the
-// client's own JSON codec a T of any keeps numbers exact. A T of []byte
-// bypasses value decoding and receives the framed item's bytes; for SSE,
-// these are the event object's JSON representation. The JSON-sequence
-// scalar-truncation rule still applies. An error that concerns one item
+// The media type is the response's Content-Type, read as Call reads it, so a T
+// of any receives a body without one as one []byte. An empty body yields no
+// items. Items decode as Call decodes, so with the client's own JSON codec a T
+// of any keeps numbers exact. A T of []byte bypasses value decoding and
+// receives the framed item's bytes; for SSE, these are the event object's JSON
+// representation. The JSON-sequence scalar-truncation rule still applies. A T
+// of *multipart.Part reads only a multipart body: under any other media type,
+// a Content-Encoding naming a coding other than identity is reported as
+// Content codings in the package documentation says, and otherwise no item
+// decodes into it, so each is an ErrItem. An error that concerns one item
 // wraps [ErrItem] and is yielded in its place, and the iteration goes on.
-// Any other error
-// (a read failure, the context's error, an item over Options.MaxItemBytes)
-// is yielded last. Items yielded before an error stand. When the loop ends,
-// by break or otherwise, Body is closed.
-// A non-EOF read error discards an unfinished item, but completed items
-// read with that error are yielded first. Ordinary EOF may finish a JSON
-// line or JSON-sequence record; SSE dispatch requires an empty line.
+// Any other error (a read failure, the context's error, an item over
+// Options.MaxItemBytes) is yielded last, except that a multipart body ends at
+// the line break that ends its close delimiter's line, so a read failure that
+// comes with or after that line break, or the context's ending after it, is
+// not reported. Items yielded before an error stand. Once the call's context
+// has ended, the next read of Body fails with the context's error, and an
+// error that concerns one item is joined with it; either ends the iteration,
+// though items whose bytes were already read may still be yielded first. When
+// the loop ends, by break or otherwise, the client closes Body and signals any
+// outstanding upload to stop, even for an unchanged upgrade or tunnel body,
+// whose own Close does not. Body is not read again after a non-EOF read error,
+// which discards an unfinished item, but completed items read with that error
+// are yielded first. Ordinary EOF may finish a JSON line or JSON-sequence
+// record; SSE dispatch requires an empty line.
 //
-// r must come from Stream or Request.Send, and may be iterated once; for
-// any other Response, Items yields one error.
+// r must come from Stream or Request.Send, and may be iterated once, by Items
+// or Events, through r or any copy of it; any later iteration, and one of any
+// other Response, yields one error and no item.
 func Items[T any](r *Response) iter.Seq2[T, error] {
 	return func(yield func(T, error) bool) {
 		var zero T
@@ -173,18 +204,20 @@ func Items[T any](r *Response) iter.Seq2[T, error] {
 }
 
 // Events returns the server-sent events of r's open text/event-stream body as
-// they arrive, one per dispatched event, parsed as the HTML standard says.
-// Its non-browser dispatch rule yields each empty-line-terminated block
-// that sets at least one valid data, event, id or retry field, including a
-// block without data. Fields belong to that block alone, without inheriting
-// an earlier block's ID or retry. Blocks that set no valid field are skipped;
-// EOF discards an unfinished block. A valid retry integer that cannot fit in
-// Event.Retry yields an ErrItem, and iteration continues with the next block.
-// Invalid UTF-8 follows the WHATWG Encoding standard's replacement decoder.
-// A body of another media type, or a Response not from Stream or
-// Request.Send, yields one error. Errors, and
-// closing Body, are as for [Items]. The client never reconnects; to resume,
-// call again with a Last-Event-ID field in Input.Header.
+// they arrive, one per dispatched event, parsed as the HTML standard says. It
+// dispatches each empty-line-terminated block that sets at least one valid
+// data, event, id or retry field, including a block without data, which a
+// browser's EventSource does not dispatch. Fields belong to that block alone,
+// without inheriting an earlier block's ID or retry. Blocks that set no valid
+// field are skipped; EOF discards an unfinished block. A valid retry integer
+// that cannot fit in Event.Retry yields an ErrItem, and iteration continues
+// with the next block. The body is decoded by the WHATWG Encoding standard's
+// UTF-8 decode, as the HTML standard requires: one leading byte order mark is
+// dropped, and each maximal subpart of ill-formed UTF-8 becomes one U+FFFD. A
+// body of another media type, a Response not from Stream or Request.Send, or
+// one already iterated, yields one error. Errors, and closing Body, are as for
+// [Items]. The client never reconnects; to resume, call again with a
+// Last-Event-ID field in Input.Header.
 func Events(r *Response) iter.Seq2[Event, error] {
 	return func(yield func(Event, error) bool) {
 		x, err := claimResponse(r)

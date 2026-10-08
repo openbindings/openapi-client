@@ -9,11 +9,11 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// The scaling harness's 8x allocated-byte bound (scaleAllocBound) applies
-// to fourfold document growth. Distinct identifiers at nested schema
-// locations must not retain or repeatedly construct every full ancestor
-// pointer. This public Parse fixture contains no operations or descriptor
-// Sources.
+// Regression check, not contract: distinct identifiers at nested schema
+// locations do not retain or repeatedly construct every full ancestor
+// pointer. The scaling harness's 8x allocated-byte bound (scaleAllocBound)
+// applies to fourfold document growth. This public Parse fixture contains no
+// operations or descriptor Sources.
 func TestDocumentNestedIdentifierByteGrowth(t *testing.T) {
 	ctx := t.Context()
 	run := func(depth int) func() {

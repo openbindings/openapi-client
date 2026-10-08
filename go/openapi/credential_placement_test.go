@@ -60,9 +60,12 @@ func newJar(t *testing.T, base string, cookies ...*http.Cookie) http.CookieJar {
 // replacing a pair of its name. Jar and parameter pairs of one name are both
 // kept, as net/http does. doc.go, Credentials: "Query and cookie
 // credentials go last ... and one that replaces a pair of the same name ...
-// removes it and goes last"; Cookies: "one Cookie field ... parameters in
-// declared order, then credentials". net/http's cookiejar returns cookies
-// of one path in the order they were set.
+// removes it and goes last"; Fixed rules, Cookies: "one Cookie field holding,
+// joined by "; ", the parameters in declared order, then the cookies the
+// HTTPClient's Jar holds for the URL, then credentials. A credential replaces
+// a pair of its name, a Jar's included (see Credentials); a Jar's cookie and a
+// parameter of the same name are both sent." net/http's cookiejar returns
+// cookies of one path in the order they were set.
 func TestJarCookiesThenCredentials(t *testing.T) {
 	for _, tt := range []struct {
 		name string
@@ -257,14 +260,14 @@ func TestParamWriterCannotMoveCredentials(t *testing.T) {
 	}
 }
 
-// doc.go, Credentials: bearer and Basic credentials go over plain http only
-// to "a loopback IP address, an IPv4-mapped one included, or the name
-// localhost written exactly so, the one name http.ProxyFromEnvironment never
-// sends through a proxy". The origin and plain-http checks run against the
-// URL actually sent, on every hop the client signs: a hop from
-// http://localhost:P to http://LOCALHOST:P is the same origin, which would
-// otherwise be signed again although net/http proxies it. The transport
-// dials nothing.
+// doc.go, Credentials: bearer and Basic credentials go over plain http only to
+// "a loopback IP address as net/netip parses one (so 127.1 is a name), an
+// IPv4-mapped one included, or the name localhost written exactly so, the one
+// name http.ProxyFromEnvironment never sends through a proxy". The origin and
+// plain-http checks run against the URL actually sent, on every hop the client
+// signs: a hop from http://localhost:P to http://LOCALHOST:P is the same
+// origin, which would otherwise be signed again although net/http proxies it.
+// The transport dials nothing.
 func TestLocalhostSpellingCheckedOnTheURLSent(t *testing.T) {
 	const base = "http://localhost:9"
 	t.Run("Request.HTTP", func(t *testing.T) {
@@ -389,14 +392,15 @@ func valueCases() []valueCase {
 // widely deployed "<id>|<token>" is outside b64token. doc.go, Credentials: "A
 // credential value its destination cannot carry is refused at
 // Options.Credentials["name"]: by Load for a static credential (by each
-// call, for a Client from Client.With), by the call for a source's. Such a
-// value is a header field value with a control character other than a tab,
-// or with leading or trailing whitespace; a cookie value with ";", a control
-// character, or leading or trailing whitespace; and a Basic value without
-// the colon, or with a control character in the user-id or password, which
-// RFC 7617 forbids." credential.go, Secret: for http basic, "the user-id
-// and password joined by a colon, as RFC 7617 writes them"; for a bearer
-// token, "the token, sent as 'Authorization: Bearer <token>'". A refusal
+// call, for a Client from Client.With), by the call for a credential
+// source's. Such a value is a header field value with an ASCII control
+// character other than a tab, or with leading or trailing whitespace; a cookie
+// value with ";", an ASCII control character, or leading or trailing
+// whitespace; and a Basic value RFC 7617 forbids: one without the colon, with
+// an ASCII control character in the user-id or password, or made by Basic from
+// a username holding a colon." credential.go, Secret: for http basic, "the
+// user-id and password joined by a colon, as RFC 7617 writes them"; for a
+// bearer token, "the token, sent as 'Authorization: Bearer <token>'". A refusal
 // never quotes the value (doc.go, Outcomes).
 func TestCredentialValueSyntax(t *testing.T) {
 	w := newWire(t, nil)
@@ -480,10 +484,11 @@ func TestBasicForAnotherSchemeThroughWith(t *testing.T) {
 // A hop's refused credential names its scheme, with no unchecked type
 // assertion. A credential value its destination cannot carry is refused on a
 // hop as on the first request (the value is a source's, refused by the call),
-// and the response that arrived is returned. errors.go, RequestError.Err: "a
-// credential source's error (naming the scheme)"; credential.go, SecretFunc:
-// on a hop, "an error or an empty secret ends the call with a *url.Error ...
-// along with the last response".
+// and the response that arrived is returned. client.go, Redirects: "A
+// credential can fail to be placed on a hop: a credential source's error,
+// empty secret or value its destination cannot carry, ... That ends the call
+// with a *url.Error, returned with the 3xx, its body closed; for a credential
+// source's failure, the error names the scheme."
 func TestHopCredentialRefusalNamesItsScheme(t *testing.T) {
 	doc := doc31(`"/r":{"get":{"operationId":"getR"}}`, `"security":[{"corp_bearer":[]}]`,
 		`"components":{"securitySchemes":{"corp_bearer":{"type":"http","scheme":"bearer"}}}`)
@@ -780,7 +785,7 @@ type schemeCase struct {
 // checkSchemeCases declares each case's scheme as "s" for an operation
 // "s", and checks SecurityScheme.Err; a defective scheme refuses a call
 // with a Secret, at the credential's key, and is satisfied by FromTransport
-// (describe.go, SecurityScheme.Err: "a defective or missing declaration.
+// (describe.go, SecurityScheme.Err: "a defective or missing declaration, ...
 // Alternatives that use it can be applied only when FromTransport satisfies
 // it"; doc.go, Credentials: "FromTransport is what satisfies a scheme a
 // requirement names but the document never declares, or declares
@@ -891,16 +896,16 @@ func TestOAuthFlowDefects(t *testing.T) {
 	})
 }
 
-// Each defect a Security Scheme Object can have. SecurityScheme.Err for a
-// header apiKey naming Content-Type, Cookie or a derived field follows the
-// rule for Options.Header and header parameters (checkHeader,
-// derivedFields); a cookie apiKey name that is not a token (RFC 6265
-// section 4.1.1) is Err. OAS 3.1.2 section 4.8.27.1: flows is REQUIRED for
-// oauth2, openIdConnectUrl for openIdConnect, scheme for http; RFC 9110
-// section 11.1: an auth-scheme is a token. doc.go, Header fields: Host,
-// Content-Length, Transfer-Encoding, Trailer, Connection, Keep-Alive,
-// Proxy-Connection and Upgrade are derived or forbidden; Content-Type and
-// Cookie are the client's.
+// Each defect a Security Scheme Object can have. describe.go,
+// SecurityScheme.Err: "a defective or missing declaration, such as an apiKey
+// sent in a header field whose name is not an RFC 9110 token or is
+// Content-Type, Cookie, Host, Content-Length, Transfer-Encoding, Trailer,
+// Connection, Keep-Alive, Proxy-Connection or Upgrade, matched without regard
+// to case; an apiKey sent in a cookie whose name is not an RFC 6265 token; or
+// an http scheme that is not an RFC 9110 token" (RFC 6265 section 4.1.1; RFC
+// 9110 section 11.1: an auth-scheme is a token). OAS 3.1.2 section 4.8.27.1:
+// flows is REQUIRED for oauth2, openIdConnectUrl for openIdConnect, scheme for
+// http.
 func TestSecuritySchemeDefectsEveryBranch(t *testing.T) {
 	header := func(name string) string { return `{"type":"apiKey","in":"header","name":"` + name + `"}` }
 	cookie := func(name string) string { return `{"type":"apiKey","in":"cookie","name":"` + name + `"}` }
@@ -932,10 +937,11 @@ func TestSecuritySchemeDefectsEveryBranch(t *testing.T) {
 // general. doc.go,
 // Outcomes: "No credential appears in the text of an error the client
 // creates, nor in the URL of the *url.Error the http.Client returns, which
-// names the request without the credentials the client added. Errors made by
-// the caller's own code, such as its transport or a credential source, are
-// passed on as they are, even when their text quotes a URL." The case here
-// is a transport returning &url.Error{URL: r.URL.String(), ...}.
+// names the request without the credentials the client added. ... Errors made
+// by the caller's own code, such as its transport, Loader.Fetch, a credential
+// source, a ParamWriters function or a Codec's Encode, are passed on as they
+// are, and their text is included as it is, even when it quotes a URL." The
+// case here is a transport returning &url.Error{URL: r.URL.String(), ...}.
 func TestCallerURLErrorPassedOn(t *testing.T) {
 	var made atomic.Pointer[url.Error]
 	rt := &memRT{answer: func(r *http.Request) (*http.Response, error) {

@@ -11,11 +11,11 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Context cancellation and deadlines. doc.go, Outcomes: "When the call's
-// context is done before the call completes, the error matches ctx.Err()
-// with errors.Is, and also context.Cause(ctx), even where net/http would
-// report only the cause ... a *StatusError or *DecodeError may wrap the
-// context's error when a deadline cut the body short."
+// Context cancellation and deadlines. doc.go, Outcomes: "An error a call
+// returns because its context ended matches both ctx.Err() and
+// context.Cause(ctx) with errors.Is, even where net/http reports only the
+// cause ... a *StatusError or *DecodeError may wrap the context's error when a
+// deadline cut the body short."
 
 var errCause = errors.New("the caller gave up")
 

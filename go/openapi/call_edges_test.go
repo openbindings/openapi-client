@@ -158,8 +158,10 @@ type skipped struct {
 // encoding/json would not write is no refusal, and the body is sent as
 // encoding/json writes it; a reader it would write is refused at its place,
 // a TextMarshaler key named by its text (client.go, Input.Body: "A Part or
-// io.Reader inside a JSON value is refused with an Inputs entry at its place
-// in Body").
+// io.Reader inside a value the client encodes with encoding/json is refused
+// at an Inputs key that begins "Input.Body""; errors.go, RequestError.Inputs:
+// "Input.Body" is "followed by a JSON Pointer to the part of Body
+// concerned").
 func TestReaderInJSONBodyFollowsEncodingJSONFields(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, doc31(jsonBodyOp), nil)
@@ -357,11 +359,10 @@ func TestNilBytePointerOutRefused(t *testing.T) {
 	}
 }
 
-// A (location, style) pair OAS 3.1.2 section 4.8.12.3 (Style Values) does
-// not allow is a document defect on Param.Err, not a missing feature
-// (errors.ErrUnsupported), and fails a call only when the call uses the
-// parameter (describe.go, Operation.Err: "A defect in an optional part is
-// reported on that part instead"). Every valid pair is serialized, so its
+// A (location, style) pair OAS 3.1.2 section 4.8.12.3 (Style Values) does not
+// allow is a document defect on Param.Err, and fails a call only when the call
+// uses the parameter (describe.go, Operation.Err: "A defect in an optional part
+// is reported on that part instead"). Every valid pair is serialized, so its
 // Param.Err is nil; explode false, since explode true with spaceDelimited or
 // pipeDelimited is an undefined combination (doc.go, Fixed rules, Styles;
 // TestStyleRefusals).
@@ -384,7 +385,7 @@ func TestStyleLocationPairValidity(t *testing.T) {
 				tt.path, tt.in, required, tt.style))
 			c := parseFor(t, w, doc, nil)
 			p := param(t, mustOp(t, c, "op"), 0)
-			if p.Err == nil || errors.Is(p.Err, errors.ErrUnsupported) {
+			if p.Err == nil {
 				t.Errorf("Param.Err = %v, want a document defect", p.Err)
 			}
 			before := w.count()
@@ -393,7 +394,7 @@ func TestStyleLocationPairValidity(t *testing.T) {
 			if resp != nil || w.count() != before {
 				t.Errorf("a value for a defective parameter was sent")
 			}
-			if e := re.Inputs["v"]; e == nil || errors.Is(e, errors.ErrUnsupported) {
+			if e := re.Inputs["v"]; e == nil {
 				t.Errorf("Inputs[\"v\"] = %v, want the defect", e)
 			}
 			if !required {
@@ -469,11 +470,20 @@ func TestDocumentURIUserinfoRefused(t *testing.T) {
 }
 
 // Header names must be RFC 9110 tokens (section 5.1) and values cannot carry
-// CR, LF, NUL, other controls, or leading or trailing whitespace (section
-// 5.5); each is refused before sending at its key (errors.go, RequestError):
-// the header parameter's Param.Key, or the Header that set it.
-// Input.MediaType is validated as a media type (section 8.3.1, parameters
-// quoted as section 5.6.4 says).
+// CR, LF, NUL, other controls, or leading or trailing whitespace (section 5.5):
+// doc.go, Fixed rules, Header fields: "A field name, in a Header
+// (Options.Header, Input.Header or Part.Header) or of a header parameter, must
+// be an RFC 9110 token, and a field value, a header parameter's included, may
+// hold no ASCII control character but a tab and no leading or trailing
+// whitespace"; a header parameter "whose name is not a token, has Param.Err,
+// and any other breach of these rules is refused at the key of what gave it,
+// such as Settings "Options.Header" or "Input.Header", or a Part's or header
+// parameter's Inputs key", before sending. Input.MediaType is validated as a
+// media type (section 8.3.1, parameters quoted as section 5.6.4 says;
+// client.go, Response.Media: "The client parses every media type it reads,
+// such as a Content-Type, a content key, a Swagger 2.0 consumes or produces
+// entry, an Encoding contentType, Options.MediaType, Input.MediaType or
+// Part.MediaType, by RFC 9110's media-type grammar").
 func TestHeaderFieldNameAndValueValidation(t *testing.T) {
 	w := newWire(t, nil)
 	doc := doc31(`"/h":{"get":{"operationId":"h","parameters":[{"name":"X-V","in":"header","schema":{}},{"name":"X C","in":"header","schema":{}}]}},
@@ -617,9 +627,10 @@ func TestServerVariableWithoutDefaultUnusable(t *testing.T) {
 	}
 }
 
-// "A *string and a *any take any text/* type as text, whatever its codec
-// class (text/xml and text/event-stream included): a *string its bytes as
-// sent ... and a *any a string" (client.go, Call).
+// "Where the media type has no caller's codec, a *string and a *any take any
+// text/* type as text, whatever its codec class (text/xml and
+// text/event-stream included): a *string its bytes as sent ... and a *any a
+// string" (client.go, Call).
 func TestTextXMLDecodesAsText(t *testing.T) {
 	body := `<a>hi<b>x</b></a>`
 	for _, ct := range []string{"text/xml", "text/xml; charset=utf-8", "text/event-stream"} {
@@ -723,8 +734,9 @@ func TestResponseMediaSpecificityOrder(t *testing.T) {
 
 // Raw document text is quoted in error text, so a hostile document cannot
 // forge a log line, and a caller's value never appears (errors.go,
-// RequestError.Error: "never a credential or an input's value"); an encoding
-// error keeps its cause.
+// RequestError.Error: "The text the client writes never holds a credential,
+// or a value the caller gave a parameter, a server variable, a header field or
+// the body"); an encoding error keeps its cause.
 func TestErrorTextQuotesDocumentAndOmitsValues(t *testing.T) {
 	w := newWire(t, nil)
 	doc := doc31(`"/x\n{a\nFAKE: line}":{"get":{"operationId":"forged"}},
@@ -776,9 +788,9 @@ func TestFileURLWithRemoteHostRefused(t *testing.T) {
 	}
 }
 
-// An invalid media key is not a codec class, so it forces no Accept
-// (client.go, Call: a typed out is refused only when 2xx responses "declare
-// concrete media types of more than one codec class").
+// An invalid media key is no concrete media type, so it forces no Accept
+// (client.go, Call: a typed out is refused only when "the concrete media types
+// the operation's 2xx responses declare fall into more than one group").
 func TestInvalidMediaKeyForcesNoAccept(t *testing.T) {
 	w := newWire(t, jsonAnswer(200, `{"a":1}`))
 	c := parseFor(t, w, doc31(`"/a":{"get":{"operationId":"op","responses":{"200":{"description":"ok","content":{"application/json":{},"json":{}}}}}}`), nil)
@@ -1068,9 +1080,11 @@ func TestHeaderWithoutValuesRemovesUserAgent(t *testing.T) {
 	}
 }
 
-// "A path parameter value that would form a whole "." or ".." segment is
-// refused, since RFC 3986 section 5.2.4 removes such segments" (doc.go,
-// Fixed rules, Percent-encoding). Other dotted values are sent.
+// "A path parameter value whose expansion would form a whole "." or ".."
+// segment, percent-encoded or not, alone or with the values and text beside
+// it, is refused at its key ..., since RFC 3986 section 5.2.4 removes such
+// segments" (doc.go, Fixed rules, Percent-encoding). Other dotted values are
+// sent.
 func TestPathValueDotSegmentsRefused(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, doc31(`"/users/{id}/sessions":{"delete":{"operationId":"op","parameters":[{"name":"id","in":"path","required":true,"schema":{}}]}}`), nil)
@@ -1094,9 +1108,9 @@ func TestPathValueDotSegmentsRefused(t *testing.T) {
 }
 
 // A Variables value substituted into the authority "may not hold "/", "?",
-// "#", "@" or "\\"" (client.go, Options.Variables; RFC 3986 section 3.2), so
-// a value cannot move the request to another host. Each value here would
-// move the request to the test server, which must receive nothing.
+// "#", "@" or a backslash" (client.go, Options.Variables; RFC 3986 section
+// 3.2), so a value cannot move the request to another host. Each value here
+// would move the request to the test server, which must receive nothing.
 func TestAuthorityVariableValuesCannotMoveHost(t *testing.T) {
 	w := newWire(t, nil)
 	host := w.hostport()

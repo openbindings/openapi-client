@@ -7,7 +7,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -15,9 +14,10 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// "ctx bounds the whole load, reading and parsing included" (load.go,
-// Load), a file that never delivers its content, such
-// as a FIFO nobody writes to, included.
+// load.go, Load: "ctx bounds the whole load, reading and parsing included:
+// when it is done before the load completes, Load returns no Client and an
+// error that matches ctx.Err() with errors.Is", a file that never delivers its
+// content, such as a FIFO nobody writes to, included.
 func TestLoadOfSilentFIFOEndsWithContext(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "doc.json")
 	if err := syscall.Mkfifo(path, 0o600); err != nil {
@@ -30,19 +30,20 @@ func TestLoadOfSilentFIFOEndsWithContext(t *testing.T) {
 			if cancelled {
 				cancel()
 			}
-			done := make(chan error, 1)
+			type result struct {
+				c   *openapi.Client
+				err error
+			}
+			done := make(chan result, 1)
 			go func() {
-				_, err := openapi.Load(ctx, path, nil)
-				done <- err
+				c, err := openapi.Load(ctx, path, nil)
+				done <- result{c, err}
 			}()
 			select {
-			case err := <-done:
-				if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
-					t.Errorf("Load of a silent FIFO = %v, want the context's error", err)
-				}
-				// The text says the context ended.
-				if err != nil && !strings.Contains(err.Error(), ctx.Err().Error()) {
-					t.Errorf("error text %q does not say the context ended (%q)", err, ctx.Err())
+			case r := <-done:
+				if r.c != nil || !errors.Is(r.err, ctx.Err()) {
+					t.Errorf("Load of a silent FIFO = %v, %v; want no Client "+
+						"and an error matching %v", r.c, r.err, ctx.Err())
 				}
 			case <-time.After(2 * time.Second):
 				t.Errorf("Load of a silent FIFO was still blocked 2s after its context ended")

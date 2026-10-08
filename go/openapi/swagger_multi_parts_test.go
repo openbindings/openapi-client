@@ -14,10 +14,10 @@ import (
 // reader is refused"; doc.go, Values: in "a form or multipart field
 // serialized by ... a Swagger 2.0 collectionFormat, null, an empty array and
 // an object whose members are all undefined are undefined ... An undefined
-// member or array item is skipped", and "a number or boolean is written in its
-// JSON spelling"; doc.go, Fixed rules, Swagger 2.0 arrays: "multi repeats the
-// name and value". So a multi array's items are written the same way under
-// multipart/form-data, one text/plain part per item, as under
+// member or array item is skipped", and "a number, boolean or json.Number is
+// written in its JSON spelling"; doc.go, Fixed rules, Swagger 2.0 arrays:
+// "multi repeats the name and value". So a multi array's items are written the
+// same way under multipart/form-data, one text/plain part per item, as under
 // application/x-www-form-urlencoded, one field per item: undefined items
 // skipped, a number in its JSON spelling, a string from the JSON data, in
 // which encoding/json writes an invalid byte as U+FFFD, and a []byte as

@@ -16,9 +16,11 @@ import (
 )
 
 // An inferred schema resource that retrieval later reveals to be instance
-// data (Loader: "references whose scope depends on that inference are
-// unresolvable. The documents already retrieved remain available, and parts
-// independent of that inference remain usable"), ErrUnresolved, and the
+// data (Loader: "every reference whose base or target depends on that
+// inference, in any document, is unresolvable, and none is resolved again
+// under the corrected types. The documents already retrieved remain
+// available, and parts independent of that inference remain usable"),
+// ErrUnresolved, and the
 // Schema/Document contracts.
 // Each inferred example resource discovers the Parameter context that disproves
 // it. Unlike the independent-route workloads, these enter the refusal path.
@@ -254,10 +256,11 @@ func TestSchemaDisprovedInferenceWorkload(t *testing.T) {
 	}
 }
 
-// Four times the feedback contexts and independent holes, under the
-// harness's five-trial 12x-time/8x-byte bounds. ParseOnly includes final
-// refusal/discovery work; GraphOnly excludes Parse and its retained state.
-// Harness, validation and fixture work remain outside measurement.
+// Regression check, not contract: a disproved schema inference costs time and
+// bytes linear in its feedback contexts and independent holes, four times them
+// under the harness's five-trial 12x-time/8x-byte bounds. ParseOnly includes
+// final refusal/discovery work; GraphOnly excludes Parse and its retained
+// state. Harness, validation and fixture work remain outside measurement.
 func TestSchemaDisprovedInferenceScale(t *testing.T) {
 	ctx := t.Context()
 	fixtures := [2]disprovedInferenceFixture{disprovedInferenceGraph(128), disprovedInferenceGraph(512)}

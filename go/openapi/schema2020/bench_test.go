@@ -219,12 +219,12 @@ func perOp(tb testing.TB, f func()) time.Duration {
 	return best
 }
 
-// Four times the input costs at most about ten times the time: one deep
-// schema, one long reference chain, a whole document, and the
-// readOnly/writeOnly discovery through allOf (Project: a property's
-// "declarations are those in the object's properties and in the
-// properties of every schema the object reaches through allOf"), for one
-// long chain and for many objects sharing one.
+// Regression check, not contract: a timing check, skipped under -short. Four
+// times the input costs at most about ten times the time: one deep schema, one
+// long reference chain, a whole document, and the readOnly/writeOnly discovery
+// through allOf (Project: a property's "declarations are those in the object's
+// properties and in the properties of every schema the object reaches through
+// allOf"), for one long chain and for many objects sharing one.
 func TestProjectScaling(t *testing.T) {
 	if testing.Short() {
 		t.Skip("timing")

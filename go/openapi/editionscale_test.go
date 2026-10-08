@@ -30,6 +30,10 @@ func editionAdditionalDoc(n int) []byte {
 	return []byte(editionDoc("3.2.1", `"/x":{"additionalOperations":{`+strings.Join(methods, ",")+`}}`, `"components":{"parameters":{"P":{"name":"p","in":"query","schema":{"type":"string"}}}}`))
 }
 
+// Regression check, not contract: loading and describing are linear in
+// allocations and bytes for a Swagger 2.0 parameter many operations share and
+// for many additional operations sharing a parameter, every normalization
+// plan being computed once per node.
 func TestEditionsNormalizationScale(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -62,8 +66,9 @@ func TestEditionsNormalizationScale(t *testing.T) {
 	}
 }
 
-// A deeply nested Items chain and nested value must cost proportional to the
-// chain, even though each level's collectionFormat is independently applied.
+// Regression check, not contract: a deeply nested Items chain and nested value
+// must cost proportional to the chain, even though each level's
+// collectionFormat is independently applied.
 func TestEditionsNestedCollectionScale(t *testing.T) {
 	wantLinearBytes(t, "nested Items", 64, func(n int) func() {
 		schema := `{"type":"string"}`
@@ -93,8 +98,10 @@ func TestEditionsNestedCollectionScale(t *testing.T) {
 	})
 }
 
-// Repeated URI requirements fetch their shared scheme once, and a large
-// scheme body must not be copied for every operation that describes it.
+// Regression check, not contract: a large scheme body is not copied for every
+// operation that describes it. That repeated URI requirements fetch their
+// shared scheme once is contract (load.go, Loader: "Only a URI no loaded
+// document identifies is admitted and fetched").
 func TestEditionsSecurityURIScale(t *testing.T) {
 	wantLinearAllocs(t, "shared URI security", 200, func(n int) func() {
 		var paths, fields []string
@@ -134,11 +141,11 @@ func TestEditionsSecurityURIScale(t *testing.T) {
 	})
 }
 
-// describe.go, Operation: "For additionalOperations, the nearest map
-// supplies the operations and a duplicate field sets Err on each of them."
-// The nearest whole map is selected, and farther maps are not unioned.
-// Inspecting this input must have bounded cost rather than copying
-// accumulated methods at every chain level.
+// Regression check, not contract: inspecting this input has bounded cost
+// rather than copying accumulated methods at every chain level. The rest is
+// contract: describe.go, Operation: "For additionalOperations, the nearest map
+// supplies the operations and a duplicate field sets Err on each of them." The
+// nearest whole map is selected, and farther maps are not unioned.
 func TestEditionsAdditionalOperationsReferenceChainScale(t *testing.T) {
 	wantLinearAllocs(t, "additionalOperations chain", 200, func(n int) func() {
 		var items []string

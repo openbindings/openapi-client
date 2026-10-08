@@ -110,10 +110,12 @@ func wantEncoded(t *testing.T, key string, req *openapi.Request, v any) {
 }
 
 // Depth is counted in the JSON encoding/json writes, a MarshalJSON's output
-// included (doc.go, Values: "A value the client encodes that is nested
-// deeper than 1,000 levels, counted in the JSON encoding/json writes (a
-// MarshalJSON's output included) ..., is refused at its key"; a scalar leaf
-// is a level, the outermost value level 1, as the Loader counts documents).
+// included (doc.go, Values: a value "whose JSON, a MarshalJSON's output
+// included, nests deeper than 1,000 levels. Levels count within each body,
+// field, part, sequential item or parameter, its outermost value being level
+// 1", is refused "at the key of the body, field, part, sequential item or
+// parameter that is or holds it"; a scalar leaf is a level, as the Loader
+// counts documents).
 // A static per-type depth may not refuse a value whose JSON is within the
 // bound, nor accept one whose JSON is not.
 func TestValueDepthCountedInEncodedJSON(t *testing.T) {
@@ -331,8 +333,8 @@ func TestReadersInStyleParamValuesRefused(t *testing.T) {
 // doc.go, Fixed rules, Percent-encoding: "a content-serialized cookie value
 // (OpenAPI 3.1.2 recommends text/plain content so the application assembles
 // the cookie) ... [is] written as given too; a cookie value written as given
-// that holds a ";" or a control character is refused" (OAS 3.1.2 section
-// 4.8.12.2.3 and Appendix D).
+// that holds a ";" or an ASCII control character is refused" (OAS 3.1.2
+// section 4.8.12.2.3 and Appendix D).
 func TestContentCookieWrittenAsGiven(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, doc31(`"/c":{"get":{"operationId":"op","parameters":[
@@ -563,9 +565,9 @@ func TestContentParamExplodeSet(t *testing.T) {
 	}
 }
 
-// client.go, Input.ParamWriters: "an unknown key, and the same key in Params
-// and ParamWriters, are refused": a nil entry is still an entry, refused at
-// Inputs[key].
+// client.go, Input.ParamWriters: "an unknown key, a nil writer, and the same
+// key in Params and ParamWriters, are refused at that key": a nil entry is
+// refused at Inputs[key].
 func TestNilParamWriterEntriesRefused(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, doc31(`"/q":{"get":{"operationId":"op","parameters":[{"name":"q","in":"query","schema":{}}]}}`), nil)
@@ -657,10 +659,10 @@ type label string
 
 // encode's branches for a text or other media type (doc.go, Values: a
 // value is converted "to JSON data as encoding/json would", then "any other
-// type takes only a string, as its UTF-8 bytes, and a text type also a
-// number or boolean"): a named string type and a TextMarshaler are strings,
-// their JSON escapes undone; a value encoding/json cannot write is refused
-// at the key.
+// type takes only a string, as its bytes, and a text type also a number,
+// boolean or json.Number"): a named string type and a TextMarshaler are
+// strings, their JSON escapes undone; a value encoding/json cannot write is
+// refused at the key.
 func TestContentParamTextEncodeBranches(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, doc31(contentDoc), nil)
@@ -835,7 +837,7 @@ func TestAllUndefinedList(t *testing.T) {
 
 // An invalid-UTF-8 string under a non-JSON content type is sent as its bytes
 // as given; under JSON, encoding/json's U+FFFD replacement stands, since a
-// JSON type "is written as encoding/json writes the value" (doc.go, Values).
+// JSON type "is written as json.Marshal writes the value" (doc.go, Values).
 // The bytes are then percent-encoded by location, or written as given in a
 // header or cookie.
 func TestContentParamInvalidUTF8(t *testing.T) {
@@ -921,17 +923,17 @@ type ptrTextReader struct{ S string }
 func (ptrTextReader) Read([]byte) (int, error)      { return 0, io.EOF }
 func (*ptrTextReader) MarshalText() ([]byte, error) { return []byte("t"), nil }
 
-// client.go, Input.Body: "A Part or io.Reader inside a JSON value is refused
-// ... unless its own MarshalJSON or MarshalText encodes it"; doc.go, Values:
-// a reader inside a parameter value the client encodes with encoding/json is
-// refused "unless its own MarshalJSON or MarshalText encodes it". A reader
-// encoding/json encodes by its MarshalJSON is sent as json.Marshal writes
-// it, in a JSON body, a JSON content parameter and a style parameter; one
-// json would encode by reflection (a pointer-receiver MarshalJSON on a value
-// that is not addressable, or a plain reader) is refused. The body and
-// content parameter hold the reader inside the value, since a reader that is
-// the whole body or content value is sent or refused as a reader (client.go,
-// Input.Body; doc.go, Values).
+// client.go, Input.Body: "A Part or io.Reader inside a value the client
+// encodes with encoding/json is refused ... unless its own MarshalJSON or
+// MarshalText encodes it"; doc.go, Values: a reader inside a parameter value
+// the client encodes with encoding/json is refused "unless its own MarshalJSON
+// or MarshalText encodes it". A reader encoding/json encodes by its MarshalJSON
+// is sent as json.Marshal writes it, in a JSON body, a JSON content parameter
+// and a style parameter; one json would encode by reflection (a
+// pointer-receiver MarshalJSON on a value that is not addressable, or a plain
+// reader) is refused. The body and content parameter hold the reader inside the
+// value, since a reader that is the whole body or content value is sent or
+// refused as a reader (client.go, Input.Body; doc.go, Values).
 func TestSelfMarshalingReaders(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, doc31(depthDoc+`,
@@ -1142,14 +1144,15 @@ func allocatedBy(f func()) uint64 {
 	return after.TotalAlloc - before.TotalAlloc
 }
 
-// doc.go, Values: "A parameter that would take the request target or a
-// header field past 1 MiB ... is refused at its key, and its serialization
-// stops there". A value or an amplified serialization, such as deepObject
-// repeating each member's bracket path per leaf or a template repeating a
-// variable, past 1 MiB is refused at the parameter's key,
-// with nothing sent, and without building the oversized output (allocation
-// during Prepare stays under 16 MiB where the full output would be 20 MiB
-// or more); a request under the limit, with a margin of 1 KiB, is sent.
+// Regression check, not contract: the 16 MiB figure for what Prepare
+// allocates before refusing, where the full output would be 20 MiB or more.
+// The rest is contract: doc.go, Values: "A parameter that would take the
+// request target or a header field past 1 MiB ... is refused at its key, and
+// its serialization stops there". A value or an amplified serialization, such
+// as deepObject repeating each member's bracket path per leaf or a template
+// repeating a variable, past 1 MiB is refused at the parameter's key, with
+// nothing sent, and without building the oversized output; a request under
+// the limit, with a margin of 1 KiB, is sent.
 func TestRequestSizeLimit(t *testing.T) {
 	w := newWire(t, nil)
 	var rep strings.Builder

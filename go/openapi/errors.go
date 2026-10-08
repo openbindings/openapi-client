@@ -19,15 +19,25 @@ import (
 // through the zero Client or a Request that Prepare did not make.
 var ErrNoOperation = errors.New("openapi: no such operation")
 
-// ErrUnresolved is wrapped by the Err of a part whose defect is a reference
-// that cannot be resolved, a reference cycle included, as distinct from a
-// malformed declaration. The Err names the reference, and wraps the retrieval
-// error too when fetching or reading its document failed (one that cannot be
-// read is named with where the problem is, as Loader describes for an entry
-// document),
-// or an error naming the refused URI when admission refused it, so a caller can
-// tell a fixable fetch or admission (see Loader.Origins, Loader.AllowReference
-// and Loader.Fetch) from a broken document.
+// ErrUnresolved is wrapped by the Err of a part, or of a SchemaReference, whose
+// defect is a reference that cannot be resolved, as distinct from a malformed
+// declaration or a document that must be bundled first (see Operation), and by
+// every error Client.Schema returns but one saying the document must be bundled
+// first. A reference cycle cannot be resolved: a chain of Reference Objects or
+// of Path Item $refs, in any edition, or of Swagger 2.0 or OpenAPI 3.0 schemas
+// written as references, that leads back into itself.
+// Other cycles, such as a recursive schema or a cycle of OpenAPI 3.1 or 3.2
+// schema $refs, resolve (see Schema). The Err names the reference, and wraps
+// the retrieval error too when fetching or reading its document failed (one
+// that cannot be read is named with where the problem is, as Loader describes
+// for an entry document), or an error naming the refused URI when admission
+// refused it, so a caller can tell a fixable fetch or admission (see
+// Loader.Origins, Loader.AllowReference and Loader.Fetch) from a broken
+// document. Where the client names a URI, a reference or a redirect's Location
+// included, it omits userinfo and query. A retrieval error that is or wraps a
+// *url.Error is shown as that *url.Error, each URL without userinfo or query,
+// though it is still wrapped unchanged, and any other, such as a Loader.Fetch
+// error that wraps no *url.Error, is shown as it is.
 var ErrUnresolved = errors.New("openapi: unresolved reference")
 
 // A RequestError is an API call refused before it was sent, or Options
@@ -52,33 +62,46 @@ type RequestError struct {
 	//   - for a part's media type, "Input.Body" followed by the part's JSON
 	//     Pointer: "Input.Body/file".
 	//
-	// A setting the document cannot use, or one that conflicts with
-	// another, is keyed by its field, at Load or at a call. Several usable
-	// servers with none selected are keyed "Options.Server", BaseURL set
-	// with Server or ServerID "Options.BaseURL", Server set with ServerID
-	// "Options.ServerID", an undetermined or unusable request media type
-	// "Input.MediaType", and a header field that a supplied header
-	// parameter or the credential sets by the Header that set it.
-	// Several security alternatives with none selected, or an
+	// A setting the document cannot use, or one that conflicts with another, is
+	// keyed by its field, at Load or at a call. Several usable servers with
+	// none selected are keyed "Options.Server", BaseURL set with Server or
+	// ServerID "Options.BaseURL", and Server set with ServerID
+	// "Options.ServerID". Configuration in the package documentation says
+	// which server variables, in the form above, and which server settings
+	// are keyed when a call finds no usable server. A body's media type is
+	// keyed "Input.MediaType" when the call cannot use it, as when it is
+	// undetermined, is not a concrete media type, is one the operation does
+	// not declare, is declared under a key that causes its Media.Err (see
+	// Input.MediaType), or is a multipart type whose boundary is invalid,
+	// repeated or, for a pre-encoded body, missing; a body that any other
+	// Media.Err refuses is keyed in Inputs. A header field that a supplied
+	// header parameter or the credential sets is keyed by the Header that set
+	// it. Several security alternatives with none selected, or an
 	// Options.Security matching several that differ only in scopes, are keyed
 	// "Options.Security", the error naming Options.SecurityKey and
 	// Input.Security too; SecurityKey set with Security is keyed
 	// "Options.SecurityKey". An empty secret from a credential source is keyed
 	// as a missing credential is. A caller may inspect the operation
-	// description for offered values. The values are errors, never
-	// credentials or caller-supplied secrets.
+	// description for offered values. The values are errors, never credentials
+	// or caller-supplied secrets.
 	Settings map[string]error
 
 	// Inputs holds each input the operation cannot accept, and why: an unknown
 	// parameter, a missing required one, a value its style cannot serialize or
-	// a header cannot carry (a CR, LF or NUL, or leading or trailing
-	// whitespace, which HTTP would strip), a body the operation does not take,
-	// a reader or Part where the media type cannot carry one, a ParamWriters
-	// failure or conflict, or a Part that sets both Filename and NoFilename.
-	// The key is the Param.Key or, for the body, "Input.Body" followed by a
-	// JSON Pointer to the part of Body concerned: "Input.Body" alone for the
-	// body itself, "Input.Body/photo" for its property photo. The two never
-	// collide (see Input.Params).
+	// a header cannot carry (see Header fields in the package documentation), a
+	// body the operation does not take, a body refused by the request body's
+	// Message.Err or by its governing Media's Err unless its key causes it (see
+	// Settings), a reader or Part where the media type cannot carry one, a
+	// ParamWriters failure or conflict, or a Part that sets both Filename and
+	// NoFilename. The key is the Param.Key or, for the body, "Input.Body"
+	// followed by a JSON Pointer to the part of Body concerned, in which a Part
+	// adds no token for its Content: "Input.Body" alone for the body itself,
+	// "Input.Body/photo" for its property photo, and "Input.Body/photo/r" for
+	// the member r of the Content of a Part given as photo. The two never
+	// collide (see Input.Params). An error with a cause, such as
+	// encoding/json's, a codec's, a reader's or a ParamWriters function's
+	// error, or that Message.Err or Media.Err, wraps it, for errors.Is and
+	// errors.As.
 	Inputs map[string]error
 
 	// Err is the reason for any other refusal, or nil: ErrNoOperation, the
@@ -92,9 +115,14 @@ type RequestError struct {
 	Err error
 }
 
-// Error describes every problem and the field that fixes each, never a
-// credential or an input's value. The text of an error a credential source
-// returned is included as it is.
+// Error describes every problem and the field that fixes each. The text the
+// client writes never holds a credential, or a value the caller gave a
+// parameter, a server variable, a header field or the body, though it may hold
+// other text the caller gave, such as a media type or a name, a body member's
+// included. The text of an error the caller's own code returned, such as a
+// credential source, a ParamWriters function or a Codec's Encode, is included
+// as it is, whatever it holds, except where the package documentation, under
+// Outcomes, says it is left out.
 func (e *RequestError) Error() string {
 	var parts []string
 	if e.Err != nil {
@@ -202,8 +230,9 @@ type DecodeError struct {
 
 // Error returns the operation, the status and the reason, never the body
 // or response-controlled media and encoding text, which may reflect credentials.
-// A decoder's own error, whose message can quote the body, is not in the
-// text; errors.As finds it through Unwrap. Header remains available for inspection.
+// A decoder's own error, a Codec's Decode or an UnmarshalJSON method's
+// included, whose message can quote the body, is not in the text; errors.As
+// finds it through Unwrap. Header remains available for inspection.
 func (e *DecodeError) Error() string {
 	msg := "openapi: " + describeResponse(e.Response)
 	if e.Err != nil {

@@ -29,8 +29,9 @@ import (
 // base64-encoded"; "any other http scheme: everything after the scheme name
 // in the Authorization field". doc.go, Credentials: "An http scheme, such as
 // bearer or basic, is compared without regard to case". doc.go, Order:
-// "query credentials last"; Cookies: "one Cookie field, pairs joined by
-// "; ", parameters in declared order, then credentials". client.go,
+// "query credentials last"; Cookies: "one Cookie field holding, joined by
+// "; ", the parameters in declared order, then the cookies the HTTPClient's
+// Jar holds for the URL, then credentials". client.go,
 // Request.Security and Response.Security: the Key of the alternative
 // applied. OAS 3.1.2 section 4.8.27: a mutualTLS scheme uses a client
 // certificate, so the client adds nothing (client.go, Options.Credentials:
@@ -265,10 +266,11 @@ func TestSecretFuncCalledPerRequest(t *testing.T) {
 }
 
 // credential.go, SecretFunc: "f receives the call's context, with its
-// deadline, cancellation and values, but not the operation: a request f
+// deadline, cancellation and values, ... but not the operation: a request f
 // makes is not labelled ... as the call's operation by middleware that asks
-// OperationFromContext." client.go, OperationFromContext: nil "for requests
-// a credential source makes".
+// OperationFromContext." client.go, OperationFromContext: "A credential
+// source is called with the call's context, or one derived from it, never the
+// request's".
 func TestSecretFuncContext(t *testing.T) {
 	w := newWire(t, nil)
 	type ctxKey struct{}
@@ -309,8 +311,8 @@ func TestSecretFuncContext(t *testing.T) {
 	// Cancellation reaches the source: it ends when the call's context
 	// does, and the call is refused with nothing sent (credential.go,
 	// SecretFunc: "An error from f ... on the first request refuses the call
-	// with a *RequestError: nothing is sent"; doc.go, Outcomes: the error
-	// "matches ctx.Err() with errors.Is").
+	// with a *RequestError: nothing is sent"; "An error from f is passed on as
+	// it is").
 	var once sync.Once
 	entered := make(chan struct{})
 	blocked := &source{fn: func(ctx context.Context, _ int64) (string, error) {
@@ -345,9 +347,9 @@ func (e *idpError) Error() string { return fmt.Sprintf("identity provider answer
 // first request refuses the call with a *RequestError: nothing is sent ...
 // An error from f is passed on as it is." errors.go, RequestError.Err: "a
 // credential source's error (naming the scheme)"; RequestError.Error: "The
-// text of an error a credential source returned is included as it is";
-// RequestError.Settings: "An empty secret from a credential source is keyed
-// as a missing credential is."
+// text of an error the caller's own code returned, such as a credential
+// source, ... is included as it is"; RequestError.Settings: "An empty secret
+// from a credential source is keyed as a missing credential is."
 func TestSecretFuncRefusals(t *testing.T) {
 	w := newWire(t, nil)
 	t.Run("error", func(t *testing.T) {
@@ -524,7 +526,8 @@ func TestCredentialReplacesEditedFields(t *testing.T) {
 // the alternative lists their schemes", whatever the order of the scheme
 // names, their declarations, or the parameters. Order: "the path item's
 // parameters, then the operation's, in declared order ... query credentials
-// last"; Cookies: "parameters in declared order, then credentials".
+// last"; Cookies: "the parameters in declared order, then the cookies the
+// HTTPClient's Jar holds for the URL, then credentials".
 func TestSeveralQueryAndCookieCredentialsOrder(t *testing.T) {
 	w := newWire(t, nil)
 	doc := doc31(`
@@ -595,8 +598,9 @@ func TestPreparedURLChangedOrigin(t *testing.T) {
 
 // credential.go, FromTransport: "The client adds nothing for the scheme, but
 // counts it as satisfied after the caller selects a security alternative."
-// doc.go, Credentials: "FromTransport also satisfies a scheme a requirement
-// names but the document never declares, or declares defectively";
+// doc.go, Credentials: "FromTransport is what satisfies a scheme a
+// requirement names but the document never declares, or declares
+// defectively";
 // describe.go, SecurityScheme.Err: "Alternatives that use it can be applied
 // only when FromTransport satisfies it." A mutualTLS scheme accepts
 // FromTransport too.

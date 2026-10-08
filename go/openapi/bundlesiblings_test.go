@@ -11,8 +11,8 @@ import (
 // Swagger 2.0 lists written as a reference, and the other members of a
 // value written as a reference. describe.go, Operation: "In Swagger 2.0,
 // consumes so written makes the request body unusable, produces each
-// response, and schemes is described as a servers list is. Bundling
-// replaces such a value whole, so its other members are not read." A
+// response, and schemes is described as a servers list is ... Bundling
+// replaces such a value whole, so its other members are not read". A
 // servers list so written "is described as one Server with that Err, which
 // Options.BaseURL can replace as it can any unusable server". Operation.Err:
 // "A defect in an optional part is reported on that part instead, and fails
@@ -47,11 +47,11 @@ func sendDeclared(t *testing.T, c *openapi.Client, desc *openapi.Operation, in *
 // bundle. A call that sends a body uses it and is refused at the body
 // (errors.go, RequestError.Inputs: "for the body, "Input.Body""), a
 // pre-encoded body too, since Input.Body exempts a pre-encoded body only from
-// "a Media.Err, a field's Param.Err or required formData fields" and
-// Message.Err is "why the request body ... cannot be used". A call without a
-// body, which the operation does not require, does not use it and is sent.
-// Root consumes is inherited by an operation that declares none; one that
-// declares its own is unaffected, and so is one without a body.
+// "a field's Param.Err, required formData fields, or a Media.Err its key does
+// not cause" and Message.Err is "why the request body ... cannot be used".
+// A call without a body, which the operation does not require, does not use it
+// and is sent. Root consumes is inherited by an operation that declares none;
+// one that declares its own is unaffected, and so is one without a body.
 func TestSwaggerConsumesReference(t *testing.T) {
 	bodyBundled := func(t *testing.T, op *openapi.Operation) {
 		wantUsable(t, "Operation", op.Err)

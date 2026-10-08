@@ -65,8 +65,8 @@ func TestServerURLRule(t *testing.T) {
 
 // doc.go, Configuration: "One usable server selects itself. Several require
 // Options.Server, Options.ServerID or Options.BaseURL, and none requires
-// BaseURL." A server that cannot be used (doc.go, Fixed rules, URL) is not
-// a usable one.
+// BaseURL or an Options.Variables value that makes one usable." A server that
+// cannot be used (doc.go, Fixed rules, URL) is not a usable one.
 func TestServerSelection(t *testing.T) {
 	w := newWire(t, nil)
 	two := `{"openapi":"3.1.0","info":{"title":"t","version":"1"},
@@ -206,7 +206,7 @@ func TestServerIDDisambiguates(t *testing.T) {
 // client.go, Options.Variables: "A variable without a value takes its
 // declared default ... The enum limits other values: one outside it refuses
 // the call, and an empty enum permits only the default ... Values are
-// substituted as given." describe.go, Variable: a declared variable without
+// substituted as given". describe.go, Variable: a declared variable without
 // a default, or an undeclared {name}, needs Options.Variables. Refusals are
 // keyed Options.Variables["name"] (errors.go, RequestError.Settings).
 func TestServerVariables(t *testing.T) {
@@ -266,11 +266,13 @@ func TestServerVariables(t *testing.T) {
 
 // load.go, Load: "Load also fails, with a *RequestError, on Options the
 // document cannot use: ... a Variables name no server URL uses, a MediaType
-// no operation declares, a Codecs key Options.Codecs refuses, a Server or
-// ServerID that matches no server, ... a BaseURL without a scheme and host,
-// with userinfo, a query or a fragment, or set with Server or ServerID,
-// conflicting exact and name selectors, or a Header field that is always
-// refused." Settings is keyed "by the Go setting that fixes it"
+// that no operation's request body Media matches (see Options.MediaType), a
+// Codecs key Options.Codecs refuses, a Server or
+// ServerID that matches no server, ... a BaseURL that is not a URL with a
+// scheme and a non-empty host, or that has a port above 65535, userinfo, a
+// query or a fragment, or is set with Server or ServerID, conflicting exact
+// and name selectors, a Header field that is always
+// refused, ..." Settings is keyed "by the Go setting that fixes it"
 // (errors.go).
 func TestLoadRefusesOptions(t *testing.T) {
 	doc := `{"openapi":"3.1.0","info":{"title":"t","version":"1"},

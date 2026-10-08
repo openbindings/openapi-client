@@ -12,7 +12,7 @@ import (
 // edition's Schema Object does not define and that JSON Schema 2020-12
 // treats as an applicator or an assertion, such as oneOf in Swagger 2.0 or
 // const in OpenAPI 3.0, is removed with an Issue, since it has no meaning
-// in the authored edition. Every other keyword is kept as an annotation."
+// in the authored edition. ... The translation changes no other keyword."
 //
 // The sets follow from the Schema Object of OAS 2.0 (section 6.4.18) and
 // OAS 3.0.4 (sections 4.7.24.1 and 4.7.24.2, with $ref from section

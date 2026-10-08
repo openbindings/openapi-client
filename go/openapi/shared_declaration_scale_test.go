@@ -53,6 +53,9 @@ func describeShared(t *testing.T, doc []byte, n int) *openapi.Client {
 	return c
 }
 
+// Regression check, not contract: loading and describing a declaration many
+// operations share, a fixed method's, an additional method's or Swagger 2.0
+// formData's, allocates bytes linear in the document.
 func TestSharedDeclarationDescribeScale(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -68,10 +71,11 @@ func TestSharedDeclarationDescribeScale(t *testing.T) {
 	}
 }
 
-// Allocations discarded after compilation must not obscure a second retained
-// copy per operation. Use the existing two-GC retainedBy helper and the same
-// 8x bound for 4x input. This is a scaling bound, not a new realistic-corpus
-// memory budget; source creation is outside the measurements.
+// Regression check, not contract: allocations discarded after compilation must
+// not obscure a second retained copy per operation. Use the existing two-GC
+// retainedBy helper and the same 8x bound for 4x input. This is a scaling
+// bound, not a new realistic-corpus memory budget; source creation is outside
+// the measurements.
 func TestSharedDeclarationRetainedScale(t *testing.T) {
 	for _, tc := range []struct {
 		name string

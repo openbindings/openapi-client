@@ -74,14 +74,17 @@ func TestColumnsInUTF16AndUTF32(t *testing.T) {
 	}
 }
 
-// load.go, Loader: "A document whose aliases would add ... more than 100 times
-// its own size in bytes ... is rejected too": one 30 KB string aliased 8,000
-// times adds 8,000 nodes, within the node bounds, and 240 MB, beyond the byte
-// bound, so it is rejected without its expansion being built; aliased 50
-// times, it adds 1.5 MB, under the bound of about 3 MB, and loads. The same
-// holds for the document written in UTF-16, whose own size counts its own
-// bytes as retrieved, with the same margins. A loader that expanded the first
-// would use hundreds of megabytes, so the test runs in a child process.
+// Regression check, not contract: the 64 MiB figure for what rejecting the
+// document allocates. The rest is contract: load.go, Loader: "A document whose
+// aliases would add ... more than 100 times its own size in bytes ... is
+// rejected too", by what its aliases would add, so before they are added, and
+// "A rejection names the document's URI": one 30 KB string aliased 8,000 times
+// adds 8,000 nodes, within the node bounds, and 240 MB, beyond the byte bound,
+// so it is rejected; aliased 50 times, it adds 1.5 MB, under the bound of about
+// 3 MB, and loads. The same holds for the document written in UTF-16, whose own
+// size counts its own bytes as retrieved, with the same margins. A loader that
+// expanded the first would use hundreds of megabytes, so the test runs in a
+// child process.
 func TestYAMLAliasByteBound(t *testing.T) {
 	if !inChild(t) {
 		return
@@ -261,9 +264,9 @@ func TestRedirectedURIIdentified(t *testing.T) {
 
 // errors.go, ErrUnresolved: the Err "wraps the retrieval error too when
 // fetching or reading its document failed (one that cannot be read is named
-// with its line and column, as Load names an entry document's)": a referenced
-// YAML document with a duplicate key, a JSON one with a duplicate key, and one
-// with invalid UTF-8, each disabling only what reaches it.
+// with where the problem is, as Loader describes for an entry document)": a
+// referenced YAML document with a duplicate key, a JSON one with a duplicate
+// key, and one with invalid UTF-8, each disabling only what reaches it.
 func TestUnreadableReferencedDocument(t *testing.T) {
 	const base = "https://docs.example.test/"
 	docs := map[string]string{
@@ -295,9 +298,9 @@ func TestUnreadableReferencedDocument(t *testing.T) {
 	}
 }
 
-// load.go, Loader: "A %YAML directive for version 1.x is read as 1.2, and
-// any other major version rejects the document (YAML 1.2.2 section 6.8.1)",
-// the rejection at the directive, which begins its line.
+// load.go, Loader: "A %YAML directive for any version 1.x changes none of
+// this, and any other major version rejects the document (YAML 1.2.2 section
+// 6.8.1)", the rejection at the directive, which begins its line.
 func TestYAMLDirectiveVersions(t *testing.T) {
 	for _, v := range []string{"1.1", "1.2", "1.3"} {
 		c := parsed(t, []byte("%YAML "+v+"\n---\n"+yamlHead+"x-v: yes\n"))
@@ -308,11 +311,12 @@ func TestYAMLDirectiveVersions(t *testing.T) {
 	}
 }
 
-// load.go, Loader: "A reference to a URI with userinfo ..., or to a file
-// URL naming a host other than localhost, is unresolvable and never
-// fetched, as Load refuses such a uri" (RFC 9110 section 4.2.4, RFC 8089).
-// The reference is not shown with its userinfo (doc.go, Outcomes: "No
-// credential appears in the text of an error the client creates").
+// load.go, Loader: "A reference is unresolvable and never fetched, ... if
+// that URI has userinfo ..., or is a file URL naming a host other than
+// localhost, as Load refuses such a uri" (RFC 9110 section 4.2.4,
+// RFC 8089). The reference is not shown with its userinfo (errors.go,
+// ErrUnresolved: "Where the client names a URI, a reference or a redirect's
+// Location included, it omits userinfo and query").
 // Admission is never asked, nothing is requested, and no error text shows
 // the user or the password.
 func TestUserinfoAndFileHostReferences(t *testing.T) {

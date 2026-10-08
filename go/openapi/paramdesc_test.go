@@ -1,7 +1,6 @@
 package openapi_test
 
 import (
-	"errors"
 	"testing"
 )
 
@@ -9,8 +8,8 @@ import (
 // (describe.go, Param): Style "as declared or as OpenAPI defaults it for the
 // location ("form" for query and cookie, "simple" for path and header), or
 // empty when the value is serialized by ContentType instead"; "Explode is
-// the effective explode, and ExplodeSet whether the document writes it" (OAS
-// 3.1.2 section 4.8.12.2.2: "When style is "form", the default value is
+// the effective explode ..., and ExplodeSet whether the document writes it"
+// (OAS 3.1.2 section 4.8.12.2.2: "When style is "form", the default value is
 // true. For all other styles, the default value is false"); AllowReserved
 // "the effective allowReserved: false where the edition or the media type
 // ignores it";
@@ -106,9 +105,8 @@ func TestParamDescriptorsEverySerialization(t *testing.T) {
 			t.Errorf("%s: ContentType = %q, want %q", p.Key, p.ContentType, d.contentType)
 		}
 		switch {
-		case d.err && (p.Err == nil || errors.Is(p.Err, errors.ErrUnsupported)):
-			// An undefined combination is the document's, not a missing
-			// feature.
+		case d.err && p.Err == nil:
+			// An undefined combination is the document's defect.
 			t.Errorf("%s: Err = %v, want the undefined combination", p.Key, p.Err)
 		case !d.err && p.Err != nil:
 			t.Errorf("%s: Err = %v, want nil", p.Key, p.Err)

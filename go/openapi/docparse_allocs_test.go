@@ -8,10 +8,10 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// The once-per-node invariant covers physical schema descendants reached
-// again through overlapping anchored roots. This 20/80-node case measures
-// allocation count through Parse rather than adding production visit
-// counters or timing assertions.
+// Regression check, not contract: the once-per-node invariant covers physical
+// schema descendants reached again through overlapping anchored roots. This
+// 20/80-node case measures allocation count through Parse rather than adding
+// production visit counters or timing assertions.
 func TestDocumentOverlappingDiscoveryAllocationGrowth(t *testing.T) {
 	var allocations [2]float64
 	for j, n := range []int{20, 80} {
@@ -32,11 +32,11 @@ func TestDocumentOverlappingDiscoveryAllocationGrowth(t *testing.T) {
 	}
 }
 
-// Known string values must not pay arbitrary-precision numeric conversion
-// costs. The test compares equal-length 0x and xx strings through the public
-// Parse and Document paths, for each contracted string form. A 32-allocation
-// margin accommodates small parser bookkeeping differences but excludes
-// discarded big-integer conversion.
+// Regression check, not contract: known string values must not pay
+// arbitrary-precision numeric conversion costs. The test compares equal-length
+// 0x and xx strings through the public Parse and Document paths, for each
+// contracted string form. A 32-allocation margin accommodates small parser
+// bookkeeping differences but excludes discarded big-integer conversion.
 func TestYAMLKnownStringsAvoidNumericAllocation(t *testing.T) {
 	for _, style := range []struct{ name, prefix, suffix string }{
 		{"double quoted", `x-v: "`, "\"\n"},

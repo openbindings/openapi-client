@@ -33,13 +33,12 @@ func fourParamOps(n int, secured bool) []byte {
 	return []byte(b.String())
 }
 
-// Credential destinations are derived from the parameter shape map already
-// compiled, so a secured operation retains nothing extra for a
-// parameter-credential collision real documents almost never have. Every
-// compiled form is computed at most once per document node. The same
-// operations
-// retain the same memory, give or take noise, with root security as
-// without; the root's alternatives are shared.
+// Regression check, not contract: credential destinations are derived from
+// the parameter shape map already compiled, so a secured operation retains
+// nothing extra for a parameter-credential collision real documents almost
+// never have. Every compiled form is computed at most once per document node.
+// The same operations retain the same memory, give or take noise, with root
+// security as without; the root's alternatives are shared.
 func TestSecuredOperationsRetainNothingExtra(t *testing.T) {
 	const n = 4000
 	keep := func(secured bool) int64 {
@@ -75,13 +74,14 @@ func identicalAlternatives(n int) []byte {
 	return []byte(b.String())
 }
 
-// Whether one alternative selects itself is decided when the operation is
-// compiled, not on every call: every compiled or decoded form is computed at
-// most once per document node. doc.go, Configuration:
-// "One security alternative selects itself", and identical alternatives are
-// one. Preparing the call after the operation is compiled costs the same
-// whatever the number of copies: sixteen times the copies may cost at most
-// three times as much, where a per-call scan costs about sixteen.
+// Regression check, not contract: whether one alternative selects itself is
+// decided when the operation is compiled, not on every call, so preparing the
+// call after the operation is compiled costs the same whatever the number of
+// copies: sixteen times the copies may cost at most three times as much, where
+// a per-call scan costs about sixteen. That identical alternatives are one,
+// which selects itself, is contract (doc.go, Configuration: "One security
+// alternative selects itself"; describe.go, SecurityRequirement.Key:
+// "Alternatives with the same key are the same requirement").
 func TestIdenticalAlternativesSelectInConstantTime(t *testing.T) {
 	if testing.Short() {
 		t.Skip("timing test")

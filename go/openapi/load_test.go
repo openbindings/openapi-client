@@ -156,9 +156,10 @@ func TestLoadRetrievalFailure(t *testing.T) {
 	}
 }
 
-// load.go, Parse: "The uri, if not empty, is the absolute URI the document
-// is meant to live at, which stands for the URI it was retrieved from and is
-// never fetched itself."
+// load.go, Parse: "The uri, if not empty, is the absolute URI, without a
+// fragment, that the document is meant to live at: taken in the form Loader
+// gives the URI requested, it stands for the URI the document was retrieved
+// from, and it is never fetched".
 func TestParseWithURI(t *testing.T) {
 	ct := &countingTransport{}
 	uri := "https://pets.example.test/specs/openapi.json"
@@ -220,7 +221,7 @@ func TestParseEmptyURI(t *testing.T) {
 }
 
 // load.go, Parse: "With an empty uri ... a call whose server URL is relative
-// needs Options.BaseURL." doc.go, Configuration: "none requires BaseURL".
+// needs Options.BaseURL". doc.go, Configuration: "none requires BaseURL".
 func TestParseEmptyURIRelativeServerNeedsBaseURL(t *testing.T) {
 	w := newWire(t, jsonAnswer(200, `{"pets":[]}`))
 	c, err := openapi.Parse(t.Context(), readPets(t), "", nil)
@@ -370,9 +371,9 @@ func deepDoc(n int) string {
 		strings.Repeat("[", n) + strings.Repeat("]", n) + "\n}"
 }
 
-// load.go, Loader: a document "that nests deeper than 1,000 levels, is
-// rejected too." Where the count starts (the root object as level 1 or 0)
-// is not stated, so the cases keep a margin on each side.
+// load.go, Loader: a document "that nests deeper than 1,000 levels (the
+// outermost value being level 1), is rejected too." The cases keep a margin on
+// each side of the bound.
 func TestLoadNestingDepth(t *testing.T) {
 	if _, err := openapi.Parse(t.Context(), []byte(deepDoc(900)), testDocURI, nil); err != nil {
 		t.Errorf("901 levels: %v, want accepted", err)

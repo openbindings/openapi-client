@@ -120,8 +120,9 @@ func hexByte(b byte) string {
 // the RFC 6570 oracle for form, the OAS 3.1.2 table and text for
 // spaceDelimited, pipeDelimited and deepObject, with undefined values
 // settled as doc.go, Values says. A field written as nothing is omitted
-// (doc.go, Values: "A form or multipart property or array item whose JSON
-// data is null is omitted, whatever its serialization"; an undefined value
+// (doc.go, Values: "A form or multipart property or array item, or a
+// positional part ..., whose JSON data is null is omitted, whatever its
+// serialization or media type"; an undefined value
 // is omitted as an undefined optional parameter is).
 func styledField(t testing.TB, name, style string, explode, reserved bool, v any) (string, fate) {
 	t.Helper()
@@ -193,9 +194,10 @@ func quoted(s string) string {
 // filename when one is given (RFC 7578 section 4.2: "Each part MUST contain
 // a Content-Disposition header field where the disposition type is
 // "form-data". The Content-Disposition header field MUST also contain an
-// additional parameter of "name""; client.go, Part: "A part's name and
-// filename are written in its Content-Disposition as given, each as a
-// quoted-string with \ and " escaped, never as filename*"). Every named part
+// additional parameter of "name""; client.go, Part: "A named part's
+// Content-Disposition is form-data, under any multipart type, with its name
+// and filename written as given, each as a quoted-string with \ and "
+// escaped, never as filename*"). Every named part
 // of every multipart type takes it, nested multipart included (OAS 3.1.2
 // section 4.8.15.3: other multipart types may be supported "when
 // Content-Disposition: form-data is used with a name parameter").

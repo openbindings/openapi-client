@@ -23,9 +23,10 @@ import (
 // Input.MediaType: "a boundary given for a multipart body the client encodes
 // is used, a part whose content holds its delimiter, or "--" and the
 // boundary after a CR or LF, being an input that cannot be encoded (RFC 2046
-// section 5.1.1). A boundary in the declared content key is used and checked
-// the same way; an invalid one is the Media's Err. Two boundary parameters
-// are refused."
+// section 5.1.1; in a reader, it is found only as the body is sent, as Body
+// says). A boundary in a request body's declared content key is used and
+// checked the same way. Two boundary parameters in a multipart type are
+// refused."
 
 // With a boundary the caller gives, content holding "--" and the boundary
 // after a lone LF or a lone CR is refused at its key before sending, as
@@ -128,14 +129,16 @@ func TestMultipartDeclaredAndDuplicateBoundaries(t *testing.T) {
 	})
 }
 
-// An empty quoted boundary, given in Input.MediaType or declared in the
-// content key, is refused, never a hang: Input.MediaType's at Settings
+// An empty quoted boundary, given in Input.MediaType or declared in the content
+// key, is refused, never a hang: Input.MediaType's at Settings
 // ["Input.MediaType"], the key's as the Media's Err (client.go,
-// Input.MediaType: "A boundary in the declared content key is used and
-// checked the same way; an invalid one is the Media's Err"), a document
-// defect, not "Input.MediaType", with a nested multipart part whose own
-// boundary would be generated. Since a regression would make Prepare spin
-// forever, the cases run in a child process under a 10 s guard.
+// Input.MediaType: "A boundary in a request body's declared content key is used
+// and checked the same way"; describe.go, Media.Err: "an OpenAPI 3.x request
+// body's form or multipart content key that holds an invalid or repeated
+// boundary parameter"), the call refused before sending, with a nested
+// multipart part whose own boundary would be generated. Since a regression
+// would make Prepare spin forever, the cases run in a child process under a
+// 10 s guard.
 func TestMultipartEmptyBoundaryRefused(t *testing.T) {
 	if !inChild(t) {
 		return
@@ -266,12 +269,15 @@ func (indentCodec) Encode(w io.Writer, v any) error {
 }
 func (indentCodec) Decode(r io.Reader, v any) error { return json.NewDecoder(r).Decode(v) }
 
-// A codec's output is framed after its trailing JSON whitespace (SP, HTAB,
-// LF, CR; RFC 8259 section 2: "JSON-text = ws value ws") is trimmed
-// (client.go, Input.Body: "a codec's output is framed after its trailing
-// JSON whitespace is trimmed"), so json.Encoder works under JSON Lines and
-// sequences; a separator left inside is refused at the item's key, with an
-// error naming the codec's output.
+// Regression check, not contract: the refusal's text names the codec's
+// output. The rest is contract: a codec's output is framed after its trailing
+// JSON whitespace (SP, HTAB, LF, CR; RFC 8259 section 2: "JSON-text = ws value
+// ws") is trimmed (client.go, Input.Body: "a codec's output is framed after
+// its trailing JSON whitespace is trimmed"), so json.Encoder works under JSON
+// Lines and sequences; a separator left inside is refused at the item's key
+// (Input.Body: "Content that cannot be encoded, such as a given boundary's
+// delimiter in a part or a separator in a sequence's item, refuses the call
+// when it is prepared").
 func TestSequentialCodecOutputFramed(t *testing.T) {
 	w := newWire(t, nil)
 	items := []any{map[string]any{"a": 1}, 2}

@@ -21,8 +21,8 @@ import (
 // and Schema Objects, $dynamicRef, the values of a Discriminator mapping
 // written as an object and a defaultMapping value, where they are not
 // component names ..., and OpenAPI 3.2 security
-// requirement URIs, anywhere in a document, webhooks and callbacks included;
-// operationRef and externalValue are not retrieved. They resolve against
+// requirement URIs, anywhere in a document, webhooks and callbacks included,
+// ...; operationRef and externalValue are not retrieved. They resolve against
 // each document's base". OpenAPI 3.1.2 section 4.3 (multi-document
 // descriptions), 4.6 (relative references resolve against the referring
 // document's base, inside schemas the nearest $id), 4.8.23 (Reference
@@ -408,14 +408,14 @@ func TestDocumentURIsOrder(t *testing.T) {
 	}
 }
 
-// load.go, Client.Document: a document is named by "the URI it was
-// retrieved from"; "With a JSON Pointer fragment ... a copy of only that
-// node, or nil when there is none; a Reference Object there is returned as
-// written"; a fragment is a JSON Pointer percent-encoded as RFC 6901
-// section 6 says; nil "when no document was loaded from uri". load.go,
-// Loader: "A fragment is percent-decoded as UTF-8 before it is read as a
-// JSON Pointer": references into keys with a space and a non-ASCII letter
-// resolve.
+// load.go, Client.Document: a document is named by "the URI it was finally
+// retrieved from, in the form Loader gives the URI requested"; "With a JSON
+// Pointer fragment ... a copy of only that node, or nil when there is none; a
+// Reference Object there is returned as written"; a fragment is a JSON Pointer
+// percent-encoded as RFC 6901 section 6 says; nil "when no document was loaded
+// from uri". load.go, Loader: "A fragment is percent-decoded as UTF-8 before it
+// is read as a JSON Pointer": references into keys with a space and a non-ASCII
+// letter resolve.
 func TestDocumentOfReferencedDocuments(t *testing.T) {
 	s := newSite(t)
 	s.put("/openapi.json", entry31(`"/p":{"get":{"operationId":"p","parameters":[
@@ -577,7 +577,7 @@ func TestIdentifiedURIsResolveFirst(t *testing.T) {
 	}
 }
 
-// load.go, Loader: "A URI claimed by two documents or schemas is
+// load.go, Loader: "A URI claimed by two different documents or schemas is
 // unresolvable, and the error names both" (JSON Schema 2020-12 core
 // section 9.1.2: "there is no way for a URI to identify more than one
 // schema"). Two schemas in two documents claim one $id; a document's
@@ -624,8 +624,10 @@ func TestURIClaimedTwice(t *testing.T) {
 }
 
 // Reference cycles across documents are detected, never followed forever
-// (load.go, Loader), and wrap ErrUnresolved (errors.go: "a reference cycle
-// included"). Each document of a cycle is fetched once.
+// (load.go, Loader), and wrap ErrUnresolved (errors.go: "A reference cycle
+// cannot be resolved: a chain of Reference Objects or of Path Item $refs, in
+// any edition, ... that leads back into itself"). Each document of a cycle is
+// fetched once.
 func TestReferenceCyclesAcrossDocuments(t *testing.T) {
 	s := newSite(t)
 	s.put("/openapi.json", entry31(`"/a":{"$ref":"a.json"},"/ok":{"get":{"operationId":"ok"}},
@@ -651,10 +653,13 @@ func TestReferenceCyclesAcrossDocuments(t *testing.T) {
 	}
 }
 
-// The error names a reference cycle deterministically. Two operations enter
-// one cycle of parameter references at different points; each operation's
-// Err is the same text whichever compiles first, and when they compile at
-// once, in one document and across two.
+// Regression check, not contract: a reference cycle's error text is
+// deterministic. Two operations enter one cycle of parameter references at
+// different points; each operation's Err is the same text whichever compiles
+// first, and when they compile at once, in one document and across two. That
+// each Err wraps ErrUnresolved stays asserted (errors.go, ErrUnresolved: "A
+// reference cycle cannot be resolved: a chain of Reference Objects ... that
+// leads back into itself").
 func TestCycleNamedDeterministically(t *testing.T) {
 	local := doc31(`"/x":{"get":{"operationId":"x","parameters":[{"$ref":"#/components/parameters/A"}]}},
 		"/y":{"get":{"operationId":"y","parameters":[{"$ref":"#/components/parameters/B"}]}}`,
@@ -784,10 +789,10 @@ func TestFailureDisablesOnlyWhatReachesIt(t *testing.T) {
 }
 
 // errors.go, ErrUnresolved: "The Err names the reference, and wraps the
-// retrieval error too when fetching its document failed, or an error naming
-// the refused URI when admission refused it, so a caller can tell a fixable
-// fetch or admission ... from a broken document." The retrieval error is
-// the Fetch error itself, or the http.Client's *url.Error.
+// retrieval error too when fetching or reading its document failed ... or an
+// error naming the refused URI when admission refused it, so a caller can
+// tell a fixable fetch or admission ... from a broken document." The
+// retrieval error is the Fetch error itself, or the http.Client's *url.Error.
 func TestErrUnresolvedWrapsTheCause(t *testing.T) {
 	errDown := errors.New("the partner's store is down")
 	const base = "https://docs.example.test/"
@@ -824,7 +829,7 @@ func TestErrUnresolvedWrapsTheCause(t *testing.T) {
 }
 
 // Discovery follows the OpenAPI object model, not the text (load.go, Loader:
-// references "anywhere in a document, webhooks and callbacks included;
+// references "anywhere in a document, webhooks and callbacks included, ...;
 // operationRef and externalValue are not retrieved"): every Reference
 // Object, Path Item $ref and Schema Object $ref is followed, in webhooks,
 // callbacks, links, examples, headers and unused components, and in every
@@ -1198,9 +1203,10 @@ func TestRootDeclarationsComeFromTheEntry(t *testing.T) {
 	}
 }
 
-// load.go, Parse: "The uri, if not empty, is the absolute URI ... the
-// document is meant to live at, which stands for the URI it was retrieved
-// from and is never fetched itself"; Loader.Parse: l's settings "govern the
+// load.go, Parse: "The uri, if not empty, is the absolute URI ... that the
+// document is meant to live at: taken in the form Loader gives the URI
+// requested, it stands for the URI the document was retrieved from, and it is
+// never fetched"; Loader.Parse: l's settings "govern the
 // documents its references reach". References resolve against the uri and
 // are fetched; one back to the uri is not.
 func TestParseFollowsReferences(t *testing.T) {
@@ -1222,10 +1228,12 @@ func TestParseFollowsReferences(t *testing.T) {
 	wantStrings(t, "DocumentURIs", c.DocumentURIs(), []string{s.uri("/openapi.json"), s.uri("/params.json")})
 }
 
-// Loader.Parse: "With an empty uri, absolute external references can be
-// fetched only when AllowReference admits them; relative external
-// references have no base unless an OpenAPI 3.2 absolute $self supplies
-// one." Parse: "With an empty uri, the document may reference only itself".
+// Loader.Parse: "With an empty uri, a document is fetched only when Origins
+// or AllowReference admits it. In the content, a relative reference other
+// than a fragment-only one then resolves only against an absolute base
+// the content supplies ...; a reference left with no base is unresolvable and
+// never fetched." Parse: "With an empty uri, the document may reference
+// only itself".
 func TestParseEmptyURIReferences(t *testing.T) {
 	s := newSite(t)
 	s.put("/params.json", `{"P":{"name":"p","in":"query"}}`)
@@ -1315,11 +1323,11 @@ func TestTrustedDocumentsSuppliedByTheCaller(t *testing.T) {
 // Load's checks of Options against the document (client.go, Options:
 // "A value that matches no server of the document is refused by Load"; "A
 // name that appears in no server URL of the document is refused by Load";
-// "A type no operation declares is refused by Load"; SecurityKey: "A key
-// that names no alternative ... is refused by Load"; doc.go, Credentials:
-// "Load refuses a Credentials name the document never uses") cover every
-// operation the Client describes, those written in referenced documents
-// included. A misspelling is still refused.
+// MediaType: "Load refuses a type that matches no such Media in any request
+// body whose Err is nil"; SecurityKey: "A key that names no alternative ... is
+// refused by Load"; doc.go, Credentials: "Load refuses a Credentials name the
+// document never uses") cover every operation the Client describes, those
+// written in referenced documents included. A misspelling is still refused.
 func TestLoadChecksReachReferencedDocuments(t *testing.T) {
 	s := newSite(t)
 	s.put("/openapi.json", entry31(`"/a":{"$ref":"a.json"}`,

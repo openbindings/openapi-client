@@ -11,8 +11,9 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// stream.go Events/Event; HTML §§9.2.5–9.2.6 and the non-browser dispatch
-// rule of Events. Only fields set in this block appear; field-only blocks
+// stream.go Events/Event; HTML §§9.2.5–9.2.6 and Events' dispatch of "a block
+// without data, which a browser's EventSource does not dispatch". Only fields
+// set in this block appear; field-only blocks
 // dispatch, comment/unknown/invalid-only blocks do not, and EOF drops an
 // unfinished block. UTF-8 replacement and a leading BOM follow HTML.
 func TestEventsFieldParsing(t *testing.T) {

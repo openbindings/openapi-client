@@ -12,7 +12,8 @@ import (
 // (Server.Err), and one written as a reference marks a document meant to be
 // bundled first (see Operation)"; describe.go, Operation: such a value "makes
 // the nearest part holding that value unusable: the Err of that ... Server
-// says the document must be bundled first, and does not wrap ErrUnresolved".
+// ... says the document must be bundled first, a cause that does not wrap
+// ErrUnresolved".
 // An unusable sole server leaves a call needing Options.BaseURL (doc.go,
 // Configuration: "none requires BaseURL"). An array of strings, empty
 // included, is an enum, and the server stays usable.

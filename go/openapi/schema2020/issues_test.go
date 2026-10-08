@@ -12,17 +12,17 @@ import (
 
 // Losses. Project: "Project returns an *Error, and with it the Projection,
 // when part of the schema cannot be carried: a reference that cannot be
-// resolved, a $dynamicRef, whose target depends on dynamic scope, a keyword
-// removed as above, or a schema resource whose dialect is neither JSON
-// Schema 2020-12 nor an OpenAPI 3.1 or 3.2 base dialect. Each Issue's At
-// names the keyword concerned, which then contributes nothing: a reference
-// or removed keyword is dropped, with its mapping entry for a mapping
-// value; a resource in another dialect becomes true, the schema that
-// accepts anything; and a schema left with no keywords becomes true."
-// Issue: "Source string // the openapi.Schema.Source of the containing
-// schema; At string // JSON Pointer from that schema's Raw to the
-// problem". The checker also verifies that the Issues are exactly those
-// the authored schemas call for.
+// resolved, ...; a $dynamicRef, whose target depends on dynamic scope; a
+// keyword removed with an Issue, as above; or a schema resource in a dialect
+// other than those openapi.Schema reads. Each Issue's At names the keyword
+// concerned, which then contributes nothing: a reference or removed keyword is
+// dropped, with its mapping entry for a mapping value; a resource in another
+// dialect, named by its $schema or, when it has none, by its root, becomes
+// true, the schema that accepts anything; and a schema left with no keywords
+// becomes true when an Issue removed one of them." Issue: "Source is the
+// openapi.Schema.Source of the Root or Defs entry holding the problem", and At
+// is "JSON Pointer from that schema's Raw to the problem". The checker also
+// verifies that the Issues are exactly those the authored schemas call for.
 
 // An unresolved $ref, to a missing component or an unavailable document,
 // is dropped; a schema it leaves with no keywords is true.
@@ -71,7 +71,7 @@ func TestProjectUnresolvedReferenceSiblings(t *testing.T) {
 }
 
 // A descriptor schema that is an unresolved $ref is a lost Root: in every
-// edition the handle stays at the site (Schema: "when it cannot, it stays
+// edition the handle stays at the site (Schema: "when it cannot ... it stays
 // at the site, and References reports the Err"), and the schema left with
 // no keywords is true.
 func TestProjectUnresolvedRoot(t *testing.T) {
@@ -302,7 +302,8 @@ func TestProjectDocumentDialect(t *testing.T) {
 }
 
 // A nested resource in another dialect becomes true with an Issue at its
-// $schema (Project: "a resource in another dialect becomes true"); the
+// $schema (Project: "a resource in another dialect, named by its $schema or,
+// when it has none, by its root, becomes true"); the
 // other references in its tree are read through c and rewritten as any
 // other, mapping values included, while one that cannot be resolved is
 // lost as usual. References inside the foreign resource are part of it.
@@ -366,11 +367,12 @@ func TestProjectForeignResourceInDefs(t *testing.T) {
 	}
 }
 
-// Project: a reference "that openapi.Schema.References does not report
-// (such as a $ref in a Swagger 2.0 items object, or one that is not a
-// string)" is lost: removed with an Issue at that $ref. A Swagger 2.0
-// Items Object (OAS 2.0 section 6.4.10) is not a Schema Object, so a $ref
-// there, in a parameter, a header or a formData field, is not reported.
+// Project: a reference "that openapi.Schema.References does not report for the
+// schema holding it (such as a $ref in a Swagger 2.0 items object, or one that
+// is not a string), which is removed alone", is lost: removed with an Issue at
+// that $ref. A Swagger 2.0 Items Object (OAS 2.0 section 6.4.10) is not a
+// Schema Object, so a $ref there, in a parameter, a header or a formData field,
+// is not reported.
 func TestProjectUnreportedReference(t *testing.T) {
 	paths := `
 		"/x":{"get":{"produces":["application/json"],"parameters":[
@@ -481,9 +483,7 @@ func TestProjectDroppedDefsNoIssue(t *testing.T) {
 }
 
 // Error: "Error names each Source and At with its reason", and Unwrap
-// "returns each issue's Err in order". The three kinds of loss are told
-// apart by their Err (Error: "Issues distinguish unresolved references,
-// dynamic scope, and unsupported dialect semantics").
+// "returns each issue's Err in order".
 func TestProjectErrorReportsEveryIssue(t *testing.T) {
 	for _, v := range modernEditions {
 		t.Run(v, func(t *testing.T) {
@@ -502,7 +502,6 @@ func TestProjectErrorReportsEveryIssue(t *testing.T) {
 				t.Fatalf("Issues %+v, want 3", pe.Issues)
 			}
 			msg := err.Error()
-			reasons := map[string]bool{}
 			for _, is := range pe.Issues {
 				if !strings.Contains(msg, is.Source) || !strings.Contains(msg, is.At) {
 					t.Errorf("Error() %q does not name %s %q", msg, is.Source, is.At)
@@ -510,10 +509,6 @@ func TestProjectErrorReportsEveryIssue(t *testing.T) {
 				if !errors.Is(err, is.Err) {
 					t.Errorf("errors.Is(err, %v) is false", is.Err)
 				}
-				reasons[is.Err.Error()] = true
-			}
-			if len(reasons) != 3 {
-				t.Errorf("the three kinds of loss share reasons: %+v", pe.Issues)
 			}
 			if got := pe.Unwrap(); len(got) != 3 {
 				t.Errorf("Unwrap() = %v, want 3 errors", got)

@@ -24,7 +24,7 @@ const headerDoc = `{"openapi":"3.1.0","info":{"title":"t","version":"1"},"server
 
 // doc.go, Fixed rules, Header fields: "Options.Header and then Input.Header
 // are applied over the generated fields: a field replaces the same field set
-// before, and one with no values removes it."
+// before, and one with no values removes it".
 func TestHeaderFieldsApplied(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, headerDoc, &openapi.Options{Header: http.Header{
@@ -167,10 +167,12 @@ func TestHeaderFieldsAndHeaderParameters(t *testing.T) {
 	}
 }
 
-// client.go, OperationFromContext: "returns the operation being sent when
-// ctx is the context of a request the client sends, and nil otherwise".
-// client.go, Request.HTTP: "Its context carries the operation for
-// OperationFromContext and is replaced by the one given to Call or Stream."
+// client.go, OperationFromContext: "returns the operation of a request that
+// Prepare built or that a call sends, when ctx is that request's context or
+// derives from it, and nil otherwise". client.go, Request.HTTP: "Its context
+// carries the operation for OperationFromContext; the request Call, Send or
+// Stream sends carries the context given to it instead, the operation still
+// attached."
 func TestOperationFromContext(t *testing.T) {
 	w := newWire(t, nil)
 	ct := &countingTransport{}

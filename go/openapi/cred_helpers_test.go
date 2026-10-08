@@ -320,8 +320,8 @@ func contains(list []string, s string) bool {
 // credentials the client added"). It walks the whole chain, which is
 // stricter than that: use it only where the caller's own code makes no error
 // that quotes a credential (doc.go, Outcomes: "Errors made by the caller's
-// own code, such as its transport or a credential source, are passed on as
-// they are").
+// own code, such as its transport, Loader.Fetch, a credential source, a
+// ParamWriters function or a Codec's Encode, are passed on as they are").
 func noSecrets(t testing.TB, err error, secrets ...string) {
 	t.Helper()
 	if err == nil {

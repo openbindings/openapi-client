@@ -52,10 +52,13 @@ func respClient(t *testing.T, answer http.HandlerFunc, opts *openapi.Options) (*
 	return w, parseFor(t, w, respDoc, opts)
 }
 
-// client.go, Call: "Any other pointer receives the body decoded straight
-// from the connection by ... its codec class ... JSON types ... with
-// encoding/json". client.go, Response.Declaration and Response.Media: "the
-// same immutable descriptor Operation.Responses exposes".
+// client.go, Call: "Any other pointer (a pointer to decode into) receives the
+// body, read in full within MaxBodyBytes and decoded once, with no
+// intermediate value, by the caller's codec for its media type (see
+// Options.Codecs), or else by its codec class ... JSON types ... with
+// encoding/json". client.go, Response.Declaration: "It is the same immutable
+// descriptor Operation.Responses exposes"; Response.Media: "It is the same
+// immutable descriptor Declaration.Media exposes".
 func TestCallDecodesJSON(t *testing.T) {
 	_, c := respClient(t, jsonAnswer(200, `{"id":"p-7","name":"Rex","tag":"dog"}`), nil)
 	var pet Pet
@@ -72,10 +75,11 @@ func TestCallDecodesJSON(t *testing.T) {
 	}
 }
 
-// doc.go, Values: "Where the client's own JSON codec creates the values, as
-// when out is a *any, a *map[string]any or a *[]any ... JSON numbers are
-// kept exact as json.Number. A caller's own type decodes exactly as
-// json.Unmarshal would, its any-typed fields included."
+// doc.go, Values: "When the client's own JSON codec decodes into exactly a
+// *any, a *map[string]any or a *[]any, ... JSON numbers are kept exact as
+// json.Number. Into any other target, a caller's own type included, it
+// decodes exactly as json.Unmarshal would, so a number held in an any there,
+// as in a *[]map[string]any, is a float64."
 func TestDecodeDynamicJSON(t *testing.T) {
 	body := `{"n":9007199254740993,"f":1.50,"a":[1],"s":"x","b":true,"z":null}`
 	want := map[string]any{
@@ -141,9 +145,10 @@ func TestDecodeRawTargets(t *testing.T) {
 	mustCall(t, c, "getPet", nil, nil)
 }
 
-// client.go, Call: "out must be nil, a *[]byte, an io.Writer, or a non-nil
-// pointer; anything else is refused before sending". errors.go,
-// RequestError.Err: "an out that cannot receive a result".
+// client.go, Call: "out must be nil, a non-nil *[]byte, an io.Writer, or a
+// non-nil pointer; anything else, a nil pointer of any type included, is
+// refused before sending." errors.go, RequestError.Err: "an out that cannot
+// receive a result".
 func TestOutRefusedBeforeSending(t *testing.T) {
 	w, c := respClient(t, nil, nil)
 	for name, out := range map[string]any{
@@ -184,11 +189,13 @@ func TestTrailingDataAfterJSON(t *testing.T) {
 	}
 }
 
-// client.go, Call: "An empty body is a success for every out, except that a
-// JSON or XML type decoded into a pointer is a *DecodeError wrapping io.EOF
-// when the response can have a body and its governing Message has Media ...
-// An empty text body decodes as "" ... and any other empty body into a *any
-// as an empty []byte." errors.go, DecodeError: "Err is io.EOF".
+// client.go, Call: "For a pointer to decode into, ... an empty body is a
+// *DecodeError wrapping io.EOF under a JSON or XML type when the response can
+// have a body and its governing Message has Media (in Swagger 2.0, a schema).
+// Otherwise it leaves out as it was under a JSON or XML type ...; under any
+// other type, it decodes as "" into a *string or *any for a text/* type, ...
+// and as an empty []byte into a *any for any other type"; the raw targets take
+// any body as it is. errors.go, DecodeError: "Err is io.EOF".
 func TestEmptyBody(t *testing.T) {
 	// JSON with Media declared: typed and *any targets fail with io.EOF.
 	_, c := respClient(t, jsonAnswer(200, ""), nil)
@@ -240,8 +247,8 @@ func TestEmptyBody(t *testing.T) {
 }
 
 // client.go, Call: "A 1xx, 204, 205 or 304 response, a response to HEAD, and
-// a 2xx response to CONNECT have no body: Call, Stream and StatusError do
-// not read one".
+// a 2xx response to CONNECT have no body: Call, Stream, StatusError and
+// Response.Decode do not read one".
 func TestBodilessResponses(t *testing.T) {
 	for _, status := range []int{204, 205} {
 		_, c := respClient(t, func(w http.ResponseWriter, r *http.Request) {
@@ -271,12 +278,14 @@ func TestBodilessResponses(t *testing.T) {
 	}
 }
 
-// client.go, Call: "When out is a pointer to decode into (not a *[]byte, an
-// io.Writer or a *any) and the operation's 2xx responses declare concrete
-// media types of more than one codec class (a type with a caller's codec is
-// a class of its own), a call whose request carries no Accept field is
-// refused before sending, at Settings key "Options.Header", naming the
-// offered types."
+// client.go, Call: "When out is a pointer to decode into other than a *any,
+// and the concrete media types the operation's 2xx responses declare fall into
+// more than one group, a call whose request carries no Accept field is refused
+// before sending, at Settings key "Options.Header", naming the offered types.
+// The types that take their codec from one Options.Codecs key form a group. Of
+// the rest, those of each codec class ... form a group, and those in no codec
+// class, such as application/octet-stream, image/png and multipart types, form
+// one group together."
 func TestTypedDecodeNeedsAccept(t *testing.T) {
 	w, c := respClient(t, jsonAnswer(200, `{"name":"Rex"}`), nil)
 	refuse := func(c *openapi.Client, key string, in *openapi.Input, types ...string) {
@@ -316,13 +325,16 @@ func TestTypedDecodeNeedsAccept(t *testing.T) {
 	}
 }
 
-// client.go, Call: "A missing, repeated or unparsable Content-Type is
-// treated as application/octet-stream, which a *any receives as a []byte and
-// a typed target cannot"; "any text/* type ... into a *string, its bytes as
-// sent, the charset left in the Content-Type; and into a *any, text as a
-// string and any other non-JSON type ... as a []byte"; "a *[]byte takes any
-// body as it is"; "A type these rules cannot decode into out is a
-// *DecodeError".
+// client.go, Call: "A missing, repeated or unparsable Content-Type is treated
+// as application/octet-stream, which, unless Options.Codecs has a codec for
+// it, a *any receives as a []byte and a typed target cannot"; "Where the media
+// type has no caller's codec, a *string and a *any take any text/* type as
+// text, whatever its codec class (text/xml and text/event-stream included): a
+// *string its bytes as sent, the charset left in the Content-Type, and a *any
+// a string; and a *any takes any other type that is neither JSON nor
+// sequential, multipart included, as a []byte."; "a
+// *[]byte takes any body as it is"; "A type these rules cannot decode into out
+// is a *DecodeError".
 func TestDecodeByContentType(t *testing.T) {
 	multi := func(values ...string) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
@@ -389,12 +401,13 @@ type xmlPet struct {
 
 // doc.go, Fixed rules, Content codings: "the transport may ask for gzip and
 // remove it ... A header field that sets Accept-Encoding turns that off. A
-// body whose Content-Encoding, other than identity, remains passes through
-// unchanged to a *[]byte or io.Writer; any other target ... report[s] an
-// error". Generated text identifies Content-Encoding; its
-// response-controlled value remains available through Header ("The coding
-// remains available in Header; generated diagnostics omit
-// response-controlled values").
+// body whose remaining Content-Encoding names a coding other than identity
+// passes through unchanged to a *[]byte or io.Writer, ...; any other target
+// ... report a non-identity Content-Encoding error". The error names the
+// operation and status (errors.go, DecodeError.Error: "Error returns the
+// operation, the status and the reason"), never the coding, which remains
+// available through Header ("The coding remains available in Header; generated
+// diagnostics omit response-controlled values").
 func TestContentCodings(t *testing.T) {
 	var gz bytes.Buffer
 	zw := gzip.NewWriter(&gz)
@@ -424,7 +437,7 @@ func TestContentCodings(t *testing.T) {
 	if !errors.As(err, &de) {
 		t.Fatalf("coded body into a struct: %v, want a *DecodeError", err)
 	}
-	for _, want := range []string{"getPet", "200", "Content-Encoding"} {
+	for _, want := range []string{"getPet", "200"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("coded body diagnostic %q does not identify %s", err, want)
 		}
@@ -451,14 +464,15 @@ func TestContentCodings(t *testing.T) {
 }
 
 // errors.go, StatusError: "A StatusError is a response whose final status is
-// not 2xx ... The promoted Body reads Content again"; "Error returns the
-// operation and the status ... never the body or the URL"; "Decode decodes
-// Content into v by the response's media type, as Response.Decode does ...
-// any number of times." client.go, Call: "Any other final status is a
-// *StatusError, and out is untouched"; doc.go, Outcomes: "Whenever a
-// response arrived, the *Response is returned, even with an error".
-// client.go, Response: for a Response from Call with a StatusError, Body
-// "reads that error's Content".
+// not 2xx, including a 3xx that was not followed"; "It holds a copy of the
+// call's Response, so its promoted Body and the Response's Body each read
+// Content again"; "Error returns the operation and the status ... never the
+// body or the URL"; "Decode decodes Content into v by the response's media
+// type, as Response.Decode does ... any number of times." client.go, Call: "Any
+// other final status is a *StatusError, and out is untouched"; doc.go,
+// Outcomes: "Whenever a response arrived, the *Response is returned, even with
+// an error". client.go, Response: for a Response from Call with a StatusError,
+// Body "reads that error's Content".
 func TestStatusError(t *testing.T) {
 	body := `{"title":"Not found","detail":"no pet p-404"}`
 	w, c := respClient(t, typedAnswer(404, "application/problem+json", body), nil)
@@ -569,11 +583,11 @@ func TestMaxErrorBytes(t *testing.T) {
 
 // errors.go, DecodeError: "a response whose body could not be used by Call
 // ... it did not decode into the value given"; "Content is the start of the
-// body, at most 4 KiB"; "The promoted Body reads Content again, and
-// ContentLength is len(Content)". DecodeError.Error returns the operation,
-// status and static reason, with response-controlled media text available
-// only through Header. doc.go, Outcomes: "A 2xx
-// whose body could not be read or decoded: a *DecodeError."
+// body, at most 4 KiB"; "whose promoted Body reads Content again, and
+// ContentLength is len(Content)". DecodeError.Error: "Error returns the
+// operation, the status and the reason, never the body or response-controlled
+// media and encoding text", which stays available through Header. doc.go,
+// Outcomes: "A 2xx whose body could not be read or decoded: a *DecodeError."
 func TestDecodeError(t *testing.T) {
 	bad := `{"name": 5, "detail":"SECRET-BODY"}`
 	_, c := respClient(t, jsonAnswer(200, bad), nil)
@@ -593,7 +607,7 @@ func TestDecodeError(t *testing.T) {
 		t.Errorf("Body reads %q, ContentLength %d", b, de.ContentLength)
 	}
 	msg := de.Error()
-	for _, want := range []string{"getPet", "200", "decode"} {
+	for _, want := range []string{"getPet", "200"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("Error() = %q, want %s in it", msg, want)
 		}
@@ -671,8 +685,8 @@ func TestWriterFailureIsDecodeError(t *testing.T) {
 	}
 }
 
-// doc.go, Outcomes: "Transport failure: the *url.Error from the
-// http.Client."
+// doc.go, Outcomes: "Transport failure: a *url.Error from the http.Client,
+// which errors.As finds".
 func TestTransportFailure(t *testing.T) {
 	w, c := respClient(t, nil, nil)
 	w.Close()
@@ -732,11 +746,11 @@ func TestResponseDeclaration(t *testing.T) {
 // cover them as a range does, and every parameter it names is present with
 // an equal value: parameter names are compared without regard to case, and
 // values after removing quoted-string quoting, a charset without regard to
-// case and others exactly. The most specific match wins: a concrete type
+// case and others exactly. ... The most specific match wins: a concrete type
 // over type/*, type/* over */*, then more parameters over fewer; a tie
 // matches none. An absent Content-Type is treated as
-// application/octet-stream for matching; a repeated Content-Type matches
-// none."
+// application/octet-stream for matching; a repeated one, or one the client
+// cannot parse, matches none."
 func TestResponseMediaMatching(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -802,9 +816,9 @@ func TestResponseMediaMatching(t *testing.T) {
 // decodes the body. The caller owns and must close Response.Body."
 // client.go, Response.Decode: "using Call's target, codec, empty-body and
 // MaxBodyBytes rules for any HTTP status ... never returns a StatusError. A
-// failure to read or decode is a *DecodeError holding r, even for a non-2xx
-// status. An invalid out is a *DecodeError without consuming or closing
-// Body".
+// failure to read or decode is a *DecodeError holding a copy of r, even for a
+// non-2xx status. An invalid out is a *DecodeError without consuming or
+// closing Body".
 func TestSendAndDecode(t *testing.T) {
 	body := `{"title":"Not found","detail":"d"}`
 	w, c := respClient(t, typedAnswer(404, "application/problem+json", body), nil)

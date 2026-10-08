@@ -68,11 +68,12 @@ func Secret(secret string) Credential {
 	return Credential{static(secret), secretCredential}
 }
 
-// SecretFunc returns a Credential whose secret, as for [Secret], f returns
-// when a request is about to be sent, so it can return a token that
-// refreshes or a secret looked up per tenant. f receives the call's
-// context, with its deadline, cancellation and values, but not the
-// operation: a request f makes is not labelled or retried as the call's
+// SecretFunc returns a Credential whose credential source, f, returns its
+// secret, as for [Secret], when a request is about to be sent, so f can return
+// a token that refreshes or a secret looked up per tenant. f receives the
+// call's context, with its deadline, cancellation and values, and on a
+// redirect hop the deadline HTTPClient.Timeout sets for the chain too, but not
+// the operation: a request f makes is not labelled or retried as the call's
 // operation by middleware that asks OperationFromContext.
 //
 // f is called once for each request the client builds that carries its
@@ -85,9 +86,10 @@ func Secret(secret string) Credential {
 // oauth2.ReuseTokenSource does. An error from f, or an empty secret, on the
 // first request refuses the call with a *RequestError: nothing is sent. On a
 // redirect hop the first request has already been sent, so an error or an
-// empty secret ends the call with a *url.Error wrapping f's error, along
-// with the last response, its body closed. An error from f is passed on as
-// it is. A nil f, like an empty secret, is no credential.
+// empty secret ends the call with a *url.Error naming the scheme, and wrapping
+// f's error if it returned one, along with the last response, its body closed.
+// An error from f is passed on as it is. A nil f, like an empty secret, is no
+// credential.
 //
 // For a golang.org/x/oauth2 TokenSource ts:
 //
@@ -107,8 +109,8 @@ func SecretFunc(f func(ctx context.Context) (string, error)) Credential {
 
 // Basic returns a Credential for http basic authentication (RFC 7617),
 // sent in UTF-8. A username containing a colon, or either value containing
-// a control character, is refused as the package doc's Credentials section
-// says of every credential value.
+// an ASCII control character, is a value RFC 7617 forbids, refused as the
+// package documentation says under Credentials.
 func Basic(username, password string) Credential {
 	if username == "" && password == "" {
 		return Credential{}

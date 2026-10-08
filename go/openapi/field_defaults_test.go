@@ -221,16 +221,19 @@ func chainDoc(n int) []byte {
 // address), so such a walk overflows it at that length.
 const chainStack = 128 << 10
 
-// No compile path recurses once per $ref or items link. Chains of 12,500
-// and 50,000 links are described, parse and Operations(), with every
-// goroutine's stack held to 128 KiB (runtime/debug.SetMaxStack), at a cost
-// linear in the chain, the field text/plain as the string at the chain's
-// end gives it: a long chain gets its true default, with no length cut
-// past which the absent type, application/octet-stream, would apply. A
-// walk recursing per link exceeds that stack and ends the process, so the
-// test runs in a child process. A 900,000-link chain with the default
-// stack took about 73 s under -race, too close to the child's 2-minute
-// limit.
+// Regression check, not contract: describing a chain costs time linear in its
+// length, and no compile path recurses once per $ref or items link, so every
+// goroutine's stack holds to 128 KiB (runtime/debug.SetMaxStack). The rest is
+// contract: chains of 12,500 and 50,000 links are described, parse and
+// Operations(), without ending the process, and the field is text/plain, as
+// the string at the chain's end gives it, with no length cut past which the
+// absent type, application/octet-stream, would apply (doc.go, Configuration:
+// "Of a property, whose array is sent one field or part per item, the array
+// type takes the defaults of its items", and in 3.1 an item's array "takes the
+// defaults of its own items in turn"). A walk recursing per link exceeds that
+// stack and ends the process, so the test runs in a child process. A
+// 900,000-link chain with the default stack takes about 73 s under -race, too
+// close to the child's 2-minute limit.
 func TestLongItemsChainNoRecursion(t *testing.T) {
 	if !inChild(t) {
 		return
@@ -266,12 +269,13 @@ func typeListChain(n int) []byte {
 	return []byte(b.String())
 }
 
-// The default set is held as a set of the three possible defaults and
-// formatted only for a descriptor: a chain of [array, string] schemas gives
-// one field the defaults text/plain and application/json, a short
-// ContentType, and costs allocated bytes and retained memory linear in the
-// chain (a joined list grown per link would be quadratic: about 600 MB at
-// 10,000 links).
+// Regression check, not contract: the default set is held as a set of the
+// three possible defaults and formatted only for a descriptor, so a chain of
+// [array, string] schemas costs allocated bytes and retained memory linear in
+// the chain (a joined list grown per link would be quadratic: about 600 MB at
+// 10,000 links). The rest is contract: the chain gives one field the defaults
+// text/plain and application/json, a short ContentType (doc.go,
+// Configuration: "types with different defaults give a list").
 func TestFieldDefaultSetLinear(t *testing.T) {
 	c, err := openapi.Parse(context.Background(), typeListChain(1000), testDocURI, nil)
 	if err != nil {
@@ -410,8 +414,9 @@ func TestEncodingContentTypeListQuoteAware(t *testing.T) {
 // Media.Encoding lists fields only for a form type, a multipart type, or a
 // range of multipart types such as multipart/*; for */* and application/*
 // it lists none, their fields depending on the type a call selects
-// (describe.go, Media.Encoding: "the fields of form or multipart
-// content").
+// (describe.go, Media.Encoding: "It is empty for a declared range other than
+// multipart/*, such as */* or application/*, and for a response's Media in
+// every edition").
 func TestMediaRangeEncodingDescriptors(t *testing.T) {
 	doc := doc31(`"/r":{"post":{"operationId":"ranges","requestBody":{"content":{
 		"*/*":{"schema":{"type":"object","properties":{"x":{"type":"string"}}}},
@@ -434,8 +439,10 @@ func TestMediaRangeEncodingDescriptors(t *testing.T) {
 // then those reached through $ref and allOf, depth first in document order,
 // a property's first declaration fixing its place, then the names only the
 // encoding map has (describe.go, Media.Encoding: "the properties the schema
-// lists at its top level (after following $ref), in document order, then
-// those that only declare an Encoding Object, in the encoding map's order").
+// lists at its top level, in document order, then those the schemas it
+// reaches by $ref and allOf list, depth first in document order, each in the
+// place of its first declaration, then those that only declare an Encoding
+// Object, in the encoding map's order").
 // Here the schema writes a $ref, its own properties, then two allOf
 // branches, the second a $ref; R, reached first, has an allOf of its own and
 // repeats own2; allOf's first branch repeats r1.

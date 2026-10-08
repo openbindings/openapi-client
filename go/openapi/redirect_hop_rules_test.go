@@ -146,8 +146,11 @@ func callOrSend(t *testing.T, c *openapi.Client, via, key string, in *openapi.In
 // reflects is not carried onward), and the credential is appended only
 // where the origin rule allows. Response.Request, via, CheckRedirect's view
 // and every URL in an error the client creates come from the unsigned view
-// (client.go, Redirects: "a query credential goes only on the request the
-// client builds, never onto a Location"). client.go, Response: "Its
+// (client.go, Redirects: "On every hop, before CheckRedirect sees it, the
+// client removes from the Location's query each pair named as a query
+// credential the call places ..., whatever its value. So a credential a server
+// echoes there reaches no other origin, and is in the URL of no request that a
+// Response, CheckRedirect or an error shows"). client.go, Response: "Its
 // Request is the last request sent, after any redirects, without the
 // credentials the client added to its URL and header fields or the cookies
 // the HTTPClient's Jar supplied, and so is every earlier request reachable
@@ -484,20 +487,20 @@ func wantBodyClosed(t *testing.T, resp *openapi.Response) {
 	}
 }
 
-// An error that ends a chain after a response arrived (CheckRedirect's
-// error or the hop limit, a SecretFunc or GetBody failure on a hop, a hop's
-// transport failure, a Timeout spent before a hop) returns that last
-// Response, its body closed, with the *url.Error, as net/http does for
-// CheckRedirect. ErrUseLastResponse keeps returning it open, as the
-// outcome. doc.go,
-// Outcomes: "Whenever a response arrived, the [*Response] is returned, even
-// with an error"; a transport failure is "the *url.Error from the
-// http.Client", not a *StatusError. credential.go, SecretFunc: "On a
-// redirect hop the first request has already been sent, so an error or an
-// empty secret ends the call with a *url.Error wrapping f's error, along
-// with the last response, its body closed." net/http's own Client.do returns
-// the 3xx with a CheckRedirect error (go1.25 client.go, "Special case for Go
-// 1 compatibility").
+// An error that ends a chain after a response arrived (CheckRedirect's error or
+// the hop limit, a SecretFunc or GetBody failure on a hop, a hop's transport
+// failure, a Timeout spent before a hop) returns that last Response, its body
+// closed, with the *url.Error, as net/http does for CheckRedirect.
+// ErrUseLastResponse keeps returning it open, as the outcome. doc.go, Outcomes:
+// "Whenever a response arrived, the [*Response] is returned, even with an
+// error; when an error ends a redirect chain, it is the last 3xx, its body
+// already closed"; a transport failure is "a *url.Error from the
+// http.Client, which errors.As finds", not a *StatusError. credential.go,
+// SecretFunc: "On a redirect hop the first request has already been sent, so an
+// error or an empty secret ends the call with a *url.Error naming the scheme,
+// and wrapping f's error if it returned one, along with the last response, its
+// body closed." net/http's own Client.do returns the 3xx with a CheckRedirect
+// error (go1.25 client.go, "Special case for Go 1 compatibility").
 func TestErrorEndingAChainReturnsTheLastResponse(t *testing.T) {
 	errStop := errors.New("caller stopped the redirect")
 	wantChainError := func(t *testing.T, resp *openapi.Response, err error, status int, cause error) {
@@ -1093,7 +1096,7 @@ func TestUserAgentRemovalKeptOnEveryHop(t *testing.T) {
 // client generated; a caller-edited one is a caller field and goes
 // (CheckRedirect can restore it). client.go, Redirects: on a hop to another
 // origin the client removes "every field supplied through Options.Header,
-// Input.Header, or an edit to Request.HTTP.Header. Generated fields needed
+// Input.Header, or an edit to Request.HTTP.Header. ... Generated fields needed
 // to describe a replayed body, such as Content-Type and Content-Length, are
 // rebuilt." A field a ParamWriter sets is the caller's too.
 func TestCrossOriginKeepsOnlyGeneratedContentType(t *testing.T) {
@@ -1198,10 +1201,10 @@ func TestRedirectKeepsCallerHostOnRelativeLocation(t *testing.T) {
 }
 
 // http://h versus http://h:80 on a hop: client.go, Redirects: "On a hop to
-// another origin (scheme, host and port)"; RFC 6454
-// section 4: a URI's port is its scheme's default port when it names none,
-// so http://h and http://h:80 are one origin, and a header credential is
-// placed again; another port or scheme is another origin.
+// another origin (scheme, host and port, a scheme's default port being the same
+// as none, ...)"; RFC 6454 section 4: a URI's port is its scheme's default port
+// when it names none, so http://h and http://h:80 are one origin, and a header
+// credential is placed again; another port or scheme is another origin.
 func TestRedirectDefaultPortIsSameOrigin(t *testing.T) {
 	for _, tt := range []struct {
 		base, loc string

@@ -152,11 +152,11 @@ func (c styleCfg) expect(t testing.TB, v any) (string, fate) {
 	case "header":
 		return uexpandOp(uheader, spec), sent
 	default:
-		// doc.go, Fixed rules, Cookies: "one Cookie field, pairs joined by
-		// "; "", the pairs form style writes; OAS 3.1.2 Appendix D.1: the
-		// form "?" prefix is stripped, and pairs in cookies "are delimited by
-		// a semicolon followed by a space character rather than &".
-		// A ";" or control character in a value is percent-encoded, as any
+		// doc.go, Fixed rules, Cookies: "one Cookie field holding, joined by ";
+		// ", the parameters", the pairs form style writes; OAS 3.1.2 Appendix
+		// D.1: the form "?" prefix is stripped, and pairs in cookies "are
+		// delimited by a semicolon followed by a space character rather than
+		// &". A ";" or control character in a value is percent-encoded, as any
 		// other byte outside the unreserved set (doc.go, Fixed rules,
 		// Percent-encoding).
 		want := strings.ReplaceAll(strings.TrimPrefix(uexpand("?", spec), "?"), "&", "; ")
@@ -167,12 +167,12 @@ func (c styleCfg) expect(t testing.TB, v any) (string, fate) {
 	}
 }
 
-// deepExpect derives a deepObject query from defined JSON data n: doc.go,
-// Fixed rules, Styles: "Nesting in any style but deepObject is refused, and
-// so are an array in a deepObject value, a primitive for ... deepObject";
-// Values: "An undefined member is skipped". Undefinedness is settled first
-// (Fixed rules, Styles), so an undefined member, an empty array included, is
-// skipped at any depth.
+// deepExpect derives a deepObject query from defined JSON data n: doc.go, Fixed
+// rules, Styles: "Nesting in any style but deepObject is refused, and so are an
+// array as or in a deepObject value unless Options.DeepObjectArrays says how to
+// write it, a primitive for ... deepObject"; Values: "An undefined member or
+// array item is skipped". Undefinedness is settled first (Fixed rules, Styles),
+// so an undefined member, an empty array included, is skipped at any depth.
 func deepExpect(name string, n jnode, allow uallow) (string, fate) {
 	if n.kind != 'o' {
 		return "", refused
@@ -308,9 +308,9 @@ func styleConfigs() []styleCfg {
 }
 
 // styleCorpus is the values every configuration is called with: primitives,
-// arrays and objects (doc.go, Values: numbers and booleans "in its JSON
-// spelling ... a string or json.Number as it is"; members in encoding/json's
-// order), the undefined values, and values a style refuses.
+// arrays and objects (doc.go, Values: "a number, boolean or json.Number is
+// written in its JSON spelling ... and a string as it is"; members in
+// encoding/json's order), the undefined values, and values a style refuses.
 var styleCorpus = []struct {
 	name string
 	v    any
@@ -361,19 +361,19 @@ var styleCorpus = []struct {
 	{"reserved member names", map[string]string{"a/b": "c", "d[e]": "f?g"}},
 }
 
-// Every configuration with every corpus value. Matrix, label, simple and
-// form (and a header's simple, and a cookie's form) are checked against the
-// RFC 6570 oracle (doc.go, Values: "as RFC 6570 says"; OAS 3.1.2 section
-// 4.8.12.3: matrix is RFC 6570 section 3.2.7, label 3.2.5, simple 3.2.2,
-// form 3.2.8), spaceDelimited, pipeDelimited and deepObject against the OAS
-// 3.1.2 table and text. allowReserved applies to the query styles: RFC 6570
-// reserved expansion, member names included (doc.go, Fixed rules,
-// Percent-encoding). An exploded member whose value is "" is written as its
-// name alone except in form style (Fixed rules, Styles), matrix without
-// explode writes [""] as ";p" (RFC 6570 section 3.2.7), a cookie value's ";"
-// is percent-encoded (Fixed rules, Percent-encoding), and undefined values,
-// nested ones included, are settled before any style refusal (Fixed rules,
-// Styles).
+// Every configuration with every corpus value. Matrix, label, simple and form
+// (and a header's simple, and a cookie's form) are checked against the RFC 6570
+// oracle (doc.go, Values: "as RFC 6570 says"; OAS 3.1.2 section 4.8.12.3:
+// matrix is RFC 6570 section 3.2.7, label 3.2.5, simple 3.2.2, form 3.2.8),
+// spaceDelimited, pipeDelimited and deepObject against the OAS 3.1.2 table and
+// text. allowReserved applies to the query styles: RFC 6570 reserved expansion,
+// member names included (doc.go, Fixed rules, Percent-encoding). An exploded
+// member whose value is "" is written as its name alone except in form style
+// and deepObject, which write its name and "=" (Fixed rules, Styles), matrix
+// without explode writes [""] as ";p" (RFC 6570 section 3.2.7), a cookie
+// value's ";" is percent-encoded (Fixed rules, Percent-encoding), and undefined
+// values, nested ones included, are settled before any style refusal (Fixed
+// rules, Styles).
 func TestStylesAgainstOracle(t *testing.T) {
 	cfgs := styleConfigs()
 	w := newWire(t, nil)
@@ -704,8 +704,8 @@ func TestNameEncoding(t *testing.T) {
 // properties to be represented using form parameters"; section 4.8.12.6:
 // color%5BR%5D=100&color%5BG%5D=200&color%5BB%5D=150), with doc.go's rules:
 // "deepObject ignores explode"; "deepObject nests objects as
-// a%5Bb%5D%5Bc%5D=v"; "An undefined member is skipped"; members in the
-// order encoding/json writes them; values in their JSON spelling.
+// a%5Bb%5D%5Bc%5D=v"; "An undefined member or array item is skipped"; members
+// in the order encoding/json writes them; values in their JSON spelling.
 func TestDeepObject(t *testing.T) {
 	w := newWire(t, nil)
 	doc := doc31(`
@@ -744,9 +744,10 @@ func TestDeepObject(t *testing.T) {
 			})
 		}
 	}
-	// "an array in a deepObject value, a primitive for ... deepObject" are
-	// refused at the key; Param.Err is not set, since the document alone does
-	// not decide it (the schema is {}).
+	// "an array as or in a deepObject value unless Options.DeepObjectArrays
+	// says how to write it, a primitive for ... deepObject" are refused at the
+	// key, Options.DeepObjectArrays being zero; Param.Err is not set, since
+	// the document alone does not decide it (the schema is {}).
 	for _, v := range []any{"x", 1, true, []string{"a"}, map[string]any{"a": []int{1}}, map[string]any{"a": map[string]any{"b": []string{"c"}}}} {
 		for _, key := range []string{"d", "t", "n"} {
 			_, re := callOne(t, w, c, key, "f", v)
@@ -811,17 +812,17 @@ func TestDelimitedStyles(t *testing.T) {
 	}
 }
 
-// Refusals at the parameter's key (errors.go, RequestError.Inputs: "a value
-// its style cannot serialize", keyed by Param.Key): doc.go, Fixed rules,
-// Styles: "Nesting in any style but deepObject is refused, and so are an
-// array in a deepObject value, a primitive for spaceDelimited, pipeDelimited
-// or deepObject, explode true with spaceDelimited or pipeDelimited ... Each
-// is refused at the parameter's key, with Param.Err set where the document
-// alone decides it". A
-// Param.Err fails a call only when the call uses the parameter (describe.go,
-// Operation.Err: "A defect in an optional part ... fails a call only when
-// the call uses it"), and a required one refuses every call (describe.go,
-// Param.Err).
+// Refusals at the parameter's key (errors.go, RequestError.Inputs: "a value its
+// style cannot serialize", keyed by Param.Key): doc.go, Fixed rules, Styles:
+// "Nesting in any style but deepObject is refused, and so are an array as or in
+// a deepObject value unless Options.DeepObjectArrays says how to write it, a
+// primitive for spaceDelimited, pipeDelimited or deepObject, explode true with
+// spaceDelimited or pipeDelimited ... Each is refused at the parameter's key,
+// with Param.Err set where the document alone decides it",
+// Options.DeepObjectArrays being zero here. A Param.Err fails a call only when
+// the call uses the parameter (describe.go, Operation.Err: "A defect in an
+// optional part ... fails a call only when the call uses it"), and a required
+// one refuses every call (describe.go, Param.Err).
 func TestStyleRefusals(t *testing.T) {
 	w := newWire(t, nil)
 	doc := doc31(`
@@ -832,7 +833,7 @@ func TestStyleRefusals(t *testing.T) {
 		"/p":{"get":{"operationId":"p","parameters":[{"name":"f","in":"query","style":"pipeDelimited","explode":false,"schema":{}}]}}`)
 	c := parseFor(t, w, doc, nil)
 	for _, key := range []string{"se", "pe", "ser"} {
-		if p := param(t, mustOp(t, c, key), 0); p.Err == nil || errors.Is(p.Err, errors.ErrUnsupported) {
+		if p := param(t, mustOp(t, c, key), 0); p.Err == nil {
 			t.Errorf("%s: Param.Err = %v, want the undefined combination", key, p.Err)
 		}
 	}
@@ -903,10 +904,11 @@ func TestNestingRefusedEveryStyle(t *testing.T) {
 	wantKeys(t, "Inputs", re.Inputs, true, "p", "q", "X-H", "zz")
 }
 
-// doc.go, Fixed rules, Percent-encoding: "A path parameter value that would
-// form a whole "." or ".." segment is refused, since RFC 3986 section 5.2.4
-// removes such segments before the value could reach the server". The rule
-// applies to the resulting segment, however many values form it. A label
+// doc.go, Fixed rules, Percent-encoding: "A path parameter value whose
+// expansion would form a whole "." or ".." segment, percent-encoded or not,
+// alone or with the values and text beside it, is refused at its key (at one
+// of their keys when several values form it), since RFC 3986 section 5.2.4
+// removes such segments before the value could reach the server". A label
 // expansion that is a whole segment forms "." from "" and ".." from "."
 // (RFC 6570 section 3.2.5: X{.empty} is "X.").
 func TestLabelDotSegments(t *testing.T) {

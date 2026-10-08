@@ -47,8 +47,9 @@ func destClient(t *testing.T, w *wire) *openapi.Client {
 // counts as given when "the applied credential supplies [it]";
 // Input.ParamWriters: "Credential-destination collisions are still
 // refused." Header names compare without regard to case (RFC 9110 section
-// 5.1). Order: "query credentials last"; Cookies: "parameters in declared
-// order, then credentials".
+// 5.1). Order: "query credentials last"; Cookies: "the parameters in
+// declared order, then the cookies the HTTPClient's Jar holds for the URL,
+// then credentials".
 func TestCredentialSuppliesItsDestination(t *testing.T) {
 	w := newWire(t, nil)
 	c := destClient(t, w)
