@@ -327,6 +327,7 @@ func (ld *loading) retrieve(uri string, froms []string, buf []byte) (string, str
 		if next == nil {
 			next = tenRedirects
 		}
+		c.Transport = followParsed{noFollow{c.Transport}}
 		c.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 			to := *req.URL
 			to.Fragment, to.RawFragment = "", ""
@@ -349,7 +350,10 @@ func (ld *loading) retrieve(uri string, froms []string, buf []byte) (string, str
 					to.Fragment, to.RawFragment = "", ""
 					final, base = to.String(), &to
 				}
-				if resp.StatusCode/100 != 2 {
+				switch {
+				case resp.Header[heldLocation] != nil:
+					err = errors.New(status(resp.StatusCode) + " with a Location that cannot be parsed (RFC 3986)")
+				case resp.StatusCode/100 != 2:
 					err = errors.New(status(resp.StatusCode))
 				}
 			}
