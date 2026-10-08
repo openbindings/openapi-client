@@ -109,8 +109,8 @@ func SecretFunc(f func(ctx context.Context) (string, error)) Credential {
 
 // Basic returns a Credential for http basic authentication (RFC 7617),
 // sent in UTF-8. A username containing a colon, or either value containing
-// a control character, is a value RFC 7617 forbids, refused as the package
-// documentation says under Credentials.
+// an ASCII control character, is a value RFC 7617 forbids, refused as the
+// package documentation says under Credentials.
 func Basic(username, password string) Credential {
 	if username == "" && password == "" {
 		return Credential{}

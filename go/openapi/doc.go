@@ -355,9 +355,10 @@
 //     3.2 cookie style names and values, a content-serialized cookie value
 //     (OpenAPI 3.1.2 recommends text/plain content so the application assembles
 //     the cookie), and an apiKey sent in a cookie, are written as given too; a
-//     cookie value written as given that holds a ";" or a control character is
-//     refused, and so is a cookie style member name that is not an RFC 6265
-//     token. A cookie style parameter whose name is not one has Param.Err set.
+//     cookie value written as given that holds a ";" or an ASCII control
+//     character is refused, and so is a cookie style member name that is not
+//     an RFC 6265 token. A cookie style parameter whose name is not one has
+//     Param.Err set.
 //   - Styles: RFC 6570's normative text governs where its informative Appendix
 //     A differs. So an exploded object member whose value is "" is written as
 //     its name alone, except in form style, OpenAPI 3.2 cookie style and
@@ -427,7 +428,7 @@
 //     included, so net/http adds none). A field name, in a Header
 //     (Options.Header, Input.Header or Part.Header) or of a header parameter,
 //     must be an RFC 9110 token, and a field value, a header parameter's
-//     included, may hold no control character but a tab and no leading or
+//     included, may hold no ASCII control character but a tab and no leading or
 //     trailing whitespace, which HTTP would strip. A Header holding two
 //     spellings of one field is refused, and so is a field or a header
 //     parameter named Host, Content-Length, Transfer-Encoding, Trailer,
@@ -483,11 +484,11 @@
 // value its destination cannot carry is refused at Options.Credentials["name"]:
 // by Load for a static credential (by each call, for a Client from
 // Client.With), by the call for a credential source's. Such a value is a header
-// field value with a control character other than a tab, or with leading or
-// trailing whitespace; a cookie value with ";", a control character, or leading
-// or trailing whitespace; and a Basic value RFC 7617 forbids: one without the
-// colon, with a control character in the user-id or password, or made by
-// [Basic] from a username holding a colon.
+// field value with an ASCII control character other than a tab, or with
+// leading or trailing whitespace; a cookie value with ";", an ASCII control
+// character, or leading or trailing whitespace; and a Basic value RFC 7617
+// forbids: one without the colon, with an ASCII control character in the
+// user-id or password, or made by [Basic] from a username holding a colon.
 //
 // Bearer tokens (http bearer, oauth2, openIdConnect) and Basic credentials are
 // sent only over https or wss, as RFC 6750 requires and RFC 7617 advises, or to

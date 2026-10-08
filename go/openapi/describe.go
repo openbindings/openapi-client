@@ -391,8 +391,9 @@ type Media struct {
 	// no Encoding Param to report it.
 	// Any other schema or Encoding defect that affects structured value
 	// encoding does not set Media.Err: it is reported by Schema.References or
-	// the relevant Encoding Param.Err. A pre-encoded
-	// []byte or io.Reader body is checked against neither (see Input.Body).
+	// the relevant Encoding Param.Err. A pre-encoded []byte or io.Reader body
+	// is checked against neither, nor against this Err unless the media key
+	// is invalid (see Input.MediaType).
 	Err error
 }
 
