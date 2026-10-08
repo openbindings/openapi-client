@@ -101,12 +101,13 @@ func TestTextBodyInvalidUTF8(t *testing.T) {
 	}
 }
 
-// Any other type without a codec takes only a string, as its UTF-8 bytes;
-// XML without a codec, application/xml, text/xml and +xml alike, takes a
-// string; every other value is refused at Inputs["Input.Body"] (errors.go,
-// RequestError.Inputs: "a body the operation does not take" ... "a reader or
-// Part where the media type cannot carry one"). A text type takes no array,
-// object or null (a typed nil is null: doc.go, Values).
+// Any other type without a codec takes only a string, as its bytes (doc.go,
+// Values: "any other type takes only a string, as its bytes, and a text type
+// also a number, boolean or json.Number, in its JSON spelling"); XML without a
+// codec, application/xml, text/xml and +xml alike, takes a string; every other
+// value is refused at Inputs["Input.Body"] (errors.go, RequestError: "Inputs
+// names request values that cannot be serialized"). A text type takes no
+// array, object or null (a typed nil is null: doc.go, Values).
 func TestOtherTypeBodies(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, doc31(textDoc), nil)

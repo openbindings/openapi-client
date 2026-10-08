@@ -194,13 +194,13 @@ func TestBundleHeadersControls(t *testing.T) {
 // describe.go, Param.ContentType: under multipart/form-data it is empty for a
 // field whose Encoding sets style, "except for an OpenAPI 3.2 positional part,
 // which may still be given as a Part of a type its Encoding lists (see
-// Input.Body)"; otherwise it is "its Encoding's, which may be a
-// comma-separated list or a range, or else the default the client uses". So a
-// styled positional part describes the contentType its Encoding lists, or,
-// listing none, the default its prefixItems schema gives (doc.go,
-// Configuration), application/json for an object (OAS 3.2.1, Encoding
-// Object). A Part's type must match a listed type or range, any concrete type
-// where none is listed (client.go, Part.MediaType), and a mismatch is keyed in
+// Input.Body)"; otherwise it is "its Encoding's, which may be a range or a
+// comma-separated list (see Response.Media), or else the default the client
+// uses". So a styled positional part describes the contentType its Encoding
+// lists, or, listing none, the default its prefixItems schema gives (doc.go,
+// Configuration), application/json for an object (OAS 3.2.1, Encoding Object).
+// A Part's type must match a listed type or range, any concrete type where none
+// is listed (client.go, Part.MediaType), and a mismatch is keyed in
 // RequestError.Settings at the part's pointer (errors.go).
 func TestBundleHeadersPositionalStyledContentType(t *testing.T) {
 	schema := `"schema":{"type":"array","prefixItems":[{"type":"object","properties":{"a":{"type":"string"}}}]}`

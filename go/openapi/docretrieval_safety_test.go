@@ -17,12 +17,17 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// The Loader never retrieves a URI with userinfo, a redirect hop's
-// included, and error text must exclude it (Load: a uri with userinfo is
-// refused, "which RFC 9110 section 4.2.4 forbids a sender to generate").
-// Admission callbacks do not waive URI validity. The cases are redirects to
-// such URIs, with an admitted redirect as a control, fragment stripping and
-// the ErrUnresolved wrapping contract.
+// The Loader never retrieves a URI with userinfo, a redirect hop's included,
+// and error text excludes it. load.go, Loader: a reference to a URI with
+// userinfo "is unresolvable and never fetched, as Load refuses such a uri, and
+// so is one whose retrieval a redirect would take to such a URI, whatever
+// AllowReference says; the default retrieval never requests that hop";
+// errors.go, ErrUnresolved: "Where the client names a URI, a reference or a
+// redirect's Location included, it omits userinfo and query", and a *url.Error
+// is shown "each URL without userinfo or query". Admission callbacks do not
+// waive URI validity. The cases are redirects to such URIs, with an admitted
+// redirect as a control, fragment stripping and the ErrUnresolved wrapping
+// contract.
 func TestDocumentRedirectURIValidity(t *testing.T) {
 	const base = "https://docs.example.test/"
 	for _, tt := range []struct {
@@ -212,9 +217,9 @@ func TestDocumentFileBoundarySurvivesSymlinkReplacement(t *testing.T) {
 	t.Logf("exercised %d successful concurrent symlink replacements", replacements)
 }
 
-// Both requested and final URIs identify the redirected entry (Load: a
-// document is identified "by its retrieval URI (and the URI requested, when
-// a redirect led there)").
+// Both requested and final URIs identify the redirected entry (load.go,
+// Loader: a reference resolves to a document "by its retrieval URI (and the
+// URI requested, when a redirect led there)").
 // Resolving an already loaded document requires no admission or refetch;
 // its Source and DocumentURIs continue to name the final retrieval URI.
 func TestDocumentRedirectedEntryIsAlreadyIdentified(t *testing.T) {

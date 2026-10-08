@@ -595,8 +595,9 @@ func TestPreparedURLChangedOrigin(t *testing.T) {
 
 // credential.go, FromTransport: "The client adds nothing for the scheme, but
 // counts it as satisfied after the caller selects a security alternative."
-// doc.go, Credentials: "FromTransport also satisfies a scheme a requirement
-// names but the document never declares, or declares defectively";
+// doc.go, Credentials: "FromTransport is what satisfies a scheme a
+// requirement names but the document never declares, or declares
+// defectively";
 // describe.go, SecurityScheme.Err: "Alternatives that use it can be applied
 // only when FromTransport satisfies it." A mutualTLS scheme accepts
 // FromTransport too.

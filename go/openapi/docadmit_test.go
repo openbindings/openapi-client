@@ -123,10 +123,10 @@ func TestEntryOriginalOrigin(t *testing.T) {
 	admittedRef(t, c, "original")
 }
 
-// load.go, Loader.AllowReference: "For a file entry, references may reach
-// only files under the entry file's directory"; with nil, "http and https
-// references may reach the entry document's original origin and Origins",
-// so an http entry cannot reach a file, nor a file entry an http document.
+// load.go, Loader.AllowReference: "With nil, http and https references may
+// reach the entry document's original origin and Origins. For a file entry,
+// file references may reach only files under the entry file's directory", so
+// an http entry cannot reach a file, nor a file entry an http document.
 // A callback that admits them replaces that boundary.
 func TestHTTPAndFileCrossings(t *testing.T) {
 	dir := t.TempDir()
@@ -532,8 +532,8 @@ func fileURI(path string) string {
 	return (&url.URL{Scheme: "file", Path: path}).String()
 }
 
-// load.go, Loader.AllowReference: "For a file entry, references may reach
-// only files under the entry file's directory, after cleaning paths and
+// load.go, Loader.AllowReference: "For a file entry, file references may
+// reach only files under the entry file's directory, after cleaning paths and
 // resolving symlinks; Origins does not enlarge that file boundary" (RFC 8089
 // file URLs; RFC 3986 section 5.2.4 removes dot segments). Inside: a
 // subdirectory, a path that leaves and comes back, a symlink to a file

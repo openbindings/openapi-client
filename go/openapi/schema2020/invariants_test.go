@@ -22,11 +22,12 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi/schema2020"
 )
 
-// Invariants over every schema of the documents under testdata/corpus,
-// in every direction, and properties of Project as a function: it is
-// deterministic, safe for concurrent use, returns caller-owned copies,
-// retrieves no documents and retains nothing (Project and Projection
-// documentation).
+// Invariants over every schema of the documents under testdata/corpus, in
+// every direction, and properties of Project as a function: "The same input
+// gives the same output"; "It is safe to call concurrently, and each call
+// returns what it would alone"; its Projection's "three fields are
+// caller-owned copies"; and it "retrieves no documents and retains nothing
+// after it returns" (Project and Projection documentation).
 
 const corpusBase = "https://corpus.example.test/"
 
@@ -401,8 +402,8 @@ func liveHeap() uint64 {
 	return m.HeapAlloc
 }
 
-// Project: "It returns an error, and no Projection, when c has not loaded
-// the document s is written in."
+// Project: "Project returns an error, and no Projection, when c has loaded no
+// document at the URI s is written in."
 func TestProjectOtherClient(t *testing.T) {
 	doc := docText(v31, "", `"R":{"type":"string"}`)
 	c := load(t, "json", doc, nil)

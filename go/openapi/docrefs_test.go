@@ -577,7 +577,7 @@ func TestIdentifiedURIsResolveFirst(t *testing.T) {
 	}
 }
 
-// load.go, Loader: "A URI claimed by two documents or schemas is
+// load.go, Loader: "A URI claimed by two different documents or schemas is
 // unresolvable, and the error names both" (JSON Schema 2020-12 core
 // section 9.1.2: "there is no way for a URI to identify more than one
 // schema"). Two schemas in two documents claim one $id; a document's
@@ -787,10 +787,10 @@ func TestFailureDisablesOnlyWhatReachesIt(t *testing.T) {
 }
 
 // errors.go, ErrUnresolved: "The Err names the reference, and wraps the
-// retrieval error too when fetching its document failed, or an error naming
-// the refused URI when admission refused it, so a caller can tell a fixable
-// fetch or admission ... from a broken document." The retrieval error is
-// the Fetch error itself, or the http.Client's *url.Error.
+// retrieval error too when fetching or reading its document failed ... or an
+// error naming the refused URI when admission refused it, so a caller can
+// tell a fixable fetch or admission ... from a broken document." The
+// retrieval error is the Fetch error itself, or the http.Client's *url.Error.
 func TestErrUnresolvedWrapsTheCause(t *testing.T) {
 	errDown := errors.New("the partner's store is down")
 	const base = "https://docs.example.test/"

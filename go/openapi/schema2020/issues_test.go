@@ -71,7 +71,7 @@ func TestProjectUnresolvedReferenceSiblings(t *testing.T) {
 }
 
 // A descriptor schema that is an unresolved $ref is a lost Root: in every
-// edition the handle stays at the site (Schema: "when it cannot, it stays
+// edition the handle stays at the site (Schema: "when it cannot ... it stays
 // at the site, and References reports the Err"), and the schema left with
 // no keywords is true.
 func TestProjectUnresolvedRoot(t *testing.T) {
@@ -366,11 +366,12 @@ func TestProjectForeignResourceInDefs(t *testing.T) {
 	}
 }
 
-// Project: a reference "that openapi.Schema.References does not report
-// (such as a $ref in a Swagger 2.0 items object, or one that is not a
-// string)" is lost: removed with an Issue at that $ref. A Swagger 2.0
-// Items Object (OAS 2.0 section 6.4.10) is not a Schema Object, so a $ref
-// there, in a parameter, a header or a formData field, is not reported.
+// Project: a reference "that openapi.Schema.References does not report for the
+// schema holding it (such as a $ref in a Swagger 2.0 items object, or one that
+// is not a string), which is removed alone", is lost: removed with an Issue at
+// that $ref. A Swagger 2.0 Items Object (OAS 2.0 section 6.4.10) is not a
+// Schema Object, so a $ref there, in a parameter, a header or a formData field,
+// is not reported.
 func TestProjectUnreportedReference(t *testing.T) {
 	paths := `
 		"/x":{"get":{"produces":["application/json"],"parameters":[

@@ -414,8 +414,9 @@ func TestEncodingContentTypeListQuoteAware(t *testing.T) {
 // Media.Encoding lists fields only for a form type, a multipart type, or a
 // range of multipart types such as multipart/*; for */* and application/*
 // it lists none, their fields depending on the type a call selects
-// (describe.go, Media.Encoding: "the fields of form or multipart
-// content").
+// (describe.go, Media.Encoding: "It is empty for a declared range other than
+// multipart/*, such as */* or application/*, and for a response's Media,
+// which the client never writes").
 func TestMediaRangeEncodingDescriptors(t *testing.T) {
 	doc := doc31(`"/r":{"post":{"operationId":"ranges","requestBody":{"content":{
 		"*/*":{"schema":{"type":"object","properties":{"x":{"type":"string"}}}},
@@ -438,8 +439,10 @@ func TestMediaRangeEncodingDescriptors(t *testing.T) {
 // then those reached through $ref and allOf, depth first in document order,
 // a property's first declaration fixing its place, then the names only the
 // encoding map has (describe.go, Media.Encoding: "the properties the schema
-// lists at its top level (after following $ref), in document order, then
-// those that only declare an Encoding Object, in the encoding map's order").
+// lists at its top level, in document order, then those the schemas it
+// reaches by $ref and allOf list, depth first in document order, each in the
+// place of its first declaration, then those that only declare an Encoding
+// Object, in the encoding map's order").
 // Here the schema writes a $ref, its own properties, then two allOf
 // branches, the second a $ref; R, reached first, has an allOf of its own and
 // repeats own2; allOf's first branch repeats r1.

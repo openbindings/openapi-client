@@ -60,9 +60,12 @@ func newJar(t *testing.T, base string, cookies ...*http.Cookie) http.CookieJar {
 // replacing a pair of its name. Jar and parameter pairs of one name are both
 // kept, as net/http does. doc.go, Credentials: "Query and cookie
 // credentials go last ... and one that replaces a pair of the same name ...
-// removes it and goes last"; Cookies: "one Cookie field ... parameters in
-// declared order, then credentials". net/http's cookiejar returns cookies
-// of one path in the order they were set.
+// removes it and goes last"; Fixed rules, Cookies: "one Cookie field holding,
+// joined by "; ", the parameters in declared order, then the cookies the
+// HTTPClient's Jar holds for the URL, then credentials. A credential replaces
+// a pair of its name, a Jar's included (see Credentials); a Jar's cookie and a
+// parameter of the same name are both sent." net/http's cookiejar returns
+// cookies of one path in the order they were set.
 func TestJarCookiesThenCredentials(t *testing.T) {
 	for _, tt := range []struct {
 		name string
@@ -480,10 +483,11 @@ func TestBasicForAnotherSchemeThroughWith(t *testing.T) {
 // A hop's refused credential names its scheme, with no unchecked type
 // assertion. A credential value its destination cannot carry is refused on a
 // hop as on the first request (the value is a source's, refused by the call),
-// and the response that arrived is returned. errors.go, RequestError.Err: "a
-// credential source's error (naming the scheme)"; credential.go, SecretFunc:
-// on a hop, "an error or an empty secret ends the call with a *url.Error ...
-// along with the last response".
+// and the response that arrived is returned. client.go, Redirects: "A
+// credential can fail to be placed on a hop: a source's error, empty secret or
+// value its destination cannot carry, ... That ends the call with a
+// *url.Error, returned with the 3xx, its body closed; for a source's failure,
+// the error names the scheme."
 func TestHopCredentialRefusalNamesItsScheme(t *testing.T) {
 	doc := doc31(`"/r":{"get":{"operationId":"getR"}}`, `"security":[{"corp_bearer":[]}]`,
 		`"components":{"securitySchemes":{"corp_bearer":{"type":"http","scheme":"bearer"}}}`)
@@ -891,16 +895,16 @@ func TestOAuthFlowDefects(t *testing.T) {
 	})
 }
 
-// Each defect a Security Scheme Object can have. SecurityScheme.Err for a
-// header apiKey naming Content-Type, Cookie or a derived field follows the
-// rule for Options.Header and header parameters (checkHeader,
-// derivedFields); a cookie apiKey name that is not a token (RFC 6265
-// section 4.1.1) is Err. OAS 3.1.2 section 4.8.27.1: flows is REQUIRED for
-// oauth2, openIdConnectUrl for openIdConnect, scheme for http; RFC 9110
-// section 11.1: an auth-scheme is a token. doc.go, Header fields: Host,
-// Content-Length, Transfer-Encoding, Trailer, Connection, Keep-Alive,
-// Proxy-Connection and Upgrade are derived or forbidden; Content-Type and
-// Cookie are the client's.
+// Each defect a Security Scheme Object can have. describe.go,
+// SecurityScheme.Err: "a defective or missing declaration, such as an apiKey
+// sent in a header field whose name is not an RFC 9110 token or is
+// Content-Type, Cookie, Host, Content-Length, Transfer-Encoding, Trailer,
+// Connection, Keep-Alive, Proxy-Connection or Upgrade, matched without regard
+// to case; an apiKey sent in a cookie whose name is not an RFC 6265 token; or
+// an http scheme that is not an RFC 9110 token" (RFC 6265 section 4.1.1; RFC
+// 9110 section 11.1: an auth-scheme is a token). OAS 3.1.2 section 4.8.27.1:
+// flows is REQUIRED for oauth2, openIdConnectUrl for openIdConnect, scheme for
+// http.
 func TestSecuritySchemeDefectsEveryBranch(t *testing.T) {
 	header := func(name string) string { return `{"type":"apiKey","in":"header","name":"` + name + `"}` }
 	cookie := func(name string) string { return `{"type":"apiKey","in":"cookie","name":"` + name + `"}` }

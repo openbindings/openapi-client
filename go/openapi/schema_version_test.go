@@ -369,12 +369,12 @@ func TestSchemaVersionLookupByIdentifier(t *testing.T) {
 	}
 }
 
-// Schema: "In Swagger 2.0 and OpenAPI 3.0 ... it follows $ref to a schema
-// that is not only a $ref", and "Source identifies the resulting handle".
-// The handle is then written in the referenced document, and Version is
-// that document's. In OpenAPI 3.1 and 3.2 the handle stays at the site and
-// keeps the entry's version, while its reference target has the other
-// document's.
+// Schema: "In Swagger 2.0 and OpenAPI 3.0 ... it follows a chain of schemas
+// written as references (see Operation) to the first schema that is not one",
+// and "Source identifies the resulting handle". The handle is then written in
+// the referenced document, and Version is that document's. In OpenAPI 3.1 and
+// 3.2 the handle stays at the site and keeps the entry's version, while its
+// reference target has the other document's.
 func TestSchemaVersionFollowedReference(t *testing.T) {
 	cases := []struct {
 		name, doc         string

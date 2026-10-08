@@ -87,8 +87,8 @@ func TestEditionsMediaReferences(t *testing.T) {
 
 // Before 3.2, a content map's values are Media Type Objects, never Reference
 // Objects, so one with a $ref member marks a document meant to be bundled
-// (describe.go, Operation: "It makes the nearest part holding that object
-// unusable: the Err of that ... Media says the document must be bundled
+// (describe.go, Operation: "It makes the nearest part holding that value
+// unusable: the Err of that ... Media ... says the document must be bundled
 // first, and does not wrap ErrUnresolved"). Such a $ref is never retrieved,
 // and neither is one in a components.mediaTypes entry, a field OpenAPI 3.0
 // and 3.1 do not define (load.go, Loader: the references followed are those
@@ -97,9 +97,11 @@ func TestEditionsMediaReferences(t *testing.T) {
 // The Media still names its media type, so the type can govern a call: a
 // structured body is checked against Media.Err and refused at the body
 // (client.go, Input.Body: a pre-encoded body is not checked "against a
-// Media.Err", so a structured one is; errors.go, RequestError.Inputs: "for
-// the body, "Input.Body""), while a pre-encoded body is sent under it, with
-// Request.Media that Media (client.go, Request.Media).
+// Media.Err", so a structured one is; errors.go, RequestError.Inputs holds "a
+// body refused by the request body's Message.Err or by its governing Media's
+// Err for any reason but an invalid key", keyed "for the body, "Input.Body""),
+// while a pre-encoded body is sent under it, with Request.Media that Media
+// (client.go, Request.Media).
 func TestEditionsMediaReferencesEarlierEditions(t *testing.T) {
 	for _, version := range []string{"3.0.4", "3.1.2"} {
 		t.Run(version, func(t *testing.T) {

@@ -68,13 +68,13 @@ func TestProjectSelfReferenceAndCycles(t *testing.T) {
 	}
 }
 
-// Schema: "In OpenAPI 3.1 and 3.2 it stays at that site, whether or not a
-// $ref there has siblings. In Swagger 2.0 and OpenAPI 3.0 ... it follows
-// $ref to a schema that is not only a $ref". So a descriptor whose schema
-// is a $ref projects to a Root that refers to the component in 3.1 and
-// 3.2, and to the component itself in 2.0 and 3.0; a component that is
-// only a $ref is its own Defs entry in 3.1 and 3.2 and is passed through in
-// 2.0 and 3.0.
+// Schema: "In OpenAPI 3.1 and 3.2 it stays at that site, whether or not a $ref
+// there has siblings"; "In Swagger 2.0 and OpenAPI 3.0 ... it follows a chain
+// of schemas written as references (see Operation) to the first schema that is
+// not one". So a descriptor whose schema is a $ref projects to a Root that
+// refers to the component in 3.1 and 3.2, and to the component itself in 2.0
+// and 3.0; a component that is only a $ref is its own Defs entry in 3.1 and 3.2
+// and is passed through in 2.0 and 3.0.
 func TestProjectReferenceAtRoot(t *testing.T) {
 	schemas := `"Pet":{"type":"object","properties":{"tag":{"$ref":"#C/Alias"}}},"Alias":{"$ref":"#C/Tag"},"Tag":{"type":"string"}`
 	for _, v := range editions {

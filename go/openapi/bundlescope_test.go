@@ -59,10 +59,11 @@ func largeMapLoader(doc []byte) *openapi.Loader {
 // Regression check, not contract: following a reference into a map is a lookup
 // of its member: its cost must not grow with the members the map holds, whether
 // their names sort above or below "$ref", in describing (Client.Operations) or
-// in loading (load.go, Loader: references "are followed"). With the operations
-// fixed, sixteen times the members must cost about the same (wantFlat, the
-// convention of scaling_test.go; only parsing the larger map grows, and it is
-// small beside the references).
+// in loading (load.go, Loader: "The references followed are $ref in Reference
+// Objects, Path Items and Schema Objects"). With the operations fixed, sixteen
+// times the members must cost about the same (wantFlat, the convention of
+// scaling_test.go; only parsing the larger map grows, and it is small beside
+// the references).
 func TestBundleCostLargeMap(t *testing.T) {
 	const operations = 4000
 	for _, prefix := range []string{"P", "!P"} {
@@ -81,9 +82,10 @@ func TestBundleCostLargeMap(t *testing.T) {
 	}
 }
 
-// load.go, Load: "ctx bounds the whole load, reading and parsing included".
-// A context canceled while the load is under way, here when the other
-// document is retrieved, ends it with the context's error and no Client.
+// load.go, Load: "ctx bounds the whole load, reading and parsing included:
+// when it is done before the load completes, Load returns no Client and an
+// error that matches ctx.Err() with errors.Is". A context canceled while the
+// load is under way, here when the other document is retrieved, ends it so.
 func TestBundleCostLoadCanceled(t *testing.T) {
 	doc := largeMapDoc(16000, 4000, "P", true)
 	ctx, cancel := context.WithCancel(context.Background())

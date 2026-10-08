@@ -276,17 +276,18 @@ func TestMultipartPartOverrides(t *testing.T) {
 	}
 }
 
-// Refusals, at the keys errors.go gives: Inputs for a value that cannot be
-// sent ("a Part that sets both Filename and NoFilename"; client.go, Part: "a
-// control character other than a tab in either is refused", Header "under the
-// rules for Options.Header's field names and values" and "Content-Type, in
-// any spelling, is refused"; Part.Header names must be tokens and values pass
-// the header-field rule, the doc.go Credentials rule of "a control character
-// other than a tab, or ... leading or trailing whitespace"; a property or
-// part value its media type cannot encode; client.go, Input.Body: a Part or
-// reader "inside a JSON value is refused with an Inputs entry at its place in
-// Body", the pointer passing through a Part with no Content segment; and a
-// Body that is not an object, a slice being an OpenAPI 3.2 shape), and
+// Refusals, at the keys errors.go gives: Inputs for a value that cannot be sent
+// ("a Part that sets both Filename and NoFilename"; client.go, Part: "a control
+// character other than a tab in either is refused", Header "under the rules for
+// Options.Header's field names and values" and "Content-Type, in any spelling,
+// is refused"; doc.go, Fixed rules, Header fields: "A field name, in a Header
+// (Options.Header, Input.Header or Part.Header) or of a header parameter, must
+// be an RFC 9110 token, and a field value, a header parameter's included, may
+// hold no control character but a tab and no leading or trailing whitespace"; a
+// property or part value its media type cannot encode; client.go, Input.Body: a
+// Part or reader "inside a JSON value is refused with an Inputs entry at its
+// place in Body", the pointer passing through a Part with no Content segment;
+// and a Body that is not an object, a slice being an OpenAPI 3.2 shape), and
 // Settings for a part's media type the call must give or gave wrongly
 // (RequestError.Settings: "for a part's media type, "Input.Body" followed by
 // the part's JSON Pointer"; Part.MediaType: "A range is refused").

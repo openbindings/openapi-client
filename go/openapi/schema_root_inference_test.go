@@ -5,16 +5,18 @@ import (
 	"testing"
 )
 
-// Loader's rule for a disproved inference ("If retrieval based on an
-// inferred schema resource later reveals that the resource is instance data,
-// references whose scope depends on that inference are unresolvable. The
-// documents already retrieved remain available, and parts independent of
-// that inference remain usable.") also applies when the disproved inferred
-// resource is the versionless document root. Loader's known Parameter
-// context must survive independently; root $schema/$id cues are not an
-// explicit Schema reference. ErrUnresolved location latitude is shared with
-// the other feedback tests (disprovedInferenceWantUnresolved). No competing
-// explicit root-Schema interpretation is added.
+// Loader's rule for a disproved inference ("If a document retrieved because of
+// an inference then shows that the inferred schema is not one, as when it is a
+// Parameter or a Parameter's example, every reference whose base or target
+// depends on that inference, in any document, is unresolvable, and none is
+// resolved again under the corrected types. The documents already retrieved
+// remain available, and parts independent of that inference remain usable.")
+// also applies when the disproved inferred resource is the versionless document
+// root. Loader's known Parameter context must survive independently; root
+// $schema/$id cues are not an explicit Schema reference. ErrUnresolved location
+// latitude is shared with the other feedback tests
+// (disprovedInferenceWantUnresolved). No competing explicit root-Schema
+// interpretation is added.
 func TestSchemaDisprovedRootInferencePreservesParameterSchema(t *testing.T) {
 	const bundle = "https://schemas.example.test/api/root-feedback.json"
 	const inferredCarrier = "https://schemas.example.test/api/data-only/root-feedback-carrier.json"

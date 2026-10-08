@@ -789,11 +789,11 @@ func TestFromTransportSeesEveryHop(t *testing.T) {
 	}
 }
 
-// credential.go, SecretFunc: "On a redirect hop the first request has
-// already been sent, so an error or an empty secret ends the call with a
-// *url.Error wrapping f's error, along with the last response, its body
-// closed". An empty secret on a hop ends the call as an error does, with a
-// *url.Error and no hop sent.
+// credential.go, SecretFunc: "On a redirect hop the first request has already
+// been sent, so an error or an empty secret ends the call with a *url.Error
+// naming the scheme, and wrapping f's error if it returned one, along with the
+// last response, its body closed". An empty secret on a hop ends the call as an
+// error does, with a *url.Error and no hop sent.
 func TestSecretFuncFailsOnHop(t *testing.T) {
 	errHop := errors.New("token refresh failed")
 	for name, answer := range map[string]func(int64) (string, error){

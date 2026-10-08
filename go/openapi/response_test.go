@@ -52,10 +52,12 @@ func respClient(t *testing.T, answer http.HandlerFunc, opts *openapi.Options) (*
 	return w, parseFor(t, w, respDoc, opts)
 }
 
-// client.go, Call: "Any other pointer receives the body decoded straight
-// from the connection by ... its codec class ... JSON types ... with
-// encoding/json". client.go, Response.Declaration and Response.Media: "the
-// same immutable descriptor Operation.Responses exposes".
+// client.go, Call: "Any other pointer receives the body, read in full within
+// MaxBodyBytes and decoded once, with no intermediate value, by the caller's
+// codec for its media type (see Options.Codecs), or else by its codec class ...
+// JSON types ... with encoding/json". client.go, Response.Declaration: "It is
+// the same immutable descriptor Operation.Responses exposes"; Response.Media:
+// "It is the same immutable descriptor Declaration.Media exposes".
 func TestCallDecodesJSON(t *testing.T) {
 	_, c := respClient(t, jsonAnswer(200, `{"id":"p-7","name":"Rex","tag":"dog"}`), nil)
 	var pet Pet
@@ -141,9 +143,10 @@ func TestDecodeRawTargets(t *testing.T) {
 	mustCall(t, c, "getPet", nil, nil)
 }
 
-// client.go, Call: "out must be nil, a *[]byte, an io.Writer, or a non-nil
-// pointer; anything else is refused before sending". errors.go,
-// RequestError.Err: "an out that cannot receive a result".
+// client.go, Call: "out must be nil, a non-nil *[]byte, an io.Writer, or a
+// non-nil pointer; anything else, a nil pointer of any type included, is
+// refused before sending." errors.go, RequestError.Err: "an out that cannot
+// receive a result".
 func TestOutRefusedBeforeSending(t *testing.T) {
 	w, c := respClient(t, nil, nil)
 	for name, out := range map[string]any{
@@ -316,13 +319,14 @@ func TestTypedDecodeNeedsAccept(t *testing.T) {
 	}
 }
 
-// client.go, Call: "A missing, repeated or unparsable Content-Type is
-// treated as application/octet-stream, which a *any receives as a []byte and
-// a typed target cannot"; "any text/* type ... into a *string, its bytes as
-// sent, the charset left in the Content-Type; and into a *any, text as a
-// string and any other non-JSON type ... as a []byte"; "a *[]byte takes any
-// body as it is"; "A type these rules cannot decode into out is a
-// *DecodeError".
+// client.go, Call: "A missing, repeated or unparsable Content-Type is treated
+// as application/octet-stream, which a *any receives as a []byte and a typed
+// target cannot"; "A *string and a *any take any text/* type as text, whatever
+// its codec class (text/xml and text/event-stream included): a *string its
+// bytes as sent, the charset left in the Content-Type, and a *any a string; a
+// *any takes any other non-JSON type, multipart included, as a []byte."; "a
+// *[]byte takes any body as it is"; "A type these rules cannot decode into out
+// is a *DecodeError".
 func TestDecodeByContentType(t *testing.T) {
 	multi := func(values ...string) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
@@ -452,14 +456,15 @@ func TestContentCodings(t *testing.T) {
 }
 
 // errors.go, StatusError: "A StatusError is a response whose final status is
-// not 2xx ... The promoted Body reads Content again"; "Error returns the
-// operation and the status ... never the body or the URL"; "Decode decodes
-// Content into v by the response's media type, as Response.Decode does ...
-// any number of times." client.go, Call: "Any other final status is a
-// *StatusError, and out is untouched"; doc.go, Outcomes: "Whenever a
-// response arrived, the *Response is returned, even with an error".
-// client.go, Response: for a Response from Call with a StatusError, Body
-// "reads that error's Content".
+// not 2xx, including a 3xx that was not followed"; "It holds a copy of the
+// call's Response, so its promoted Body and the Response's Body each read
+// Content again"; "Error returns the operation and the status ... never the
+// body or the URL"; "Decode decodes Content into v by the response's media
+// type, as Response.Decode does ... any number of times." client.go, Call: "Any
+// other final status is a *StatusError, and out is untouched"; doc.go,
+// Outcomes: "Whenever a response arrived, the *Response is returned, even with
+// an error". client.go, Response: for a Response from Call with a StatusError,
+// Body "reads that error's Content".
 func TestStatusError(t *testing.T) {
 	body := `{"title":"Not found","detail":"no pet p-404"}`
 	w, c := respClient(t, typedAnswer(404, "application/problem+json", body), nil)
@@ -803,9 +808,9 @@ func TestResponseMediaMatching(t *testing.T) {
 // decodes the body. The caller owns and must close Response.Body."
 // client.go, Response.Decode: "using Call's target, codec, empty-body and
 // MaxBodyBytes rules for any HTTP status ... never returns a StatusError. A
-// failure to read or decode is a *DecodeError holding r, even for a non-2xx
-// status. An invalid out is a *DecodeError without consuming or closing
-// Body".
+// failure to read or decode is a *DecodeError holding a copy of r, even for a
+// non-2xx status. An invalid out is a *DecodeError without consuming or
+// closing Body".
 func TestSendAndDecode(t *testing.T) {
 	body := `{"title":"Not found","detail":"d"}`
 	w, c := respClient(t, typedAnswer(404, "application/problem+json", body), nil)

@@ -77,14 +77,18 @@ func TestFieldMediaTypesThatCannotEncodeObject(t *testing.T) {
 	refusedAt(t, w, c, "mp", &openapi.Input{Body: map[string]any{"l": obj}}, false, "Input.Body/l")
 }
 
-// A form field's reader read once is streamed as the body is read (doc.go,
-// Fixed rules, Form bodies: "A body holding a reader that can be read only
-// once is encoded as the transport reads it"), and its read error aborts the
-// body and is reported by Call (client.go, Input.Body: an error "aborts the
-// body and is reported by Call or Response.WaitRequest"). A
-// replayable reader is read when the call is prepared, and its read error
-// refuses the call, kept for errors.As: an *os.File opened only
-// for writing.
+// In an application/x-www-form-urlencoded body, a field's reader that can be
+// read only once is streamed as the body is read, and a replayable one is read
+// when the call is prepared (doc.go, Fixed rules, Form bodies: "In an
+// application/x-www-form-urlencoded body, a field's reader that can be sent
+// again is read into memory when the call is prepared, and one that can be
+// read only once is encoded as the transport reads it"). The read-once
+// reader's error fails the call (client.go, Client.Call: "If request-body
+// consumption fails, the error wraps its cause"); the replayable reader's, an
+// *os.File opened only for writing, refuses it, kept for errors.As (errors.go,
+// RequestError.Inputs: "An error with a cause, such as encoding/json's, a
+// codec's, a reader's or a ParamWriters function's error, or that Message.Err
+// or Media.Err, wraps it, for errors.Is and errors.As").
 func TestFormFieldReaderErrors(t *testing.T) {
 	w, c := contractLineClient(t)
 	errRead := errors.New("the disk went away")
@@ -437,11 +441,12 @@ func TestReferenceFormsUnresolved(t *testing.T) {
 
 // describe.go, Operation: a Path Item's field "on both sides, which OpenAPI
 // leaves undefined, sets Err on each operation whose request it affects ...
-// every operation that uses the parameters or servers"; a
-// path template with an unclosed "{" is a defect of its operation;
-// a Paths key that does not begin with "/" is an
-// entry listed only to report it (describe.go, Operation.Key), which does
-// not upset Load's check of Options.MediaType.
+// every operation that uses the parameters or servers"; a path template with
+// an unclosed "{" is a defect of its operation; and a Paths key that does not
+// begin with "/" is listed only to report it (describe.go, Client.Operations:
+// "a Paths entry that cannot be read, because its key does not begin with "/"
+// or its $ref cannot be followed, listed once with its Path and Err and no
+// Method"), which does not upset Load's check of Options.MediaType.
 func TestPathItemDefectsReported(t *testing.T) {
 	c := parseAt(t, doc31(`
 		"nope":{"get":{"operationId":"nope"}},
@@ -499,9 +504,12 @@ func TestParameterLengthBound(t *testing.T) {
 }
 
 // doc.go, Fixed rules, Styles: a style OpenAPI does not define for its
-// location, such as spaceDelimited exploded, is the parameter's Err, and a
-// call that gives the parameter is refused at its key, its items defined or
-// not.
+// location, such as spaceDelimited exploded, is refused: "Each is refused at
+// the parameter's key, with Param.Err set where the document alone decides
+// it", and "the refusals here apply to defined values". doc.go, Values: "An
+// array whose items are all undefined is itself defined, as RFC 6570 section
+// 2.3 says, and is refused where [""] would be". So a call that gives the
+// parameter [nil], as one that gives it ["a"], is refused at its key.
 func TestUndefinedStyleRefusesUndefinedItems(t *testing.T) {
 	w, c := contractLineClient(t)
 	if p := param(t, mustOp(t, c, "params"), 3); p.Err == nil {
@@ -590,15 +598,16 @@ func TestDecodeForeignResponse(t *testing.T) {
 	}
 }
 
-// client.go, Call: "An empty body is a success for every out, except that a
-// JSON or XML type decoded into a pointer is a *DecodeError ... An empty text
-// body decodes as "", an empty sequential body as an empty array, and any
-// other empty body into a *any as an empty []byte": an empty body under a type
-// with a caller's codec, an empty JSON Lines body,
-// and an empty image into a typed pointer.
-// Call decodes a nonempty sequential body as a JSON array
-// of its items (client.go, Call: "a sequential type, as a JSON array of its
-// items").
+// client.go, Call, for an empty body decoded into a pointer: "Otherwise it
+// leaves out as it was under a JSON or XML type, or a type with a caller's
+// codec, which is not called; under any other type, it decodes as "" into a
+// *string or *any for a text/* type, as an empty array for a sequential type
+// (a *DecodeError for an out that cannot hold one), and as an empty []byte
+// into a *any for any other type, leaving any other out as it was": an empty
+// body under a type with a caller's codec, an empty JSON Lines body, and an
+// empty image into a typed pointer. Call decodes a nonempty sequential body as
+// a JSON array of its items (client.go, Call: "a sequential type, as a JSON
+// array of its items").
 func TestEmptyAndSequentialResponseBodies(t *testing.T) {
 	var ct, body string
 	w := newWire(t, func(rw http.ResponseWriter, r *http.Request) { typedAnswer(200, ct, body)(rw, r) })
@@ -1007,14 +1016,16 @@ func TestClosedIteratorBodyNeverStarts(t *testing.T) {
 
 // load.go, Load: "Any other defect ... is reported on the part it reaches, in
 // its Err, or ignored where nothing depends on it". A tags value or a server
-// variable's enum that is an object instead of an array lists nothing
-// (describe.go: Variable.Enum "is nil when none is declared"), the enum also
-// making its server unusable (see TestServerVariableEnumShapes); a security
-// requirement whose scopes are an object is a defect of each operation it
-// reaches (Operation.Err, with no alternative listed), and Load does not take
-// an Options.SecurityKey naming the scopes that object holds as an alternative
-// (client.go, Options.SecurityKey: "A key that names no alternative ... is
-// refused by Load"). Previously the object's string values were listed.
+// variable's enum that is an object instead of an array lists nothing, the
+// enum also making its server unusable (describe.go, Variable.Enum: "An enum
+// written as anything but an array of strings, a variable's values being
+// strings, makes the server unusable (Server.Err)"; see
+// TestServerVariableEnumShapes); a security requirement whose scopes are an
+// object is a defect of each operation it reaches (Operation.Err, with no
+// alternative listed), and Load does not take an Options.SecurityKey naming
+// the scopes that object holds as an alternative (client.go,
+// Options.SecurityKey: "A key that names no alternative ... is refused by
+// Load").
 func TestObjectsWhereArraysBelong(t *testing.T) {
 	doc := func(scopes string) string {
 		return `{"openapi":"3.1.0","info":{"title":"t","version":"1"},

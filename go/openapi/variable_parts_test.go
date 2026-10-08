@@ -428,9 +428,12 @@ func TestCallerSetBodyKnownLength(t *testing.T) {
 }
 
 // A Load URI with leading or trailing whitespace is refused, not read as a
-// path: no password in the text, and Loader.Fetch is not called (Load: a uri
-// with userinfo is refused, as RFC 9110 section 4.2.4 forbids a sender to
-// generate it; doc.go, Outcomes).
+// path, and Loader.Fetch is not called (load.go, Load: "A uri with a fragment
+// is refused, as is one with userinfo, ... one with leading or trailing
+// whitespace"; Loader.Fetch: any other uri "reaches it as it is, whatever its
+// scheme, unless Load refuses it"), with no password in the text (doc.go,
+// Outcomes: "No credential appears in the text of an error the client
+// creates").
 func TestPaddedLoadURIRefused(t *testing.T) {
 	for _, uri := range []string{
 		" https://u:s3cret@127.0.0.1:1/x",

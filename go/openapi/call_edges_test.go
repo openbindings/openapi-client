@@ -468,11 +468,18 @@ func TestDocumentURIUserinfoRefused(t *testing.T) {
 }
 
 // Header names must be RFC 9110 tokens (section 5.1) and values cannot carry
-// CR, LF, NUL, other controls, or leading or trailing whitespace (section
-// 5.5); each is refused before sending at its key (errors.go, RequestError):
-// the header parameter's Param.Key, or the Header that set it.
-// Input.MediaType is validated as a media type (section 8.3.1, parameters
-// quoted as section 5.6.4 says).
+// CR, LF, NUL, other controls, or leading or trailing whitespace (section 5.5):
+// doc.go, Fixed rules, Header fields: "A field name, in a Header
+// (Options.Header, Input.Header or Part.Header) or of a header parameter, must
+// be an RFC 9110 token, and a field value, a header parameter's included, may
+// hold no control character but a tab and no leading or trailing whitespace"; a
+// header parameter "whose name is not a token, has Param.Err, and any other
+// breach of these rules is refused at the key of what gave it, such as Settings
+// "Options.Header" or "Input.Header", or a Part's or header parameter's Inputs
+// key", before sending. Input.MediaType is validated as a media type (section
+// 8.3.1, parameters quoted as section 5.6.4 says; client.go, Response.Media:
+// "That grammar governs every media type the client reads (a content key, an
+// Encoding contentType, Input.MediaType, Part.MediaType)").
 func TestHeaderFieldNameAndValueValidation(t *testing.T) {
 	w := newWire(t, nil)
 	doc := doc31(`"/h":{"get":{"operationId":"h","parameters":[{"name":"X-V","in":"header","schema":{}},{"name":"X C","in":"header","schema":{}}]}},

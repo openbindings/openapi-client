@@ -16,20 +16,21 @@ const (
 	overrideGood = `"content":{"multipart/mixed":{"schema":{"type":"object"}}}`
 )
 
-// An operation's parameter overrides the Path Item's with the same location
-// and name: describe.go, Operation.Params is "the path item's and the
-// operation's merged", and doc.go, Order, "an overriding parameter taking the
-// place of the one it overrides"; a header's name compares without regard to
-// case (RFC 9110 section 5.1). An overridden parameter is not the operation's,
-// so a value written as a reference in it is held by no part of that
-// operation: an operation whose own Accept overrides a path-level Accept
-// holding one has no Err and its calls are sent, while a sibling that
-// inherits the path-level Accept, which no Param describes (Operation.Params
-// holds "no header parameter that OpenAPI 3.x tells clients to ignore"), is
-// unusable ("another value whose nearest part is the operation"), every call
-// refused wrapping its Err. For an ordinary header, the inheriting sibling
-// describes the parameter, whose Err says to bundle, and the overriding one
-// describes its own, usable. Inline parameters and components behave alike.
+// An operation's parameter overrides the Path Item's with the same location and
+// name: describe.go, Operation.Params is "the path item's and the operation's
+// merged", and doc.go, Fixed rules, Order, "an overriding parameter (one with
+// the same location and name, a header parameter's name, if a valid field name,
+// compared without regard to case, as HTTP compares field names) taking the
+// place of the one it overrides". An overridden parameter is not the
+// operation's, so a value written as a reference in it is held by no part of
+// that operation: an operation whose own Accept overrides a path-level Accept
+// holding one has no Err and its calls are sent, while a sibling that inherits
+// the path-level Accept, which no Param describes (Operation.Params holds "no
+// header parameter that OpenAPI 3.x tells clients to ignore"), is unusable
+// ("another value whose nearest part is the operation"), every call refused
+// wrapping its Err. For an ordinary header, the inheriting sibling describes
+// the parameter, whose Err says to bundle, and the overriding one describes its
+// own, usable. Inline parameters and components behave alike.
 func TestBundleIgnoredHeaderOverride(t *testing.T) {
 	ref := func(name string) string { return `{"$ref":"#/components/parameters/` + name + `"}` }
 	var cases []shapeCase

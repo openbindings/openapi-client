@@ -15,13 +15,11 @@ import (
 // Request.HTTP: "HTTP may be changed before sending, to set a header the
 // document cannot express, say, or to add a raw body the operation does not
 // declare ... a caller who replaces the body sets GetBody and ContentLength
-// with it, or clears GetBody." errors.go, RequestError.Error: "Error
-// describes every problem and the field that fixes each", so the refusal
-// names the route, Prepare. Operation.Body: "nil when the operation takes
-// none, as for an OpenAPI 3.0 GET (see Bodies by method in the package
-// documentation)"; doc.go, Fixed rules, Bodies by method: "a request body
-// declared on TRACE or CONNECT, and in OpenAPI 3.0 on GET, HEAD, DELETE or
-// OPTIONS, as 3.0 says, is ignored, so the operation takes none".
+// with it, or clears GetBody." describe.go, Operation.Body: "nil when the
+// operation takes none, as for an OpenAPI 3.0 GET (see Bodies by method in
+// the package documentation)"; doc.go, Fixed rules, Bodies by method: "a
+// request body declared on TRACE or CONNECT, and in OpenAPI 3.0 on GET, HEAD,
+// DELETE or OPTIONS, as 3.0 says, is ignored, so the operation takes none".
 
 // noBodyDoc has, in each edition, operations that take no body: one that
 // declares none, and one whose declared body the edition's rules ignore.

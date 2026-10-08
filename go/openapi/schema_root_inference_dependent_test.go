@@ -5,14 +5,15 @@ import (
 	"testing"
 )
 
-// load.go, Loader: "If retrieval based on an inferred schema resource later
-// reveals that the resource is instance data, references whose scope depends
-// on that inference are unresolvable." A schema reference that enabled
-// inference-dependent discovery must not become a stale success merely
-// because its node is also a valid schema field in the later Parameter
-// context. The causal route is payload -> /schema -> carrier -> root
-// Parameter, not an execution-order assumption. Both entry references name
-// fragments, never the root as Schema.
+// load.go, Loader: "If a document retrieved because of an inference then shows
+// that the inferred schema is not one, as when it is a Parameter or a
+// Parameter's example, every reference whose base or target depends on that
+// inference, in any document, is unresolvable, and none is resolved again under
+// the corrected types." A schema reference that enabled inference-dependent
+// discovery must not become a stale success merely because its node is also a
+// valid schema field in the later Parameter context. The causal route is
+// payload -> /schema -> carrier -> root Parameter, not an execution-order
+// assumption. Both entry references name fragments, never the root as Schema.
 func TestSchemaDisprovedRootInferenceRefusesDependentReferences(t *testing.T) {
 	const bundle = "https://schemas.example.test/api/executed-root.json"
 	const inferredCarrier = "https://schemas.example.test/api/data-only/executed-carrier.json"

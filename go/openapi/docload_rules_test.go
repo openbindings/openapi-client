@@ -264,9 +264,9 @@ func TestRedirectedURIIdentified(t *testing.T) {
 
 // errors.go, ErrUnresolved: the Err "wraps the retrieval error too when
 // fetching or reading its document failed (one that cannot be read is named
-// with its line and column, as Load names an entry document's)": a referenced
-// YAML document with a duplicate key, a JSON one with a duplicate key, and one
-// with invalid UTF-8, each disabling only what reaches it.
+// with where the problem is, as Loader describes for an entry document)": a
+// referenced YAML document with a duplicate key, a JSON one with a duplicate
+// key, and one with invalid UTF-8, each disabling only what reaches it.
 func TestUnreadableReferencedDocument(t *testing.T) {
 	const base = "https://docs.example.test/"
 	docs := map[string]string{
@@ -298,9 +298,9 @@ func TestUnreadableReferencedDocument(t *testing.T) {
 	}
 }
 
-// load.go, Loader: "A %YAML directive for version 1.x is read as 1.2, and
-// any other major version rejects the document (YAML 1.2.2 section 6.8.1)",
-// the rejection at the directive, which begins its line.
+// load.go, Loader: "A %YAML directive for any version 1.x changes none of
+// this, and any other major version rejects the document (YAML 1.2.2 section
+// 6.8.1)", the rejection at the directive, which begins its line.
 func TestYAMLDirectiveVersions(t *testing.T) {
 	for _, v := range []string{"1.1", "1.2", "1.3"} {
 		c := parsed(t, []byte("%YAML "+v+"\n---\n"+yamlHead+"x-v: yes\n"))
@@ -314,8 +314,9 @@ func TestYAMLDirectiveVersions(t *testing.T) {
 // load.go, Loader: "A reference to a URI with userinfo ..., or to a file
 // URL naming a host other than localhost, is unresolvable and never
 // fetched, as Load refuses such a uri" (RFC 9110 section 4.2.4, RFC 8089).
-// The reference is not shown with its userinfo (doc.go, Outcomes: "No
-// credential appears in the text of an error the client creates").
+// The reference is not shown with its userinfo (errors.go, ErrUnresolved:
+// "Where the client names a URI, a reference or a redirect's Location
+// included, it omits userinfo and query").
 // Admission is never asked, nothing is requested, and no error text shows
 // the user or the password.
 func TestUserinfoAndFileHostReferences(t *testing.T) {

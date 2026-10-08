@@ -370,9 +370,9 @@ func deepDoc(n int) string {
 		strings.Repeat("[", n) + strings.Repeat("]", n) + "\n}"
 }
 
-// load.go, Loader: a document "that nests deeper than 1,000 levels, is
-// rejected too." Where the count starts (the root object as level 1 or 0)
-// is not stated, so the cases keep a margin on each side.
+// load.go, Loader: a document "that nests deeper than 1,000 levels (the
+// outermost value being level 1), is rejected too." The cases keep a margin on
+// each side of the bound.
 func TestLoadNestingDepth(t *testing.T) {
 	if _, err := openapi.Parse(t.Context(), []byte(deepDoc(900)), testDocURI, nil); err != nil {
 		t.Errorf("901 levels: %v, want accepted", err)

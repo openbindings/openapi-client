@@ -8,10 +8,12 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// doc.go, Values: "A value the client encodes that is nested deeper than
-// 1,000 levels ... is refused at its key", the bound documents have
-// (load.go: "the outermost value being level 1"): a parameter or body value
-// up to 1,000 levels deep is serialized, and one 1,001 levels deep is
+// doc.go, Values: a value "whose JSON, a MarshalJSON's output included, nests
+// deeper than 1,000 levels, the outermost value being level 1" is refused "at
+// the key of the body, field, part, sequential item or parameter that is or
+// holds it", the bound documents have too (load.go, Loader: "nests deeper
+// than 1,000 levels (the outermost value being level 1)"): a parameter or body
+// value up to 1,000 levels deep is serialized, and one 1,001 levels deep is
 // refused at its key (a parameter's Param.Key, or "Input.Body").
 //
 // Levels are counted as the Loader counts them for documents: the outermost

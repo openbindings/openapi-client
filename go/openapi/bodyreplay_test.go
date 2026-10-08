@@ -321,8 +321,10 @@ func (g *tailGate) Close() error { g.closed.Store(true); return nil }
 
 // A reader in a multipart body is streamed as it is read, never held: a 4
 // MiB part whose reader returns io.EOF only after the server has received 2
-// MiB of the body (Example_filesUpload: "The file is streamed from disk when
-// the request is sent"). A client that read the reader to its end before
+// MiB of the body (doc.go, Fixed rules, Form bodies: "A multipart body is
+// written as the transport reads it", and "each reader in a part, a regular
+// file included, is read as it is sent"; client.go, Input.Body: "A reader is
+// read as the body is sent"). A client that read the reader to its end before
 // sending would never let the server see those bytes, and the call would not
 // end.
 func TestMultipartReaderStreamed(t *testing.T) {

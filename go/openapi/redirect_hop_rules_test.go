@@ -484,20 +484,20 @@ func wantBodyClosed(t *testing.T, resp *openapi.Response) {
 	}
 }
 
-// An error that ends a chain after a response arrived (CheckRedirect's
-// error or the hop limit, a SecretFunc or GetBody failure on a hop, a hop's
-// transport failure, a Timeout spent before a hop) returns that last
-// Response, its body closed, with the *url.Error, as net/http does for
-// CheckRedirect. ErrUseLastResponse keeps returning it open, as the
-// outcome. doc.go,
-// Outcomes: "Whenever a response arrived, the [*Response] is returned, even
-// with an error"; a transport failure is "the *url.Error from the
-// http.Client", not a *StatusError. credential.go, SecretFunc: "On a
-// redirect hop the first request has already been sent, so an error or an
-// empty secret ends the call with a *url.Error wrapping f's error, along
-// with the last response, its body closed." net/http's own Client.do returns
-// the 3xx with a CheckRedirect error (go1.25 client.go, "Special case for Go
-// 1 compatibility").
+// An error that ends a chain after a response arrived (CheckRedirect's error or
+// the hop limit, a SecretFunc or GetBody failure on a hop, a hop's transport
+// failure, a Timeout spent before a hop) returns that last Response, its body
+// closed, with the *url.Error, as net/http does for CheckRedirect.
+// ErrUseLastResponse keeps returning it open, as the outcome. doc.go, Outcomes:
+// "Whenever a response arrived, the [*Response] is returned, even with an
+// error; when an error ends a redirect chain, it is the last 3xx, its body
+// already closed"; a transport failure is "the *url.Error from the
+// http.Client", not a *StatusError. credential.go, SecretFunc: "On a redirect
+// hop the first request has already been sent, so an error or an empty secret
+// ends the call with a *url.Error naming the scheme, and wrapping f's error if
+// it returned one, along with the last response, its body closed." net/http's
+// own Client.do returns the 3xx with a CheckRedirect error (go1.25 client.go,
+// "Special case for Go 1 compatibility").
 func TestErrorEndingAChainReturnsTheLastResponse(t *testing.T) {
 	errStop := errors.New("caller stopped the redirect")
 	wantChainError := func(t *testing.T, resp *openapi.Response, err error, status int, cause error) {

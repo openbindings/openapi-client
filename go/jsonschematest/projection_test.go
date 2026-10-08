@@ -606,10 +606,10 @@ func TestNullableTypeLists(t *testing.T) {
 	verdicts(t, "nullable list with null", s, []string{`null`, `"x"`}, []string{`1`})
 }
 
-// Project: a reference "that openapi.Schema.References does not report
-// (such as a $ref in a Swagger 2.0 items object, or one that is not a
-// string)" is removed with an Issue, so the output compiles and the lost
-// part accepts anything.
+// Project: a reference "that openapi.Schema.References does not report for the
+// schema holding it (such as a $ref in a Swagger 2.0 items object, or one that
+// is not a string), which is removed alone", is removed with an Issue, so the
+// output compiles and the lost part accepts anything.
 func TestUnreportedReferencesCompile(t *testing.T) {
 	c := parse(t, `{"swagger":"2.0","info":{"title":"T","version":"1"},"paths":{"/x":{"get":{"parameters":[
 		{"name":"q","in":"query","type":"array","maxItems":2,"items":{"$ref":"#/definitions/D"}}],"responses":{"204":{"description":"none"}}}}},
