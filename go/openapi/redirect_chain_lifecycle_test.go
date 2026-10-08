@@ -963,7 +963,7 @@ func TestDefaultTransportResolvedAtSend(t *testing.T) {
 // RequestError.Error: "Error describes every problem and the field that fixes
 // each". The hop's error, which has no Settings key, still names the scheme
 // (TestHopCredentialRefusalNamesItsScheme).
-func TestSourceRefusalNamesItsSchemeOnce(t *testing.T) {
+func TestSourceRefusalNamesItsScheme(t *testing.T) {
 	doc := doc31(`"/r":{"get":{"operationId":"getR"}}`, `"security":[{"corp_bearer":[]}]`,
 		`"components":{"securitySchemes":{"corp_bearer":{"type":"http","scheme":"bearer"}}}`)
 	for name, value := range map[string]string{"a value no header field carries": "bad\nZq9-7Yt", "an empty secret": ""} {

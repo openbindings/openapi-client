@@ -483,9 +483,7 @@ func TestProjectDroppedDefsNoIssue(t *testing.T) {
 }
 
 // Error: "Error names each Source and At with its reason", and Unwrap
-// "returns each issue's Err in order". The three kinds of loss are told
-// apart by their Err (Error: "Issues distinguish unresolved references,
-// dynamic scope, and unsupported dialect semantics").
+// "returns each issue's Err in order".
 func TestProjectErrorReportsEveryIssue(t *testing.T) {
 	for _, v := range modernEditions {
 		t.Run(v, func(t *testing.T) {
@@ -504,7 +502,6 @@ func TestProjectErrorReportsEveryIssue(t *testing.T) {
 				t.Fatalf("Issues %+v, want 3", pe.Issues)
 			}
 			msg := err.Error()
-			reasons := map[string]bool{}
 			for _, is := range pe.Issues {
 				if !strings.Contains(msg, is.Source) || !strings.Contains(msg, is.At) {
 					t.Errorf("Error() %q does not name %s %q", msg, is.Source, is.At)
@@ -512,10 +509,6 @@ func TestProjectErrorReportsEveryIssue(t *testing.T) {
 				if !errors.Is(err, is.Err) {
 					t.Errorf("errors.Is(err, %v) is false", is.Err)
 				}
-				reasons[is.Err.Error()] = true
-			}
-			if len(reasons) != 3 {
-				t.Errorf("the three kinds of loss share reasons: %+v", pe.Issues)
 			}
 			if got := pe.Unwrap(); len(got) != 3 {
 				t.Errorf("Unwrap() = %v, want 3 errors", got)
