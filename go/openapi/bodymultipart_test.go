@@ -14,34 +14,32 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Multipart bodies from an object, parsed back with
-// mime/multipart and checked part by part: names, filenames, media types,
-// header fields and content. client.go, Input.Body: "For form and multipart
-// media, Body is an object (a map or a struct) whose properties are the
-// fields. A property may be a []byte, an io.Reader or a [Part] (or a
-// non-nil *Part); a property whose value is an array sends one field or
-// part per item under the property's name, unless its collectionFormat or
-// Encoding style says otherwise, each item taking the property's content
-// type (an array schema's items type by default); any other value is one
-// field or part. ... A multipart object with no fields sends the close
-// delimiter alone ("--" boundary "--" CRLF), as browsers do."
-// Part: "A part's name and filename are written in its Content-Disposition
-// as given, each as a quoted-string with \ and " escaped, never as
-// filename*; a control character other than a tab in either is refused, as
-// a quoted-string cannot carry it"; Filename "Empty means the default: the
-// part's name for a []byte or io.Reader Content whose media type is not
-// multipart, and none otherwise"; NoFilename "sends no filename, whatever
-// the Content"; Header "holds other header fields of the part, such as those
-// its Encoding declares, under the rules for Options.Header's field names
-// and values. A Content-Disposition field replaces the one the client
-// writes; Content-Type, in any spelling, is refused (set MediaType)". doc.go,
-// Fixed rules, Form bodies: "Multipart/form-data fields are never URI
-// percent-encoded." OAS 3.1.2 section 4.8.15.1.1 gives each part's default
+// Multipart bodies from an object, parsed back with mime/multipart and checked
+// part by part: names, filenames, media types, header fields and content.
+// client.go, Input.Body: "For form and multipart media, Body is an object whose
+// properties are the fields ... A property may be a []byte, an io.Reader or a
+// [Part] (or a non-nil *Part); a property whose value is an array sends one
+// field or part per item under the property's name, unless its collectionFormat
+// or Encoding style says otherwise, each item taking the property's content
+// type (an array schema's items type by default); any other value is one field
+// or part. ... A multipart object with no fields sends the close delimiter
+// alone ("--" boundary "--" CRLF), as browsers do." Part: "A named part's
+// Content-Disposition is form-data, under any multipart type, with its name and
+// filename written as given, each as a quoted-string with \ and " escaped,
+// never as filename*; a control character other than a tab in either is
+// refused, as a quoted-string cannot carry it"; Filename "Empty means the
+// default: the part's name for a []byte or io.Reader Content whose media type
+// is not multipart, and none otherwise"; NoFilename "sends no filename,
+// whatever the Content"; Header "holds other header fields of the part, such as
+// those its Encoding declares, under the rules for Options.Header's field names
+// and values. A Content-Disposition field replaces the one the client writes;
+// Content-Type, in any spelling, is refused (set MediaType)". doc.go, Fixed
+// rules, Form bodies: "Multipart/form-data fields are never URI
+// percent-encoded". OAS 3.1.2 section 4.8.15.1.1 gives each part's default
 // Content-Type from its schema, and section 4.8.15.3: "Array properties are
 // handled by applying the same name to multiple parts, as is recommended by
 // [RFC7578] Section 4.3". RFC 7578 section 4.2: "Each part MUST contain a
-// Content-Disposition header field where the disposition type is
-// "form-data"".
+// Content-Disposition header field where the disposition type is "form-data"".
 
 const mpPaths = `
 	"/oas1":{"post":{"operationId":"oas1","requestBody":{"content":{"multipart/form-data":{"schema":{"type":"object","properties":{
@@ -419,7 +417,7 @@ func TestMultipartBoundary(t *testing.T) {
 
 // A part whose media type is multipart, encoded one level deep (client.go,
 // Input.Body: "A part whose media type is multipart is encoded, one level
-// deep, from an object or slice by its Encoding's own encoding,
+// deep, from an object or list by its Encoding's own encoding,
 // prefixEncoding or itemEncoding; a []byte or io.Reader supplies it
 // pre-encoded, with its boundary in Part.MediaType"). In OpenAPI 3.1 an
 // Encoding Object has no encoding of its own, so the nested parts take the

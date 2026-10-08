@@ -21,8 +21,8 @@ import (
 // and Schema Objects, $dynamicRef, the values of a Discriminator mapping
 // written as an object and a defaultMapping value, where they are not
 // component names ..., and OpenAPI 3.2 security
-// requirement URIs, anywhere in a document, webhooks and callbacks included;
-// operationRef and externalValue are not retrieved. They resolve against
+// requirement URIs, anywhere in a document, webhooks and callbacks included,
+// ...; operationRef and externalValue are not retrieved. They resolve against
 // each document's base". OpenAPI 3.1.2 section 4.3 (multi-document
 // descriptions), 4.6 (relative references resolve against the referring
 // document's base, inside schemas the nearest $id), 4.8.23 (Reference
@@ -624,8 +624,10 @@ func TestURIClaimedTwice(t *testing.T) {
 }
 
 // Reference cycles across documents are detected, never followed forever
-// (load.go, Loader), and wrap ErrUnresolved (errors.go: "a reference cycle
-// included"). Each document of a cycle is fetched once.
+// (load.go, Loader), and wrap ErrUnresolved (errors.go: "A reference cycle
+// cannot be resolved: a chain of Reference Objects or of Path Item $refs, in
+// any edition, ... that leads back into itself"). Each document of a cycle is
+// fetched once.
 func TestReferenceCyclesAcrossDocuments(t *testing.T) {
 	s := newSite(t)
 	s.put("/openapi.json", entry31(`"/a":{"$ref":"a.json"},"/ok":{"get":{"operationId":"ok"}},
@@ -827,7 +829,7 @@ func TestErrUnresolvedWrapsTheCause(t *testing.T) {
 }
 
 // Discovery follows the OpenAPI object model, not the text (load.go, Loader:
-// references "anywhere in a document, webhooks and callbacks included;
+// references "anywhere in a document, webhooks and callbacks included, ...;
 // operationRef and externalValue are not retrieved"): every Reference
 // Object, Path Item $ref and Schema Object $ref is followed, in webhooks,
 // callbacks, links, examples, headers and unused components, and in every

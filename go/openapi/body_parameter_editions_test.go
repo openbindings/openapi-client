@@ -25,8 +25,8 @@ import (
 // root parameters, and through Request.Media, which "is the same immutable
 // descriptor Operation.Body.Media exposes" (client.go). The fields are
 // still sent as the body, in the order doc.go, Order, gives: "a form or
-// multipart body's fields follow the order encoding/json writes members
-// in (a struct's fields in declaration order, a map's keys sorted)". The
+// multipart body's fields, follow the order encoding/json writes members in
+// (a struct's fields in declaration order, a map's keys sorted)". The
 // documentation does not order the Swagger 2.0 Encoding list, so the
 // fields are compared as a set.
 func TestSwaggerFormDataFieldsHaveNoLocation(t *testing.T) {

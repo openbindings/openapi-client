@@ -485,7 +485,7 @@ func TestBundlePartsFailOnlyWhenUsed(t *testing.T) {
 					)
 					if version != "3.2.1" {
 						// describe.go, Media.Err: "A pre-encoded []byte or
-						// io.Reader body is checked against neither."
+						// io.Reader body is checked against neither".
 						calls = append(calls,
 							call{"Media Type Object: a structured body", "mediaRef", &openapi.Input{Body: map[string]any{"a": 1}}, nil, true},
 							call{"Media Type Object: a pre-encoded body", "mediaRef", &openapi.Input{Body: []byte(`{"a":1}`)}, nil, false},

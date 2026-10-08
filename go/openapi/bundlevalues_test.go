@@ -23,9 +23,9 @@ import (
 // and does not wrap ErrUnresolved. A parameters list so written makes every
 // operation it applies to unusable, and a servers list so written is
 // described as one Server with that Err, which Options.BaseURL can replace
-// as it can any unusable server. Extension values and examples are not such
-// values, and in a map of objects a member named $ref whose value is an
-// object is an entry like any other, such as a header named $ref."
+// as it can any unusable server ... Extension values and examples are not
+// such values. In a map of objects a member named $ref whose value is an
+// object is an entry like any other, such as a header named $ref".
 //
 // Operation.Err lists among its causes, "written as a reference where the
 // edition defines none, the Operation or Responses Object, a parameters list
@@ -221,12 +221,12 @@ func TestBundleValuesContentMapValue(t *testing.T) {
 // references (OAS 3.x Media Type Object: encoding is "Map[string, Encoding
 // Object]", prefixEncoding "[Encoding Object]"). Written as one, it sets
 // Media.Err (describe.go, Media.Err: "an encoding map or prefixEncoding list
-// written as a reference (see Operation), which leaves no Encoding Param to
-// report it"), and Media.Encoding names no field "$ref" and no part "0"
-// (Media.Encoding: the parts are "those of prefixEncoding in order"). A
-// structured body is checked against Media.Err and refused at the body
-// (client.go, Input.Body: a pre-encoded body is not checked "against a
-// Media.Err"), and a pre-encoded body is sent under that Media.
+// written as a reference ... (see Operation), under any media type, which
+// leaves no Encoding Param to report it"), and Media.Encoding names no field
+// "$ref" and no part "0" (Media.Encoding: the parts are "those of
+// prefixEncoding in order"). A structured body is checked against Media.Err and
+// refused at the body (client.go, Input.Body: a pre-encoded body is not checked
+// "against a Media.Err"), and a pre-encoded body is sent under that Media.
 func TestBundleValuesEncodingMap(t *testing.T) {
 	var cases []shapeCase
 	check := func(t *testing.T, op *openapi.Operation) {
@@ -397,7 +397,7 @@ func TestBundleValuesPositionalItemEncoding(t *testing.T) {
 // undefined are undefined", and only those, so [null] is defined, and so is
 // an object with a member [null]; "an undefined required one is missing", a
 // defined one is not. doc.go, Styles: "the refusals here apply to defined
-// values ... and so are an array in a deepObject value unless
+// values ... and so are an array as or in a deepObject value unless
 // Options.DeepObjectArrays says how to write it"; client.go,
 // Options.DeepObjectArrays: such an array "is refused at the value's key in
 // RequestError.Inputs, and RequestError.Settings names
@@ -628,7 +628,8 @@ func TestBundleValuesNarrowParts(t *testing.T) {
 // describe.go, Operations: listed with an empty Key are "a Paths Object, or
 // a Path Item's additionalOperations map, written as a reference (see
 // Operation), listed once with the Path it is under, empty for a Paths
-// Object, and an Err saying the document must be bundled first". The Path
+// Object, no Method, and an Err saying the document must be bundled first".
+// The Path
 // Item's other operations are listed and called as usual.
 func TestBundleValuesListedEntries(t *testing.T) {
 	// listed returns the entries of c with an empty Key.

@@ -430,9 +430,9 @@ func TestTypedNilReaderFromIteratorIsNull(t *testing.T) {
 
 // A Part, or a non-nil *Part, as the whole form or multipart Body is refused
 // at Input.Body (client.go, Input.Body: "For form and multipart media, Body
-// is an object (a map or a struct)"; errors.go, RequestError.Inputs: "a
-// reader or Part where the media type cannot carry one"), never sent as an
-// empty body.
+// is an object whose properties are the fields: a value whose JSON data is an
+// object, ... but not a Part, a *Part, or a pointer to either or to a reader,
+// which is refused at Inputs["Input.Body"]"), never sent as an empty body.
 func TestPartAsWholeBodyRefused(t *testing.T) {
 	w, c := valuesClient(t)
 	for _, key := range []string{"bareForm", "bareMp"} {

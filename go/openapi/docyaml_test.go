@@ -304,7 +304,7 @@ func aliasDoc(k, filler, m int) []byte {
 }
 
 // load.go, Loader: "A document whose aliases would add more than 1,000,000
-// nodes, or more than 100 times its own node count ... is rejected too"
+// nodes, more than 100 times its own node count, ... is rejected too"
 // (RFC 9512 section 4.2 asks for such a bound). The cases keep a wide
 // margin on either side of each bound, so they hold however nodes are
 // counted (keys included or not, the alias node itself or not).

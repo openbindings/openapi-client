@@ -166,8 +166,9 @@ type nullJSON struct{}
 
 func (nullJSON) MarshalJSON() ([]byte, error) { return []byte("null"), nil }
 
-// doc.go, Values: "A form or multipart property or array item whose JSON
-// data is null is omitted, whatever its serialization": JSON data null from
+// doc.go, Values: "A form or multipart property or array item, or a
+// positional part, whose JSON data is null is omitted, whatever its
+// serialization or media type": JSON data null from
 // a json.RawMessage under a JSON field, and from a MarshalJSON under a text
 // field.
 func TestNullJSONFieldsOmitted(t *testing.T) {
@@ -199,11 +200,11 @@ func TestNestedBoundaryHoldingOuterRefused(t *testing.T) {
 	}
 }
 
-// Input.MediaType: a boundary is "checked", and "Two boundary parameters are
-// refused"; a part's media type problem is at its key in Settings (errors.go,
-// RequestError.Settings: "for a part's media type, "Input.Body" followed by
-// the part's JSON Pointer"). A nested multipart Part.MediaType with an invalid
-// boundary, or two, is refused.
+// Input.MediaType: a boundary is "checked", and "Two boundary parameters in a
+// multipart type are refused"; a part's media type problem is at its key in
+// Settings (errors.go, RequestError.Settings: "for a part's media type,
+// "Input.Body" followed by the part's JSON Pointer"). A nested multipart
+// Part.MediaType with an invalid boundary, or two, is refused.
 func TestPartBoundaryRefused(t *testing.T) {
 	w, c := contractLineClient(t)
 	for _, mt := range []string{`multipart/mixed; boundary="a "`, "multipart/mixed; boundary=a; boundary=b", `multipart/mixed; boundary="a@b"`} {
@@ -247,8 +248,11 @@ func TestArrayWithoutItemsDefaultsToOctetStream(t *testing.T) {
 	})
 }
 
-// client.go, Input.Body: "For form and multipart media, Body is an object (a
-// map or a struct)"; a typed nil body is a value (doc.go, Values: "a typed
+// client.go, Input.Body: "For form and multipart media, Body is an object
+// whose properties are the fields: a value whose JSON data is an object, such
+// as a struct, a non-nil map or a non-nil pointer to either, but not a Part, a
+// *Part, or a pointer to either or to a reader, which is refused at
+// Inputs["Input.Body"]"; a typed nil body is a value (doc.go, Values: "a typed
 // nil, such as a nil pointer or map, is a value, which encoding/json writes as
 // null"), and null is no object. A typed nil pointer to a struct, a pointer to
 // a *Part and a pointer to a reader are refused at Input.Body.
@@ -414,12 +418,12 @@ func TestLoadEndsWithContextAtEveryCheck(t *testing.T) {
 }
 
 // load.go, Loader: references resolve as RFC 3986 and RFC 6901 say, and
-// errors.go, ErrUnresolved "is wrapped by the Err of a part whose defect is
-// a reference that cannot be resolved": a $ref that is no URI reference,
-// a fragment that is no JSON Pointer or whose
-// percent-encoding is invalid cannot be resolved; one that
-// names the document by its own URI resolves (load.go: "A reference resolves
-// first to what loaded documents identify: a document by its retrieval URI").
+// errors.go, ErrUnresolved "is wrapped by the Err of a part, or of a
+// SchemaReference, whose defect is a reference that cannot be resolved": a $ref
+// that is no URI reference, a fragment that is no JSON Pointer or whose
+// percent-encoding is invalid cannot be resolved; one that names the document
+// by its own URI resolves (load.go: "A reference resolves first to what loaded
+// documents identify: a document by its retrieval URI").
 func TestReferenceFormsUnresolved(t *testing.T) {
 	c := parseAt(t, doc31(`"/x":{"get":{"operationId":"x","parameters":[
 		{"$ref":"%zz"},{"$ref":"#plain-name"},{"$ref":"#/components/parameters/a%zz"},
@@ -746,8 +750,9 @@ func TestEmptyReplayablePart(t *testing.T) {
 	})
 }
 
-// errors.go, ErrUnresolved: wrapped by "the Err of a part whose defect is a
-// reference that cannot be resolved", a Security Scheme Object's included.
+// errors.go, ErrUnresolved: wrapped by "the Err of a part, or of a
+// SchemaReference, whose defect is a reference that cannot be resolved", a
+// Security Scheme Object's included.
 func TestUnresolvableSecurityScheme(t *testing.T) {
 	c := parseAt(t, doc31(`"/x":{"get":{"operationId":"x","security":[{"s":[]}]}}`,
 		`"components":{"securitySchemes":{"s":{"$ref":"#/components/securitySchemes/nope"}}}`), "https://api.example.test", testDocURI, nil)
@@ -756,8 +761,9 @@ func TestUnresolvableSecurityScheme(t *testing.T) {
 	}
 }
 
-// client.go, Input.Body: a sequential body is "a slice, an iter.Seq, or an
-// iter.Seq2 whose second value is an error"; a nil iterator is refused, the
+// client.go, Input.Body: a sequential body is "a list, an iter.Seq, or an
+// iter.Seq2 whose second value is an error"; "A nil iterator is refused at
+// Inputs["Input.Body"]", the
 // fast path's iter.Seq[any] included, and a function of
 // another shape is no iterator.
 func TestSequentialBodyIteratorShapes(t *testing.T) {
@@ -985,8 +991,9 @@ func TestSecretFuncOfNilIsNoCredential(t *testing.T) {
 	}
 }
 
-// client.go, Input.Body: an iterator "runs on a goroutine of the transport;
-// its yield returns false once the body is no longer wanted". A prepared
+// client.go, Input.Body: an iterator "runs on a goroutine of the transport,
+// from the transport's first Read of the body, so a body closed unread never
+// runs it". A prepared
 // iterator body that is closed and then read never starts the iterator: the
 // read fails. Its GetBody is nil, an iterator being read once.
 func TestClosedIteratorBodyNeverStarts(t *testing.T) {
@@ -1015,15 +1022,15 @@ func TestClosedIteratorBodyNeverStarts(t *testing.T) {
 }
 
 // load.go, Load: "Any other defect ... is reported on the part it reaches, in
-// its Err, or ignored where nothing depends on it". A tags value or a server
-// variable's enum that is an object instead of an array lists nothing, the
-// enum also making its server unusable (describe.go, Variable.Enum: "An enum
-// written as anything but an array of strings, a variable's values being
-// strings, makes the server unusable (Server.Err)"; see
-// TestServerVariableEnumShapes); a security requirement whose scopes are an
-// object is a defect of each operation it reaches (Operation.Err, with no
-// alternative listed), and Load does not take an Options.SecurityKey naming
-// the scopes that object holds as an alternative (client.go,
+// its Err, or ignored where nothing depends on it". A tags value that is an
+// object instead of an array lists nothing, and so does a server variable's
+// enum, which also makes its server unusable (describe.go, Variable.Enum: "An
+// enum written as anything but an array of strings, a variable's values being
+// strings, makes the server unusable (Server.Err)" and "Enum is nil for
+// either"; see TestServerVariableEnumShapes); a security requirement whose
+// scopes are an object is a defect of each operation it reaches (Operation.Err,
+// with no alternative listed), and Load does not take an Options.SecurityKey
+// naming the scopes that object holds as an alternative (client.go,
 // Options.SecurityKey: "A key that names no alternative ... is refused by
 // Load").
 func TestObjectsWhereArraysBelong(t *testing.T) {

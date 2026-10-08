@@ -29,8 +29,9 @@ import (
 // base64-encoded"; "any other http scheme: everything after the scheme name
 // in the Authorization field". doc.go, Credentials: "An http scheme, such as
 // bearer or basic, is compared without regard to case". doc.go, Order:
-// "query credentials last"; Cookies: "one Cookie field, pairs joined by
-// "; ", parameters in declared order, then credentials". client.go,
+// "query credentials last"; Cookies: "one Cookie field holding, joined by
+// "; ", the parameters in declared order, then the cookies the HTTPClient's
+// Jar holds for the URL, then credentials". client.go,
 // Request.Security and Response.Security: the Key of the alternative
 // applied. OAS 3.1.2 section 4.8.27: a mutualTLS scheme uses a client
 // certificate, so the client adds nothing (client.go, Options.Credentials:
@@ -265,7 +266,7 @@ func TestSecretFuncCalledPerRequest(t *testing.T) {
 }
 
 // credential.go, SecretFunc: "f receives the call's context, with its
-// deadline, cancellation and values, but not the operation: a request f
+// deadline, cancellation and values, ... but not the operation: a request f
 // makes is not labelled ... as the call's operation by middleware that asks
 // OperationFromContext." client.go, OperationFromContext: nil "for requests
 // a credential source makes".
@@ -524,7 +525,8 @@ func TestCredentialReplacesEditedFields(t *testing.T) {
 // the alternative lists their schemes", whatever the order of the scheme
 // names, their declarations, or the parameters. Order: "the path item's
 // parameters, then the operation's, in declared order ... query credentials
-// last"; Cookies: "parameters in declared order, then credentials".
+// last"; Cookies: "the parameters in declared order, then the cookies the
+// HTTPClient's Jar holds for the URL, then credentials".
 func TestSeveralQueryAndCookieCredentialsOrder(t *testing.T) {
 	w := newWire(t, nil)
 	doc := doc31(`

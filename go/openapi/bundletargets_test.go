@@ -12,7 +12,7 @@ import (
 // Operation: "Bundling replaces such a value whole, so its other members are
 // not read, and a reference whose target lies inside it cannot be followed
 // before bundling either: it makes its own nearest part unusable the same
-// way. ... In a map of objects a member named $ref whose value is an object
+// way ... In a map of objects a member named $ref whose value is an object
 // is an entry like any other, such as a header named $ref; in a map of
 // strings, such as OAuth scopes, a string $ref member is a reference."
 //

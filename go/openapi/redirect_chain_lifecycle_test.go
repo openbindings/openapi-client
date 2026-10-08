@@ -441,8 +441,9 @@ func TestCheckRedirectGetBodyCopyNotWaitedFor(t *testing.T) {
 // wait for it as for any hop body, and WaitRequest reports its result, since
 // it is the last request that carried the body. client.go,
 // Response.WaitRequest: it waits "for every request of the call that carried
-// one: the first and each redirect hop that sent it again. It reports on the
-// last of them". The transport reads the first body completely, and the
+// one: the first, each copy the transport takes with GetBody to send it
+// again, and each redirect hop that sent it again. It reports on the last of
+// them". The transport reads the first body completely, and the
 // hop's as each case says; in the last case it closes the hop's body only
 // when the test lets it.
 func TestCheckRedirectInstalledCopyIsWaitedFor(t *testing.T) {

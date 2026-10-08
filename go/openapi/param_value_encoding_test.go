@@ -110,10 +110,11 @@ func wantEncoded(t *testing.T, key string, req *openapi.Request, v any) {
 }
 
 // Depth is counted in the JSON encoding/json writes, a MarshalJSON's output
-// included (doc.go, Values: "A value the client encodes that is nested
-// deeper than 1,000 levels, counted in the JSON encoding/json writes (a
-// MarshalJSON's output included) ..., is refused at its key"; a scalar leaf
-// is a level, the outermost value level 1, as the Loader counts documents).
+// included (doc.go, Values: a value "whose JSON, a MarshalJSON's output
+// included, nests deeper than 1,000 levels, the outermost value being level
+// 1", is refused "at the key of the body, field, part, sequential item or
+// parameter that is or holds it"; a scalar leaf is a level, as the Loader
+// counts documents).
 // A static per-type depth may not refuse a value whose JSON is within the
 // bound, nor accept one whose JSON is not.
 func TestValueDepthCountedInEncodedJSON(t *testing.T) {
@@ -563,9 +564,9 @@ func TestContentParamExplodeSet(t *testing.T) {
 	}
 }
 
-// client.go, Input.ParamWriters: "an unknown key, and the same key in Params
-// and ParamWriters, are refused": a nil entry is still an entry, refused at
-// Inputs[key].
+// client.go, Input.ParamWriters: "an unknown key, a nil writer, and the same
+// key in Params and ParamWriters, are refused at that key": a nil entry is
+// refused at Inputs[key].
 func TestNilParamWriterEntriesRefused(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, doc31(`"/q":{"get":{"operationId":"op","parameters":[{"name":"q","in":"query","schema":{}}]}}`), nil)

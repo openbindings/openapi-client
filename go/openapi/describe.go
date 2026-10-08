@@ -427,7 +427,8 @@ type Variable struct {
 	// written as anything but an array of strings, a variable's values being
 	// strings, makes the server unusable (Server.Err), and one written as a
 	// reference marks a document meant to be bundled first (see Operation).
-	// What it permits is on Options.Variables.
+	// Enum is nil for either, even for an array only some of whose items are
+	// strings. What it permits is on Options.Variables.
 	Enum []string
 }
 

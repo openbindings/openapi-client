@@ -41,13 +41,14 @@ const bodyDoc = `{"openapi":"3.1.0","info":{"title":"t","version":"1"},"servers"
 // namedBytes is a named byte-slice type, which is a value for the codec.
 type namedBytes []byte
 
-// doc.go, Values: a JSON type "is written as encoding/json writes the
-// value"; "a typed nil, such as a nil pointer or map, is a value, which
-// encoding/json writes as null". client.go, Input.Body: "Under a JSON type,
-// json.RawMessage("null") sends null, and bytes go as a base64 string: give
-// the string, or the bytes as a named byte-slice type". doc.go, Fixed rules,
-// Header fields: the client generates Content-Type, and Content-Length for a
-// body that can be sent again, which every encoded value can.
+// doc.go, Values: a JSON type "is written as json.Marshal writes the value,
+// with no trailing newline"; "a typed nil, such as a nil pointer or map, is a
+// value, which encoding/json writes as null". client.go, Input.Body: "Under a
+// JSON type, json.RawMessage("null") sends null, and bytes go as a base64
+// string: give the string, or the bytes as a named byte-slice type". doc.go,
+// Fixed rules, Header fields: the client generates Content-Type, and
+// Content-Length for a body that can be sent again, which every encoded value
+// can.
 func TestJSONBody(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, bodyDoc, nil)
@@ -340,10 +341,10 @@ func (c *closeRecorder) wasClosed() bool {
 
 // client.go, Input.Body: "A body can be sent again ... when every source in
 // it can: a []byte, a *bytes.Buffer, a *bytes.Reader and a *strings.Reader,
-// from the bytes they hold when the call is prepared, without being drained;
-// an *os.File that Stat reports to be a regular file, from its offset when
-// the call is prepared; and every value the client encodes. Any other
-// reader ... is read once." client.go, Request.HTTP: "GetBody is set when
+// from the bytes they hold when the call is prepared, without being drained
+// ...; an *os.File that Stat reports to be a regular file, from its offset
+// when the call is prepared; and every value the client encodes. Any other
+// reader ... is read once". client.go, Request.HTTP: "GetBody is set when
 // the body can be sent again". doc.go, Fixed rules, Header fields:
 // Content-Length "for a body that can be sent again". "The client never
 // closes a reader it is given."

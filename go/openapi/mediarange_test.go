@@ -19,16 +19,17 @@ import (
 //
 // What each call does follows from:
 //
-//   - client.go, Input.Body: "A nil Body where the request body is required
-//     is refused at Inputs["Input.Body"]"; "For form and multipart media,
-//     Body is an object (a map or a struct) whose properties are the
-//     fields"; a []byte "is sent as its bytes, under whatever media type is
-//     chosen".
+//   - client.go, Input.Body: "A nil Body where the request body is required is
+//     refused at Inputs["Input.Body"]"; "For form and multipart media, Body is
+//     an object whose properties are the fields"; a []byte "is sent as its
+//     bytes, under whatever media type is chosen".
 //   - doc.go, Configuration: "A body uses the declared request media type
 //     when exactly one is declared and it is concrete; otherwise, a range
 //     counting as an alternative, it requires Options.MediaType or
-//     Input.MediaType"; errors.go, RequestError.Settings: "an undetermined or
-//     unusable request media type "Input.MediaType"".
+//     Input.MediaType"; errors.go, RequestError.Settings: "A body's media
+//     type is keyed "Input.MediaType" when it is undetermined, is not a
+//     concrete media type, is one the operation does not declare, or is
+//     declared under an invalid key".
 //   - client.go, Input.MediaType: "a concrete type matching one the
 //     operation declares, by the rules on Response.Media"; Response.Media:
 //     "The most specific match wins: a concrete type over type/*, type/*

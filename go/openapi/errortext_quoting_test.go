@@ -34,8 +34,9 @@ func wantQuotedText(t testing.TB, what, text string, escapes ...string) {
 // so that it cannot forge a line of a log or reach a terminal as control
 // codes." A YAML tag is percent-decoded (YAML 1.2.2 section 6.8.2), so a
 // document can spell a line feed and an escape in one; the rejection that
-// names the tag (load.go, Loader: "a tag outside the Core schema ... rejects
-// the document") quotes it.
+// names the tag (load.go, Loader: a document "rejects the document, and so,
+// in every edition, does a value JSON cannot hold (.inf, .nan, or a tag
+// outside the Core schema, such as !!timestamp)") quotes it.
 func TestYAMLTagQuotedInError(t *testing.T) {
 	doc := "openapi: 3.1.0\ninfo: {title: t, version: '1'}\npaths: {}\nx-a: !e%0AFAKE%1B[31m value\n"
 	_, err := openapi.Parse(context.Background(), []byte(doc), testDocURI, nil)

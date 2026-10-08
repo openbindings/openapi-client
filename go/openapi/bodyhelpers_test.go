@@ -120,8 +120,9 @@ func hexByte(b byte) string {
 // the RFC 6570 oracle for form, the OAS 3.1.2 table and text for
 // spaceDelimited, pipeDelimited and deepObject, with undefined values
 // settled as doc.go, Values says. A field written as nothing is omitted
-// (doc.go, Values: "A form or multipart property or array item whose JSON
-// data is null is omitted, whatever its serialization"; an undefined value
+// (doc.go, Values: "A form or multipart property or array item, or a
+// positional part, whose JSON data is null is omitted, whatever its
+// serialization or media type"; an undefined value
 // is omitted as an undefined optional parameter is).
 func styledField(t testing.TB, name, style string, explode, reserved bool, v any) (string, fate) {
 	t.Helper()

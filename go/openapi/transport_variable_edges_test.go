@@ -411,10 +411,10 @@ func TestErrorTextQuotesKeysAndReasonPhrase(t *testing.T) {
 	}
 }
 
-// client.go, Response.WaitRequest: "consumed completely (read to EOF, or,
-// for a body of known length, read to that length)". A transport that reads
-// exactly the declared length and closes has consumed the body completely,
-// on every upload path.
+// client.go, Response.WaitRequest: "consumed completely (read to EOF, or, for a
+// body of known length, read to that length, ...)". A transport that reads
+// exactly the declared length and closes has consumed the body completely, on
+// every upload path.
 func TestExactLengthConsumerCompletesUpload(t *testing.T) {
 	framed := func(copyN bool) roundTripFunc {
 		return func(r *http.Request) (*http.Response, error) {

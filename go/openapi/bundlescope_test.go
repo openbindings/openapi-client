@@ -14,7 +14,7 @@ import (
 // Where the rule for values written as references reaches, and what it costs.
 // describe.go, Operation: "a reference whose target lies inside it cannot be
 // followed before bundling either: it makes its own nearest part unusable
-// the same way. Extension values and examples are not such values." The
+// the same way ... Extension values and examples are not such values." The
 // harness, and the checks of each call in both orders and of nothing being
 // fetched, are those of bundlevalues_test.go.
 

@@ -49,20 +49,20 @@ func (jsonCodec) Decode(io.Reader, any) error { return nil }
 // can be written straight into the body (no style, no Err, one concrete type
 // that is not the form type, a text class for numbers and booleans, not JSON
 // for strings), and with no caller codec configured such a value is written by
-// strconv and the form encoder; anything else, a named type included, takes
-// the general path. The shortcut's boundary is covered here against exact
-// bytes (each class, named types, a caller codec, maps and pointers). Each
-// value, a string, an int, a bool, a named string, a named int and a
-// MarshalText type, is given to each field from a map, a struct and a pointer
-// to the struct, and the body is exactly what the contract makes of it: under
-// text/plain its text (doc.go, Values: "a number or boolean is written in its
-// JSON spelling ... and a string ... as it is"), under application/json its
-// JSON, under application/octet-stream a string only ("any other type takes
-// only a string", its JSON data a string for the named string and the
-// MarshalText type), under the form type an object only, under a style
-// RFC 6570's form expansion, under two types a choice by Part.MediaType, and
-// with a caller codec for text/plain what the codec writes (client.go,
-// Options.Codecs). These pin the behavior any shortcut must keep.
+// strconv and the form encoder; anything else, a named type included, takes the
+// general path. The shortcut's boundary is covered here against exact bytes
+// (each class, named types, a caller codec, maps and pointers). Each value, a
+// string, an int, a bool, a named string, a named int and a MarshalText type,
+// is given to each field from a map, a struct and a pointer to the struct, and
+// the body is exactly what the contract makes of it: under text/plain its text
+// (doc.go, Values: "a number, boolean or json.Number is written in its JSON
+// spelling ... and a string as it is"), under application/json its JSON, under
+// application/octet-stream a string only ("any other type takes only a string",
+// its JSON data a string for the named string and the MarshalText type), under
+// the form type an object only, under a style RFC 6570's form expansion, under
+// two types a choice by Part.MediaType, and with a caller codec for text/plain
+// what the codec writes (client.go, Options.Codecs). These pin the behavior any
+// shortcut must keep.
 func TestFormFieldScalarEncodings(t *testing.T) {
 	doc := doc31(formFieldPaths)
 	plain := parseAt(t, doc, "https://api.example.test", testDocURI, nil)

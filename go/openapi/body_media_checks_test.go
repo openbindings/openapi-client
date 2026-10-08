@@ -204,7 +204,7 @@ func (*ptrMarshalerElem) MarshalJSON() ([]byte, error) { return []byte(`"ptr"`),
 
 // Under JSON Lines and JSON text sequences, a slice and an iterator of the
 // same values send the same items (client.go, Input.Body: "each element is
-// one item, encoded as that value on its own would be, so a slice and an
+// one item, encoded as that value on its own would be, so a list and an
 // iterator yielding the same values send the same bytes"), each
 // json.Marshal of the item on its own. A pointer-receiver MarshalJSON of the
 // element type does not apply to a slice's items, as it does not to an

@@ -24,8 +24,9 @@ import (
 // of an addressable struct or array, at any depth), not only at a field's own
 // type; a map type whose key json refuses is refused as json refuses it, never
 // walked (its keys never reach mapKey). Dereferences never end the walk:
-// doc.go's Values counts levels "in the JSON encoding/json writes", and
-// pointers add none, so a chain of pointers around a reader is walked to the
+// doc.go's Values counts the levels of "a value whose JSON, a MarshalJSON's
+// output included, nests deeper than 1,000 levels", to which pointers add
+// none, so a chain of pointers around a reader is walked to the
 // reader and refused. Past 1,000 dereferences on one path the walk records the
 // pointers on that path, as encoding/json does past its own 1,000
 // (startDetectingCyclesAfter), and a repeat ends the whole walk: the value is
@@ -655,7 +656,8 @@ func jsonMembersOf(t *testing.T, b []byte) []jsonMember {
 
 // fieldsOf is what a form or multipart body whose every field is JSON
 // carries for the JSON object b (doc.go, Values: "A form or multipart
-// property or array item whose JSON data is null is omitted"; client.go,
+// property or array item, or a positional part, whose JSON data is null is
+// omitted"; client.go,
 // Input.Body: "a property whose value is an array sends one field or part
 // per item under the property's name"): each member's JSON text, an array
 // one per item, null left out.

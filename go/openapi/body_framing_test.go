@@ -128,11 +128,11 @@ func TestMultipartDeclaredAndDuplicateBoundaries(t *testing.T) {
 	})
 }
 
-// An empty quoted boundary, given in Input.MediaType or declared in the
-// content key, is refused, never a hang: Input.MediaType's at Settings
+// An empty quoted boundary, given in Input.MediaType or declared in the content
+// key, is refused, never a hang: Input.MediaType's at Settings
 // ["Input.MediaType"], the key's as the Media's Err (client.go,
-// Input.MediaType: "A boundary in the declared content key is used and
-// checked the same way; an invalid one is the Media's Err"), a document
+// Input.MediaType: "A boundary in a request body's declared content key is used
+// and checked the same way; an invalid one is the Media's Err"), a document
 // defect, not "Input.MediaType", with a nested multipart part whose own
 // boundary would be generated. Since a regression would make Prepare spin
 // forever, the cases run in a child process under a 10 s guard.

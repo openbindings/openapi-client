@@ -17,9 +17,9 @@ import (
 
 // Sequential bodies, in any edition. client.go, Input.Body: "For a
 // sequential media type (JSON Lines, JSON text sequences, server-sent
-// events), in any edition, Body is a slice, an iter.Seq, or an iter.Seq2
+// events), in any edition, Body is a list, an iter.Seq, or an iter.Seq2
 // whose second value is an error, of any element type; each element is one
-// item. Under text/event-stream an item is an object with no members but
+// item ... Under text/event-stream an item is an object with no members but
 // data, event and id, as strings, and retry, as a non-negative integer, or
 // an [Event] (or a non-nil *Event), of which only the fields it sets are
 // used. It is written as those fields, each as a "field: value" line ending
@@ -328,20 +328,20 @@ func eventStream(events [][]string) string {
 // unencodable is a channel, which encoding/json cannot encode.
 var unencodable = make(chan int)
 
-// Items that cannot be encoded, in a slice, which the client encodes when
-// the call is prepared: refused before sending at the item's Inputs key,
+// Items that cannot be encoded, in a slice, which the client encodes when the
+// call is prepared: refused before sending at the item's Inputs key,
 // "Input.Body" followed by the JSON Pointer to it (errors.go,
-// RequestError.Inputs: "The key is the Param.Key or, for the body,
-// "Input.Body" followed by a JSON Pointer to the part of Body concerned").
-// Event stream items as client.go, Input.Body, lists them ("any other member
-// or type, a line break in event or id, or a retry that is not whole
-// milliseconds"), a negative Retry too (retry is "a non-negative integer"),
-// and under text/event-stream an item is only an object or an Event; JSON
-// items as encoding/json fails on them, or holding a reader or Part
-// (client.go, Input.Body: "A Part or io.Reader inside a JSON value is
-// refused with an Inputs entry at its place in Body"); a pre-encoded item
-// holding its framing's separator (Input.Body: "one holding the framing's
-// separator (LF or CR, or RS) cannot be encoded").
+// RequestError.Inputs: "The key is the Param.Key or, for the body, "Input.Body"
+// followed by a JSON Pointer to the part of Body concerned"). Event stream
+// items as client.go, Input.Body, lists them ("any other member or type, a line
+// break in event or id, a NUL in id, or a retry that is not whole
+// milliseconds"), a negative Retry too (retry is "a non-negative integer"), and
+// under text/event-stream an item is only an object or an Event; JSON items as
+// encoding/json fails on them, or holding a reader or Part (client.go,
+// Input.Body: "A Part or io.Reader inside a JSON value is refused with an
+// Inputs entry at its place in Body"); a pre-encoded item holding its framing's
+// separator (Input.Body: "one holding the framing's separator (LF or CR, or RS)
+// cannot be encoded").
 func TestSequentialItemRefusals(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, seqDoc(), nil)
@@ -420,9 +420,9 @@ func TestSequentialItemsUseCodecs(t *testing.T) {
 
 // A slice body is a value the client encodes, so it can be sent again, with
 // Content-Length; an iterator is read once and sent without (client.go,
-// Input.Body: "every value the client encodes" can be sent again, "an
-// iterator, is read once"; Request.HTTP: "GetBody is set when the body can
-// be sent again"; doc.go, Fixed rules, Header fields).
+// Input.Body: "every value the client encodes" can be sent again, and "Any
+// other reader ... is read once, and so is an iterator"; Request.HTTP: "GetBody
+// is set when the body can be sent again"; doc.go, Fixed rules, Header fields).
 func TestSequentialBodiesPrepared(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, seqDoc(), nil)

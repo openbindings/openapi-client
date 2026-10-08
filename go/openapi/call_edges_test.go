@@ -729,7 +729,8 @@ func TestResponseMediaSpecificityOrder(t *testing.T) {
 
 // Raw document text is quoted in error text, so a hostile document cannot
 // forge a log line, and a caller's value never appears (errors.go,
-// RequestError.Error: "never a credential or an input's value"); an encoding
+// RequestError.Error: "never a credential, an input's value, or a value given
+// for a server variable or a header field"); an encoding
 // error keeps its cause.
 func TestErrorTextQuotesDocumentAndOmitsValues(t *testing.T) {
 	w := newWire(t, nil)

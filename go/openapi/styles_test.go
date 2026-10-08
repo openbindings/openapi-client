@@ -152,11 +152,11 @@ func (c styleCfg) expect(t testing.TB, v any) (string, fate) {
 	case "header":
 		return uexpandOp(uheader, spec), sent
 	default:
-		// doc.go, Fixed rules, Cookies: "one Cookie field, pairs joined by
-		// "; "", the pairs form style writes; OAS 3.1.2 Appendix D.1: the
-		// form "?" prefix is stripped, and pairs in cookies "are delimited by
-		// a semicolon followed by a space character rather than &".
-		// A ";" or control character in a value is percent-encoded, as any
+		// doc.go, Fixed rules, Cookies: "one Cookie field holding, joined by ";
+		// ", the parameters", the pairs form style writes; OAS 3.1.2 Appendix
+		// D.1: the form "?" prefix is stripped, and pairs in cookies "are
+		// delimited by a semicolon followed by a space character rather than
+		// &". A ";" or control character in a value is percent-encoded, as any
 		// other byte outside the unreserved set (doc.go, Fixed rules,
 		// Percent-encoding).
 		want := strings.ReplaceAll(strings.TrimPrefix(uexpand("?", spec), "?"), "&", "; ")
@@ -308,9 +308,9 @@ func styleConfigs() []styleCfg {
 }
 
 // styleCorpus is the values every configuration is called with: primitives,
-// arrays and objects (doc.go, Values: numbers and booleans "in its JSON
-// spelling ... a string or json.Number as it is"; members in encoding/json's
-// order), the undefined values, and values a style refuses.
+// arrays and objects (doc.go, Values: "a number, boolean or json.Number is
+// written in its JSON spelling ... and a string as it is"; members in
+// encoding/json's order), the undefined values, and values a style refuses.
 var styleCorpus = []struct {
 	name string
 	v    any
@@ -904,10 +904,11 @@ func TestNestingRefusedEveryStyle(t *testing.T) {
 	wantKeys(t, "Inputs", re.Inputs, true, "p", "q", "X-H", "zz")
 }
 
-// doc.go, Fixed rules, Percent-encoding: "A path parameter value that would
-// form a whole "." or ".." segment is refused, since RFC 3986 section 5.2.4
-// removes such segments before the value could reach the server". The rule
-// applies to the resulting segment, however many values form it. A label
+// doc.go, Fixed rules, Percent-encoding: "A path parameter value whose
+// expansion would form a whole "." or ".." segment, percent-encoded or not,
+// alone or with the values and text beside it, is refused at its key (at one
+// of their keys when several values form it), since RFC 3986 section 5.2.4
+// removes such segments before the value could reach the server". A label
 // expansion that is a whole segment forms "." from "" and ".." from "."
 // (RFC 6570 section 3.2.5: X{.empty} is "X.").
 func TestLabelDotSegments(t *testing.T) {

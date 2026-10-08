@@ -1356,7 +1356,7 @@ func (ck *checker) checkIssues() {
 
 // checkEffect checks that the keyword an Issue names contributes nothing
 // to o (Project: "a reference or removed keyword is dropped, with its
-// mapping entry for a mapping value; a resource in another dialect becomes
+// mapping entry for a mapping value; a resource in another dialect ... becomes
 // true ... and a schema left with no keywords becomes true").
 func (ck *checker) checkEffect(o output, at string, tokens []string) {
 	ck.t.Helper()

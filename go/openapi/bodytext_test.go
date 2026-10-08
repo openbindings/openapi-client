@@ -13,14 +13,14 @@ import (
 
 // Text and other media types. doc.go, Values: "a type with a caller's codec
 // takes a value of any Go type, which that codec encodes; a JSON type is
-// written as encoding/json writes the value; and any other type takes only a
-// string, as its UTF-8 bytes, and a text type also a number or boolean, in
-// its JSON spelling"; "The client first converts a value to JSON data as
-// encoding/json would (struct tags, MarshalJSON, TextMarshaler map keys)".
-// So XML without a caller's codec takes a string. doc.go, Fixed rules,
-// Header fields: the client generates Content-Type, and Content-Length for a
-// body that can be sent again, which every value it encodes can (client.go,
-// Input.Body).
+// written as json.Marshal writes the value, with no trailing newline; and any
+// other type takes only a string, as its bytes, and a text type also a number,
+// boolean or json.Number, in its JSON spelling"; "The client first converts a
+// value to JSON data as encoding/json would (struct tags, MarshalJSON,
+// TextMarshaler map keys)". So XML without a caller's codec takes a string.
+// doc.go, Fixed rules, Header fields: the client generates Content-Type, and
+// Content-Length for a body that can be sent again, which every value it
+// encodes can (client.go, Input.Body).
 
 const textDoc = `
 	"/text":{"post":{"operationId":"text","requestBody":{"content":{"text/plain":{}}}}},
@@ -42,8 +42,9 @@ func (m textMarshaler) MarshalText() ([]byte, error) { return []byte(m.s), nil }
 // converted to JSON data as encoding/json would, so a pointer to a string,
 // a MarshalJSON or MarshalText result that is a JSON string, and a
 // json.Number are text too. A string is sent as its bytes, never escaped
-// (doc.go, Values: "a string or json.Number as it is"); a number in its
-// JSON spelling as encoding/json writes it (1e21 is 1e+21).
+// (doc.go, Values: "any other type takes only a string, as its bytes, and a
+// text type also a number, boolean or json.Number, in its JSON spelling"); a
+// number in its JSON spelling as encoding/json writes it (1e21 is 1e+21).
 func TestTextBodies(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, doc31(textDoc), nil)

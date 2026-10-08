@@ -70,8 +70,9 @@ func TestAllowReservedQuery(t *testing.T) {
 		{"pipeDelimited member names", "pd", "p", map[string]string{"k=1": "v"}, "/pd?p=k=1%7Cv"},
 		{"deepObject member names", "d", "p", map[string]any{"a/b": map[string]string{"c:d": "e"}}, "/d?p%5Ba/b%5D%5Bc:d%5D=e"},
 		// A parameter name is literal template text, not a value: the name
-		// rule applies (doc.go: "parameter names always follow the rule
-		// above"; OAS 3.1.2 Appendix C.3).
+		// rule applies (doc.go: "parameter names, and the brackets
+		// deepObject writes, always follow the rule above"; OAS 3.1.2
+		// Appendix C.3).
 		{"name encoded", "name", "a/b c", "x/y", "/name?a%2Fb%20c=x/y"},
 		{"name encoded, object", "name", "a/b c", map[string]string{"k": "v"}, "/name?k=v"},
 	}
@@ -107,7 +108,7 @@ func TestAllowReservedQuery(t *testing.T) {
 // Percent-encoding: "elsewhere it is ignored" (in 3.1, path and cookie
 // parameters encode as without it; header values are never
 // percent-encoded); describe.go, Param.AllowReserved: "the effective
-// allowReserved: false where the edition ignores it".
+// allowReserved: false where the edition or the media type ignores it".
 func TestAllowReservedIgnoredOutsideQuery(t *testing.T) {
 	w := newWire(t, nil)
 	doc := doc31(`
@@ -199,7 +200,8 @@ func TestAllowReservedEncodesHashInQuery(t *testing.T) {
 // expansion under allowReserved include ""," and ";" in a form-style cookie's
 // member names and values, which RFC 6265 section 4.1.1 excludes from a
 // cookie-octet, so that a value cannot add a cookie pair"; doc.go, Fixed
-// rules, Cookies: "one Cookie field, pairs joined by "; "". In OpenAPI 3.2,
+// rules, Cookies: "one Cookie field holding, joined by "; ", the parameters".
+// In OpenAPI 3.2,
 // where allowReserved applies to a form-style cookie, "c=x;admin=1" stays
 // one pair, and the other reserved characters still pass.
 func TestAllowReservedCookieKeepsPairs(t *testing.T) {

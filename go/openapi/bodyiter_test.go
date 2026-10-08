@@ -17,22 +17,22 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Iterator bodies, tested deterministically: every wait is on a channel
-// the server or the iterator closes (bodyServer.seen, gates), never on time
-// alone; where a test must show that something has NOT happened yet, it
-// waits the suite's grace period on top of the channel that proves the
-// state, and the race detector checks the rest (the iterator writes caller
-// state the test then writes, as gatedReader does in
-// upload_inflight_read_test.go). Run with -race. client.go, Input.Body: "An
-// iterator is written one item at a time as it yields, so a large body is
-// never held. It runs on a goroutine of the transport; its yield returns
-// false once the body is no longer wanted. Call waits for the iterator to
-// return; Send and Stream may return at response headers while it is still
-// running. An error from an iter.Seq2, an item that cannot be encoded, or
-// the context ending before the iterator returns aborts the body and is
-// reported by Call or Response.WaitRequest." Input: "closing Response.Body
-// stops an outstanding upload." Stream: "An iterator that honors its yield
-// result then stops."
+// Iterator bodies, tested deterministically: every wait is on a channel the
+// server or the iterator closes (bodyServer.seen, gates), never on time alone;
+// where a test must show that something has NOT happened yet, it waits the
+// suite's grace period on top of the channel that proves the state, and the
+// race detector checks the rest (the iterator writes caller state the test then
+// writes, as gatedReader does in upload_inflight_read_test.go). Run with -race.
+// client.go, Input.Body: "An iterator is written one item at a time as it
+// yields, so a large body is never held ... It runs on a goroutine of the
+// transport, from the transport's first Read of the body, so a body closed
+// unread never runs it; its yield returns false once the body is no longer
+// wanted. Call waits for the iterator to return; Send and Stream may return at
+// response headers while it is still running. An error from an iter.Seq2, an
+// item that cannot be encoded, or the context ending before the iterator
+// returns aborts the body and is reported by Call or Response.WaitRequest."
+// Input: "closing Response.Body stops an outstanding upload." Stream: "An
+// iterator that honors its yield result then stops".
 //
 // Note on net/http: once a response body has been read to its end, the
 // HTTP/1 transport closes the connection unless the request body was

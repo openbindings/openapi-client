@@ -260,14 +260,14 @@ func TestParamWriterCannotMoveCredentials(t *testing.T) {
 	}
 }
 
-// doc.go, Credentials: bearer and Basic credentials go over plain http only
-// to "a loopback IP address, an IPv4-mapped one included, or the name
-// localhost written exactly so, the one name http.ProxyFromEnvironment never
-// sends through a proxy". The origin and plain-http checks run against the
-// URL actually sent, on every hop the client signs: a hop from
-// http://localhost:P to http://LOCALHOST:P is the same origin, which would
-// otherwise be signed again although net/http proxies it. The transport
-// dials nothing.
+// doc.go, Credentials: bearer and Basic credentials go over plain http only to
+// "a loopback IP address as net/netip parses one (so 127.1 is a name), an
+// IPv4-mapped one included, or the name localhost written exactly so, the one
+// name http.ProxyFromEnvironment never sends through a proxy". The origin and
+// plain-http checks run against the URL actually sent, on every hop the client
+// signs: a hop from http://localhost:P to http://LOCALHOST:P is the same
+// origin, which would otherwise be signed again although net/http proxies it.
+// The transport dials nothing.
 func TestLocalhostSpellingCheckedOnTheURLSent(t *testing.T) {
 	const base = "http://localhost:9"
 	t.Run("Request.HTTP", func(t *testing.T) {
@@ -936,9 +936,10 @@ func TestSecuritySchemeDefectsEveryBranch(t *testing.T) {
 // general. doc.go,
 // Outcomes: "No credential appears in the text of an error the client
 // creates, nor in the URL of the *url.Error the http.Client returns, which
-// names the request without the credentials the client added. Errors made by
-// the caller's own code, such as its transport or a credential source, are
-// passed on as they are, even when their text quotes a URL." The case here
+// names the request without the credentials the client added. ... Errors made
+// by the caller's own code, such as its transport, Loader.Fetch or a
+// credential source, are passed on as they are, and their text is included as
+// it is, even when it quotes a URL." The case here
 // is a transport returning &url.Error{URL: r.URL.String(), ...}.
 func TestCallerURLErrorPassedOn(t *testing.T) {
 	var made atomic.Pointer[url.Error]

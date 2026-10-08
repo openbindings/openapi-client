@@ -187,11 +187,13 @@ func TestTrailingDataAfterJSON(t *testing.T) {
 	}
 }
 
-// client.go, Call: "An empty body is a success for every out, except that a
-// JSON or XML type decoded into a pointer is a *DecodeError wrapping io.EOF
-// when the response can have a body and its governing Message has Media ...
-// An empty text body decodes as "" ... and any other empty body into a *any
-// as an empty []byte." errors.go, DecodeError: "Err is io.EOF".
+// client.go, Call: "An empty body decoded into a pointer is a *DecodeError
+// wrapping io.EOF under a JSON or XML type when the response can have a body
+// and its governing Message has Media (in Swagger 2.0, a schema). Otherwise
+// it leaves out as it was under a JSON or XML type ...; under any other type,
+// it decodes as "" into a *string or *any for a text/* type, ... and as an
+// empty []byte into a *any for any other type"; the raw targets take any body
+// as it is. errors.go, DecodeError: "Err is io.EOF".
 func TestEmptyBody(t *testing.T) {
 	// JSON with Media declared: typed and *any targets fail with io.EOF.
 	_, c := respClient(t, jsonAnswer(200, ""), nil)
@@ -243,8 +245,8 @@ func TestEmptyBody(t *testing.T) {
 }
 
 // client.go, Call: "A 1xx, 204, 205 or 304 response, a response to HEAD, and
-// a 2xx response to CONNECT have no body: Call, Stream and StatusError do
-// not read one".
+// a 2xx response to CONNECT have no body: Call, Stream, StatusError and
+// Response.Decode do not read one".
 func TestBodilessResponses(t *testing.T) {
 	for _, status := range []int{204, 205} {
 		_, c := respClient(t, func(w http.ResponseWriter, r *http.Request) {
@@ -741,8 +743,8 @@ func TestResponseDeclaration(t *testing.T) {
 // case and others exactly. The most specific match wins: a concrete type
 // over type/*, type/* over */*, then more parameters over fewer; a tie
 // matches none. An absent Content-Type is treated as
-// application/octet-stream for matching; a repeated Content-Type matches
-// none."
+// application/octet-stream for matching; a repeated one, or one outside RFC
+// 9110's media-type grammar, matches none."
 func TestResponseMediaMatching(t *testing.T) {
 	tests := []struct {
 		name     string

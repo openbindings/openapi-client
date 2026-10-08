@@ -11,8 +11,8 @@ import (
 // Swagger 2.0 lists written as a reference, and the other members of a
 // value written as a reference. describe.go, Operation: "In Swagger 2.0,
 // consumes so written makes the request body unusable, produces each
-// response, and schemes is described as a servers list is. Bundling
-// replaces such a value whole, so its other members are not read." A
+// response, and schemes is described as a servers list is ... Bundling
+// replaces such a value whole, so its other members are not read". A
 // servers list so written "is described as one Server with that Err, which
 // Options.BaseURL can replace as it can any unusable server". Operation.Err:
 // "A defect in an optional part is reported on that part instead, and fails

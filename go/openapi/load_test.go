@@ -156,9 +156,9 @@ func TestLoadRetrievalFailure(t *testing.T) {
 	}
 }
 
-// load.go, Parse: "The uri, if not empty, is the absolute URI the document
-// is meant to live at, which stands for the URI it was retrieved from and is
-// never fetched itself."
+// load.go, Parse: "The uri, if not empty, is the absolute URI, without a
+// fragment, the document is meant to live at, which stands for the URI it was
+// retrieved from and is never fetched itself".
 func TestParseWithURI(t *testing.T) {
 	ct := &countingTransport{}
 	uri := "https://pets.example.test/specs/openapi.json"
@@ -220,7 +220,7 @@ func TestParseEmptyURI(t *testing.T) {
 }
 
 // load.go, Parse: "With an empty uri ... a call whose server URL is relative
-// needs Options.BaseURL." doc.go, Configuration: "none requires BaseURL".
+// needs Options.BaseURL". doc.go, Configuration: "none requires BaseURL".
 func TestParseEmptyURIRelativeServerNeedsBaseURL(t *testing.T) {
 	w := newWire(t, jsonAnswer(200, `{"pets":[]}`))
 	c, err := openapi.Parse(t.Context(), readPets(t), "", nil)

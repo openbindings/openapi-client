@@ -102,7 +102,8 @@ func TestPathParamSimple(t *testing.T) {
 		{"integer", 3, "/items/3"},
 		{"float", 2.5, "/items/2.5"},
 		{"boolean", true, "/items/true"},
-		// doc.go, Values: "a string or json.Number as it is".
+		// doc.go, Values: "a number, boolean or json.Number is written in
+		// its JSON spelling".
 		{"json.Number", json.Number("9007199254740993"), "/items/9007199254740993"},
 		// encoding/json writes 1e21 as 1e+21, and + is not unreserved.
 		{"exponent", 1e21, "/items/1e%2B21"},
@@ -117,7 +118,7 @@ func TestPathParamSimple(t *testing.T) {
 		{"member names encoded", map[string]string{"a b": "c/d"}, "/items/a%20b,c%2Fd"},
 		// doc.go, Values: "" is a value.
 		{"empty string", "", "/items/"},
-		// doc.go, Values: "An undefined member is skipped".
+		// doc.go, Values: "An undefined member or array item is skipped".
 		{"null member skipped", map[string]any{"a": nil, "b": "x"}, "/items/b,x"},
 		// encoding/json: MarshalJSON, struct tags, TextMarshaler keys, []byte
 		// as base64, pointers followed.
@@ -221,8 +222,9 @@ func TestHeaderParamSimple(t *testing.T) {
 }
 
 // doc.go, Fixed rules, Order: "the path item's parameters, then the
-// operation's, in declared order, an overriding parameter taking the place
-// of the one it overrides". The operation's a (explode false) replaces the
+// operation's, in declared order, an overriding parameter (one with the same
+// location and name, ...) taking the place of the one it overrides". The
+// operation's a (explode false) replaces the
 // path item's a (explode true) in the first place.
 func TestParamOrderAndOverride(t *testing.T) {
 	w := newWire(t, nil)
@@ -334,7 +336,8 @@ func TestParamRefusals(t *testing.T) {
 	}
 }
 
-// errors.go, RequestError.Error: "never a credential or an input's value".
+// errors.go, RequestError.Error: "never a credential, an input's value, or a
+// value given for a server variable or a header field".
 func TestRequestErrorOmitsValues(t *testing.T) {
 	w := newWire(t, nil)
 	doc := doc31(`"/r":{"get":{"operationId":"r","parameters":[

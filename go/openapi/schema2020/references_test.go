@@ -6,12 +6,12 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi/schema2020"
 )
 
-// Reference closure. Project: "Root is the schema itself; Defs holds every
-// schema it reaches by reference, transitively, and nothing else. Every
-// reference that
-// openapi.Schema.References reports, discriminator mapping and
-// defaultMapping values included, is rewritten to #/$defs/KEY for its
-// target." Projection: "Defs contains the complete transitive closure."
+// Reference closure. Project: "Root is the schema itself. Each $ref,
+// discriminator mapping value and defaultMapping value that
+// openapi.Schema.References reports with a Target is rewritten to #/$defs/KEY
+// for that Target, and Defs holds every schema these references reach,
+// transitively, and nothing else". Projection: "Defs contains the complete
+// transitive closure."
 
 // Defs holds what Root reaches, directly and through other Defs entries,
 // and nothing it does not reach.

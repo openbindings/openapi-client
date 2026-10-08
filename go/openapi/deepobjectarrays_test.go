@@ -11,28 +11,29 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Options.DeepObjectArrays. client.go, Options.DeepObjectArrays: "says how
-// the deepObject style writes an array inside its value, which OpenAPI
-// leaves undefined, wherever the client writes a value in that style. An
-// array it does not write, every array when it is zero, is refused at the
-// value's key in RequestError.Inputs, and RequestError.Settings names
-// "Options.DeepObjectArrays"." DeepObjectArrays: "Each item takes the
-// array's name with a suffix; a member of an object item adds [member]
-// after it. Indexes number the items written, from 0, so an item skipped as
-// undefined takes none. Brackets and member names are percent-encoded as
-// the rest of the name is." BracketArrays: "a[]=1&a[]=2; an item that is an
-// object or array is refused"; IndexArrays: "a[0]=1&a[1]=2, and a[0][b]=x
-// for an object item". doc.go, Fixed rules, Styles: "Nesting in any style
-// but deepObject is refused, and so are an array in a deepObject value
-// unless Options.DeepObjectArrays says how to write it"; "Whether a value is
-// undefined (see Values) is settled first; the refusals here apply to
-// defined values"; Percent-encoding: path and query values and "parameter
-// and member names encode every byte outside RFC 3986's unreserved set as
-// %XX in uppercase hex ... So deepObject nests objects as
-// a%5Bb%5D%5Bc%5D=v". OAS 3.1.2 section 4.8.12.3, Style Values (3.0.4
-// section 4.7.12.3, 3.2.1 section 4.12.3): deepObject "Allows objects with
-// scalar properties to be represented using form parameters. The
-// representation of array or object properties is not defined."
+// Options.DeepObjectArrays. client.go, Options.DeepObjectArrays: "says how the
+// deepObject style writes an array as or inside its value, which OpenAPI leaves
+// undefined, wherever the client writes a value in that style. An array it does
+// not write, every array when it is zero, is refused at the value's key in
+// RequestError.Inputs, and RequestError.Settings names
+// "Options.DeepObjectArrays"." DeepObjectArrays: "Each item takes the array's
+// name with a suffix; a member of an object item adds [member] after it.
+// Indexes number the items written, from 0, so an item skipped as undefined
+// takes none. Brackets are always written as %5B and %5D, and member names are
+// percent-encoded as in any deepObject value (see Percent-encoding in the
+// package documentation)." BracketArrays: "a[]=1&a[]=2; an item that is an
+// object or array is refused"; IndexArrays: "a[0]=1&a[1]=2, and a[0][b]=x for
+// an object item". doc.go, Fixed rules, Styles: "Nesting in any style but
+// deepObject is refused, and so are an array as or in a deepObject value unless
+// Options.DeepObjectArrays says how to write it"; "Whether a value is undefined
+// (see Values) is settled first; the refusals here apply to defined values";
+// Percent-encoding: path and query values and "parameter and member names
+// encode every byte outside RFC 3986's unreserved set as %XX in uppercase hex
+// ... So deepObject nests objects as a%5Bb%5D%5Bc%5D=v". OAS 3.1.2 section
+// 4.8.12.3, Style Values (3.0.4 section 4.7.12.3, 3.2.1 section 4.12.3):
+// deepObject "Allows objects with scalar properties to be represented using
+// form parameters. The representation of array or object properties is not
+// defined."
 
 // deepObjectArraysSetting is the Settings key that names the setting when
 // an array is refused.
@@ -312,11 +313,11 @@ func TestDeepObjectArraysMultipartField(t *testing.T) {
 
 // With allowReserved, member names and values take RFC 6570 reserved
 // expansion and the parameter name the unreserved rule (doc.go, Fixed
-// rules, Percent-encoding: "RFC 6570 reserved expansion is used exactly,
-// member names included (parameter names always follow the rule above)").
-// The suffix brackets are percent-encoded as the rest of the name is, which
-// for deepObject keeps every bracket %5B and %5D, as a%5Bb%5D%5Bc%5D=v does
-// under allowReserved too.
+// rules, Percent-encoding: "RFC 6570 reserved expansion is used, member names
+// included (parameter names, and the brackets deepObject writes, always
+// follow the rule above)"). So every bracket stays %5B and %5D (client.go,
+// DeepObjectArrays: "Brackets are always written as %5B and %5D"), as
+// a%5Bb%5D%5Bc%5D=v does under allowReserved too.
 func TestDeepObjectArraysAllowReserved(t *testing.T) {
 	w := newWire(t, nil)
 	v := map[string]any{"k/1": []string{"a/b?c", "d e"}}

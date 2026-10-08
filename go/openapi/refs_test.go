@@ -16,11 +16,12 @@ import (
 // Item's $ref and the Path Item's own fields are read together: a field on
 // one side only is used, and a field on both sides, which OpenAPI leaves
 // undefined, sets Err on each operation whose request it affects".
-// describe.go, Client.Operations: "a Paths entry whose $ref cannot be read,
-// listed once with its Path and Err ... has an empty Key". describe.go,
-// Client.Operation: such an entry is returned "for a key with any method
-// and that path; calling with the same key is refused with an error
-// wrapping that Err".
+// describe.go, Client.Operations lists, "each with an empty Key", "a Paths
+// entry that cannot be read, because its key does not begin with "/" or its
+// $ref cannot be followed, listed once with its Path and Err and no Method".
+// describe.go, Client.Operation: such an entry is returned "for a
+// method-and-path key with that path and any method; calling with the same
+// key is refused with an error wrapping that Err".
 func TestPathItemRef(t *testing.T) {
 	w := newWire(t, nil)
 	doc := doc31(`
@@ -87,8 +88,8 @@ func TestPathItemRef(t *testing.T) {
 			t.Errorf("defect entry %s: Key %q, Err %v; want empty Key and an Err", e.Path, e.Key, e.Err)
 		}
 	}
-	// errors.go, ErrUnresolved: wrapped by "the Err of a part whose defect is
-	// a reference that cannot be resolved".
+	// errors.go, ErrUnresolved: wrapped by "the Err of a part, or of a
+	// SchemaReference, whose defect is a reference that cannot be resolved".
 	if !errors.Is(ops[4].Err, openapi.ErrUnresolved) {
 		t.Errorf("/broken Err %v does not wrap ErrUnresolved", ops[4].Err)
 	}
@@ -180,9 +181,10 @@ func TestParameterRefs(t *testing.T) {
 }
 
 // describe.go, Operation.Err: "an unresolvable parameter or request body
-// reference, whose identity and requiredness cannot be known, and whose
-// part's Source is the reference's own location" makes the operation
-// uncallable; "Wherever an Err's cause is a reference that could not be
+// reference, whose identity and requiredness cannot be known" makes the
+// operation uncallable, and Operation: "A part written as a Reference Object
+// that cannot be resolved has that Reference Object's location as its
+// Source"; "Wherever an Err's cause is a reference that could not be
 // resolved, it wraps ErrUnresolved". Calling it "returns a *RequestError
 // wrapping Err" (errors.go, RequestError: errors.Is(err, op.Err)).
 func TestBrokenParameterAndBodyRefs(t *testing.T) {

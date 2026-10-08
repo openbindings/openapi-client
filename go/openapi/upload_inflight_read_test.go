@@ -145,7 +145,8 @@ func awaitReading(r *http.Request, reading <-chan struct{}) {
 // when the call's context ends or its connection closes ... For Send or
 // Stream, wait for Response.WaitRequest before reusing a body reader";
 // Response.WaitRequest: it waits "for every request of the call that carried
-// one: the first and each redirect hop that sent it again". The client
+// one: the first, each copy the transport takes with GetBody to send it
+// again, and each redirect hop that sent it again". The client
 // handles redirects itself, so net/http's Client.do does not act on the 303
 // under FollowNone either. The server answers 303 before reading the POST
 // body, once the transport's first Read of it is in flight.
@@ -277,8 +278,9 @@ func TestCloseDuringReadDefersTheEnd(t *testing.T) {
 
 // WaitRequest and Call wait for every generation the call handed the
 // transport, earlier hops included. client.go, Response.WaitRequest:
-// "for every request of the call that carried one: the first and each
-// redirect hop that sent it again." A 307 answered before the first body
+// "for every request of the call that carried one: the first, each copy the
+// transport takes with GetBody to send it again, and each redirect hop that
+// sent it again". A 307 answered before the first body
 // was read leaves that body's Read in flight while the hop, from GetBody,
 // is sent and answered. The server answers the 307 once that Read is in
 // flight.
@@ -354,9 +356,10 @@ func cutShort(r *http.Request, n int) {
 // resend that succeeds is nil even if the first upload was cut short), and
 // still waits for all of them. client.go,
 // Response.WaitRequest: "for every request of the call that carried one: the
-// first and each redirect hop that sent it again. It reports on the last of
-// them: nil when its body was consumed completely (read to EOF, or, for a
-// body of known length, read to that length), or the encoding, iterator,
+// first, each copy the transport takes with GetBody to send it again, and
+// each redirect hop that sent it again. It reports on the last of them: nil
+// when its body was consumed completely (read to EOF, or, for a body of known
+// length, read to that length, ...), or the encoding, iterator,
 // read, premature-close or cancellation error that stopped it." Call: "If
 // request-body consumption fails, the error wraps its cause and the
 // Response is still returned"; Redirects: "When the server answered before

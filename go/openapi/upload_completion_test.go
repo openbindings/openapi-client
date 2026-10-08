@@ -21,7 +21,7 @@ import (
 // The upload state machine, with the body-rewind and blocking-wait paths. The
 // contract: client.go, Response.WaitRequest ("It reports on the last of them:
 // nil when its body was consumed completely (read to EOF, or, for a body of
-// known length, read to that length), or the encoding, iterator, read,
+// known length, read to that length, ...), or the encoding, iterator, read,
 // premature-close or cancellation error that stopped it. It returns nil when
 // no request carried a body"), Call ("Call drains a successful response and
 // waits for complete consumption of its request body before closing the
@@ -340,7 +340,7 @@ func TestCallBoundedDiscardClosesBeforeWait(t *testing.T) {
 
 // client.go, Input: "Call has stopped reading its body when it returns,
 // provided a reader body returns from Read when the call's context ends or its
-// connection closes." A peer that answers without reading the body and closes:
+// connection closes". A peer that answers without reading the body and closes:
 // Call reports the incomplete upload, and the reader is not read after Call
 // returns.
 func TestCallStopsReadingBody(t *testing.T) {

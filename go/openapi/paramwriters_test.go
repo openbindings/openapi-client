@@ -11,22 +11,22 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi"
 )
 
-// Input.ParamWriters (client.go): "overrides the serialization of
-// individual parameters, keyed by Param.Key. A writer counts as supplying a
-// required parameter; an unknown key, and the same key in Params and
-// ParamWriters, are refused. After the client serializes the other
-// parameters and the body, Prepare calls writers in the operation's
-// parameter order with its unsigned *http.Request. The writer may edit
-// URL.Path, URL.RawPath, URL.RawQuery, headers or cookies ... A path
-// parameter's {name} remains in both URL.Path and URL.RawPath until its
-// writer replaces it in both, keeping RawPath an encoding of Path; an
-// unresolved path token after all writers refuses preparation. A writer also
-// bypasses that parameter's serialization Err, including for a required
-// parameter, when its Key is known. It cannot bypass a defect in the
-// operation or an unresolved parameter reference whose Key cannot be
-// determined ... return an error on failure; that error is reported at
-// RequestError.Inputs[key]." errors.go, RequestError.Inputs: "a ParamWriters
-// failure or conflict", keyed by Param.Key.
+// Input.ParamWriters (client.go): "overrides the serialization of individual
+// parameters, keyed by Param.Key. A writer counts as supplying a required
+// parameter; an unknown key, a nil writer, and the same key in Params and
+// ParamWriters, are refused at that key. After the client serializes the other
+// parameters and the body, Prepare calls writers in the operation's parameter
+// order with its unsigned *http.Request. The writer may edit URL.Path,
+// URL.RawPath, URL.RawQuery, headers or cookies ... A path parameter's {name}
+// remains in both URL.Path and URL.RawPath until its writer replaces it in
+// both, keeping RawPath an encoding of Path; an unresolved path token after all
+// writers refuses preparation. ... A writer also bypasses that parameter's
+// serialization Err, including for a required parameter, when its Key is known.
+// It cannot bypass a defect in the operation or an unresolved parameter
+// reference whose Key cannot be determined ... return an error on failure; that
+// error is reported at RequestError.Inputs[key]." errors.go,
+// RequestError.Inputs: "a ParamWriters failure or conflict", keyed by
+// Param.Key.
 
 type writers = map[string]func(*http.Request) error
 

@@ -140,9 +140,9 @@ func controlChar(s string) bool {
 // FuzzMultipartRoundTrip: an arbitrary part (property name, filename, bytes,
 // media type, NoFilename) and a text field are prepared as
 // multipart/form-data, and read back with mime/multipart: each part's
-// Content-Disposition is formData's (client.go, Part: "written in its
-// Content-Disposition as given, each as a quoted-string with \ and "
-// escaped, never as filename*"; Filename "Empty means the default: the
+// Content-Disposition is formData's (client.go, Part: "with its name and
+// filename written as given, each as a quoted-string with \ and " escaped,
+// never as filename*"; Filename "Empty means the default: the
 // part's name for a []byte or io.Reader Content whose media type is not
 // multipart, and none otherwise"), its Content-Type the one given or the
 // schema's (text/plain for t), its content the bytes as given (doc.go, Fixed

@@ -24,7 +24,7 @@ const headerDoc = `{"openapi":"3.1.0","info":{"title":"t","version":"1"},"server
 
 // doc.go, Fixed rules, Header fields: "Options.Header and then Input.Header
 // are applied over the generated fields: a field replaces the same field set
-// before, and one with no values removes it."
+// before, and one with no values removes it".
 func TestHeaderFieldsApplied(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, headerDoc, &openapi.Options{Header: http.Header{

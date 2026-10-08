@@ -262,14 +262,15 @@ func TestAlternativeSettingOneFieldTwice(t *testing.T) {
 // doc.go, Credentials: "Bearer tokens (http bearer, oauth2, openIdConnect)
 // and Basic credentials are sent only over https or wss, as RFC 6750
 // requires and RFC 7617 advises, or to a loopback host, where they do not
-// leave the machine: a loopback IP address, an IPv4-mapped one included, or
-// the name localhost written exactly so, the one name
-// http.ProxyFromEnvironment never sends through a proxy. Other names, such
-// as those under .localhost, can be proxied or resolved elsewhere, so they
-// are not loopback here. A call that would send one over plain http or ws to
-// any other host is refused. ... A URL scheme other than http, https, ws or
-// wss requires FromTransport for these credentials. API keys, which no RFC
-// governs, are not restricted by this rule." errors.go, RequestError.Err: "a
+// leave the machine: a loopback IP address as net/netip parses one (so 127.1
+// is a name), an IPv4-mapped one included, or the name localhost written
+// exactly so, the one name http.ProxyFromEnvironment never sends through a
+// proxy. Other names, such as those under .localhost, can be proxied or
+// resolved elsewhere, so they are not loopback here. A call that would send
+// one over plain http or ws to any other host is refused. ... A URL scheme
+// other than http, https, ws or wss requires FromTransport for these
+// credentials. Neither rule restricts API keys, which no RFC governs, or http
+// schemes other than bearer and basic." errors.go, RequestError.Err: "a
 // bearer or Basic credential that would go over plain http or ws". Loopback
 // addresses are 127.0.0.0/8 and ::1 (RFC 6890, RFC 4291 section 2.5.3);
 // "127.1" is not a loopback literal (RFC 3986 section 3.2.2's IPv4address

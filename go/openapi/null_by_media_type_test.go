@@ -84,7 +84,7 @@ func TestJSONNullPositionalPartOmitted(t *testing.T) {
 // doc.go, Fixed rules, Querystring: "Under
 // application/x-www-form-urlencoded its value is an object written by the
 // form-body rules ..., and a value whose JSON data is null is undefined ...
-// An undefined value or an empty result sends no query. A query credential
+// An undefined value or an empty result sends no query ... A query credential
 // follows, joined by "&" to any query." A typed-nil map, a nil *struct, a nil
 // []any and json.RawMessage("null") send no query and are not refused; a
 // query credential then forms the query alone.
