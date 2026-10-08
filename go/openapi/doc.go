@@ -55,8 +55,9 @@
 // interface is absent; a typed nil, such as a nil pointer or map, is a value,
 // which encoding/json writes as null. The client first converts a value to JSON
 // data as encoding/json would (struct tags, MarshalJSON, TextMarshaler map
-// keys), then serializes that data as the document says; a caller's codec (see
-// [Options.Codecs]) receives the value as given. The JSON data of a value
+// keys), then serializes that data as the document says; a caller's codec
+// receives the value as given, or, for a field, item or part the client
+// divides out of it, as Options.Codecs says. The JSON data of a value
 // encoding/json writes by its MarshalText, such as a net.IP, is a string,
 // whatever its Go kind. Where a parameter or a form or multipart field needs
 // text, a number, boolean or json.Number is written in its JSON spelling (10,
@@ -64,12 +65,13 @@
 // media type that is not JSON and has no caller's codec, a value of type string
 // that is the whole content of a body, field, part or content-serialized
 // parameter is sent as its bytes, invalid UTF-8 included. A form type refuses
-// such a string; a multipart type takes one only as a field of an
-// application/x-www-form-urlencoded body, and a sequential type only as a field
-// or part. Any other string value the client writes, one of a named string type
-// included, is taken from the JSON data, in which encoding/json writes each
-// invalid byte as U+FFFD: so in JSON, in a parameter not serialized by content,
-// and in a field that a style or a Swagger 2.0 collectionFormat writes.
+// such a string; a multipart type takes one only as an
+// application/x-www-form-urlencoded field, and a sequential type only as a
+// field or part. Any other string value the client writes, one of a named
+// string type included, is taken from the JSON data, in which encoding/json
+// writes each invalid byte as U+FFFD: so in JSON, in a parameter not serialized
+// by content, and in a field that a style or a Swagger 2.0 collectionFormat
+// writes.
 //
 // The client's codecs sort media types into four classes, for requests
 // and responses alike, taking the first that applies:
@@ -98,8 +100,8 @@
 // that an exploded one, or one in deepObject style or under the multi
 // collectionFormat, writes nothing, not even its name or prefix. A form or
 // multipart property or array item, or a positional part (a part given by its
-// position: one element of a list Body under an OpenAPI 3.2 multipart type, or
-// of an iterator Body under one other than multipart/form-data; see
+// position, such as one element of a list Body under an OpenAPI 3.2 multipart
+// type, or of an iterator Body under one other than multipart/form-data; see
 // Input.Body), whose JSON data is null is omitted, whatever its serialization
 // or media type, a form, multipart or sequential one included. A parameter
 // serialized by content is encoded as a body of its media type is, so under
@@ -117,15 +119,15 @@
 // 1,000 levels. Levels count within each body, field, part, sequential item or
 // parameter, its outermost value being level 1; each item of a form or
 // multipart property's array is a field or part of its own. A JSON body of 999
-// nested arrays around a number is sent; one of 1,000 is refused. Either value
-// is refused at the key of the body, field, part, sequential item or parameter
-// that is or holds it, or, as an iterator's item, aborts the body; a caller's
-// codec receives the value as given. A parameter that would take the request
-// target or a header field past 1 MiB, far beyond the 8,000 octets RFC 9110
-// section 4.1 asks servers to accept, is refused at its key, and its
-// serialization stops there. Schema defaults are never sent, and values are
-// never validated against schemas. How bytes, readers and iterators are sent is
-// on Input.Body.
+// nested arrays around a number is sent; one of 1,000 is refused. A value
+// refused for either reason is refused at the key of the body, field, part,
+// sequential item or parameter that is or holds it, or, as an iterator's item,
+// aborts the body. A value a caller's codec encodes is refused for neither
+// reason. A parameter that would take the request target or a header field
+// past 1 MiB, far beyond the 8,000 octets RFC 9110 section 4.1 asks servers to
+// accept, is refused at its key, and its serialization stops there. Schema
+// defaults are never sent, and values are never validated against schemas. How
+// bytes, readers and iterators are sent is on Input.Body.
 //
 // When the client's own JSON codec decodes into exactly a *any, a
 // *map[string]any or a *[]any, as out or through Response.Decode or
@@ -158,13 +160,12 @@
 // transport consumed the complete request body. Whenever a response arrived,
 // the [*Response] is returned, even with an error; when an error ends a
 // redirect chain, it is the last 3xx, its body already closed, as net/http's
-// Client.Do does for a CheckRedirect error. When the call's context is done
-// before the call completes, the error matches both ctx.Err() and
-// context.Cause(ctx) with errors.Is, even where net/http reports only the
-// cause. This does not apply to a call refused before it was sent, which
-// returns its *RequestError, nor to a call whose transport ignores the
-// request's context (net/http's honors it) and returns a response anyway; such
-// a call can succeed. A read of a Stream's Body after the context is done fails
+// Client.Do does for a CheckRedirect error. An error a call returns because its
+// context ended matches both ctx.Err() and context.Cause(ctx) with errors.Is,
+// even where net/http reports only the cause; a call refused before it was
+// sent returns its *RequestError. A call whose context ends can still succeed,
+// as when its response was read before the end, or its transport ignores the
+// request's context. A read of a Stream's Body after the context is done fails
 // with an error that matches both. Test for the package's three types first: a
 // *RequestError may wrap a *url.Error from a token endpoint a credential source
 // called, and a *StatusError or *DecodeError may wrap the context's error when
@@ -178,8 +179,8 @@
 // No credential appears in the text of an error the client creates, nor in the
 // URL of the *url.Error the http.Client returns, which names the request
 // without the credentials the client added. Text such an error takes from the
-// document, a caller's value or a server, a media type and a YAML tag included,
-// is quoted, as strconv.Quote quotes it, whenever it holds invalid UTF-8 or a
+// document, the caller or a server, a media type and a YAML tag included, is
+// quoted, as strconv.Quote quotes it, whenever it holds invalid UTF-8 or a
 // character that strconv.IsPrint reports is not printable, such as a line feed
 // or an escape, so that it cannot forge a line of a log or reach a terminal as
 // control codes. A status is named by its code and net/http's text for it,
@@ -191,13 +192,15 @@
 // decodes a response body, it leaves out the text of the error from
 // encoding/json, from a decoder such as a Codec's Decode, or from a method run
 // there, such as MarshalJSON or UnmarshalText. The client's error still wraps
-// that error (see Values and DecodeError). A Codec's Encode error keeps its
-// text, even when it reports a MarshalJSON error, and a YAML syntax error in a
-// loaded document is shown with the parser's own message (see Loader). Second,
-// an error from retrieving a document, the entry document included, that is or
-// wraps a *url.Error is shown as that *url.Error, each URL without userinfo or
-// query, though it is still wrapped unchanged (for a referenced document, see
-// ErrUnresolved).
+// that error, or, for a map key's MarshalText error, which encoding/json
+// reports only in its own text, encoding/json's error (see Values and
+// DecodeError). A Codec's Encode error keeps its text, even when it reports a
+// MarshalJSON error, and a syntax error in a loaded document is shown with the
+// YAML parser's own message, a document that is not JSON being read as YAML
+// (see Loader). Second, an error from retrieving a document, the entry
+// document included, that is or wraps a *url.Error is shown as that *url.Error,
+// each URL without userinfo or query, though it is still wrapped unchanged
+// (for a referenced document, see ErrUnresolved).
 //
 // # Configuration when the document is incomplete
 //
@@ -214,10 +217,11 @@
 //     even when URL or name collides. Server variables use their declared
 //     defaults; a server with a variable that has none is not usable until
 //     Options.Variables gives it a value. When a call finds no usable server,
-//     RequestError.Settings keys each variable that has no value, or whose
-//     Options.Variables value is refused, of each server whose Err is nil,
-//     never of one whose Err is set; when Options.Server or Options.ServerID is
-//     set, only the server it selects counts. If one is set and no variable is
+//     RequestError.Settings keys each variable that has no value, whose
+//     Options.Variables value is refused, or whose default leaves the host
+//     empty or the port above 65535, in each server whose Err is nil, never in
+//     one whose Err is set; when Options.Server or Options.ServerID is set,
+//     only the server it selects counts. If one is set and no variable is
 //     keyed, Settings keys that setting. If neither is set, Settings also keys
 //     Options.BaseURL, unless the operation has one server and one of its
 //     variables is keyed.
@@ -311,11 +315,12 @@
 //     key, and makes a server URL unusable and Options.BaseURL refused.
 //     URL.Path holds the path decoded. After substitution, a server URL that
 //     url.Parse refuses, such as one whose port holds anything but digits,
-//     cannot be used either, nor can one with no host, a port above 65535,
-//     userinfo, a query or a fragment (Server.Err, where the document alone
-//     decides it). An empty
-//     servers array on a path item or operation, and an empty Swagger 2.0
-//     schemes list, are read as absent, as OpenAPI says of the root's servers.
+//     cannot be used either, nor can one whose host is empty, with or without
+//     a port, whose port is above 65535, or that has userinfo, a query or a
+//     fragment (Server.Err, where the document alone decides it); in each of
+//     these cases Options.BaseURL is refused. An empty servers array on a path
+//     item or operation, and an empty Swagger 2.0 schemes list, are read as
+//     absent, as OpenAPI says of the root's servers.
 //     In Swagger 2.0, as 2.0 says, a missing host is the host and port as
 //     written in the http or https URI the document was retrieved from, a
 //     missing schemes list that URI's scheme, and a missing basePath adds
@@ -464,10 +469,11 @@
 //     names a coding other than identity passes through unchanged to a *[]byte
 //     or io.Writer, is discarded for a nil out, and is framed with its coding
 //     still applied by Items with a T of []byte, or of *multipart.Part for a
-//     multipart body; any other target, Items with any other T, and Events
-//     report a non-identity Content-Encoding error. The coding remains
-//     available in Header; generated diagnostics omit response-controlled
-//     values.
+//     multipart body, so a coded multipart body usually cannot be framed; any
+//     other target, Items with any other T, a *multipart.Part over a body that
+//     is not multipart included, and Events report a non-identity
+//     Content-Encoding error. The coding remains available in Header;
+//     generated diagnostics omit response-controlled values.
 //
 // # Credentials
 //
