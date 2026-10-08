@@ -9,15 +9,16 @@ import "encoding/json"
 // three defects that are not operations, each with an empty Key and its own
 // location as Source: a Paths entry that cannot be read, because its key does
 // not begin with "/" or its $ref cannot be followed, listed once with its Path
-// and Err and no Method; a Paths Object, or a Path Item's additionalOperations
-// map, written as a reference (see Operation), listed once with the Path it is
-// under, empty for a Paths Object, no Method, and an Err saying the document
-// must be bundled first; and an OpenAPI 3.2 additional operation whose method
-// is not a token or is exactly GET, PUT, POST, DELETE, OPTIONS, HEAD, PATCH,
-// TRACE or QUERY, which OpenAPI forbids. Methods are compared exactly, so an
-// additional operation "Post" is an ordinary one, "Post /path". An extension
-// (an x- member) of the Paths Object is not listed. Webhooks and callbacks
-// describe requests the server sends and are not operations of the Client.
+// and Err and no Method; a Paths Object written as a reference (see Operation),
+// listed once with an empty Path, or a Path Item's additionalOperations map so
+// written, listed once for each Paths entry that reaches it, with that entry's
+// Path, each with no Method and an Err saying the document must be bundled
+// first; and an OpenAPI 3.2 additional operation whose method is not a token or
+// is exactly GET, PUT, POST, DELETE, OPTIONS, HEAD, PATCH, TRACE or QUERY,
+// which OpenAPI forbids. Methods are compared exactly, so an additional
+// operation "Post" is an ordinary one, "Post /path". An extension (an
+// x- member) of the Paths Object is not listed. Webhooks and callbacks describe
+// requests the server sends and are not operations of the Client.
 //
 // The slice is new on each call; the Operations it points to are shared by
 // every caller and must not be modified. Listing them does no schema work.
@@ -74,7 +75,9 @@ func (c *Client) Operation(key string) (*Operation, error) {
 // included, and a security scheme's whether its requirement names it by
 // component name or by an OpenAPI 3.2 URI; a scheme whose name in an OpenAPI
 // 3.2 requirement is neither a component name nor a URI that can be resolved
-// has that Security Requirement Object's location as its Source.
+// has that Security Requirement Object's location as its Source. A scheme
+// looked up in a Components Object or scheme map written as a reference has an
+// empty Source (see SchemeLookup).
 //
 // A value written as a reference, an object whose $ref member is a string,
 // where the edition defines no Reference Object, such as an Operation Object, a
@@ -93,9 +96,10 @@ func (c *Client) Operation(key string) (*Operation, error) {
 // that uses it unusable, since the parameter's identity cannot be read, and a
 // response entry each response that uses it. Bundling replaces such a value
 // whole, so its other members are not read, and a reference whose target lies
-// inside it cannot be followed before bundling either: it makes its own nearest
-// part unusable the same way, and a schema's reference reports it as that
-// reference's Err (see Schema.References). A value so written makes its part
+// inside it cannot be followed before bundling either. Such a reference in a
+// schema has an Err saying the document must be bundled first (see
+// Schema.References); any other makes its own nearest part unusable the same
+// way. Neither Err wraps ErrUnresolved. A value so written makes its part
 // unusable even where OpenAPI says the value is ignored, such as an encoding
 // under a JSON media type or an Encoding Object's headers for a field written
 // by its style, since the document still needs bundling. Extension values and
@@ -159,28 +163,43 @@ type Operation struct {
 	// Client.Document.
 	Source string
 
-	// Err is why the operation cannot be called, or nil. It is set by a defect
-	// without which no request can be built: an unresolvable operation or path
-	// reference; an unresolvable parameter or request body reference, whose
-	// identity and requiredness cannot be known; a Path Item field that both
-	// the Path Item and its $ref target define (see Operation); a path template
-	// that does not match any knowable parameter key; or a security value, the
-	// operation's or the root's it inherits, that is not an array of Security
-	// Requirement Objects each mapping names to arrays of strings; or, written
-	// as a reference where the edition defines none, the Operation or Responses
-	// Object, a parameters list that applies to it, or another value whose
-	// nearest part is the operation, which marks a document meant to be bundled
-	// first (see Operation); or a Swagger 2.0 body or formData parameter that
-	// an OpenAPI 3.x operation reaches, as through a $ref into a Swagger
-	// document, since such an operation has no place for one. A required
-	// parameter with a known Key but unsupported serialization has its own
-	// Param.Err, which Input.ParamWriters may bypass. Calling an operation with
-	// Err set returns a *RequestError wrapping Err. A defect in an optional
-	// part is reported on that part instead, and fails a call only when the
-	// call uses it, the *RequestError then wrapping that part's Err, whether or
-	// not the operation was described first. Wherever an Err's cause is a
-	// reference that could not be resolved, it wraps [ErrUnresolved], and the
-	// retrieval error when retrieving a document failed.
+	// Err is why the operation cannot be called, or nil. For an entry listed
+	// only to report a defect (see Client.Operations), it includes that
+	// defect. It is set by each of these defects, any one of which prevents
+	// building a request:
+	//
+	//   - a parameter or request body reference that cannot be followed, or a
+	//     parameter whose in field is absent, empty or not a string, as then
+	//     the parameter's identity or the body's requiredness cannot be known;
+	//   - a Path Item field that both the Path Item and its $ref target
+	//     define (see Operation);
+	//   - a path template that has an unclosed { or names a parameter that no
+	//     path parameter declares;
+	//   - a querystring parameter beside another query or querystring
+	//     parameter;
+	//   - a security value, the operation's or the root's it inherits, that
+	//     is not an array of Security Requirement Objects each mapping names
+	//     to arrays of strings;
+	//   - written as a reference where the edition defines none, the
+	//     Operation or Responses Object, a parameters list that applies to
+	//     it, or another value whose nearest part is the operation, which
+	//     marks a document meant to be bundled first (see Operation);
+	//   - in Swagger 2.0, two or more body parameters, or body and formData
+	//     parameters together;
+	//   - a Swagger 2.0 body or formData parameter that an OpenAPI 3.x
+	//     operation reaches, as through a $ref into a Swagger document, since
+	//     such an operation has no place for one.
+	//
+	// A required parameter with a known Key but unsupported serialization has
+	// its own Param.Err, which Input.ParamWriters may bypass. Calling an
+	// operation with Err set returns a *RequestError wrapping Err. A defect in
+	// an optional part is reported on that part instead, and fails a call only
+	// when the call uses it, the *RequestError then wrapping that part's Err,
+	// whether or not the operation was described first. Wherever an Err's
+	// cause is a reference that could not be resolved, it wraps
+	// [ErrUnresolved], and the retrieval error when retrieving a document
+	// failed; a reference that cannot be followed before bundling is not one
+	// (see Operation).
 	Err error
 }
 
@@ -257,9 +276,11 @@ type Param struct {
 
 	// Source is where the value is declared: the absolute URI of its document,
 	// with a JSON Pointer to its Parameter, Header or Encoding Object as the
-	// fragment, or, for an OpenAPI 3.x form or multipart field without an
-	// Encoding Object, to the property that first declares it (see
-	// Media.Encoding). See Client.Document.
+	// fragment, or, for a form or multipart field that a schema property
+	// declares and no Encoding Object describes, its Schema's Source: that of
+	// the property that first declares it (see Media.Encoding) or, in Swagger
+	// 2.0 and OpenAPI 3.0, of the schema that property's reference leads to
+	// (see Schema). See Client.Document.
 	Source string
 
 	// Err is why built-in serialization cannot use the value, or nil. A
@@ -304,7 +325,7 @@ type Message struct {
 	// with the form types among them; where the operation declares none,
 	// one Media with an empty Type holds it. Swagger 2.0 formData whose
 	// consumes names no form type also has an empty Type; Input.MediaType
-	// selects a concrete form type for the call.
+	// or Options.MediaType selects a concrete form type for the call.
 	Media []*Media
 
 	// Source is where the request body or response is declared: the absolute
@@ -326,7 +347,7 @@ type Media struct {
 	// "application/json" or "image/*". It is empty where a Swagger 2.0
 	// operation declares no consumes or produces; such a Media matches any
 	// type, as */* would. A body sent under it requires a concrete
-	// Input.MediaType.
+	// Input.MediaType or Options.MediaType.
 	Type string
 
 	// Schema is the content's schema, or nil when none is declared. For
@@ -353,7 +374,7 @@ type Media struct {
 	// OpenAPI 3.2, it describes the parts: those of prefixEncoding in order,
 	// named "0", "1" and so on, then that of itemEncoding, named "*". It is
 	// empty for a declared range other than multipart/*, such as */* or
-	// application/*, and for a response's Media, which the client never writes.
+	// application/*, and for an OpenAPI 3.x response's Media.
 	Encoding []*Param
 
 	// Source is where the media type is declared: the absolute URI of its
@@ -523,7 +544,9 @@ type SecurityScheme struct {
 	// fragment. It tells which document a scheme name was found in. It is
 	// empty for a scheme the document never declares, but in OpenAPI 3.2 it
 	// is then the location of the Security Requirement Object that writes
-	// the name (see Operation).
+	// the name (see Operation). It is empty too for a scheme looked up in a
+	// Components Object or scheme map written as a reference (see
+	// SchemeLookup).
 	Source string
 
 	// Err is why the scheme cannot be used, or nil: a defective or missing

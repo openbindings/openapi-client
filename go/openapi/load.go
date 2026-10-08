@@ -131,26 +131,27 @@ func Parse(ctx context.Context, content []byte, uri string, opts *Options) (*Cli
 // plain name. The URI requested, which AllowReference and Fetch receive, is the
 // resolved reference without its fragment, as net/url's ResolveReference and
 // URL.String give it: a space or a non-ASCII character is percent-encoded as
-// UTF-8, except in the query, which is kept as written.
+// UTF-8, except in the query and in an opaque URI, such as a urn: URI, which
+// are kept as written.
 //
 // A reference resolves first to what loaded documents identify: a document by
 // its retrieval URI (and the URI requested, when a redirect led there) or 3.2
 // $self, a schema by $id, a plain name by $anchor or $dynamicAnchor. This is
 // decided once every document reached is parsed. Only a URI no loaded document
 // identifies is admitted and fetched, and the fetched document is then searched
-// the same way. A reference to a URI with userinfo or with leading or trailing
-// whitespace, or to a file URL naming a host other than localhost, is
-// unresolvable and never fetched, as Load refuses such a uri, and so is one
-// whose retrieval a redirect would take to such a URI, whatever AllowReference
-// says; the default retrieval never requests that hop, and a final URI that
-// Fetch returns is checked the same way. A URI claimed by two different
-// documents or schemas is unresolvable, and the error names both; a document's
-// URI and the $id of the schema at its root claim one schema. A reference that
-// names a 3.2 document by the URI it was retrieved from rather than its $self,
-// or that reaches a schema by a JSON Pointer crossing a nearer $id, still
-// resolves; it stays visible as written where it is written, in a Schema's Raw
-// or in Document at the Source of the object holding it. Security requirement
-// names resolve as [SchemeLookup] says.
+// the same way. A reference is unresolvable and never fetched when the URI
+// requested for it has userinfo or leading or trailing whitespace, or is a file
+// URL naming a host other than localhost, as Load refuses such a uri, and so is
+// one whose retrieval a redirect would take to such a URI, whatever
+// AllowReference says; the default retrieval never requests that hop, and a
+// final URI that Fetch returns is checked the same way. A URI claimed by two
+// different documents or schemas is unresolvable, and the error names both; a
+// document's URI and the $id of the schema at its root claim one schema. A
+// reference that names a 3.2 document by the URI it was retrieved from rather
+// than its $self, or that reaches a schema by a JSON Pointer crossing a nearer
+// $id, still resolves; it stays visible as written where it is written, in a
+// Schema's Raw or in Document at the Source of the object holding it. Security
+// requirement names resolve as [SchemeLookup] says.
 type Loader struct {
 	// Fetch, if set, retrieves each document the loader needs in place of the
 	// default (http and https with the Options' HTTPClient, file URLs from
@@ -247,8 +248,8 @@ func (l *Loader) Load(ctx context.Context, uri string, opts *Options) (*Client, 
 
 // Parse returns a Client for content as the package's Parse function does,
 // with l's settings, which govern the documents its references reach. With
-// an empty uri, absolute external references can be fetched only when
-// AllowReference admits them; relative external references have no base
+// an empty uri, absolute external references can be fetched only when Origins
+// or AllowReference admits them; relative external references have no base
 // unless an OpenAPI 3.2 absolute $self supplies one.
 func (l *Loader) Parse(ctx context.Context, content []byte, uri string, opts *Options) (*Client, error) {
 	ld, err := l.start(ctx, uri, opts)
