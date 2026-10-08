@@ -103,18 +103,18 @@ func pathLevelDoc(name string, n, e int) []byte {
 		name, strings.Join(entries, ","), strings.Join(ops, ","))))
 }
 
-// Describing searches each object of the document for values written as
-// references a bounded number of times (TestBundleCostNestedHeaderReferences),
-// so that search of a path-level parameter's content runs once, not once for
-// each operation inheriting it, whether the parameter is described or, as an
-// ignored Accept, is not. Other work on the content, such as the fields each
-// operation compiles from a form-content parameter, is not bounded here: the
-// content is multipart/mixed, which cannot serialize a parameter (doc.go,
-// Values), so its entries describe no fields and the search is all they cost.
-// The measure is what its e encoding entries add to describing: with sixteen
-// times the operations, it must stay within 3 times (flatBound), in time, not
-// checked under -short, and in bytes, a difference below 1 ms or 16 bytes an
-// entry counting as that floor.
+// Regression check, not contract: describing searches each object of the
+// document for values written as references a bounded number of times
+// (TestBundleCostNestedHeaderReferences), so that search of a path-level
+// parameter's content runs once, not once for each operation inheriting it,
+// whether the parameter is described or, as an ignored Accept, is not. Other
+// work on the content, such as the fields each operation compiles from a
+// form-content parameter, is not bounded here: the content is multipart/mixed,
+// which cannot serialize a parameter (doc.go, Values), so its entries describe
+// no fields and the search is all they cost. The measure is what its e encoding
+// entries add to describing: with sixteen times the operations, it must stay
+// within 3 times (flatBound), in time, not checked under -short, and in bytes,
+// a difference below 1 ms or 16 bytes an entry counting as that floor.
 func TestBundleCostPathLevelParameter(t *testing.T) {
 	const entries, small = 4000, 16
 	for _, name := range []string{"X-H", "Accept"} {

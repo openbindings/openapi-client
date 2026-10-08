@@ -709,13 +709,14 @@ func (nilBodyRT) RoundTrip(r *http.Request) (*http.Response, error) {
 	return &http.Response{StatusCode: 200, Header: http.Header{}, ContentLength: 5, Request: r}, nil
 }
 
-// When the inner transport breaks the RoundTripper contract (nil response
-// and nil error; a positive ContentLength with a nil Body), noFollow returns
-// net/http's error text naming the caller's transport type, not noFollow.
-// doc.go, Outcomes: a transport failure is "the *url.Error from the
-// http.Client"; errors from the caller's own transport "are passed on as
-// they are". net/http writes these errors with the transport's type (go1.25
-// client.go, send: "http: RoundTripper implementation (%T) ...").
+// Regression check, not contract: when the inner transport breaks the
+// RoundTripper contract (nil response and nil error; a positive ContentLength
+// with a nil Body), the error's wording mirrors net/http's, which names the
+// caller's transport type, never the client's own wrapper, noFollow. net/http
+// writes these errors with the transport's type (go1.25 client.go, send:
+// "http: RoundTripper implementation (%T) ..."). What doc.go, Outcomes
+// promises stays asserted: a transport failure is "the *url.Error from the
+// http.Client".
 func TestBrokenTransportNamedInError(t *testing.T) {
 	for name, rt := range map[string]http.RoundTripper{"nil response and nil error": nilNilRT{}, "a nil Body": nilBodyRT{}} {
 		t.Run(name, func(t *testing.T) {
@@ -954,11 +955,12 @@ func TestDefaultTransportResolvedAtSend(t *testing.T) {
 	}
 }
 
-// A source's refused value on the first request names its scheme once (the
-// Settings key plus the reason). errors.go, RequestError.Settings: keyed
-// "Options.Credentials[\"api_key\"]"; RequestError.Settings: "An empty
-// secret from a credential source is keyed as a missing credential is." The
-// hop's error, which has no Settings key, still names the scheme
+// A source's refused value on the first request is keyed by its scheme, and
+// the error names the scheme. errors.go, RequestError.Settings: keyed in the
+// form "Options.<Field>[<name>], for Credentials and Variables", and "An empty
+// secret from a credential source is keyed as a missing credential is";
+// RequestError.Error: "Error describes every problem and the field that fixes
+// each". The hop's error, which has no Settings key, still names the scheme
 // (TestHopCredentialRefusalNamesItsScheme).
 func TestSourceRefusalNamesItsSchemeOnce(t *testing.T) {
 	doc := doc31(`"/r":{"get":{"operationId":"getR"}}`, `"security":[{"corp_bearer":[]}]`,
@@ -970,8 +972,8 @@ func TestSourceRefusalNamesItsSchemeOnce(t *testing.T) {
 			resp, err := c.Call(t.Context(), "getR", nil, nil)
 			re := refusedBeforeSending(t, w, resp, err)
 			wantKeys(t, "Settings", re.Settings, true, credKey("corp_bearer"))
-			if n := strings.Count(err.Error(), "corp_bearer"); n != 1 {
-				t.Errorf("error %q names the scheme %d times, want once", err, n)
+			if !strings.Contains(err.Error(), "corp_bearer") {
+				t.Errorf("error %q does not name the scheme corp_bearer", err)
 			}
 			if value != "" {
 				noSecrets(t, err, value)

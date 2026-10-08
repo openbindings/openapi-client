@@ -651,10 +651,13 @@ func TestReferenceCyclesAcrossDocuments(t *testing.T) {
 	}
 }
 
-// The error names a reference cycle deterministically. Two operations enter
-// one cycle of parameter references at different points; each operation's
-// Err is the same text whichever compiles first, and when they compile at
-// once, in one document and across two.
+// Regression check, not contract: a reference cycle's error text is
+// deterministic. Two operations enter one cycle of parameter references at
+// different points; each operation's Err is the same text whichever compiles
+// first, and when they compile at once, in one document and across two. That
+// each Err wraps ErrUnresolved stays asserted (errors.go, ErrUnresolved: "A
+// reference cycle cannot be resolved: a chain of Reference Objects ... that
+// leads back into itself").
 func TestCycleNamedDeterministically(t *testing.T) {
 	local := doc31(`"/x":{"get":{"operationId":"x","parameters":[{"$ref":"#/components/parameters/A"}]}},
 		"/y":{"get":{"operationId":"y","parameters":[{"$ref":"#/components/parameters/B"}]}}`,

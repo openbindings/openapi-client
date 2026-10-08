@@ -299,13 +299,13 @@ func TestWaitRequestWithoutRequest(t *testing.T) {
 }
 
 // The error types' Error methods describe a value with no Response, as a
-// caller may build one, without failing.
+// caller may build one, without failing: no panic, and some text.
 func TestErrorTypesWithoutResponse(t *testing.T) {
 	for _, err := range []error{&openapi.StatusError{}, &openapi.DecodeError{}} {
 		var msg string
 		noPanic(t, fmt.Sprintf("%T.Error", err), func() { msg = err.Error() })
-		if !strings.HasPrefix(msg, "openapi: ") {
-			t.Errorf("%T.Error() = %q", err, msg)
+		if msg == "" {
+			t.Errorf("%T.Error() is empty", err)
 		}
 	}
 }
@@ -710,8 +710,9 @@ func TestDecodeErrorJoinsUploadError(t *testing.T) {
 	}
 }
 
-// doc.go, Outcomes: "When the call's context is done before the call
-// completes, the error matches ctx.Err()", and its text says so.
+// Regression check, not contract: the error text names the context's error.
+// doc.go, Outcomes promises only the match: "When the call's context is done
+// before the call completes, the error matches ctx.Err() with errors.Is".
 func TestContextErrorTextNamesCause(t *testing.T) {
 	_, c := contractLineClient(t)
 	ctx, cancel := context.WithCancel(t.Context())

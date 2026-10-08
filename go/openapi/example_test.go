@@ -158,8 +158,8 @@ func Example_credentialsTypo() {
 	})
 	var re *openapi.RequestError
 	if errors.As(err, &re) {
-		// Options.Credentials names "apiKey", which the document never
-		// uses (it uses api_key, oauth).
+		// re.Settings keys the refusal `Options.Credentials["apiKey"]`: the
+		// document never uses that name (it uses api_key and oauth).
 		log.Print(re)
 	}
 
@@ -169,7 +169,7 @@ func Example_credentialsTypo() {
 		},
 	})
 	if errors.As(err, &re) {
-		// Options.Credentials["api_key"] is an empty secret
+		// re.Settings keys the empty secret `Options.Credentials["api_key"]`.
 		log.Fatal(re)
 	}
 }

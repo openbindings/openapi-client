@@ -68,12 +68,12 @@ func sharedOperation(n, m int, kind string) []byte {
 	return []byte(b.String())
 }
 
-// Every compiled or decoded form is computed at most once per document node:
-// each Operation Object node is compiled once and its path-independent parts
-// are shared. N Paths entries sharing one Operation Object with M servers,
-// parameters or response media types cost Operations() time and retained
-// memory linear in the document, N and M growing together; the first Call
-// too.
+// Regression check, not contract: every compiled or decoded form is computed at
+// most once per document node: each Operation Object node is compiled once and
+// its path-independent parts are shared. N Paths entries sharing one Operation
+// Object with M servers, parameters or response media types cost Operations()
+// time and retained memory linear in the document, N and M growing together;
+// the first Call too.
 func TestSharedOperationObjectScales(t *testing.T) {
 	for _, kind := range []string{"servers", "params", "media"} {
 		// Compiling the shared Operation Object once per Paths entry would
@@ -113,9 +113,10 @@ func TestSharedOperationObjectScales(t *testing.T) {
 	}
 }
 
-// checkNames runs once per node: Load with Options.Server or
-// Options.MediaType that no server or media type matches, over the
-// sharedOperation document, checks each shared Operation Object once.
+// Regression check, not contract: Load's checks of an Options.Server or
+// Options.MediaType that no server or media type matches look at each shared
+// Operation Object of the sharedOperation document once, so they cost time
+// linear in the document.
 func TestLoadOptionChecksScale(t *testing.T) {
 	refused := func(doc []byte, opts func() *openapi.Options) func() {
 		return func() {
@@ -137,11 +138,11 @@ func TestLoadOptionChecksScale(t *testing.T) {
 // escapedQuotes returns n bytes of escaped quotes: \" repeated.
 func escapedQuotes(n int) string { return strings.Repeat(`\"`, n/2) }
 
-// str consults the decoded cache before scanning, and name comparison reads
-// forward only as far as the key: strings made of escaped quotes, as long
-// member names on the path to $ref targets and as a shared description, cost
-// Parse and Operations() linear in the document when the strings and the
-// references grow together.
+// Regression check, not contract: str consults the decoded cache before
+// scanning, and name comparison reads forward only as far as the key: strings
+// made of escaped quotes, as long member names on the path to $ref targets and
+// as a shared description, cost Parse and Operations() linear in the document
+// when the strings and the references grow together.
 func TestEscapedQuoteStringsScale(t *testing.T) {
 	names := func(k int, refs bool) []byte {
 		var b strings.Builder

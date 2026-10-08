@@ -152,9 +152,11 @@ func TestCustomCollectionUndefinedNestedMembers(t *testing.T) {
 	}
 }
 
-// The caller returns prebuilt bytes, so measured allocation is client-owned.
-// The documented 1 MiB serialization stop and existing 16 MiB refusal ceiling
-// also apply after custom JSON is available, through pointer wrappers too.
+// Regression check, not contract: the 16 MiB refusal allocation ceiling. The
+// rest is contract: the 1 MiB serialization stop applies after custom JSON is
+// available, through pointer wrappers too (doc.go, Values: a parameter past 1
+// MiB "is refused at its key, and its serialization stops there"). The caller
+// returns prebuilt bytes, so measured allocation is the client's.
 func TestCustomCollectionStopsAtTargetLimit(t *testing.T) {
 	var b strings.Builder
 	b.Grow((8192+3)*4096 + 2)

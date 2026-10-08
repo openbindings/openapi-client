@@ -30,12 +30,14 @@ func allocated(f func()) uint64 {
 	return after.TotalAlloc - before.TotalAlloc
 }
 
-// A peer's Content-Length does not decide an up-front allocation (the
-// reservation is capped at 1 MiB, and each read at the remaining allowance
-// plus one byte); client.go, Options.MaxBodyBytes and MaxErrorBytes and
+// A peer's Content-Length does not decide an up-front allocation: doc.go,
+// Outcomes: "Even with no bound, the length a response body or retrieved
+// document declares reserves at most 1 MiB in advance; the rest is allocated
+// as its bytes arrive." client.go, Options.MaxBodyBytes and MaxErrorBytes and
 // load.go, Loader.MaxBytes bound what is read, and a negative bound, "no
 // limit", never overflows into a panic. Each server here declares a length
-// and sends 2 bytes.
+// and sends 2 bytes; the 16 MiB budget is a tolerance around the 1 MiB
+// reservation.
 func TestContentLengthDoesNotDecideAllocation(t *testing.T) {
 	const budget = 16 << 20 // the 1 MiB reservation, with room for everything else
 	doc := doc31(`"/x":{"get":{"operationId":"get","responses":{"200":{"description":"ok","content":{"application/json":{}}}}}}`)
@@ -152,10 +154,10 @@ func TestBodyReadsCappedAtBound(t *testing.T) {
 	}
 }
 
-// Load's Options checks do not compile every operation's plan, so setting
-// Options.Server or Options.MediaType costs about what a plain Load costs:
-// plans are compiled lazily, per operation (load.go, Load's Options checks).
-// Checks that compiled every plan measured 8.7 times the allocations.
+// Regression check, not contract: Load's Options checks do not compile every
+// operation's plan, so setting Options.Server or Options.MediaType costs about
+// what a plain Load costs. Checks that compiled every plan would make 8.7
+// times the allocations.
 func TestLoadOptionChecksStayLazy(t *testing.T) {
 	doc, _ := largeDoc(700, 500)
 	count := func(opts *openapi.Options) float64 {
@@ -177,9 +179,9 @@ func TestLoadOptionChecksStayLazy(t *testing.T) {
 	}
 }
 
-// The compact document tree's budgets: retained heap at most 3 times the
-// document's bytes, and allocation during the load at most 6 times (measured
-// as the total allocated, which bounds the peak).
+// Regression check, not contract: the compact document tree's budgets: retained
+// heap at most 3 times the document's bytes, and allocation during the load at
+// most 6 times (measured as the total allocated, which bounds the peak).
 func TestDocumentTreeMemoryBudget(t *testing.T) {
 	doc, _ := largeDoc(700, 500)
 	var c *openapi.Client
@@ -208,9 +210,9 @@ func TestDocumentTreeMemoryBudget(t *testing.T) {
 	}
 }
 
-// Reference resolution is linear, at Load and at first use. Four times the
-// references must cost well under the sixteen times a quadratic resolution
-// costs, by the shared harness (scaling_test.go).
+// Regression check, not contract: reference resolution is linear, at Load and
+// at first use. Four times the references must cost well under the sixteen
+// times a quadratic resolution costs, by the shared harness (scaling_test.go).
 func TestReferenceResolutionScales(t *testing.T) {
 	if testing.Short() {
 		t.Skip("timing test")
@@ -368,19 +370,19 @@ func countValues(t *testing.T, b []byte) int {
 	}
 }
 
-// Any document stays within its bytes plus 16 bytes per JSON value
-// retained, and the node estimate does not count structural bytes inside
-// strings: an array of zeros with one value per two bytes; one string of
-// commas, and one of braces, which hold a handful of values; and an array of
-// empty objects. Each document is about 1 MiB. The budget has a fixed
-// allowance of 64 KiB, as TestRejectedDocumentAllocationBudget has: Go's
-// allocator rounds a large allocation up to whole 8 KiB pages, so the copy
-// of a document of few values alone exceeds bytes plus 16 per value.
-// Retained memory may also add the decoded bytes of escaped strings, plus up
-// to 64 bytes per such string; the cases with escaped member names
-// (including an object that is indexed for a $ref, and escaped Paths keys)
-// check it. (The 3x and 6x budgets stay on the synthetic document,
-// TestDocumentTreeMemoryBudget.)
+// Regression check, not contract: any document stays within its bytes plus 16
+// bytes per JSON value retained, and the node estimate does not count
+// structural bytes inside strings: an array of zeros with one value per two
+// bytes; one string of commas, and one of braces, which hold a handful of
+// values; and an array of empty objects. Each document is about 1 MiB. The
+// budget has a fixed allowance of 64 KiB, as
+// TestRejectedDocumentAllocationBudget has: Go's allocator rounds a large
+// allocation up to whole 8 KiB pages, so the copy of a document of few values
+// alone exceeds bytes plus 16 per value. Retained memory may also add the
+// decoded bytes of escaped strings, plus up to 64 bytes per such string; the
+// cases with escaped member names (including an object that is indexed for a
+// $ref, and escaped Paths keys) check it. (The 3x and 6x budgets stay on the
+// synthetic document, TestDocumentTreeMemoryBudget.)
 func TestWorstCaseRetainedMemoryBudget(t *testing.T) {
 	const size = 1 << 20
 	const head = `{"openapi":"3.1.0","info":{"title":"t","version":"1"},"paths":{},"components":{"x":`
@@ -430,10 +432,10 @@ func TestWorstCaseRetainedMemoryBudget(t *testing.T) {
 	}
 }
 
-// A document rejected at its second byte pays no reservation beyond what a
-// document of its length could need: its allocation stays within the
-// worst-case budget for its length, the document's bytes plus 16 bytes for
-// each value its bytes could hold (one per two bytes).
+// Regression check, not contract: a document rejected at its second byte pays
+// no reservation beyond what a document of its length could need: its
+// allocation stays within the worst-case budget for its length, the document's
+// bytes plus 16 bytes for each value its bytes could hold (one per two bytes).
 func TestRejectedDocumentAllocationBudget(t *testing.T) {
 	doc := []byte("{" + strings.Repeat(",", 4<<20))
 	var err error

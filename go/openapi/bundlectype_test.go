@@ -51,17 +51,16 @@ func nestedHeaderDoc(l, k, w int) []byte {
 		`"components":{"headers":{"C":`+b.String()+`}}`))
 }
 
-// Describing reads each object of the document a bounded number of times, so
-// describing is linear in the document even where references reach the same
-// nested Encodings from many places. The measure isolates the innermost w
-// entries: the cost of describing with them less the cost of the same
-// document without them, each the best of interleaved runs (bestCosts, from
-// scaling_test.go). Read once, they add the same whatever refers to
-// them; read once for each reference, they add in proportion to the
-// references. With sixteen times the references, what the entries add must
-// stay within 3 times (flatBound), in time, not checked under -short, and in
-// bytes; a difference below a floor, 1 ms or 16 bytes an entry, counts as the
-// floor.
+// Regression check, not contract: describing reads each object of the document
+// a bounded number of times, so describing is linear in the document even where
+// references reach the same nested Encodings from many places. The measure
+// isolates the innermost w entries: the cost of describing with them less the
+// cost of the same document without them, each the best of interleaved runs
+// (bestCosts, from scaling_test.go). Read once, they add the same whatever
+// refers to them; read once for each reference, they add in proportion to the
+// references. With sixteen times the references, what the entries add must stay
+// within 3 times (flatBound), in time, not checked under -short, and in bytes;
+// a difference below a floor, 1 ms or 16 bytes an entry, counts as the floor.
 func TestBundleCostNestedHeaderReferences(t *testing.T) {
 	const levels, entries, small = 150, 20000, 9
 	added := func(k int) (time.Duration, int64) {

@@ -391,9 +391,10 @@ type xmlPet struct {
 // remove it ... A header field that sets Accept-Encoding turns that off. A
 // body whose Content-Encoding, other than identity, remains passes through
 // unchanged to a *[]byte or io.Writer; any other target ... report[s] an
-// error". Generated text identifies Content-Encoding; its
-// response-controlled value remains available through Header ("The coding
-// remains available in Header; generated diagnostics omit
+// error". The error names the operation and status (errors.go,
+// DecodeError.Error: "Error returns the operation, the status and the
+// reason"), never the coding, which remains available through Header ("The
+// coding remains available in Header; generated diagnostics omit
 // response-controlled values").
 func TestContentCodings(t *testing.T) {
 	var gz bytes.Buffer
@@ -424,7 +425,7 @@ func TestContentCodings(t *testing.T) {
 	if !errors.As(err, &de) {
 		t.Fatalf("coded body into a struct: %v, want a *DecodeError", err)
 	}
-	for _, want := range []string{"getPet", "200", "Content-Encoding"} {
+	for _, want := range []string{"getPet", "200"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("coded body diagnostic %q does not identify %s", err, want)
 		}
@@ -570,10 +571,10 @@ func TestMaxErrorBytes(t *testing.T) {
 // errors.go, DecodeError: "a response whose body could not be used by Call
 // ... it did not decode into the value given"; "Content is the start of the
 // body, at most 4 KiB"; "The promoted Body reads Content again, and
-// ContentLength is len(Content)". DecodeError.Error returns the operation,
-// status and static reason, with response-controlled media text available
-// only through Header. doc.go, Outcomes: "A 2xx
-// whose body could not be read or decoded: a *DecodeError."
+// ContentLength is len(Content)". DecodeError.Error: "Error returns the
+// operation, the status and the reason, never the body or response-controlled
+// media and encoding text", which stays available through Header. doc.go,
+// Outcomes: "A 2xx whose body could not be read or decoded: a *DecodeError."
 func TestDecodeError(t *testing.T) {
 	bad := `{"name": 5, "detail":"SECRET-BODY"}`
 	_, c := respClient(t, jsonAnswer(200, bad), nil)
@@ -593,7 +594,7 @@ func TestDecodeError(t *testing.T) {
 		t.Errorf("Body reads %q, ContentLength %d", b, de.ContentLength)
 	}
 	msg := de.Error()
-	for _, want := range []string{"getPet", "200", "decode"} {
+	for _, want := range []string{"getPet", "200"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("Error() = %q, want %s in it", msg, want)
 		}

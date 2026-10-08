@@ -238,6 +238,14 @@ func rangeOutcome(t *testing.T, desc *openapi.Operation, cl rangeCall, req *open
 	return fmt.Sprintf("sent %q %q, Media %d", ctype, body, media)
 }
 
+// Regression check, not contract: a refusal's text is the same whether or not
+// the operation was described first. What the documentation promises stays
+// asserted too: the refusal's key, and its wrapping of the described Err
+// (describe.go, Operation.Err: a part's defect "fails a call only when the
+// call uses it, the *RequestError then wrapping that part's Err, whether or
+// not the operation was described first"); and the Content-Type, body and
+// Media index a sent call gets, the same in either order, since a Client
+// "never changes once made" (client.go, Client).
 func TestMediaRangeDescribeOrder(t *testing.T) {
 	for _, op := range rangeOps() {
 		t.Run(op.name, func(t *testing.T) {

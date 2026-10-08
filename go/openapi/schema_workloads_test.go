@@ -181,11 +181,12 @@ func BenchmarkSchemaReferencesWarm(b *testing.B) {
 	}
 }
 
-// Hostile-input scaling, under the shared 4x-input / 8x-bytes / 12x-time
-// harness: many identifier lookups, a broad graph with distinct targets,
-// ancestry depth, and many entry points into one legacy reference chain.
-// These exercise public graph reads, excluding Parse from measured work.
-// The first-use cases provision one fresh client per harness sample.
+// Regression check, not contract: hostile-input scaling, under the shared
+// 4x-input / 8x-bytes / 12x-time harness: many identifier lookups, a broad
+// graph with distinct targets, ancestry depth, and many entry points into one
+// legacy reference chain. These exercise public graph reads, excluding Parse
+// from measured work. The first-use cases provision one fresh client per
+// harness sample.
 func TestSchemaGraphScale(t *testing.T) {
 	wantLinearBytes(t, "first lookup of every resource", 256, func(n int) func() {
 		f := newSchemaGraphWorkload(n)

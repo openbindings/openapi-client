@@ -184,14 +184,14 @@ func yamlAliasDoc(k, a int) []byte {
 	return []byte(b.String())
 }
 
-// load.go, Loader reads YAML aliases within its bounds (a document "whose
-// aliases would add more than 1,000,000 nodes, more than 100 times its own
-// node count, or more than 100 times its own size in bytes ... is
-// rejected"); within them, what each alias costs must not grow with the rest
-// of the document. With the aliases fixed, sixteen times the mappings must
-// cost about the same (wantFlat, the convention of scaling_test.go;
-// the mappings themselves are small beside the aliases, whose time is not
-// checked under -short).
+// Regression check, not contract: what each YAML alias costs does not grow
+// with the rest of the document. load.go, Loader bounds aliases (a document
+// "whose aliases would add more than 1,000,000 nodes, more than 100 times its
+// own node count, or more than 100 times its own size in bytes ... is rejected
+// too"); within those bounds, with the aliases fixed, sixteen times the
+// mappings must cost about the same (wantFlat, the convention of
+// scaling_test.go; the mappings themselves are small beside the aliases, whose
+// time is not checked under -short).
 func TestYAMLAliasCostIndependentOfMappings(t *testing.T) {
 	const aliases = 200000
 	wantFlat(t, "aliases beside more mappings with a $ref", 250, func(k int) func() {
@@ -327,18 +327,18 @@ func nestedCostDoc(l, m int, positional bool) []byte {
 		"encoding":{"f":{"contentType":"`+types+`",`+nested+`}}}}},`+partErrResponse+`}}`))
 }
 
-// Describing a field reads its contentType list and its nested entries once
-// each, so what the entries cost must not grow with the list: a cost
-// proportional to the list times the entries is quadratic in the document.
-// The measure isolates the entries: for a list of l types, the cost of
-// describing the document with its m entries less the cost of the same
+// Regression check, not contract: describing a field reads its contentType list
+// and its nested entries once each, so what the entries cost must not grow with
+// the list: a cost proportional to the list times the entries is quadratic in
+// the document. The measure isolates the entries: for a list of l types, the
+// cost of describing the document with its m entries less the cost of the same
 // document with none, each the best of interleaved runs (bestCosts, from
-// scaling_test.go). The list's own cost, whatever it is, is in both
-// and cancels. With the list sixteen times longer, what the entries add must
-// stay within 3 times (flatBound, as wantFlat bounds a cost independent of
-// what grows), in time, which is not checked under -short, and in bytes
-// allocated. A difference below a floor, 1 ms or 16 bytes an entry, counts
-// as the floor, so that a cost too small to measure cannot fail the test.
+// scaling_test.go). The list's own cost, whatever it is, is in both and
+// cancels. With the list sixteen times longer, what the entries add must stay
+// within 3 times (flatBound, as wantFlat bounds a cost independent of what
+// grows), in time, which is not checked under -short, and in bytes allocated. A
+// difference below a floor, 1 ms or 16 bytes an entry, counts as the floor, so
+// that a cost too small to measure cannot fail the test.
 func TestBundleCostNestedEncodingList(t *testing.T) {
 	const entries, small = 16000, 100
 	// added returns what the entries add to describing, for l listed types.

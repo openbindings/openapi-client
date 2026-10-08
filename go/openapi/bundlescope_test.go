@@ -56,13 +56,13 @@ func largeMapLoader(doc []byte) *openapi.Loader {
 	}}
 }
 
-// Following a reference into a map is a lookup of its member: its cost must
-// not grow with the members the map holds, whether their names sort above
-// or below "$ref", in describing (Client.Operations) or in loading (load.go,
-// Loader: references "are followed"). With the operations fixed, sixteen
-// times the members must cost about the same (wantFlat, the convention of
-// scaling_test.go; only parsing the larger map grows, and it is small
-// beside the references).
+// Regression check, not contract: following a reference into a map is a lookup
+// of its member: its cost must not grow with the members the map holds, whether
+// their names sort above or below "$ref", in describing (Client.Operations) or
+// in loading (load.go, Loader: references "are followed"). With the operations
+// fixed, sixteen times the members must cost about the same (wantFlat, the
+// convention of scaling_test.go; only parsing the larger map grows, and it is
+// small beside the references).
 func TestBundleCostLargeMap(t *testing.T) {
 	const operations = 4000
 	for _, prefix := range []string{"P", "!P"} {

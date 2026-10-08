@@ -66,12 +66,12 @@ func styledParams(n int) []byte {
 		`"components":{"parameters":{` + strings.Join(params, ",") + `}}}`)
 }
 
-// Compiling an operation's parameters, path template included, is linear in
-// their number, in time and in bytes allocated: at first use (Operations),
-// and at a first Prepare that gives every path parameter. The sizes are
-// where a quadratic dominates: an earlier path template compile, quadratic
-// in the number of path parameters, took 16x as long for 960 to 3,840
-// parameters (160 to 640 of them in the path).
+// Regression check, not contract: compiling an operation's parameters, path
+// template included, is linear in their number, in time and in bytes
+// allocated: at first use (Operations), and at a first Prepare that gives
+// every path parameter. The sizes are where a quadratic dominates: a path
+// template compile quadratic in the number of path parameters takes 16x as
+// long for 960 to 3,840 parameters (160 to 640 of them in the path).
 func TestStyledParamsCompileScale(t *testing.T) {
 	wantLinear(t, "Operations()", 960, func(n int) func() { return timedOperations(t, styledParams(n)) })
 	wantLinear(t, "first Prepare", 960, func(n int) func() {
@@ -113,18 +113,18 @@ const largeValueDoc = `{"openapi":"3.1.0","info":{"title":"t","version":"1"},"se
 	"/j":{"get":{"operationId":"json","parameters":[{"name":"v","in":"query","content":{"application/json":{}}}]}}
 }}`
 
-// Serializing a value costs time and allocated bytes linear in its encoded
-// size: arrays and objects of 5,000 to 20,000 items, whose output stays
-// under the 1 MiB bound on the request target and header fields (doc.go,
-// Values; at 20,000 items the largest, the deepObject query, is about 500
-// KiB), and a deepObject nested 250 to 1,000 levels (one leaf, so its
-// encoded form is linear in its depth), within the 1,000-level bound on
-// values (doc.go, Values). A quadratic serializer, one that copies what it
-// has written for each item, would copy about 190 MB at 5,000 items and 3 GB
-// at 20,000 against a linear cost well under a millisecond, so it takes
+// Regression check, not contract: serializing a value costs time and allocated
+// bytes linear in its encoded size: arrays and objects of 5,000 to 20,000
+// items, whose output stays under the 1 MiB bound on the request target and
+// header fields (doc.go, Values; at 20,000 items the largest, the deepObject
+// query, is about 500 KiB), and a deepObject nested 250 to 1,000 levels (one
+// leaf, so its encoded form is linear in its depth), within the 1,000-level
+// bound on values (doc.go, Values). A quadratic serializer, one that copies
+// what it has written for each item, would copy about 190 MB at 5,000 items and
+// 3 GB at 20,000 against a linear cost well under a millisecond, so it takes
 // about 16x in time and in bytes allocated. At 1,000 levels such copying is
-// megabytes, which time alone may not separate from the linear cost, which
-// the bytes check does.
+// megabytes, which time alone may not separate from the linear cost, which the
+// bytes check does.
 func TestLargeParamValuesScale(t *testing.T) {
 	c, err := openapi.Parse(context.Background(), []byte(largeValueDoc), testDocURI, nil)
 	if err != nil {
@@ -203,14 +203,14 @@ func sharedLongName(n int, in string) []byte {
 	return []byte(b.String())
 }
 
-// Every compiled or decoded form is computed at most once per document node,
-// so one Parameter Object with a long name, referenced by many operations,
-// costs Operations() time, allocated bytes and retained memory linear in the
-// document, the name and the references growing together, in every location
-// a shared name can take (a path parameter's name is written in each Paths
-// key, so its document is already the product). Before the fix, 64 KiB by
-// 1,000 references retained about 67 MB (query, cookie) and 133 MB (header),
-// 16x its quarter.
+// Regression check, not contract: every compiled or decoded form is computed
+// at most once per document node, so one Parameter Object with a long name,
+// referenced by many operations, costs Operations() time, allocated bytes and
+// retained memory linear in the document, the name and the references growing
+// together, in every location a shared name can take (a path parameter's name
+// is written in each Paths key, so its document is already the product). A
+// cost per reference would retain, for 64 KiB by 1,000 references, about 67 MB
+// (query, cookie) and 133 MB (header), 16x its quarter.
 func TestSharedLongParamNameScalesLinearly(t *testing.T) {
 	for _, in := range []string{"query", "header", "cookie"} {
 		wantLinear(t, in+": Operations()", 16, func(n int) func() { return timedOperations(t, sharedLongName(n, in)) })
@@ -248,12 +248,13 @@ func manyParams(n int) []byte {
 	return []byte(b.String())
 }
 
-// An unknown key refuses the call (client.go, Input.Params: "A key the
-// operation does not declare ... refuses the call"; Input.ParamWriters):
-// with n declared parameters, all n keys given and one unknown key, the
-// refusal costs time linear in n, in Params and in ParamWriters. Before the
-// fix each key was checked again by a scan of the declarations, n(n+1)/2
-// comparisons.
+// Regression check, not contract: with n declared parameters, all n keys
+// given and one unknown key, the refusal costs time linear in n, in Params and
+// in ParamWriters; a scan of the declarations for each key would make n(n+1)/2
+// comparisons. The refusal itself is contract (client.go, Input.Params: "A key
+// the operation does not declare, or a missing required parameter, refuses the
+// call"; Input.ParamWriters: "an unknown key, a nil writer, and the same key in
+// Params and ParamWriters, are refused at that key").
 func TestUnknownParamKeyRefusalScalesLinearly(t *testing.T) {
 	refused := func(c *openapi.Client, in *openapi.Input) func() {
 		return func() {

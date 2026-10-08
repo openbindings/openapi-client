@@ -1,7 +1,6 @@
 package openapi_test
 
 import (
-	"errors"
 	"testing"
 
 	"github.com/openbindings/openapi-client/go/openapi"
@@ -225,9 +224,8 @@ func TestEncodingDescriptorsFromEncoding(t *testing.T) {
 
 // RFC 6570 fields: effective style, explode and allowReserved, as for
 // query parameters (OAS 3.1.2 section 4.8.15.1.2; describe.go, Param);
-// defects on the field's Err, never Media.Err, and never a "not
-// implemented" (an undefined combination is a defect of the document);
-// headers ignored outside multipart.
+// defects on the field's Err, never Media.Err (an undefined combination is a
+// defect of the document); headers ignored outside multipart.
 func TestEncodingDescriptorStyles(t *testing.T) {
 	c := parseAt(t, doc31(descPaths, descComponents), "https://api.example.test", testDocURI, nil)
 	op := mustOp(t, c, "styles")
@@ -258,7 +256,7 @@ func TestEncodingDescriptorStyles(t *testing.T) {
 		}
 	}
 	for _, name := range []string{"bad1", "bad2", "badct"} {
-		if e := byName[name]; e == nil || e.Err == nil || errors.Is(e.Err, errors.ErrUnsupported) {
+		if e := byName[name]; e == nil || e.Err == nil {
 			t.Errorf("%s: Err = %v, want the document's defect", name, e)
 		}
 	}

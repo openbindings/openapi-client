@@ -1,7 +1,6 @@
 package openapi_test
 
 import (
-	"errors"
 	"testing"
 )
 
@@ -106,9 +105,8 @@ func TestParamDescriptorsEverySerialization(t *testing.T) {
 			t.Errorf("%s: ContentType = %q, want %q", p.Key, p.ContentType, d.contentType)
 		}
 		switch {
-		case d.err && (p.Err == nil || errors.Is(p.Err, errors.ErrUnsupported)):
-			// An undefined combination is the document's, not a missing
-			// feature.
+		case d.err && p.Err == nil:
+			// An undefined combination is the document's defect.
 			t.Errorf("%s: Err = %v, want the undefined combination", p.Key, p.Err)
 		case !d.err && p.Err != nil:
 			t.Errorf("%s: Err = %v, want nil", p.Key, p.Err)

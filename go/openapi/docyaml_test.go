@@ -342,10 +342,13 @@ func TestYAMLAliasBounds(t *testing.T) {
 	}
 }
 
-// An exponential alias document (the "billion laughs" shape RFC 9512
-// section 4.2 describes) is rejected, at a cost the bound sets: its own
-// nodes number about 120, so the aliases it may add before rejection number
-// at most about 12,000, and rejecting it allocates little.
+// Regression check, not contract: the 32 MiB figure for what rejecting it
+// allocates. The rest is contract: an exponential alias document (the "billion
+// laughs" shape RFC 9512 section 4.2 describes) is rejected by what its
+// aliases would add (load.go, Loader: "A document whose aliases would add more
+// than 1,000,000 nodes, more than 100 times its own node count, ... is
+// rejected too"): its own nodes number about 120, so the aliases it may add
+// before rejection number at most about 12,000.
 func TestYAMLAliasBomb(t *testing.T) {
 	if !inChild(t) { // a loader that expands it would exhaust memory
 		return

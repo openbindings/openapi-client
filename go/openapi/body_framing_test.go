@@ -266,12 +266,15 @@ func (indentCodec) Encode(w io.Writer, v any) error {
 }
 func (indentCodec) Decode(r io.Reader, v any) error { return json.NewDecoder(r).Decode(v) }
 
-// A codec's output is framed after its trailing JSON whitespace (SP, HTAB,
-// LF, CR; RFC 8259 section 2: "JSON-text = ws value ws") is trimmed
-// (client.go, Input.Body: "a codec's output is framed after its trailing
-// JSON whitespace is trimmed"), so json.Encoder works under JSON Lines and
-// sequences; a separator left inside is refused at the item's key, with an
-// error naming the codec's output.
+// Regression check, not contract: the refusal's text names the codec's
+// output. The rest is contract: a codec's output is framed after its trailing
+// JSON whitespace (SP, HTAB, LF, CR; RFC 8259 section 2: "JSON-text = ws value
+// ws") is trimmed (client.go, Input.Body: "a codec's output is framed after
+// its trailing JSON whitespace is trimmed"), so json.Encoder works under JSON
+// Lines and sequences; a separator left inside is refused at the item's key
+// (Input.Body: "Content that cannot be encoded, such as a given boundary's
+// delimiter in a part or a separator in a sequence's item, refuses the call
+// when it is prepared").
 func TestSequentialCodecOutputFramed(t *testing.T) {
 	w := newWire(t, nil)
 	items := []any{map[string]any{"a": 1}, 2}

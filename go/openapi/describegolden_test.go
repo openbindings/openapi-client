@@ -21,8 +21,16 @@ import (
 // caller and must not be modified. Listing them does no schema work." The
 // descriptors are the package's public description of a document, so the
 // same documents must keep giving the same descriptors, field for field,
-// each Err's text included, whatever the client builds or stops building
-// while describing.
+// whatever the client builds or stops building while describing.
+//
+// Regression check, not contract: two parts of the rendering are snapshots
+// the documentation does not promise. One is each Err's text; an Err's
+// presence, and whether it wraps ErrUnresolved (its "unresolved" flag), are
+// contract. The other is the Raw of a schema the client makes, such as one
+// made from a Swagger 2.0 parameter or response header (describe.go,
+// Param.Schema) or from formData parameters, whose member order and spelling
+// are the client's; the Raw of an authored schema is contract (describe.go,
+// Schema.Raw: "exactly as written, as JSON").
 //
 // The golden file is generated from the client, not written by hand. Run
 //
@@ -616,12 +624,14 @@ func marshalGolden(tb testing.TB, v any) []byte {
 	return append(b, '\n')
 }
 
-// The descriptors of every golden document equal the committed rendering,
-// each Err's text included. Each edition is loaded twice, and the two
-// Clients, a Client.With of one, and a second Operations call all describe
-// the same operations; Client.Operation reaches the very descriptor
-// Operations lists for every Key (describe.go, Client.Operation: "describes
-// the operation named key, by the rules Call uses").
+// Regression check, not contract: each Err's text, and the Raw of a schema the
+// client makes, match the committed rendering (see the file comment). The rest
+// is contract: the descriptors of every golden document equal the committed
+// rendering, field for field. Each edition is loaded twice, and the two
+// Clients, a Client.With of one, and a second Operations call all describe the
+// same operations; Client.Operation reaches the very descriptor Operations
+// lists for every Key (describe.go, Client.Operation: "describes the operation
+// named key, by the rules Call uses").
 func TestDescribeGolden(t *testing.T) {
 	var docs []goldenDocument
 	for _, e := range goldenEditions() {

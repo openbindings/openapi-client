@@ -585,11 +585,12 @@ func TestMultipartArrayValues(t *testing.T) {
 	}
 }
 
-// An untyped property is application/octet-stream (OAS 3.1.2 section
-// 4.8.15.1.1: type absent, application/octet-stream), whether the schema
-// gives it no type or does not list it, so it takes a string, []byte or
-// reader; a number is refused at its key, the error naming the media type,
-// which is never inferred from the Go value (doc.go, Configuration).
+// Regression check, not contract: the refusal's text names the media type.
+// The rest is contract: an untyped property is application/octet-stream (OAS
+// 3.1.2 section 4.8.15.1.1: type absent, application/octet-stream), whether
+// the schema gives it no type or does not list it, so it takes a string,
+// []byte or reader; a number is refused at its key, the media type never
+// being inferred from the Go value (doc.go, Configuration).
 func TestUntypedPropertyTakesOctets(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, mpDoc(), nil)

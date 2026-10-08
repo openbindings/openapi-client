@@ -48,8 +48,9 @@ func TestSwaggerInvalidHostOrBasePathUnusable(t *testing.T) {
 	}
 }
 
-// Reproduce the numeric-conversion amplification without a multi-gigabyte
-// allocation. Four times the input may not cost quadratic allocation.
+// Regression check, not contract: four times the input does not cost
+// quadratic allocation in YAML numeric conversion. The amplification is
+// reproduced without a multi-gigabyte allocation.
 func TestYAMLOctalAllocationScales(t *testing.T) {
 	measure := func(n int) uint64 {
 		doc := []byte("openapi: 3.1.0\npaths: {}\nx-number: 0o" + strings.Repeat("7", n) + "\n")

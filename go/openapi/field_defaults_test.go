@@ -221,16 +221,19 @@ func chainDoc(n int) []byte {
 // address), so such a walk overflows it at that length.
 const chainStack = 128 << 10
 
-// No compile path recurses once per $ref or items link. Chains of 12,500
-// and 50,000 links are described, parse and Operations(), with every
-// goroutine's stack held to 128 KiB (runtime/debug.SetMaxStack), at a cost
-// linear in the chain, the field text/plain as the string at the chain's
-// end gives it: a long chain gets its true default, with no length cut
-// past which the absent type, application/octet-stream, would apply. A
-// walk recursing per link exceeds that stack and ends the process, so the
-// test runs in a child process. A 900,000-link chain with the default
-// stack took about 73 s under -race, too close to the child's 2-minute
-// limit.
+// Regression check, not contract: describing a chain costs time linear in its
+// length, and no compile path recurses once per $ref or items link, so every
+// goroutine's stack holds to 128 KiB (runtime/debug.SetMaxStack). The rest is
+// contract: chains of 12,500 and 50,000 links are described, parse and
+// Operations(), without ending the process, and the field is text/plain, as
+// the string at the chain's end gives it, with no length cut past which the
+// absent type, application/octet-stream, would apply (doc.go, Configuration:
+// "Of a property, whose array is sent one field or part per item, the array
+// type takes the defaults of its items", and in 3.1 an item's array "takes the
+// defaults of its own items in turn"). A walk recursing per link exceeds that
+// stack and ends the process, so the test runs in a child process. A
+// 900,000-link chain with the default stack takes about 73 s under -race, too
+// close to the child's 2-minute limit.
 func TestLongItemsChainNoRecursion(t *testing.T) {
 	if !inChild(t) {
 		return
@@ -266,12 +269,13 @@ func typeListChain(n int) []byte {
 	return []byte(b.String())
 }
 
-// The default set is held as a set of the three possible defaults and
-// formatted only for a descriptor: a chain of [array, string] schemas gives
-// one field the defaults text/plain and application/json, a short
-// ContentType, and costs allocated bytes and retained memory linear in the
-// chain (a joined list grown per link would be quadratic: about 600 MB at
-// 10,000 links).
+// Regression check, not contract: the default set is held as a set of the
+// three possible defaults and formatted only for a descriptor, so a chain of
+// [array, string] schemas costs allocated bytes and retained memory linear in
+// the chain (a joined list grown per link would be quadratic: about 600 MB at
+// 10,000 links). The rest is contract: the chain gives one field the defaults
+// text/plain and application/json, a short ContentType (doc.go,
+// Configuration: "types with different defaults give a list").
 func TestFieldDefaultSetLinear(t *testing.T) {
 	c, err := openapi.Parse(context.Background(), typeListChain(1000), testDocURI, nil)
 	if err != nil {

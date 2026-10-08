@@ -145,12 +145,13 @@ func formFieldBodies(name string, v any) []struct {
 	}
 }
 
-// payload.appendForm grows the builder by the source's size before reading:
-// preparing a form body whose field is a 1 MiB *bytes.Reader, read when the
-// call is prepared (doc.go, Fixed rules, Form bodies: "a file in a field is
-// read into memory then"), allocates at most 2.5 times the field's size (bytes
-// allocated, as the scaling harness counts them). An earlier implementation
-// allocated about 5.2 times.
+// Regression check, not contract: preparing a form body whose field is a 1 MiB
+// *bytes.Reader allocates at most 2.5 times the field's size (bytes allocated,
+// as the scaling harness counts them), payload.appendForm growing the builder
+// by the source's size before reading. The reader is read when the call is
+// prepared (doc.go, Fixed rules, Form bodies: "In an
+// application/x-www-form-urlencoded body, a field's reader that can be sent
+// again is read into memory when the call is prepared").
 func TestReplayableFormFieldAllocation(t *testing.T) {
 	c := parseAt(t, doc31(formFieldPaths), "https://api.example.test", testDocURI, nil)
 	if _, err := c.Prepare("form", &openapi.Input{Body: map[string]any{"oc": bytes.NewReader([]byte("first use"))}}); err != nil {

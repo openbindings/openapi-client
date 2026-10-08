@@ -1142,14 +1142,15 @@ func allocatedBy(f func()) uint64 {
 	return after.TotalAlloc - before.TotalAlloc
 }
 
-// doc.go, Values: "A parameter that would take the request target or a
-// header field past 1 MiB ... is refused at its key, and its serialization
-// stops there". A value or an amplified serialization, such as deepObject
-// repeating each member's bracket path per leaf or a template repeating a
-// variable, past 1 MiB is refused at the parameter's key,
-// with nothing sent, and without building the oversized output (allocation
-// during Prepare stays under 16 MiB where the full output would be 20 MiB
-// or more); a request under the limit, with a margin of 1 KiB, is sent.
+// Regression check, not contract: the 16 MiB figure for what Prepare
+// allocates before refusing, where the full output would be 20 MiB or more.
+// The rest is contract: doc.go, Values: "A parameter that would take the
+// request target or a header field past 1 MiB ... is refused at its key, and
+// its serialization stops there". A value or an amplified serialization, such
+// as deepObject repeating each member's bracket path per leaf or a template
+// repeating a variable, past 1 MiB is refused at the parameter's key, with
+// nothing sent, and without building the oversized output; a request under
+// the limit, with a margin of 1 KiB, is sent.
 func TestRequestSizeLimit(t *testing.T) {
 	w := newWire(t, nil)
 	var rep strings.Builder

@@ -74,14 +74,17 @@ func TestColumnsInUTF16AndUTF32(t *testing.T) {
 	}
 }
 
-// load.go, Loader: "A document whose aliases would add ... more than 100 times
-// its own size in bytes ... is rejected too": one 30 KB string aliased 8,000
-// times adds 8,000 nodes, within the node bounds, and 240 MB, beyond the byte
-// bound, so it is rejected without its expansion being built; aliased 50
-// times, it adds 1.5 MB, under the bound of about 3 MB, and loads. The same
-// holds for the document written in UTF-16, whose own size counts its own
-// bytes as retrieved, with the same margins. A loader that expanded the first
-// would use hundreds of megabytes, so the test runs in a child process.
+// Regression check, not contract: the 64 MiB figure for what rejecting the
+// document allocates. The rest is contract: load.go, Loader: "A document whose
+// aliases would add ... more than 100 times its own size in bytes ... is
+// rejected too", by what its aliases would add, so before they are added, and
+// "A rejection names the document's URI": one 30 KB string aliased 8,000 times
+// adds 8,000 nodes, within the node bounds, and 240 MB, beyond the byte bound,
+// so it is rejected; aliased 50 times, it adds 1.5 MB, under the bound of about
+// 3 MB, and loads. The same holds for the document written in UTF-16, whose own
+// size counts its own bytes as retrieved, with the same margins. A loader that
+// expanded the first would use hundreds of megabytes, so the test runs in a
+// child process.
 func TestYAMLAliasByteBound(t *testing.T) {
 	if !inChild(t) {
 		return

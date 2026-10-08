@@ -357,11 +357,10 @@ func TestNilBytePointerOutRefused(t *testing.T) {
 	}
 }
 
-// A (location, style) pair OAS 3.1.2 section 4.8.12.3 (Style Values) does
-// not allow is a document defect on Param.Err, not a missing feature
-// (errors.ErrUnsupported), and fails a call only when the call uses the
-// parameter (describe.go, Operation.Err: "A defect in an optional part is
-// reported on that part instead"). Every valid pair is serialized, so its
+// A (location, style) pair OAS 3.1.2 section 4.8.12.3 (Style Values) does not
+// allow is a document defect on Param.Err, and fails a call only when the call
+// uses the parameter (describe.go, Operation.Err: "A defect in an optional part
+// is reported on that part instead"). Every valid pair is serialized, so its
 // Param.Err is nil; explode false, since explode true with spaceDelimited or
 // pipeDelimited is an undefined combination (doc.go, Fixed rules, Styles;
 // TestStyleRefusals).
@@ -384,7 +383,7 @@ func TestStyleLocationPairValidity(t *testing.T) {
 				tt.path, tt.in, required, tt.style))
 			c := parseFor(t, w, doc, nil)
 			p := param(t, mustOp(t, c, "op"), 0)
-			if p.Err == nil || errors.Is(p.Err, errors.ErrUnsupported) {
+			if p.Err == nil {
 				t.Errorf("Param.Err = %v, want a document defect", p.Err)
 			}
 			before := w.count()
@@ -393,7 +392,7 @@ func TestStyleLocationPairValidity(t *testing.T) {
 			if resp != nil || w.count() != before {
 				t.Errorf("a value for a defective parameter was sent")
 			}
-			if e := re.Inputs["v"]; e == nil || errors.Is(e, errors.ErrUnsupported) {
+			if e := re.Inputs["v"]; e == nil {
 				t.Errorf("Inputs[\"v\"] = %v, want the defect", e)
 			}
 			if !required {

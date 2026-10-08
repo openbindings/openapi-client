@@ -72,9 +72,9 @@ func manyEncodingsInput(n int) *openapi.Input {
 	return &openapi.Input{Body: body, MediaType: "application/x-www-form-urlencoded"}
 }
 
-// Compiling many properties and Encoding Objects is linear: at first use
-// (Operations, which describes every Encoding), and at a first Prepare that
-// gives every form field.
+// Regression check, not contract: compiling many properties and Encoding
+// Objects is linear, at first use (Operations, which describes every Encoding),
+// and at a first Prepare that gives every form field.
 func TestEncodingCompileScale(t *testing.T) {
 	wantLinear(t, "Operations()", 960, func(n int) func() { return timedOperations(t, manyEncodings(n)) })
 	wantLinearBytes(t, "Operations() bytes", 960, func(n int) func() { return timedOperations(t, manyEncodings(n)) })
@@ -123,11 +123,12 @@ func sharedRequestBody(n int) []byte {
 	return []byte(b.String())
 }
 
-// One Request Body with many Encodings, referenced by many operations, is
-// compiled once, as every compiled or decoded form is computed at most once
-// per document node: Operations() costs time, allocated bytes and retained
-// memory linear in the document. Compiled per reference, n Encodings for
-// 16*n operations would be 16 times the work at four times the input.
+// Regression check, not contract: one Request Body with many Encodings,
+// referenced by many operations, is compiled once, as every compiled or decoded
+// form is computed at most once per document node: Operations() costs time,
+// allocated bytes and retained memory linear in the document. Compiled per
+// reference, n Encodings for 16*n operations would be 16 times the work at four
+// times the input.
 func TestSharedEncodingsScale(t *testing.T) {
 	wantLinear(t, "Operations()", 64, func(n int) func() { return timedOperations(t, sharedRequestBody(n)) })
 	wantLinearBytes(t, "Operations() bytes", 64, func(n int) func() { return timedOperations(t, sharedRequestBody(n)) })
@@ -164,11 +165,11 @@ const bodyScaleDoc = `{"openapi":"3.1.0","info":{"title":"t","version":"1"},"ser
 	"/sse":{"post":{"operationId":"sse","requestBody":{"content":{"text/event-stream":{}}}}}
 }}`
 
-// A body of many fields or items costs time and allocated bytes linear in
-// its encoded size, per call: a 100,000-field form (fields of a map, or
-// items of an array, content-encoded or exploded by RFC 6570), a multipart
-// body of as many parts, and a sequential body of 100,000 items from a
-// slice, prepared, and from an iterator, sent through an in-memory
+// Regression check, not contract: a body of many fields or items costs time and
+// allocated bytes linear in its encoded size, per call: a 100,000-field form
+// (fields of a map, or items of an array, content-encoded or exploded by RFC
+// 6570), a multipart body of as many parts, and a sequential body of 100,000
+// items from a slice, prepared, and from an iterator, sent through an in-memory
 // transport.
 func TestBodySizeScale(t *testing.T) {
 	c, err := openapi.Parse(context.Background(), []byte(bodyScaleDoc), testDocURI, &openapi.Options{HTTPClient: &http.Client{Transport: cannedRT{}}})
@@ -240,13 +241,13 @@ const depthBodyDoc = `{"openapi":"3.1.0","info":{"title":"t","version":"1"},"ser
 	"/jsonl":{"post":{"operationId":"jsonl","requestBody":{"content":{"application/jsonl":{}}}}}
 }}`
 
-// doc.go, Values: "A value the client encodes that is nested deeper than
-// 1,000 levels, counted in the JSON encoding/json writes (a MarshalJSON's
-// output included) from the root of that value (a body, a field or part, a
-// sequential item), is refused at its key". A scalar leaf counts as a level,
-// the outermost value being level 1: 999 objects around a leaf in a field, a
-// part or an item are sent, 1,000 are refused at its key. Refusing costs
-// time and bytes linear in the depth; so does accepting.
+// Regression check, not contract: refusing costs time and bytes linear in the
+// depth, and so does accepting. The rest is contract: doc.go, Values: a value
+// "whose JSON, a MarshalJSON's output included, nests deeper than 1,000 levels,
+// the outermost value being level 1" is refused "at the key of the body, field,
+// part, sequential item or parameter that is or holds it". A scalar leaf counts
+// as a level: 999 objects around a leaf in a field, a part or an item are sent,
+// 1,000 are refused at its key.
 func TestBodyDepthLimit(t *testing.T) {
 	c, err := openapi.Parse(context.Background(), []byte(depthBodyDoc), testDocURI, nil)
 	if err != nil {

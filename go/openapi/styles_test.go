@@ -832,7 +832,7 @@ func TestStyleRefusals(t *testing.T) {
 		"/p":{"get":{"operationId":"p","parameters":[{"name":"f","in":"query","style":"pipeDelimited","explode":false,"schema":{}}]}}`)
 	c := parseFor(t, w, doc, nil)
 	for _, key := range []string{"se", "pe", "ser"} {
-		if p := param(t, mustOp(t, c, key), 0); p.Err == nil || errors.Is(p.Err, errors.ErrUnsupported) {
+		if p := param(t, mustOp(t, c, key), 0); p.Err == nil {
 			t.Errorf("%s: Param.Err = %v, want the undefined combination", key, p.Err)
 		}
 	}

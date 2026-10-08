@@ -339,10 +339,12 @@ func TestSwaggerArrayUndefinedFieldOmitted(t *testing.T) {
 	}
 }
 
-// The same 1 MiB stop rule covers named/general/nested collection values and
-// headers. Inputs are prebuilt and plans compiled outside measurement; reuse
-// TestRequestSizeLimit's established 16 MiB allocation ceiling. Small
-// counterparts retain JSON replacement and undefined-item semantics.
+// Regression check, not contract: TestRequestSizeLimit's 16 MiB allocation
+// ceiling. The rest is contract: the 1 MiB stop (doc.go, Values: "its
+// serialization stops there") covers named, general and nested collection
+// values and headers. Inputs are prebuilt and plans compiled outside
+// measurement. Small counterparts retain JSON replacement and undefined-item
+// semantics.
 func TestCollectionStopsAtTargetLimit(t *testing.T) {
 	const n = 4096
 	chunk := strings.Repeat("x", 8192)

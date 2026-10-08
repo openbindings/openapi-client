@@ -254,10 +254,11 @@ func TestSchemaDisprovedInferenceWorkload(t *testing.T) {
 	}
 }
 
-// Four times the feedback contexts and independent holes, under the
-// harness's five-trial 12x-time/8x-byte bounds. ParseOnly includes final
-// refusal/discovery work; GraphOnly excludes Parse and its retained state.
-// Harness, validation and fixture work remain outside measurement.
+// Regression check, not contract: a disproved schema inference costs time and
+// bytes linear in its feedback contexts and independent holes, four times them
+// under the harness's five-trial 12x-time/8x-byte bounds. ParseOnly includes
+// final refusal/discovery work; GraphOnly excludes Parse and its retained
+// state. Harness, validation and fixture work remain outside measurement.
 func TestSchemaDisprovedInferenceScale(t *testing.T) {
 	ctx := t.Context()
 	fixtures := [2]disprovedInferenceFixture{disprovedInferenceGraph(128), disprovedInferenceGraph(512)}

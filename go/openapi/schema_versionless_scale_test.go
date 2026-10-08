@@ -165,11 +165,13 @@ func TestSchemaVersionlessBundleWorkload(t *testing.T) {
 	}
 }
 
-// The unchanged 4x-input, five-trial, 12x-time/8x-byte gate is applied to both
-// phases. ParseAndGraph includes loading, contextual reference discovery and
-// a cold graph-read batch. GraphOnly retains fresh parsed clients but excludes
-// loading work and its retained incoming-context state; it does not claim
-// that work or retention is free. Root must reserve the timing window.
+// Regression check, not contract: a versionless bundle costs time and bytes
+// linear in its size, under the unchanged 4x-input, five-trial,
+// 12x-time/8x-byte gate, applied to both phases. ParseAndGraph includes
+// loading, contextual reference discovery and a cold graph-read batch.
+// GraphOnly retains fresh parsed clients but excludes loading work and its
+// retained incoming-context state; it does not claim that work or retention is
+// free. Root must reserve the timing window.
 func TestSchemaVersionlessBundleScale(t *testing.T) {
 	ctx := t.Context()
 	for _, chained := range []bool{false, true} {

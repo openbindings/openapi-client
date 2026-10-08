@@ -321,12 +321,14 @@ func TestCyclicValuesRefused(t *testing.T) {
 	}
 }
 
-// The depth walk runs before every client encoding, in every class: an
-// object 50,000 levels deep is refused at its key under text, octet-stream,
-// a form text field, a multipart text part and an event stream item, without
-// encoding it first (doc.go, Values: a value "nested deeper than 1,000
-// levels ... is refused at its key"; json.Marshal of it allocates several
-// megabytes): each refusal allocates under 1 MiB.
+// Regression check, not contract: each refusal allocates under 1 MiB, the
+// depth walk running before every client encoding, in every class, so the
+// value is not encoded first (json.Marshal of it allocates several megabytes).
+// The rest is contract: an object 50,000 levels deep is refused at its key
+// under text, octet-stream, a form text field, a multipart text part and an
+// event stream item (doc.go, Values: a value whose JSON "nests deeper than
+// 1,000 levels" is refused "at the key of the body, field, part, sequential
+// item or parameter that is or holds it").
 func TestDepthLimitInEveryEncodingClass(t *testing.T) {
 	_, c := valuesClient(t)
 	deep := nestMap(50000, "x")

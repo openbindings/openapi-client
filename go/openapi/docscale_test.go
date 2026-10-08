@@ -77,10 +77,13 @@ func entryWith(paths string, extra ...string) string {
 	return bare31(paths, extra...)
 }
 
-// Many documents, each a Path Item the entry references, all referencing
-// one shared document; one Path Item chain through many documents; a
-// cycle through many documents entered at every point, as Path Items and
-// as parameters; one external URI referenced many times.
+// Regression check, not contract: loading is linear in time and bytes for
+// many documents, each a Path Item the entry references, all referencing one
+// shared document; one Path Item chain through many documents; a cycle through
+// many documents entered at every point, as Path Items and as parameters; and
+// one external URI referenced many times. That the shared document is fetched
+// once is contract (load.go, Loader: "Only a URI no loaded document identifies
+// is admitted and fetched").
 func TestDocumentsScale(t *testing.T) {
 	wantLinear(t, "many documents", 100, func(n int) func() {
 		docs := map[string]string{docsBase + "shared.json": `{"P":{"name":"p","in":"query"}}`}
@@ -186,11 +189,10 @@ func formPaths(n int, ref func(i int) string) string {
 	return strings.Join(paths, ",")
 }
 
-// The identifier index: one $id claimed by many schemas and referenced many
-// times (each reference unresolvable, naming two claimants); many distinct
-// $ids each referenced; a schema chain through many documents, each adding
-// a field (load.go, Loader: identified URIs first; schema inspection costs
-// what the document holds).
+// Regression check, not contract: the identifier index is linear in time and
+// bytes for one $id claimed by many schemas and referenced many times (each
+// reference unresolvable, naming two claimants); many distinct $ids each
+// referenced; and a schema chain through many documents, each adding a field.
 func TestIdentifiersScale(t *testing.T) {
 	wantLinear(t, "a URI claimed by many schemas", 500, func(n int) func() {
 		var schemas []string
@@ -236,9 +238,9 @@ func yamlParse(t *testing.T, doc string) func() {
 	}
 }
 
-// YAML's shapes: many keys, block and flow; many anchors each aliased;
-// many nests close to the depth bound; a long escaped scalar; a long block
-// scalar.
+// Regression check, not contract: loading YAML is linear in time and bytes for
+// many keys, block and flow; many anchors each aliased; many nests close to
+// the depth bound; a long escaped scalar; and a long block scalar.
 func TestYAMLScale(t *testing.T) {
 	wantLinear(t, "many keys, block", 5000, func(n int) func() {
 		var b strings.Builder
@@ -296,11 +298,11 @@ func sharedNameDoc(refs, nameKiB int) []byte {
 	return []byte(b.String())
 }
 
-// A shared parameter's identity is computed once per node, not once per
-// referencing operation: every compiled or decoded form is computed at most
-// once per document node. With the references fixed, describing the
-// operations costs the same whatever the shared name's length: sixteen times
-// the name, at most three times the time and bytes.
+// Regression check, not contract: a shared parameter's identity is computed
+// once per node, not once per referencing operation: every compiled or decoded
+// form is computed at most once per document node. With the references fixed,
+// describing the operations costs the same whatever the shared name's length:
+// sixteen times the name, at most three times the time and bytes.
 func TestSharedParameterIdentityOncePerNode(t *testing.T) {
 	wantFlat(t, "a shared name 16 times longer", 8, func(n int) func() { return timedOperations(t, sharedNameDoc(4000, n)) })
 }

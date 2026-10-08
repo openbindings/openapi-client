@@ -44,8 +44,11 @@ func noBodyDoc(version string) (doc string, keys []string) {
 		`"servers":[{"url":"@BASE@"}]`), []string{"plain", "ignored"}
 }
 
-// Every kind of body is refused at Inputs["Input.Body"] alone, nothing is
-// sent, and the error names Prepare; with no body the call is sent.
+// Regression check, not contract: the refusal's text names Prepare, the
+// route Input.Body gives ("to send one anyway, Prepare the call and set the
+// body on Request.HTTP"). The rest is contract: every kind of body is refused
+// at Inputs["Input.Body"] alone, nothing is sent, and with no body the call is
+// sent.
 func TestBodyForOperationWithoutBody(t *testing.T) {
 	w := newWire(t, nil)
 	bodies := []struct {
