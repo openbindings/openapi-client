@@ -59,7 +59,7 @@ func parseYAML(ctx context.Context, src, uri string, unit, size int) (*tree, err
 	}
 	switch {
 	case ctx.Err() != nil:
-		return nil, ctx.Err()
+		return nil, contextErr(ctx)
 	case err == io.EOF:
 		return nil, rejection(uri, src, len(src), unit, "no document in the YAML stream")
 	case err != nil:
@@ -136,7 +136,7 @@ func (w *yamlWriter) value(n *yaml.Node, depth int, name uint32) (int, error) {
 	case depth > maxDepth:
 		return 0, w.reject(n, "nesting deeper than 1,000 levels")
 	case w.ctx.Err() != nil:
-		return 0, fmt.Errorf("openapi: %s: %w", safeURI(w.uri), w.ctx.Err())
+		return 0, fmt.Errorf("openapi: %s: %w", safeURI(w.uri), contextErr(w.ctx))
 	case n.Kind == yaml.AliasNode:
 		return w.alias(n, depth, name)
 	}
@@ -163,7 +163,7 @@ func (w *yamlWriter) value(n *yaml.Node, depth int, name uint32) (int, error) {
 			tag, write = "!!map", w.mapping
 		}
 		if n.Style&yaml.TaggedStyle != 0 && n.Tag != tag {
-			return 0, w.reject(n, "the tag "+n.Tag+" is outside the Core schema")
+			return 0, w.reject(n, "the tag "+label(n.Tag)+" is outside the Core schema")
 		}
 		var err error
 		if levels, err = write(n, depth); err != nil {
@@ -403,7 +403,7 @@ func yamlScalar(n *yaml.Node) (text string, quoted bool, err error) {
 	case tag == "":
 		return s, true, nil
 	}
-	return "", false, fmt.Errorf("%s %q: a tag outside the Core schema, or a value that is not of its tag", tag, s)
+	return "", false, fmt.Errorf("%s %q: a tag outside the Core schema, or a value that is not of its tag", label(tag), s)
 }
 
 // yamlNumber returns the JSON spelling of s when it is an integer or float of

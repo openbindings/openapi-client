@@ -83,7 +83,15 @@ func (c *Client) writeParam(b *strings.Builder, lead string, p *param, v any, re
 	if _, raw := v.([]byte); !raw && c.cfg.codecsErr != nil {
 		re.setting("Options.Codecs", c.cfg.codecsErr)
 	}
-	if p.In == "querystring" && p.Err == nil && isForm(*p.media) && len(c.cfg.codecs) == 0 {
+	form := p.In == "querystring" && isForm(*p.media)
+	if form {
+		x := c.doc.datum(v)
+		if x.null {
+			return false, false // undefined, as no form body writes null
+		}
+		v = x.v
+	}
+	if form && p.Err == nil && len(c.cfg.codecs) == 0 {
 		if written, ok, err := simpleForm(b, lead, p.form, v); ok {
 			if err != nil {
 				re.input(p.Key, err)
@@ -114,9 +122,12 @@ func (c *Client) writeParam(b *strings.Builder, lead string, p *param, v any, re
 		b.WriteString(p.name)
 		b.WriteByte('=')
 	}
-	if p.In == "header" || p.In == "cookie" || p.In == "querystring" && isForm(*p.media) {
+	switch {
+	case form:
+		b.WriteString(strings.ReplaceAll(s, "#", "%23")) // as given, but for a "#", which would end the query
+	case p.In == "header" || p.In == "cookie":
 		b.WriteString(s) // as given
-	} else {
+	default:
 		escapeTo(b, s, unreservedSet)
 	}
 	if b.Len() > maxLength {
@@ -132,7 +143,7 @@ func (c *Client) writeParam(b *strings.Builder, lead string, p *param, v any, re
 func (c *Client) encode(p *param, v any) (string, error) {
 	m, k := *p.media, p.media.class()
 	if k == sequentialClass || isMultipart(m) {
-		return "", fmt.Errorf("%s cannot serialize a parameter", m.full)
+		return "", fmt.Errorf("%s cannot serialize a parameter", label(m.full))
 	}
 	switch v := v.(type) {
 	case []byte:
@@ -460,6 +471,9 @@ func (r *jsonReader) skip() (defined bool) {
 			defined = r.skip() || defined
 			return nil
 		})
+	case '"':
+		r.i = closingQuote(r.s, r.i) + 1 // passed over, not decoded
+		defined = true
 	default:
 		r.scalar()
 		defined = true

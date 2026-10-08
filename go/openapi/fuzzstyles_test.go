@@ -22,7 +22,9 @@ import (
 // form style (doc.go, Fixed rules, Styles: RFC 6570's normative text
 // governs); [""] under matrix without explode is ";p" (RFC 6570 section
 // 3.2.7: "=" only if the value is not empty); under allowReserved, reserved
-// expansion applies to member names; and form-style cookie values are
+// expansion applies to member names, and a "#" in the query is encoded
+// (doc.go, Fixed rules, Percent-encoding: "The exceptions are ... "#" in a
+// query"); and form-style cookie values are
 // percent-encoded (doc.go, Fixed rules, Percent-encoding). On top of expect:
 // a path value forming a whole "." or ".." segment is refused (doc.go, Fixed
 // rules, Percent-encoding); a header value holding a CR, LF or NUL, or

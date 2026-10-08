@@ -101,6 +101,10 @@ const (
 	allowU    uallow = iota // unreserved (U)
 	allowUR                 // unreserved, reserved and pct-encoded (U+R)
 	allowNone               // no percent-encoding at all: OAS 3.1.2 section 4.8.12.2.2, for headers
+	// U+R in a query, but for "#", which would end the query (doc.go,
+	// Fixed rules, Percent-encoding: under allowReserved, "#" in a query is
+	// encoded)
+	allowURQuery
 )
 
 // uop is an operator's row of the Appendix A table.
@@ -289,9 +293,9 @@ func uencode(s string, allow uallow) string {
 		switch {
 		case isUnreserved(c):
 			b.WriteByte(c)
-		case allow == allowUR && isReserved(c):
+		case allow == allowUR && isReserved(c), allow == allowURQuery && isReserved(c) && c != '#':
 			b.WriteByte(c)
-		case allow == allowUR && c == '%' && i+2 < len(s) && isHex(s[i+1]) && isHex(s[i+2]):
+		case (allow == allowUR || allow == allowURQuery) && c == '%' && i+2 < len(s) && isHex(s[i+1]) && isHex(s[i+2]):
 			b.WriteString(s[i : i+3])
 			i += 2
 		default:

@@ -3,6 +3,7 @@ package openapi
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"iter"
 	"mime/multipart"
@@ -124,6 +125,10 @@ func Items[T any](r *Response) iter.Seq2[T, error] {
 		_, raw := any(&zero).(*[]byte)
 		_, part := any(&zero).(**multipart.Part)
 		if !raw && !part {
+			if x.cfg.codecsErr != nil { // as Response.Decode reports it, the body left unread
+				yield(zero, invalidDecodeError(r, fmt.Errorf("Options.Codecs: %w", x.cfg.codecsErr)))
+				return
+			}
 			if err := contentCoding(r.Header); err != nil {
 				yield(zero, err)
 				return

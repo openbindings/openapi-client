@@ -499,8 +499,9 @@ var defaultMedia = [...]struct {
 // than array (OpenAPI 3.1.2 section 4.8.15.1.1), whether they allow an
 // object or an array, and the schema of an array's items, or the schemas
 // when several declare items. A string with a contentEncoding is
-// application/octet-stream, as is a value whose type no schema constrains,
-// or nothing can be.
+// application/octet-stream; a value whose type no schema constrains, or
+// nothing can be, and an array's items without a schema, take the untyped
+// default.
 type typing struct {
 	own           mediaSet
 	object, array bool
@@ -519,10 +520,7 @@ func (d *document) typing(s []value, whole bool) typing {
 	var l typing
 	switch t := sh.types; {
 	case !sh.typed || t&^64 == 0:
-		if len(s) > 0 && s[0].ok() && s[0].t.edition <= 30 {
-			return typing{own: textDefault}
-		}
-		return typing{own: octetDefault}
+		return typing{own: untypedDefault(s)}
 	case t&1 != 0 && sh.encoded:
 		l.own = octetDefault
 	case t&1 != 0:
@@ -539,7 +537,7 @@ func (d *document) typing(s []value, whole bool) typing {
 	case whole:
 		l.own |= jsonDefault
 	case !sh.items.ok():
-		l.own |= octetDefault // items allowing anything have no type
+		l.own |= untypedDefault(s) // items allowing anything have no type
 	case !sh.several:
 		l.item = sh.items
 	default:
@@ -550,6 +548,16 @@ func (d *document) typing(s []value, whole bool) typing {
 		})
 	}
 	return l
+}
+
+// untypedDefault is the default of a value of the schemas s whose type none
+// constrains: text/plain in OpenAPI 3.0, and Swagger 2.0, whose tables give
+// it none, and application/octet-stream in OpenAPI 3.1 and 3.2.
+func untypedDefault(s []value) mediaSet {
+	if len(s) > 0 && s[0].ok() && s[0].t.edition <= 30 {
+		return textDefault
+	}
+	return octetDefault
 }
 
 // A state identifies the schemas of a value for the document's caches: a
@@ -572,21 +580,30 @@ func stateOf(s []value) state {
 }
 
 // defaults returns the default media types of a field whose schemas are s:
-// those of the types they allow, an array's following its items. An items
-// chain that leads back into schemas being resolved contributes the absent
-// type, so that every schema of a cycle has the same set, whichever is
-// resolved first. The chain is followed without recursion, and each set is
-// computed once.
+// those of the types they allow, an array's following its items, whose own
+// array type is application/json where an item's schemas are OpenAPI 3.2's,
+// whose table says so of an array inside a top-level array, and otherwise
+// follows its items in turn. An items chain that leads back into schemas
+// being resolved contributes the untyped default, so that every schema of a
+// cycle has the same set, whichever is resolved first. The chain is followed
+// without recursion, and each set is computed once: a set kept for schemas is
+// what they give a field, which is what they give an item too, but for
+// OpenAPI 3.2's, whose set as an item is not kept.
 func (d *document) defaults(s []value) mediaSet {
 	type step struct {
-		key state
-		own mediaSet
+		key     state
+		own     mediaSet
+		untyped mediaSet
 	}
 	var path []step
 	var acc mediaSet
 	var one [1]value
 	cycle, mark, lap := -1, -1, 1 // Brent's cycle detection: the step at the last power of two
 	for len(s) > 0 {
+		if len(path) > 0 && s[0].ok() && s[0].t.edition == 32 { // an item, whose array is application/json, whatever its items
+			acc = d.typing(s, true).own
+			break
+		}
 		k := stateOf(s)
 		if set, ok := d.setOf(k); ok {
 			acc = set
@@ -599,7 +616,7 @@ func (d *document) defaults(s []value) mediaSet {
 			break
 		}
 		l := d.typing(s, false)
-		if path = append(path, step{k, l.own}); !l.array {
+		if path = append(path, step{k, l.own, untypedDefault(s)}); !l.array {
 			break
 		}
 		if len(path)-1-mark == lap || mark < 0 {
@@ -611,7 +628,7 @@ func (d *document) defaults(s []value) mediaSet {
 		}
 	}
 	if cycle >= 0 {
-		acc = octetDefault
+		acc = path[cycle].untyped
 		for _, st := range path[cycle:] {
 			acc |= st.own
 		}
@@ -707,6 +724,9 @@ func (d *document) newField(name string, schema *Schema, roots []value, e value,
 			p.Style = "form"
 		}
 		f.param = compileStyle(p, "query", explode)
+		if p.AllowReserved {
+			f.set = reservedSet // in a body, which no "#" ends; a querystring encodes it as it is written
+		}
 		p.Err = d.defect(e, p.Err)
 	}
 	// Under form-urlencoded and multipart/form-data the style writes every
@@ -1106,11 +1126,19 @@ func (d *document) headers(h value, src string) []*Param {
 			list = append(list, &Param{Name: name, In: "header", Source: at, Err: errBundle})
 			continue
 		}
-		t, at, desc, err := d.follow(v, at)
+		t, tat, desc, err := d.follow(v, at)
+		if err == nil { // a reference that cannot be followed keeps its own location
+			at = tat
+		}
 		p := &Param{Name: name, In: "header", Description: desc, Source: at, Err: err}
 		if err == nil {
 			p.Required, p.Deprecated, p.Schema = t.flag("required"), t.flag("deprecated"), d.schema(t.get("schema"), at, "/schema")
-			if content := t.get("content"); bundled(content) {
+			if content := t.get("content"); !content.ok() && t.t.edition != 20 { // a header value, by the one style a Header Object has
+				p.Style, p.Explode, p.ExplodeSet = "simple", t.flag("explode"), t.get("explode").ok()
+				if style := t.get("style"); style.ok() && style.string() != "simple" {
+					p.Err = fmt.Errorf("style %q is not allowed for a header value", style.string())
+				}
+			} else if bundled(content) {
 				p.Err = errBundle
 			} else if content.ok() {
 				n := 0
@@ -1151,14 +1179,18 @@ func (f *field) media(mt string) (string, parsedMedia, class, error) {
 		if len(f.parsed) == 1 && f.parsed[0].concrete() {
 			return f.types[0], f.parsed[0], f.class, nil
 		}
-		return "", parsedMedia{}, 0, fmt.Errorf("the field offers %s; select one with Part.MediaType", strings.Join(f.types, ", "))
+		offers := make([]string, len(f.types))
+		for i, t := range f.types {
+			offers[i] = label(t)
+		}
+		return "", parsedMedia{}, 0, fmt.Errorf("the field offers %s; select one with Part.MediaType", strings.Join(offers, ", "))
 	}
 	m, ok := parseMedia(mt)
 	switch {
 	case !ok || !m.concrete():
 		return "", parsedMedia{}, 0, errors.New("Part.MediaType is not a concrete media type")
 	case f.listed && !slices.ContainsFunc(f.parsed, func(d parsedMedia) bool { _, ok := d.covers(m); return ok }):
-		return "", parsedMedia{}, 0, fmt.Errorf("the field does not offer %s", m.full)
+		return "", parsedMedia{}, 0, fmt.Errorf("the field does not offer %s", label(m.full))
 	}
 	return mt, m, m.class(), nil
 }
@@ -1176,11 +1208,16 @@ type fieldValue struct {
 // value resolves v, a value of f named name at at, in a form body or else a
 // part, recording why it cannot be sent: f's Err first, as the field's own
 // defect, then its Part's problems, a name a part cannot carry, and its media
-// type's problems. ok is false when nothing is to be sent.
-func (f *field) value(v any, name string, at key, form bool, re *RequestError) (fieldValue, bool) {
+// type's problems. ok is false when nothing is to be sent. read reports that
+// v was read as a datum already, and is not null.
+func (f *field) value(d *document, v any, name string, at key, form, read bool, re *RequestError) (fieldValue, bool) {
 	v, pt, err := part(v, form)
-	if err == nil && pt != nil && null(v) {
-		return fieldValue{}, false // a Part whose content is null is omitted
+	if err == nil && (pt != nil || !read) && !scalar(v) {
+		x := d.datum(v)
+		if x.null {
+			return fieldValue{}, false // a value, or a Part's content, whose JSON data is null is omitted, whatever the media type
+		}
+		v = x.v
 	}
 	switch {
 	case f.err != nil:
@@ -1215,6 +1252,9 @@ func (d *document) members(v any, enc *formEncoding, f func(name string, fd *fie
 		}
 		return nil
 	}
+	if j, ok := v.(jsonData); ok {
+		return jsonMembers(j, enc, f)
+	}
 	rv := reflect.ValueOf(v)
 	if h, ok := v.(held); ok {
 		rv = h.p.Elem()
@@ -1229,7 +1269,7 @@ func (d *document) members(v any, enc *formEncoding, f func(name string, fd *fie
 	w := d.walkOf(rv.Type(), nil)
 	switch {
 	case w.json || w.text || rv.CanAddr() && (w.ptrJSON || w.ptrText) || rv.Kind() == reflect.Map && !jsonKeys(rv.Type()):
-		return jsonMembers(d.elem(rv), enc, f)
+		return jsonMembers(v, enc, f) // v itself, as json dispatches on the types it meets
 	case w.reader || rv.Kind() == reflect.Map && rv.IsNil():
 		return errNotObject
 	case rv.Kind() == reflect.Map:
@@ -1273,24 +1313,32 @@ func (d *document) members(v any, enc *formEncoding, f func(name string, fd *fie
 }
 
 // jsonMembers calls f with the members of the object encoding/json writes for
-// v, each as its JSON text, and the fields of enc they are.
+// v, or a jsonData holds, each as the JSON data of a json.RawMessage of its
+// text, and the fields of enc they are.
 func jsonMembers(v any, enc *formEncoding, f func(name string, fd *field, v any)) error {
-	s, err := marshal(v)
+	j, ok := v.(jsonData)
+	if !ok {
+		j = marshaled(v)
+	}
 	switch {
-	case err != nil:
-		return err
-	case s[0] != '{':
+	case j.err != nil:
+		return j.err
+	case j.s[0] != '{':
 		return errNotObject
 	}
-	r := &jsonReader{s: s}
+	r := &jsonReader{s: j.s}
 	r.each(func(name string) error {
 		start := r.i
 		r.skip()
-		f(name, enc.field(name), json.RawMessage(r.s[start:r.i]))
+		f(name, enc.field(name), rawData(r.s[start:r.i]))
 		return nil
 	})
 	return nil
 }
+
+// rawData is the JSON data of a json.RawMessage of s, JSON text as marshal
+// writes it, which bare makes only for a caller's codec.
+func rawData(s string) jsonData { return jsonData{s: s} }
 
 // deref returns v past the pointers and interfaces encoding/json follows to
 // write it, to a value it writes by its own method or by reflection, or to
@@ -1321,20 +1369,35 @@ func (d *document) deref(v reflect.Value) (reflect.Value, bool) {
 // it where v can be addressed and json writes it otherwise than a copy, by
 // a pointer's method at it or inside it, held when that pointer is a reader;
 // and held when v's interface type selects a method other than the value's
-// own.
+// own (see item).
 func (d *document) elem(v reflect.Value) any {
 	switch {
 	case v.Kind() == reflect.Interface:
-		if w := d.walkOf(v.Type(), nil); w.text && !w.json && !v.IsNil() && d.walkOf(v.Elem().Type(), nil).json {
-			p := reflect.New(v.Type())
-			p.Elem().Set(v)
-			return held{p}
-		}
+		return d.item(v)
 	case v.CanAddr():
 		if w := d.walkOf(v.Type(), nil); w.addr && w.ptrRead {
 			return held{v.Addr()}
 		} else if w.addr {
 			return v.Addr().Interface()
+		}
+	}
+	return v.Interface()
+}
+
+// item returns the value the interface v holds inside a value, as a struct
+// field, map value or array element, as encoding/json writes the value around
+// it: held when v's interface type selects a method other than the value's
+// own, as MarshalText does over a MarshalJSON, or one the value does not run,
+// as either does on a nil pointer, whose own encoding is null. A whole list
+// body's element is read on its own instead (see datum.item).
+func (d *document) item(v reflect.Value) any {
+	if v.Kind() == reflect.Interface && v.NumMethod() > 0 && !v.IsNil() { // an empty interface selects no method
+		w := d.walkOf(v.Type(), nil)
+		e := v.Elem()
+		if (w.json || w.text) && e.Kind() == reflect.Pointer && e.IsNil() || w.text && !w.json && d.walkOf(e.Type(), nil).json {
+			p := reflect.New(v.Type())
+			p.Elem().Set(v)
+			return held{p}
 		}
 	}
 	return v.Interface()
@@ -1364,6 +1427,8 @@ func (d *document) values(v any, at key, f func(v any, at key)) bool {
 	item := func(i int) key { at.item = i; return at }
 	switch x := v.(type) {
 	case nil, string, int, bool, float64, json.Number, []byte, Part, *Part, io.Reader:
+	case jsonData:
+		return dataValues(x, at, f)
 	case []any:
 		for i, v := range x {
 			if !null(v) {
@@ -1383,19 +1448,7 @@ func (d *document) values(v any, at key, f func(v any, at key)) bool {
 		w := d.walkOf(rv.Type(), nil)
 		switch k := rv.Kind(); {
 		case w.json || rv.CanAddr() && w.ptrJSON:
-			if s, err := marshal(d.elem(rv)); err == nil && s[0] == '[' {
-				r, i := &jsonReader{s: s}, 0
-				r.each(func(string) error {
-					start := r.i
-					r.skip()
-					if v := r.s[start:r.i]; v != "null" {
-						f(json.RawMessage(v), item(i))
-					}
-					i++
-					return nil
-				})
-				return s[1] != ']'
-			}
+			return dataValues(marshaled(v), at, f)
 		case w.text || rv.CanAddr() && w.ptrText || k != reflect.Slice && k != reflect.Array || k == reflect.Slice && bytesKind(rv.Type()):
 		default:
 			for i := range rv.Len() {
@@ -1410,6 +1463,30 @@ func (d *document) values(v any, at key, f func(v any, at key)) bool {
 		f(v, at)
 	}
 	return false
+}
+
+// dataValues calls f as values does for the JSON data j: with each item of an
+// array, null items left out, at its index, or else with j, unless it is
+// null.
+func dataValues(j jsonData, at key, f func(v any, at key)) bool {
+	if j.err != nil || j.s[0] != '[' {
+		if j.err != nil || j.s != "null" {
+			f(j, at)
+		}
+		return false
+	}
+	r := &jsonReader{s: j.s}
+	at.item = 0
+	r.each(func(string) error {
+		start := r.i
+		r.skip()
+		if s := r.s[start:r.i]; s != "null" {
+			f(rawData(s), at)
+		}
+		at.item++
+		return nil
+	})
+	return j.s[1] != ']'
 }
 
 // bytesKind reports whether encoding/json writes the slice type t as base64.
@@ -1431,6 +1508,139 @@ func null(v any) bool {
 		return rv.IsNil() && !t.Implements(marshalerType) && !t.Implements(textMarshalerType) && (rv.Kind() == reflect.Slice || jsonKeys(t))
 	}
 	return false
+}
+
+// A datum is a value as json.Marshal reads it: its JSON data is null, a list,
+// whose items are items, or other data, bytes when it is a byte slice's
+// base64 string. v is the value to carry on: as given, or a jsonData when json
+// writes it by its own MarshalJSON, or cannot write it.
+type datum struct {
+	v                 any
+	null, list, bytes bool
+	items             reflect.Value
+}
+
+// datum reads v as json.Marshal does: through the pointers and interfaces it
+// follows, a nil one, a nil map whose keys it can write and a nil slice being
+// null, up to a value it
+// writes by its own MarshalJSON, which it runs once on v itself (json
+// dispatches on the types it meets), or MarshalText, which writes a string,
+// or by reflection, a slice or an array, not a []byte, being a list. Its
+// elements are read each on its own. A reader is raw content, given as it is,
+// though null when its own MarshalJSON writes null.
+func (d *document) datum(v any) datum {
+	switch x := v.(type) {
+	case nil:
+		return datum{null: true}
+	case string, int, bool, float64, json.Number:
+		return datum{v: v}
+	case map[string]any:
+		return datum{v: v, null: x == nil}
+	case []any:
+		return datum{v: v, null: x == nil, list: x != nil, items: reflect.ValueOf(x)}
+	case jsonData:
+		return x.datum()
+	case held:
+		if d.walkOf(x.p.Elem().Type(), nil).json {
+			return marshaled(v).datum()
+		}
+		return datum{v: v}
+	}
+	if _, reader := v.(io.Reader); reader {
+		if null(v) {
+			return datum{v: v, null: true}
+		}
+		if !d.walkOf(reflect.TypeOf(v), nil).json {
+			return datum{v: v}
+		}
+		s, err := marshal(v)
+		return datum{v: v, null: err == nil && s == "null"}
+	}
+	rv, ok := d.deref(reflect.ValueOf(v))
+	switch {
+	case !ok: // a cycle, which json refuses as it encodes v
+		return datum{v: v}
+	case !rv.IsValid(), (rv.Kind() == reflect.Pointer || rv.Kind() == reflect.Interface) && rv.IsNil():
+		return datum{v: v, null: true}
+	}
+	switch w := d.walkOf(rv.Type(), nil); {
+	case w.json:
+		return marshaled(v).datum() // a caller's codec still receives v
+	case w.text || w.reader:
+		return datum{v: v}
+	}
+	switch rv.Kind() {
+	case reflect.Map:
+		if rv.IsNil() && !jsonKeys(rv.Type()) {
+			return marshaled(v).datum() // json's refusal of its keys, nil or not
+		}
+		return datum{v: v, null: rv.IsNil()}
+	case reflect.Slice:
+		if rv.IsNil() {
+			return datum{v: v, null: true}
+		}
+		if bytesKind(rv.Type()) {
+			return datum{v: v, bytes: true} // a base64 string
+		}
+		fallthrough
+	case reflect.Array:
+		return datum{v: v, list: true, items: rv}
+	}
+	return datum{v: v}
+}
+
+// len returns the number of items of a list, and 0 for null.
+func (x datum) len() int {
+	if !x.list {
+		return 0
+	}
+	return x.items.Len()
+}
+
+// item returns the list's item i on its own, as an iterator yields it: the
+// value the element holds, whatever the list's element type, a copy where
+// the element could be addressed.
+func (x datum) item(i int) any { return x.items.Index(i).Interface() }
+
+// scalar reports whether v is a string, bool or number of a type a datum
+// reads as it is: never null, and written by no method.
+func scalar(v any) bool {
+	switch v.(type) {
+	case string, bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, uintptr, float32, float64:
+		return true
+	}
+	return false
+}
+
+// nullData reports whether v's JSON data is null.
+func (d *document) nullData(v any) bool { return d.datum(v).null }
+
+// datum reads the JSON data j: null, a list of its items, each the JSON data
+// of a json.RawMessage, or other data, as which j is carried on.
+func (j jsonData) datum() datum {
+	switch {
+	case j.err != nil:
+		return datum{v: j}
+	case j.s == "null":
+		return datum{v: j, null: true}
+	case j.s[0] == '[':
+		return datum{v: j, list: true, items: reflect.ValueOf(jsonItems(j.s))}
+	}
+	return datum{v: j}
+}
+
+// jsonItems returns the items of the JSON array s, as marshal writes it, each
+// as the JSON data of a json.RawMessage.
+func jsonItems(s string) []any {
+	r := &jsonReader{s: s}
+	var items []any
+	r.each(func(string) error {
+		start := r.i
+		r.skip()
+		items = append(items, rawData(r.s[start:r.i]))
+		return nil
+	})
+	return items
 }
 
 // part returns the content of v, a field's value, and its Part, if it is one

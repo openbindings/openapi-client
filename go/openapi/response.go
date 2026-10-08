@@ -655,6 +655,10 @@ func readAll(dst []byte, r io.Reader, size, bound int64) ([]byte, error) {
 	}
 }
 
+// contextErr returns ctx's error once ctx is done, matching its cause too,
+// or nil.
+func contextErr(ctx context.Context) error { return withContext(ctx, ctx.Err()) }
+
 // withContext makes err, from a call whose context is done, match the
 // context's error and its cause.
 func withContext(ctx context.Context, err error) error {

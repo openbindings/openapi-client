@@ -56,7 +56,9 @@
 // value, which encoding/json writes as null. The client first converts a
 // value to JSON data as encoding/json would (struct tags, MarshalJSON,
 // TextMarshaler map keys), then serializes that data as the document says;
-// a caller's codec (see [Options.Codecs]) receives the value as given.
+// a caller's codec (see [Options.Codecs]) receives the value as given. The
+// JSON data of a value encoding/json writes by its MarshalText, such as a
+// net.IP, is a string, whatever its Go kind.
 // Where a parameter or a form or multipart field needs text, a number or
 // boolean is written in its JSON spelling (10, 2.5, true) and a string or
 // json.Number as it is.
@@ -83,14 +85,15 @@
 // says, and "" is a value. An undefined member or array item is skipped, as RFC
 // 6570 section 3.2.1 expands only defined ones, an undefined optional parameter
 // is omitted, and an undefined required one is missing. A form or multipart
-// property or array item whose JSON data is null is omitted, whatever its
-// serialization. A parameter serialized by content is encoded as a body of its
-// media type is, so under application/json null, [] and {} are present values,
-// and a []byte is the encoded content; a reader, and a multipart or sequential
-// media type, cannot serialize a parameter and are refused at its key. A reader
-// or Part anywhere inside a parameter value the client encodes with
-// encoding/json is refused at the parameter's key, as for a body, unless its
-// own MarshalJSON or MarshalText encodes it. A JSON body
+// property or array item, or a positional part, whose JSON data is null is
+// omitted, whatever its serialization or media type, a form, multipart or
+// sequential one included. A parameter serialized by content is encoded as a
+// body of its media type is, so under application/json null, [] and {} are
+// present values, and a []byte is the encoded content; a reader, and a
+// multipart or sequential media type, cannot serialize a parameter and are
+// refused at its key. A reader or Part anywhere inside a parameter value the
+// client encodes with encoding/json is refused at the parameter's key, as for a
+// body, unless its own MarshalJSON or MarshalText encodes it. A JSON body
 // or JSON part is exactly what its codec writes, null members, [] and {}
 // included. A value the client encodes that is nested deeper than 1,000 levels,
 // counted in the JSON encoding/json writes (a MarshalJSON's output included)
@@ -138,9 +141,14 @@
 //
 // No credential appears in the text of an error the client creates, nor in the
 // URL of the *url.Error the http.Client returns, which names the request
-// without the credentials the client added. Errors made by the caller's own
-// code, such as its transport or a credential source, are passed on as they
-// are, even when their text quotes a URL.
+// without the credentials the client added. Text such an error takes from the
+// document, a caller's value or a server, a media type and a YAML tag
+// included, is quoted, as strconv.Quote quotes it, whenever it holds invalid
+// UTF-8 or a character that strconv.IsPrint reports is not printable, such as
+// a line feed or an escape, so that it cannot forge a line of a log or reach a
+// terminal as control codes. Errors made by the caller's own code, such as its
+// transport or a credential source, are passed on as they are, even when
+// their text quotes a URL.
 //
 // # Configuration when the document is incomplete
 //
@@ -169,9 +177,25 @@
 //     type when the Encoding gives none; a list or a range requires
 //     Part.MediaType. The default is read from the field's schema (the
 //     property's, or, for a positional part, the prefixItems, items or
-//     itemSchema entry for its position), never from the Go value; in
-//     Swagger 2.0, and where an OpenAPI 3.0 schema has no type, it is
-//     text/plain, or application/octet-stream for a file parameter.
+//     itemSchema entry for its position), never from the Go value, by the
+//     Encoding Object's table of defaults in the schema's edition: it is the
+//     default of each type allowed together by that schema and every schema it
+//     reaches by $ref and allOf, a schema without type allowing every type and
+//     number allowing integer, as JSON Schema says, and types with different
+//     defaults give a list. Where they allow every type, or none but null, it
+//     is application/octet-stream in OpenAPI 3.1 and 3.2, as for a string with
+//     a contentEncoding, and text/plain in 3.0, whose table gives no default
+//     for it; in 3.0 a string with format binary or byte is
+//     application/octet-stream. Of a property, whose array is sent one field or
+//     part per item, the array type takes the defaults of its items, those of a
+//     schema without type when it declares none. Of an item, the array type is
+//     application/json in OpenAPI 3.2, as its table says of an array inside a
+//     top-level array; in 3.0 and 3.1, whose tables read an array by its items,
+//     it takes the defaults of its own items in turn, as a property's does, and
+//     an items chain that leads back into itself adds the default of a schema
+//     without type. A positional part's array is application/json. In Swagger
+//     2.0, a formData field is text/plain, or application/octet-stream for a
+//     file parameter.
 //
 // Options.Security, Options.SecurityKey and Options.MediaType are
 // preferences: each applies to the operations that offer its selection,
@@ -222,17 +246,21 @@
 //     document that contains the Server Object, the one it was retrieved
 //     from, never its OpenAPI 3.2 $self; only an http or https URI is such
 //     a base, and otherwise the server cannot be used. The path is then
-//     appended as written, except that one "/" is dropped where the URL
-//     ends with one and the path begins with one. A server URL with
-//     userinfo, a query or a fragment after substitution cannot be used
-//     either (Server.Err, where the document alone decides it). An empty
-//     servers array on a path item or operation, and an empty Swagger 2.0
-//     schemes list, are read as absent, as OpenAPI says of the root's
-//     servers. In Swagger 2.0, as 2.0 says, a missing host is the host and
-//     port as written in the http or https URI the document was retrieved
-//     from, a missing schemes list that URI's scheme, and a missing basePath
-//     adds nothing; without such a URI, a server missing host or schemes
-//     cannot be used.
+//     appended as written, except that one "/" is dropped where the URL ends
+//     with one and the path begins with one. In the request target, the Paths
+//     key and the path of the server URL or Options.BaseURL keep each %XX
+//     triple as written and write as %XX, in uppercase hex, any other byte RFC
+//     3986 does not allow in a path; a "%" that begins no triple is such a byte
+//     in the Paths key, and makes a server URL unusable and Options.BaseURL
+//     refused. A server URL with userinfo, a query or a fragment after
+//     substitution cannot be used either (Server.Err, where the document alone
+//     decides it). An empty servers array on a path item or operation, and an
+//     empty Swagger 2.0 schemes list, are read as absent, as OpenAPI says of
+//     the root's servers. In Swagger 2.0, as 2.0 says, a missing host is the
+//     host and port as written in the http or https URI the document was
+//     retrieved from, a missing schemes list that URI's scheme, and a missing
+//     basePath adds nothing; without such a URI, a server missing host or
+//     schemes cannot be used.
 //   - Bodies by method: a request body declared on TRACE or CONNECT, and in
 //     OpenAPI 3.0 on GET, HEAD, DELETE or OPTIONS, as 3.0 says, is ignored,
 //     so the operation takes none; otherwise a declared body is sent with
@@ -256,15 +284,20 @@
 //     whole "." or ".." segment is refused, since RFC 3986 section 5.2.4
 //     removes such segments before the value could reach the server. So deepObject nests objects
 //     as a%5Bb%5D%5Bc%5D=v, and the spaceDelimited and pipeDelimited
-//     delimiters are %20 and %7C. allowReserved applies to query
-//     parameters, and in OpenAPI 3.2 to path parameters and form-style
-//     cookie parameters too; elsewhere it is ignored. Where it applies, RFC
-//     6570 reserved expansion is used exactly, member names included
-//     (parameter names always follow the rule above): reserved characters
-//     and existing %XX triples pass through, and the caller supplies any
-//     percent-encoding OpenAPI leaves to the application. Header values
-//     are written as given in every edition, never percent-encoded, as
-//     OpenAPI 3.1.2 corrects. OpenAPI 3.2 cookie style names and values, a
+//     delimiters are %20 and %7C. allowReserved applies to query parameters,
+//     and in OpenAPI 3.2 to path parameters and form-style cookie parameters
+//     too; elsewhere it is ignored. Where it applies, RFC 6570 reserved
+//     expansion is used, member names included (parameter names always follow
+//     the rule above): reserved characters and existing %XX triples pass
+//     through, except those the destination cannot carry, which are encoded as
+//     above, and the caller supplies any other percent-encoding OpenAPI leaves
+//     to the application. The exceptions are "?" and "#" in a path and "#" in a
+//     query, a querystring parameter's included, which would end the path or
+//     the query there; and "," and ";" in a form-style cookie's member names
+//     and values, which RFC 6265 section 4.1.1 excludes from a cookie-octet, so
+//     that a value cannot add a cookie pair. Header values are written as given
+//     in every edition, never percent-encoded, as OpenAPI 3.1.2 corrects.
+//     OpenAPI 3.2 cookie style names and values, a
 //     content-serialized cookie value (OpenAPI 3.1.2 recommends text/plain
 //     content so the application assembles the cookie), and an apiKey sent
 //     in a cookie, are written as given too; a cookie
@@ -282,13 +315,14 @@
 //     array or object for a cookie parameter with explode false. Each is
 //     refused at the parameter's key, with Param.Err set where the document
 //     alone decides it.
-//   - Querystring: an OpenAPI 3.2 querystring parameter is the whole query,
-//     and its name is not written. Under application/x-www-form-urlencoded
-//     its value is an object written by the form-body rules, Encoding
-//     included, and is not encoded again; under any other media type the
-//     encoded value is percent-encoded as a query value is. An undefined
-//     value or an empty result sends no query. A query credential follows,
-//     after "&".
+//   - Querystring: an OpenAPI 3.2 querystring parameter is the whole query, and
+//     its name is not written. Under application/x-www-form-urlencoded its
+//     value is an object written by the form-body rules, Encoding included, and
+//     is not encoded again, but for a "#" (see Percent-encoding), and a value
+//     whose JSON data is null is undefined; under any other media type the
+//     encoded value is percent-encoded as a query value is. An undefined value
+//     or an empty result sends no query, and leaves a required parameter
+//     missing. A query credential follows, joined by "&" to any query.
 //   - Form bodies use the WHATWG application/x-www-form-urlencoded encoder
 //     in every edition (a space as +, letters, digits and *-._ literal,
 //     every other byte as %XX), except that a property whose Encoding sets

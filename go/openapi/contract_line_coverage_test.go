@@ -1007,7 +1007,8 @@ func TestClosedIteratorBodyNeverStarts(t *testing.T) {
 // load.go, Load: "Any other defect ... is reported on the part it reaches, in
 // its Err, or ignored where nothing depends on it". A tags value or a server
 // variable's enum that is an object instead of an array lists nothing
-// (describe.go: Variable.Enum "is nil when none is declared"); a security
+// (describe.go: Variable.Enum "is nil when none is declared"), the enum also
+// making its server unusable (see TestServerVariableEnumShapes); a security
 // requirement whose scopes are an object is a defect of each operation it
 // reaches (Operation.Err, with no alternative listed), and Load does not take
 // an Options.SecurityKey naming the scopes that object holds as an alternative

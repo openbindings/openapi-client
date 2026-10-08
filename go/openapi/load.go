@@ -14,9 +14,12 @@ import (
 // one with userinfo, which RFC 9110 section 4.2.4 forbids a sender to
 // generate (supply credentials through HTTPClient or Loader.Fetch), and a
 // file URL naming a host other than localhost. ctx bounds the whole load,
-// reading and parsing included. A nil opts means the defaults. The Client
-// keeps a copy of opts, its maps included, so changing them afterwards has
-// no effect. Load uses the zero [Loader].
+// reading and parsing included: when it is done before the load completes, Load
+// returns no Client and an error that matches ctx.Err() with errors.Is, and
+// also context.Cause(ctx), even while a referenced document, whose failure
+// would otherwise disable only what reaches it, is being read. A nil opts means
+// the defaults. The Client keeps a copy of opts, its maps included, so changing
+// them afterwards has no effect. Load uses the zero [Loader].
 //
 // Load fails when the document is unusable as a whole: it cannot be
 // retrieved or parsed (see [Loader]), its swagger or openapi field is
@@ -123,13 +126,15 @@ func Parse(ctx context.Context, content []byte, uri string, opts *Options) (*Cli
 // Schema's Raw or in Document at the Source of the object holding it. Security
 // requirement names resolve as [SchemeLookup] says.
 type Loader struct {
-	// Fetch, if set, retrieves each document the loader needs in place of
-	// the default (http and https with the Options' HTTPClient, file URLs
-	// from disk). It returns the content, which the loader closes, and the
-	// URI it was finally retrieved from after any redirects, which becomes
-	// that document's base; an empty final means uri. The loader may call
-	// Fetch from several goroutines at once, so that a document split into
-	// several files loads in parallel.
+	// Fetch, if set, retrieves each document the loader needs in place of the
+	// default (http and https with the Options' HTTPClient, file URLs from
+	// disk). A uri given to Load as a file path reaches Fetch as the file URL
+	// of its absolute path (filepath.Abs), the URI under which the default
+	// reads it. It returns the content, which the loader closes, and the URI it
+	// was finally retrieved from after any redirects, which becomes that
+	// document's base; an empty final means uri. The loader may call Fetch from
+	// several goroutines at once, so that a document split into several files
+	// loads in parallel.
 	//
 	// Fetch only retrieves. Reference admission is decided by
 	// AllowReference, or by the default boundary and Origins when it is nil.

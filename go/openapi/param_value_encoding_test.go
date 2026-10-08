@@ -1055,6 +1055,79 @@ func TestSelfMarshalingReaders(t *testing.T) {
 	}
 }
 
+// marshalingReader is an io.Reader, read once, whose value-receiver
+// MarshalJSON writes an object.
+type marshalingReader struct{ r *strings.Reader }
+
+func (m marshalingReader) Read(p []byte) (int, error) { return m.r.Read(p) }
+func (marshalingReader) MarshalJSON() ([]byte, error) { return []byte(`{"a":"json"}`), nil }
+
+// A value that is both an io.Reader and a json.Marshaler is a reader wherever
+// a reader is raw content, as TestSelfMarshalingReaders has a whole body or
+// content value "sent or refused as a reader". client.go, Input.Body: "A
+// property may be a []byte, an io.Reader or a [Part]", and a positional part
+// "a []byte, an io.Reader, a Part, or a value encoded by that part's media
+// type"; Part.Content: "a []byte or an io.Reader for raw content";
+// Part.Filename: "the part's name for a []byte or io.Reader Content whose
+// media type is not multipart"; Options.Codecs: "a []byte or io.Reader body,
+// bypass codecs"; Request.HTTP: "GetBody is set when the body can be sent
+// again", and Input.Body says such a reader "is read once"; doc.go, Values:
+// "a reader ... cannot serialize a parameter and [is] refused at its key". So
+// its bytes, never its MarshalJSON, are sent as a form field, a text/plain
+// form field, a multipart/form-data field with a filename, a text/plain one,
+// a Part's Content, a field of a caller's codec type, and an OpenAPI 3.2
+// positional multipart/mixed part, each in a body sent once; and it is
+// refused at the key of a querystring parameter under
+// application/x-www-form-urlencoded.
+func TestMarshalingReaderIsAReader(t *testing.T) {
+	c := editionClient(t, editionDoc("3.2.1", `
+		"/f":{"post":{"requestBody":{"content":{"application/x-www-form-urlencoded":{
+			"schema":{"type":"object","properties":{"f":{},"t":{"type":"string"}}}}}}}},
+		"/m":{"post":{"requestBody":{"content":{"multipart/form-data":{
+			"schema":{"type":"object","properties":{"f":{},"t":{"type":"string"},"c":{}}},
+			"encoding":{"c":{"contentType":"application/x-tag"}}}}}}},
+		"/p":{"post":{"requestBody":{"content":{"multipart/mixed":{"schema":{"type":"array"},"itemEncoding":{"contentType":"application/json"}}}}}},
+		"/q":{"get":{"parameters":[{"name":"qs","in":"querystring","content":{"application/x-www-form-urlencoded":{}}}]}}`),
+		&openapi.Options{Codecs: map[string]openapi.Codec{"application/x-tag": tagCodec{tag: "TAG"}}})
+	const mfd, mixed = "multipart/form-data; boundary=B", "multipart/mixed; boundary=B"
+	part := func(name, ctype string) string {
+		return "--B\r\nContent-Disposition: form-data; name=\"" + name + "\"; filename=\"" + name + "\"\r\nContent-Type: " + ctype + "\r\n\r\nraw\r\n--B--\r\n"
+	}
+	for _, tc := range []struct {
+		name, key, media string
+		body             func(r any) any
+		want             string
+	}{
+		{"form field", "POST /f", "", func(r any) any { return map[string]any{"f": r} }, "f=raw"},
+		{"text/plain form field", "POST /f", "", func(r any) any { return map[string]any{"t": r} }, "t=raw"},
+		{"multipart field", "POST /m", mfd, func(r any) any { return map[string]any{"f": r} }, part("f", "application/octet-stream")},
+		{"text/plain multipart field", "POST /m", mfd, func(r any) any { return map[string]any{"t": r} }, part("t", "text/plain")},
+		{"Part Content", "POST /m", mfd, func(r any) any { return map[string]any{"f": openapi.Part{Content: r}} }, part("f", "application/octet-stream")},
+		{"caller's codec field", "POST /m", mfd, func(r any) any { return map[string]any{"c": r} }, part("c", "application/x-tag")},
+		{"positional part", "POST /p", mixed, func(r any) any { return []any{r} }, "--B\r\nContent-Type: application/json\r\n\r\nraw\r\n--B--\r\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req, err := c.Prepare(tc.key, &openapi.Input{MediaType: tc.media, Body: tc.body(marshalingReader{strings.NewReader("raw")})})
+			if err != nil {
+				t.Fatalf("refused: %v", err)
+			}
+			if req.HTTP.GetBody != nil {
+				t.Error("GetBody is set for a body holding a reader read once")
+			}
+			if got := string(editionBody(t, req)); got != tc.want {
+				t.Errorf("body %q, want %q", got, tc.want)
+			}
+		})
+	}
+	t.Run("querystring", func(t *testing.T) {
+		_, err := c.Prepare("GET /q", &openapi.Input{Params: map[string]any{"qs": marshalingReader{strings.NewReader("raw")}}})
+		if err == nil {
+			t.Fatal("prepared a reader as a querystring value")
+		}
+		wantKeys(t, "Inputs", asRequestError(t, err).Inputs, true, "qs")
+	})
+}
+
 // limit is the bound on the request target and on each header field the
 // client builds.
 const limit = 1 << 20

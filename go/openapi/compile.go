@@ -303,7 +303,7 @@ func (e *entry) shape(plan bool) *operation {
 
 	sec := d.inherited().security
 	if security.ok() {
-		sec = d.compileSecurity(security)
+		sec = d.compileSecurity(security, src+"/security")
 	}
 	op.Security, o.security, errs = sec.reqs, sec.alts, append(errs, sec.err)
 	for dest := range sec.dests { // keep the parameters where a credential goes
@@ -605,11 +605,15 @@ func compileStyle(p *Param, in string, explode value) param {
 	}
 	pp := param{Param: p, style: cmp.Or(styles[p.Style], &noStyle), set: unreservedSet, name: escape(p.Name, unreservedSet)}
 	if p.AllowReserved {
-		pp.set = reservedSet
-		if in == "path" {
+		switch in {
+		case "path":
 			// Literal ? and # invalidate URL.RawPath; net/url then falls
 			// back to decoded Path, losing preserved percent triplets.
 			pp.set = reservedPathSet
+		case "cookie":
+			pp.set = reservedCookieSet // a "," or ";" would end the pair
+		case "query":
+			pp.set = reservedQuerySet // a "#" would end the query
 		}
 	}
 	return pp
@@ -944,7 +948,7 @@ func (d *document) inherited() *inheritance {
 			r.servers = &serverList{[]*server{sv}, []*Server{sv.Server}}
 		}
 		if sec := d.root().get("security"); sec.ok() {
-			r.security = d.compileSecurity(sec)
+			r.security = d.compileSecurity(sec, d.source("/security"))
 		}
 		return r
 	})
@@ -1052,6 +1056,7 @@ func newServer(s *Server, declared value, t *tree) *server {
 	text, names, _ := splitTemplate(s.URL)
 	sv := &server{Server: s, t: t, text: text}
 	var index map[string]int
+	var enumErr error // an enum written as a reference, or as anything but an array of strings
 	for _, name := range names {
 		j, seen := index[name]
 		if !seen {
@@ -1066,8 +1071,16 @@ func newServer(s *Server, declared value, t *tree) *server {
 				if !bundled(n) { // written as a reference, it has nothing to read (its Server's Err says so)
 					v.Description = n.str("description")
 					v.Default, v.DefaultSet = n.str("default"), n.get("default").ok()
-					if e := n.get("enum"); e.kind() == '[' {
-						v.Enum = append([]string{}, e.strs()...)
+					switch e := n.get("enum"); {
+					case !e.ok():
+					case bundled(e):
+						enumErr = errBundle
+					default:
+						if list, ok := stringList(e); ok {
+							v.Enum = append([]string{}, list...)
+						} else {
+							enumErr = cmp.Or(enumErr, fmt.Errorf("the enum of variable %s is not an array of strings", label(name)))
+						}
 					}
 				}
 			}
@@ -1102,6 +1115,9 @@ func newServer(s *Server, declared value, t *tree) *server {
 	} else if strings.ContainsAny(literal, "?#") || authority >= 0 && strings.Contains(literal[authority:path], "@") ||
 		strings.HasPrefix(sv.text[0], "/") && !t.httpBase() {
 		s.Err = fmt.Errorf("server URL %q cannot be used whatever its variables' values", s.URL)
+	}
+	if enumErr != nil && (s.Err == nil || enumErr == errBundle) {
+		s.Err = enumErr
 	}
 	if s.Err == nil && !slices.ContainsFunc(s.Variables, func(v Variable) bool { return !v.DefaultSet }) {
 		if ep, err := t.resolveServerURL(defaults); err == nil {

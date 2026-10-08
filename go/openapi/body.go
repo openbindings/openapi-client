@@ -10,7 +10,6 @@ import (
 	"io"
 	"net/textproto"
 	"net/url"
-	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -36,6 +35,7 @@ func (c *Client) appendContent(dst []byte, m parsedMedia, k class, v any) (b []b
 		err = codec.Encode(&buf, bare(v))
 		return append(dst, buf.Bytes()...), "", false, err
 	}
+	j, data := v.(jsonData)
 	switch x := v.(type) {
 	case string:
 		if k != jsonClass {
@@ -51,15 +51,23 @@ func (c *Client) appendContent(dst []byte, m parsedMedia, k class, v any) (b []b
 		}
 	}
 	switch {
+	case k == jsonClass && data:
+		s, err := j.text()
+		return appendJSON(dst, s), "", s == "null", err
 	case k == jsonClass:
 		if b, at, err = encodeJSON(c.doc, v, marshalJSON); dst != nil {
 			b = append(dst, b...)
 		}
 		return b, at, string(b[len(dst):]) == "null", err
 	case k == sequentialClass || isMultipart(m) || isForm(m):
-		return dst, "", false, fmt.Errorf("%s cannot encode this value", m.full)
+		return dst, "", false, fmt.Errorf("%s cannot encode this value", label(m.full))
 	}
-	s, at, err := encodeJSON(c.doc, v, marshal)
+	var s string
+	if data {
+		s, err = j.text()
+	} else {
+		s, at, err = encodeJSON(c.doc, v, marshal)
+	}
 	switch {
 	case err != nil:
 		return dst, at, false, err
@@ -68,9 +76,9 @@ func (c *Client) appendContent(dst []byte, m parsedMedia, k class, v any) (b []b
 	case k == textClass && s[0] != '{' && s[0] != '[' && s[0] != 'n':
 		return append(dst, s...), "", false, nil
 	case k == textClass:
-		return dst, "", s == "null", fmt.Errorf("%s takes a string, number or boolean", m.full)
+		return dst, "", s == "null", fmt.Errorf("%s takes a string, number or boolean", label(m.full))
 	}
-	return dst, "", s == "null", fmt.Errorf("%s takes a string", m.full)
+	return dst, "", s == "null", fmt.Errorf("%s takes a string", label(m.full))
 }
 
 // A builder assembles a body: bytes, and between them the sources that read
@@ -238,7 +246,7 @@ func (c *Client) formBody(b *builder, enc *formEncoding, v any, body string, rea
 		if f.legacy.ok() {
 			at := key{body, name, -1}
 			if f.legacy.str("type") == "file" {
-				if !null(v) { // a null property is omitted, whatever its serialization
+				if !c.doc.nullData(v) { // a null property is omitted, whatever its serialization
 					re.input(at.String(), cmp.Or(f.Err, errors.New("a Swagger file requires multipart/form-data")))
 				}
 				return
@@ -275,7 +283,7 @@ func (c *Client) formBody(b *builder, enc *formEncoding, v any, body string, rea
 			return
 		}
 		given = c.doc.values(v, at, func(v any, at key) {
-			fv, ok := f.value(v, name, at, true, re)
+			fv, ok := f.value(c.doc, v, name, at, true, false, re)
 			if !ok {
 				return
 			}
@@ -567,10 +575,17 @@ func (w *partWriter) parts(enc *formEncoding, v any, body, boundary string, give
 		w.own = append(slices.Clip(w.outer), delimiters(boundary)...)
 	}
 	if enc.ordered {
-		if rv := reflect.ValueOf(v); rv.IsValid() && (rv.Kind() == reflect.Slice || rv.Kind() == reflect.Array) {
+		// v is read by its JSON data, whatever its Go kind, once: as a list,
+		// null having no items, or else as an object.
+		x := w.c.doc.datum(v)
+		if x.bytes && !w.nested {
+			w.re.input(body, errByteList)
+			return
+		}
+		if v = x.v; x.null || x.list {
 			w.positional = !w.styles
-			for i := range rv.Len() {
-				w.position(enc, rv.Index(i).Interface(), body, i)
+			for i := range x.len() {
+				w.position(enc, x.item(i), body, i)
 			}
 			if !w.delimiter("--") {
 				w.re.input(body, errDelimiter)
@@ -580,26 +595,26 @@ func (w *partWriter) parts(enc *formEncoding, v any, body, boundary string, give
 	}
 	err := w.c.membersChecked(v, enc, body, w.re, w.b, func(name string, f *field, v any) (given bool) {
 		at := key{body, name, -1}
-		if !rawField(v) && f.legacy.ok() && (f.Err != nil || f.CollectionFormat != "" && f.CollectionFormat != "multi") {
+		if !rawField(v) && f.legacy.ok() && (f.Err != nil || f.CollectionFormat != "") { // JSON data, as in a form body
 			s, _, err := encodeJSON(w.c.doc, v, marshal)
 			var xs []string
 			if err == nil {
 				xs, err = legacyValues(&jsonReader{s: s}, f.legacy)
 				if err == nil && (len(xs) > 0 || s[0] == '[' && s[1] != ']') {
-					err = f.Err // a defined value, which a defective field refuses as writeLegacy does
+					err, given = f.Err, true // a defined value, which a defective field refuses as writeLegacy does
 				}
 			}
 			if err != nil {
 				w.re.input(at.String(), cmp.Or(f.Err, err))
-				return
+				return false
 			}
 			for _, x := range xs {
-				w.write(textField, name, x, at)
+				w.write(textField, name, x, at, false)
 			}
 			return
 		}
 		if !f.styled || !w.styles {
-			given = w.c.doc.values(v, at, func(v any, at key) { w.write(f, name, v, at) })
+			given = w.c.doc.values(v, at, func(v any, at key) { w.write(f, name, v, at, false) })
 			return
 		}
 		w.styled(f, name, v, at)
@@ -629,7 +644,7 @@ func (w *partWriter) styled(f *field, name string, v any, at key) {
 			n, v, _ := strings.Cut(pair, "=")
 			n, _ = url.PathUnescape(n)
 			v, _ = url.PathUnescape(v)
-			w.write(textField, n, v, at)
+			w.write(textField, n, v, at, false)
 		}
 	}
 }
@@ -652,10 +667,11 @@ var textField = &field{param: param{Param: &Param{ContentType: "text/plain"}, st
 
 // write writes v, a value of f named name, as a part, at at: its header,
 // then its content, as given, encoded by its media type, or, one level
-// deep, as a multipart body of its own.
-func (w *partWriter) write(f *field, name string, v any, at key) {
+// deep, as a multipart body of its own. read reports that v was read as a
+// datum already, and is not null.
+func (w *partWriter) write(f *field, name string, v any, at key, read bool) {
 	c, b, re := w.c, w.b, w.re
-	fv, ok := f.value(v, name, at, false, re)
+	fv, ok := f.value(c.doc, v, name, at, false, read, re)
 	if !ok {
 		return
 	}
