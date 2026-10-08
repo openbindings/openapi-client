@@ -112,8 +112,10 @@ func (w *itemWriter) write(v any) (string, error) {
 	if w.multipart != nil {
 		w.multipart.position(w.fields, v, "", w.position)
 		w.position++
-		if err := w.multipart.re.refused(); err != nil {
-			return "", err
+		if re := w.multipart.re; re.refused() != nil {
+			// The request was sent, so the item's problems, all re holds as
+			// the body ends at the first, are not a *RequestError.
+			return "", errors.Join(re.Unwrap()...)
 		}
 		return "", nil
 	}

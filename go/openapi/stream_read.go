@@ -190,58 +190,91 @@ func multipartItems[T any](x *exchange, r *Response, ct parsedMedia, bound int64
 }
 
 // mime/multipart can report EOF both for a closing delimiter and for an
-// empty, truncated header block. Recognize closing delimiter lines with
+// empty, truncated header block. Recognize the close delimiter's line with
 // constant storage so those outcomes remain distinct, even with epilogues
 // and arbitrarily fragmented reads. The MIME reader still parses all parts.
+// The close delimiter's line is the first closing delimiter line that
+// mime/multipart's framing reaches: after CRLF once the first delimiter line
+// has ended in CRLF, after any LF once it has ended in LF alone, and before
+// it, at the start of the body, after CRLF, or ending in CRLF. The body ends
+// at that line's line break, and an LF alone there is left out, since
+// mime/multipart takes the line at EOF without one: so in a body framed with
+// CRLF the line may end in LF alone.
 type multipartEnding struct {
 	io.Reader
-	marker    string
-	matched   int
-	cr, ended bool
+	marker  string // the closing delimiter: "--", the boundary, "--"
+	matched int    // the bytes of marker that begin the line, or -1
+	prev    byte   // the last byte read
+	lone    bool   // the line follows an LF alone
+	pad, cr bool   // padding, and a CR, after the delimiter or marker
+	breaks  byte   // '\r' or '\n' as the first delimiter line ended in CRLF or LF alone; 0 before it
+	done    bool   // the close delimiter's line has ended
 }
 
 func (r *multipartEnding) complete() bool {
-	return r.ended || r.matched == len(r.marker) && !r.cr
+	return r.done || r.matched == len(r.marker) && !r.cr
+}
+
+// alone reports whether the LF at p[k] follows no CR.
+func (r *multipartEnding) alone(p []byte, k int) bool {
+	if k == 0 {
+		return r.prev != '\r'
+	}
+	return p[k-1] != '\r'
 }
 
 func (r *multipartEnding) Read(p []byte) (int, error) {
-	n, err := r.Reader.Read(p)
-	if r.ended {
-		return n, err
+	if r.done {
+		return 0, io.EOF
 	}
+	n, err := r.Reader.Read(p)
 	for i := 0; i < n; {
 		if r.matched < 0 {
 			// Skip ordinary header/payload bytes in bulk; only a line
-			// starting with two hyphens can be a closing delimiter.
+			// starting with two hyphens can be a delimiter line.
 			j := bytes.Index(p[i:n], []byte("\n--"))
 			if j < 0 {
 				if p[n-1] == '\n' {
-					r.matched, r.cr = 0, false
+					r.matched, r.pad, r.cr, r.lone = 0, false, false, r.alone(p, n-1)
 				} else if n-i >= 2 && p[n-2] == '\n' && p[n-1] == '-' {
-					r.matched, r.cr = 1, false
+					r.matched, r.pad, r.cr, r.lone = 1, false, false, r.alone(p, n-2)
 				}
 				break
 			}
+			r.matched, r.pad, r.cr, r.lone = 2, false, false, r.alone(p, i+j)
 			i += j + 3
-			r.matched, r.cr = 2, false
 			continue
 		}
 		c := p[i]
 		i++
-		if c == '\n' {
-			if r.matched == len(r.marker) {
-				r.ended = true
-				break
+		ending := r.matched == len(r.marker) || r.matched == len(r.marker)-2 // the line so far is a closing delimiter or a delimiter
+		switch {
+		case c == '\n' && r.matched == len(r.marker) && (!r.lone || r.breaks == '\n' || r.breaks == 0 && r.cr):
+			r.done = true
+			if !r.cr {
+				i--
 			}
-			r.matched, r.cr = 0, false
-		} else if r.matched >= 0 && r.matched < len(r.marker) && c == r.marker[r.matched] {
+			return i, io.EOF
+		case c == '\n':
+			if r.breaks == 0 && r.matched == len(r.marker)-2 {
+				r.breaks = '\n'
+				if r.cr {
+					r.breaks = '\r'
+				}
+			}
+			r.matched, r.pad, r.cr, r.lone = 0, false, false, r.alone(p, i-1)
+		case r.matched >= 0 && r.matched < len(r.marker) && !r.pad && !r.cr && c == r.marker[r.matched]:
 			r.matched++
-		} else if r.matched == len(r.marker) && !r.cr && (c == ' ' || c == '\t') {
-		} else if r.matched == len(r.marker) && !r.cr && c == '\r' {
+		case ending && !r.cr && (c == ' ' || c == '\t'):
+			r.pad = true
+		case ending && !r.cr && c == '\r':
 			r.cr = true
-		} else {
+		default:
 			r.matched = -1
 		}
+	}
+	if n > 0 {
+		r.prev = p[n-1]
 	}
 	return n, err
 }
@@ -270,7 +303,7 @@ func readPart(p *multipart.Part, bound int64) ([]byte, bool, error) {
 	var opaque bool
 	switch strings.ToLower(strings.TrimSpace(p.Header.Get("Content-Transfer-Encoding"))) {
 	case "base64":
-		r = base64.NewDecoder(base64.StdEncoding, mimeBase64{source})
+		r = base64.NewDecoder(base64.StdEncoding, &mimeBase64{Reader: source})
 	case "quoted-printable":
 		r = quotedprintable.NewReader(source)
 	case "", "7bit", "8bit", "binary":
@@ -293,17 +326,31 @@ func readPart(p *multipart.Part, bound int64) ([]byte, bool, error) {
 
 // MIME base64 ignores SP and HTAB in addition to the standard decoder's
 // CR/LF handling. Filter in place before decoding and decoded-byte limiting.
-type mimeBase64 struct{ io.Reader }
+// Padding ends the data (RFC 4648 section 4), but the standard decoder
+// accepts data after it that a later read gives, so the filter refuses that
+// data itself.
+type mimeBase64 struct {
+	io.Reader
+	padded bool
+}
 
-func (r mimeBase64) Read(p []byte) (int, error) {
+var errPadding = errors.New("base64 data after its padding")
+
+func (r *mimeBase64) Read(p []byte) (int, error) {
 	for {
 		n, err := r.Reader.Read(p)
 		used := 0
 		for _, c := range p[:n] {
-			if c != ' ' && c != '\t' {
-				p[used] = c
-				used++
+			switch {
+			case c == ' ' || c == '\t':
+				continue
+			case c == '=':
+				r.padded = true
+			case r.padded && c != '\r' && c != '\n':
+				return 0, errPadding
 			}
+			p[used] = c
+			used++
 		}
 		if used > 0 || n == 0 || err != nil {
 			return used, err

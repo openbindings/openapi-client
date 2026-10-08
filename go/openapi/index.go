@@ -1008,7 +1008,7 @@ func (d *document) checkNames(ctx context.Context, cfg *config, re *RequestError
 				serverID = serverID || s.ID == cfg.ServerID
 			}
 			if o.Body != nil && o.Body.Err == nil { // consumes written as a reference offers no type
-				media = media || match(o.body, o.Body.Media, cfg.mediaType, true) != nil
+				media = media || match(o.body, o.Body.Media, cfg.mediaType, keyErr) != nil
 			}
 		}
 		none := free
@@ -1029,7 +1029,8 @@ func (d *document) checkNames(ctx context.Context, cfg *config, re *RequestError
 			for typ := range body.get("content").members() {
 				m, ok := parseMedia(typ)
 				_, covers := m.covers(cfg.mediaType)
-				media = media || ok && covers
+				_, _, err := m.boundary() // invalid or repeated, it causes a form or multipart Media's Err
+				media = media || ok && covers && (err == nil || !isForm(m) && !isMultipart(m))
 			}
 		}
 	}

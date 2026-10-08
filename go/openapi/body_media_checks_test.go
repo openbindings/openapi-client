@@ -394,6 +394,41 @@ func TestResponseMediaHaveNoRequestRules(t *testing.T) {
 	}
 }
 
+// A response's Media lists no Encoding in any edition, Swagger 2.0
+// included: a Swagger 2.0 response whose produces names form and multipart
+// types lists no fields, while a formData request body under those types
+// does. describe.go, Media.Encoding: it describes "the fields of form or
+// multipart content", and "It is empty for a declared range other than
+// multipart/*, such as */* or application/*, and for a response's Media in
+// every edition."
+func TestSwaggerResponseMediaHaveNoEncoding(t *testing.T) {
+	doc := `{"swagger":"2.0","info":{"title":"t","version":"1"},"host":"a.example","paths":{"/r":{"post":{"operationId":"both",
+		"consumes":["application/x-www-form-urlencoded","multipart/form-data"],
+		"produces":["application/x-www-form-urlencoded","multipart/form-data","application/json"],
+		"parameters":[{"name":"x","in":"formData","type":"string"}],
+		"responses":{"200":{"description":"ok","schema":{"type":"object","properties":{"x":{"type":"string"},"y":{"type":"integer"}}}},
+			"default":{"description":"other","schema":{"$ref":"#/definitions/E"}}}}}},
+		"definitions":{"E":{"type":"object","properties":{"code":{"type":"integer"}}}}}`
+	c := parseAt(t, doc, "https://a.example", testDocURI, nil)
+	op := mustOp(t, c, "both")
+	for i := range op.Responses {
+		r := response(t, op, i)
+		if len(r.Media) != 3 {
+			t.Errorf("response %q has %d Media, want one per produces entry", r.Key, len(r.Media))
+		}
+		for _, m := range r.Media {
+			if len(m.Encoding) != 0 {
+				t.Errorf("response %q Media %q: Encoding %q, want none", r.Key, m.Type, encodingNames(m))
+			}
+		}
+	}
+	for _, m := range op.Body.Media {
+		if names := encodingNames(m); len(names) != 1 || names[0] != "x" {
+			t.Errorf("request Media %q: Encoding %q, want the formData field x", m.Type, names)
+		}
+	}
+}
+
 // mustMarshal is json.Marshal, failing on an error.
 func mustMarshal(t *testing.T, v any) []byte {
 	t.Helper()
