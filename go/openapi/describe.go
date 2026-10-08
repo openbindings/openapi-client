@@ -359,7 +359,8 @@ type Media struct {
 	// Type is the media type or range as declared, such as
 	// "application/json" or "image/*". It is empty where a Swagger 2.0
 	// operation declares no consumes or produces; such a Media matches any
-	// type, as */* would. A body sent under it requires a concrete
+	// type, as */* would, except that formData takes only a form type (see
+	// Input.MediaType). A body sent under it requires a concrete
 	// Input.MediaType or Options.MediaType.
 	Type string
 
