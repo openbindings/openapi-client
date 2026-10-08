@@ -68,13 +68,13 @@ func Secret(secret string) Credential {
 	return Credential{static(secret), secretCredential}
 }
 
-// SecretFunc returns a Credential whose secret, as for [Secret], f returns when
-// a request is about to be sent, so it can return a token that refreshes or a
-// secret looked up per tenant. f receives the call's context, with its
-// deadline, cancellation and values, and on a redirect hop the deadline
-// HTTPClient.Timeout sets for the chain too, but not the operation: a request f
-// makes is not labelled or retried as the call's operation by middleware that
-// asks OperationFromContext.
+// SecretFunc returns a Credential whose credential source f returns its
+// secret, as for [Secret], when a request is about to be sent, so f can return
+// a token that refreshes or a secret looked up per tenant. f receives the
+// call's context, with its deadline, cancellation and values, and on a
+// redirect hop the deadline HTTPClient.Timeout sets for the chain too, but not
+// the operation: a request f makes is not labelled or retried as the call's
+// operation by middleware that asks OperationFromContext.
 //
 // f is called once for each request the client builds that carries its
 // credential: the call's first request, and each redirect hop on which
@@ -109,8 +109,8 @@ func SecretFunc(f func(ctx context.Context) (string, error)) Credential {
 
 // Basic returns a Credential for http basic authentication (RFC 7617),
 // sent in UTF-8. A username containing a colon, or either value containing
-// a control character, is refused as the package doc's Credentials section
-// says of every credential value.
+// a control character, is a value RFC 7617 forbids, refused as the package
+// documentation says under Credentials.
 func Basic(username, password string) Credential {
 	if username == "" && password == "" {
 		return Credential{}

@@ -21,10 +21,11 @@ var ErrNoOperation = errors.New("openapi: no such operation")
 
 // ErrUnresolved is wrapped by the Err of a part, or of a SchemaReference, whose
 // defect is a reference that cannot be resolved, as distinct from a malformed
-// declaration, and by every error Client.Schema returns but one saying the
-// document must be bundled first. A reference cycle cannot be resolved: a chain
-// of Reference Objects or of Path Item $refs, in any edition, or of Swagger 2.0
-// or OpenAPI 3.0 schemas written as references, that leads back into itself.
+// declaration or a document that must be bundled first (see Operation), and by
+// every error Client.Schema returns but one saying the document must be bundled
+// first. A reference cycle cannot be resolved: a chain of Reference Objects or
+// of Path Item $refs, in any edition, or of Swagger 2.0 or OpenAPI 3.0 schemas
+// written as references, that leads back into itself.
 // Other cycles, such as a recursive schema or a cycle of OpenAPI 3.1 or 3.2
 // schema $refs, resolve (see Schema). The Err names the reference, and wraps
 // the retrieval error too when fetching or reading its document failed (one
@@ -226,8 +227,9 @@ type DecodeError struct {
 
 // Error returns the operation, the status and the reason, never the body
 // or response-controlled media and encoding text, which may reflect credentials.
-// A decoder's own error, whose message can quote the body, is not in the
-// text; errors.As finds it through Unwrap. Header remains available for inspection.
+// A decoder's own error, a Codec's Decode or an UnmarshalJSON method's
+// included, whose message can quote the body, is not in the text; errors.As
+// finds it through Unwrap. Header remains available for inspection.
 func (e *DecodeError) Error() string {
 	msg := "openapi: " + describeResponse(e.Response)
 	if e.Err != nil {
