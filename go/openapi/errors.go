@@ -52,33 +52,47 @@ type RequestError struct {
 	//   - for a part's media type, "Input.Body" followed by the part's JSON
 	//     Pointer: "Input.Body/file".
 	//
-	// A setting the document cannot use, or one that conflicts with
-	// another, is keyed by its field, at Load or at a call. Several usable
-	// servers with none selected are keyed "Options.Server", BaseURL set
-	// with Server or ServerID "Options.BaseURL", Server set with ServerID
-	// "Options.ServerID", an undetermined or unusable request media type
-	// "Input.MediaType", and a header field that a supplied header
-	// parameter or the credential sets by the Header that set it.
-	// Several security alternatives with none selected, or an
+	// A setting the document cannot use, or one that conflicts with another, is
+	// keyed by its field, at Load or at a call. Several usable servers with
+	// none selected are keyed "Options.Server", BaseURL set with Server or
+	// ServerID "Options.BaseURL", and Server set with ServerID
+	// "Options.ServerID". A server made unusable by a variable that has no
+	// value, or by Options.Variables values, is keyed by variable, in the form
+	// above: by the variable without a value, by one whose value is off its
+	// enum or unfit for its place in the URL, or, when the URL the given values
+	// form cannot be used, by each variable given a value. It is keyed
+	// "Options.BaseURL" too when the operation has several servers and none is
+	// usable. A body's media type is keyed "Input.MediaType" when it is
+	// undetermined, is not a concrete media type, is one the operation does not
+	// declare, or is declared under an invalid key (see Media.Err); a body that
+	// any other Media.Err refuses is keyed in Inputs. A header field that a
+	// supplied header parameter or the credential sets is keyed by the Header
+	// that set it. Several security alternatives with none selected, or an
 	// Options.Security matching several that differ only in scopes, are keyed
 	// "Options.Security", the error naming Options.SecurityKey and
 	// Input.Security too; SecurityKey set with Security is keyed
 	// "Options.SecurityKey". An empty secret from a credential source is keyed
 	// as a missing credential is. A caller may inspect the operation
-	// description for offered values. The values are errors, never
-	// credentials or caller-supplied secrets.
+	// description for offered values. The values are errors, never credentials
+	// or caller-supplied secrets.
 	Settings map[string]error
 
 	// Inputs holds each input the operation cannot accept, and why: an unknown
 	// parameter, a missing required one, a value its style cannot serialize or
-	// a header cannot carry (a CR, LF or NUL, or leading or trailing
-	// whitespace, which HTTP would strip), a body the operation does not take,
-	// a reader or Part where the media type cannot carry one, a ParamWriters
-	// failure or conflict, or a Part that sets both Filename and NoFilename.
-	// The key is the Param.Key or, for the body, "Input.Body" followed by a
-	// JSON Pointer to the part of Body concerned: "Input.Body" alone for the
-	// body itself, "Input.Body/photo" for its property photo. The two never
-	// collide (see Input.Params).
+	// a header cannot carry (see Header fields in the package documentation), a
+	// body the operation does not take, a body refused by the request body's
+	// Message.Err or by its governing Media's Err for any reason but an invalid
+	// key, a reader or Part where the media type cannot carry one, a
+	// ParamWriters failure or conflict, or a Part that sets both Filename and
+	// NoFilename. The key is the Param.Key or, for the body, "Input.Body"
+	// followed by a JSON Pointer to the part of Body concerned, in which a Part
+	// adds no token for its Content: "Input.Body" alone for the body itself,
+	// "Input.Body/photo" for its property photo, and "Input.Body/photo/r" for
+	// the member r of the Content of a Part given as photo. The two never
+	// collide (see Input.Params). An error with a cause, such as
+	// encoding/json's, a codec's, a reader's or a ParamWriters function's
+	// error, or that Message.Err or Media.Err, wraps it, for errors.Is and
+	// errors.As.
 	Inputs map[string]error
 
 	// Err is the reason for any other refusal, or nil: ErrNoOperation, the
@@ -93,8 +107,9 @@ type RequestError struct {
 }
 
 // Error describes every problem and the field that fixes each, never a
-// credential or an input's value. The text of an error a credential source
-// returned is included as it is.
+// credential, an input's value, or a value given for a server variable or a
+// header field. The text of an error a credential source returned is included
+// as it is.
 func (e *RequestError) Error() string {
 	var parts []string
 	if e.Err != nil {

@@ -68,12 +68,13 @@ func Secret(secret string) Credential {
 	return Credential{static(secret), secretCredential}
 }
 
-// SecretFunc returns a Credential whose secret, as for [Secret], f returns
-// when a request is about to be sent, so it can return a token that
-// refreshes or a secret looked up per tenant. f receives the call's
-// context, with its deadline, cancellation and values, but not the
-// operation: a request f makes is not labelled or retried as the call's
-// operation by middleware that asks OperationFromContext.
+// SecretFunc returns a Credential whose secret, as for [Secret], f returns when
+// a request is about to be sent, so it can return a token that refreshes or a
+// secret looked up per tenant. f receives the call's context, with its
+// deadline, cancellation and values, and on a redirect hop the deadline
+// HTTPClient.Timeout sets for the chain too, but not the operation: a request f
+// makes is not labelled or retried as the call's operation by middleware that
+// asks OperationFromContext.
 //
 // f is called once for each request the client builds that carries its
 // credential: the call's first request, and each redirect hop on which
