@@ -94,15 +94,19 @@ var inflightDoc = doc31(`"/up":{"post":{"operationId":"up","requestBody":{"conte
 
 // earlyAnswerServer answers POST /up with a 303 to /done before reading any
 // of the request body, its handler running full duplex (net/http's
-// ResponseController.EnableFullDuplex), and /done with 200. answered is
-// closed once the 303 has been written, done once /done has been.
-func earlyAnswerServer(t *testing.T) (srv *httptest.Server, answered, done chan struct{}) {
+// ResponseController.EnableFullDuplex), and /done with 200. It answers /up
+// only once reading is closed, as the caller's reader closes it on its first
+// Read, so that the transport's first Read of the body is in flight when the
+// 303 arrives. answered is closed once the 303 has been written, done once
+// /done has been.
+func earlyAnswerServer(t *testing.T, reading <-chan struct{}) (srv *httptest.Server, answered, done chan struct{}) {
 	answered, done = make(chan struct{}), make(chan struct{})
 	var once1, once2 sync.Once
 	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/up":
 			http.NewResponseController(w).EnableFullDuplex()
+			awaitReading(r, reading)
 			w.Header().Set("Location", "/done")
 			w.WriteHeader(http.StatusSeeOther)
 			w.(http.Flusher).Flush()
@@ -118,6 +122,20 @@ func earlyAnswerServer(t *testing.T) (srv *httptest.Server, answered, done chan 
 	return srv, answered, done
 }
 
+// awaitReading waits, in the handler of r, until reading is closed, which
+// tells that the transport is inside its first Read of r's body; net/http
+// flushes a request's header fields before it reads a body that is not in
+// memory, so the handler runs first. It gives up after 5 seconds, or when r's
+// context ends, so that a client that never reads fails its test rather than
+// leaving the handler waiting.
+func awaitReading(r *http.Request, reading <-chan struct{}) {
+	select {
+	case <-reading:
+	case <-r.Context().Done():
+	case <-time.After(5 * time.Second):
+	}
+}
+
 // A body generation ends only when the transport has closed it and no Read
 // is in flight; a Close during a Read defers the end until that Read
 // returns, since net/http closes a request body mid-Read after a 301 to
@@ -130,15 +148,15 @@ func earlyAnswerServer(t *testing.T) (srv *httptest.Server, answered, done chan 
 // one: the first and each redirect hop that sent it again". The client
 // handles redirects itself, so net/http's Client.do does not act on the 303
 // under FollowNone either. The server answers 303 before reading the POST
-// body.
+// body, once the transport's first Read of it is in flight.
 func TestReadInFlightAfterAnEarly303(t *testing.T) {
 	for _, follow := range []openapi.Redirects{openapi.FollowNone, openapi.FollowAll} {
 		for _, via := range []string{"Call", "Send"} {
 			t.Run(fmt.Sprintf("Redirects %d, %s", follow, via), func(t *testing.T) {
-				srv, answered, done := earlyAnswerServer(t)
-				c := parseAt(t, inflightDoc, srv.URL, srv.URL+"/openapi.json", &openapi.Options{Redirects: follow})
 				g := newGatedReader(0)
-				t.Cleanup(g.open)
+				srv, answered, done := earlyAnswerServer(t, g.entered)
+				t.Cleanup(g.open) // before the server's Close, which waits for the upload
+				c := parseAt(t, inflightDoc, srv.URL, srv.URL+"/openapi.json", &openapi.Options{Redirects: follow})
 				ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 				defer cancel()
 
@@ -262,14 +280,17 @@ func TestCloseDuringReadDefersTheEnd(t *testing.T) {
 // "for every request of the call that carried one: the first and each
 // redirect hop that sent it again." A 307 answered before the first body
 // was read leaves that body's Read in flight while the hop, from GetBody,
-// is sent and answered.
+// is sent and answered. The server answers the 307 once that Read is in
+// flight.
 func TestWaitRequestCoversEarlierHops(t *testing.T) {
+	g := newGatedReader(0)
 	answered, done := make(chan struct{}), make(chan struct{})
 	var once1, once2 sync.Once
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/up":
 			http.NewResponseController(w).EnableFullDuplex()
+			awaitReading(r, g.entered)
 			w.Header().Set("Location", "/next")
 			w.WriteHeader(http.StatusTemporaryRedirect)
 			w.(http.Flusher).Flush()
@@ -283,9 +304,8 @@ func TestWaitRequestCoversEarlierHops(t *testing.T) {
 		}
 	}))
 	t.Cleanup(srv.Close)
+	t.Cleanup(g.open) // before the server's Close, which waits for the upload
 	c := parseAt(t, inflightDoc, srv.URL, srv.URL+"/openapi.json", &openapi.Options{Redirects: openapi.FollowAll})
-	g := newGatedReader(0)
-	t.Cleanup(g.open)
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 

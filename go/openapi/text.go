@@ -41,8 +41,8 @@ func readTree(ctx context.Context, content, uri string, base *url.URL) (*tree, e
 	if t == nil && ctx.Err() == nil {
 		t, err = parseYAML(ctx, src, uri, unit, len(content))
 	}
-	if ctx.Err() != nil {
-		return nil, fmt.Errorf("openapi: %s: %w", safeURI(uri), ctx.Err())
+	if err := contextErr(ctx); err != nil {
+		return nil, fmt.Errorf("openapi: %s: %w", safeURI(uri), err)
 	}
 	if t == nil {
 		return nil, err

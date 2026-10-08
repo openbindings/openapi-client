@@ -303,6 +303,12 @@ func (ld *loading) retrieve(uri string, froms []string, buf []byte) (string, str
 	switch {
 	case err != nil:
 	case ld.Fetch != nil:
+		if u.Scheme == "" { // a file path, which reaches Fetch as the file URL the default reads it by
+			if base, _, err = fileURL(uri); err != nil {
+				break
+			}
+			uri = base.String()
+		}
 		if r, final, err = ld.Fetch(ctx, uri); final == "" {
 			final = uri
 		}
@@ -361,12 +367,7 @@ func (ld *loading) retrieve(uri string, froms []string, buf []byte) (string, str
 		}
 	case u.Scheme == "":
 		var abs string
-		if abs, err = filepath.Abs(uri); err == nil {
-			path := filepath.ToSlash(abs)
-			if !strings.HasPrefix(path, "/") {
-				path = "/" + path // a Windows drive is a path segment, not a host
-			}
-			base = &url.URL{Scheme: "file", Path: path}
+		if base, abs, err = fileURL(uri); err == nil {
 			final = base.String()
 			r, size, err = open(ctx, abs, nil)
 		}
@@ -384,6 +385,20 @@ func (ld *loading) retrieve(uri string, froms []string, buf []byte) (string, str
 		}
 	}
 	return "", "", nil, fmt.Errorf("openapi: load %s: %w", safeURI(uri), safeRetrievalError(withContext(ctx, err)))
+}
+
+// fileURL returns the file URL of the file path's absolute path, and that
+// path.
+func fileURL(path string) (*url.URL, string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, "", err
+	}
+	slashed := filepath.ToSlash(abs)
+	if !strings.HasPrefix(slashed, "/") {
+		slashed = "/" + slashed // a Windows drive is a path segment, not a host
+	}
+	return &url.URL{Scheme: "file", Path: slashed}, abs, nil
 }
 
 // hasScheme distinguishes URI schemes from native Windows drive paths.
@@ -421,7 +436,7 @@ type ctxReader struct {
 }
 
 func (c ctxReader) Read(p []byte) (int, error) {
-	if err := c.ctx.Err(); err != nil {
+	if err := contextErr(c.ctx); err != nil {
 		return 0, err
 	}
 	return c.r.Read(p)
@@ -461,7 +476,7 @@ func open(ctx context.Context, path string, root *os.Root) (io.ReadCloser, int64
 		}
 		f = r.f
 	case <-ctx.Done():
-		return nil, 0, ctx.Err()
+		return nil, 0, contextErr(ctx)
 	}
 	fi, err := f.Stat()
 	if err != nil {
@@ -472,7 +487,7 @@ func open(ctx context.Context, path string, root *os.Root) (io.ReadCloser, int64
 		return f, fi.Size(), nil
 	}
 	pr, pw := io.Pipe()
-	stop := context.AfterFunc(ctx, func() { pw.CloseWithError(ctx.Err()); f.Close() })
+	stop := context.AfterFunc(ctx, func() { pw.CloseWithError(contextErr(ctx)); f.Close() })
 	go func() {
 		defer stop()
 		defer f.Close()
@@ -514,7 +529,7 @@ func safeRetrievalError(err error) error {
 // newDocument reads content, retrieved from uri, and every document its
 // references reach, and indexes its operations.
 func newDocument(ld *loading, content, uri string) (*document, error) {
-	if err := ld.ctx.Err(); err != nil {
+	if err := contextErr(ld.ctx); err != nil {
 		return nil, fmt.Errorf("openapi: %w", err)
 	}
 	if uri == "" {
@@ -611,7 +626,7 @@ func (d *document) index(ctx context.Context) error {
 		return nil
 	}
 	for path, item := range paths.members() {
-		if err := ctx.Err(); err != nil {
+		if err := contextErr(ctx); err != nil {
 			return fmt.Errorf("openapi: %w", err)
 		}
 		if strings.HasPrefix(path, "x-") {
@@ -753,7 +768,7 @@ func (d *document) lookup(key string) (*entry, error) {
 	}
 	var keys []string
 	for _, e := range d.entries {
-		if e.id == key {
+		if e.id == key && !e.forbidden { // a forbidden additional operation is no operation, and has no Key
 			keys = append(keys, label(e.method()+" "+e.path))
 		}
 	}
@@ -828,7 +843,9 @@ type resolution struct {
 // replaces its target's. Each Reference Object's resolution is published
 // once per document, and a chain stops at one already published. A cycle is
 // named by the reference of its first Reference Object in node order, so
-// that every chain into it names it alike.
+// that every chain into it names it alike. An entry of a Swagger 2.0 root
+// parameters or responses map, which holds no Reference Object, that is
+// written as a reference is for a bundler to replace, and is not followed.
 func (d *document) follow(v value, src string) (value, string, string, error) {
 	ref, desc, _ := reference(v)
 	if !ref.ok() {
@@ -866,6 +883,10 @@ func (d *document) follow(v value, src string) (value, string, string, error) {
 			r = resolution{err: err}
 			break
 		}
+		if next.t.edition == 20 && next.t.openAPI && swaggerEntry(nextAt) && bundled(next) {
+			r = resolution{err: errBundle}
+			break
+		}
 		v, at = next, nextAt
 		ref, desc, _ = reference(v)
 	}
@@ -877,6 +898,16 @@ func (d *document) follow(v value, src string) (value, string, string, error) {
 		r = *kept.(*resolution)
 	}
 	return r.v, r.src, r.desc, r.err
+}
+
+// swaggerEntry reports whether the JSON Pointer ptr names an entry of a
+// Swagger 2.0 document's root parameters or responses map.
+func swaggerEntry(ptr string) bool {
+	name, ok := strings.CutPrefix(ptr, "/parameters/")
+	if !ok {
+		name, ok = strings.CutPrefix(ptr, "/responses/")
+	}
+	return ok && !strings.Contains(name, "/")
 }
 
 // reference returns v's $ref, if it is a string, and its description, if
@@ -953,7 +984,7 @@ func (d *document) checkNames(ctx context.Context, cfg *config, re *RequestError
 		if server && serverID && media && len(unused) == 0 && sec.done() {
 			break
 		}
-		if err := ctx.Err(); err != nil {
+		if err := contextErr(ctx); err != nil {
 			return fmt.Errorf("openapi: %w", err)
 		}
 		if e.m < 0 {
@@ -1005,7 +1036,7 @@ func (d *document) checkNames(ctx context.Context, cfg *config, re *RequestError
 		re.setting("Options.ServerID", errors.New("no server has this ID"))
 	}
 	if !media {
-		re.setting("Options.MediaType", fmt.Errorf("no operation declares %s", cfg.MediaType))
+		re.setting("Options.MediaType", fmt.Errorf("no operation declares %s", label(cfg.MediaType)))
 	}
 	for name := range unused {
 		re.setting("Options.Variables["+strconv.Quote(name)+"]", errors.New("no server URL uses this variable"))

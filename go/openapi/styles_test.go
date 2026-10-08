@@ -94,7 +94,7 @@ func (c styleCfg) expect(t testing.TB, v any) (string, fate) {
 	n := jsonData(t, v)
 	allow := allowU
 	if c.reserved && c.in == "query" {
-		allow = allowUR
+		allow = allowURQuery
 	}
 	// Undefinedness is settled first; style refusals apply to defined values
 	// (doc.go, Fixed rules, Styles).
@@ -144,8 +144,9 @@ func (c styleCfg) expect(t testing.TB, v any) (string, fate) {
 		return strings.TrimSuffix(c.path(), "{p}") + uexpand(op, spec), sent
 	case "query":
 		o := uops["?"]
-		if allow == allowUR {
+		if allow == allowURQuery {
 			o = uformReserved
+			o.allow = allowURQuery
 		}
 		return "/" + c.id + uexpandOp(o, spec), sent
 	case "header":

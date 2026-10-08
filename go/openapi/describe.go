@@ -30,15 +30,16 @@ func (c *Client) Operations() []*Operation {
 	return ops
 }
 
-// Operation describes the operation named key, by the rules Call uses. When
-// no operation has that key, or several share it as their operationId, it
-// returns an error wrapping ErrNoOperation that names the candidates; each
-// is still reached by its Operation.Key. An operation that exists but
-// cannot be called is returned with Err set, and so is the entry for a
-// Paths entry that cannot be read, for a key with any method and that path;
-// calling with the same key is refused with an error wrapping that Err. A
-// method-and-path key always reaches the fixed method, never the forbidden
-// additional operation of the same method (see Client.Operations).
+// Operation describes the operation named key, by the rules Call uses. When no
+// operation has that key, it returns an error wrapping ErrNoOperation; when
+// several share it as their operationId, the error wraps ErrNoOperation too and
+// names those operations, each once by its Operation.Key, and no other, and
+// each is still reached by its Key. An operation that exists but cannot be
+// called is returned with Err set, and so is the entry for a Paths entry that
+// cannot be read, for a key with any method and that path; calling with the
+// same key is refused with an error wrapping that Err. A method-and-path key
+// always reaches the fixed method, never the forbidden additional operation of
+// the same method (see Client.Operations).
 func (c *Client) Operation(key string) (*Operation, error) {
 	e, err := c.doc.lookup(key)
 	if err != nil {
@@ -64,8 +65,13 @@ func (c *Client) Operation(key string) (*Operation, error) {
 // where a parameter, request body, response, header or security scheme, or
 // in 3.2 a media type, is a Reference Object that gives a description, that
 // description replaces the target's, the Reference Object nearest the use
-// site winning, while Source still names the target; in Swagger 2.0 and
-// OpenAPI 3.0, a Reference Object's siblings are ignored.
+// site winning, while Source still names the target; in Swagger 2.0 and OpenAPI
+// 3.0, a Reference Object's siblings are ignored. A part written as a Reference
+// Object that cannot be resolved has that Reference Object's location as its
+// Source, a header's included, and a security scheme's whether its requirement
+// names it by component name or by an OpenAPI 3.2 URI; a scheme whose name in
+// an OpenAPI 3.2 requirement is neither a component name nor a URI that can be
+// resolved has that Security Requirement Object's location as its Source.
 //
 // A value written as a reference, an object whose $ref member is a string,
 // where the edition defines no Reference Object, such as an Operation Object, a
@@ -78,10 +84,14 @@ func (c *Client) Operation(key string) (*Operation, error) {
 // written is described as one Server with that Err, which Options.BaseURL can
 // replace as it can any unusable server. In Swagger 2.0, consumes so written
 // makes the request body unusable, produces each response, and schemes is
-// described as a servers list is. Bundling replaces such a value whole, so its
-// other members are not read, and a reference whose target lies inside it
-// cannot be followed before bundling either: it makes its own nearest part
-// unusable the same way, and a schema's reference reports it as that
+// described as a servers list is; and an entry of its root parameters or
+// responses map, which holds Parameter or Response Objects only, is such a
+// value when written as a reference: a parameter entry makes each operation
+// that uses it unusable, since the parameter's identity cannot be read, and a
+// response entry each response that uses it. Bundling replaces such a value
+// whole, so its other members are not read, and a reference whose target lies
+// inside it cannot be followed before bundling either: it makes its own nearest
+// part unusable the same way, and a schema's reference reports it as that
 // reference's Err (see Schema.References). A value so written makes its part
 // unusable even where OpenAPI says the value is ignored, such as an encoding
 // under a JSON media type or an Encoding Object's headers for a field written
@@ -194,7 +204,10 @@ type Param struct {
 	// Style is the RFC 6570 style the value is serialized with, as declared
 	// or as OpenAPI defaults it for the location ("form" for query and
 	// cookie, "simple" for path and header), or empty when the value is
-	// serialized by ContentType instead, and in Swagger 2.0.
+	// serialized by ContentType instead, and in Swagger 2.0. A response or
+	// Encoding header described by a schema has "simple", the only style a
+	// Header Object allows, even where it declares another style, which Err
+	// then reports as not allowed.
 	Style string
 
 	// Explode is the effective explode (true for deepObject, which ignores
@@ -394,8 +407,11 @@ type Variable struct {
 	Default    string
 	DefaultSet bool
 
-	// Enum lists the declared enum, or is nil when none is declared. What
-	// it permits is on Options.Variables.
+	// Enum lists the declared enum, or is nil when none is declared. An enum
+	// written as anything but an array of strings, a variable's values being
+	// strings, makes the server unusable (Server.Err), and one written as a
+	// reference marks a document meant to be bundled first (see Operation).
+	// What it permits is on Options.Variables.
 	Enum []string
 }
 
@@ -484,7 +500,9 @@ type SecurityScheme struct {
 	// Source is where the scheme is declared: the absolute URI of its
 	// document, with a JSON Pointer to its Security Scheme Object as the
 	// fragment. It tells which document a scheme name was found in. It is
-	// empty for a scheme the document never declares.
+	// empty for a scheme the document never declares, but in OpenAPI 3.2 it
+	// is then the location of the Security Requirement Object that writes
+	// the name (see Operation).
 	Source string
 
 	// Err is why the scheme cannot be used, or nil: a defective or missing

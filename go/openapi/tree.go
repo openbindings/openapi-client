@@ -450,7 +450,7 @@ func (p *scanner) value(depth int, name uint32) error {
 		return p.errorAt(p.i, "nesting deeper than 1,000 levels")
 	}
 	if len(p.nodes)&0xffff == 0xffff && p.ctx.Err() != nil {
-		return fmt.Errorf("openapi: %s: %w", safeURI(p.uri), p.ctx.Err())
+		return fmt.Errorf("openapi: %s: %w", safeURI(p.uri), contextErr(p.ctx))
 	}
 	if p.i == len(p.src) {
 		return p.errorAt(p.i, "unexpected end of the document")

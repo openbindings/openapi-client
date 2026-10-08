@@ -301,11 +301,13 @@ func newCharset(kept string, triples bool) *charset {
 }
 
 var (
-	unreservedSet   = newCharset("", false)
-	reservedSet     = newCharset(":/?#[]@!$&'()*+,;=", true) // RFC 6570 reserved expansion
-	reservedPathSet = newCharset(":/[]@!$&'()*+,;=", true)   // reserved expansion within a URL path
-	pathSet         = newCharset("!$&'()*+,;=:@/", true)     // path text: pchar and "/"
-	fragmentSet     = newCharset("!$&'()*+,;=:@/?", false)   // RFC 3986 section 3.5
+	unreservedSet     = newCharset("", false)
+	reservedSet       = newCharset(":/?#[]@!$&'()*+,;=", true) // RFC 6570 reserved expansion
+	reservedPathSet   = newCharset(":/[]@!$&'()*+,;=", true)   // reserved expansion within a URL path
+	reservedQuerySet  = newCharset(":/?[]@!$&'()*+,;=", true)  // within a query, which "#" would end
+	reservedCookieSet = newCharset(":/?#[]@!$&'()*+=", true)   // within a cookie-octet (RFC 6265 section 4.1.1)
+	pathSet           = newCharset("!$&'()*+,;=:@/", true)     // path text: pchar and "/"
+	fragmentSet       = newCharset("!$&'()*+,;=:@/?", false)   // RFC 3986 section 3.5
 )
 
 // escapeTo writes s to b, percent-encoding each byte set does not keep as

@@ -1,6 +1,7 @@
 package openapi_test
 
 import (
+	"encoding"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -240,6 +241,69 @@ func TestSequentialSliceAndIteratorSendSameItems(t *testing.T) {
 				fromIterator := string(w.last(t).Body)
 				if fromSlice != op.want || fromIterator != op.want {
 					t.Errorf("slice sent %q, iterator %q; want %q", fromSlice, fromIterator, op.want)
+				}
+			})
+		}
+	}
+}
+
+// client.go, Input.Body: for a sequential type "each element is one item,
+// encoded as that value on its own would be, so a list and an iterator
+// yielding the same values send the same bytes"; for an OpenAPI 3.2 multipart
+// type other than multipart/form-data, each part is "a value encoded by that
+// part's media type as that value on its own would be, so a list and an
+// iterator yielding the same values send the same parts"; doc.go, Values: "a
+// positional part, whose JSON data is null is omitted". An element is taken on
+// its own, as the value its list holds, whatever the list's element type: a
+// json.Marshaler element holding a nil pointer is that nil pointer, which
+// json.Marshal writes as null; an encoding.TextMarshaler element whose value
+// also has MarshalJSON is written by MarshalJSON; and an element whose pointer
+// has MarshalJSON is a copy, written by reflection. So a list, an iter.Seq and
+// an iter.Seq2 of the same values send the same JSON Lines items, each
+// json.Marshal of the element on its own, and the same multipart/mixed parts,
+// a null element leaving none.
+func TestListAndIteratorSendSameElements(t *testing.T) {
+	c := editionClient(t, editionDoc("3.2.1", `"/x":{"post":{"requestBody":{"content":{
+		"application/jsonl":{},
+		"multipart/mixed":{"schema":{"type":"array"},"itemEncoding":{"contentType":"application/json"}}}}}}`), nil)
+	marshalers := []json.Marshaler{(*nilReceiver)(nil)}
+	texts := []encoding.TextMarshaler{jwBoth{}}
+	pointers := []ptrMarshalerElem{{1}, {2}}
+	for _, tt := range []struct {
+		name            string
+		list, seq, seq2 any
+		elements        []any
+	}{
+		{"json.Marshaler holding a nil pointer", marshalers, seqOf(marshalers...), seq2Of(marshalers...), []any{marshalers[0]}},
+		{"TextMarshaler with MarshalJSON", texts, seqOf(texts...), seq2Of(texts...), []any{texts[0]}},
+		{"pointer-receiver MarshalJSON", pointers, seqOf(pointers...), seq2Of(pointers...), []any{pointers[0], pointers[1]}},
+	} {
+		var lines, parts strings.Builder
+		for _, e := range tt.elements {
+			data := string(mustMarshal(t, e))
+			lines.WriteString(data + "\n")
+			if data != "null" {
+				parts.WriteString("--B\r\nContent-Type: application/json\r\n\r\n" + data + "\r\n")
+			}
+		}
+		parts.WriteString("--B--\r\n")
+		for _, media := range []struct{ name, want string }{
+			{"application/jsonl", lines.String()},
+			{"multipart/mixed; boundary=B", parts.String()},
+		} {
+			t.Run(tt.name+"/"+media.name, func(t *testing.T) {
+				for _, body := range []struct {
+					name  string
+					value any
+				}{{"list", tt.list}, {"iter.Seq", tt.seq}, {"iter.Seq2", tt.seq2}} {
+					req, err := c.Prepare("POST /x", &openapi.Input{MediaType: media.name, Body: body.value})
+					if err != nil {
+						t.Errorf("%s refused: %v", body.name, err)
+						continue
+					}
+					if got := string(editionBody(t, req)); got != media.want {
+						t.Errorf("%s sends %q, want %q", body.name, got, media.want)
+					}
 				}
 			})
 		}

@@ -34,20 +34,91 @@ type zeroer interface{ IsZero() bool }
 
 // A held value is a field's value that encoding/json writes otherwise than
 // the value alone: one it reaches addressably and whose pointer, which its
-// methods need, is a reader, which the value is not; or one held in an
+// methods need, is a reader, which the value is not; one held in an
 // interface type with MarshalText but not MarshalJSON, whose method json
-// calls whatever MarshalJSON the value has. It is p, a pointer to the value
-// where it is held, which json writes as it writes the value there; the
-// field's content is the value p points to.
+// calls whatever MarshalJSON the value has; or a nil pointer held in an
+// interface type with either method, which json calls on the nil receiver.
+// It is p, a pointer to the value where it is held, which json writes as it
+// writes the value there; the field's content is the value p points to.
 type held struct{ p reflect.Value }
 
 // bare returns v, or the value it holds.
 func bare(v any) any {
+	if j, ok := v.(jsonData); ok {
+		if j.v == nil {
+			return json.RawMessage(j.s)
+		}
+		v = j.v
+	}
 	if h, ok := v.(held); ok {
 		return h.p.Elem().Interface()
 	}
 	return v
 }
+
+// A jsonData is a value encoding/json writes by its own MarshalJSON, a
+// json.RawMessage's included, converted to JSON data once: the value as
+// given, which a caller's codec receives, and its JSON text, as marshal
+// writes it, with HTML characters unescaped, or the method's error. Wherever
+// the client reads such a value, for null, an array, an object's members or
+// its encoding, it reads that text, so the method runs once however often the
+// value is read; written as JSON, the text is escaped as json.Marshal escapes
+// it (see appendJSON).
+type jsonData struct {
+	v   any // nil for a json.RawMessage of s, which bare makes only for a codec
+	s   string
+	err error
+}
+
+// marshaled converts v, which encoding/json writes by its own method, to its
+// JSON data, marshaling v itself, as json dispatches on the types it meets.
+func marshaled(v any) jsonData {
+	s, err := marshal(v)
+	return jsonData{v: v, s: s, err: err}
+}
+
+// MarshalJSON returns the JSON text, so that encoding/json writes a jsonData
+// as it writes the value, escaping it as the encoder escapes any other.
+func (j jsonData) MarshalJSON() ([]byte, error) { return []byte(j.s), j.err }
+
+// text returns the JSON text, refused, as encodeJSON refuses a method's
+// output, when it nests deeper than 1,000 levels.
+func (j jsonData) text() (string, error) {
+	if j.err == nil && tooDeep(j.s) {
+		return "", errDepth
+	}
+	return j.s, j.err
+}
+
+// appendJSON appends the JSON text s, as marshal writes it, to dst as
+// json.Marshal writes it: with "<", ">" and "&", and U+2028 and U+2029, which
+// can appear only in its strings, escaped as \u003c, \u003e, \u0026, \u2028
+// and \u2029 (see json.HTMLEscape).
+func appendJSON(dst []byte, s string) []byte {
+	html := strings.Count(s, "<") + strings.Count(s, ">") + strings.Count(s, "&") // a byte, escaped as six
+	lines := strings.Count(s, "\u2028") + strings.Count(s, "\u2029")              // three bytes, escaped as six
+	if html+lines == 0 {
+		return append(dst, s...)
+	}
+	dst = slices.Grow(dst, len(s)+5*html+3*lines)
+	start := 0
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; {
+		case !htmlByte[c]:
+		case c != 0xE2:
+			dst = append(append(dst, s[start:i]...), '\\', 'u', '0', '0', lowerHex[c>>4], lowerHex[c&15])
+			start = i + 1
+		case i+2 < len(s) && s[i+1] == 0x80 && s[i+2]&^1 == 0xA8:
+			dst = append(append(dst, s[start:i]...), '\\', 'u', '2', '0', '2', lowerHex[s[i+2]&15])
+			start = i + 3
+			i += 2
+		}
+	}
+	return append(dst, s[start:]...)
+}
+
+// htmlByte marks "<", ">" and "&", and the first byte of U+2028 and U+2029.
+var htmlByte = [256]bool{'<': true, '>': true, '&': true, 0xE2: true}
 
 // marshal returns v as encoding/json writes it, but for HTML characters,
 // which it leaves unescaped: the JSON data of a parameter value.

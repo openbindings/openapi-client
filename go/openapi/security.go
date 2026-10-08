@@ -102,9 +102,10 @@ func (d *document) schemeURI(name string, from *tree) *scheme {
 		return &scheme{desc: SecurityScheme{Err: err}, uri: true}
 	}
 	sc := *d.schemeForms.get(v.id(), func() *scheme {
-		t, at, _, err := d.follow(v, v.t.source(ptr))
+		src := v.t.source(ptr)
+		t, at, _, err := d.follow(v, src)
 		if err != nil {
-			return &scheme{desc: SecurityScheme{Err: err}}
+			return &scheme{desc: SecurityScheme{Source: src, Err: err}} // where the reference it reaches is written
 		}
 		return newScheme(t, at)
 	})
@@ -318,8 +319,8 @@ type securityPlan struct {
 	err   error
 }
 
-// compileSecurity compiles the security value list.
-func (d *document) compileSecurity(list value) securityPlan {
+// compileSecurity compiles the security value list, written at src.
+func (d *document) compileSecurity(list value, src string) securityPlan {
 	if bundled(list) {
 		return securityPlan{err: errBundle}
 	}
@@ -344,6 +345,9 @@ func (d *document) compileSecurity(list value) securityPlan {
 			sc := d.securityScheme(name, list.t)
 			s := sc.desc
 			s.Name, s.Scopes = name, roles
+			if sc.uri && s.Source == "" { // a 3.2 name that reaches no scheme: the requirement that writes it
+				s.Source = src + "/" + strconv.Itoa(len(p.reqs))
+			}
 			req.Schemes, a.schemes = append(req.Schemes, s), append(a.schemes, sc)
 			if sc.dest.in != "" {
 				if p.dests == nil {

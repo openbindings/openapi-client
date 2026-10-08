@@ -429,27 +429,39 @@ func (d *document) positionalEncoding(enc *formEncoding, v value, roots []value,
 
 func (w *partWriter) position(enc *formEncoding, v any, body string, i int) {
 	at := key{body, fmt.Sprint(i), -1}
-	if null(v) {
-		return
+	if !scalar(v) {
+		x := w.c.doc.datum(v)
+		if x.null {
+			return
+		}
+		v = x.v
 	}
 	f := enc.rest
 	if i < len(enc.positional) {
 		f = enc.positional[i]
 	}
+	if _, pt, _ := part(v, false); pt != nil && pt.Filename != "" {
+		err := errPositionalFilename
+		if f.err != nil {
+			err = cmp.Or(f.Err, f.err) // the field's own defect first, as for any value
+		}
+		w.re.input(at.String(), err)
+		return
+	}
 	if !w.styles {
-		w.write(f, "", v, at)
+		w.write(f, "", v, at, true)
 		return
 	}
 	// Form-data arrays retain explicit names, rather than assigning index names.
 	switch p := v.(type) {
 	case Part:
 		if len(p.Header.Values("Content-Disposition")) > 0 {
-			w.write(f, "", p, at)
+			w.write(f, "", p, at, true)
 			return
 		}
 	case *Part:
 		if p != nil && len(p.Header.Values("Content-Disposition")) > 0 {
-			w.write(f, "", p, at)
+			w.write(f, "", p, at, true)
 			return
 		}
 	}
@@ -465,10 +477,14 @@ func (w *partWriter) position(enc *formEncoding, v any, body string, i int) {
 		if f.styled {
 			w.styled(f, name, content, at)
 		} else {
-			w.write(f, name, content, at)
+			w.write(f, name, content, at, false)
 		}
 	}
 }
+
+// errPositionalFilename refuses a Filename on a part without a name, whose
+// Content-Disposition only its Header gives.
+var errPositionalFilename = errors.New("a positional part takes its Content-Disposition only from Part.Header, and no Filename")
 
 func schemaRoots(v value) []value {
 	if v.ok() {

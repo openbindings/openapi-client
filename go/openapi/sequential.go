@@ -40,6 +40,7 @@ func sequenceOf(m parsedMedia) sequence {
 }
 
 var (
+	errByteList  = errors.New("a byte slice is a base64 string in its JSON data, not a list of items or parts")
 	errSeparator = errors.New("a pre-encoded item holds its framing's separator")
 	errCodecSep  = errors.New("the codec's output for the item holds its framing's separator")
 	errEvent     = errors.New("an event stream item is an Event, or an object of data, event and id strings and a retry integer")
@@ -57,17 +58,26 @@ func (c *Client) sequentialBody(m parsedMedia, v any, re *RequestError) payload 
 	if seq := iterator(v); seq != nil {
 		return payload{once: &items{w: w, seq: seq}, size: -1}
 	}
-	rv := reflect.ValueOf(v)
-	if k := rv.Kind(); k != reflect.Slice && k != reflect.Array {
-		re.input("Input.Body", errors.New("a sequential body is a slice or an iterator of its items"))
+	x := c.doc.datum(v) // by its JSON data, whatever its Go kind, null having no items
+	switch j, own := x.v.(jsonData); {
+	case own && j.err != nil:
+		re.input("Input.Body", j.err)
+		return payload{}
+	case x.bytes:
+		re.input("Input.Body", errByteList)
+		return payload{}
+	case !x.null && !x.list:
+		re.input("Input.Body", errors.New("a sequential body is a list or an iterator of its items"))
 		return payload{}
 	}
-	if t := rv.Type().Elem(); t.Kind() != reflect.Interface {
-		e := c.doc.walkOf(t, nil)
-		w.static = !e.holds && e.levels > 0 && e.levels <= maxDepth // a proven bound, no reader
+	if x.list {
+		if t := x.items.Type().Elem(); t.Kind() != reflect.Interface {
+			e := c.doc.walkOf(t, nil)
+			w.static = !e.holds && e.levels > 0 && e.levels <= maxDepth // a proven bound, no reader
+		}
 	}
-	for i := range rv.Len() {
-		if at, err := w.write(rv.Index(i).Interface()); err != nil {
+	for i := range x.len() {
+		if at, err := w.write(x.item(i)); err != nil {
 			re.input("Input.Body/"+strconv.Itoa(i)+at, err)
 		}
 	}
@@ -123,14 +133,20 @@ func (w *itemWriter) write(v any) (string, error) {
 		err = w.text(x, errSeparator)
 	default:
 		r, reader := v.(io.Reader)
+		j, data := v.(jsonData)
 		switch {
 		case reader && !null(v):
 			b.add(source{payload: readerPayload(r), check: w.sq.seps})
 			b.buf = append(b.buf, '\n')
 		case w.codec != nil:
 			var buf bytes.Buffer
-			if err = w.codec.Encode(&buf, v); err == nil {
+			if err = w.codec.Encode(&buf, bare(v)); err == nil {
 				err = w.text(bytes.TrimRight(buf.Bytes(), " \t\n\r"), errCodecSep) // trailing JSON whitespace
+			}
+		case data:
+			var s string
+			if s, err = j.text(); err == nil {
+				b.buf = append(appendJSON(b.buf, s), '\n') // compact JSON text, which holds no separator
 			}
 		case w.static:
 			_, err = w.encode(v)
@@ -161,6 +177,9 @@ func (w *itemWriter) text(data []byte, err error) error {
 func (w *itemWriter) encode(v any) ([]byte, error) {
 	if w.enc == nil {
 		w.enc = json.NewEncoder(&w.b)
+	}
+	if h, ok := v.(held); ok {
+		v = h.p.Interface() // written as json writes it where it is held
 	}
 	start := len(w.b.buf)
 	if err := w.enc.Encode(v); err != nil {
@@ -378,7 +397,7 @@ func (it *items) read(buf []byte) (int, error) {
 		b := &it.w.b
 		b.buf, b.parts = b.buf[:0], b.parts[:0]
 		if at, err := it.w.write(v); err != nil {
-			return 0, fmt.Errorf("item %d%s: %w", it.n, at, err)
+			return 0, fmt.Errorf("%s: %w", label("item "+strconv.Itoa(it.n)+at), err)
 		}
 		it.n++
 		p := b.payload()

@@ -141,11 +141,17 @@ type Options struct {
 	// and SSE event objects, or application/json or the corresponding +json
 	// type for JSON sequences. Whole sequential responses are assembled as
 	// JSON arrays and decoded once by that item-type codec, without decoding
-	// and re-encoding each item.
-	// An Encode error
-	// refuses the call at the body's or parameter's Inputs key, or aborts
-	// the body for an iterator's item; a Decode error is a *DecodeError, or
-	// an ErrItem for one item.
+	// and re-encoding each item. An Encode error refuses the call at the body's
+	// or parameter's Inputs key, or aborts the body for an iterator's item; a
+	// Decode error is a *DecodeError, or an ErrItem for one item. A key Load
+	// would refuse, given through Client.With, refuses at Settings
+	// "Options.Codecs" each call that encodes a value as a body or
+	// content-serialized parameter, or whose out is a pointer to decode into
+	// (not a *[]byte or an io.Writer). Unless the response has no body (see
+	// Client.Call), it also makes Response.Decode and StatusError.Decode into
+	// such a pointer return a *DecodeError naming Options.Codecs, and Items,
+	// for a T other than []byte or *multipart.Part, yield such an error, not
+	// wrapping ErrItem, as its only result.
 	Codecs map[string]Codec
 
 	// MaxBodyBytes bounds a body decoded by Call or Response.Decode into a
@@ -348,37 +354,47 @@ type Input struct {
 	//     property's name, unless its collectionFormat or Encoding style says
 	//     otherwise, each item taking the property's content type (an array
 	//     schema's items type by default); any other value is one field or
-	//     part. A field an Encoding style serializes takes JSON data, so a
-	//     []byte there is a base64 string and a Part or reader is refused. A
-	//     typed nil is a value, never a reader, so a property or item holding
-	//     one is omitted as null. A multipart object with no fields sends the
-	//     close delimiter alone ("--" boundary "--" CRLF), as browsers do.
-	//   - For OpenAPI 3.2 multipart/form-data, Body may instead be a slice,
+	//     part. A field an Encoding style or a Swagger 2.0 collectionFormat
+	//     serializes, multi included, takes JSON data, under
+	//     multipart/form-data too, so a []byte there is a base64 string and a
+	//     Part or reader is refused. A typed nil is a value, never a reader, so
+	//     a property or item holding one is omitted as null. A multipart object
+	//     with no fields sends the close delimiter alone ("--" boundary "--"
+	//     CRLF), as browsers do.
+	//   - For OpenAPI 3.2 multipart/form-data, Body may instead be a list, a
+	//     slice or array other than a byte slice (whose JSON data is a string),
 	//     one part per element, in order: each a one-property object, whose
 	//     property names the part and whose value is its content, encoded as
 	//     that position's Encoding says, or a Part whose Header gives
 	//     Content-Disposition, which takes a type its Encoding lists (see
 	//     Part.MediaType) even where that Encoding sets a style.
 	//   - For any other OpenAPI 3.2 multipart media type, Body may instead be
-	//     a slice, or an iterator as for a sequential type, one part per
+	//     a list, or an iterator as for a sequential type, one part per
 	//     element, in order, whether or not the type declares prefixEncoding
 	//     or itemEncoding: each a []byte, an io.Reader, a Part, or a value
-	//     encoded by that part's media type. Such a part has no
-	//     Content-Disposition or filename unless its Part sets them.
+	//     encoded by that part's media type as that value on its own would
+	//     be, so a list and an iterator yielding the same values send the
+	//     same parts. Such a part has no Content-Disposition or filename
+	//     unless its Part sets them. Under these types and OpenAPI 3.2
+	//     multipart/form-data, a non-nil pointer to a list sends what the list
+	//     it points to sends, and a Body whose JSON data is null, as a nil
+	//     slice's is, has no parts: it is the close delimiter alone.
 	//   - A part whose media type is multipart is encoded, one level deep,
-	//     from an object or slice by its Encoding's own encoding,
+	//     from an object or list by its Encoding's own encoding,
 	//     prefixEncoding or itemEncoding; a []byte or io.Reader supplies it
 	//     pre-encoded, with its boundary in Part.MediaType.
 	//   - For a sequential media type (JSON Lines, JSON text sequences,
-	//     server-sent events), in any edition, Body is a slice, an iter.Seq, or
+	//     server-sent events), in any edition, Body is a list, an iter.Seq, or
 	//     an iter.Seq2 whose second value is an error, of any element type;
 	//     each element is one item, encoded as that value on its own would be,
-	//     so a slice and an iterator yielding the same values send the same
-	//     bytes. Under text/event-stream an item is an object with no members
-	//     but data, event and id, as strings, and retry, as a non-negative
-	//     integer, or an [Event] (or a non-nil *Event), of which only the
-	//     fields it sets are used. It is written as those fields, each as a
-	//     "field: value" line ending in LF, data as one data line per line
+	//     so a list and an iterator yielding the same values send the same
+	//     bytes; a non-nil pointer to a list sends what the list it points to
+	//     sends, and a Body whose JSON data is null, as a nil slice's is,
+	//     has no items. Under text/event-stream an item is an object with no
+	//     members but data, event and id, as strings, and retry, as a
+	//     non-negative integer, or an [Event] (or a non-nil *Event), of which
+	//     only the fields it sets are used. It is written as those fields, each
+	//     as a "field: value" line ending in LF, data as one data line per line
 	//     (split at CRLF, LF or CR), then a blank line; any other member or
 	//     type, a line break in event or id, a NUL in id, or a retry that is
 	//     not whole milliseconds, is an item that cannot be encoded; invalid
@@ -470,8 +486,10 @@ type Input struct {
 // carry it. In an application/x-www-form-urlencoded body only Content and
 // MediaType apply, and Filename, NoFilename or Header is refused.
 type Part struct {
-	// Content is the part's value: a []byte or an io.Reader for raw
-	// content, a string, or any other value, encoded by MediaType.
+	// Content is the part's value: a []byte or an io.Reader for raw content, a
+	// string, or any other value, encoded by MediaType. A nil Content, or one
+	// whose JSON data is null, omits the part, as a null property is omitted,
+	// whatever the part's media type.
 	Content any
 
 	// MediaType is the part's Content-Type: a concrete type matching, by the

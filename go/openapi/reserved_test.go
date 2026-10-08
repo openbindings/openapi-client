@@ -9,19 +9,22 @@ import (
 // allowReserved (doc.go, Fixed rules, Percent-encoding: "allowReserved
 // applies to query parameters, and in OpenAPI 3.2 to path parameters and
 // form-style cookie parameters too; elsewhere it is ignored. Where it
-// applies, RFC 6570 reserved expansion is used exactly: reserved characters
-// and existing %XX triples pass through, and the caller supplies any
-// percent-encoding OpenAPI leaves to the application"). RFC 6570 section
-// 3.2.3 (reserved expansion allows "the set (unreserved / reserved /
-// pct-encoded)") and section 3.2.1 ("the percent character ("%") is only
-// allowed as part of a pct-encoded triplet"); OAS 3.1.2 section 4.8.12.2.2
-// ("Applications are still responsible for percent-encoding reserved
-// characters that are not allowed in the query string ([, ], #)") and
-// Appendix C.3 (non-RFC 6570 styles take "regular or reserved expansion
-// (based on allowReserved)"). Reserved expansion covers member names too,
-// while parameter names always follow the name rule (doc.go: "RFC 6570
-// reserved expansion is used exactly, member names included (parameter
-// names always follow the rule above)").
+// applies, RFC 6570 reserved expansion is used ...: reserved characters and
+// existing %XX triples pass through, except those the destination cannot
+// carry, which are encoded as above, and the caller supplies any other
+// percent-encoding OpenAPI leaves to the application. The exceptions are ...
+// "#" in a query"). RFC 6570 section 3.2.3 (reserved expansion allows "the
+// set (unreserved / reserved / pct-encoded)") and section 3.2.1 ("the
+// percent character ("%") is only allowed as part of a pct-encoded
+// triplet"); OAS 3.1.2 section 4.8.12.2.2 ("Applications are still
+// responsible for percent-encoding reserved characters that are not allowed
+// in the query string ([, ], #)"), of which the client encodes "#", which
+// would end the query, and passes "[" and "]"; and Appendix C.3 (non-RFC
+// 6570 styles take "regular or reserved expansion (based on
+// allowReserved)"). Reserved expansion covers member names too, while
+// parameter names always follow the name rule (doc.go: "RFC 6570 reserved
+// expansion is used, member names included (parameter names always follow
+// the rule above)").
 func TestAllowReservedQuery(t *testing.T) {
 	w := newWire(t, nil)
 	doc := doc31(`
@@ -38,7 +41,7 @@ func TestAllowReservedQuery(t *testing.T) {
 		want             string
 	}{
 		{"gen-delims and sub-delims pass", "f", "p", ":/?@!$&'()*+,;=", "/f?p=:/?@!$&'()*+,;="},
-		{"brackets and hash pass", "f", "p", "a[0]#x", "/f?p=a[0]#x"},
+		{"brackets pass, hash encoded", "f", "p", "a[0]#x", "/f?p=a[0]%23x"},
 		{"triples pass", "f", "p", "x%2By%2fz", "/f?p=x%2By%2fz"},
 		{"lone percent encoded", "f", "p", "50%", "/f?p=50%25"},
 		{"percent not before two hex digits", "f", "p", "%zz%4", "/f?p=%25zz%254"},
@@ -133,5 +136,98 @@ func TestAllowReservedIgnoredOutsideQuery(t *testing.T) {
 		if p := param(t, mustOp(t, c, key), 0); p.AllowReserved || p.Err != nil {
 			t.Errorf("%s: AllowReserved %t, Err %v; want false, nil", key, p.AllowReserved, p.Err)
 		}
+	}
+}
+
+// doc.go, Fixed rules, Percent-encoding: under allowReserved "reserved
+// characters and existing %XX triples pass through, except those the
+// destination cannot carry, which are encoded as above ... The exceptions are
+// "?" and "#" in a path and "#" in a query, a querystring parameter's
+// included, which would end the path or the query there". A "#" in a query
+// value or member name, in every query style, and in an OpenAPI 3.2
+// querystring parameter's form content written under an Encoding's
+// allowReserved (doc.go, Fixed rules, Querystring: "is not encoded again, but
+// for a "#""), is %23, so the request target carries no fragment (RFC 3986
+// section 3.5); "?" still passes in a query. A 3.2 path value's "?" and "#"
+// are encoded too.
+func TestAllowReservedEncodesHashInQuery(t *testing.T) {
+	w := newWire(t, nil)
+	c := parseFor(t, w, doc31(`
+		"/f":{"get":{"operationId":"f","parameters":[{"name":"p","in":"query","allowReserved":true,"schema":{}}]}},
+		"/n":{"get":{"operationId":"n","parameters":[{"name":"p","in":"query","explode":false,"allowReserved":true,"schema":{}}]}},
+		"/s":{"get":{"operationId":"s","parameters":[{"name":"p","in":"query","style":"spaceDelimited","explode":false,"allowReserved":true,"schema":{}}]}},
+		"/pd":{"get":{"operationId":"pd","parameters":[{"name":"p","in":"query","style":"pipeDelimited","explode":false,"allowReserved":true,"schema":{}}]}},
+		"/d":{"get":{"operationId":"d","parameters":[{"name":"p","in":"query","style":"deepObject","allowReserved":true,"schema":{}}]}}`), nil)
+	for _, tt := range []struct {
+		name, key string
+		v         any
+		want      string
+	}{
+		{"value", "f", "a#b?c", "/f?p=a%23b?c"},
+		{"exploded member name and value", "f", map[string]string{"k#1": "v#2"}, "/f?k%231=v%232"},
+		{"array", "n", []string{"a#", "#b"}, "/n?p=a%23,%23b"},
+		{"object", "n", map[string]string{"k#": "v#"}, "/n?p=k%23,v%23"},
+		{"spaceDelimited", "s", []string{"a#b", "c"}, "/s?p=a%23b%20c"},
+		{"pipeDelimited", "pd", []string{"a#b", "c"}, "/pd?p=a%23b%7Cc"},
+		{"deepObject", "d", map[string]string{"k#": "v#"}, "/d?p%5Bk%23%5D=v%23"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, re := callOne(t, w, c, tt.key, "p", tt.v)
+			if re != nil {
+				t.Fatalf("refused: %v", re)
+			}
+			if got.RequestURI != tt.want {
+				t.Errorf("request target %q, want %q", got.RequestURI, tt.want)
+			}
+		})
+	}
+	c32 := parseFor(t, w, `{"openapi":"3.2.0","info":{"title":"t","version":"1"},"servers":[{"url":"@BASE@"}],"paths":{
+		"/qs":{"get":{"operationId":"qs","parameters":[{"name":"q","in":"querystring","content":{"application/x-www-form-urlencoded":{
+			"schema":{"type":"object"},"encoding":{"a":{"allowReserved":true}}}}}]}},
+		"/x/{p}":{"get":{"operationId":"path","parameters":[{"name":"p","in":"path","required":true,"allowReserved":true,"schema":{}}]}}}}`, nil)
+	got, re := callOne(t, w, c32, "qs", "q", map[string]string{"a": "x#y/z"})
+	if re != nil || got.RequestURI != "/qs?a=x%23y/z" {
+		t.Errorf("querystring: request target %q, %v; want /qs?a=x%%23y/z", got.RequestURI, re)
+	}
+	got, re = callOne(t, w, c32, "path", "p", "a?b#c/d")
+	if re != nil || got.RequestURI != "/x/a%3Fb%23c/d" {
+		t.Errorf("path: request target %q, %v; want /x/a%%3Fb%%23c/d", got.RequestURI, re)
+	}
+}
+
+// doc.go, Fixed rules, Percent-encoding: the exceptions to reserved
+// expansion under allowReserved include ""," and ";" in a form-style cookie's
+// member names and values, which RFC 6265 section 4.1.1 excludes from a
+// cookie-octet, so that a value cannot add a cookie pair"; doc.go, Fixed
+// rules, Cookies: "one Cookie field, pairs joined by "; "". In OpenAPI 3.2,
+// where allowReserved applies to a form-style cookie, "c=x;admin=1" stays
+// one pair, and the other reserved characters still pass.
+func TestAllowReservedCookieKeepsPairs(t *testing.T) {
+	w := newWire(t, nil)
+	c := parseFor(t, w, `{"openapi":"3.2.0","info":{"title":"t","version":"1"},"servers":[{"url":"@BASE@"}],"paths":{
+		"/c":{"get":{"operationId":"c","parameters":[{"name":"c","in":"cookie","allowReserved":true,"schema":{}}]}}}}`, nil)
+	if p := param(t, mustOp(t, c, "c"), 0); !p.AllowReserved {
+		t.Fatalf("AllowReserved %t, want true for an OpenAPI 3.2 form-style cookie", p.AllowReserved)
+	}
+	for _, tt := range []struct {
+		name string
+		v    any
+		want string
+	}{
+		{"semicolon", "x;admin=1", "c=x%3Badmin=1"},
+		{"comma", "a,b", "c=a%2Cb"},
+		{"other reserved characters pass", "a/b:c=d@e?f#g[h]!$&'()*+", "c=a/b:c=d@e?f#g[h]!$&'()*+"},
+		{"exploded member name and value", map[string]string{"k;1": "v;2", "m": "a,b"}, "k%3B1=v%3B2; m=a%2Cb"},
+		{"exploded array", []string{"a;b", "c"}, "c=a%3Bb; c=c"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, re := callOne(t, w, c, "c", "c", tt.v)
+			if re != nil {
+				t.Fatalf("refused: %v", re)
+			}
+			if v := got.Header.Values("Cookie"); len(v) != 1 || v[0] != tt.want {
+				t.Errorf("Cookie %q, want [%s]", v, tt.want)
+			}
+		})
 	}
 }

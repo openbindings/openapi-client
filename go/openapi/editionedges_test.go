@@ -77,8 +77,11 @@ func TestEditionsReferencedDescriptors(t *testing.T) {
 	}
 }
 
-// External fragments need no version. Swagger parameter and response $refs
-// are discovered in their edition's root containers and remain target-sourced.
+// External fragments need no version. A Swagger 2.0 parameter or response
+// Reference Object naming another document's fragment is followed, and the
+// part it reaches keeps the target as its Source. A root parameters or
+// responses entry written as a reference is not such a Reference Object (see
+// TestSwaggerDefinitionEntryWrittenAsReference).
 func TestEditionsSwaggerExternalFragments(t *testing.T) {
 	l := openapi.Loader{Fetch: func(_ context.Context, u string) (io.ReadCloser, string, error) {
 		switch u {
@@ -89,7 +92,7 @@ func TestEditionsSwaggerExternalFragments(t *testing.T) {
 		}
 		return nil, "", fmt.Errorf("unexpected %s", u)
 	}}
-	doc := editionDoc("2.0", `"/x":{"post":{"consumes":["application/json"],"produces":["application/json"],"parameters":[{"$ref":"#/parameters/B"}],"responses":{"200":{"$ref":"#/responses/R","description":"ignored"}}}}`, `"parameters":{"B":{"$ref":"p.json#/Body"}},"responses":{"R":{"$ref":"r.json#/OK"}}`)
+	doc := editionDoc("2.0", `"/x":{"post":{"consumes":["application/json"],"produces":["application/json"],"parameters":[{"$ref":"p.json#/Body"}],"responses":{"200":{"$ref":"r.json#/OK","description":"ignored"}}}}`)
 	c, err := l.Parse(t.Context(), []byte(doc), testDocURI, nil)
 	if err != nil {
 		t.Fatal(err)

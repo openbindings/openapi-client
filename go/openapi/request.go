@@ -145,7 +145,7 @@ func (cfg *config) checkAccept(o *operation, h http.Header, out any, re *Request
 		var types []string
 		for _, list := range o.success {
 			for _, m := range list {
-				types = append(types, m.full)
+				types = append(types, label(m.full))
 			}
 		}
 		re.setting("Options.Header", fmt.Errorf("2xx responses offer %s; set an Accept field to decode into %T",
@@ -571,18 +571,34 @@ func dotSegment(u string, start, end int) bool {
 // the URL rule.
 func (t *tree) resolveServerURL(s string) (endpoint, error) {
 	u, err := url.Parse(s)
+	path := writtenPath(s)
 	switch {
 	case err != nil:
 		return endpoint{}, errors.New("it is not a URL")
 	case !u.IsAbs() && !t.httpBase():
 		return endpoint{}, errors.New("a relative URL needs a document retrieved over http or https")
 	case !u.IsAbs():
+		u.RawPath = path // merged as written, its triples kept
 		u = t.base.ResolveReference(u)
+		path = escape(u.EscapedPath(), pathSet)
 	}
 	if u.Host == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || strings.Contains(s, "#") {
 		return endpoint{}, errors.New("it has no host, or has userinfo, a query or a fragment")
 	}
-	return endpoint{u.Scheme, u.Host, escape(u.EscapedPath(), pathSet)}, nil
+	return endpoint{u.Scheme, u.Host, path}, nil
+}
+
+// writtenPath returns the path of the URL reference s as written, keeping
+// each %XX triple and percent-encoding every other byte a path does not
+// allow, as the Paths key is; net/url would decode the triples of a path
+// holding such a byte.
+func writtenPath(s string) string {
+	_, _, at := urlParts(s)
+	end := strings.IndexAny(s[at:], "?#")
+	if end < 0 {
+		end = len(s) - at
+	}
+	return escape(s[at:at+end], pathSet)
 }
 
 // httpBase reports whether relative server URLs resolve against the
@@ -715,7 +731,7 @@ func (c *Client) mediaType(o *operation, in *Input, re *RequestError) (string, p
 	if len(declared) > 0 {
 		switch md = match(o.body, declared, m, true); {
 		case md == nil:
-			re.setting("Input.MediaType", fmt.Errorf("the operation does not declare %s", typ))
+			re.setting("Input.MediaType", fmt.Errorf("the operation does not declare %s", label(typ)))
 			return "", parsedMedia{}, nil
 		case keyErr(md):
 			re.setting("Input.MediaType", mediaErr(md))

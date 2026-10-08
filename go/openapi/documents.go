@@ -547,7 +547,7 @@ func (d *document) discover(ld *loading) error {
 			break
 		}
 		wave = dc.getAll(wave)
-		if err := ld.ctx.Err(); err != nil {
+		if err := contextErr(ld.ctx); err != nil {
 			return fmt.Errorf("openapi: %w", err)
 		}
 		slices.SortFunc(wave, func(a, b fetch) int { return strings.Compare(a.uri, b.uri) })
@@ -564,7 +564,7 @@ func (d *document) discover(ld *loading) error {
 			}
 		}
 	}
-	if err := ld.ctx.Err(); err != nil { // a reader may have stopped short
+	if err := contextErr(ld.ctx); err != nil { // a reader may have stopped short
 		return fmt.Errorf("openapi: %w", err)
 	}
 	for k := range dc.refused {
@@ -586,7 +586,7 @@ func (d *document) discover(ld *loading) error {
 	// path bytes from the identifier keys the document will retain, before any
 	// caller can read the URLs. This adds neither an index nor a cached string.
 	for uri, c := range d.ids {
-		if err := ld.ctx.Err(); err != nil {
+		if err := contextErr(ld.ctx); err != nil {
 			return fmt.Errorf("openapi: %w", err)
 		}
 		// Short keys offer little storage to recover; avoid looking up their
