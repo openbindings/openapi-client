@@ -135,8 +135,8 @@ func TestMultipartDeclaredAndDuplicateBoundaries(t *testing.T) {
 // Input.MediaType: "A boundary in a request body's declared content key is used
 // and checked the same way"; describe.go, Media.Err: "an OpenAPI 3.x request
 // body's form or multipart key that holds an invalid or repeated boundary
-// parameter"), a document defect, not "Input.MediaType", with a nested
-// multipart part whose own boundary would be generated. Since a regression
+// parameter"), the call refused before sending, with a nested multipart part
+// whose own boundary would be generated. Since a regression
 // would make Prepare spin forever, the cases run in a child process under a
 // 10 s guard.
 func TestMultipartEmptyBoundaryRefused(t *testing.T) {
