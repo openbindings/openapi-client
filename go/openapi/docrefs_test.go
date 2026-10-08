@@ -408,14 +408,14 @@ func TestDocumentURIsOrder(t *testing.T) {
 	}
 }
 
-// load.go, Client.Document: a document is named by "the URI it was
-// retrieved from"; "With a JSON Pointer fragment ... a copy of only that
-// node, or nil when there is none; a Reference Object there is returned as
-// written"; a fragment is a JSON Pointer percent-encoded as RFC 6901
-// section 6 says; nil "when no document was loaded from uri". load.go,
-// Loader: "A fragment is percent-decoded as UTF-8 before it is read as a
-// JSON Pointer": references into keys with a space and a non-ASCII letter
-// resolve.
+// load.go, Client.Document: a document is named by "the URI it was finally
+// retrieved from, in the form Loader gives the URI requested"; "With a JSON
+// Pointer fragment ... a copy of only that node, or nil when there is none; a
+// Reference Object there is returned as written"; a fragment is a JSON Pointer
+// percent-encoded as RFC 6901 section 6 says; nil "when no document was loaded
+// from uri". load.go, Loader: "A fragment is percent-decoded as UTF-8 before it
+// is read as a JSON Pointer": references into keys with a space and a non-ASCII
+// letter resolve.
 func TestDocumentOfReferencedDocuments(t *testing.T) {
 	s := newSite(t)
 	s.put("/openapi.json", entry31(`"/p":{"get":{"operationId":"p","parameters":[
@@ -1203,9 +1203,10 @@ func TestRootDeclarationsComeFromTheEntry(t *testing.T) {
 	}
 }
 
-// load.go, Parse: "The uri, if not empty, is the absolute URI ... the
-// document is meant to live at, which stands for the URI it was retrieved
-// from and is never fetched itself"; Loader.Parse: l's settings "govern the
+// load.go, Parse: "The uri, if not empty, is the absolute URI ... that the
+// document is meant to live at: taken in the form Loader gives the URI
+// requested, it stands for the URI the document was retrieved from, and it is
+// never fetched"; Loader.Parse: l's settings "govern the
 // documents its references reach". References resolve against the uri and
 // are fetched; one back to the uri is not.
 func TestParseFollowsReferences(t *testing.T) {
@@ -1228,10 +1229,10 @@ func TestParseFollowsReferences(t *testing.T) {
 }
 
 // Loader.Parse: "With an empty uri, a document is fetched only when Origins
-// or AllowReference admits it. In the content, a relative reference with
-// anything before its fragment then resolves only against an absolute base
-// the content supplies ... and a reference left with no base is unresolvable
-// and never fetched." Parse: "With an empty uri, the document may reference
+// or AllowReference admits it. In the content, a relative reference other
+// than a fragment-only one then resolves only against an absolute base
+// the content supplies ...; a reference left with no base is unresolvable and
+// never fetched." Parse: "With an empty uri, the document may reference
 // only itself".
 func TestParseEmptyURIReferences(t *testing.T) {
 	s := newSite(t)
@@ -1322,11 +1323,11 @@ func TestTrustedDocumentsSuppliedByTheCaller(t *testing.T) {
 // Load's checks of Options against the document (client.go, Options:
 // "A value that matches no server of the document is refused by Load"; "A
 // name that appears in no server URL of the document is refused by Load";
-// MediaType: "Load refuses a type that no such Media of any operation
-// matches"; SecurityKey: "A key that names no alternative ... is refused by
-// Load"; doc.go, Credentials: "Load refuses a Credentials name the document
-// never uses") cover every operation the Client describes, those written in
-// referenced documents included. A misspelling is still refused.
+// MediaType: "Load refuses a type that matches no such Media in any request
+// body whose Err is nil"; SecurityKey: "A key that names no alternative ... is
+// refused by Load"; doc.go, Credentials: "Load refuses a Credentials name the
+// document never uses") cover every operation the Client describes, those
+// written in referenced documents included. A misspelling is still refused.
 func TestLoadChecksReachReferencedDocuments(t *testing.T) {
 	s := newSite(t)
 	s.put("/openapi.json", entry31(`"/a":{"$ref":"a.json"}`,

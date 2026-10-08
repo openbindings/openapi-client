@@ -13,11 +13,11 @@ import (
 // part holding that value unusable", and "A value so written makes its part
 // unusable even where OpenAPI says the value is ignored, such as an encoding
 // under a JSON media type or an Encoding Object's headers for a field written
-// by its style". describe.go, Media.Err: it is set by "an entry of one that no
-// Encoding Param describes written as or holding one ..., under any media
-// type, which leaves no Encoding Param to report it". The harness, and the
-// checks of each call in both orders and of nothing being fetched, are those
-// of bundlevalues_test.go.
+// by its style". describe.go, Media.Err: it is set by "an entry of one or an
+// itemEncoding that no Encoding Param describes written as or holding one ...,
+// under any media type, which leaves no Encoding Param to report it". The
+// harness, and the checks of each call in both orders and of nothing being
+// fetched, are those of bundlevalues_test.go.
 
 // headerValues are headers maps whose header X-A holds a value written as a
 // reference, with the editions each applies to and the root members they

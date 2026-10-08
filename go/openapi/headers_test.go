@@ -167,11 +167,12 @@ func TestHeaderFieldsAndHeaderParameters(t *testing.T) {
 	}
 }
 
-// client.go, OperationFromContext: "returns the operation being sent when
-// ctx is the context of a request the client sends, and nil otherwise".
-// client.go, Request.HTTP: "Its context carries the operation for
-// OperationFromContext; the request Call, Send or Stream sends carries the
-// context given to it instead, the operation still attached."
+// client.go, OperationFromContext: "returns the operation of a request that
+// Prepare built or that a call sends, when ctx is that request's context or
+// derives from it, and nil otherwise". client.go, Request.HTTP: "Its context
+// carries the operation for OperationFromContext; the request Call, Send or
+// Stream sends carries the context given to it instead, the operation still
+// attached."
 func TestOperationFromContext(t *testing.T) {
 	w := newWire(t, nil)
 	ct := &countingTransport{}

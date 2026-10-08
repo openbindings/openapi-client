@@ -247,7 +247,7 @@ func (c recordingCodec) Decode(r io.Reader, v any) error { return errors.New("no
 // "+json" replace encoding/json wherever a value is encoded or decoded as
 // content of a JSON type ... An Encode error refuses the
 // call at the body's or parameter's Inputs key". doc.go, Values: "a caller's
-// codec ... receives the value as given". The encoded bytes are then
+// codec receives the value as given". The encoded bytes are then
 // percent-encoded, or written as given in a header.
 func TestContentParamCodecs(t *testing.T) {
 	w := newWire(t, nil)

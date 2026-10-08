@@ -20,8 +20,9 @@ import (
 // document meant to be bundled before use. It makes the nearest part holding
 // that value unusable: the Err of that Operation, Param, Message, Media, Server
 // or SecurityScheme says the document must be bundled first, a cause that does
-// not wrap ErrUnresolved." "Extension values, examples, info, tags,
-// externalDocs, webhooks, callbacks and links are not such values".
+// not wrap ErrUnresolved." "Extension values are not such values, nor are
+// values that only document the API and in which the edition defines no
+// Reference Object, such as info, tags, externalDocs and example values".
 // Operation.Err: "Calling an operation with Err set returns a *RequestError
 // wrapping Err. A defect in an optional part is reported on that part instead,
 // and fails a call only when the call uses it".

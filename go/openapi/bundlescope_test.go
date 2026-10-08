@@ -16,8 +16,10 @@ import (
 // followed before bundling either. Such a reference in a schema has an Err
 // saying the document must be bundled first, which does not wrap
 // ErrUnresolved (see Schema.References); any other makes its own nearest part
-// unusable the same way ... Extension values, examples, info, tags,
-// externalDocs, webhooks, callbacks and links are not such values". The
+// unusable the same way ... The client reads no webhooks, callbacks, links or
+// examples for an operation, so none makes a part unusable, whatever is
+// written there, unless a reference the client follows leads into it.
+// Extension values are not such values". The
 // harness, and the checks of each call in both orders and of nothing being
 // fetched, are those of bundlevalues_test.go.
 
@@ -196,8 +198,7 @@ func TestBundleScopeSecurityRequirement(t *testing.T) {
 	})
 }
 
-// "Extension values, examples, info, tags, externalDocs, webhooks, callbacks
-// and links are not such values": a Callback Object's,
+// "Extension values are not such values": a Callback Object's,
 // or the Paths Object's, extension member is data, so an object inside it
 // whose $ref member is a string marks nothing, and a parameter reference into
 // its other members is followed as before. Nothing is retrieved.

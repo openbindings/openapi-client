@@ -339,7 +339,7 @@ var unencodable = make(chan int)
 // under text/event-stream an item is only an object or an Event; JSON items as
 // encoding/json fails on them, or holding a reader or Part (client.go,
 // Input.Body: "A Part or io.Reader inside a value the client encodes with
-// encoding/json is refused with an Inputs entry at its place in Body"); a
+// encoding/json is refused at an Inputs key that begins "Input.Body""); a
 // pre-encoded item holding its framing's separator (Input.Body: "one holding
 // the framing's separator (LF or CR, or RS) cannot be encoded").
 func TestSequentialItemRefusals(t *testing.T) {

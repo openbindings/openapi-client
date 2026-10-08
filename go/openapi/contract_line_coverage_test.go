@@ -725,9 +725,9 @@ func TestDecodeErrorJoinsUploadError(t *testing.T) {
 }
 
 // Regression check, not contract: the error text names the context's error.
-// doc.go, Outcomes promises only the match: "When the call's context is done
-// before the call completes, the error matches both ctx.Err() and
-// context.Cause(ctx) with errors.Is".
+// doc.go, Outcomes promises only the match: "An error a call returns because
+// its context ended matches both ctx.Err() and context.Cause(ctx) with
+// errors.Is".
 func TestContextErrorTextNamesCause(t *testing.T) {
 	_, c := contractLineClient(t)
 	ctx, cancel := context.WithCancel(t.Context())
@@ -897,9 +897,9 @@ func (rt cancelThenRead) RoundTrip(r *http.Request) (*http.Response, error) {
 	return nil, errGaveUp
 }
 
-// doc.go, Outcomes: "When the call's context is done before the call
-// completes, the error matches both ctx.Err() and context.Cause(ctx) with
-// errors.Is", even with a transport that ignores the request's context and
+// doc.go, Outcomes: "An error a call returns because its context ended
+// matches both ctx.Err() and context.Cause(ctx) with errors.Is", even with a
+// transport that ignores the request's context and
 // then fails; the transport's own error is kept, its text included.
 // Regression check, not contract: a read of the request body after the
 // context ended reports the context's error.

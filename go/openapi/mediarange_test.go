@@ -27,9 +27,9 @@ import (
 //     when exactly one is declared and it is concrete; otherwise, a range
 //     counting as an alternative, it requires Options.MediaType or
 //     Input.MediaType"; errors.go, RequestError.Settings: "A body's media
-//     type is keyed "Input.MediaType" when it is undetermined, is not a
-//     concrete media type, is one the operation does not declare, or is
-//     declared under a key that causes its Media.Err".
+//     type is keyed "Input.MediaType" when the call cannot use it, as when
+//     it is undetermined, is not a concrete media type, is one the operation
+//     does not declare, is declared under a key that causes its Media.Err".
 //   - client.go, Input.MediaType: "a concrete type matching one the
 //     operation declares, by the rules on Response.Media"; Response.Media:
 //     "The most specific match wins: a concrete type over type/*, type/*

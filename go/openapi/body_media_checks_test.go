@@ -75,10 +75,11 @@ func TestFieldNumberWithIntegerIsInteger(t *testing.T) {
 // one when none is given) has an Err, the refusal wraps that Err (client.go,
 // Input.MediaType: "A boundary in a request body's declared content key is
 // used and checked the same way"; describe.go, Media.Err: "an OpenAPI 3.x
-// request body's form or multipart key that holds an invalid or repeated
-// boundary parameter"; describe.go, Operation.Err: a part's defect "fails a
-// call only when the call uses it, the *RequestError then wrapping that part's
-// Err"; OAS 3.1.2 section 4.8.13: "only the most specific key is applicable").
+// request body's form or multipart content key that holds an invalid or
+// repeated boundary parameter"; describe.go, Operation.Err: a part's defect
+// "fails a call only when the call uses it, the *RequestError then wrapping
+// that part's Err"; OAS 3.1.2 section 4.8.13: "only the most specific key is
+// applicable").
 func TestDeclaredBoundaryRefusalNamesTheMedia(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, doc31(`

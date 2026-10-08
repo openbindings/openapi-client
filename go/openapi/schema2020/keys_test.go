@@ -16,8 +16,8 @@ import (
 // the entry document, or #/definitions/NAME in Swagger 2.0, has the key
 // NAME when NAME contains no "#"; any other key is the schema's Source
 // written as a URI reference relative to the entry document's URI, so that
-// the key resolves against that URI to the Source, its dot segments removed.
-// In a reference, a key is escaped as a JSON Pointer token and then as RFC 3986
+// the key resolves against that URI to the Source. In a reference, a key is
+// escaped as a JSON Pointer token and then as RFC 3986
 // section 3.5 requires of a fragment."
 
 var hexEscape = regexp.MustCompile(`%[0-9a-fA-F]{2}`)

@@ -172,7 +172,7 @@ func TestBodyPresence(t *testing.T) {
 // exactly one is declared and it is concrete; otherwise, a range counting as
 // an alternative, it requires Options.MediaType or Input.MediaType."
 // client.go, Input.MediaType: "a concrete type matching one the operation
-// declares, by the rules on Response.Media ... A range is refused.
+// declares, by the rules on Response.Media ... A range is refused. ...
 // MediaType may carry parameters, which are sent as given"; an empty content
 // map takes any concrete type with a pre-encoded body. client.go,
 // Request.Media: the Media the Content-Type matches, most specific first,
@@ -289,9 +289,9 @@ func TestMediaTypePreference(t *testing.T) {
 }
 
 // client.go, Input.Body: "A Part or io.Reader inside a value the client
-// encodes with encoding/json is refused with an Inputs entry at its place in
-// Body"; errors.go, RequestError.Inputs: "Input.Body" followed by a JSON
-// Pointer (RFC 6901: "/" in a key is "~1").
+// encodes with encoding/json is refused at an Inputs key that begins
+// "Input.Body""; errors.go, RequestError.Inputs: "Input.Body" followed by a
+// JSON Pointer (RFC 6901: "/" in a key is "~1").
 func TestReaderInsideJSONRefused(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, bodyDoc, nil)
@@ -522,7 +522,7 @@ func (c tagCodec) Decode(r io.Reader, v any) error {
 // wins over a suffix key, which wins over a built-in codec ... A *[]byte or
 // io.Writer target, and a []byte or io.Reader body, bypass codecs ... An
 // Encode error refuses the call at the body's ... Inputs key". doc.go,
-// Values: "a caller's codec ... receives the value as given"; "a type with
+// Values: "a caller's codec receives the value as given"; "a type with
 // a caller's codec takes a value of any Go type".
 func TestCodecsForRequestBodies(t *testing.T) {
 	w := newWire(t, nil)

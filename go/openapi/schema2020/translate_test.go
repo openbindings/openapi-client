@@ -19,10 +19,9 @@ import (
 // maximum, which is removed; one that is false or has no bound is removed. In
 // OpenAPI 3.0, nullable is removed and, where the schema then has a type, true
 // adds "null" to it as a type list unless it already allows null; enum is
-// unchanged. ... Every other keyword is kept, as an annotation where the
-// edition does not define it. Project never validates an instance, invents a
-// fact or repairs a schema." A schema these rules leave with no keywords
-// compares equal to true.
+// unchanged. ... The translation changes no other keyword. Project never
+// validates an instance, invents a fact or repairs a schema." A schema these
+// rules leave with no keywords compares equal to true.
 
 type translation struct {
 	name     string

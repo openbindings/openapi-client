@@ -20,7 +20,8 @@ import (
 //   - client.go, Response.Declaration: "It is the same immutable descriptor
 //     Operation.Responses exposes." Response.Media: "It is the same
 //     immutable descriptor Declaration.Media exposes."
-//   - client.go, OperationFromContext: "returns the operation being sent";
+//   - client.go, OperationFromContext: "returns the operation of a request
+//     that Prepare built or that a call sends";
 //     Request.HTTP: "Its context carries the operation for
 //     OperationFromContext".
 //   - describe.go, Operations: "the Operations it points to are shared by

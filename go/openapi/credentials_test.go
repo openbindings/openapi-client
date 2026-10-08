@@ -268,8 +268,9 @@ func TestSecretFuncCalledPerRequest(t *testing.T) {
 // credential.go, SecretFunc: "f receives the call's context, with its
 // deadline, cancellation and values, ... but not the operation: a request f
 // makes is not labelled ... as the call's operation by middleware that asks
-// OperationFromContext." client.go, OperationFromContext: nil "for requests
-// a credential source makes".
+// OperationFromContext." client.go, OperationFromContext: "A credential
+// source is called with the call's context, or one derived from it, never the
+// request's".
 func TestSecretFuncContext(t *testing.T) {
 	w := newWire(t, nil)
 	type ctxKey struct{}

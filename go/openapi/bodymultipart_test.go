@@ -284,7 +284,7 @@ func TestMultipartPartOverrides(t *testing.T) {
 // included, may hold no ASCII control character but a tab and no leading or
 // trailing whitespace"; a property or part value its media type cannot encode;
 // client.go, Input.Body: a Part or reader "inside a value the client encodes
-// with encoding/json is refused with an Inputs entry at its place in Body", the
+// with encoding/json is refused at an Inputs key that begins "Input.Body"", the
 // pointer passing through a Part with no Content segment; and a Body that is
 // not an object, a slice being an OpenAPI 3.2 shape), and Settings for a part's
 // media type the call must give or gave wrongly (RequestError.Settings: "for a

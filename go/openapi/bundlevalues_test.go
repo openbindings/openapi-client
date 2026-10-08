@@ -23,9 +23,10 @@ import (
 // first, a cause that does not wrap ErrUnresolved. A parameters list so
 // written makes every operation it applies to unusable, and a servers list so
 // written is described as one Server with that Err, which Options.BaseURL can
-// replace as it can any unusable server ... Extension values, examples, info,
-// tags, externalDocs, webhooks, callbacks and links are not such values ... In
-// a map of objects a member named $ref whose value is an
+// replace as it can any unusable server ... Extension values are not such
+// values, nor are values that only document the API and in which the edition
+// defines no Reference Object, such as info, tags, externalDocs and example
+// values. In a map of objects a member named $ref whose value is an
 // object is an entry like any other, such as a header named $ref".
 //
 // Operation.Err lists among its causes, "a value written as a reference where

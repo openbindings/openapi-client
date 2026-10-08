@@ -176,11 +176,12 @@ func derefChain(v any, n int) any {
 // Dereferences never end the walk, so a chain of pointers around a reader is
 // walked to the reader and refused (client.go, Input.Body: "A Part or
 // io.Reader inside a value the client encodes with encoding/json is refused
-// with an Inputs entry at its place in Body"; pointers add no JSON Pointer
-// token). A reader or Part behind 1,200 and 3,000 dereferences, a non-cyclic
-// chain of *any, is refused at its key in JSON, form and multipart bodies, and
-// nothing is sent: previously the walk gave up past 1,000 dereferences and
-// encoding/json wrote the reader as {}.
+// at an Inputs key that begins "Input.Body""; errors.go, RequestError.Inputs:
+// "followed by a JSON Pointer to the part of Body concerned"; pointers add no
+// JSON Pointer token). A reader or Part behind 1,200 and 3,000 dereferences, a
+// non-cyclic chain of *any, is refused at its key in JSON, form and multipart
+// bodies, and nothing is sent: previously the walk gave up past 1,000
+// dereferences and encoding/json wrote the reader as {}.
 func TestReaderBehindManyDereferencesRefused(t *testing.T) {
 	w, c := walkClient(t)
 	for _, hidden := range []struct {

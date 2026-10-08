@@ -157,8 +157,9 @@ func TestLoadRetrievalFailure(t *testing.T) {
 }
 
 // load.go, Parse: "The uri, if not empty, is the absolute URI, without a
-// fragment, the document is meant to live at, which stands for the URI it was
-// retrieved from and is never fetched itself".
+// fragment, that the document is meant to live at: taken in the form Loader
+// gives the URI requested, it stands for the URI the document was retrieved
+// from, and it is never fetched".
 func TestParseWithURI(t *testing.T) {
 	ct := &countingTransport{}
 	uri := "https://pets.example.test/specs/openapi.json"

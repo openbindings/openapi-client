@@ -147,12 +147,13 @@ func partErrDocs() []partErrDoc {
 		},
 	}, {
 		// describe.go, Media.Encoding: "For a positional multipart type in
-		// OpenAPI 3.2, it describes the parts: those of prefixEncoding in
-		// order, named "0", "1" and so on". load.go, SchemeLookup: "In OpenAPI
-		// 3.2, a name that is not a component name where it is looked up is a
-		// URI reference to a Security Scheme Object"; doc.go, Credentials:
-		// "FromTransport is what satisfies a scheme a requirement names but the
-		// document never declares, or declares defectively".
+		// OpenAPI 3.2, it describes the top-level parts: those of
+		// prefixEncoding in order, named "0", "1" and so on". load.go,
+		// SchemeLookup: "In OpenAPI 3.2, a name that is not a component name
+		// where it is looked up is a URI reference to a Security Scheme
+		// Object"; doc.go, Credentials: "FromTransport is what satisfies a
+		// scheme a requirement names but the document never declares, or
+		// declares defectively".
 		name: "OpenAPI 3.2",
 		doc: editionDoc("3.2.1", `
 			"/positional":{"post":{"operationId":"positional","requestBody":{"content":{"multipart/mixed":{

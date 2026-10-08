@@ -378,8 +378,8 @@ func TestFormBodyStyleExamples(t *testing.T) {
 // whose JSON data is an object"); a property or item
 // value its media type cannot encode (doc.go, Values); a reader or Part
 // inside a JSON value (client.go, Input.Body: "A Part or io.Reader inside a
-// value the client encodes with encoding/json is refused with an Inputs entry
-// at its place in Body"). A field's media type that the call must choose, or
+// value the client encodes with encoding/json is refused at an Inputs key that
+// begins "Input.Body""). A field's media type that the call must choose, or
 // chose outside the Encoding's list, is a setting:
 // Settings["Input.Body/<field>"] (errors.go, RequestError.Settings: "for a
 // part's media type, "Input.Body" followed by the part's JSON Pointer";

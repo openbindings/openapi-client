@@ -159,7 +159,9 @@ type skipped struct {
 // encoding/json writes it; a reader it would write is refused at its place,
 // a TextMarshaler key named by its text (client.go, Input.Body: "A Part or
 // io.Reader inside a value the client encodes with encoding/json is refused
-// with an Inputs entry at its place in Body").
+// at an Inputs key that begins "Input.Body""; errors.go, RequestError.Inputs:
+// "Input.Body" is "followed by a JSON Pointer to the part of Body
+// concerned").
 func TestReaderInJSONBodyFollowsEncodingJSONFields(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, doc31(jsonBodyOp), nil)
@@ -478,9 +480,10 @@ func TestDocumentURIUserinfoRefused(t *testing.T) {
 // such as Settings "Options.Header" or "Input.Header", or a Part's or header
 // parameter's Inputs key", before sending. Input.MediaType is validated as a
 // media type (section 8.3.1, parameters quoted as section 5.6.4 says;
-// client.go, Response.Media: "The client parses every media type it reads (a
-// Content-Type, a content key, an Encoding contentType, Options.MediaType,
-// Input.MediaType, Part.MediaType) by RFC 9110's media-type grammar").
+// client.go, Response.Media: "The client parses every media type it reads,
+// such as a Content-Type, a content key, a Swagger 2.0 consumes or produces
+// entry, an Encoding contentType, Options.MediaType, Input.MediaType or
+// Part.MediaType, by RFC 9110's media-type grammar").
 func TestHeaderFieldNameAndValueValidation(t *testing.T) {
 	w := newWire(t, nil)
 	doc := doc31(`"/h":{"get":{"operationId":"h","parameters":[{"name":"X-V","in":"header","schema":{}},{"name":"X C","in":"header","schema":{}}]}},
@@ -732,8 +735,8 @@ func TestResponseMediaSpecificityOrder(t *testing.T) {
 // Raw document text is quoted in error text, so a hostile document cannot
 // forge a log line, and a caller's value never appears (errors.go,
 // RequestError.Error: "The text the client writes never holds a credential,
-// an input's value, or a value given for a server variable or a header
-// field"); an encoding error keeps its cause.
+// or a value the caller gave a parameter, a server variable, a header field or
+// the body"); an encoding error keeps its cause.
 func TestErrorTextQuotesDocumentAndOmitsValues(t *testing.T) {
 	w := newWire(t, nil)
 	doc := doc31(`"/x\n{a\nFAKE: line}":{"get":{"operationId":"forged"}},

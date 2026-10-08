@@ -268,9 +268,10 @@ func TestServerVariables(t *testing.T) {
 // document cannot use: ... a Variables name no server URL uses, a MediaType
 // that no operation's request body Media matches (see Options.MediaType), a
 // Codecs key Options.Codecs refuses, a Server or
-// ServerID that matches no server, ... a BaseURL without a scheme and host,
-// with userinfo, a query or a fragment, or set with Server or ServerID,
-// conflicting exact and name selectors, a Header field that is always
+// ServerID that matches no server, ... a BaseURL that is not a URL with a
+// scheme and a non-empty host, or that has a port above 65535, userinfo, a
+// query or a fragment, or is set with Server or ServerID, conflicting exact
+// and name selectors, a Header field that is always
 // refused, ..." Settings is keyed "by the Go setting that fixes it"
 // (errors.go).
 func TestLoadRefusesOptions(t *testing.T) {

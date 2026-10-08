@@ -27,8 +27,8 @@ func wantQuotedText(t testing.TB, what, text string, escapes ...string) {
 	}
 }
 
-// doc.go, Outcomes: "Text such an error takes from the document, a caller's
-// value or a server, a media type and a YAML tag included, is quoted, as
+// doc.go, Outcomes: "Text such an error takes from the document, the caller
+// or a server, a media type and a YAML tag included, is quoted, as
 // strconv.Quote quotes it, whenever it holds invalid UTF-8 or a character that
 // strconv.IsPrint reports is not printable, such as a line feed or an escape,
 // so that it cannot forge a line of a log or reach a terminal as control
@@ -49,13 +49,14 @@ func TestYAMLTagQuotedInError(t *testing.T) {
 // doc.go, Outcomes, as for TestYAMLTagQuotedInError, for the media types an
 // error takes from a caller's value or the document: an Input.MediaType the
 // operation does not declare, an Options.MediaType no operation declares
-// (client.go, Options.MediaType: "Load refuses a type that no such Media of
-// any operation matches"), and an Encoding contentType list that requires
-// Part.MediaType (doc.go, Configuration: "a list or a range requires
-// Part.MediaType"). A line feed or an escape cannot reach these errors, since a
-// media type that holds one does not parse (RFC 9110 section 5.6.4 admits only
-// a tab, a space, visible characters and obs-text in a quoted-string), so the
-// tab and the C1 controls U+0085 and U+009B, which do parse, stand for them.
+// (client.go, Options.MediaType: "Load refuses a type that matches no such
+// Media in any request body whose Err is nil"), and an Encoding contentType
+// list that requires Part.MediaType (doc.go, Configuration: "a list or a range
+// requires Part.MediaType"). A line feed or an escape cannot reach these
+// errors, since a media type that holds one does not parse (RFC 9110 section
+// 5.6.4 admits only a tab, a space, visible characters and obs-text in a
+// quoted-string), so the tab and the C1 controls U+0085 and U+009B, which do
+// parse, stand for them.
 func TestMediaTypeQuotedInError(t *testing.T) {
 	const tab = "text/csv;\tx=1"
 	const nel = "text/csv; x=\"\u0085\""

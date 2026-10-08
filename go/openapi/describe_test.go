@@ -575,8 +575,9 @@ func TestServersDescriptor(t *testing.T) {
 
 // describe.go, Server.Err and doc.go, Fixed rules, URL: "After substitution,
 // a server URL that url.Parse refuses ... cannot be used either, nor can one
-// with no host, userinfo, a query or a fragment (Server.Err, where the
-// document alone decides it)."
+// whose host is empty, with or without a port, whose port is above 65535, or
+// that has userinfo, a query or a fragment (Server.Err, where the document
+// alone decides it)".
 func TestServerErrUnusableURL(t *testing.T) {
 	doc := `{"openapi":"3.1.0","info":{"title":"t","version":"1"},"servers":[
 		{"url":"https://api.example.test/v1"},
