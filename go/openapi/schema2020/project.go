@@ -42,14 +42,20 @@ type Projection struct {
 
 // Issue names one schema location that cannot be translated faithfully.
 type Issue struct {
-	Source string // the openapi.Schema.Source of the containing schema
+	// Source is the openapi.Schema.Source of the Root or Defs entry holding the
+	// problem: for Root, that of the schema given to Project; for a Defs entry,
+	// its Sources value.
+	Source string
 	At     string // JSON Pointer from that schema's Raw to the problem
 	Err    error
 }
 
-// Error reports every independently detectable loss in a projection.
-// Issues distinguish unresolved references, dynamic scope, and unsupported
-// dialect semantics.
+// Error reports every independently detectable loss in a projection, each an
+// Issue whose At names what was lost: a $ref, mapping value or defaultMapping
+// that is unresolved or unreported, whose Err is the reference's own Err where
+// openapi.Schema.References reports one; a $dynamicRef, for dynamic scope; a
+// keyword removed as Project describes; or, for a resource in another dialect,
+// its $schema, or its root when it has none.
 type Error struct {
 	Issues []Issue
 }
@@ -72,22 +78,22 @@ func (e *Error) Unwrap() []error {
 	return out
 }
 
-// Project converts a supported schema s of the Client c to a standalone
-// JSON Schema 2020-12 schema for direction. s must come from c or from a
-// Client derived from c with With; Project returns an error, and no
-// Projection, when c has loaded no document at the URI s is written in. Root is
-// the schema itself; Defs holds every schema
-// it reaches by reference, transitively, and nothing else. Every reference
-// that openapi.Schema.References reports, discriminator mapping and
-// defaultMapping values included, is rewritten to #/$defs/KEY for its
-// target. No emitted schema carries $id, $schema, $anchor, $dynamicAnchor
-// or $defs: a referenced nested $defs entry becomes a Defs entry, and an
-// unreferenced one is dropped. A schema written at #/components/schemas/NAME
-// of the entry document, or #/definitions/NAME in Swagger 2.0, has the key
-// NAME when NAME contains no "#"; any other key is the schema's Source as a
-// URI reference relative to the entry document's URI. In a reference, a key
-// is escaped as a JSON Pointer token and then as RFC 3986 section 3.5
-// requires of a fragment. The same input gives the same output.
+// Project converts a supported schema s of the Client c to a standalone JSON
+// Schema 2020-12 schema for direction. s must come from c or from a Client
+// derived from c with With; Project returns an error, and no Projection, when c
+// has loaded no document at the URI s is written in. Root is the schema itself.
+// Each $ref, discriminator mapping value and defaultMapping value that
+// openapi.Schema.References reports with a Target is rewritten to #/$defs/KEY
+// for that Target, and Defs holds every schema these references reach,
+// transitively, and nothing else; a $dynamicRef is lost, as below. No emitted
+// schema carries $id, $schema, $anchor, $dynamicAnchor or $defs: a referenced
+// nested $defs entry becomes a Defs entry, and an unreferenced one is dropped.
+// A schema written at #/components/schemas/NAME of the entry document, or
+// #/definitions/NAME in Swagger 2.0, has the key NAME when NAME contains no
+// "#"; any other key is the schema's Source as a URI reference relative to the
+// entry document's URI. In a reference, a key is escaped as a JSON Pointer
+// token and then as RFC 3986 section 3.5 requires of a fragment. The same input
+// gives the same output.
 //
 // Schemas are read under their openapi.Schema.Version. In OpenAPI 3.1 and
 // 3.2, readOnly and writeOnly are annotations, so every direction gives the
@@ -123,20 +129,19 @@ func (e *Error) Unwrap() []error {
 //
 // Project returns an *Error, and with it the Projection, when part of the
 // schema cannot be carried: a reference that cannot be resolved, or that
-// openapi.Schema.References does not report for the schema holding it
-// (such as a $ref in a Swagger 2.0 items object, or one that is not a
-// string), which is removed alone; a $dynamicRef, whose
-// target depends on dynamic scope; a keyword removed as above; or a schema
-// resource whose dialect is neither JSON Schema 2020-12 nor an OpenAPI 3.1
-// or 3.2 base dialect. Each Issue's At names the keyword
-// concerned, which then contributes nothing: a reference or removed
-// keyword is dropped, with its mapping entry for a mapping value; a
-// resource in another dialect becomes true, the schema that accepts
-// anything; and a schema left with no keywords becomes true. Callers that
-// need the lost parts can use the authored graph through openapi.Schema
+// openapi.Schema.References does not report for the schema holding it (such as
+// a $ref in a Swagger 2.0 items object, or one that is not a string), which is
+// removed alone; a $dynamicRef, whose target depends on dynamic scope; a
+// keyword removed as above; or a schema resource in a dialect other than those
+// openapi.Schema reads. Each Issue's At names the keyword concerned, which then
+// contributes nothing: a reference or removed keyword is dropped, with its
+// mapping entry for a mapping value; a resource in another dialect, named by
+// its $schema or, when it has none, by its root, becomes true, the schema that
+// accepts anything; and a schema left with no keywords becomes true. Callers
+// that need the lost parts can use the authored graph through openapi.Schema
 // and openapi.Client.DocumentURIs with their own dialect-aware processor.
-// Project is lazy, retrieves no documents and retains nothing after it
-// returns.
+// Project is lazy, retrieves no documents and retains nothing after it returns.
+// It is safe to call concurrently, and each call returns what it would alone.
 func Project(c *openapi.Client, s *openapi.Schema, direction Direction) (*Projection, error) {
 	if c == nil || s == nil {
 		return nil, errors.New("openapi/schema2020: Project needs a client and a schema")

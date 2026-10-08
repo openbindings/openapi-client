@@ -19,15 +19,22 @@ import (
 // through the zero Client or a Request that Prepare did not make.
 var ErrNoOperation = errors.New("openapi: no such operation")
 
-// ErrUnresolved is wrapped by the Err of a part whose defect is a reference
-// that cannot be resolved, a reference cycle included, as distinct from a
-// malformed declaration. The Err names the reference, and wraps the retrieval
-// error too when fetching or reading its document failed (one that cannot be
-// read is named with where the problem is, as Loader describes for an entry
-// document),
-// or an error naming the refused URI when admission refused it, so a caller can
-// tell a fixable fetch or admission (see Loader.Origins, Loader.AllowReference
-// and Loader.Fetch) from a broken document.
+// ErrUnresolved is wrapped by the Err of a part, or of a SchemaReference, whose
+// defect is a reference that cannot be resolved, as distinct from a malformed
+// declaration, and by every error Client.Schema returns but one saying the
+// document must be bundled first. A reference cycle cannot be resolved: a chain
+// of Reference Objects or of Path Item $refs, in any edition, or of Swagger 2.0
+// or OpenAPI 3.0 schemas written as references, that leads back into itself.
+// Other cycles, such as a recursive schema or a cycle of OpenAPI 3.1 or 3.2
+// schema $refs, resolve (see Schema). The Err names the reference, and wraps
+// the retrieval error too when fetching or reading its document failed (one
+// that cannot be read is named with where the problem is, as Loader describes
+// for an entry document), or an error naming the refused URI when admission
+// refused it, so a caller can tell a fixable fetch or admission (see
+// Loader.Origins, Loader.AllowReference and Loader.Fetch) from a broken
+// document. Its text shows no userinfo that a reference, a redirect's Location
+// or the URL of a *url.Error gives, though each cause is still wrapped
+// unchanged; any other text of an error from Loader.Fetch is shown as it is.
 var ErrUnresolved = errors.New("openapi: unresolved reference")
 
 // A RequestError is an API call refused before it was sent, or Options
