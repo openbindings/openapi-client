@@ -81,8 +81,8 @@ var ErrItem = errors.New("openapi: bad item")
 //     reading goes on at the next RS. Under a text/* type whose items have
 //     no caller's codec, a T of any or string receives each record's bytes
 //     as text, as Call takes a text/* body, so a record that is not a JSON
-//     text is yielded, not reported; a malformed record is still dropped
-//     and reported.
+//     text is yielded, not reported; the malformed records above (text
+//     outside a record, a truncated scalar) are still dropped and reported.
 //   - text/event-stream: one per dispatched event, as the JSON object
 //     OpenAPI 3.2 defines for it, whose members are only the fields the
 //     event set: "data", "event" and "id" as strings, "retry" as a number.
@@ -103,12 +103,13 @@ var ErrItem = errors.New("openapi: bad item")
 //     valid until the next iteration. Nested multipart bodies are decoded as
 //     Call decodes them, without flattening their parts. The body is framed
 //     as RFC 2046 says, except for line breaks. A header line may end in LF
-//     alone. If the first delimiter line ends in LF alone, LF alone replaces
-//     CRLF before and after each delimiter. Otherwise the close delimiter's
-//     line may still end in LF alone. A body that cannot be framed, as with
-//     no delimiter, a malformed part header, or an end before the close
-//     delimiter, ends the iteration with an error that is not an ErrItem,
-//     wrapping mime/multipart's where it gives one.
+//     alone. If the delimiter line that opens the first part ends in LF
+//     alone, LF alone replaces CRLF before and after each delimiter; if it
+//     ends in CRLF, the close delimiter's line may still end in LF alone. A
+//     body that holds only a close delimiter line has no parts. A body that
+//     cannot be framed, as with no delimiter, a malformed part header, or an
+//     end before the close delimiter, ends the iteration with an error that
+//     is not an ErrItem, wrapping mime/multipart's where it gives one.
 //   - any other media type: the whole body, as one item.
 //
 // The media type is the response's Content-Type, read as Call reads it, so a T
@@ -118,8 +119,10 @@ var ErrItem = errors.New("openapi: bad item")
 // receives the framed item's bytes; for SSE, these are the event object's JSON
 // representation. The JSON-sequence scalar-truncation rule still applies. A T
 // of *multipart.Part reads only a multipart body: under any other media type,
-// no item decodes into it, so each is an ErrItem. An error that concerns one
-// item wraps [ErrItem] and is yielded in its place, and the iteration goes on.
+// a Content-Encoding naming a coding other than identity is reported as
+// Content codings in the package documentation says, and otherwise no item
+// decodes into it, so each is an ErrItem. An error that concerns one item
+// wraps [ErrItem] and is yielded in its place, and the iteration goes on.
 // Any other error (a read failure, the context's error, an item over
 // Options.MaxItemBytes) is yielded last, except that a multipart body ends at
 // the line break that ends its close delimiter's line, so a read failure that

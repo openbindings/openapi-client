@@ -51,7 +51,8 @@ type Options struct {
 	ServerID string
 
 	// BaseURL, if set, replaces every server of every operation: an absolute
-	// URL with a scheme and host, joined to the operation's path as the
+	// URL with a scheme and a non-empty host, and no port above 65535,
+	// userinfo, query or fragment, joined to the operation's path as the
 	// package documentation says. HTTPClient.Transport must support its
 	// scheme. This includes Swagger 2.0's ws and wss schemes when the
 	// caller supplies a suitable transport. Server and ServerID must then
@@ -107,11 +108,11 @@ type Options struct {
 	SecurityKey string
 
 	// MediaType selects a concrete request media type, as Input.MediaType
-	// does, for every operation whose request body has a Media, other than
-	// one whose Err its key causes, that it matches by the rules on
-	// Input.MediaType; it is a preference, as Security is. Input.MediaType
-	// overrides it for one call. Load refuses a type that no such Media of
-	// any operation matches.
+	// does, for every operation whose request body has a Media that it
+	// matches by the rules on Input.MediaType, a Media whose Err its key
+	// causes not counting; it is a preference, as Security is.
+	// Input.MediaType overrides it for one call. Load refuses a type that
+	// matches no such Media in any request body whose Err is nil.
 	MediaType string
 
 	// Redirects says whether the client follows redirects; zero means none.
@@ -138,14 +139,16 @@ type Options struct {
 	// the fields of an event-stream item object sent, still come from
 	// encoding/json (see Values in the package documentation), and so does
 	// the division of a form or multipart value into fields, and of a
-	// sequential or multipart list into items or parts: a codec receives
-	// each field, item or part as the value holds it, or as a
-	// json.RawMessage when the value has its own MarshalJSON. A *[]byte or
-	// io.Writer target, and a []byte or io.Reader body, bypass codecs. Load
-	// refuses any other key, and one that names a sequential, multipart or
-	// application/x-www-form-urlencoded type, whose framing and field
-	// encoding stay the client's, as OpenAPI's Encoding Object governs them;
-	// their items and parts use the codec for their own type. Sequential
+	// sequential or multipart list into items or parts: a codec receives a
+	// Part's Content as given, and each other field, item or part as
+	// encoding/json would see it in the value divided, so a ,string field
+	// as a string, or, when that value has its own MarshalJSON, as a
+	// json.RawMessage of the member or element that method wrote. A *[]byte
+	// or io.Writer target, and a []byte or io.Reader body, bypass codecs.
+	// Load refuses any other key, and one that names a sequential,
+	// multipart or application/x-www-form-urlencoded type, whose framing and
+	// field encoding stay the client's, as OpenAPI's Encoding Object governs
+	// them; their items and parts use the codec for their own type. Sequential
 	// response items use application/json for JSON Lines and SSE event
 	// objects, or application/json or the corresponding +json type for JSON
 	// sequences. Whole sequential responses are assembled as JSON arrays and
@@ -492,7 +495,7 @@ type Input struct {
 	// rather than send a short body.
 	//
 	// A Part or io.Reader inside a value the client encodes with
-	// encoding/json is refused with an Inputs entry at its place in Body,
+	// encoding/json is refused at an Inputs key that begins "Input.Body",
 	// unless its own MarshalJSON or MarshalText encodes it, and a []byte
 	// there is a base64 string. A []byte that is itself a form or multipart
 	// field or part is sent as its bytes, unless a style or collectionFormat
@@ -507,32 +510,35 @@ type Input struct {
 	Body any
 
 	// MediaType is the body's media type: a concrete type matching one the
-	// operation declares, by the rules on Response.Media; any concrete type
-	// where Swagger 2.0 declares none; or, for Swagger 2.0 formData with no
-	// form type declared, either form type. Unlike a response's Content-Type,
-	// the body's media type can match a Media whose Err is set. Its key
-	// causes that Err when the Err reports that the content key or Swagger
-	// 2.0 consumes entry declaring the Media is not a valid media type, or
-	// that an OpenAPI 3.x request body's content key is a form or multipart
-	// type whose boundary parameter is invalid or repeated. A Media whose Err
-	// its key causes refuses, at Settings "Input.MediaType", every call whose
-	// body it would govern, a pre-encoded body included; a Media with any
-	// other Err takes only a pre-encoded []byte or io.Reader body, and
-	// refuses a structured one at Inputs["Input.Body"]. When an OpenAPI 3.x
-	// requestBody has an empty content map, a pre-encoded []byte or
-	// io.Reader body may use any concrete type given here; there is no
-	// governing Media descriptor or structured encoder. A range is refused.
-	// MediaType may carry parameters, which are sent as given: a pre-encoded
-	// multipart body requires its boundary here, and a boundary given for a
-	// multipart body the client encodes is used, a part whose content holds
-	// its delimiter, or "--" and the boundary after a CR or LF, being an
-	// input that cannot be encoded (RFC 2046 section 5.1.1; in a reader, it
-	// is found only as the body is sent, as Body says). A boundary in a
-	// request body's declared content key is used and checked the same way.
-	// Two boundary parameters in a multipart type are refused. Empty means
-	// Options.MediaType, else the declared type where one selects itself (see
-	// the package documentation); otherwise a body requires MediaType before
-	// dispatch.
+	// operation declares, by the rules on Response.Media; or, under a
+	// Swagger 2.0 Media with an empty Type, any concrete type for a body
+	// parameter, but only an application/x-www-form-urlencoded or
+	// multipart/form-data type for formData. Unlike a response's
+	// Content-Type, the body's media type can match a Media whose Err is set.
+	// Its key causes that Err when the content key or Swagger 2.0 consumes
+	// entry declaring the Media is not a valid media type, or an OpenAPI 3.x
+	// request body's form or multipart content key has an invalid or
+	// repeated boundary parameter, whatever else the Err reports. A Media
+	// whose Err its key causes never governs a body, a pre-encoded one
+	// included, and a type that only such a Media matches is refused at
+	// Settings "Input.MediaType"; a Media with any other Err takes only a
+	// pre-encoded []byte or io.Reader body, and refuses a structured one at
+	// Inputs["Input.Body"]. When an OpenAPI 3.x requestBody has an empty
+	// content map, a pre-encoded []byte or io.Reader body may use any
+	// concrete type given here; there is no governing Media descriptor or
+	// structured encoder. A range is refused. Spaces and tabs around the
+	// whole value are ignored and not sent. MediaType may carry parameters,
+	// which are sent as given: a pre-encoded multipart body requires its
+	// boundary here, and a boundary given for a multipart body the client
+	// encodes is used, a part whose content holds its delimiter, or "--" and
+	// the boundary after a CR or LF, being an input that cannot be encoded
+	// (RFC 2046 section 5.1.1; in a reader, it is found only as the body is
+	// sent, as Body says). A boundary in a request body's declared content
+	// key is used and checked the same way. Two boundary parameters in a
+	// multipart type are refused. Empty means Options.MediaType, for an
+	// operation it applies to, else the declared type where one selects
+	// itself (see the package documentation); otherwise a body requires
+	// MediaType before dispatch.
 	MediaType string
 
 	// Security selects the security alternative by its
@@ -550,15 +556,14 @@ type Input struct {
 	Header http.Header
 }
 
-// A Part is one field of a form or multipart body, or one part of a positional
-// multipart body, given where its media type, filename or part header fields
-// matter. An empty field means its default. A named part's Content-Disposition
-// is form-data, under any multipart type, with its name and filename written as
-// given, each as a quoted-string with \ and " escaped, never as filename*; an
-// ASCII control character other than a tab in either is refused, as a
-// quoted-string cannot carry it. In an application/x-www-form-urlencoded body
-// only Content and MediaType apply, and Filename, NoFilename or Header is
-// refused.
+// A Part is one field or part of form or multipart content, given where its
+// media type, filename or part header fields matter. An empty field means its
+// default. A named part's Content-Disposition is form-data, under any multipart
+// type, with its name and filename written as given, each as a quoted-string
+// with \ and " escaped, never as filename*; an ASCII control character other
+// than a tab in either is refused, as a quoted-string cannot carry it. In an
+// application/x-www-form-urlencoded body only Content and MediaType apply, and
+// Filename, NoFilename or Header is refused.
 type Part struct {
 	// Content is the part's value: a []byte or an io.Reader for raw content, a
 	// string, or any other value, encoded by MediaType. A nil Content, or one
@@ -659,8 +664,9 @@ type Part struct {
 // CONNECT have no body: Call, Stream, StatusError and Response.Decode do not
 // read one, Call and Response.Decode leave out as it was, a *[]byte included,
 // and Send keeps a 101 or a tunnel open. For a pointer to decode into, a
-// Content-Encoding other than identity is a *DecodeError, even for an empty
-// body (see Content codings in the package documentation). Without one, an
+// response that can have a body and whose Content-Encoding names a coding
+// other than identity is a *DecodeError, even when the body is empty (see
+// Content codings in the package documentation). Without such a coding, an
 // empty body is a *DecodeError wrapping io.EOF under a JSON or XML type when
 // the response can have a body and its governing Message has Media (in
 // Swagger 2.0, a schema). Otherwise it leaves out as it was under a JSON or
@@ -857,16 +863,16 @@ type Response struct {
 	// more parameters over fewer; a tie matches none. An absent Content-Type
 	// is treated as application/octet-stream for matching; a repeated one, or
 	// one the client cannot parse, matches none. The client parses every
-	// media type it reads (a Content-Type, a content key, an Encoding
-	// contentType, Options.MediaType, Input.MediaType, Part.MediaType) by
-	// RFC 9110's media-type grammar, except that "*" is a type only in */*
-	// and spaces and tabs around the whole value are ignored, though not
-	// around an Options.Codecs key, which must have none; an Encoding
-	// contentType that lists several is split at commas outside quoted
-	// strings. A Swagger 2.0 response with a schema that declares no produces
-	// has one Media with an empty Type, which matches any Content-Type, as
-	// */* would. It is the same immutable descriptor Declaration.Media
-	// exposes.
+	// media type it reads, such as a Content-Type, a content key, a Swagger
+	// 2.0 consumes or produces entry, an Encoding contentType,
+	// Options.MediaType, Input.MediaType or Part.MediaType, by RFC 9110's
+	// media-type grammar, except that "*" is a type only in */* and spaces
+	// and tabs around the whole value are ignored, though not around an
+	// Options.Codecs key, which must have none; an Encoding contentType that
+	// lists several is split at commas outside quoted strings. A Swagger 2.0
+	// response with a schema that declares no produces has one Media with an
+	// empty Type, which matches any Content-Type, as */* would. It is the
+	// same immutable descriptor Declaration.Media exposes.
 	Media *Media
 
 	// Security is the Key of the security alternative applied, "{}" for the
@@ -926,11 +932,12 @@ func (r *Response) WaitRequest(ctx context.Context) error {
 	return nil
 }
 
-// OperationFromContext returns the operation being sent when ctx is the
-// context of a request the client sends, and nil otherwise, including for
-// requests a credential source makes. It lets an http.RoundTripper label
-// traces and metrics by Operation.Key, or decide whether a retry is safe.
-// It does no work beyond the lookup.
+// OperationFromContext returns the operation of a request that Prepare built
+// or that a call sends, when ctx is that request's context or derives from
+// it, and nil otherwise. A credential source is called with the call's
+// context, or one derived from it, never the request's. It lets an
+// http.RoundTripper label traces and metrics by Operation.Key, or decide
+// whether a retry is safe. It does no work beyond the lookup.
 func OperationFromContext(ctx context.Context) *Operation {
 	if o, ok := ctx.Value(operationKey{}).(*operation); ok {
 		return o.Operation
