@@ -68,16 +68,19 @@ type RequestError struct {
 	// ServerID "Options.BaseURL", and Server set with ServerID
 	// "Options.ServerID". A server made unusable by a variable that has no
 	// value, or by Options.Variables values, is keyed by variable, in the form
-	// above: by the variable without a value, by one whose value is off its
-	// enum or unfit for its place in the URL, or, when the URL the given values
-	// form cannot be used, by each variable given a value. It is keyed
-	// "Options.BaseURL" too when the operation has several servers and none is
-	// usable. A body's media type is keyed "Input.MediaType" when it is
-	// undetermined, is not a concrete media type, is one the operation does not
-	// declare, or is declared under an invalid key (see Media.Err); a body that
-	// any other Media.Err refuses is keyed in Inputs. A header field that a
-	// supplied header parameter or the credential sets is keyed by the Header
-	// that set it. Several security alternatives with none selected, or an
+	// above, when its Err is nil: by the variable without a value, by one whose
+	// value is off its enum or unfit for its place in the URL, or, when the URL
+	// the given values form cannot be used, by each variable given a value. It
+	// is keyed "Options.BaseURL" too when neither Options.Server nor
+	// Options.ServerID is set, unless the operation has one server (see
+	// Configuration in the package documentation). A body's media type is keyed
+	// "Input.MediaType" when it is undetermined, is not a concrete media type,
+	// is one the operation does not declare, or is declared under a key that is
+	// not a valid media type, or under a form or multipart key whose boundary
+	// parameter is invalid or repeated (see Media.Err); a body that any other
+	// Media.Err refuses is keyed in Inputs. A header field that a supplied
+	// header parameter or the credential sets is keyed by the Header that set
+	// it. Several security alternatives with none selected, or an
 	// Options.Security matching several that differ only in scopes, are keyed
 	// "Options.Security", the error naming Options.SecurityKey and
 	// Input.Security too; SecurityKey set with Security is keyed
@@ -91,8 +94,8 @@ type RequestError struct {
 	// parameter, a missing required one, a value its style cannot serialize or
 	// a header cannot carry (see Header fields in the package documentation), a
 	// body the operation does not take, a body refused by the request body's
-	// Message.Err or by its governing Media's Err for any reason but an invalid
-	// key, a reader or Part where the media type cannot carry one, a
+	// Message.Err or by its governing Media's Err for any reason but its key
+	// (see Settings), a reader or Part where the media type cannot carry one, a
 	// ParamWriters failure or conflict, or a Part that sets both Filename and
 	// NoFilename. The key is the Param.Key or, for the body, "Input.Body"
 	// followed by a JSON Pointer to the part of Body concerned, in which a Part
@@ -116,10 +119,12 @@ type RequestError struct {
 	Err error
 }
 
-// Error describes every problem and the field that fixes each, never a
-// credential, an input's value, or a value given for a server variable or a
-// header field. The text of an error a credential source returned is included
-// as it is.
+// Error describes every problem and the field that fixes each. The text the
+// client writes never holds a credential, an input's value, or a value given
+// for a server variable or a header field. The text of an error the caller's
+// own code returned, such as a credential source, a ParamWriters function or a
+// Codec's Encode, is included as it is, whatever it holds, except where the
+// package documentation, under Outcomes, says it is left out.
 func (e *RequestError) Error() string {
 	var parts []string
 	if e.Err != nil {

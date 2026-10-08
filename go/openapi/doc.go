@@ -63,14 +63,13 @@
 // 2.5, true, and 0 for an empty json.Number) and a string as it is. Under a
 // media type that is not JSON and has no caller's codec, a value of type string
 // that is the whole content of a body, field, part or content-serialized
-// parameter is sent as its bytes, invalid UTF-8 included, unless the type
-// refuses a string: a form type always does, a multipart type does but for a
-// field of an application/x-www-form-urlencoded body, and a sequential type
-// does for a body or a parameter. Any other string value the client writes, one
-// of a named string type included, is taken from the JSON data, in which
-// encoding/json writes each invalid byte as U+FFFD: so in JSON, in a parameter
-// not serialized by content, and in a field that a style or a Swagger 2.0
-// collectionFormat writes.
+// parameter is sent as its bytes, invalid UTF-8 included. A form type refuses
+// such a string; a multipart type takes one only as a field of an
+// application/x-www-form-urlencoded body, and a sequential type only as a field
+// or part. Any other string value the client writes, one of a named string type
+// included, is taken from the JSON data, in which encoding/json writes each
+// invalid byte as U+FFFD: so in JSON, in a parameter not serialized by content,
+// and in a field that a style or a Swagger 2.0 collectionFormat writes.
 //
 // The client's codecs sort media types into four classes, for requests
 // and responses alike, taking the first that applies:
@@ -99,27 +98,28 @@
 // that an exploded one, or one in deepObject style or under the multi
 // collectionFormat, writes nothing, not even its name or prefix. A form or
 // multipart property or array item, or a positional part (a part given by its
-// position, as one element of a list or iterator Body under an OpenAPI 3.2
-// multipart type; see Input.Body), whose JSON data is null is omitted, whatever
-// its serialization or media type, a form, multipart or sequential one
-// included. A parameter serialized by content is encoded as a body of its media
-// type is, so under application/json null, [] and {} are present values, and a
-// []byte is the encoded content; a reader, and a multipart or sequential media
-// type, cannot serialize a parameter and are refused at its key. A reader or
-// Part anywhere inside a parameter value the client encodes with encoding/json
-// is refused at the parameter's key, as for a body, unless its own MarshalJSON
-// or MarshalText encodes it. A JSON body or JSON part is exactly what its codec
-// writes, null members, [] and {} included. A value the client encodes with
-// encoding/json is refused if encoding/json cannot encode it, as with a map
-// whose key type it cannot write, a malformed json.Number, or a MarshalJSON or
-// MarshalText that fails, and the error wraps encoding/json's error or the
-// failing method's. So is a value whose JSON, a MarshalJSON's output included,
-// nests deeper than 1,000 levels, the outermost value of a body, field, part,
-// sequential item or parameter being level 1, each item of a form or multipart
-// property's array being a field or part of its own: a JSON body of 999 nested
-// arrays around a number is sent, and one of 1,000 is refused. Either is
-// refused at the key of the body, field, part, sequential item or parameter
-// that is or holds it, or, in an iterator's item, aborts the body; a caller's
+// position: one element of a list Body under an OpenAPI 3.2 multipart type, or
+// of an iterator Body under one other than multipart/form-data; see
+// Input.Body), whose JSON data is null is omitted, whatever its serialization
+// or media type, a form, multipart or sequential one included. A parameter
+// serialized by content is encoded as a body of its media type is, so under
+// application/json null, [] and {} are present values, and a []byte is the
+// encoded content; a reader, and a multipart or sequential media type, cannot
+// serialize a parameter and are refused at its key. A reader or Part anywhere
+// inside a parameter value the client encodes with encoding/json is refused at
+// the parameter's key, as for a body, unless its own MarshalJSON or MarshalText
+// encodes it. A JSON body or JSON part is exactly what its codec writes, null
+// members, [] and {} included. A value the client encodes with encoding/json is
+// refused if encoding/json cannot encode it, as with a map whose key type it
+// cannot write, a malformed json.Number, or a MarshalJSON or MarshalText that
+// fails, and the error wraps encoding/json's error or the failing method's. So
+// is a value whose JSON, a MarshalJSON's output included, nests deeper than
+// 1,000 levels. Levels count within each body, field, part, sequential item or
+// parameter, its outermost value being level 1; each item of a form or
+// multipart property's array is a field or part of its own. A JSON body of 999
+// nested arrays around a number is sent; one of 1,000 is refused. Either value
+// is refused at the key of the body, field, part, sequential item or parameter
+// that is or holds it, or, as an iterator's item, aborts the body; a caller's
 // codec receives the value as given. A parameter that would take the request
 // target or a header field past 1 MiB, far beyond the 8,000 octets RFC 9110
 // section 4.1 asks servers to accept, is refused at its key, and its
@@ -140,10 +140,12 @@
 // Call and Stream classify the response as follows:
 //
 //   - API request not sent: a [*RequestError]. A credential source, the
-//     function a [SecretFunc] credential calls for its secret, may have made
-//     its own request before returning an error.
-//   - Transport failure: the *url.Error from the http.Client. The request
-//     may have reached the server.
+//     function given to [SecretFunc], may have made its own request before
+//     returning an error.
+//   - Transport failure: a *url.Error from the http.Client, which errors.As
+//     finds; once the call's context is done, it may be wrapped so that it
+//     also matches the context's error. The request may have reached the
+//     server.
 //   - A final status other than 2xx: a [*StatusError], holding the response
 //     and a bounded copy of its body.
 //   - A 2xx whose body could not be read or decoded: a [*DecodeError]. The
@@ -157,18 +159,21 @@
 // the [*Response] is returned, even with an error; when an error ends a
 // redirect chain, it is the last 3xx, its body already closed, as net/http's
 // Client.Do does for a CheckRedirect error. When the call's context is done
-// before the call completes, and the transport honors the request's context,
-// as net/http's does, the error matches ctx.Err() with errors.Is, and also
-// context.Cause(ctx), even where net/http would report only the cause, unless
-// the call was refused before it was sent; so does a read of a Stream's Body.
-// Test for the package's three types first: a *RequestError may wrap a
-// *url.Error from a token endpoint a credential source called, and a
-// *StatusError or *DecodeError may wrap the context's error when a deadline cut
-// the body short. Hitting a bound that Options or Loader.MaxBytes sets gives an
-// error that is or wraps an [*http.MaxBytesError], except that a body discarded
-// for a nil out is cut off without one. Even with no bound, the length a
-// response body or retrieved document declares reserves no more than about
-// 1 MiB in advance; the rest is allocated as its bytes arrive.
+// before the call completes, the error matches both ctx.Err() and
+// context.Cause(ctx) with errors.Is, even where net/http reports only the
+// cause. This does not apply to a call refused before it was sent, which
+// returns its *RequestError, nor to a call whose transport ignores the
+// request's context (net/http's honors it) and returns a response anyway; such
+// a call can succeed. A read of a Stream's Body after the context is done fails
+// with an error that matches both. Test for the package's three types first: a
+// *RequestError may wrap a *url.Error from a token endpoint a credential source
+// called, and a *StatusError or *DecodeError may wrap the context's error when
+// a deadline cut the body short. Hitting a bound that Options or
+// Loader.MaxBytes sets gives an error that is or wraps an
+// [*http.MaxBytesError], except that a body discarded for a nil out is cut off
+// without one. Even with no bound, the length a response body or retrieved
+// document declares reserves no more than about 1 MiB in advance; the rest is
+// allocated as its bytes arrive.
 //
 // No credential appears in the text of an error the client creates, nor in the
 // URL of the *url.Error the http.Client returns, which names the request
@@ -182,14 +187,17 @@
 // code, such as its transport, Loader.Fetch, a credential source, a
 // ParamWriters function or a Codec's Encode, are passed on as they are, and
 // their text is included as it is, even when it quotes a URL. There are two
-// exceptions. The text of an error from a MarshalJSON, MarshalText,
-// UnmarshalJSON or UnmarshalText method, or from a Codec's Decode, is left out,
-// as the text of every encoding/json and decoder error is, though the client's
-// error wraps it, or the encoding/json error that reports it (see Values and
-// DecodeError). An error from retrieving a document, the entry document
-// included, that is or wraps a *url.Error is shown as that *url.Error, each URL
-// without userinfo or query, though it is still wrapped unchanged (for a
-// referenced document, see ErrUnresolved).
+// exceptions. First, where the client encodes a value with encoding/json, or
+// decodes a response body, it leaves out the text of the error from
+// encoding/json, from a decoder such as a Codec's Decode, or from a method run
+// there, such as MarshalJSON or UnmarshalText. The client's error still wraps
+// that error (see Values and DecodeError). A Codec's Encode error keeps its
+// text, even when it reports a MarshalJSON error, and a YAML syntax error in a
+// loaded document is shown with the parser's own message (see Loader). Second,
+// an error from retrieving a document, the entry document included, that is or
+// wraps a *url.Error is shown as that *url.Error, each URL without userinfo or
+// query, though it is still wrapped unchanged (for a referenced document, see
+// ErrUnresolved).
 //
 // # Configuration when the document is incomplete
 //
@@ -202,14 +210,16 @@
 //
 //   - One usable server selects itself. Several require Options.Server,
 //     Options.ServerID or Options.BaseURL, and none requires BaseURL or an
-//     Options.Variables value that makes one usable. RequestError.Settings then
-//     keys each variable, of a server whose Err is nil, that has no value or
-//     whose Options.Variables value is refused, and, unless Options.Server or
-//     Options.ServerID selects a server, Options.BaseURL too when the
-//     operation has several servers or no variable is keyed. ServerID
-//     identifies one even when URL or name collides. Server variables use their
-//     declared defaults; a server with a variable that has none is not usable
-//     until Options.Variables gives it a value.
+//     Options.Variables value that makes one usable. ServerID identifies one
+//     even when URL or name collides. Server variables use their declared
+//     defaults; a server with a variable that has none is not usable until
+//     Options.Variables gives it a value. When a call finds no usable server,
+//     RequestError.Settings keys each variable that has no value, or whose
+//     Options.Variables value is refused, of each server whose Err is nil; when
+//     Options.Server or Options.ServerID is set, only the server it selects
+//     counts. If one is set and no variable is keyed, Settings keys that
+//     setting. If neither is set, Settings also keys Options.BaseURL, unless
+//     the operation has one server and one of its variables is keyed.
 //   - One security alternative selects itself. Several require
 //     Options.Security, Options.SecurityKey or Input.Security, including an
 //     anonymous alternative. SecurityKey names an exact alternative.
@@ -301,10 +311,9 @@
 //     URL.Path holds the path decoded. After substitution, a server URL that
 //     url.Parse refuses, such as one whose port holds anything but digits,
 //     cannot be used either, nor can one with no host, userinfo, a query or a
-//     fragment (Server.Err when the URL has no variables, or when its text
-//     outside them holds userinfo, a query or a fragment). An empty servers
-//     array on a path item or operation, and an empty Swagger 2.0 schemes
-//     list, are read as absent, as OpenAPI says of the root's servers.
+//     fragment (Server.Err, where the document alone decides it). An empty
+//     servers array on a path item or operation, and an empty Swagger 2.0
+//     schemes list, are read as absent, as OpenAPI says of the root's servers.
 //     In Swagger 2.0, as 2.0 says, a missing host is the host and port as
 //     written in the http or https URI the document was retrieved from, a
 //     missing schemes list that URI's scheme, and a missing basePath adds
@@ -362,18 +371,17 @@
 //   - Styles: RFC 6570's normative text governs where its informative Appendix
 //     A differs. So an exploded object member whose value is "" is written as
 //     its name alone, except in form style, OpenAPI 3.2 cookie style and
-//     deepObject, which write its name and "=" (a%5Bb%5D=). By the same text,
-//     a value not exploded whose expansion is empty, such as [""], counts as
-//     an empty value (;p in matrix style). Whether a value is undefined (see
-//     Values) is settled first; the refusals here apply to defined values.
-//     deepObject ignores explode. Nesting in any style but deepObject is
-//     refused, and so are an array as or in a deepObject value unless
-//     Options.DeepObjectArrays says how to write it, a primitive for
+//     deepObject, which write its name and "=" (a%5Bb%5D=). A value not
+//     exploded whose expansion is empty, such as [""], counts as empty where
+//     RFC 6570 asks whether a value is empty (;p in matrix style). Whether a
+//     value is undefined (see Values) is settled first; the refusals here apply
+//     to defined values. deepObject ignores explode. Nesting in any style but
+//     deepObject is refused, and so are an array as or in a deepObject value
+//     unless Options.DeepObjectArrays says how to write it, a primitive for
 //     spaceDelimited, pipeDelimited or deepObject, explode true with
-//     spaceDelimited or pipeDelimited, and, in OpenAPI 3.2, an array or
-//     object for a cookie parameter with explode false. Each is refused at
-//     the parameter's key, with Param.Err set where the document alone
-//     decides it.
+//     spaceDelimited or pipeDelimited, and, in OpenAPI 3.2, an array or object
+//     for a cookie parameter with explode false. Each is refused at the
+//     parameter's key, with Param.Err set where the document alone decides it.
 //   - Querystring: an OpenAPI 3.2 querystring parameter is the whole query, and
 //     its name is not written. Under application/x-www-form-urlencoded its
 //     value is an object written by the form-body rules, Encoding included, and
@@ -450,13 +458,14 @@
 //     body, where it is an ordinary header parameter.
 //   - Content codings are Go's: the transport may ask for gzip and remove it,
 //     and every bound counts decoded bytes. A header field that sets
-//     Accept-Encoding turns that off. A body whose Content-Encoding, other
-//     than identity, remains passes through unchanged to a *[]byte or
-//     io.Writer, is discarded for a nil out, and is read as it is by Items
-//     with a T of []byte or *multipart.Part; any other target, Items with any
-//     other T, and Events report a non-identity Content-Encoding error. The
-//     coding remains available in Header; generated diagnostics omit
-//     response-controlled values.
+//     Accept-Encoding turns that off. A body whose remaining Content-Encoding
+//     names a coding other than identity passes through unchanged to a *[]byte
+//     or io.Writer, is discarded for a nil out, and is framed with its coding
+//     still applied by Items with a T of []byte, or of *multipart.Part for a
+//     multipart body; any other target, Items with any other T, and Events
+//     report a non-identity Content-Encoding error. The coding remains
+//     available in Header; generated diagnostics omit response-controlled
+//     values.
 //
 // # Credentials
 //
@@ -478,17 +487,18 @@
 // their schemes, and one that replaces a pair of the same name, including one
 // edited into Request.HTTP, removes it and goes last. A query credential is
 // joined by "&" to any pairs before it, which are left as written, empty ones
-// included; a query pair has the credential's name when its name, each "+"
-// read as a space and each %XX triple decoded, is exactly that name, or, where
-// a "%" in it begins no triple, when it is that name as written. A credential
-// value its destination cannot carry is refused at Options.Credentials["name"]:
-// by Load for a static credential (by each call, for a Client from
-// Client.With), by the call for a credential source's. Such a value is a header
-// field value with an ASCII control character other than a tab, or with
-// leading or trailing whitespace; a cookie value with ";", an ASCII control
-// character, or leading or trailing whitespace; and a Basic value RFC 7617
-// forbids: one without the colon, with an ASCII control character in the
-// user-id or password, or made by [Basic] from a username holding a colon.
+// included; a query pair has the credential's name when its name, each "+" read
+// as a space and each %XX triple decoded, is exactly that name. A name in which
+// some "%" begins no triple is not decoded, so it has the credential's name
+// only when it is that name as written. A credential value its destination
+// cannot carry is refused at Options.Credentials["name"]: by Load for a static
+// credential (by each call, for a Client from Client.With), by the call for a
+// credential source's. Such a value is a header field value with an ASCII
+// control character other than a tab, or with leading or trailing whitespace; a
+// cookie value with ";", an ASCII control character, or leading or trailing
+// whitespace; and a Basic value RFC 7617 forbids: one without the colon, with
+// an ASCII control character in the user-id or password, or made by [Basic]
+// from a username holding a colon.
 //
 // Bearer tokens (http bearer, oauth2, openIdConnect) and Basic credentials are
 // sent only over https or wss, as RFC 6750 requires and RFC 7617 advises, or to

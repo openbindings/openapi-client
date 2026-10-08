@@ -68,7 +68,7 @@ func Secret(secret string) Credential {
 	return Credential{static(secret), secretCredential}
 }
 
-// SecretFunc returns a Credential whose credential source f returns its
+// SecretFunc returns a Credential whose credential source, f, returns its
 // secret, as for [Secret], when a request is about to be sent, so f can return
 // a token that refreshes or a secret looked up per tenant. f receives the
 // call's context, with its deadline, cancellation and values, and on a
