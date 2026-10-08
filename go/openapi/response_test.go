@@ -189,7 +189,7 @@ func TestTrailingDataAfterJSON(t *testing.T) {
 	}
 }
 
-// client.go, Call: "For a pointer to decode into, an empty body is a
+// client.go, Call: "For a pointer to decode into, ... an empty body is a
 // *DecodeError wrapping io.EOF under a JSON or XML type when the response can
 // have a body and its governing Message has Media (in Swagger 2.0, a schema).
 // Otherwise it leaves out as it was under a JSON or XML type ...; under any
@@ -279,11 +279,13 @@ func TestBodilessResponses(t *testing.T) {
 }
 
 // client.go, Call: "When out is a pointer to decode into other than a *any,
-// and the operation's 2xx responses declare concrete media types of more than
-// one codec class (the types that take their codec from one Options.Codecs
-// key forming a class of their own), a call whose request carries no Accept
-// field is refused before sending, at Settings key "Options.Header", naming the
-// offered types."
+// and the concrete media types the operation's 2xx responses declare fall into
+// more than one group, a call whose request carries no Accept field is refused
+// before sending, at Settings key "Options.Header", naming the offered types.
+// The types that take their codec from one Options.Codecs key form a group. Of
+// the rest, those of each codec class ... form a group, and those in no codec
+// class, such as application/octet-stream, image/png and multipart types, form
+// one group together."
 func TestTypedDecodeNeedsAccept(t *testing.T) {
 	w, c := respClient(t, jsonAnswer(200, `{"name":"Rex"}`), nil)
 	refuse := func(c *openapi.Client, key string, in *openapi.Input, types ...string) {
@@ -399,13 +401,13 @@ type xmlPet struct {
 
 // doc.go, Fixed rules, Content codings: "the transport may ask for gzip and
 // remove it ... A header field that sets Accept-Encoding turns that off. A
-// body whose Content-Encoding, other than identity, remains passes through
-// unchanged to a *[]byte or io.Writer, ...; any other target ... report a
-// non-identity Content-Encoding error". The error names the operation and
-// status (errors.go, DecodeError.Error: "Error returns the operation, the
-// status and the reason"), never the coding, which remains available through
-// Header ("The coding remains available in Header; generated diagnostics omit
-// response-controlled values").
+// body whose remaining Content-Encoding names a coding other than identity
+// passes through unchanged to a *[]byte or io.Writer, ...; any other target
+// ... report a non-identity Content-Encoding error". The error names the
+// operation and status (errors.go, DecodeError.Error: "Error returns the
+// operation, the status and the reason"), never the coding, which remains
+// available through Header ("The coding remains available in Header; generated
+// diagnostics omit response-controlled values").
 func TestContentCodings(t *testing.T) {
 	var gz bytes.Buffer
 	zw := gzip.NewWriter(&gz)
@@ -683,8 +685,8 @@ func TestWriterFailureIsDecodeError(t *testing.T) {
 	}
 }
 
-// doc.go, Outcomes: "Transport failure: the *url.Error from the
-// http.Client."
+// doc.go, Outcomes: "Transport failure: a *url.Error from the http.Client,
+// which errors.As finds".
 func TestTransportFailure(t *testing.T) {
 	w, c := respClient(t, nil, nil)
 	w.Close()

@@ -378,11 +378,12 @@ func TestFormBodyStyleExamples(t *testing.T) {
 // whose JSON data is an object"); a property or item
 // value its media type cannot encode (doc.go, Values); a reader or Part
 // inside a JSON value (client.go, Input.Body: "A Part or io.Reader inside a
-// JSON value is refused with an Inputs entry at its place in Body"). A
-// field's media type that the call must choose, or chose outside the
-// Encoding's list, is a setting: Settings["Input.Body/<field>"] (errors.go,
-// RequestError.Settings: "for a part's media type, "Input.Body" followed by
-// the part's JSON Pointer"; client.go, Part.MediaType: "A range is refused").
+// value the client encodes with encoding/json is refused with an Inputs entry
+// at its place in Body"). A field's media type that the call must choose, or
+// chose outside the Encoding's list, is a setting:
+// Settings["Input.Body/<field>"] (errors.go, RequestError.Settings: "for a
+// part's media type, "Input.Body" followed by the part's JSON Pointer";
+// client.go, Part.MediaType: "A range is refused").
 func TestFormBodyRefusals(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, doc31(formDoc), nil)

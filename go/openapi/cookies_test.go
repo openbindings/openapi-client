@@ -130,7 +130,7 @@ func TestCookieFieldConflicts(t *testing.T) {
 // character is percent-encoded, not refused (doc.go, Fixed rules,
 // Percent-encoding: form-style cookie values "encode every byte outside RFC
 // 3986's unreserved set"; only "a cookie value written as given that holds a
-// ";" or a control character is refused").
+// ";" or an ASCII control character is refused").
 func TestCookieValuesEncoded(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, doc31(cookieDoc), nil)

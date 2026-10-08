@@ -449,8 +449,8 @@ func TestReferenceFormsUnresolved(t *testing.T) {
 // an unclosed "{" is a defect of its operation; and a Paths key that does not
 // begin with "/" is listed only to report it (describe.go, Client.Operations:
 // "a Paths entry that cannot be read, because its key does not begin with "/"
-// or its $ref cannot be followed, listed once with its Path and Err and no
-// Method"), which does not upset Load's check of Options.MediaType.
+// or its $ref cannot be followed: listed once, with its Path and no Method"),
+// which does not upset Load's check of Options.MediaType.
 func TestPathItemDefectsReported(t *testing.T) {
 	c := parseAt(t, doc31(`
 		"nope":{"get":{"operationId":"nope"}},

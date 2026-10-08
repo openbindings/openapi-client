@@ -9,7 +9,8 @@ import (
 )
 
 // doc.go, Values: a value "whose JSON, a MarshalJSON's output included, nests
-// deeper than 1,000 levels, the outermost value ... being level 1" is refused
+// deeper than 1,000 levels. Levels count within each body, field, part,
+// sequential item or parameter, its outermost value being level 1" is refused
 // "at the key of the body, field, part, sequential item or parameter that is
 // or holds it", the bound documents have too (load.go, Loader: "nests deeper
 // than 1,000 levels (the outermost value being level 1)"): a parameter or body

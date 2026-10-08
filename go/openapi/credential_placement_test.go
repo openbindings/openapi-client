@@ -392,14 +392,15 @@ func valueCases() []valueCase {
 // widely deployed "<id>|<token>" is outside b64token. doc.go, Credentials: "A
 // credential value its destination cannot carry is refused at
 // Options.Credentials["name"]: by Load for a static credential (by each
-// call, for a Client from Client.With), by the call for a source's. Such a
-// value is a header field value with a control character other than a tab,
-// or with leading or trailing whitespace; a cookie value with ";", a control
-// character, or leading or trailing whitespace; and a Basic value without
-// the colon, or with a control character in the user-id or password, which
-// RFC 7617 forbids." credential.go, Secret: for http basic, "the user-id
-// and password joined by a colon, as RFC 7617 writes them"; for a bearer
-// token, "the token, sent as 'Authorization: Bearer <token>'". A refusal
+// call, for a Client from Client.With), by the call for a credential
+// source's. Such a value is a header field value with an ASCII control
+// character other than a tab, or with leading or trailing whitespace; a cookie
+// value with ";", an ASCII control character, or leading or trailing
+// whitespace; and a Basic value RFC 7617 forbids: one without the colon, with
+// an ASCII control character in the user-id or password, or made by Basic from
+// a username holding a colon." credential.go, Secret: for http basic, "the
+// user-id and password joined by a colon, as RFC 7617 writes them"; for a
+// bearer token, "the token, sent as 'Authorization: Bearer <token>'". A refusal
 // never quotes the value (doc.go, Outcomes).
 func TestCredentialValueSyntax(t *testing.T) {
 	w := newWire(t, nil)

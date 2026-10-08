@@ -14,16 +14,17 @@ import (
 
 // A $ref where the edition defines no Reference Object. describe.go,
 // Operation: "A value written as a reference, an object whose $ref member is a
-// string, where the edition defines no Reference Object, such as an Operation
-// Object, a headers or encoding map, or a parameters or servers list written
-// as a reference to another file, marks a document meant to be bundled before
-// use. It makes the nearest part holding that value unusable: the Err of that
-// Operation, Param, Message, Media, Server or SecurityScheme says the document
-// must be bundled first, and does not wrap ErrUnresolved." "Extension values
-// and examples are not such values." Operation.Err: "Calling an operation with
-// Err set returns a *RequestError wrapping Err. A defect in an optional part
-// is reported on that part instead, and fails a call only when the call uses
-// it".
+// string where an object, list or map belongs but the edition defines no
+// Reference Object, such as an Operation Object, a headers or encoding map, or
+// a parameters or servers list written as a reference to another file, marks a
+// document meant to be bundled before use. It makes the nearest part holding
+// that value unusable: the Err of that Operation, Param, Message, Media, Server
+// or SecurityScheme says the document must be bundled first, a cause that does
+// not wrap ErrUnresolved." "Extension values, examples, info, tags,
+// externalDocs, webhooks, callbacks and links are not such values".
+// Operation.Err: "Calling an operation with Err set returns a *RequestError
+// wrapping Err. A defect in an optional part is reported on that part instead,
+// and fails a call only when the call uses it".
 //
 // Where each edition defines a Reference Object, from its field tables
 // (a Path Item's own $ref field aside, which every edition defines):
@@ -344,8 +345,8 @@ func mentionsBundling(err error) bool {
 
 // Each part's Err says the document must be bundled, does not wrap
 // ErrUnresolved (describe.go, Operation: "says the document must be bundled
-// first, and does not wrap ErrUnresolved"), has the same text whether or
-// not the referenced file loads, and the parts holding it stay usable.
+// first, a cause that does not wrap ErrUnresolved"), has the same text whether
+// or not the referenced file loads, and the parts holding it stay usable.
 func TestBundleDiagnostics(t *testing.T) {
 	for _, version := range editionVersions {
 		t.Run(version, func(t *testing.T) {

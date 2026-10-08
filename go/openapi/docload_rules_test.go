@@ -311,9 +311,9 @@ func TestYAMLDirectiveVersions(t *testing.T) {
 	}
 }
 
-// load.go, Loader: "A reference is unresolvable and never fetched when the
-// URI requested for it has userinfo ..., or is a file URL naming a host
-// other than localhost, as Load refuses such a uri" (RFC 9110 section 4.2.4,
+// load.go, Loader: "A reference is unresolvable and never fetched, ... if
+// that URI has userinfo ..., or is a file URL naming a host other than
+// localhost, as Load refuses such a uri" (RFC 9110 section 4.2.4,
 // RFC 8089). The reference is not shown with its userinfo (errors.go,
 // ErrUnresolved: "Where the client names a URI, a reference or a redirect's
 // Location included, it omits userinfo and query").

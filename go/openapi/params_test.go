@@ -336,8 +336,9 @@ func TestParamRefusals(t *testing.T) {
 	}
 }
 
-// errors.go, RequestError.Error: "never a credential, an input's value, or a
-// value given for a server variable or a header field".
+// errors.go, RequestError.Error: "The text the client writes never holds a
+// credential, an input's value, or a value given for a server variable or a
+// header field".
 func TestRequestErrorOmitsValues(t *testing.T) {
 	w := newWire(t, nil)
 	doc := doc31(`"/r":{"get":{"operationId":"r","parameters":[

@@ -9,19 +9,20 @@ import (
 	"github.com/openbindings/openapi-client/go/openapi/schema2020"
 )
 
-// Keyword translation in Swagger 2.0 and OpenAPI 3.0. Project: "In Swagger 2.0
-// and OpenAPI 3.0, members beside a reported $ref are dropped. type: string
-// with format: binary loses both keywords, and Swagger 2.0 type: file loses its
-// type and any format other than byte; format: byte becomes contentEncoding:
-// base64, which replaces any contentEncoding the schema has. A boolean
-// exclusiveMinimum or exclusiveMaximum that is true becomes exclusiveMinimum or
-// exclusiveMaximum with the value of minimum or maximum, which is removed; one
-// that is false or has no bound is removed. In OpenAPI 3.0, nullable is removed
-// and, where the schema then has a type, true adds "null" to it as a type list
-// unless it already allows null; enum is unchanged. ... Every other keyword is
-// kept as an annotation. Project never validates an instance, invents a fact or
-// repairs a schema." A schema these rules leave with no keywords compares equal
-// to true.
+// Keyword translation in Swagger 2.0 and OpenAPI 3.0. Project: "A Swagger 2.0
+// or OpenAPI 3.0 schema is also translated: members beside a reported $ref are
+// dropped; type: string with format: binary loses both keywords, and Swagger
+// 2.0 type: file loses its type and any format other than byte; and format:
+// byte becomes contentEncoding: base64, which replaces any contentEncoding the
+// schema has. A boolean exclusiveMinimum or exclusiveMaximum that is true
+// becomes exclusiveMinimum or exclusiveMaximum with the value of minimum or
+// maximum, which is removed; one that is false or has no bound is removed. In
+// OpenAPI 3.0, nullable is removed and, where the schema then has a type, true
+// adds "null" to it as a type list unless it already allows null; enum is
+// unchanged. ... Every other keyword is kept, as an annotation where the
+// edition does not define it. Project never validates an instance, invents a
+// fact or repairs a schema." A schema these rules leave with no keywords
+// compares equal to true.
 
 type translation struct {
 	name     string

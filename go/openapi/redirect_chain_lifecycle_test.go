@@ -716,8 +716,8 @@ func (nilBodyRT) RoundTrip(r *http.Request) (*http.Response, error) {
 // caller's transport type, never the client's own wrapper, noFollow. net/http
 // writes these errors with the transport's type (go1.25 client.go, send:
 // "http: RoundTripper implementation (%T) ..."). What doc.go, Outcomes
-// promises stays asserted: a transport failure is "the *url.Error from the
-// http.Client".
+// promises stays asserted: a transport failure is "a *url.Error from the
+// http.Client, which errors.As finds".
 func TestBrokenTransportNamedInError(t *testing.T) {
 	for name, rt := range map[string]http.RoundTripper{"nil response and nil error": nilNilRT{}, "a nil Body": nilBodyRT{}} {
 		t.Run(name, func(t *testing.T) {

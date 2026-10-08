@@ -310,8 +310,8 @@ func TestSecretFuncContext(t *testing.T) {
 	// Cancellation reaches the source: it ends when the call's context
 	// does, and the call is refused with nothing sent (credential.go,
 	// SecretFunc: "An error from f ... on the first request refuses the call
-	// with a *RequestError: nothing is sent"; doc.go, Outcomes: the error
-	// "matches ctx.Err() with errors.Is").
+	// with a *RequestError: nothing is sent"; "An error from f is passed on as
+	// it is").
 	var once sync.Once
 	entered := make(chan struct{})
 	blocked := &source{fn: func(ctx context.Context, _ int64) (string, error) {
@@ -346,9 +346,9 @@ func (e *idpError) Error() string { return fmt.Sprintf("identity provider answer
 // first request refuses the call with a *RequestError: nothing is sent ...
 // An error from f is passed on as it is." errors.go, RequestError.Err: "a
 // credential source's error (naming the scheme)"; RequestError.Error: "The
-// text of an error a credential source returned is included as it is";
-// RequestError.Settings: "An empty secret from a credential source is keyed
-// as a missing credential is."
+// text of an error the caller's own code returned, such as a credential
+// source, ... is included as it is"; RequestError.Settings: "An empty secret
+// from a credential source is keyed as a missing credential is."
 func TestSecretFuncRefusals(t *testing.T) {
 	w := newWire(t, nil)
 	t.Run("error", func(t *testing.T) {

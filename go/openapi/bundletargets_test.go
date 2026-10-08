@@ -12,11 +12,11 @@ import (
 // Operation: "Bundling replaces such a value whole, so its other members are
 // not read, and a reference whose target lies inside it cannot be followed
 // before bundling either. Such a reference in a schema has an Err saying the
-// document must be bundled first (see Schema.References); any other makes its
-// own nearest part unusable the same way ... In a map of objects a member
-// named $ref whose value is an object is an entry like any other, such as a
-// header named $ref; in a map of strings, such as OAuth scopes, a string $ref
-// member is a reference."
+// document must be bundled first, which does not wrap ErrUnresolved (see
+// Schema.References); any other makes its own nearest part unusable the same
+// way ... In a map of objects a member named $ref whose value is an object is
+// an entry like any other, such as a header named $ref; in a map of strings,
+// such as OAuth scopes, a string $ref member is a reference."
 //
 // The harness, and the checks of each call in both orders and of nothing
 // being fetched, are those of bundlevalues_test.go.
@@ -136,8 +136,9 @@ func TestBundleTargetsSiblingsNotRead(t *testing.T) {
 }
 
 // load.go, Load fails "with a *RequestError, on Options the document cannot
-// use: ... a Variables name no server URL uses, a MediaType no operation
-// declares, ... a Server or ServerID that matches no server, a Security or
+// use: ... a Variables name no server URL uses, a MediaType that no
+// operation's request body Media matches (see Options.MediaType), ... a Server
+// or ServerID that matches no server, a Security or
 // SecurityKey that matches no alternative", and a setting the document cannot
 // use is keyed by its field (errors.go, RequestError.Settings). Members beside
 // a reference are not read, so a server URL, a variable, or a media type
@@ -195,8 +196,8 @@ func TestBundleTargetsRootSecurity(t *testing.T) {
 // not read, so a reference to "#/components/..." has its target inside it
 // and cannot be followed before bundling: a parameter reference, whose
 // identity cannot then be known, makes the Operation unusable (describe.go,
-// Operation.Err: "a parameter or request body reference that cannot be
-// followed ... as then the parameter's identity ... cannot be known"), and a
+// Operation.Err: "a reference that cannot be followed to a parameter ... as
+// then the parameter's identity ... cannot be known"), and a
 // security requirement naming a scheme among those members makes its
 // SecurityScheme unusable; neither Err wraps ErrUnresolved, and the schema
 // reference inside the unread parameter is never retrieved.

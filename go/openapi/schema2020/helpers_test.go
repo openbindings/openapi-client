@@ -1172,8 +1172,9 @@ func (ck *checker) run(s *openapi.Schema) {
 // checkKey checks a key against its Source (Project: "A schema written at
 // #/components/schemas/NAME of the entry document, or #/definitions/NAME
 // in Swagger 2.0, has the key NAME when NAME contains no "#"; any other key
-// is the schema's Source as a URI reference relative to the entry
-// document's URI").
+// is the schema's Source written as a URI reference relative to the entry
+// document's URI, so that the key resolves against that URI to the Source,
+// its dot segments removed").
 func (ck *checker) checkKey(key, src string) {
 	ck.t.Helper()
 	entry := ck.c.DocumentURIs()[0]

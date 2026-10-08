@@ -19,10 +19,10 @@ import (
 
 // The Loader never retrieves a URI with userinfo, a redirect hop's included,
 // and error text excludes it. load.go, Loader: "A reference is unresolvable
-// and never fetched when the URI requested for it has userinfo ..., as Load
-// refuses such a uri, and so is one whose retrieval a redirect would take to
-// such a URI, whatever AllowReference says; the default retrieval never
-// requests that hop"; errors.go, ErrUnresolved: "Where the client names a URI,
+// and never fetched, ... if that URI has userinfo ..., as Load refuses such a
+// uri. Whatever AllowReference says, so is one whose retrieval a redirect
+// would take to such a URI; the default retrieval never requests that hop";
+// errors.go, ErrUnresolved: "Where the client names a URI,
 // a reference or a redirect's Location included, it omits userinfo and query",
 // and a *url.Error is shown "each URL without userinfo or query". Admission
 // callbacks do not waive URI validity. The cases are redirects to such URIs,

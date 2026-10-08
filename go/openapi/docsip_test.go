@@ -137,8 +137,9 @@ var rfc3986Examples = []string{
 // it, and nothing is requested when that is the entry's own URI. A result with
 // leading or trailing whitespace is requested not at all, and the operation's
 // Err wraps ErrUnresolved (load.go, Loader: "A reference is unresolvable and
-// never fetched when the URI requested for it has userinfo or leading or
-// trailing whitespace"). References net/url cannot parse, or whose result
+// never fetched, even when a loaded document or schema identifies the URI
+// requested for it, if that URI has userinfo or trailing whitespace").
+// References net/url cannot parse, or whose result
 // another rule decides (a scheme other than http, https and file, an http URI
 // without a host, userinfo, a file URL naming a host), are left out.
 func FuzzRelativeReferences(f *testing.F) {

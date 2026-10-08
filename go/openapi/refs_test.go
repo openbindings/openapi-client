@@ -18,7 +18,7 @@ import (
 // undefined, sets Err on each operation whose request it affects".
 // describe.go, Client.Operations lists, "each with an empty Key", "a Paths
 // entry that cannot be read, because its key does not begin with "/" or its
-// $ref cannot be followed, listed once with its Path and Err and no Method".
+// $ref cannot be followed: listed once, with its Path and no Method".
 // describe.go, Client.Operation: such an entry is returned "for a
 // method-and-path key with that path and any method; calling with the same
 // key is refused with an error wrapping that Err".
@@ -180,9 +180,10 @@ func TestParameterRefs(t *testing.T) {
 	}
 }
 
-// describe.go, Operation.Err: "a parameter or request body reference that
-// cannot be followed ... as then the parameter's identity or the body's
-// requiredness cannot be known" makes the operation uncallable, and Operation:
+// describe.go, Operation.Err: "a reference that cannot be followed to a
+// parameter, or to the request body of an operation that takes one ..., as
+// then the parameter's identity or the body's requiredness cannot be known"
+// makes the operation uncallable, and Operation:
 // "A part written as a Reference Object that cannot be resolved has that
 // Reference Object's location as its Source"; "Wherever an Err's cause is a
 // reference that could not be resolved, it wraps ErrUnresolved". Calling it

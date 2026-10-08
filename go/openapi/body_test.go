@@ -288,10 +288,10 @@ func TestMediaTypePreference(t *testing.T) {
 	}
 }
 
-// client.go, Input.Body: "A Part or io.Reader inside a JSON value is refused
-// with an Inputs entry at its place in Body"; errors.go, RequestError.
-// Inputs: "Input.Body" followed by a JSON Pointer (RFC 6901: "/" in a key
-// is "~1").
+// client.go, Input.Body: "A Part or io.Reader inside a value the client
+// encodes with encoding/json is refused with an Inputs entry at its place in
+// Body"; errors.go, RequestError.Inputs: "Input.Body" followed by a JSON
+// Pointer (RFC 6901: "/" in a key is "~1").
 func TestReaderInsideJSONRefused(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, bodyDoc, nil)

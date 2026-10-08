@@ -168,8 +168,8 @@ func TestBasicRefusals(t *testing.T) {
 }
 
 // doc.go, Percent-encoding: "an apiKey sent in a cookie, [is] written as
-// given too; a cookie value written as given that holds a ";" or a control
-// character is refused."
+// given too; a cookie value written as given that holds a ";" or an ASCII
+// control character is refused."
 func TestCookieCredentialRefused(t *testing.T) {
 	w := newWire(t, nil)
 	c := credClient(t, w, nil)
@@ -442,10 +442,10 @@ func TestPlainHTTPOtherHTTPScheme(t *testing.T) {
 
 // doc.go, Credentials: "A credential value its destination cannot carry is
 // refused at Options.Credentials["name"]: by Load for a static credential
-// (by each call, for a Client from Client.With), by the call for a source's.
-// Such a value is a header field value with a control character other than a
-// tab, or with leading or trailing whitespace". The call is refused before
-// anything is sent.
+// (by each call, for a Client from Client.With), by the call for a credential
+// source's. Such a value is a header field value with an ASCII control
+// character other than a tab, or with leading or trailing whitespace". The
+// call is refused before anything is sent.
 func TestHeaderUnsafeCredentialRefused(t *testing.T) {
 	values := map[string]string{
 		"CR":                  "hu-3Kl\rX",

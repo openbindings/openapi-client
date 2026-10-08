@@ -84,8 +84,8 @@ func TestEditionsLegacySchemaReferenceSiblingDiscovery(t *testing.T) {
 // distinct Items Object 6.4.10 only nests Items and is not a Reference
 // Object, so a $ref in one marks a document meant to be bundled (describe.go,
 // Operation: "It makes the nearest part holding that value unusable: the
-// Err of that ... Param ... says the document must be bundled first, and
-// does not wrap ErrUnresolved"). Such a $ref is never retrieved (load.go,
+// Err of that ... Param ... says the document must be bundled first, a cause
+// that does not wrap ErrUnresolved"). Such a $ref is never retrieved (load.go,
 // Loader: the references followed are those in Reference Objects, Path
 // Items and Schema Objects), and neither is one inside an Items member the
 // Items Object does not define.

@@ -415,8 +415,8 @@ func TestEncodingContentTypeListQuoteAware(t *testing.T) {
 // range of multipart types such as multipart/*; for */* and application/*
 // it lists none, their fields depending on the type a call selects
 // (describe.go, Media.Encoding: "It is empty for a declared range other than
-// multipart/*, such as */* or application/*, and for an OpenAPI 3.x
-// response's Media").
+// multipart/*, such as */* or application/*, and for a response's Media in
+// every edition").
 func TestMediaRangeEncodingDescriptors(t *testing.T) {
 	doc := doc31(`"/r":{"post":{"operationId":"ranges","requestBody":{"content":{
 		"*/*":{"schema":{"type":"object","properties":{"x":{"type":"string"}}}},

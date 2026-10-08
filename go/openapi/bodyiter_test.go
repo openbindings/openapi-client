@@ -432,9 +432,9 @@ func TestUnencodableItemAbortsTheBody(t *testing.T) {
 // The context ending before the iterator returns aborts the body: the
 // iterator's yield then returns false, Call returns after the iterator,
 // with an error matching ctx.Err() (doc.go, Outcomes: "When the call's
-// context is done before the call completes, and the transport honors the
-// request's context, as net/http's does, the error matches ctx.Err()"),
-// and after Send, WaitRequest reports it.
+// context is done before the call completes, the error matches both ctx.Err()
+// and context.Cause(ctx) with errors.Is"), and after Send, WaitRequest reports
+// it.
 func TestIteratorContextEnds(t *testing.T) {
 	t.Run("Call", func(t *testing.T) {
 		srv := newBodyServer(t, false, "")

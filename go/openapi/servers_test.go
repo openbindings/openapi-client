@@ -266,7 +266,8 @@ func TestServerVariables(t *testing.T) {
 
 // load.go, Load: "Load also fails, with a *RequestError, on Options the
 // document cannot use: ... a Variables name no server URL uses, a MediaType
-// no operation declares, a Codecs key Options.Codecs refuses, a Server or
+// that no operation's request body Media matches (see Options.MediaType), a
+// Codecs key Options.Codecs refuses, a Server or
 // ServerID that matches no server, ... a BaseURL without a scheme and host,
 // with userinfo, a query or a fragment, or set with Server or ServerID,
 // conflicting exact and name selectors, a Header field that is always

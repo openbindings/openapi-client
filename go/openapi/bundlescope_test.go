@@ -14,11 +14,12 @@ import (
 // Where the rule for values written as references reaches, and what it costs.
 // describe.go, Operation: "a reference whose target lies inside it cannot be
 // followed before bundling either. Such a reference in a schema has an Err
-// saying the document must be bundled first (see Schema.References); any
-// other makes its own nearest part unusable the same way ... Extension values
-// and examples are not such values." The harness, and the checks of each call
-// in both orders and of nothing being fetched, are those of
-// bundlevalues_test.go.
+// saying the document must be bundled first, which does not wrap
+// ErrUnresolved (see Schema.References); any other makes its own nearest part
+// unusable the same way ... Extension values, examples, info, tags,
+// externalDocs, webhooks, callbacks and links are not such values". The
+// harness, and the checks of each call in both orders and of nothing being
+// fetched, are those of bundlevalues_test.go.
 
 // largeMapDoc is an OpenAPI 3.1.2 document with n members of
 // components.parameters, named prefix followed by a number, and m operations
@@ -195,7 +196,8 @@ func TestBundleScopeSecurityRequirement(t *testing.T) {
 	})
 }
 
-// "Extension values and examples are not such values": a Callback Object's,
+// "Extension values, examples, info, tags, externalDocs, webhooks, callbacks
+// and links are not such values": a Callback Object's,
 // or the Paths Object's, extension member is data, so an object inside it
 // whose $ref member is a string marks nothing, and a parameter reference into
 // its other members is followed as before. Nothing is retrieved.

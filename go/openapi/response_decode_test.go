@@ -89,12 +89,13 @@ func TestDecodeInvalidTargetCopiesResponse(t *testing.T) {
 // client.go, Options.Codecs: "A key Load would refuse, given through
 // Client.With, refuses at Settings "Options.Codecs" each call that encodes a
 // value as a body or content-serialized parameter, or whose out is a pointer
-// to decode into (not a *[]byte or an io.Writer). Unless the response has no
-// body (see Client.Call), it also makes Response.Decode and StatusError.Decode
-// into such a pointer return a *DecodeError naming Options.Codecs". So a
-// decoding target makes malformed Codecs relevant after raw Send too, rather
-// than falling back to built-in decoding, and raw targets bypass the map;
-// configuration-error read timing is not pinned.
+// to decode into (see Client.Call), a *any included. With such a key, when the
+// response has a body (see Client.Call), decoding it into such a pointer with
+// Response.Decode, or with StatusError.Decode when its Err is nil, returns a
+// *DecodeError naming Options.Codecs". So a decoding target makes malformed
+// Codecs relevant after raw Send too, rather than falling back to built-in
+// decoding, and raw targets bypass the map; configuration-error read timing is
+// not pinned.
 func TestWithMalformedCodecsDecodeTargets(t *testing.T) {
 	for _, mode := range []string{"Send 200", "Send 422", "StatusError 422"} {
 		for _, target := range []string{"typed", "any", "nil", "bytes", "writer"} {

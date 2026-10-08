@@ -111,8 +111,9 @@ func wantEncoded(t *testing.T, key string, req *openapi.Request, v any) {
 
 // Depth is counted in the JSON encoding/json writes, a MarshalJSON's output
 // included (doc.go, Values: a value "whose JSON, a MarshalJSON's output
-// included, nests deeper than 1,000 levels, the outermost value ... being
-// level 1", is refused "at the key of the body, field, part, sequential item or
+// included, nests deeper than 1,000 levels. Levels count within each body,
+// field, part, sequential item or parameter, its outermost value being level
+// 1", is refused "at the key of the body, field, part, sequential item or
 // parameter that is or holds it"; a scalar leaf is a level, as the Loader
 // counts documents).
 // A static per-type depth may not refuse a value whose JSON is within the
@@ -332,8 +333,8 @@ func TestReadersInStyleParamValuesRefused(t *testing.T) {
 // doc.go, Fixed rules, Percent-encoding: "a content-serialized cookie value
 // (OpenAPI 3.1.2 recommends text/plain content so the application assembles
 // the cookie) ... [is] written as given too; a cookie value written as given
-// that holds a ";" or a control character is refused" (OAS 3.1.2 section
-// 4.8.12.2.3 and Appendix D).
+// that holds a ";" or an ASCII control character is refused" (OAS 3.1.2
+// section 4.8.12.2.3 and Appendix D).
 func TestContentCookieWrittenAsGiven(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, doc31(`"/c":{"get":{"operationId":"op","parameters":[
@@ -922,17 +923,17 @@ type ptrTextReader struct{ S string }
 func (ptrTextReader) Read([]byte) (int, error)      { return 0, io.EOF }
 func (*ptrTextReader) MarshalText() ([]byte, error) { return []byte("t"), nil }
 
-// client.go, Input.Body: "A Part or io.Reader inside a JSON value is refused
-// ... unless its own MarshalJSON or MarshalText encodes it"; doc.go, Values:
-// a reader inside a parameter value the client encodes with encoding/json is
-// refused "unless its own MarshalJSON or MarshalText encodes it". A reader
-// encoding/json encodes by its MarshalJSON is sent as json.Marshal writes
-// it, in a JSON body, a JSON content parameter and a style parameter; one
-// json would encode by reflection (a pointer-receiver MarshalJSON on a value
-// that is not addressable, or a plain reader) is refused. The body and
-// content parameter hold the reader inside the value, since a reader that is
-// the whole body or content value is sent or refused as a reader (client.go,
-// Input.Body; doc.go, Values).
+// client.go, Input.Body: "A Part or io.Reader inside a value the client
+// encodes with encoding/json is refused ... unless its own MarshalJSON or
+// MarshalText encodes it"; doc.go, Values: a reader inside a parameter value
+// the client encodes with encoding/json is refused "unless its own MarshalJSON
+// or MarshalText encodes it". A reader encoding/json encodes by its MarshalJSON
+// is sent as json.Marshal writes it, in a JSON body, a JSON content parameter
+// and a style parameter; one json would encode by reflection (a
+// pointer-receiver MarshalJSON on a value that is not addressable, or a plain
+// reader) is refused. The body and content parameter hold the reader inside the
+// value, since a reader that is the whole body or content value is sent or
+// refused as a reader (client.go, Input.Body; doc.go, Values).
 func TestSelfMarshalingReaders(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, doc31(depthDoc+`,

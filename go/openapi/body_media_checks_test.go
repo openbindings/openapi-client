@@ -69,15 +69,16 @@ func TestFieldNumberWithIntegerIsInteger(t *testing.T) {
 // Source, or, when nothing covers the type, the type as given, parameters
 // included. The rest is contract: the refusal is keyed Input.MediaType
 // (errors.go, RequestError.Settings: a body's media type is keyed
-// "Input.MediaType" when it "is declared under an invalid key (see
-// Media.Err)"), and when the Media that would govern the call (the most
-// specific declared key covering its type, or the sole declared one when none
-// is given) has an Err, the refusal wraps that Err (client.go,
+// "Input.MediaType" when it "is declared under a key that causes its
+// Media.Err (see Input.MediaType)"), and when the Media that would govern the
+// call (the most specific declared key covering its type, or the sole declared
+// one when none is given) has an Err, the refusal wraps that Err (client.go,
 // Input.MediaType: "A boundary in a request body's declared content key is
-// used and checked the same way; an invalid one is the Media's Err";
-// describe.go, Operation.Err: a part's defect "fails a call only when the call
-// uses it, the *RequestError then wrapping that part's Err"; OAS 3.1.2 section
-// 4.8.13: "only the most specific key is applicable").
+// used and checked the same way"; describe.go, Media.Err: "an OpenAPI 3.x
+// request body's form or multipart key that holds an invalid or repeated
+// boundary parameter"; describe.go, Operation.Err: a part's defect "fails a
+// call only when the call uses it, the *RequestError then wrapping that part's
+// Err"; OAS 3.1.2 section 4.8.13: "only the most specific key is applicable").
 func TestDeclaredBoundaryRefusalNamesTheMedia(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, doc31(`

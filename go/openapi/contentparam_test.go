@@ -378,10 +378,10 @@ type readerHolder struct {
 
 // doc.go, Values: "A reader or Part anywhere inside a parameter value the
 // client encodes with encoding/json is refused at the parameter's key, as for
-// a body" (client.go, Input.Body: "A Part or io.Reader inside a JSON value is
-// refused"): at Inputs[Param.Key], with nothing sent, in a query, header or
-// +json content parameter, whether the reader is the value, a map member or a
-// struct field, and for a Part.
+// a body" (client.go, Input.Body: "A Part or io.Reader inside a value the
+// client encodes with encoding/json is refused"): at Inputs[Param.Key], with
+// nothing sent, in a query, header or +json content parameter, whether the
+// reader is the value, a map member or a struct field, and for a Part.
 func TestContentParamRefusesReaders(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, doc31(contentDoc), nil)

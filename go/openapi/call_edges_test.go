@@ -158,8 +158,8 @@ type skipped struct {
 // encoding/json would not write is no refusal, and the body is sent as
 // encoding/json writes it; a reader it would write is refused at its place,
 // a TextMarshaler key named by its text (client.go, Input.Body: "A Part or
-// io.Reader inside a JSON value is refused with an Inputs entry at its place
-// in Body").
+// io.Reader inside a value the client encodes with encoding/json is refused
+// with an Inputs entry at its place in Body").
 func TestReaderInJSONBodyFollowsEncodingJSONFields(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, doc31(jsonBodyOp), nil)
@@ -479,8 +479,8 @@ func TestDocumentURIUserinfoRefused(t *testing.T) {
 // parameter's Inputs key", before sending. Input.MediaType is validated as a
 // media type (section 8.3.1, parameters quoted as section 5.6.4 says;
 // client.go, Response.Media: "The client parses every media type it reads (a
-// Content-Type, a content key, an Encoding contentType, Input.MediaType,
-// Part.MediaType) by RFC 9110's media-type grammar").
+// Content-Type, a content key, an Encoding contentType, Options.MediaType,
+// Input.MediaType, Part.MediaType) by RFC 9110's media-type grammar").
 func TestHeaderFieldNameAndValueValidation(t *testing.T) {
 	w := newWire(t, nil)
 	doc := doc31(`"/h":{"get":{"operationId":"h","parameters":[{"name":"X-V","in":"header","schema":{}},{"name":"X C","in":"header","schema":{}}]}},
@@ -731,9 +731,9 @@ func TestResponseMediaSpecificityOrder(t *testing.T) {
 
 // Raw document text is quoted in error text, so a hostile document cannot
 // forge a log line, and a caller's value never appears (errors.go,
-// RequestError.Error: "never a credential, an input's value, or a value given
-// for a server variable or a header field"); an encoding
-// error keeps its cause.
+// RequestError.Error: "The text the client writes never holds a credential,
+// an input's value, or a value given for a server variable or a header
+// field"); an encoding error keeps its cause.
 func TestErrorTextQuotesDocumentAndOmitsValues(t *testing.T) {
 	w := newWire(t, nil)
 	doc := doc31(`"/x\n{a\nFAKE: line}":{"get":{"operationId":"forged"}},
@@ -785,9 +785,9 @@ func TestFileURLWithRemoteHostRefused(t *testing.T) {
 	}
 }
 
-// An invalid media key is not a codec class, so it forces no Accept
-// (client.go, Call: a typed out is refused only when 2xx responses "declare
-// concrete media types of more than one codec class").
+// An invalid media key is no concrete media type, so it forces no Accept
+// (client.go, Call: a typed out is refused only when "the concrete media types
+// the operation's 2xx responses declare fall into more than one group").
 func TestInvalidMediaKeyForcesNoAccept(t *testing.T) {
 	w := newWire(t, jsonAnswer(200, `{"a":1}`))
 	c := parseFor(t, w, doc31(`"/a":{"get":{"operationId":"op","responses":{"200":{"description":"ok","content":{"application/json":{},"json":{}}}}}}`), nil)

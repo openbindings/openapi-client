@@ -1227,10 +1227,12 @@ func TestParseFollowsReferences(t *testing.T) {
 	wantStrings(t, "DocumentURIs", c.DocumentURIs(), []string{s.uri("/openapi.json"), s.uri("/params.json")})
 }
 
-// Loader.Parse: "With an empty uri, absolute external references can be
-// fetched only when Origins or AllowReference admits them; relative external
-// references have no base unless an OpenAPI 3.2 absolute $self supplies
-// one." Parse: "With an empty uri, the document may reference only itself".
+// Loader.Parse: "With an empty uri, a document is fetched only when Origins
+// or AllowReference admits it. In the content, a relative reference with
+// anything before its fragment then resolves only against an absolute base
+// the content supplies ... and a reference left with no base is unresolvable
+// and never fetched." Parse: "With an empty uri, the document may reference
+// only itself".
 func TestParseEmptyURIReferences(t *testing.T) {
 	s := newSite(t)
 	s.put("/params.json", `{"P":{"name":"p","in":"query"}}`)
@@ -1320,11 +1322,11 @@ func TestTrustedDocumentsSuppliedByTheCaller(t *testing.T) {
 // Load's checks of Options against the document (client.go, Options:
 // "A value that matches no server of the document is refused by Load"; "A
 // name that appears in no server URL of the document is refused by Load";
-// "A type no operation declares is refused by Load"; SecurityKey: "A key
-// that names no alternative ... is refused by Load"; doc.go, Credentials:
-// "Load refuses a Credentials name the document never uses") cover every
-// operation the Client describes, those written in referenced documents
-// included. A misspelling is still refused.
+// MediaType: "Load refuses a type that no such Media of any operation
+// matches"; SecurityKey: "A key that names no alternative ... is refused by
+// Load"; doc.go, Credentials: "Load refuses a Credentials name the document
+// never uses") cover every operation the Client describes, those written in
+// referenced documents included. A misspelling is still refused.
 func TestLoadChecksReachReferencedDocuments(t *testing.T) {
 	s := newSite(t)
 	s.put("/openapi.json", entry31(`"/a":{"$ref":"a.json"}`,

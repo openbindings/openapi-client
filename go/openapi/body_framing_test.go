@@ -25,8 +25,8 @@ import (
 // boundary after a CR or LF, being an input that cannot be encoded (RFC 2046
 // section 5.1.1; in a reader, it is found only as the body is sent, as Body
 // says). A boundary in a request body's declared content key is used and
-// checked the same way; an invalid one is the Media's Err. Two boundary
-// parameters in a multipart type are refused."
+// checked the same way. Two boundary parameters in a multipart type are
+// refused."
 
 // With a boundary the caller gives, content holding "--" and the boundary
 // after a lone LF or a lone CR is refused at its key before sending, as
@@ -133,10 +133,12 @@ func TestMultipartDeclaredAndDuplicateBoundaries(t *testing.T) {
 // key, is refused, never a hang: Input.MediaType's at Settings
 // ["Input.MediaType"], the key's as the Media's Err (client.go,
 // Input.MediaType: "A boundary in a request body's declared content key is used
-// and checked the same way; an invalid one is the Media's Err"), a document
-// defect, not "Input.MediaType", with a nested multipart part whose own
-// boundary would be generated. Since a regression would make Prepare spin
-// forever, the cases run in a child process under a 10 s guard.
+// and checked the same way"; describe.go, Media.Err: "an OpenAPI 3.x request
+// body's form or multipart key that holds an invalid or repeated boundary
+// parameter"), a document defect, not "Input.MediaType", with a nested
+// multipart part whose own boundary would be generated. Since a regression
+// would make Prepare spin forever, the cases run in a child process under a
+// 10 s guard.
 func TestMultipartEmptyBoundaryRefused(t *testing.T) {
 	if !inChild(t) {
 		return
