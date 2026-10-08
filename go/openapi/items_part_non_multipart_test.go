@@ -11,9 +11,9 @@ import (
 // Items with T = *multipart.Part over a body that is not multipart yields
 // one ErrItem for each item the media type frames, and never a Part.
 // stream.go, Items: "A T of *multipart.Part reads only a multipart body:
-// under any other media type, no item decodes into it, so each is an
-// ErrItem. An error that concerns one item wraps [ErrItem] and is yielded in
-// its place, and the iteration goes on."
+// under any other media type, ... otherwise no item decodes into it, so each
+// is an ErrItem. An error that concerns one item wraps [ErrItem] and is yielded
+// in its place, and the iteration goes on."
 func TestItemsPartRefusedForNonMultipartBody(t *testing.T) {
 	for _, tt := range []struct {
 		ct, body string

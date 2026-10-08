@@ -20,14 +20,14 @@ func keyDoc(content string) string {
 // covers is governed by that range and sent, whether Input.MediaType or
 // Options.MediaType gives it. client.go, Options.MediaType: it "selects a
 // concrete request media type, as Input.MediaType does, for every operation
-// whose request body has a Media, other than one whose Err its key causes,
-// that it matches by the rules on Input.MediaType"; Input.MediaType: "Its key
-// causes that Err when the Err reports that the content key ... declaring the
-// Media is not a valid media type"; Response.Media: "The most specific match
-// wins: a concrete type over type/*, type/* over */*, then more parameters
-// over fewer; a tie matches none", and "The client parses every media type it
-// reads (a Content-Type, a content key, ...) by RFC 9110's media-type grammar,
-// except that "*" is a type only in */*".
+// whose request body has a Media that it matches by the rules on
+// Input.MediaType, a Media whose Err its key causes not counting";
+// Input.MediaType: "Its key causes that Err when the content key ...
+// declaring the Media is not a valid media type"; Response.Media: "The most
+// specific match wins: a concrete type over type/*, type/* over */*, then
+// more parameters over fewer; a tie matches none", and "The client parses
+// every media type it reads, such as a Content-Type, a content key, ..., by
+// RFC 9110's media-type grammar, except that "*" is a type only in */*".
 func TestInvalidContentKeyNeverMatchesAsARange(t *testing.T) {
 	const content = `{"*/json":{},"*/*":{}}`
 	for _, tt := range []struct {
@@ -59,13 +59,13 @@ func TestInvalidContentKeyNeverMatchesAsARange(t *testing.T) {
 // Options.MediaType: a content key that is not a valid media type, or a form
 // or multipart key with an invalid or repeated boundary parameter, governs no
 // body, so an Options.MediaType that only such a Media would match is
-// refused. client.go, Options.MediaType: "Load refuses a type that no such
-// Media of any operation matches", such a Media being a request body's Media
-// "other than one whose Err its key causes"; Input.MediaType: "Its key causes
-// that Err when the Err reports that the content key or Swagger 2.0 consumes
-// entry declaring the Media is not a valid media type, or that an OpenAPI 3.x
-// request body's content key is a form or multipart type whose boundary
-// parameter is invalid or repeated."
+// refused. client.go, Options.MediaType: "Load refuses a type that matches no
+// such Media in any request body whose Err is nil", such a Media being one the
+// type matches, "a Media whose Err its key causes not counting";
+// Input.MediaType: "Its key causes that Err when the content key or Swagger
+// 2.0 consumes entry declaring the Media is not a valid media type, or an
+// OpenAPI 3.x request body's form or multipart content key has an invalid or
+// repeated boundary parameter".
 func TestLoadOptionsMediaTypeIgnoresDefectiveKeys(t *testing.T) {
 	for _, tt := range []struct{ name, doc, typ string }{
 		{"not a media type", keyDoc(`{"*/json":{}}`), "application/json"},
@@ -104,8 +104,8 @@ func TestLoadOptionsMediaTypeIgnoresDefectiveKeys(t *testing.T) {
 // empty content map. In the latter case a raw body with explicit
 // Input.MediaType can still be sent, but no structured encoder governs it";
 // client.go, Options.MediaType: it applies "for every operation whose
-// request body has a Media, other than one whose Err its key causes, that it
-// matches by the rules on Input.MediaType".
+// request body has a Media that it matches by the rules on Input.MediaType, a
+// Media whose Err its key causes not counting".
 func TestEmptyContentMapRefusalNamesInputMediaType(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, keyDoc(`{}`), nil)

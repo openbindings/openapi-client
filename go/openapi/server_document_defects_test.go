@@ -28,13 +28,14 @@ func serverDoc(servers string) string {
 // rules, URL: "only an http or https URI is such a base, and otherwise the
 // server cannot be used" and "After substitution, a server URL that url.Parse
 // refuses, such as one whose port holds anything but digits, cannot be used
-// either, nor can one with no host, userinfo, a query or a fragment
-// (Server.Err, where the document alone decides it)"; Configuration: "When a
-// call finds no usable server, RequestError.Settings keys each variable that
-// has no value, or whose Options.Variables value is refused, of each server
-// whose Err is nil, never of one whose Err is set ... If neither is set,
-// Settings also keys Options.BaseURL, unless the operation has one server and
-// one of its variables is keyed."
+// either, nor can one whose host is empty, with or without a port, whose port
+// is above 65535, or that has userinfo, a query or a fragment (Server.Err,
+// where the document alone decides it)"; Configuration: "When a call finds no
+// usable server, RequestError.Settings keys each variable that has no value,
+// whose Options.Variables value is refused, or whose default leaves the host
+// empty or the port above 65535, in each server whose Err is nil, never in one
+// whose Err is set ... If neither is set, Settings also keys Options.BaseURL,
+// unless the operation has one server and one of its variables is keyed."
 func TestServerUnusableByTheDocumentAlone(t *testing.T) {
 	w := newWire(t, nil)
 	_, port, _ := strings.Cut(w.hostport(), ":")
@@ -104,7 +105,7 @@ func TestServerUnusableByTheDocumentAlone(t *testing.T) {
 // variable without a value is keyed, Options.BaseURL is keyed for the
 // several servers, and the unusable server's variable is not keyed, though
 // a value is given for it. doc.go, Configuration: Settings keys such
-// variables "of each server whose Err is nil, never of one whose Err is set".
+// variables "in each server whose Err is nil, never in one whose Err is set".
 func TestUnusableServerVariableNotKeyedBesideAnother(t *testing.T) {
 	doc := serverDoc(`{"url":"https://a.example:abc/{v}","variables":{"v":{"default":"x"}}},` +
 		`{"url":"https://b.example/{w}","variables":{"w":{"enum":["a"]}}}`)
@@ -124,11 +125,13 @@ func TestUnusableServerVariableNotKeyedBesideAnother(t *testing.T) {
 // A server a variable's value can repair has no Server.Err, and the call
 // keys that variable when its value cannot be used: the port and the host
 // are variables here, so the document alone does not decide. errors.go,
-// RequestError.Settings: "A server made unusable by a variable that has no
-// value, or by Options.Variables values, is keyed by variable, in the form
-// above, when its Err is nil: by the variable without a value, by one whose
-// value is off its enum or unfit for its place in the URL, or, when the URL
-// the given values form cannot be used, by each variable given a value."
+// RequestError.Settings: "Configuration in the package documentation says
+// which server variables, in the form above, and which server settings are
+// keyed when a call finds no usable server"; doc.go, Configuration: "When a
+// call finds no usable server, RequestError.Settings keys each variable that
+// has no value, whose Options.Variables value is refused, or whose default
+// leaves the host empty or the port above 65535, in each server whose Err is
+// nil".
 func TestRepairableServerKeysItsVariable(t *testing.T) {
 	for _, tt := range []struct {
 		name, variable string

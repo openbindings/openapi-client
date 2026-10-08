@@ -35,9 +35,10 @@ func codedClient(t *testing.T, ct, body string, lines []string) *openapi.Client 
 // codings: "A body whose remaining Content-Encoding names a coding other than
 // identity passes through unchanged to a *[]byte or io.Writer, is discarded
 // for a nil out, and is framed with its coding still applied by Items with a
-// T of []byte, or of *multipart.Part for a multipart body; any other target,
-// Items with any other T, and Events report a non-identity Content-Encoding
-// error."
+// T of []byte, or of *multipart.Part for a multipart body, so a coded
+// multipart body usually cannot be framed; any other target, Items with any
+// other T, a *multipart.Part over a body that is not multipart included, and
+// Events report a non-identity Content-Encoding error."
 func TestContentCodingInAnyFieldLine(t *testing.T) {
 	for _, lines := range [][]string{
 		{"identity", "gzip"},

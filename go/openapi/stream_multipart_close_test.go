@@ -11,9 +11,9 @@ import (
 // iteration ends without an error, an epilogue after it ignored, whatever
 // the read boundaries. stream.go, Items: "The body is framed as RFC 2046
 // says, except for line breaks. A header line may end in LF alone. If the
-// first delimiter line ends in LF alone, LF alone replaces CRLF before and
-// after each delimiter. Otherwise the close delimiter's line may still end in
-// LF alone."
+// delimiter line that opens the first part ends in LF alone, LF alone replaces
+// CRLF before and after each delimiter; if it ends in CRLF, the close
+// delimiter's line may still end in LF alone."
 func TestMultipartCloseDelimiterLineEndingInLF(t *testing.T) {
 	const x = "--b\r\nContent-Type: text/plain\r\n\r\nx\r\n"
 	const y = "--b\r\nContent-Type: text/plain\r\n\r\ny\r\n"

@@ -202,8 +202,8 @@ func varDoc(url string, defaults map[string]string) string {
 // document alone makes that server unusable: its Server.Err is set (describe.go,
 // Server.Err: "Err is why the document alone makes the server unusable"), and,
 // as the operation's one server keys no variable, the call keys only
-// Options.BaseURL (doc.go, Configuration: Settings keys such variables "of each
-// server whose Err is nil, never of one whose Err is set ... If neither is
+// Options.BaseURL (doc.go, Configuration: Settings keys such variables "in each
+// server whose Err is nil, never in one whose Err is set ... If neither is
 // set, Settings also keys Options.BaseURL, unless the operation has one server
 // and one of its variables is keyed").
 func TestServerVariablesRestrictedByPart(t *testing.T) {
