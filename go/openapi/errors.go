@@ -75,13 +75,12 @@ type RequestError struct {
 	// Options.ServerID is set, unless the operation has one server (see
 	// Configuration in the package documentation). A body's media type is keyed
 	// "Input.MediaType" when it is undetermined, is not a concrete media type,
-	// is one the operation does not declare, or is declared under a key that is
-	// not a valid media type, or under a form or multipart key whose boundary
-	// parameter is invalid or repeated (see Media.Err); a body that any other
-	// Media.Err refuses is keyed in Inputs. A header field that a supplied
-	// header parameter or the credential sets is keyed by the Header that set
-	// it. Several security alternatives with none selected, or an
-	// Options.Security matching several that differ only in scopes, are keyed
+	// is one the operation does not declare, or is declared under a key that
+	// causes its Media.Err (see Media.Err); a body that any other Media.Err
+	// refuses is keyed in Inputs. A header field that a supplied header
+	// parameter or the credential sets is keyed by the Header that set it.
+	// Several security alternatives with none selected, or an Options.Security
+	// matching several that differ only in scopes, are keyed
 	// "Options.Security", the error naming Options.SecurityKey and
 	// Input.Security too; SecurityKey set with Security is keyed
 	// "Options.SecurityKey". An empty secret from a credential source is keyed
@@ -94,8 +93,8 @@ type RequestError struct {
 	// parameter, a missing required one, a value its style cannot serialize or
 	// a header cannot carry (see Header fields in the package documentation), a
 	// body the operation does not take, a body refused by the request body's
-	// Message.Err or by its governing Media's Err for any reason but its key
-	// (see Settings), a reader or Part where the media type cannot carry one, a
+	// Message.Err or by its governing Media's Err unless its key causes it (see
+	// Settings), a reader or Part where the media type cannot carry one, a
 	// ParamWriters failure or conflict, or a Part that sets both Filename and
 	// NoFilename. The key is the Param.Key or, for the body, "Input.Body"
 	// followed by a JSON Pointer to the part of Body concerned, in which a Part

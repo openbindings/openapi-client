@@ -215,11 +215,12 @@
 //     defaults; a server with a variable that has none is not usable until
 //     Options.Variables gives it a value. When a call finds no usable server,
 //     RequestError.Settings keys each variable that has no value, or whose
-//     Options.Variables value is refused, of each server whose Err is nil; when
-//     Options.Server or Options.ServerID is set, only the server it selects
-//     counts. If one is set and no variable is keyed, Settings keys that
-//     setting. If neither is set, Settings also keys Options.BaseURL, unless
-//     the operation has one server and one of its variables is keyed.
+//     Options.Variables value is refused, of each server whose Err is nil,
+//     never of one whose Err is set; when Options.Server or Options.ServerID is
+//     set, only the server it selects counts. If one is set and no variable is
+//     keyed, Settings keys that setting. If neither is set, Settings also keys
+//     Options.BaseURL, unless the operation has one server and one of its
+//     variables is keyed.
 //   - One security alternative selects itself. Several require
 //     Options.Security, Options.SecurityKey or Input.Security, including an
 //     anonymous alternative. SecurityKey names an exact alternative.
