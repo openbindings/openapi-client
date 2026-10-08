@@ -10,13 +10,14 @@ import (
 
 // Load reads the document at uri, and every document its references reach, and
 // returns a Client for it that uses opts. The uri is an http or https URL, a
-// file URL, or a file path. A uri that begins with a URI scheme (RFC 3986
-// section 3.1), even a one-letter one, is a URI, never a path, except for a
-// drive letter on Windows, and is refused unread if it does not parse as one. A
-// uri with a fragment is refused, as is one with userinfo, which RFC 9110
-// section 4.2.4 forbids a sender to generate (supply credentials through
-// HTTPClient or Loader.Fetch), one with leading or trailing whitespace, and a
-// file URL naming a host other than localhost. ctx bounds the whole load,
+// file URL, or a file path; a URL is requested, and names the document, in the
+// form Loader gives the URI requested for a reference. A uri that begins with a
+// URI scheme (RFC 3986 section 3.1), even a one-letter one, is a URI, never a
+// path, except for a drive letter on Windows, and is refused unread if it does
+// not parse as one. A uri with a fragment is refused, as is one with userinfo,
+// which RFC 9110 section 4.2.4 forbids a sender to generate (supply credentials
+// through HTTPClient or Loader.Fetch), one with leading or trailing whitespace,
+// and a file URL naming a host other than localhost. ctx bounds the whole load,
 // reading and parsing included: when it is done before the load completes, Load
 // returns no Client and an error that matches ctx.Err() with errors.Is, and
 // also context.Cause(ctx), even while a referenced document, whose failure
@@ -52,15 +53,15 @@ func Load(ctx context.Context, uri string, opts *Options) (*Client, error) {
 // Parse returns a Client for a document the caller already holds, such as one
 // embedded with go:embed, using the zero [Loader], and fails as Load does. The
 // content is JSON or YAML text. The uri, if not empty, is the absolute URI,
-// without a fragment, the document is meant to live at, which stands for the
-// URI it was retrieved from and is never fetched itself; a relative or
-// unparsable uri is refused, as is one Load refuses for its form: with a
-// fragment, userinfo, or leading or trailing whitespace, or a file URL naming a
-// host other than localhost. With an empty uri, the document may reference only
-// itself, a call whose server URL is relative needs Options.BaseURL, and
-// Sources name the document by a "urn:uuid:" URI derived from the content (a
-// name-based UUID, RFC 9562 version 5), so Sources and $defs keys are the same
-// on every run.
+// without a fragment, the document is meant to live at, which, in the form
+// Loader gives the URI requested, stands for the URI it was retrieved from and
+// is never fetched itself; a relative or unparsable uri is refused, as is one
+// Load refuses for its form: with a fragment, userinfo, or leading or trailing
+// whitespace, or a file URL naming a host other than localhost. With an empty
+// uri, the document may reference only itself, a call whose server URL is
+// relative needs Options.BaseURL, and Sources name the document by a
+// "urn:uuid:" URI derived from the content (a name-based UUID, RFC 9562 version
+// 5), so Sources and $defs keys are the same on every run.
 func Parse(ctx context.Context, content []byte, uri string, opts *Options) (*Client, error) {
 	var l Loader
 	return l.Parse(ctx, content, uri, opts)
@@ -133,8 +134,9 @@ func Parse(ctx context.Context, content []byte, uri string, opts *Options) (*Cli
 // resolved reference without its fragment, its scheme in lowercase. An opaque
 // URI, such as a urn: URI, is otherwise kept as written. Any other has its dot
 // segments removed, as RFC 3986 section 5.2 says, and its query kept as
-// written; elsewhere in it, only a space or a non-ASCII character is
-// percent-encoded, as UTF-8, and each %XX triple is kept as written.
+// written; elsewhere in it, each character a URI cannot hold there, such as a
+// space, a non-ASCII character or "<", is percent-encoded, as UTF-8, and each
+// %XX triple is kept as written.
 //
 // A reference resolves first to what loaded documents identify: a document by
 // its retrieval URI (and the URI requested, when a redirect led there) or 3.2
@@ -162,8 +164,9 @@ type Loader struct {
 	// of its absolute path (filepath.Abs), the URI under which the default
 	// reads it, and any other reaches it as it is, whatever its scheme, unless
 	// Load refuses it. It returns the content, which the loader closes, and the
-	// URI it was finally retrieved from after any redirects, which becomes that
-	// document's base; an empty final means uri. The loader may call Fetch from
+	// URI it was finally retrieved from after any redirects, which, in the form
+	// Loader gives the URI requested, names that document and becomes its
+	// base; an empty final means uri. The loader may call Fetch from
 	// several goroutines at once, so that a document split into several files
 	// loads in parallel.
 	//
