@@ -163,7 +163,7 @@ func partErrDocs() []partErrDoc {
 			`"servers":[{"url":"`+orderBase+`"}]`),
 		cases: []orderCase{
 			// client.go, Input.Body: a pre-encoded body is not checked
-			// "against ... a field's Param.Err", so it is sent.
+			// "against a field's Param.Err", so it is sent.
 			{name: "positional part", key: "positional",
 				ok:   &openapi.Input{Body: []byte("--b\r\n\r\nraw\r\n--b--\r\n"), MediaType: "multipart/mixed; boundary=b"},
 				body: firstMedia,

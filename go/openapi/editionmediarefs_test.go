@@ -96,12 +96,12 @@ func TestEditionsMediaReferences(t *testing.T) {
 //
 // The Media still names its media type, so the type can govern a call: a
 // structured body is checked against Media.Err and refused at the body
-// (client.go, Input.Body: a pre-encoded body is not checked "against a
-// Media.Err", so a structured one is; errors.go, RequestError.Inputs holds "a
-// body refused by the request body's Message.Err or by its governing Media's
-// Err for any reason but an invalid key", keyed "for the body, "Input.Body""),
-// while a pre-encoded body is sent under it, with Request.Media that Media
-// (client.go, Request.Media).
+// (client.go, Input.Body: a pre-encoded body is not checked "against ... a
+// Media.Err other than an invalid key's", so a structured one is; errors.go,
+// RequestError.Inputs holds "a body refused by the request body's Message.Err
+// or by its governing Media's Err for any reason but an invalid key", keyed
+// "for the body, "Input.Body""), while a pre-encoded body is sent under it,
+// with Request.Media that Media (client.go, Request.Media).
 func TestEditionsMediaReferencesEarlierEditions(t *testing.T) {
 	for _, version := range []string{"3.0.4", "3.1.2"} {
 		t.Run(version, func(t *testing.T) {

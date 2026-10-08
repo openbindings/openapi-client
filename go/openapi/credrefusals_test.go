@@ -63,12 +63,12 @@ func TestMissingEmptyOrZeroCredential(t *testing.T) {
 // static credential, or a credential its schemes cannot use". doc.go,
 // Credentials: "Load refuses a Credentials name the document never uses, as
 // a likely misspelling, an empty static credential (Secret(""), Basic("",
-// "") or the zero Credential), and a Basic credential for a name none of
+// "") or the zero Credential), a Basic credential for a name none of
 // whose schemes is http basic, and any credential but FromTransport for a
 // name all of whose schemes are mutualTLS"; "A credential value its
 // destination cannot carry is refused at Options.Credentials["name"]: by
 // Load for a static credential ... Such a value is a header field value with
-// a control character other than a tab, or with leading or trailing
+// an ASCII control character other than a tab, or with leading or trailing
 // whitespace". errors.go, RequestError.Settings: keyed
 // Options.Credentials[<name>], the name quoted as strconv.Quote does.
 func TestLoadRefusesCredentials(t *testing.T) {
@@ -126,8 +126,8 @@ func TestLoadRefusesCredentials(t *testing.T) {
 }
 
 // credential.go, Basic: "A username containing a colon, or either value
-// containing a control character, is refused as the package doc's
-// Credentials section says of every credential value" (RFC 7617 section 2:
+// containing an ASCII control character, is a value RFC 7617 forbids, refused
+// as the package documentation says under Credentials" (RFC 7617 section 2:
 // "a user-id containing a colon character is invalid", and user-id and
 // password "MUST NOT contain any control characters", CTL in RFC 5234:
 // %x00-1F / %x7F); doc.go, Credentials: such a value is refused "at

@@ -12,7 +12,8 @@ import (
 )
 
 // Context cancellation and deadlines. doc.go, Outcomes: "When the call's
-// context is done before the call completes, the error matches ctx.Err()
+// context is done before the call completes, and the transport honors the
+// request's context, as net/http's does, the error matches ctx.Err()
 // with errors.Is, and also context.Cause(ctx), even where net/http would
 // report only the cause ... a *StatusError or *DecodeError may wrap the
 // context's error when a deadline cut the body short."

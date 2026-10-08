@@ -23,8 +23,8 @@ import (
 // any other value is one field or part. A field an Encoding style or a Swagger
 // 2.0 collectionFormat serializes, multi included, takes JSON data, under
 // multipart/form-data too, so a []byte there is a base64 string and a Part or
-// reader is refused. A typed nil is a value, never a reader, so a property or
-// item holding one is omitted as null." Part: "In an
+// reader is refused ... A typed nil is a value, never a reader, so a property
+// or item holding one is omitted as null." Part: "In an
 // application/x-www-form-urlencoded body only Content and MediaType apply, and
 // Filename, NoFilename or Header is refused." doc.go, Fixed rules, Form bodies:
 // "Form bodies use the WHATWG application/x-www-form-urlencoded encoder in
@@ -33,19 +33,19 @@ import (
 // allowReserved is written by RFC 6570, as OpenAPI says"; Order: "a form or
 // multipart body's fields, follow the order encoding/json writes members in (a
 // struct's fields in declaration order, a map's keys sorted)"; Values: "A form
-// or multipart property or array item, or a positional part, whose JSON data is
-// null is omitted, whatever its serialization or media type", and a field "uses
-// its Encoding contentType ..., or its default type when the Encoding gives
-// none; a list or a range requires Part.MediaType. The default is read from the
-// field's schema" (doc.go, Configuration). OAS 3.1.2 section 4.8.15.1.1 gives
-// the defaults: no type application/octet-stream, a string with contentEncoding
-// application/octet-stream, a string text/plain, a number, integer or boolean
-// text/plain, an object application/json, an array "according to the type of
-// the items schema". Section 4.8.15.2: the body "MUST be encoded per [RFC1866]
-// when passed to the server, after any complex objects have been serialized to
-// a string representation"; Appendix E.4: each content-encoded field "is
-// encoded based on the media type (e.g. text/plain or application/json), and
-// must then be percent-encoded".
+// or multipart property or array item, or a positional part ..., whose JSON
+// data is null is omitted, whatever its serialization or media type", and a
+// field "uses its Encoding contentType ..., or its default type when the
+// Encoding gives none; a list or a range requires Part.MediaType. The default
+// is read from the field's schema" (doc.go, Configuration). OAS 3.1.2 section
+// 4.8.15.1.1 gives the defaults: no type application/octet-stream, a string
+// with contentEncoding application/octet-stream, a string text/plain, a number,
+// integer or boolean text/plain, an object application/json, an array
+// "according to the type of the items schema". Section 4.8.15.2: the body "MUST
+// be encoded per [RFC1866] when passed to the server, after any complex objects
+// have been serialized to a string representation"; Appendix E.4: each
+// content-encoded field "is encoded based on the media type (e.g. text/plain or
+// application/json), and must then be percent-encoded".
 
 const formDoc = `
 	"/form":{"post":{"operationId":"form","requestBody":{"content":{"application/x-www-form-urlencoded":{
@@ -308,7 +308,7 @@ func formStyleDoc() string {
 // removed, beside a content field c: "c=1+2" then the expansion, joined by
 // "&". A space is %20 there, not +, as RFC 6570 percent-encodes it;
 // allowReserved is RFC 6570 reserved expansion exactly (doc.go, Fixed
-// rules, Percent-encoding: "the caller supplies any percent-encoding
+// rules, Percent-encoding: "the caller supplies any other percent-encoding
 // OpenAPI leaves to the application"; OAS 3.1.2: "Applications are still
 // responsible for percent-encoding reserved characters that ... have a
 // special meaning in application/x-www-form-urlencoded"). Undefined values
@@ -374,7 +374,8 @@ func TestFormBodyStyleExamples(t *testing.T) {
 // Refusals, each at its Inputs key: "Input.Body" followed by a JSON Pointer
 // to the part of Body concerned (errors.go, RequestError.Inputs; RFC 6901,
 // "~" as "~0" and "/" as "~1"): a body that is not an object (client.go,
-// Input.Body: "Body is an object (a map or a struct)"); a property or item
+// Input.Body: "Body is an object whose properties are the fields: a value
+// whose JSON data is an object"); a property or item
 // value its media type cannot encode (doc.go, Values); a reader or Part
 // inside a JSON value (client.go, Input.Body: "A Part or io.Reader inside a
 // JSON value is refused with an Inputs entry at its place in Body"). A

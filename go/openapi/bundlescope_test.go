@@ -13,10 +13,12 @@ import (
 
 // Where the rule for values written as references reaches, and what it costs.
 // describe.go, Operation: "a reference whose target lies inside it cannot be
-// followed before bundling either: it makes its own nearest part unusable
-// the same way ... Extension values and examples are not such values." The
-// harness, and the checks of each call in both orders and of nothing being
-// fetched, are those of bundlevalues_test.go.
+// followed before bundling either. Such a reference in a schema has an Err
+// saying the document must be bundled first (see Schema.References); any
+// other makes its own nearest part unusable the same way ... Extension values
+// and examples are not such values." The harness, and the checks of each call
+// in both orders and of nothing being fetched, are those of
+// bundlevalues_test.go.
 
 // largeMapDoc is an OpenAPI 3.1.2 document with n members of
 // components.parameters, named prefix followed by a number, and m operations

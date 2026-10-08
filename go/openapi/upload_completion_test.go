@@ -209,8 +209,10 @@ func (rt *slowRT) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 // The blocking-wait path: WaitRequest blocks while a slow transport is still
-// reading, returning nil only once the body can have reached EOF; "A
-// cancellation of ctx ends only this wait".
+// reading, returning nil only once the body can have reached EOF; "When ctx
+// ends first, WaitRequest returns an error matching ctx.Err() and
+// context.Cause(ctx), and that ends only this wait" (client.go,
+// Response.WaitRequest).
 func TestWaitRequestBlocksUntilConsumed(t *testing.T) {
 	const payload = `{"k":"abcdefgh"}`
 	for name, body := range map[string]func() any{

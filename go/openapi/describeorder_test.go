@@ -31,8 +31,9 @@ import (
 //     operation; Settings and Inputs, for what the caller must supply or
 //     correct".
 //   - client.go, Input.Body: a pre-encoded body is not checked "against a
-//     Media.Err, a field's Param.Err or required formData fields", so a
-//     structured body is checked against the field's Param.Err; describe.go,
+//     field's Param.Err, required formData fields, or a Media.Err other than
+//     an invalid key's", so a structured body is checked against the field's
+//     Param.Err; describe.go,
 //     Param.Err: "Err is why built-in serialization cannot use the value";
 //     Media.Err: an Encoding defect "is reported by ... the relevant
 //     Encoding Param.Err".

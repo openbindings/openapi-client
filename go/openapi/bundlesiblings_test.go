@@ -47,11 +47,11 @@ func sendDeclared(t *testing.T, c *openapi.Client, desc *openapi.Operation, in *
 // bundle. A call that sends a body uses it and is refused at the body
 // (errors.go, RequestError.Inputs: "for the body, "Input.Body""), a
 // pre-encoded body too, since Input.Body exempts a pre-encoded body only from
-// "a Media.Err, a field's Param.Err or required formData fields" and
-// Message.Err is "why the request body ... cannot be used". A call without a
-// body, which the operation does not require, does not use it and is sent.
-// Root consumes is inherited by an operation that declares none; one that
-// declares its own is unaffected, and so is one without a body.
+// "a field's Param.Err, required formData fields, or a Media.Err other than an
+// invalid key's" and Message.Err is "why the request body ... cannot be used".
+// A call without a body, which the operation does not require, does not use it
+// and is sent. Root consumes is inherited by an operation that declares none;
+// one that declares its own is unaffected, and so is one without a body.
 func TestSwaggerConsumesReference(t *testing.T) {
 	bodyBundled := func(t *testing.T, op *openapi.Operation) {
 		wantUsable(t, "Operation", op.Err)

@@ -157,10 +157,10 @@ func hopMethod(status int, method string) (string, bool) {
 // (RFC 9110 section 15.4, item 5: "If the request method has been changed
 // to GET or HEAD, remove content-specific header fields, including ...
 // Content-Language ... Content-Type, Content-Length"); "On a hop within the
-// origin, header and cookie credentials are placed again; a query
-// credential goes only on the request the client builds, never onto a
-// Location." credential.go, SecretFunc: f is called for "each redirect hop
-// on which Redirects says credentials are placed again".
+// origin, header, query and cookie credentials are placed again, a query
+// credential after the Location's own query." credential.go, SecretFunc: f is
+// called for "each redirect hop on which Redirects says credentials are placed
+// again".
 func TestRedirectMethodsAndBodies(t *testing.T) {
 	for _, status := range []int{301, 302, 303, 307, 308} {
 		for key, method := range redirKeys {

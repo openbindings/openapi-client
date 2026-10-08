@@ -7,7 +7,7 @@ import (
 )
 
 // Reference closure. Project: "Root is the schema itself. Each $ref,
-// discriminator mapping value and defaultMapping value that
+// discriminator mapping value and defaultMapping value that Project keeps and
 // openapi.Schema.References reports with a Target is rewritten to #/$defs/KEY
 // for that Target, and Defs holds every schema these references reach,
 // transitively, and nothing else". Projection: "Defs contains the complete
@@ -146,8 +146,9 @@ func TestProjectReferencesAcrossDocuments(t *testing.T) {
 	}
 }
 
-// Schemas are read under their own document's edition (Project: "Schemas
-// are read under their openapi.Schema.Version"): an OpenAPI 3.1 schema
+// Schemas are read under their own document's edition (Project: "Each
+// schema, the Root and every Defs entry, is read under its own
+// openapi.Schema.Version"): an OpenAPI 3.1 schema
 // referring to an OpenAPI 3.0 one, and the reverse, each translated by its
 // own edition's rules within one Projection.
 func TestProjectMixedEditions(t *testing.T) {

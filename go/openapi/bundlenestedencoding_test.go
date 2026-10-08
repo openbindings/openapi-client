@@ -137,7 +137,7 @@ func TestBundleNestedFormEncodingWithCharset(t *testing.T) {
 // concrete type its caller names in Part.MediaType (client.go, Part.MediaType:
 // "where the Encoding lists no type ..., any concrete type"), and a part whose
 // media type is multipart "is encoded, one level deep, from an object or
-// slice by its Encoding's own encoding, prefixEncoding or itemEncoding"
+// list by its Encoding's own encoding, prefixEncoding or itemEncoding"
 // (client.go, Input.Body). So its prefixEncoding is one the client can read
 // for a type the field can be sent as, and written as a reference it "makes
 // the nearest part holding that value unusable" (describe.go, Operation): the

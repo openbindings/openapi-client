@@ -8,8 +8,8 @@ import (
 // (describe.go, Param): Style "as declared or as OpenAPI defaults it for the
 // location ("form" for query and cookie, "simple" for path and header), or
 // empty when the value is serialized by ContentType instead"; "Explode is
-// the effective explode, and ExplodeSet whether the document writes it" (OAS
-// 3.1.2 section 4.8.12.2.2: "When style is "form", the default value is
+// the effective explode ..., and ExplodeSet whether the document writes it"
+// (OAS 3.1.2 section 4.8.12.2.2: "When style is "form", the default value is
 // true. For all other styles, the default value is false"); AllowReserved
 // "the effective allowReserved: false where the edition or the media type
 // ignores it";

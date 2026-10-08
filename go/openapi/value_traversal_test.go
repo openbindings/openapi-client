@@ -431,8 +431,9 @@ func TestTypedNilReaderFromIteratorIsNull(t *testing.T) {
 // A Part, or a non-nil *Part, as the whole form or multipart Body is refused
 // at Input.Body (client.go, Input.Body: "For form and multipart media, Body
 // is an object whose properties are the fields: a value whose JSON data is an
-// object, ... but not a Part, a *Part, or a pointer to either or to a reader,
-// which is refused at Inputs["Input.Body"]"), never sent as an empty body.
+// object, ... but not a Part, a non-nil *Part, or a pointer to either or to a
+// reader, which is refused at Inputs["Input.Body"]"), never sent as an empty
+// body.
 func TestPartAsWholeBodyRefused(t *testing.T) {
 	w, c := valuesClient(t)
 	for _, key := range []string{"bareForm", "bareMp"} {
@@ -445,8 +446,8 @@ func TestPartAsWholeBodyRefused(t *testing.T) {
 	}
 }
 
-// "A field an Encoding style serializes takes JSON data, so a []byte there
-// is a base64 string and a Part or reader is refused" (client.go,
+// "A field an Encoding style ... serializes, ... takes JSON data, ... so a
+// []byte there is a base64 string and a Part or reader is refused" (client.go,
 // Input.Body): in a form body the base64 is percent-encoded as any RFC 6570
 // value; in a multipart part it is sent as it is.
 func TestStyledFieldTakesJSONData(t *testing.T) {

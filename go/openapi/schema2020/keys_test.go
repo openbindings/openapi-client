@@ -15,9 +15,9 @@ import (
 // Defs keys. Project: "A schema written at #/components/schemas/NAME of
 // the entry document, or #/definitions/NAME in Swagger 2.0, has the key
 // NAME when NAME contains no "#"; any other key is the schema's Source as
-// a URI reference relative to the entry document's URI. In a reference, a
-// key is escaped as a JSON Pointer token and then as RFC 3986 section 3.5
-// requires of a fragment."
+// a URI reference relative to the entry document's URI taken as written, ...
+// In a reference, a key is escaped as a JSON Pointer token and then as RFC 3986
+// section 3.5 requires of a fragment."
 
 var hexEscape = regexp.MustCompile(`%[0-9a-fA-F]{2}`)
 

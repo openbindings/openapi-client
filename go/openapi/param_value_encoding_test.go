@@ -111,8 +111,8 @@ func wantEncoded(t *testing.T, key string, req *openapi.Request, v any) {
 
 // Depth is counted in the JSON encoding/json writes, a MarshalJSON's output
 // included (doc.go, Values: a value "whose JSON, a MarshalJSON's output
-// included, nests deeper than 1,000 levels, the outermost value being level
-// 1", is refused "at the key of the body, field, part, sequential item or
+// included, nests deeper than 1,000 levels, the outermost value ... being
+// level 1", is refused "at the key of the body, field, part, sequential item or
 // parameter that is or holds it"; a scalar leaf is a level, as the Loader
 // counts documents).
 // A static per-type depth may not refuse a value whose JSON is within the
@@ -658,10 +658,10 @@ type label string
 
 // encode's branches for a text or other media type (doc.go, Values: a
 // value is converted "to JSON data as encoding/json would", then "any other
-// type takes only a string, as its UTF-8 bytes, and a text type also a
-// number or boolean"): a named string type and a TextMarshaler are strings,
-// their JSON escapes undone; a value encoding/json cannot write is refused
-// at the key.
+// type takes only a string, as its bytes, and a text type also a number,
+// boolean or json.Number"): a named string type and a TextMarshaler are
+// strings, their JSON escapes undone; a value encoding/json cannot write is
+// refused at the key.
 func TestContentParamTextEncodeBranches(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, doc31(contentDoc), nil)
@@ -836,7 +836,7 @@ func TestAllUndefinedList(t *testing.T) {
 
 // An invalid-UTF-8 string under a non-JSON content type is sent as its bytes
 // as given; under JSON, encoding/json's U+FFFD replacement stands, since a
-// JSON type "is written as encoding/json writes the value" (doc.go, Values).
+// JSON type "is written as json.Marshal writes the value" (doc.go, Values).
 // The bytes are then percent-encoded by location, or written as given in a
 // header or cookie.
 func TestContentParamInvalidUTF8(t *testing.T) {

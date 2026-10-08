@@ -23,9 +23,10 @@ import (
 // Input.MediaType: "a boundary given for a multipart body the client encodes
 // is used, a part whose content holds its delimiter, or "--" and the
 // boundary after a CR or LF, being an input that cannot be encoded (RFC 2046
-// section 5.1.1). A boundary in the declared content key is used and checked
-// the same way; an invalid one is the Media's Err. Two boundary parameters
-// are refused."
+// section 5.1.1; in a reader, it is found only as the body is sent, as Body
+// says). A boundary in a request body's declared content key is used and
+// checked the same way; an invalid one is the Media's Err. Two boundary
+// parameters in a multipart type are refused."
 
 // With a boundary the caller gives, content holding "--" and the boundary
 // after a lone LF or a lone CR is refused at its key before sending, as

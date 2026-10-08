@@ -24,15 +24,15 @@ import (
 // race detector checks the rest (the iterator writes caller state the test then
 // writes, as gatedReader does in upload_inflight_read_test.go). Run with -race.
 // client.go, Input.Body: "An iterator is written one item at a time as it
-// yields, so a large body is never held ... It runs on a goroutine of the
-// transport, from the transport's first Read of the body, so a body closed
-// unread never runs it; its yield returns false once the body is no longer
-// wanted. Call waits for the iterator to return; Send and Stream may return at
-// response headers while it is still running. An error from an iter.Seq2, an
-// item that cannot be encoded, or the context ending before the iterator
-// returns aborts the body and is reported by Call or Response.WaitRequest."
-// Input: "closing Response.Body stops an outstanding upload." Stream: "An
-// iterator that honors its yield result then stops".
+// yields, so a large body is never held ... It runs on a goroutine of its
+// own, in step with the transport's reads, from the transport's first Read of
+// the body, so a body closed unread never runs it; its yield returns false
+// once the body is no longer wanted. Call waits for the iterator to return;
+// Send and Stream may return at response headers while it is still running. An
+// error from an iter.Seq2, an item that cannot be encoded, or the context
+// ending before the iterator returns aborts the body and is reported by Call or
+// Response.WaitRequest." Input: "closing Response.Body stops an outstanding
+// upload." Stream: "An iterator that honors its yield result then stops".
 //
 // Note on net/http: once a response body has been read to its end, the
 // HTTP/1 transport closes the connection unless the request body was
@@ -432,7 +432,8 @@ func TestUnencodableItemAbortsTheBody(t *testing.T) {
 // The context ending before the iterator returns aborts the body: the
 // iterator's yield then returns false, Call returns after the iterator,
 // with an error matching ctx.Err() (doc.go, Outcomes: "When the call's
-// context is done before the call completes, the error matches ctx.Err()"),
+// context is done before the call completes, and the transport honors the
+// request's context, as net/http's does, the error matches ctx.Err()"),
 // and after Send, WaitRequest reports it.
 func TestIteratorContextEnds(t *testing.T) {
 	t.Run("Call", func(t *testing.T) {

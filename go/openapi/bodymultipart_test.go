@@ -26,8 +26,8 @@ import (
 // alone ("--" boundary "--" CRLF), as browsers do." Part: "A named part's
 // Content-Disposition is form-data, under any multipart type, with its name and
 // filename written as given, each as a quoted-string with \ and " escaped,
-// never as filename*; a control character other than a tab in either is
-// refused, as a quoted-string cannot carry it"; Filename "Empty means the
+// never as filename*; an ASCII control character other than a tab in either
+// is refused, as a quoted-string cannot carry it"; Filename "Empty means the
 // default: the part's name for a []byte or io.Reader Content whose media type
 // is not multipart, and none otherwise"; NoFilename "sends no filename,
 // whatever the Content"; Header "holds other header fields of the part, such as
@@ -275,20 +275,21 @@ func TestMultipartPartOverrides(t *testing.T) {
 }
 
 // Refusals, at the keys errors.go gives: Inputs for a value that cannot be sent
-// ("a Part that sets both Filename and NoFilename"; client.go, Part: "a control
-// character other than a tab in either is refused", Header "under the rules for
-// Options.Header's field names and values" and "Content-Type, in any spelling,
-// is refused"; doc.go, Fixed rules, Header fields: "A field name, in a Header
-// (Options.Header, Input.Header or Part.Header) or of a header parameter, must
-// be an RFC 9110 token, and a field value, a header parameter's included, may
-// hold no control character but a tab and no leading or trailing whitespace"; a
-// property or part value its media type cannot encode; client.go, Input.Body: a
-// Part or reader "inside a JSON value is refused with an Inputs entry at its
-// place in Body", the pointer passing through a Part with no Content segment;
-// and a Body that is not an object, a slice being an OpenAPI 3.2 shape), and
-// Settings for a part's media type the call must give or gave wrongly
-// (RequestError.Settings: "for a part's media type, "Input.Body" followed by
-// the part's JSON Pointer"; Part.MediaType: "A range is refused").
+// ("a Part that sets both Filename and NoFilename"; client.go, Part: "an ASCII
+// control character other than a tab in either is refused", Header "under the
+// rules for Options.Header's field names and values" and "Content-Type, in any
+// spelling, is refused"; doc.go, Fixed rules, Header fields: "A field name, in
+// a Header (Options.Header, Input.Header or Part.Header) or of a header
+// parameter, must be an RFC 9110 token, and a field value, a header parameter's
+// included, may hold no ASCII control character but a tab and no leading or
+// trailing whitespace"; a property or part value its media type cannot encode;
+// client.go, Input.Body: a Part or reader "inside a JSON value is refused with
+// an Inputs entry at its place in Body", the pointer passing through a Part
+// with no Content segment; and a Body that is not an object, a slice being an
+// OpenAPI 3.2 shape), and Settings for a part's media type the call must give
+// or gave wrongly (RequestError.Settings: "for a part's media type,
+// "Input.Body" followed by the part's JSON Pointer"; Part.MediaType: "A range
+// is refused").
 func TestMultipartRefusals(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, mpDoc(), nil)
@@ -353,9 +354,8 @@ func TestMultipartRefusals(t *testing.T) {
 // multipart body requires its boundary here, and a boundary given for a
 // multipart body the client encodes is used, a part whose content holds its
 // delimiter, or "--" and the boundary after a CR or LF, being an input that
-// cannot be encoded (RFC 2046 section 5.1.1)"; Options.MediaType selects "as
-// Input.MediaType does"), a quoted
-// one included (RFC 2046: "bchars :=
+// cannot be encoded (RFC 2046 section 5.1.1; ...)"; Options.MediaType selects
+// "as Input.MediaType does"), a quoted one included (RFC 2046: "bchars :=
 // bcharsnospace / " "", so a boundary may hold a space, and RFC 9110
 // section 8.3.1 quotes such a parameter value).
 func TestMultipartBoundary(t *testing.T) {

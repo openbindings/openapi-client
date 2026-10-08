@@ -180,13 +180,14 @@ func TestParameterRefs(t *testing.T) {
 	}
 }
 
-// describe.go, Operation.Err: "an unresolvable parameter or request body
-// reference, whose identity and requiredness cannot be known" makes the
-// operation uncallable, and Operation: "A part written as a Reference Object
-// that cannot be resolved has that Reference Object's location as its
-// Source"; "Wherever an Err's cause is a reference that could not be
-// resolved, it wraps ErrUnresolved". Calling it "returns a *RequestError
-// wrapping Err" (errors.go, RequestError: errors.Is(err, op.Err)).
+// describe.go, Operation.Err: "a parameter or request body reference that
+// cannot be followed ... as then the parameter's identity or the body's
+// requiredness cannot be known" makes the operation uncallable, and Operation:
+// "A part written as a Reference Object that cannot be resolved has that
+// Reference Object's location as its Source"; "Wherever an Err's cause is a
+// reference that could not be resolved, it wraps ErrUnresolved". Calling it
+// "returns a *RequestError wrapping Err" (errors.go, RequestError:
+// errors.Is(err, op.Err)).
 func TestBrokenParameterAndBodyRefs(t *testing.T) {
 	w := newWire(t, nil)
 	doc := doc31(`
@@ -384,8 +385,9 @@ func TestSchemasNotInterpreted(t *testing.T) {
 	}
 }
 
-// describe.go, Operation.Err: "a path template that does not match any
-// knowable parameter key" makes the operation uncallable.
+// describe.go, Operation.Err: "a path template that has an unclosed { or
+// names a parameter that no path parameter declares" makes the operation
+// uncallable.
 func TestPathTemplateWithoutParameter(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, doc31(`"/pets/{petId}":{"get":{"operationId":"getPet"}}`), nil)

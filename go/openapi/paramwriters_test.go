@@ -212,9 +212,9 @@ func TestParamWritersBypassSerializationErr(t *testing.T) {
 
 // "It cannot bypass a defect in the operation or an unresolved parameter
 // reference whose Key cannot be determined": the call is refused with an
-// error wrapping the operation's Err (describe.go, Operation.Err: "an
-// unresolvable parameter ... reference, whose identity and requiredness
-// cannot be known").
+// error wrapping the operation's Err (describe.go, Operation.Err: "a
+// parameter or request body reference that cannot be followed ... as then the
+// parameter's identity ... cannot be known").
 func TestParamWritersCannotBypassOperationErr(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, doc31(writerDoc), nil)

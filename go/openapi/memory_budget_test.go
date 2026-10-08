@@ -32,11 +32,11 @@ func allocated(f func()) uint64 {
 
 // A peer's Content-Length does not decide an up-front allocation: doc.go,
 // Outcomes: "Even with no bound, the length a response body or retrieved
-// document declares reserves at most 1 MiB in advance; the rest is allocated
-// as its bytes arrive." client.go, Options.MaxBodyBytes and MaxErrorBytes and
-// load.go, Loader.MaxBytes bound what is read, and a negative bound, "no
-// limit", never overflows into a panic. Each server here declares a length
-// and sends 2 bytes; the 16 MiB budget is a tolerance around the 1 MiB
+// document declares reserves no more than about 1 MiB in advance; the rest is
+// allocated as its bytes arrive." client.go, Options.MaxBodyBytes and
+// MaxErrorBytes and load.go, Loader.MaxBytes bound what is read, and a negative
+// bound, "no limit", never overflows into a panic. Each server here declares a
+// length and sends 2 bytes; the 16 MiB budget is a tolerance around the 1 MiB
 // reservation.
 func TestContentLengthDoesNotDecideAllocation(t *testing.T) {
 	const budget = 16 << 20 // the 1 MiB reservation, with room for everything else

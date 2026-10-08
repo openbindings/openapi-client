@@ -127,7 +127,7 @@ func TestJSONLinesBodies(t *testing.T) {
 
 // JSON text sequences, application/json-seq and any +json-seq type (doc.go,
 // Values: sequential types are "JSON Lines, JSON text sequences, server-sent
-// events"; client.go, Items: "application/json-seq and any +json-seq type:
+// events"; stream.go, Items: "application/json-seq and any +json-seq type:
 // one per RFC 7464 record"): each item preceded by RS and followed by LF,
 // exactly (RFC 7464 section 2.2), which also gives a top-level number the
 // whitespace after it that parsers check for.
@@ -395,7 +395,8 @@ func TestSequentialItemRefusals(t *testing.T) {
 // sequential, multipart or application/x-www-form-urlencoded type, whose
 // framing and field encoding stay the client's, as OpenAPI's Encoding Object
 // governs them; their items and parts use the codec for their own type", and
-// entries for "application/json" "replace encoding/json everywhere"). The
+// entries for "application/json" "replace encoding/json wherever a value is
+// encoded or decoded as content of a JSON type"). The
 // codec receives each item as given (doc.go, Values); an Encode error
 // refuses the call at the item's Inputs key.
 func TestSequentialItemsUseCodecs(t *testing.T) {

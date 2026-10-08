@@ -9,7 +9,7 @@ import (
 )
 
 // doc.go, Values: "A form or multipart property or array item, or a positional
-// part, whose JSON data is null is omitted, whatever its serialization or
+// part ..., whose JSON data is null is omitted, whatever its serialization or
 // media type, a form, multipart or sequential one included"; client.go,
 // Part.Content: "A nil Content, or one whose JSON data is null, omits the
 // part, as a null property is omitted, whatever the part's media type". JSON

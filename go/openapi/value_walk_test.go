@@ -656,11 +656,10 @@ func jsonMembersOf(t *testing.T, b []byte) []jsonMember {
 
 // fieldsOf is what a form or multipart body whose every field is JSON
 // carries for the JSON object b (doc.go, Values: "A form or multipart
-// property or array item, or a positional part, whose JSON data is null is
-// omitted"; client.go,
-// Input.Body: "a property whose value is an array sends one field or part
-// per item under the property's name"): each member's JSON text, an array
-// one per item, null left out.
+// property or array item, or a positional part ..., whose JSON data is null
+// is omitted"; client.go, Input.Body: "a property whose value is an array sends
+// one field or part per item under the property's name"): each member's JSON
+// text, an array one per item, null left out.
 func fieldsOf(t *testing.T, b []byte) []jsonMember {
 	t.Helper()
 	var out []jsonMember
@@ -761,7 +760,7 @@ func jwFieldsDoc(names []string) string {
 // writes it:
 //
 //   - a JSON body is json.Marshal's bytes (doc.go, Values: "a JSON type is
-//     written as encoding/json writes the value");
+//     written as json.Marshal writes the value");
 //   - a form or multipart body whose fields are JSON carries, field by field,
 //     the JSON data json.Marshal gives each property (doc.go, Values: "The
 //     client first converts a value to JSON data as encoding/json would"),

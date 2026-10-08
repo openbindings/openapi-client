@@ -533,8 +533,8 @@ func TestEmptiedRequired(t *testing.T) {
 	verdicts(t, "2.0 Request", compiled(t, "2.0", schemas, "Token", schema2020.Request), []string{`{}`}, []string{`{"id":"1"}`})
 }
 
-// Project: binary and file translation comes first ("format: binary with
-// type: string ... lose both keywords"), and nullable adds "null" only
+// Project: binary and file translation comes first ("type: string with
+// format: binary loses both keywords"), and nullable adds "null" only
 // "where the schema then has a type"; format: byte "becomes
 // contentEncoding: base64" whatever the type.
 func TestBinaryNullableAndByteTypes(t *testing.T) {

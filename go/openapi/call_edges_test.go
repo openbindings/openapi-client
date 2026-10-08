@@ -472,14 +472,15 @@ func TestDocumentURIUserinfoRefused(t *testing.T) {
 // doc.go, Fixed rules, Header fields: "A field name, in a Header
 // (Options.Header, Input.Header or Part.Header) or of a header parameter, must
 // be an RFC 9110 token, and a field value, a header parameter's included, may
-// hold no control character but a tab and no leading or trailing whitespace"; a
-// header parameter "whose name is not a token, has Param.Err, and any other
-// breach of these rules is refused at the key of what gave it, such as Settings
-// "Options.Header" or "Input.Header", or a Part's or header parameter's Inputs
-// key", before sending. Input.MediaType is validated as a media type (section
-// 8.3.1, parameters quoted as section 5.6.4 says; client.go, Response.Media:
-// "That grammar governs every media type the client reads (a content key, an
-// Encoding contentType, Input.MediaType, Part.MediaType)").
+// hold no ASCII control character but a tab and no leading or trailing
+// whitespace"; a header parameter "whose name is not a token, has Param.Err,
+// and any other breach of these rules is refused at the key of what gave it,
+// such as Settings "Options.Header" or "Input.Header", or a Part's or header
+// parameter's Inputs key", before sending. Input.MediaType is validated as a
+// media type (section 8.3.1, parameters quoted as section 5.6.4 says;
+// client.go, Response.Media: "The client parses every media type it reads (a
+// Content-Type, a content key, an Encoding contentType, Input.MediaType,
+// Part.MediaType) by RFC 9110's media-type grammar").
 func TestHeaderFieldNameAndValueValidation(t *testing.T) {
 	w := newWire(t, nil)
 	doc := doc31(`"/h":{"get":{"operationId":"h","parameters":[{"name":"X-V","in":"header","schema":{}},{"name":"X C","in":"header","schema":{}}]}},
@@ -623,9 +624,10 @@ func TestServerVariableWithoutDefaultUnusable(t *testing.T) {
 	}
 }
 
-// "A *string and a *any take any text/* type as text, whatever its codec
-// class (text/xml and text/event-stream included): a *string its bytes as
-// sent ... and a *any a string" (client.go, Call).
+// "Where the media type has no caller's codec, a *string and a *any take any
+// text/* type as text, whatever its codec class (text/xml and
+// text/event-stream included): a *string its bytes as sent ... and a *any a
+// string" (client.go, Call).
 func TestTextXMLDecodesAsText(t *testing.T) {
 	body := `<a>hi<b>x</b></a>`
 	for _, ct := range []string{"text/xml", "text/xml; charset=utf-8", "text/event-stream"} {
@@ -1075,9 +1077,11 @@ func TestHeaderWithoutValuesRemovesUserAgent(t *testing.T) {
 	}
 }
 
-// "A path parameter value that would form a whole "." or ".." segment is
-// refused, since RFC 3986 section 5.2.4 removes such segments" (doc.go,
-// Fixed rules, Percent-encoding). Other dotted values are sent.
+// "A path parameter value whose expansion would form a whole "." or ".."
+// segment, percent-encoded or not, alone or with the values and text beside
+// it, is refused at its key ..., since RFC 3986 section 5.2.4 removes such
+// segments" (doc.go, Fixed rules, Percent-encoding). Other dotted values are
+// sent.
 func TestPathValueDotSegmentsRefused(t *testing.T) {
 	w := newWire(t, nil)
 	c := parseFor(t, w, doc31(`"/users/{id}/sessions":{"delete":{"operationId":"op","parameters":[{"name":"id","in":"path","required":true,"schema":{}}]}}`), nil)
@@ -1101,9 +1105,9 @@ func TestPathValueDotSegmentsRefused(t *testing.T) {
 }
 
 // A Variables value substituted into the authority "may not hold "/", "?",
-// "#", "@" or "\\"" (client.go, Options.Variables; RFC 3986 section 3.2), so
-// a value cannot move the request to another host. Each value here would
-// move the request to the test server, which must receive nothing.
+// "#", "@" or a backslash" (client.go, Options.Variables; RFC 3986 section
+// 3.2), so a value cannot move the request to another host. Each value here
+// would move the request to the test server, which must receive nothing.
 func TestAuthorityVariableValuesCannotMoveHost(t *testing.T) {
 	w := newWire(t, nil)
 	host := w.hostport()

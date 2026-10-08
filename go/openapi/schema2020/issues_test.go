@@ -13,16 +13,16 @@ import (
 // Losses. Project: "Project returns an *Error, and with it the Projection,
 // when part of the schema cannot be carried: a reference that cannot be
 // resolved, ...; a $dynamicRef, whose target depends on dynamic scope; a
-// keyword removed as above; or a schema resource in a dialect other than
-// those openapi.Schema reads. Each Issue's At names the keyword concerned,
-// which then contributes nothing: a reference or removed keyword is dropped,
-// with its mapping entry for a mapping value; a resource in another dialect,
-// named by its $schema or, when it has none, by its root, becomes true, the
-// schema that accepts anything; and a schema left with no keywords becomes
-// true." Issue: "Source is the openapi.Schema.Source of the Root or Defs
-// entry holding the problem", and At is "JSON Pointer from that schema's Raw
-// to the problem". The checker also verifies that the Issues are exactly those
-// the authored schemas call for.
+// keyword removed with an Issue, as above; or a schema resource in a dialect
+// other than those openapi.Schema reads. Each Issue's At names the keyword
+// concerned, which then contributes nothing: a reference or removed keyword is
+// dropped, with its mapping entry for a mapping value; a resource in another
+// dialect, named by its $schema or, when it has none, by its root, becomes
+// true, the schema that accepts anything; and a schema left with no keywords
+// becomes true when an Issue removed one of them." Issue: "Source is the
+// openapi.Schema.Source of the Root or Defs entry holding the problem", and At
+// is "JSON Pointer from that schema's Raw to the problem". The checker also
+// verifies that the Issues are exactly those the authored schemas call for.
 
 // An unresolved $ref, to a missing component or an unavailable document,
 // is dropped; a schema it leaves with no keywords is true.

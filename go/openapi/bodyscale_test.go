@@ -244,10 +244,10 @@ const depthBodyDoc = `{"openapi":"3.1.0","info":{"title":"t","version":"1"},"ser
 // Regression check, not contract: refusing costs time and bytes linear in the
 // depth, and so does accepting. The rest is contract: doc.go, Values: a value
 // "whose JSON, a MarshalJSON's output included, nests deeper than 1,000 levels,
-// the outermost value being level 1" is refused "at the key of the body, field,
-// part, sequential item or parameter that is or holds it". A scalar leaf counts
-// as a level: 999 objects around a leaf in a field, a part or an item are sent,
-// 1,000 are refused at its key.
+// the outermost value ... being level 1" is refused "at the key of the body,
+// field, part, sequential item or parameter that is or holds it". A scalar leaf
+// counts as a level: 999 objects around a leaf in a field, a part or an item
+// are sent, 1,000 are refused at its key.
 func TestBodyDepthLimit(t *testing.T) {
 	c, err := openapi.Parse(context.Background(), []byte(depthBodyDoc), testDocURI, nil)
 	if err != nil {

@@ -167,7 +167,7 @@ type nullJSON struct{}
 func (nullJSON) MarshalJSON() ([]byte, error) { return []byte("null"), nil }
 
 // doc.go, Values: "A form or multipart property or array item, or a
-// positional part, whose JSON data is null is omitted, whatever its
+// positional part ..., whose JSON data is null is omitted, whatever its
 // serialization or media type": JSON data null from
 // a json.RawMessage under a JSON field, and from a MarshalJSON under a text
 // field.
@@ -251,7 +251,7 @@ func TestArrayWithoutItemsDefaultsToOctetStream(t *testing.T) {
 // client.go, Input.Body: "For form and multipart media, Body is an object
 // whose properties are the fields: a value whose JSON data is an object, such
 // as a struct, a non-nil map or a non-nil pointer to either, but not a Part, a
-// *Part, or a pointer to either or to a reader, which is refused at
+// non-nil *Part, or a pointer to either or to a reader, which is refused at
 // Inputs["Input.Body"]"; a typed nil body is a value (doc.go, Values: "a typed
 // nil, such as a nil pointer or map, is a value, which encoding/json writes as
 // null"), and null is no object. A typed nil pointer to a struct, a pointer to
@@ -584,9 +584,10 @@ func TestCallerGetBodyFailure(t *testing.T) {
 
 // client.go, Response.Decode: it "reads r's open Body into out, using Call's
 // target, codec, empty-body and MaxBodyBytes rules for any HTTP status", for
-// a Response the client did not make too; and "A missing,
+// a Response the client did not make too; and Client.Call: "A missing,
 // repeated or unparsable Content-Type is treated as
-// application/octet-stream, which a *any receives as a []byte".
+// application/octet-stream, which, unless Options.Codecs has a codec for it, a
+// *any receives as a []byte".
 func TestDecodeForeignResponse(t *testing.T) {
 	foreign := func(ct, body string) *openapi.Response {
 		return &openapi.Response{Response: &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {ct}},
@@ -725,7 +726,8 @@ func TestDecodeErrorJoinsUploadError(t *testing.T) {
 
 // Regression check, not contract: the error text names the context's error.
 // doc.go, Outcomes promises only the match: "When the call's context is done
-// before the call completes, the error matches ctx.Err() with errors.Is".
+// before the call completes, and the transport honors the request's context,
+// as net/http's does, the error matches ctx.Err() with errors.Is".
 func TestContextErrorTextNamesCause(t *testing.T) {
 	_, c := contractLineClient(t)
 	ctx, cancel := context.WithCancel(t.Context())
@@ -806,7 +808,7 @@ func TestIteratorBodyReadAfterClose(t *testing.T) {
 	awaitStopped(t, stopped, "the iterator")
 }
 
-// client.go, Client.Document: "With a JSON Pointer fragment ... it returns a
+// load.go, Client.Document: "With a JSON Pointer fragment ... it returns a
 // copy of only that node, or nil when there is none": a node that ends in
 // false, and pointers that name no node: an array index out of
 // range, with a leading zero or negative, into a scalar, a fragment that
@@ -896,7 +898,8 @@ func (rt cancelThenRead) RoundTrip(r *http.Request) (*http.Response, error) {
 }
 
 // doc.go, Outcomes: "When the call's context is done before the call
-// completes, the error matches ctx.Err()", the transport's own error kept;
+// completes, and the transport honors the request's context, as net/http's
+// does, the error matches ctx.Err()", the transport's own error kept;
 // and a body read after the context ended reports the
 // context's error.
 func TestContextEndsDuringUpload(t *testing.T) {
@@ -991,9 +994,9 @@ func TestSecretFuncOfNilIsNoCredential(t *testing.T) {
 	}
 }
 
-// client.go, Input.Body: an iterator "runs on a goroutine of the transport,
-// from the transport's first Read of the body, so a body closed unread never
-// runs it". A prepared
+// client.go, Input.Body: an iterator "runs on a goroutine of its own, in step
+// with the transport's reads, from the transport's first Read of the body, so
+// a body closed unread never runs it". A prepared
 // iterator body that is closed and then read never starts the iterator: the
 // read fails. Its GetBody is nil, an iterator being read once.
 func TestClosedIteratorBodyNeverStarts(t *testing.T) {

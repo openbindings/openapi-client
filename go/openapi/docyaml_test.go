@@ -48,7 +48,7 @@ func yamlValue(t testing.TB, tail, fragment string) []byte {
 // Core schema scalars, YAML 1.2.2 section 10.3.2: null, booleans, integers
 // in base 10, 8 (0o) and 16 (0x), floats, and everything else a string.
 // load.go, Loader: "yes and no stay strings", "Numbers keep the exact value
-// written"; client.go, Document: "a YAML document converted as the client
+// written"; load.go, Client.Document: "a YAML document converted as the client
 // read it". Each number is compared by its exact value, however the client
 // spells it in JSON.
 func TestYAMLCoreScalars(t *testing.T) {
@@ -459,9 +459,9 @@ func TestDocumentNumbersExact(t *testing.T) {
 }
 
 // load.go, Parse: "The content is JSON or YAML text"; Load reads YAML from
-// a file and over http too. client.go, Document: "a YAML document converted
-// as the client read it". A YAML document describes what the same JSON
-// document describes: the same operations, parameters, Sources and calls.
+// a file and over http too. load.go, Client.Document: "a YAML document
+// converted as the client read it". A YAML document describes what the same
+// JSON document describes: the same operations, parameters, Sources and calls.
 // describe.go, Message.Key: a response's key "a code such as "404"": an
 // unquoted 200 is the key "200".
 func TestYAMLDocumentLoads(t *testing.T) {
@@ -544,7 +544,7 @@ paths:
 
 // A YAML document and the JSON document it was written from describe the
 // same Client: every descriptor equal, Sources included, and Document the
-// same JSON (load.go, Loader; client.go, Document). The YAML is the tests'
+// same JSON (load.go, Loader and Client.Document). The YAML is the tests'
 // own block and flow writing of testdata/pets.json and of a synthetic
 // document, in several scalar styles.
 func TestYAMLSameAsJSON(t *testing.T) {

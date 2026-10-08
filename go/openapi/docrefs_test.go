@@ -1228,7 +1228,7 @@ func TestParseFollowsReferences(t *testing.T) {
 }
 
 // Loader.Parse: "With an empty uri, absolute external references can be
-// fetched only when AllowReference admits them; relative external
+// fetched only when Origins or AllowReference admits them; relative external
 // references have no base unless an OpenAPI 3.2 absolute $self supplies
 // one." Parse: "With an empty uri, the document may reference only itself".
 func TestParseEmptyURIReferences(t *testing.T) {

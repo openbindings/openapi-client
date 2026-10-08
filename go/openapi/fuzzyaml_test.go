@@ -209,7 +209,7 @@ func (g *fuzzGen) document() jnode {
 // input chooses, describes the same Client as the JSON (every descriptor)
 // and Document is the same JSON, numbers by exact value (load.go, Loader:
 // the Core schema's reading, "Numbers keep the exact value written";
-// client.go, Document: "a YAML document converted as the client read
+// load.go, Client.Document: "a YAML document converted as the client read
 // it"). The member order is the document's in both.
 func FuzzYAMLEquivalence(f *testing.F) {
 	for _, seed := range []string{"", "\x00", "\x01\x02\x03\x04\x05\x06\x07\x08", "\xff\xfe\xfd\xfc\xfb\xfa", "seed with words in it",

@@ -149,8 +149,8 @@ func controlChar(s string) bool {
 // rules, Form bodies: "Multipart/form-data fields are never URI
 // percent-encoded", a text value that is not valid UTF-8 included). A
 // control character other than a tab in the name or filename (client.go,
-// Part: "a control character other than a tab in either is refused", DEL
-// included), or Filename with NoFilename, is
+// Part: "an ASCII control character other than a tab in either is refused",
+// DEL included), or Filename with NoFilename, is
 // refused at the property's Inputs key.
 func FuzzMultipartRoundTrip(f *testing.F) {
 	c, err := openapi.Parse(context.Background(), []byte(fuzzMultipartDoc), fuzzURI, nil)

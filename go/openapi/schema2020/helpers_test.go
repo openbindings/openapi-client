@@ -1415,9 +1415,9 @@ func (ck *checker) checkEffect(o output, at string, tokens []string) {
 }
 
 // checkModern checks an OpenAPI 3.1 or 3.2 schema against its authored Raw
-// (Project: "every direction gives the same output, which equals the
-// authored schema apart from the rewritten references and the removed
-// identifiers"), less what its Issues drop.
+// (Project: "such a schema is written the same in every direction: as
+// authored, apart from the rewritten references, the keywords removed above
+// and the losses Issues report"), less what its Issues drop.
 func (ck *checker) checkModern(o output) {
 	ck.t.Helper()
 	want, emptied, ok := ck.modernExpected(o.handle)

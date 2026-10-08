@@ -226,7 +226,8 @@ func TestBundleValuesContentMapValue(t *testing.T) {
 // "$ref" and no part "0" (Media.Encoding: the parts are "those of
 // prefixEncoding in order"). A structured body is checked against Media.Err and
 // refused at the body (client.go, Input.Body: a pre-encoded body is not checked
-// "against a Media.Err"), and a pre-encoded body is sent under that Media.
+// "against ... a Media.Err other than an invalid key's"), and a pre-encoded
+// body is sent under that Media.
 func TestBundleValuesEncodingMap(t *testing.T) {
 	var cases []shapeCase
 	check := func(t *testing.T, op *openapi.Operation) {
@@ -625,10 +626,11 @@ func TestBundleValuesNarrowParts(t *testing.T) {
 	runShapeCases(t, cases)
 }
 
-// describe.go, Operations: listed with an empty Key are "a Paths Object, or
-// a Path Item's additionalOperations map, written as a reference (see
-// Operation), listed once with the Path it is under, empty for a Paths
-// Object, no Method, and an Err saying the document must be bundled first".
+// describe.go, Operations: listed with an empty Key are "a Paths Object
+// written as a reference (see Operation), listed once with an empty Path, or a
+// Path Item's additionalOperations map so written, listed once for each Paths
+// entry that reaches it, with that entry's Path, each with no Method and an
+// Err saying the document must be bundled first".
 // The Path
 // Item's other operations are listed and called as usual.
 func TestBundleValuesListedEntries(t *testing.T) {

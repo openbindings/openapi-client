@@ -39,7 +39,8 @@ import (
 // by the octet following the backslash"), a "*" in a parameter name (no RFC
 // 2231 in media type parameters: section 5.6.6's parameter-name is a token),
 // and a parameter given twice (accepted, the boundary excepted: client.go,
-// Input.MediaType, "Two boundary parameters are refused").
+// Input.MediaType, "Two boundary parameters in a multipart type are
+// refused").
 
 // mediaElements splits s at commas outside quoted strings, a backslash in a
 // quoted string escaping the byte after it (RFC 9110 section 5.6.4), each

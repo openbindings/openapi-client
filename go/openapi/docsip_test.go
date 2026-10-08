@@ -136,11 +136,11 @@ var rfc3986Examples = []string{
 // base.ResolveReference(ref) without its fragment, exactly as net/url writes
 // it, and nothing is requested when that is the entry's own URI. A result with
 // leading or trailing whitespace is requested not at all, and the operation's
-// Err wraps ErrUnresolved (load.go, Loader: "A reference to a URI with
-// userinfo or with leading or trailing whitespace ... is unresolvable and
-// never fetched"). References net/url cannot parse, or whose result another
-// rule decides (a scheme other than http, https and file, an http URI without
-// a host, userinfo, a file URL naming a host), are left out.
+// Err wraps ErrUnresolved (load.go, Loader: "A reference is unresolvable and
+// never fetched when the URI requested for it has userinfo or leading or
+// trailing whitespace"). References net/url cannot parse, or whose result
+// another rule decides (a scheme other than http, https and file, an http URI
+// without a host, userinfo, a file URL naming a host), are left out.
 func FuzzRelativeReferences(f *testing.F) {
 	for _, ref := range rfc3986Examples {
 		f.Add(uint8(0), ref)

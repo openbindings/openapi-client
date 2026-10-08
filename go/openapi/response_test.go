@@ -52,12 +52,13 @@ func respClient(t *testing.T, answer http.HandlerFunc, opts *openapi.Options) (*
 	return w, parseFor(t, w, respDoc, opts)
 }
 
-// client.go, Call: "Any other pointer receives the body, read in full within
-// MaxBodyBytes and decoded once, with no intermediate value, by the caller's
-// codec for its media type (see Options.Codecs), or else by its codec class ...
-// JSON types ... with encoding/json". client.go, Response.Declaration: "It is
-// the same immutable descriptor Operation.Responses exposes"; Response.Media:
-// "It is the same immutable descriptor Declaration.Media exposes".
+// client.go, Call: "Any other pointer (a pointer to decode into) receives the
+// body, read in full within MaxBodyBytes and decoded once, with no
+// intermediate value, by the caller's codec for its media type (see
+// Options.Codecs), or else by its codec class ... JSON types ... with
+// encoding/json". client.go, Response.Declaration: "It is the same immutable
+// descriptor Operation.Responses exposes"; Response.Media: "It is the same
+// immutable descriptor Declaration.Media exposes".
 func TestCallDecodesJSON(t *testing.T) {
 	_, c := respClient(t, jsonAnswer(200, `{"id":"p-7","name":"Rex","tag":"dog"}`), nil)
 	var pet Pet
@@ -74,10 +75,11 @@ func TestCallDecodesJSON(t *testing.T) {
 	}
 }
 
-// doc.go, Values: "Where the client's own JSON codec creates the values, as
-// when out is a *any, a *map[string]any or a *[]any ... JSON numbers are
-// kept exact as json.Number. A caller's own type decodes exactly as
-// json.Unmarshal would, its any-typed fields included."
+// doc.go, Values: "When the client's own JSON codec decodes into exactly a
+// *any, a *map[string]any or a *[]any, ... JSON numbers are kept exact as
+// json.Number. Into any other target, a caller's own type included, it
+// decodes exactly as json.Unmarshal would, so a number held in an any there,
+// as in a *[]map[string]any, is a float64."
 func TestDecodeDynamicJSON(t *testing.T) {
 	body := `{"n":9007199254740993,"f":1.50,"a":[1],"s":"x","b":true,"z":null}`
 	want := map[string]any{
@@ -187,13 +189,13 @@ func TestTrailingDataAfterJSON(t *testing.T) {
 	}
 }
 
-// client.go, Call: "An empty body decoded into a pointer is a *DecodeError
-// wrapping io.EOF under a JSON or XML type when the response can have a body
-// and its governing Message has Media (in Swagger 2.0, a schema). Otherwise
-// it leaves out as it was under a JSON or XML type ...; under any other type,
-// it decodes as "" into a *string or *any for a text/* type, ... and as an
-// empty []byte into a *any for any other type"; the raw targets take any body
-// as it is. errors.go, DecodeError: "Err is io.EOF".
+// client.go, Call: "For a pointer to decode into, an empty body is a
+// *DecodeError wrapping io.EOF under a JSON or XML type when the response can
+// have a body and its governing Message has Media (in Swagger 2.0, a schema).
+// Otherwise it leaves out as it was under a JSON or XML type ...; under any
+// other type, it decodes as "" into a *string or *any for a text/* type, ...
+// and as an empty []byte into a *any for any other type"; the raw targets take
+// any body as it is. errors.go, DecodeError: "Err is io.EOF".
 func TestEmptyBody(t *testing.T) {
 	// JSON with Media declared: typed and *any targets fail with io.EOF.
 	_, c := respClient(t, jsonAnswer(200, ""), nil)
@@ -276,11 +278,11 @@ func TestBodilessResponses(t *testing.T) {
 	}
 }
 
-// client.go, Call: "When out is a pointer to decode into (not a *[]byte, an
-// io.Writer or a *any) and the operation's 2xx responses declare concrete
-// media types of more than one codec class (a type with a caller's codec is
-// a class of its own), a call whose request carries no Accept field is
-// refused before sending, at Settings key "Options.Header", naming the
+// client.go, Call: "When out is a pointer to decode into other than a *any,
+// and the operation's 2xx responses declare concrete media types of more than
+// one codec class (the types that take their codec from one Options.Codecs
+// key forming a class of their own), a call whose request carries no Accept
+// field is refused before sending, at Settings key "Options.Header", naming the
 // offered types."
 func TestTypedDecodeNeedsAccept(t *testing.T) {
 	w, c := respClient(t, jsonAnswer(200, `{"name":"Rex"}`), nil)
@@ -322,11 +324,13 @@ func TestTypedDecodeNeedsAccept(t *testing.T) {
 }
 
 // client.go, Call: "A missing, repeated or unparsable Content-Type is treated
-// as application/octet-stream, which a *any receives as a []byte and a typed
-// target cannot"; "A *string and a *any take any text/* type as text, whatever
-// its codec class (text/xml and text/event-stream included): a *string its
-// bytes as sent, the charset left in the Content-Type, and a *any a string; a
-// *any takes any other non-JSON type, multipart included, as a []byte."; "a
+// as application/octet-stream, which, unless Options.Codecs has a codec for
+// it, a *any receives as a []byte and a typed target cannot"; "Where the media
+// type has no caller's codec, a *string and a *any take any text/* type as
+// text, whatever its codec class (text/xml and text/event-stream included): a
+// *string its bytes as sent, the charset left in the Content-Type, and a *any
+// a string; and a *any takes any other type that is neither JSON nor
+// sequential, multipart included, as a []byte."; "a
 // *[]byte takes any body as it is"; "A type these rules cannot decode into out
 // is a *DecodeError".
 func TestDecodeByContentType(t *testing.T) {
@@ -396,11 +400,11 @@ type xmlPet struct {
 // doc.go, Fixed rules, Content codings: "the transport may ask for gzip and
 // remove it ... A header field that sets Accept-Encoding turns that off. A
 // body whose Content-Encoding, other than identity, remains passes through
-// unchanged to a *[]byte or io.Writer; any other target ... report[s] an
-// error". The error names the operation and status (errors.go,
-// DecodeError.Error: "Error returns the operation, the status and the
-// reason"), never the coding, which remains available through Header ("The
-// coding remains available in Header; generated diagnostics omit
+// unchanged to a *[]byte or io.Writer, ...; any other target ... report a
+// non-identity Content-Encoding error". The error names the operation and
+// status (errors.go, DecodeError.Error: "Error returns the operation, the
+// status and the reason"), never the coding, which remains available through
+// Header ("The coding remains available in Header; generated diagnostics omit
 // response-controlled values").
 func TestContentCodings(t *testing.T) {
 	var gz bytes.Buffer
@@ -577,7 +581,7 @@ func TestMaxErrorBytes(t *testing.T) {
 
 // errors.go, DecodeError: "a response whose body could not be used by Call
 // ... it did not decode into the value given"; "Content is the start of the
-// body, at most 4 KiB"; "The promoted Body reads Content again, and
+// body, at most 4 KiB"; "whose promoted Body reads Content again, and
 // ContentLength is len(Content)". DecodeError.Error: "Error returns the
 // operation, the status and the reason, never the body or response-controlled
 // media and encoding text", which stays available through Header. doc.go,
@@ -740,11 +744,11 @@ func TestResponseDeclaration(t *testing.T) {
 // cover them as a range does, and every parameter it names is present with
 // an equal value: parameter names are compared without regard to case, and
 // values after removing quoted-string quoting, a charset without regard to
-// case and others exactly. The most specific match wins: a concrete type
+// case and others exactly. ... The most specific match wins: a concrete type
 // over type/*, type/* over */*, then more parameters over fewer; a tie
 // matches none. An absent Content-Type is treated as
-// application/octet-stream for matching; a repeated one, or one outside RFC
-// 9110's media-type grammar, matches none."
+// application/octet-stream for matching; a repeated one, or one the client
+// cannot parse, matches none."
 func TestResponseMediaMatching(t *testing.T) {
 	tests := []struct {
 		name     string

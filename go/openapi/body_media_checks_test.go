@@ -255,8 +255,8 @@ func TestSequentialSliceAndIteratorSendSameItems(t *testing.T) {
 // type other than multipart/form-data, each part is "a value encoded by that
 // part's media type as that value on its own would be, so a list and an
 // iterator yielding the same values send the same parts"; doc.go, Values: "a
-// positional part, whose JSON data is null is omitted". An element is taken on
-// its own, as the value its list holds, whatever the list's element type: a
+// positional part ..., whose JSON data is null is omitted". An element is taken
+// on its own, as the value its list holds, whatever the list's element type: a
 // json.Marshaler element holding a nil pointer is that nil pointer, which
 // json.Marshal writes as null; an encoding.TextMarshaler element whose value
 // also has MarshalJSON is written by MarshalJSON; and an element whose pointer

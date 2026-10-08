@@ -484,10 +484,10 @@ func TestBasicForAnotherSchemeThroughWith(t *testing.T) {
 // assertion. A credential value its destination cannot carry is refused on a
 // hop as on the first request (the value is a source's, refused by the call),
 // and the response that arrived is returned. client.go, Redirects: "A
-// credential can fail to be placed on a hop: a source's error, empty secret or
-// value its destination cannot carry, ... That ends the call with a
-// *url.Error, returned with the 3xx, its body closed; for a source's failure,
-// the error names the scheme."
+// credential can fail to be placed on a hop: a credential source's error,
+// empty secret or value its destination cannot carry, ... That ends the call
+// with a *url.Error, returned with the 3xx, its body closed; for a credential
+// source's failure, the error names the scheme."
 func TestHopCredentialRefusalNamesItsScheme(t *testing.T) {
 	doc := doc31(`"/r":{"get":{"operationId":"getR"}}`, `"security":[{"corp_bearer":[]}]`,
 		`"components":{"securitySchemes":{"corp_bearer":{"type":"http","scheme":"bearer"}}}`)
@@ -784,7 +784,7 @@ type schemeCase struct {
 // checkSchemeCases declares each case's scheme as "s" for an operation
 // "s", and checks SecurityScheme.Err; a defective scheme refuses a call
 // with a Secret, at the credential's key, and is satisfied by FromTransport
-// (describe.go, SecurityScheme.Err: "a defective or missing declaration.
+// (describe.go, SecurityScheme.Err: "a defective or missing declaration, ...
 // Alternatives that use it can be applied only when FromTransport satisfies
 // it"; doc.go, Credentials: "FromTransport is what satisfies a scheme a
 // requirement names but the document never declares, or declares
@@ -937,10 +937,10 @@ func TestSecuritySchemeDefectsEveryBranch(t *testing.T) {
 // Outcomes: "No credential appears in the text of an error the client
 // creates, nor in the URL of the *url.Error the http.Client returns, which
 // names the request without the credentials the client added. ... Errors made
-// by the caller's own code, such as its transport, Loader.Fetch or a
-// credential source, are passed on as they are, and their text is included as
-// it is, even when it quotes a URL." The case here
-// is a transport returning &url.Error{URL: r.URL.String(), ...}.
+// by the caller's own code, such as its transport, Loader.Fetch, a credential
+// source, a ParamWriters function or a Codec's Encode, are passed on as they
+// are, and their text is included as it is, even when it quotes a URL." The
+// case here is a transport returning &url.Error{URL: r.URL.String(), ...}.
 func TestCallerURLErrorPassedOn(t *testing.T) {
 	var made atomic.Pointer[url.Error]
 	rt := &memRT{answer: func(r *http.Request) (*http.Response, error) {

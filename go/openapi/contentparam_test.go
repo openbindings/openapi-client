@@ -18,17 +18,17 @@ import (
 // parameter serialized by content is encoded as a body of its media type is,
 // so under application/json null, [] and {} are present values"; "a type with
 // a caller's codec takes a value of any Go type, which that codec encodes; a
-// JSON type is written as encoding/json writes the value; and any other type
-// takes only a string, as its UTF-8 bytes, and a text type also a number or
-// boolean, in its JSON spelling"; "Only a nil interface is absent". doc.go,
-// Fixed rules, Percent-encoding: "path and query values (content-serialized
-// ones included ...) ... encode every byte outside RFC 3986's unreserved set
-// as %XX in uppercase hex"; "Header values are written as given", and so is "a
-// content-serialized cookie value". OAS 3.1.2 section 4.8.12.4: a value
-// serialized "with a Media Type Object for a media type that does not already
-// incorporate URI percent-encoding" is percent-encoded by the Parameter
-// Object. "as encoding/json writes" is json.Marshal, HTML escaping included
-// and no trailing newline.
+// JSON type is written as json.Marshal writes the value, with no trailing
+// newline; and any other type takes only a string, as its bytes, and a text
+// type also a number, boolean or json.Number, in its JSON spelling"; "Only a
+// nil interface is absent". doc.go, Fixed rules, Percent-encoding: "path and
+// query values (content-serialized ones included ...) ... encode every byte
+// outside RFC 3986's unreserved set as %XX in uppercase hex"; "Header values
+// are written as given", and so is "a content-serialized cookie value". OAS
+// 3.1.2 section 4.8.12.4: a value serialized "with a Media Type Object for a
+// media type that does not already incorporate URI percent-encoding" is
+// percent-encoded by the Parameter Object. "as json.Marshal writes" includes
+// its HTML escaping.
 
 const contentDoc = `
 	"/q":{"get":{"operationId":"q","parameters":[{"name":"p","in":"query","content":{"application/json":{"schema":{}}}}]}},
@@ -244,7 +244,8 @@ func (c recordingCodec) Decode(r io.Reader, v any) error { return errors.New("no
 // client.go, Options.Codecs: "A codec applies wherever the client encodes
 // or decodes a value of its type: request bodies, parts and
 // content-serialized parameters ... So entries for "application/json" and
-// "+json" replace encoding/json everywhere ... An Encode error refuses the
+// "+json" replace encoding/json wherever a value is encoded or decoded as
+// content of a JSON type ... An Encode error refuses the
 // call at the body's or parameter's Inputs key". doc.go, Values: "a caller's
 // codec ... receives the value as given". The encoded bytes are then
 // percent-encoded, or written as given in a header.

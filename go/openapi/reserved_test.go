@@ -23,8 +23,8 @@ import (
 // 6570 styles take "regular or reserved expansion (based on
 // allowReserved)"). Reserved expansion covers member names too, while
 // parameter names always follow the name rule (doc.go: "RFC 6570 reserved
-// expansion is used, member names included (parameter names always follow
-// the rule above)").
+// expansion is used, member names included (parameter names, and the brackets
+// deepObject writes, always follow the rule above)").
 func TestAllowReservedQuery(t *testing.T) {
 	w := newWire(t, nil)
 	doc := doc31(`
