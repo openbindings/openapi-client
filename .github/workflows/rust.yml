@@ -1,0 +1,59 @@
+name: Rust qualification
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  rust-native:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.99.0'
+          components: rustfmt, clippy
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python rust/qualification/verify.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rust-native-${{ matrix.os }}
+          path: rust/target/qualification/*.log
+
+  rust-hosts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.99.0'
+          targets: wasm32-unknown-unknown
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.19.0'
+      - run: cargo install wasm-bindgen-cli --version 0.2.129 --locked
+      - run: cargo build --locked --manifest-path rust/Cargo.toml --release --target wasm32-unknown-unknown -p oac-host-qualification
+      - run: wasm-bindgen rust/target/wasm32-unknown-unknown/release/oac_host_qualification.wasm --target web --out-dir rust/qualification/bridge/generated
+      - run: npm ci --ignore-scripts
+        working-directory: rust/qualification/host
+      - run: npx playwright-core install --with-deps chromium
+        working-directory: rust/qualification/host
+      - run: node rust/qualification/host/run.mjs rust/target/qualification
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rust-host-results
+          path: |
+            rust/target/qualification/observations/hosts-*/results.json
+            rust/target/qualification/observations/hosts-*/*.log

@@ -3,3 +3,7 @@ dist/
 coverage/
 *.tgz
 .DS_Store
+
+# Rust source and portable qualification outputs
+/rust/target/
+/rust/qualification/bridge/generated/

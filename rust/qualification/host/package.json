@@ -1,0 +1,10 @@
+{
+  "name": "openapi-rust-qualification-host",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "playwright-core": "1.64.0",
+    "wrangler": "4.149.0"
+  }
+}
