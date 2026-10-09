@@ -1,0 +1,12 @@
+{
+  "document_bytes": 8388608,
+  "depth": 128,
+  "nodes": 500000,
+  "operations": 20000,
+  "reference_steps": 128,
+  "body_bytes": 4194304,
+  "target_bytes": 65536,
+  "headers": 256,
+  "number_conversion_chars": 256,
+  "cached_operations": 1024
+}

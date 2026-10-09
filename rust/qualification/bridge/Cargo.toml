@@ -1,0 +1,16 @@
+[package]
+name = "oac-host-qualification"
+version = "0.0.0"
+edition.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+dynamic-openapi-client = { path = "../../client" }
+serde_json.workspace = true
+wasm-bindgen = "=0.2.129"
+js-sys = "=0.3.106"
+wasm-bindgen-futures = "=0.4.79"
+oac-qualification = { path = "../runner" }

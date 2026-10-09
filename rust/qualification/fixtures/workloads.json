@@ -1,0 +1,20 @@
+[
+  {
+    "id": "normal",
+    "operations": 8,
+    "bytes": 2011,
+    "sha256": "1c25d71687bbf710d9acdc1acbd0f00e4a7d1e0e7421b6270e746d4f6c604703"
+  },
+  {
+    "id": "wide",
+    "operations": 1000,
+    "bytes": 239903,
+    "sha256": "f572ce978745a245758b102e75acc0781274fd6f6d662bd04a4ba1f7e7e5e4f4"
+  },
+  {
+    "id": "stress",
+    "operations": 5000,
+    "bytes": 1207903,
+    "sha256": "6aab0b0b0bbb1ca6cc7c14c624061399a9b3ac3eb5cf85b5e3845b79e7977449"
+  }
+]

@@ -1,0 +1,14 @@
+[package]
+name = "oac-qualification"
+version = "0.0.0"
+edition.workspace = true
+publish = false
+
+[dependencies]
+dynamic-openapi-client = { path = "../../client" }
+serde.workspace = true
+serde_json.workspace = true
+
+[[bin]]
+name = "oac-qualify"
+path = "src/main.rs"
