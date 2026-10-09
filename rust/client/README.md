@@ -58,12 +58,17 @@ For a normal dynamic call, the operation owns a per-call builder using its confi
 
 ```rust
 use dynamic_openapi_client::*;
+use serde::Serialize;
 # fn build(operation: &Operation) -> Result<PreparedRequest, RequestError> {
-let body = OrdinaryValue::Object(&[("count", OrdinaryValue::U64(9_007_199_254_740_993))]);
+#[derive(Serialize)]
+struct Item<'a> { count: u64, tags: Vec<&'a str> }
+let payload = Item { count: 9_007_199_254_740_993, tags: vec!["red", "blue"] };
+let body = ExactJson::from_serializable(&payload, Limits::default())
+    .map_err(RequestError::Input)?;
 let request = operation.request()
     .parameter(ParameterLocation::Path, "id", "A/B")
     .parameter(ParameterLocation::Query, "limit", 25)
-    .json(body)
+    .json(body.root())
     .prepare()?;
 # Ok(request)
 # }
@@ -71,11 +76,19 @@ let request = operation.request()
 
 Standard string names/server variables borrow through `Cow`; values accept borrowed strings, booleans, signed/unsigned primitive integers through 64 bits (including default `i32` and `usize`), borrowed `OrdinaryValue` arrays/objects, or exact `Value` handles. No float or 128-bit narrowing occurs. Ordinary values serialize once into one generated owner at consuming prepare; exact arguments preserve their owner/token identity. The builder checks collection counts and byte lower bounds before its own growth/copy, then fully checks depth/nodes/escaped bytes at preparation. Caller allocations, custom `Into` work and a shared exact handle's full backing owner are separate resource domains.
 
+Use `ExactJson::from_serializable(&value, limits)` for a nested application struct, collection, or `serde_json::Value`. It emits bounded JSON bytes and then uses the same exact parser/indexer once. Pass `owner.root()` or retained child handles to the existing builder or `Input`; retain the owner when repeated requests should reuse the body. Construction accepts borrowed, non-Clone and host-local Serialize implementations without requiring Send, Sync or static input. Returned exact owners and existing builders retain their thread-safety behavior. An independently constructed body and ordinary builder parameters may retain separate owners.
+
+The checked Serde profile supports exact signed/unsigned integers through 128 bits, finite f32/f64, strings/chars, sequences/tuples, structs, string-key maps, standard enum representations and bytes as arrays of numbers. Float spelling comes from the pinned JSON formatter and describes the supplied binary float, including negative zero; it cannot recover decimal precision already lost by the caller. NaN and infinity refuse. Numeric/bool/container map keys refuse instead of becoming strings; char, unit enum, string-emitting newtype and explicit `collect_str` keys are supported. None/unit become null; a skipped Serde field is absent. Duplicate emitted names refuse through the exact parser with complete generated source. No schema defaults or evaluation occur.
+
+`serde_json` feature unification with `arbitrary_precision` is supported by strictly checking its pinned Number protocol and preserving the number token. RawValue and unknown private wrappers refuse; pass exact raw JSON to `parse`. A checked construction refusal reports `Code::Serialization` and `DiagnosticReason::Serialization`, distinguishing nonfinite values, non-string keys, unsupported or invalid representations, and custom serializer/formatter failure. Custom error text is neither formatted nor retained. Limits and cancellation keep their existing structured categories. Before a complete representation exists, failures have Construction context and no source bytes, source identity or invented location. Complete parse failures retain Constructed bytes and locations.
+
+Construction is eager. Use `from_serializable_with_cancellation(&value, limits, &token)` to check cancellation before Serialize and at emission/indexing checkpoints; a later builder token cannot cancel earlier construction. Document byte/node limits and container depth `min(limits.depth, 128)` apply here. The operation's body limit is checked separately during request preparation. First detected construction refusal is latched: ignored errors cannot resume library writes or later child callbacks. Sequence hints do not drive allocation. Arbitrary caller Serialize/Display execution, recursion and allocation remain caller work and cannot be preempted by this synchronous API.
+
 Every explicit field assignment counts, including `Body::Absent`; `Selection::default()` assigns nothing and clears nothing. Distinct fields commute; repeats refuse even when equal. Header parameter identities are case-insensitive, while additional `header` calls append ordered lines. Bulk selections assign server, media, security and lexical variables in that order. Duplicate diagnostics include typed context and zero-based assignment ordinals. A first refusal drops prior drafts and ignores later setter conversions. It precedes cancellation; otherwise consuming prepare checks cancellation before serialization. Correction starts a fresh builder on the same healthy operation.
 
 `RequestError::Input` retains a generated-source `ParseFailure`; `RequestError::Preparation` retains a builder or protocol `Diagnostic`. Both compose with ordinary Rust error chains. Construction/preparation performs no transport. Controlled callers continue to construct `Input` and call `Operation::prepare`; the builder lowers into that same primitive.
 
-Use `ExactJson::from_ordinary` when you want to own and reuse ordinary JSON independently of a request. It checks limits, serializes generated JSON bytes, then parses/indexes once. It is fallible and not zero-copy. This API accepts no floats or arbitrary Serialize implementations. Use exact authored JSON tokens through `parse` when those are the input; conversion conveniences never change stored tokens.
+Use `ExactJson::from_ordinary` for the deliberately narrow borrowed `OrdinaryValue` representation. It checks limits, serializes generated JSON bytes, then parses/indexes once. It is fallible and not zero-copy. This narrow API accepts no floats or arbitrary Serialize implementations; use `from_serializable` for the checked Serde profile above. Use exact authored JSON tokens through `parse` when those are the input; conversion conveniences never change stored tokens.
 
 ```rust
 use dynamic_openapi_client::*;

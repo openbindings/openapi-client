@@ -18,7 +18,7 @@ pub use document::{
 };
 pub use error::{
     Code, Diagnostic, DiagnosticContext, DiagnosticReason, LimitKind, Location, NumericReason,
-    NumericTarget, SelectionKind,
+    NumericTarget, SelectionKind, SerializationReason,
 };
 pub use prepare::{
     Body, Credential, CredentialValue, Input, Parameter, ParameterInput, ParameterLocation,
@@ -33,6 +33,7 @@ pub use value::{
     live_json_owners,
 };
 mod ordinary;
+mod serializable;
 pub use ordinary::OrdinaryValue;
 
 mod request;

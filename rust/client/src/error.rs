@@ -38,6 +38,21 @@ pub enum NumericReason {
     /// The admitted i64 integer would round in binary64.
     PrecisionLoss,
 }
+/// Why checked Serde construction refused an application value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SerializationReason {
+    /// JSON cannot represent NaN or infinity.
+    NonFiniteNumber,
+    /// An object key did not serialize as a string.
+    NonStringKey,
+    /// A private raw-token representation requires the exact parsing path.
+    UnsupportedRepresentation,
+    /// A serializer emitted an invalid compound or private-number protocol.
+    InvalidRepresentation,
+    /// Caller serialization or string formatting returned an error; its text is not retained.
+    Custom,
+}
 /// Caller election field, without the elected value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SelectionKind {
@@ -54,6 +69,8 @@ pub enum SelectionKind {
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum DiagnosticReason {
+    /// Checked Serde construction refused the emitted representation.
+    Serialization(SerializationReason),
     /// A resource exceeds its configured maximum. Actual can be a lower bound when admission stopped early.
     Limit {
         /// Resource dimension being limited.
@@ -155,6 +172,8 @@ struct Details {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Code {
+    /// Checked Serde construction refused; inspect its Serialization reason.
+    Serialization,
     /// Input bytes are not valid UTF-8; the range marks the decoding failure.
     InvalidUtf8,
     /// Input is not valid JSON under the supported grammar.
