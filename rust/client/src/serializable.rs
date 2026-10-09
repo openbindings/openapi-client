@@ -71,6 +71,12 @@ impl<'limits> Encoder<'limits> {
     }
     fn write(&mut self, bytes: &[u8]) -> Result<(), Error> {
         self.room(bytes.len())?;
+        // Match the pinned JSON writer's small initial buffer, but only after
+        // admission and never reserve more than this construction's byte limit.
+        if self.bytes.capacity() == 0 && !bytes.is_empty() {
+            self.bytes
+                .reserve_exact(self.limits.document_bytes.min(128));
+        }
         self.bytes.extend_from_slice(bytes);
         Ok(())
     }
