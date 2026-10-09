@@ -575,6 +575,18 @@ fn named_policy_orders_primary_reason_without_hiding_other_facts() {
             }
         },
     ));
+    // The engine already reports a missing response as invalid host evidence;
+    // the selected policy must preserve that earlier transport-level refusal.
+    let failure = accept(out).unwrap_err();
+    assert_eq!(failure.reason, CompleteJsonRefusal::Transport);
+    assert_eq!(
+        failure.outcome.error.as_ref().unwrap().code(),
+        Code::InvalidHostEvidence
+    );
+    // Exercise the policy's missing-response branch with an explicitly edited
+    // public Outcome rather than falsely expecting invoke to omit its evidence.
+    let mut out = failure.outcome;
+    out.error = None;
     let failure = accept(out).unwrap_err();
     assert_eq!(failure.reason, CompleteJsonRefusal::MissingResponse);
     assert_eq!(failure.outcome.upload, UploadState::Unknown);

@@ -259,7 +259,7 @@ pub fn run(c: &J) -> J {
         Ok(d) => d,
         Err(e) => {
             let mut f = err(e.diagnostic().clone());
-            f["source_preserved"] = json!(e.source_bytes().as_ref() == bytes);
+            f["source_preserved"] = json!(e.source_bytes() == bytes);
             return f;
         }
     };
@@ -494,7 +494,7 @@ pub fn campaign(family: &str, seconds: u64, seed: u64) -> J {
                     nodes: 2048,
                     ..Limits::default()
                 };
-                let x = if iterations % 4 == 0 {
+                let x = if iterations.is_multiple_of(4) {
                     format!("{{\"x\":\"{}\"}}", s)
                 } else if iterations % 4 == 1 {
                     format!("{}0{}", "[".repeat(n), "]".repeat(n))

@@ -533,9 +533,11 @@ impl Operation {
             desc.security.as_ref(),
             &target,
             input,
-            &mut headers,
-            &mut query,
-            &mut cookies,
+            SecurityFields {
+                headers: &mut headers,
+                query: &mut query,
+                cookies: &mut cookies,
+            },
             limits.reference_steps,
         )
         .map_err(|e| e.election(SelectionKind::Security, input.selection.security, None))?;
@@ -927,10 +929,10 @@ fn parse_media(s: &str, ranges: bool) -> Result<Media, Diagnostic> {
     if ty.is_empty() || sub.is_empty() || !ty.bytes().all(token) || !sub.bytes().all(token) {
         return Err(bad());
     }
-    if ty.contains('*') || sub.contains('*') {
-        if !ranges || !(ty == "*" && sub == "*" || !ty.contains('*') && sub == "*") {
-            return Err(bad());
-        }
+    if (ty.contains('*') || sub.contains('*'))
+        && (!ranges || !(ty == "*" && sub == "*" || !ty.contains('*') && sub == "*"))
+    {
+        return Err(bad());
     }
     let mut parameters = BTreeMap::new();
     let mut rest = tail;
@@ -1024,11 +1026,12 @@ fn media_matches(key: &Media, selected: &Media) -> Option<(u8, usize)> {
 pub(crate) fn token(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b)
 }
+type BodyEncoding = (Option<Arc<[u8]>>, &'static str, Option<String>);
 fn prepare_body(
     decl: Option<&Value>,
     input: &Input,
     limits: &Limits,
-) -> Result<(Option<Arc<[u8]>>, &'static str, Option<String>), Diagnostic> {
+) -> Result<BodyEncoding, Diagnostic> {
     let absent = matches!(input.body, Body::Absent);
     let Some(decl) = decl else {
         if absent && input.selection.media.is_none() {
@@ -1115,16 +1118,24 @@ fn prepare_body(
     }
     Ok((Some(bytes), kind, Some(selected)))
 }
+struct SecurityFields<'a> {
+    headers: &'a mut Vec<Header>,
+    query: &'a mut Vec<(String, String)>,
+    cookies: &'a mut Vec<(String, String)>,
+}
 fn apply_security(
     root: &Value,
     requirements: Option<&Value>,
     target: &str,
     input: &Input,
-    headers: &mut Vec<Header>,
-    query: &mut Vec<(String, String)>,
-    cookies: &mut Vec<(String, String)>,
+    fields: SecurityFields<'_>,
     budget: usize,
 ) -> Result<(), Diagnostic> {
+    let SecurityFields {
+        headers,
+        query,
+        cookies,
+    } = fields;
     let choices = match requirements {
         None => vec![],
         Some(v) => v

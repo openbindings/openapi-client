@@ -279,65 +279,65 @@ impl Document {
             path_errors: HashMap::new(),
             cached: AtomicUsize::new(0),
         };
-        if let Some(paths) = root.get("paths") {
-            if let Some(items) = paths.members() {
-                for (path, item) in items {
-                    cancellation.check().map_err(|diagnostic| ParseFailure {
-                        diagnostic,
-                        source: Arc::from(bytes.as_ref()),
-                    })?;
-                    if !path.starts_with('/') {
-                        continue;
+        if let Some(paths) = root.get("paths")
+            && let Some(items) = paths.members()
+        {
+            for (path, item) in items {
+                cancellation.check().map_err(|diagnostic| ParseFailure {
+                    diagnostic,
+                    source: Arc::from(bytes.as_ref()),
+                })?;
+                if !path.starts_with('/') {
+                    continue;
+                }
+                let resolved = resolve(
+                    &root,
+                    &item,
+                    ReferenceKind::PathItem,
+                    store.limits.reference_steps,
+                );
+                let (path_chain, path_error) = match resolved {
+                    Ok(r) => (r.chain, None),
+                    Err(e) => {
+                        store.path_errors.insert(path.to_owned(), e.clone());
+                        (vec![item.clone()], Some(e))
                     }
-                    let resolved = resolve(
-                        &root,
-                        &item,
-                        ReferenceKind::PathItem,
-                        store.limits.reference_steps,
-                    );
-                    let (path_chain, path_error) = match resolved {
-                        Ok(r) => (r.chain, None),
-                        Err(e) => {
-                            store.path_errors.insert(path.to_owned(), e.clone());
-                            (vec![item.clone()], Some(e))
-                        }
-                    };
-                    let mut methods = HashSet::new();
-                    for container in &path_chain {
-                        if let Some(members) = container.members() {
-                            for (name, node) in members {
-                                let Some(method) = Method::parse(name)
-                                    .filter(|_| name == &name.to_ascii_lowercase())
-                                else {
-                                    continue;
-                                };
-                                if !methods.insert(method) {
-                                    continue;
-                                }
-                                if store.records.len() >= store.limits.operations {
-                                    return Err(ParseFailure {
-                                        diagnostic: node.error(Code::Limit),
-                                        source: Arc::from(bytes.as_ref()),
-                                    });
-                                }
-                                let index = store.records.len();
-                                if let Some(id) = node
-                                    .get("operationId")
-                                    .and_then(|v| v.as_str().map(str::to_owned))
-                                {
-                                    store.ids.entry(id).or_default().push(index);
-                                }
-                                store.paths.insert((path.to_owned(), method), index);
-                                store.records.push(Record {
-                                    path: path.to_owned(),
-                                    method,
-                                    node,
-                                    path_chain: path_chain.clone(),
-                                    path_error: path_error.clone(),
-                                    cache_slot: OnceLock::new(),
-                                    compiled: OnceLock::new(),
+                };
+                let mut methods = HashSet::new();
+                for container in &path_chain {
+                    if let Some(members) = container.members() {
+                        for (name, node) in members {
+                            let Some(method) =
+                                Method::parse(name).filter(|_| name == name.to_ascii_lowercase())
+                            else {
+                                continue;
+                            };
+                            if !methods.insert(method) {
+                                continue;
+                            }
+                            if store.records.len() >= store.limits.operations {
+                                return Err(ParseFailure {
+                                    diagnostic: node.error(Code::Limit),
+                                    source: Arc::from(bytes.as_ref()),
                                 });
                             }
+                            let index = store.records.len();
+                            if let Some(id) = node
+                                .get("operationId")
+                                .and_then(|v| v.as_str().map(str::to_owned))
+                            {
+                                store.ids.entry(id).or_default().push(index);
+                            }
+                            store.paths.insert((path.to_owned(), method), index);
+                            store.records.push(Record {
+                                path: path.to_owned(),
+                                method,
+                                node,
+                                path_chain: path_chain.clone(),
+                                path_error: path_error.clone(),
+                                cache_slot: OnceLock::new(),
+                                compiled: OnceLock::new(),
+                            });
                         }
                     }
                 }
