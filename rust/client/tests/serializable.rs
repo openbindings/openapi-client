@@ -270,6 +270,26 @@ impl Serialize for Ignored<'_> {
     }
 }
 #[test]
+fn forgotten_serializer_error_keeps_first_refusal_and_suppresses_callbacks() {
+    struct Forgot<'a>(&'a Cell<usize>);
+    impl Serialize for Forgot<'_> {
+        fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            let mut seq = serializer.serialize_seq(None)?;
+            let error = seq.serialize_element(&f64::NAN).unwrap_err();
+            // Caller code deliberately leaks one small associated error for this
+            // test process. This exercises shared-error recovery; it is not an
+            // exact-JSON owner leak or a library-owned lifecycle assertion.
+            std::mem::forget(error);
+            assert!(seq.serialize_element(&Counted(self.0)).is_err());
+            seq.end()
+        }
+    }
+    let later = Cell::new(0);
+    failure(&Forgot(&later), SerializationReason::NonFiniteNumber);
+    assert_eq!(later.get(), 0);
+}
+
+#[test]
 fn first_error_is_fused_before_later_serializer_callbacks() {
     for key in [false, true] {
         let later = Cell::new(0);
