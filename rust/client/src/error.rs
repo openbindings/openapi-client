@@ -38,6 +38,22 @@ pub enum NumericReason {
     /// The admitted i64 integer would round in binary64.
     PrecisionLoss,
 }
+/// Why checked Serde construction refused an application value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SerializationReason {
+    /// JSON cannot represent NaN or infinity.
+    NonFiniteNumber,
+    /// An object key did not serialize as a string.
+    NonStringKey,
+    /// A private raw-token representation requires the exact parsing path.
+    UnsupportedRepresentation,
+    /// A serializer emitted an invalid compound or private-number protocol.
+    InvalidRepresentation,
+    /// A Serialize implementation (including derive adapters) or string formatter
+    /// returned an error; its text is not retained.
+    Custom,
+}
 /// Caller election field, without the elected value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SelectionKind {
@@ -54,6 +70,8 @@ pub enum SelectionKind {
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum DiagnosticReason {
+    /// Checked Serde construction refused the emitted representation.
+    Serialization(SerializationReason),
     /// A resource exceeds its configured maximum. Actual can be a lower bound when admission stopped early.
     Limit {
         /// Resource dimension being limited.
@@ -74,6 +92,13 @@ pub enum DiagnosticReason {
     UnknownParameter,
     /// Multiple caller entries target the same declared parameter.
     DuplicateParameter,
+    /// Two explicit builder events assigned the same field or key.
+    DuplicateAssignment {
+        /// Zero-based first assignment event.
+        first_assignment: usize,
+        /// Zero-based repeated assignment event.
+        repeated_assignment: usize,
+    },
     /// The caller must correct or supply the named election; Code distinguishes invalid/ambiguous forms.
     Selection(SelectionKind),
 }
@@ -99,11 +124,18 @@ pub enum DiagnosticContext {
         /// Explicit-access untrusted variable key, when applicable.
         key: Option<String>,
     },
+    /// Explicit finite body assignment.
+    Body,
+    /// Caller credential scheme; the name is explicit-access untrusted data.
+    Credential {
+        /// Declared scheme name, omitted from default formatting.
+        scheme: String,
+    },
     /// Derived request target or final header collection.
     PreparedRequest,
     /// Aggregate caller data admission.
     CallerInput,
-    /// Typed ordinary-value construction before a complete JSON source exists.
+    /// Ordinary-value or checked Serde construction before a complete JSON source exists.
     Construction,
 }
 impl fmt::Debug for DiagnosticContext {
@@ -121,6 +153,8 @@ impl fmt::Debug for DiagnosticContext {
                 .field("kind", kind)
                 .field("index", index)
                 .finish_non_exhaustive(),
+            Self::Body => f.write_str("Body"),
+            Self::Credential { .. } => f.write_str("Credential { .. }"),
             Self::PreparedRequest => f.write_str("PreparedRequest"),
             Self::CallerInput => f.write_str("CallerInput"),
             Self::Construction => f.write_str("Construction"),
@@ -132,12 +166,15 @@ struct Details {
     reason: Option<DiagnosticReason>,
     context: Option<DiagnosticContext>,
     source: Option<SourceContext>,
+    context_omitted_for_limit: bool,
 }
 
 /// Stable failure categories. Diagnostic text never includes input values.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Code {
+    /// Checked Serde construction refused; inspect its Serialization reason.
+    Serialization,
     /// Input bytes are not valid UTF-8; the range marks the decoding failure.
     InvalidUtf8,
     /// Input is not valid JSON under the supported grammar.
@@ -235,16 +272,22 @@ pub struct Location {
 }
 
 /// Structured, safely displayed diagnostic. No arbitrary host error is displayed.
+/// Source metadata is immutable to callers; add application context with a wrapper error.
+/// ```compile_fail
+/// use dynamic_openapi_client::{Code, Diagnostic};
+/// let mut error = Diagnostic::new(Code::InvalidJson);
+/// error.location = None;
+/// ```
 #[derive(Clone, PartialEq, Eq)]
 pub struct Diagnostic {
     /// Stable category.
-    pub code: Code,
+    pub(crate) code: Code,
     /// Authored position when a document/value supplies the failure.
-    pub location: Option<Location>,
+    pub(crate) location: Option<Location>,
     /// Additional positions, such as the previous duplicate member.
-    pub related: Vec<Location>,
+    pub(crate) related: Vec<Location>,
     /// A setting that can repair the failure; never contains a setting value.
-    pub setting: Option<String>,
+    pub(crate) setting: Option<String>,
     details: Option<Box<Details>>,
 }
 impl Diagnostic {
@@ -258,11 +301,27 @@ impl Diagnostic {
             details: None,
         }
     }
+    /// Stable failure category.
+    pub fn code(&self) -> Code {
+        self.code
+    }
+    /// Exact source range when available; its owner is source_context().
+    pub fn location(&self) -> Option<&Location> {
+        self.location.as_ref()
+    }
+    /// Related ranges within the diagnostic's source owner.
+    pub fn related(&self) -> &[Location] {
+        &self.related
+    }
+    /// Corrective setting name, never a setting value.
+    pub fn setting(&self) -> Option<&str> {
+        self.setting.as_deref()
+    }
     pub(crate) fn at(mut self, location: Location) -> Self {
         self.location = Some(location);
         self
     }
-    pub(crate) fn setting(mut self, key: impl Into<String>) -> Self {
+    pub(crate) fn with_setting(mut self, key: impl Into<String>) -> Self {
         self.setting = Some(key.into());
         self
     }
@@ -278,6 +337,18 @@ impl Diagnostic {
     /// None means no exact source owner was associated; do not assume the OpenAPI document.
     pub fn source_context(&self) -> Option<SourceContext> {
         self.details.as_ref()?.source
+    }
+    /// Whether corrective context was omitted because its complete name exceeded the bound.
+    pub fn context_omitted_for_limit(&self) -> bool {
+        self.details
+            .as_ref()
+            .is_some_and(|d| d.context_omitted_for_limit)
+    }
+    pub(crate) fn omit_context(mut self) -> Self {
+        self.details
+            .get_or_insert_with(Default::default)
+            .context_omitted_for_limit = true;
+        self
     }
     pub(crate) fn reasoned(mut self, reason: DiagnosticReason) -> Self {
         self.details.get_or_insert_with(Default::default).reason = Some(reason);

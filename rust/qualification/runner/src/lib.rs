@@ -113,7 +113,7 @@ pub fn input(c: &J) -> Input {
 }
 fn err(e: Diagnostic) -> J {
     let display = e.to_string();
-    json!({"error":format!("{:?}",e.code),"location":e.location.map(|l|json!({"start":l.start,"end":l.end,"pointer":l.pointer})),"related":e.related.len(),"setting":e.setting,"display":display})
+    json!({"error":format!("{:?}",e.code()),"location":e.location().map(|l|json!({"start":l.start,"end":l.end,"pointer":l.pointer})),"related":e.related().len(),"setting":e.setting(),"display":display})
 }
 fn headers(h: &[Header]) -> J {
     json!(
@@ -175,7 +175,7 @@ pub fn upload(r: &J) -> UploadState {
 pub fn outcome_facts(out: Outcome, p: &PreparedRequest) -> J {
     let mut facts = json!({"dispatch":if out.dispatch==DispatchEvidence::Dispatched{"dispatched"}else{"not_dispatched"},"upload":format!("{:?}",out.upload).to_ascii_lowercase(),"cancelled":out.cancelled,"safe_debug":format!("{out:?}")});
     if let Some(e) = out.error {
-        facts["error"] = json!(format!("{:?}", e.code));
+        facts["error"] = json!(format!("{:?}", e.code()));
         facts["display"] = json!(e.to_string());
     }
     if let Some(r) = out.response {
@@ -191,7 +191,7 @@ pub fn outcome_facts(out: Outcome, p: &PreparedRequest) -> J {
         );
         match r.json() {
             Ok(v) => facts["json_raw"] = json!(v.root().raw()),
-            Err(e) => facts["decode_error"] = json!(format!("{:?}", e.code)),
+            Err(e) => facts["decode_error"] = json!(format!("{:?}", e.code())),
         }
     }
     facts
@@ -214,11 +214,11 @@ pub fn run(c: &J) -> J {
         let mut f = json!({});
         match n.to_i64() {
             Ok(i) => f["integer"] = json!(i.to_string()),
-            Err(e) => f["integer_error"] = json!(format!("{:?}", e.code)),
+            Err(e) => f["integer_error"] = json!(format!("{:?}", e.code())),
         };
         match n.to_f64_exact() {
             Ok(i) => f["float"] = json!(i.to_string()),
-            Err(e) => f["float_error"] = json!(format!("{:?}", e.code)),
+            Err(e) => f["float_error"] = json!(format!("{:?}", e.code())),
         };
         return f;
     }
@@ -258,8 +258,8 @@ pub fn run(c: &J) -> J {
     let d = match Document::parse(&bytes, c.get("base").and_then(J::as_str), limits(c)) {
         Ok(d) => d,
         Err(e) => {
-            let mut f = err(e.diagnostic);
-            f["source_preserved"] = json!(e.source.as_ref() == bytes);
+            let mut f = err(e.diagnostic().clone());
+            f["source_preserved"] = json!(e.source_bytes() == bytes);
             return f;
         }
     };
@@ -268,8 +268,8 @@ pub fn run(c: &J) -> J {
         if let Some(pointer) = c.get("select").and_then(J::as_str) {
             match d.root().pointer(pointer) {
                 Ok(v) => f["selected_raw"] = json!(v.raw()),
-                Err(e) if e.code == Code::MissingReference => f["selected_raw"] = J::Null,
-                Err(e) => f["selection_error"] = json!(format!("{:?}", e.code)),
+                Err(e) if e.code() == Code::MissingReference => f["selected_raw"] = J::Null,
+                Err(e) => f["selection_error"] = json!(format!("{:?}", e.code())),
             }
         }
         return f;
@@ -379,27 +379,27 @@ fn limit_case(c: &J) -> J {
             let s = format!("{}{{}}", " ".repeat(n - 2));
             result = ExactJson::parse(s, l)
                 .map(|_| ())
-                .map_err(|e| e.diagnostic.code);
+                .map_err(|e| e.diagnostic().code());
         }
         "depth" => {
             l.depth = limit;
             let s = format!("{}0{}", "[".repeat(n), "]".repeat(n));
             result = ExactJson::parse(s, l)
                 .map(|_| ())
-                .map_err(|e| e.diagnostic.code);
+                .map_err(|e| e.diagnostic().code());
         }
         "nodes" => {
             l.nodes = limit;
             let s = format!("[{}]", vec!["0"; n - 1].join(","));
             result = ExactJson::parse(s, l)
                 .map(|_| ())
-                .map_err(|e| e.diagnostic.code);
+                .map_err(|e| e.diagnostic().code());
         }
         "operations" => {
             l.operations = limit;
             result = Document::parse(minimal(n).to_string(), None, l)
                 .map(|_| ())
-                .map_err(|e| e.diagnostic.code);
+                .map_err(|e| e.diagnostic().code());
         }
         "reference_steps" => {
             l.reference_steps = limit;
@@ -420,7 +420,7 @@ fn limit_case(c: &J) -> J {
             result = d
                 .resolve_protocol("/components/parameters/p0", ReferenceKind::Parameter)
                 .map(|_| ())
-                .map_err(|e| e.code);
+                .map_err(|e| e.code());
         }
         "body_bytes" => {
             l.body_bytes = limit;
@@ -437,7 +437,7 @@ fn limit_case(c: &J) -> J {
                 .unwrap()
                 .prepare(&i)
                 .map(|_| ())
-                .map_err(|e| e.code);
+                .map_err(|e| e.code());
         }
         "number_conversion_chars" => {
             l.number_conversion_chars = limit;
@@ -448,7 +448,7 @@ fn limit_case(c: &J) -> J {
                 .unwrap()
                 .to_i64()
                 .map(|_| ())
-                .map_err(|e| e.code);
+                .map_err(|e| e.code());
         }
         "cached_operations" => {
             l.cached_operations = limit;
@@ -494,7 +494,7 @@ pub fn campaign(family: &str, seconds: u64, seed: u64) -> J {
                     nodes: 2048,
                     ..Limits::default()
                 };
-                let x = if iterations % 4 == 0 {
+                let x = if iterations.is_multiple_of(4) {
                     format!("{{\"x\":\"{}\"}}", s)
                 } else if iterations % 4 == 1 {
                     format!("{}0{}", "[".repeat(n), "]".repeat(n))

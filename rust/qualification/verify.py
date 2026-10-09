@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import tomllib
 
 root = Path(__file__).resolve().parents[1]
 output = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else root / 'target/qualification'
@@ -48,12 +49,34 @@ with tempfile.TemporaryDirectory(prefix='openapi-consumer-', dir=output) as temp
         packed.extractall(work, filter='data')
     crate = work / 'dynamic-openapi-client-0.0.0'
     consumer = work / 'consumer'
-    (consumer / 'src/support').mkdir(parents=True)
+    (consumer / 'src').mkdir(parents=True)
+    dependencies = tomllib.loads((crate / 'Cargo.toml').read_text())['dependencies']
     (consumer / 'Cargo.toml').write_text(
         '[package]\nname = "openapi-external-consumer"\nversion = "0.0.0"\n'
-        'edition = "2024"\n[workspace]\n[dependencies]\n'
-        'dynamic-openapi-client = { path = ' + json.dumps(str(crate)) + ' }\n')
+        'edition = "2024"\n[workspace]\n'
+        '[features]\narbitrary_precision = ["serde_json/arbitrary_precision"]\n'
+        'preserve_order = ["serde_json/preserve_order"]\n'
+        '[dependencies]\n'
+        'dynamic-openapi-client = { path = ' + json.dumps(str(crate)) + ' }\n'
+        '[dev-dependencies]\nserde = { version = '
+        + json.dumps(dependencies['serde']['version']) + ', features = ["derive"] }\n'
+        'serde_json = { version = ' + json.dumps(dependencies['serde_json']['version'])
+        + ', features = ["raw_value"] }\n')
     shutil.copy2(crate / 'examples/dynamic.rs', consumer / 'src/main.rs')
-    shutil.copy2(crate / 'examples/support/outcome_policy.rs', consumer / 'src/support/outcome_policy.rs')
     run('external-consumer', ['cargo', 'run', '--manifest-path', consumer / 'Cargo.toml'], consumer)
+    (consumer / 'tests').mkdir()
+    shutil.copy2(root / 'qualification/serializable_consumer.rs',
+                 consumer / 'tests/serializable.rs')
+    # Features belong to this external consumer and unify with the actual archive.
+    # Read version constraints from the packaged manifest; do not add product features
+    # or maintain a second dependency-version list here.
+    for label, features in [('default', None),
+                            ('arbitrary-precision', 'arbitrary_precision'),
+                            ('preserve-order', 'preserve_order'),
+                            ('combined', 'arbitrary_precision,preserve_order')]:
+        command = ['cargo', 'test', '--locked', '--manifest-path', consumer / 'Cargo.toml',
+                   '--test', 'serializable']
+        if features:
+            command += ['--features', features]
+        run('external-serde-' + label, command, consumer)
 print(json.dumps({'passed': True, 'commands': len(results), 'output': str(output)}))

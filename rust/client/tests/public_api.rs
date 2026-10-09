@@ -47,7 +47,7 @@ fn send_and_local_callbacks_preserve_response() {
     assert_send(&send);
     let o = ready(send);
     assert_eq!(o.upload, UploadState::Incomplete);
-    assert_eq!(o.error.unwrap().code, Code::TransportFailure);
+    assert_eq!(o.error.unwrap().code(), Code::TransportFailure);
     assert_eq!(
         o.response
             .unwrap()
@@ -75,8 +75,8 @@ fn cancellation_and_small_limits_are_explicit() {
     assert_eq!(
         ExactJson::parse_with_cancellation(DOC, Limits::default(), &c)
             .unwrap_err()
-            .diagnostic
-            .code,
+            .diagnostic()
+            .code(),
         Code::Cancelled
     );
     let d = Document::parse(DOC, None, Limits::default()).unwrap();
@@ -85,7 +85,7 @@ fn cancellation_and_small_limits_are_explicit() {
             .unwrap()
             .prepare_with_cancellation(&Input::default(), &c)
             .unwrap_err()
-            .code,
+            .code(),
         Code::Cancelled
     );
     let l = Limits {
@@ -93,8 +93,8 @@ fn cancellation_and_small_limits_are_explicit() {
         ..Limits::default()
     };
     let e = ExactJson::parse(" ".repeat(1_000_000), l).unwrap_err();
-    assert_eq!(e.diagnostic.code, Code::Limit);
-    assert!(e.source.is_empty());
+    assert_eq!(e.diagnostic().code(), Code::Limit);
+    assert!(e.source_bytes().is_empty());
     let l = Limits {
         nodes: 2,
         ..Limits::default()
@@ -102,8 +102,8 @@ fn cancellation_and_small_limits_are_explicit() {
     assert_eq!(
         ExactJson::parse(format!("[{}]", vec!["0"; 10_000].join(",")), l)
             .unwrap_err()
-            .diagnostic
-            .code,
+            .diagnostic()
+            .code(),
         Code::Limit
     );
 }
@@ -112,7 +112,7 @@ fn credentials_and_document_names_are_not_formatted() {
     let e=Document::parse(r#"{"openapi":"3.1.2","servers":[{"url":"https://api.example"}],"paths":{"/secret-key":{"get":{"responses":{"secret-key":{}}}}}}"#,None,Limits::default()).unwrap().operations().next().unwrap().prepare(&Input::default()).unwrap_err();
     assert!(!format!("{e:?}").contains("secret-key"));
     assert!(!e.to_string().contains("secret-key"));
-    assert!(e.location.unwrap().pointer.contains("secret-key"));
+    assert!(e.location().unwrap().pointer.contains("secret-key"));
 }
 #[test]
 fn raw_body_debug_and_pending_invocation_are_honest() {

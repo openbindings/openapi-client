@@ -1,11 +1,9 @@
 use dynamic_openapi_client::*;
+use policies::complete_2xx_json as accept;
 use std::{
     future::Future,
     task::{Context, Poll, Waker},
 };
-#[path = "../examples/support/outcome_policy.rs"]
-mod outcome_policy;
-use outcome_policy::{PolicyRefusal, accept};
 
 const DOC: &str = r#"{"openapi":"3.1.2","servers":[{"url":"https://api.example"}],"paths":{"/":{"get":{"operationId":"op","requestBody":{"content":{"application/json":{},"text/plain":{}}},"responses":{"200":{"description":"ok"}}}}}}"#;
 fn operation(limits: Limits) -> Operation {
@@ -99,7 +97,7 @@ fn r01_safe_numeric_and_ordinary_debug() {
     assert_eq!(s.as_str(), Some("synthetic-ordinary-secret"));
 }
 #[test]
-fn r02_example_success() {
+fn r02_policy_success() {
     let r = accept(outcome(
         200,
         UploadState::Complete,
@@ -117,7 +115,7 @@ fn r02_example_success() {
     assert_eq!(r.outcome.upload, UploadState::Complete);
 }
 #[test]
-fn r03_example_late_error_retains_decode_and_response() {
+fn r03_policy_late_error_retains_decode_and_response() {
     for bytes in [JSON, b"{".as_slice()] {
         let e = accept(outcome(
             200,
@@ -128,9 +126,9 @@ fn r03_example_late_error_retains_decode_and_response() {
             bytes,
         ))
         .unwrap_err();
-        assert!(matches!(e.reason, PolicyRefusal::Transport));
+        assert!(matches!(e.reason, CompleteJsonRefusal::Transport));
         assert_eq!(
-            e.outcome.error.as_ref().unwrap().code,
+            e.outcome.error.as_ref().unwrap().code(),
             Code::TransportFailure
         );
         assert_eq!(e.outcome.response.as_ref().unwrap().raw(), bytes);
@@ -138,14 +136,21 @@ fn r03_example_late_error_retains_decode_and_response() {
             assert!(e.decoded.is_some());
             assert!(e.decode_error.is_none());
         } else {
-            assert_eq!(e.decode_error.as_ref().unwrap().code, Code::InvalidJson);
+            assert_eq!(e.decode_error.as_ref().unwrap().code(), Code::InvalidJson);
         }
-        assert!(std::error::Error::source(e.as_ref()).is_some());
+        assert_eq!(
+            std::error::Error::source(e.as_ref())
+                .unwrap()
+                .downcast_ref::<Diagnostic>()
+                .unwrap()
+                .code(),
+            Code::TransportFailure
+        );
         assert!(!format!("{e:?} {e}").contains("synthetic-host-secret"));
     }
 }
 #[test]
-fn r04_example_cancelled_with_response() {
+fn r04_policy_cancelled_with_response() {
     let e = accept(outcome(
         200,
         UploadState::Complete,
@@ -155,13 +160,13 @@ fn r04_example_cancelled_with_response() {
         JSON,
     ))
     .unwrap_err();
-    assert!(matches!(e.reason, PolicyRefusal::Cancelled));
+    assert!(matches!(e.reason, CompleteJsonRefusal::Cancelled));
     assert!(e.outcome.cancelled);
     assert!(e.decoded.is_some());
     assert_eq!(e.outcome.response.as_ref().unwrap().status(), 200);
 }
 #[test]
-fn r05_example_pre_dispatch_cancellation() {
+fn r05_policy_pre_dispatch_cancellation() {
     let e = accept(outcome(
         200,
         UploadState::Complete,
@@ -171,13 +176,21 @@ fn r05_example_pre_dispatch_cancellation() {
         JSON,
     ))
     .unwrap_err();
-    assert!(matches!(e.reason, PolicyRefusal::Cancelled));
+    assert!(matches!(e.reason, CompleteJsonRefusal::Cancelled));
     assert_eq!(e.outcome.dispatch, DispatchEvidence::NotDispatched);
     assert!(e.outcome.response.is_none());
     assert!(e.decoded.is_none());
+    assert_eq!(
+        std::error::Error::source(e.as_ref())
+            .unwrap()
+            .downcast_ref::<Diagnostic>()
+            .unwrap()
+            .code(),
+        Code::Cancelled
+    );
 }
 #[test]
-fn r06_example_http_error() {
+fn r06_policy_http_error() {
     let e = accept(outcome(
         429,
         UploadState::Complete,
@@ -187,13 +200,13 @@ fn r06_example_http_error() {
         JSON,
     ))
     .unwrap_err();
-    assert!(matches!(e.reason, PolicyRefusal::HttpStatus));
+    assert!(matches!(e.reason, CompleteJsonRefusal::HttpStatus));
     assert_eq!(e.outcome.response.as_ref().unwrap().status(), 429);
     assert!(e.outcome.error.is_none());
     assert!(e.decoded.is_some());
 }
 #[test]
-fn r07_example_unknown_upload_policy() {
+fn r07_policy_unknown_upload_policy() {
     let e = accept(outcome(
         200,
         UploadState::Unknown,
@@ -203,7 +216,7 @@ fn r07_example_unknown_upload_policy() {
         JSON,
     ))
     .unwrap_err();
-    assert!(matches!(e.reason, PolicyRefusal::UploadUncertain));
+    assert!(matches!(e.reason, CompleteJsonRefusal::UploadUncertain));
     assert_eq!(e.outcome.upload, UploadState::Unknown);
     assert!(e.decoded.is_some());
 }
@@ -226,7 +239,7 @@ fn r08_numeric_reasons_and_exact_policy() {
             })
         );
         assert_eq!(error.source_context(), Some(value.source_context()));
-        assert_eq!(error.location, Some(value.location()));
+        assert_eq!(error.location().cloned(), Some(value.location()));
     }
     let v = ExactJson::parse(
         "123",
@@ -279,7 +292,7 @@ fn r09_corrective_input_selection_and_limits() {
         })
     ));
     assert_eq!(error.context(), Some(&DiagnosticContext::PreparedRequest));
-    assert!(error.location.is_none());
+    assert!(error.location().is_none());
     let error = operation(Limits {
         headers: 0,
         ..Default::default()
@@ -297,7 +310,7 @@ fn r09_corrective_input_selection_and_limits() {
             actual: 1
         })
     ));
-    assert!(error.location.is_none());
+    assert!(error.location().is_none());
     let value = ExactJson::from_ordinary(OrdinaryValue::U64(4), Limits::default())
         .unwrap()
         .root();
@@ -314,7 +327,7 @@ fn r09_corrective_input_selection_and_limits() {
     assert!(
         matches!(error.context(),Some(DiagnosticContext::Parameter{index:0,name,..})if name=="synthetic-secret-key")
     );
-    assert!(error.location.is_none());
+    assert!(error.location().is_none());
     assert!(!format!("{error} {error:?} {:?}", error.context()).contains("synthetic-secret-key"));
     for (kind, input) in [
         (
@@ -417,9 +430,9 @@ fn r11_construction_limits_and_duplicate_names() {
         },
     )
     .unwrap_err();
-    assert!(failure.source.is_empty());
+    assert!(failure.source_bytes().is_empty());
     assert!(matches!(
-        failure.diagnostic.reason(),
+        failure.diagnostic().reason(),
         Some(DiagnosticReason::Limit {
             kind: LimitKind::DocumentBytes,
             maximum: 8,
@@ -437,16 +450,16 @@ fn r11_construction_limits_and_duplicate_names() {
         );
         assert_eq!(result.is_ok(), maximum >= 3);
         if let Err(e) = result {
-            assert!(e.source.is_empty());
+            assert!(e.source_bytes().is_empty());
             assert!(matches!(
-                e.diagnostic.reason(),
+                e.diagnostic().reason(),
                 Some(DiagnosticReason::Limit {
                     kind: LimitKind::DocumentBytes,
                     ..
                 })
             ));
             assert_eq!(
-                e.diagnostic.context(),
+                e.diagnostic().context(),
                 Some(&DiagnosticContext::Construction)
             );
         }
@@ -476,8 +489,8 @@ fn r11_construction_limits_and_duplicate_names() {
         assert_eq!(
             ExactJson::from_ordinary(OrdinaryValue::Array(&array), limits)
                 .unwrap_err()
-                .diagnostic
-                .code,
+                .diagnostic()
+                .code(),
             Code::Limit
         );
     }
@@ -489,12 +502,12 @@ fn r11_construction_limits_and_duplicate_names() {
         Limits::default(),
     )
     .unwrap_err();
-    assert_eq!(error.diagnostic.code, Code::DuplicateMember);
+    assert_eq!(error.diagnostic().code(), Code::DuplicateMember);
     assert_eq!(
-        error.diagnostic.source_context().unwrap().origin,
+        error.diagnostic().source_context().unwrap().origin,
         SourceOrigin::Constructed
     );
-    assert!(!error.source.is_empty());
+    assert!(!error.source_bytes().is_empty());
 }
 #[test]
 fn r12_error_chaining_and_source_domains() {
@@ -507,10 +520,10 @@ fn r12_error_chaining_and_source_domains() {
         },
     )
     .unwrap_err();
-    assert!(failure.diagnostic.location.is_none());
-    assert!(failure.diagnostic.source_context().is_none());
+    assert!(failure.diagnostic().location().is_none());
+    assert!(failure.diagnostic().source_context().is_none());
     assert_eq!(
-        failure.diagnostic.context(),
+        failure.diagnostic().context(),
         Some(&DiagnosticContext::CallerInput)
     );
 
@@ -519,7 +532,7 @@ fn r12_error_chaining_and_source_domains() {
         .unwrap()
         .downcast_ref::<Diagnostic>()
         .unwrap();
-    assert_eq!(cause, &failure.diagnostic);
+    assert_eq!(cause, failure.diagnostic());
     assert_eq!(
         cause.source_context().unwrap().origin,
         SourceOrigin::Authored
@@ -532,7 +545,7 @@ fn r12_error_chaining_and_source_domains() {
         .root();
     let error = c.number().unwrap().to_f64_exact().unwrap_err();
     assert_eq!(error.source_context(), Some(c.source_context()));
-    assert_eq!(error.location, Some(c.location()));
+    assert_eq!(error.location().cloned(), Some(c.location()));
     let text = r#"{"openapi":"3.1.2","servers":[{"url":"https://api.example"}],"paths":{"/":{"get":{"operationId":"op","parameters":[{"name":"q","in":"query","schema":{}}]}}}}"#;
     let op = Document::parse(text, None, Limits::default())
         .unwrap()
@@ -550,7 +563,112 @@ fn r12_error_chaining_and_source_domains() {
         ..Default::default()
     };
     let error = op.prepare(&input).unwrap_err();
-    assert_eq!(error.code, Code::UnsupportedValue);
+    assert_eq!(error.code(), Code::UnsupportedValue);
     assert_eq!(error.source_context(), Some(bad.source_context()));
-    assert_eq!(error.location, Some(bad.location()));
+    assert_eq!(error.location().cloned(), Some(bad.location()));
+}
+
+#[test]
+fn named_policy_orders_primary_reason_without_hiding_other_facts() {
+    let p = operation(Limits::default()).request().prepare().unwrap();
+    let mut caps = HostCapabilities::programmable();
+    caps.no_retries = false;
+    let out = ready(p.invoke(Cancellation::default(), &caps, |_, _| async {
+        panic!("preflight must not dispatch")
+    }));
+    let failure = accept(out).unwrap_err();
+    assert_eq!(failure.reason, CompleteJsonRefusal::NotDispatched);
+    assert_eq!(
+        std::error::Error::source(failure.as_ref())
+            .unwrap()
+            .downcast_ref::<Diagnostic>(),
+        failure.outcome.error.as_ref()
+    );
+    let out = ready(p.invoke(
+        Cancellation::default(),
+        &HostCapabilities::programmable(),
+        |_, _| async {
+            TransportResult {
+                response: None,
+                upload: UploadState::Unknown,
+                error_detail: None,
+            }
+        },
+    ));
+    // The engine already reports a missing response as invalid host evidence;
+    // the selected policy must preserve that earlier transport-level refusal.
+    let failure = accept(out).unwrap_err();
+    assert_eq!(failure.reason, CompleteJsonRefusal::Transport);
+    assert_eq!(
+        failure.outcome.error.as_ref().unwrap().code(),
+        Code::InvalidHostEvidence
+    );
+    // Exercise the policy's missing-response branch with an explicitly edited
+    // public Outcome rather than falsely expecting invoke to omit its evidence.
+    let mut out = failure.outcome;
+    out.error = None;
+    let failure = accept(out).unwrap_err();
+    assert_eq!(failure.reason, CompleteJsonRefusal::MissingResponse);
+    assert!(std::error::Error::source(failure.as_ref()).is_none());
+    assert_eq!(failure.outcome.upload, UploadState::Unknown);
+    assert!(failure.decoded.is_none());
+    assert!(failure.decode_error.is_none());
+    for (cancel, late, status, upload, expected) in [
+        (
+            true,
+            true,
+            500,
+            UploadState::Unknown,
+            CompleteJsonRefusal::Cancelled,
+        ),
+        (
+            false,
+            true,
+            500,
+            UploadState::Unknown,
+            CompleteJsonRefusal::Transport,
+        ),
+        (
+            false,
+            false,
+            500,
+            UploadState::Unknown,
+            CompleteJsonRefusal::HttpStatus,
+        ),
+        (
+            false,
+            false,
+            200,
+            UploadState::Unknown,
+            CompleteJsonRefusal::UploadUncertain,
+        ),
+        (
+            false,
+            false,
+            200,
+            UploadState::Complete,
+            CompleteJsonRefusal::Decode,
+        ),
+    ] {
+        let failure = accept(outcome(status, upload, late, cancel, false, b"{")).unwrap_err();
+        assert_eq!(failure.reason, expected);
+        let source = std::error::Error::source(failure.as_ref())
+            .map(|e| e.downcast_ref::<Diagnostic>().unwrap().code());
+        let expected_source = match expected {
+            CompleteJsonRefusal::Transport => Some(Code::TransportFailure),
+            CompleteJsonRefusal::Decode => Some(Code::InvalidJson),
+            _ => None,
+        };
+        assert_eq!(source, expected_source);
+        assert_eq!(failure.outcome.cancelled, cancel);
+        assert_eq!(failure.outcome.error.is_some(), late);
+        assert_eq!(failure.outcome.upload, upload);
+        assert_eq!(failure.outcome.response.as_ref().unwrap().status(), status);
+        assert_eq!(failure.outcome.response.as_ref().unwrap().raw(), b"{");
+        assert_eq!(
+            failure.decode_error.as_ref().unwrap().code(),
+            Code::InvalidJson
+        );
+        assert!(failure.decoded.is_none());
+    }
 }

@@ -18,11 +18,11 @@ pub use document::{
 };
 pub use error::{
     Code, Diagnostic, DiagnosticContext, DiagnosticReason, LimitKind, Location, NumericReason,
-    NumericTarget, SelectionKind,
+    NumericTarget, SelectionKind, SerializationReason,
 };
 pub use prepare::{
-    Body, Credential, CredentialValue, Input, ParameterInput, ParameterLocation, PreparedRequest,
-    Selection,
+    Body, Credential, CredentialValue, Input, Parameter, ParameterInput, ParameterLocation,
+    Parameters, PreparedRequest, Selection,
 };
 pub use transport::{
     BodyState, Cancellation, DeliveredBody, DispatchEvidence, DispatchRequest, Header,
@@ -33,4 +33,12 @@ pub use value::{
     live_json_owners,
 };
 mod ordinary;
+mod serializable;
 pub use ordinary::OrdinaryValue;
+
+mod request;
+pub use request::{Argument, RequestBuilder, RequestError};
+
+/// Explicit evidence-preserving application acceptance policies.
+pub mod policies;
+pub use policies::{CompleteJsonRefusal, CompletedJson, JsonCallRefusal};

@@ -100,14 +100,62 @@ pub struct Input {
     /// Credentials keyed by declared security-scheme name.
     pub credentials: BTreeMap<String, Credential>,
 }
+/// One effective parameter with independently retained source/reference data.
 #[derive(Clone)]
-struct Parameter {
+pub struct Parameter {
+    resolved: crate::ResolvedReference,
     node: Value,
     name: String,
     location: ParameterLocation,
     required: bool,
     explode: bool,
     unsupported: bool,
+}
+/// Effective parameter declarations retaining their exact source owners.
+/// Structured refusal leaves Operation::inspect available for raw inspection.
+#[derive(Clone, Debug)]
+pub struct Parameters {
+    entries: Vec<Parameter>,
+}
+impl Parameters {
+    /// Effective order, with operation declarations overriding path declarations.
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = Parameter> + '_ {
+        self.entries.iter().cloned()
+    }
+}
+impl std::fmt::Debug for Parameter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Parameter")
+            .field("location", &self.location)
+            .field("required", &self.required)
+            .finish_non_exhaustive()
+    }
+}
+impl Parameter {
+    /// Exact declared name; untrusted explicit-access data.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+    /// Parameter namespace.
+    pub fn location(&self) -> ParameterLocation {
+        self.location
+    }
+    /// Effective required flag after declaration checks.
+    pub fn required(&self) -> bool {
+        self.required
+    }
+    /// Authored declaration/reference at its use site.
+    pub fn authored(&self) -> Value {
+        self.resolved.authored.clone()
+    }
+    /// Reference use-site siblings, chain and final target, retaining their owners.
+    pub fn resolved(&self) -> crate::ResolvedReference {
+        self.resolved.clone()
+    }
+    /// Raw Schema Object. None does not mean a content declaration is absent.
+    pub fn schema(&self) -> Option<Value> {
+        self.node.get("schema")
+    }
 }
 pub(crate) struct Compiled {
     parameters: Vec<Parameter>,
@@ -146,7 +194,7 @@ fn bool_field(node: &Value, key: &str, default: bool) -> Result<bool, Diagnostic
         Some(v) => v.as_bool().ok_or_else(|| v.error(Code::InvalidDeclaration)),
     }
 }
-fn same_name(a: &str, b: &str, location: ParameterLocation) -> bool {
+pub(crate) fn same_name(a: &str, b: &str, location: ParameterLocation) -> bool {
     if location == ParameterLocation::Header {
         a.eq_ignore_ascii_case(b)
     } else {
@@ -155,7 +203,13 @@ fn same_name(a: &str, b: &str, location: ParameterLocation) -> bool {
 }
 
 impl Operation {
-    fn compile(&self) -> Result<Arc<Compiled>, Diagnostic> {
+    /// Inspect effective parameters without compiling body/media/security requirements.
+    /// Unsupported editions and invalid parameter declarations refuse; raw inspection remains.
+    pub fn parameters(&self) -> Result<Parameters, Diagnostic> {
+        self.parameter_declarations()
+            .map(|(entries, _)| Parameters { entries })
+    }
+    fn parameter_declarations(&self) -> Result<(Vec<Parameter>, usize), Diagnostic> {
         let root = self.store.json.root();
         let node = self.value();
         if !root
@@ -188,8 +242,9 @@ impl Operation {
                     return Err(authored.error(Code::Limit));
                 }
                 budget -= 1;
-                let p = document::resolve(&root, &authored, ReferenceKind::Parameter, budget + 1)?
-                    .target;
+                let resolved =
+                    document::resolve(&root, &authored, ReferenceKind::Parameter, budget + 1)?;
+                let p = resolved.target.clone();
                 let name = required_string(&p, "name")?;
                 let location = ParameterLocation::parse(&required_string(&p, "in")?)
                     .ok_or_else(|| p.error(Code::UnsupportedParameter))?;
@@ -253,6 +308,7 @@ impl Operation {
                     || bool_field(&p, "allowReserved", false)?
                     || location == ParameterLocation::Header && name.eq_ignore_ascii_case("cookie");
                 let param = Parameter {
+                    resolved,
                     node: p.clone(),
                     name: name.clone(),
                     location,
@@ -270,6 +326,12 @@ impl Operation {
                 }
             }
         }
+        Ok((parameters, budget))
+    }
+    fn compile(&self) -> Result<Arc<Compiled>, Diagnostic> {
+        let (parameters, mut budget) = self.parameter_declarations()?;
+        let root = self.store.json.root();
+        let node = self.value();
         let body = node
             .get("requestBody")
             .map(|b| {
@@ -471,9 +533,11 @@ impl Operation {
             desc.security.as_ref(),
             &target,
             input,
-            &mut headers,
-            &mut query,
-            &mut cookies,
+            SecurityFields {
+                headers: &mut headers,
+                query: &mut query,
+                cookies: &mut cookies,
+            },
             limits.reference_steps,
         )
         .map_err(|e| e.election(SelectionKind::Security, input.selection.security, None))?;
@@ -649,7 +713,7 @@ fn choose_server(
             if value.contains(['{', '}']) {
                 return Err(v
                     .error(Code::InvalidDestination)
-                    .setting(format!("server.variables.{name}"))
+                    .with_setting(format!("server.variables.{name}"))
                     .election(SelectionKind::ServerVariable, None, Some(name.clone())));
             }
             if let Some(en) = v.get("enum") {
@@ -668,7 +732,7 @@ fn choose_server(
                 if !values.contains(value) {
                     return Err(v
                         .error(Code::InvalidSelection)
-                        .setting(format!("server.variables.{name}"))
+                        .with_setting(format!("server.variables.{name}"))
                         .election(SelectionKind::ServerVariable, None, Some(name.clone())));
                 }
             }
@@ -865,10 +929,10 @@ fn parse_media(s: &str, ranges: bool) -> Result<Media, Diagnostic> {
     if ty.is_empty() || sub.is_empty() || !ty.bytes().all(token) || !sub.bytes().all(token) {
         return Err(bad());
     }
-    if ty.contains('*') || sub.contains('*') {
-        if !ranges || !(ty == "*" && sub == "*" || !ty.contains('*') && sub == "*") {
-            return Err(bad());
-        }
+    if (ty.contains('*') || sub.contains('*'))
+        && (!ranges || !(ty == "*" && sub == "*" || !ty.contains('*') && sub == "*"))
+    {
+        return Err(bad());
     }
     let mut parameters = BTreeMap::new();
     let mut rest = tail;
@@ -962,11 +1026,12 @@ fn media_matches(key: &Media, selected: &Media) -> Option<(u8, usize)> {
 pub(crate) fn token(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b)
 }
+type BodyEncoding = (Option<Arc<[u8]>>, &'static str, Option<String>);
 fn prepare_body(
     decl: Option<&Value>,
     input: &Input,
     limits: &Limits,
-) -> Result<(Option<Arc<[u8]>>, &'static str, Option<String>), Diagnostic> {
+) -> Result<BodyEncoding, Diagnostic> {
     let absent = matches!(input.body, Body::Absent);
     let Some(decl) = decl else {
         if absent && input.selection.media.is_none() {
@@ -1053,16 +1118,24 @@ fn prepare_body(
     }
     Ok((Some(bytes), kind, Some(selected)))
 }
+struct SecurityFields<'a> {
+    headers: &'a mut Vec<Header>,
+    query: &'a mut Vec<(String, String)>,
+    cookies: &'a mut Vec<(String, String)>,
+}
 fn apply_security(
     root: &Value,
     requirements: Option<&Value>,
     target: &str,
     input: &Input,
-    headers: &mut Vec<Header>,
-    query: &mut Vec<(String, String)>,
-    cookies: &mut Vec<(String, String)>,
+    fields: SecurityFields<'_>,
     budget: usize,
 ) -> Result<(), Diagnostic> {
+    let SecurityFields {
+        headers,
+        query,
+        cookies,
+    } = fields;
     let choices = match requirements {
         None => vec![],
         Some(v) => v

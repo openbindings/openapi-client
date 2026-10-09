@@ -30,12 +30,10 @@ native tests/doctests, both native fixture inventories, the dynamic example and 
 fresh external consumer of a locally packaged crate. Outputs go to
 `rust/target/qualification` by default; an explicit output path is accepted.
 
-The existing qualification retained five production Clippy style/complexity
-warnings; the workspace runner adds one existing style warning. `lint.py` prints
-these warnings and recognizes only their exact codes and source locations. New
-warnings or compiler errors fail CI. This explicit debt should be repaired in a
-bounded implementation follow-up before stabilization; this import does not
-claim a warning-free implementation or suppress entire lint categories.
+The API quality revision resolves the six previously retained Clippy warnings.
+Workspace lint now passes without warnings. `lint.py` still rejects warnings
+outside its historical exact-code/source-location baseline, and compiler errors
+fail the check; no lint category is suppressed.
 
 For host qualification, install the `wasm32-unknown-unknown` target and
 wasm-bindgen-cli 0.2.129. Build `oac-host-qualification` for that target with the
