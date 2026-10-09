@@ -48,12 +48,11 @@ with tempfile.TemporaryDirectory(prefix='openapi-consumer-', dir=output) as temp
         packed.extractall(work, filter='data')
     crate = work / 'dynamic-openapi-client-0.0.0'
     consumer = work / 'consumer'
-    (consumer / 'src/support').mkdir(parents=True)
+    (consumer / 'src').mkdir(parents=True)
     (consumer / 'Cargo.toml').write_text(
         '[package]\nname = "openapi-external-consumer"\nversion = "0.0.0"\n'
         'edition = "2024"\n[workspace]\n[dependencies]\n'
         'dynamic-openapi-client = { path = ' + json.dumps(str(crate)) + ' }\n')
     shutil.copy2(crate / 'examples/dynamic.rs', consumer / 'src/main.rs')
-    shutil.copy2(crate / 'examples/support/outcome_policy.rs', consumer / 'src/support/outcome_policy.rs')
     run('external-consumer', ['cargo', 'run', '--manifest-path', consumer / 'Cargo.toml'], consumer)
 print(json.dumps({'passed': True, 'commands': len(results), 'output': str(output)}))

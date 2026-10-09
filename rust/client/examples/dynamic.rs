@@ -1,7 +1,5 @@
 //! Dynamic public consumer using a supplied in-memory transport.
 use dynamic_openapi_client::*;
-#[path = "support/outcome_policy.rs"]
-mod outcome_policy;
 use std::{
     future::Future,
     task::{Context, Poll, Waker},
@@ -13,7 +11,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let description = operation.inspect();
     assert!(description.authored.get("operationId").is_some());
     drop(doc);
-    let request = operation.prepare(&Input::default())?;
+    let request = operation.request().prepare()?;
     let host = HostCapabilities::programmable();
     let mut future =
         Box::pin(
@@ -39,7 +37,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let Poll::Ready(outcome) = future.as_mut().poll(&mut cx) else {
         panic!("fixture must be ready")
     };
-    let completed = outcome_policy::accept(outcome).map_err(|failure| {
+    let completed = policies::complete_2xx_json(outcome).map_err(|failure| {
         eprintln!(
             "{}; response_available={}, decoded_available={}",
             failure,

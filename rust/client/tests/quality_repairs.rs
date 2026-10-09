@@ -1,11 +1,9 @@
 use dynamic_openapi_client::*;
+use policies::complete_2xx_json as accept;
 use std::{
     future::Future,
     task::{Context, Poll, Waker},
 };
-#[path = "../examples/support/outcome_policy.rs"]
-mod outcome_policy;
-use outcome_policy::{PolicyRefusal, accept};
 
 const DOC: &str = r#"{"openapi":"3.1.2","servers":[{"url":"https://api.example"}],"paths":{"/":{"get":{"operationId":"op","requestBody":{"content":{"application/json":{},"text/plain":{}}},"responses":{"200":{"description":"ok"}}}}}}"#;
 fn operation(limits: Limits) -> Operation {
@@ -99,7 +97,7 @@ fn r01_safe_numeric_and_ordinary_debug() {
     assert_eq!(s.as_str(), Some("synthetic-ordinary-secret"));
 }
 #[test]
-fn r02_example_success() {
+fn r02_policy_success() {
     let r = accept(outcome(
         200,
         UploadState::Complete,
@@ -117,7 +115,7 @@ fn r02_example_success() {
     assert_eq!(r.outcome.upload, UploadState::Complete);
 }
 #[test]
-fn r03_example_late_error_retains_decode_and_response() {
+fn r03_policy_late_error_retains_decode_and_response() {
     for bytes in [JSON, b"{".as_slice()] {
         let e = accept(outcome(
             200,
@@ -128,7 +126,7 @@ fn r03_example_late_error_retains_decode_and_response() {
             bytes,
         ))
         .unwrap_err();
-        assert!(matches!(e.reason, PolicyRefusal::Transport));
+        assert!(matches!(e.reason, CompleteJsonRefusal::Transport));
         assert_eq!(
             e.outcome.error.as_ref().unwrap().code(),
             Code::TransportFailure
@@ -145,7 +143,7 @@ fn r03_example_late_error_retains_decode_and_response() {
     }
 }
 #[test]
-fn r04_example_cancelled_with_response() {
+fn r04_policy_cancelled_with_response() {
     let e = accept(outcome(
         200,
         UploadState::Complete,
@@ -155,13 +153,13 @@ fn r04_example_cancelled_with_response() {
         JSON,
     ))
     .unwrap_err();
-    assert!(matches!(e.reason, PolicyRefusal::Cancelled));
+    assert!(matches!(e.reason, CompleteJsonRefusal::Cancelled));
     assert!(e.outcome.cancelled);
     assert!(e.decoded.is_some());
     assert_eq!(e.outcome.response.as_ref().unwrap().status(), 200);
 }
 #[test]
-fn r05_example_pre_dispatch_cancellation() {
+fn r05_policy_pre_dispatch_cancellation() {
     let e = accept(outcome(
         200,
         UploadState::Complete,
@@ -171,13 +169,13 @@ fn r05_example_pre_dispatch_cancellation() {
         JSON,
     ))
     .unwrap_err();
-    assert!(matches!(e.reason, PolicyRefusal::Cancelled));
+    assert!(matches!(e.reason, CompleteJsonRefusal::Cancelled));
     assert_eq!(e.outcome.dispatch, DispatchEvidence::NotDispatched);
     assert!(e.outcome.response.is_none());
     assert!(e.decoded.is_none());
 }
 #[test]
-fn r06_example_http_error() {
+fn r06_policy_http_error() {
     let e = accept(outcome(
         429,
         UploadState::Complete,
@@ -187,13 +185,13 @@ fn r06_example_http_error() {
         JSON,
     ))
     .unwrap_err();
-    assert!(matches!(e.reason, PolicyRefusal::HttpStatus));
+    assert!(matches!(e.reason, CompleteJsonRefusal::HttpStatus));
     assert_eq!(e.outcome.response.as_ref().unwrap().status(), 429);
     assert!(e.outcome.error.is_none());
     assert!(e.decoded.is_some());
 }
 #[test]
-fn r07_example_unknown_upload_policy() {
+fn r07_policy_unknown_upload_policy() {
     let e = accept(outcome(
         200,
         UploadState::Unknown,
@@ -203,7 +201,7 @@ fn r07_example_unknown_upload_policy() {
         JSON,
     ))
     .unwrap_err();
-    assert!(matches!(e.reason, PolicyRefusal::UploadUncertain));
+    assert!(matches!(e.reason, CompleteJsonRefusal::UploadUncertain));
     assert_eq!(e.outcome.upload, UploadState::Unknown);
     assert!(e.decoded.is_some());
 }
@@ -553,4 +551,83 @@ fn r12_error_chaining_and_source_domains() {
     assert_eq!(error.code(), Code::UnsupportedValue);
     assert_eq!(error.source_context(), Some(bad.source_context()));
     assert_eq!(error.location().cloned(), Some(bad.location()));
+}
+
+#[test]
+fn named_policy_orders_primary_reason_without_hiding_other_facts() {
+    let p = operation(Limits::default()).request().prepare().unwrap();
+    let mut caps = HostCapabilities::programmable();
+    caps.no_retries = false;
+    let out = ready(p.invoke(Cancellation::default(), &caps, |_, _| async {
+        panic!("preflight must not dispatch")
+    }));
+    let failure = accept(out).unwrap_err();
+    assert_eq!(failure.reason, CompleteJsonRefusal::NotDispatched);
+    assert!(failure.outcome.error.is_some());
+    let out = ready(p.invoke(
+        Cancellation::default(),
+        &HostCapabilities::programmable(),
+        |_, _| async {
+            TransportResult {
+                response: None,
+                upload: UploadState::Unknown,
+                error_detail: None,
+            }
+        },
+    ));
+    let failure = accept(out).unwrap_err();
+    assert_eq!(failure.reason, CompleteJsonRefusal::MissingResponse);
+    assert_eq!(failure.outcome.upload, UploadState::Unknown);
+    assert!(failure.decoded.is_none());
+    assert!(failure.decode_error.is_none());
+    for (cancel, late, status, upload, expected) in [
+        (
+            true,
+            true,
+            500,
+            UploadState::Unknown,
+            CompleteJsonRefusal::Cancelled,
+        ),
+        (
+            false,
+            true,
+            500,
+            UploadState::Unknown,
+            CompleteJsonRefusal::Transport,
+        ),
+        (
+            false,
+            false,
+            500,
+            UploadState::Unknown,
+            CompleteJsonRefusal::HttpStatus,
+        ),
+        (
+            false,
+            false,
+            200,
+            UploadState::Unknown,
+            CompleteJsonRefusal::UploadUncertain,
+        ),
+        (
+            false,
+            false,
+            200,
+            UploadState::Complete,
+            CompleteJsonRefusal::Decode,
+        ),
+    ] {
+        let failure = accept(outcome(status, upload, late, cancel, false, b"{")).unwrap_err();
+        assert_eq!(failure.reason, expected);
+        assert_eq!(failure.outcome.cancelled, cancel);
+        assert_eq!(failure.outcome.error.is_some(), late);
+        assert_eq!(failure.outcome.upload, upload);
+        assert_eq!(failure.outcome.response.as_ref().unwrap().status(), status);
+        assert_eq!(failure.outcome.response.as_ref().unwrap().raw(), b"{");
+        assert_eq!(
+            failure.decode_error.as_ref().unwrap().code(),
+            Code::InvalidJson
+        );
+        assert!(failure.decoded.is_none());
+    }
 }
