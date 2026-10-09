@@ -235,16 +235,22 @@ pub struct Location {
 }
 
 /// Structured, safely displayed diagnostic. No arbitrary host error is displayed.
+/// Source metadata is immutable to callers; add application context with a wrapper error.
+/// ```compile_fail
+/// use dynamic_openapi_client::{Code, Diagnostic};
+/// let mut error = Diagnostic::new(Code::InvalidJson);
+/// error.location = None;
+/// ```
 #[derive(Clone, PartialEq, Eq)]
 pub struct Diagnostic {
     /// Stable category.
-    pub code: Code,
+    pub(crate) code: Code,
     /// Authored position when a document/value supplies the failure.
-    pub location: Option<Location>,
+    pub(crate) location: Option<Location>,
     /// Additional positions, such as the previous duplicate member.
-    pub related: Vec<Location>,
+    pub(crate) related: Vec<Location>,
     /// A setting that can repair the failure; never contains a setting value.
-    pub setting: Option<String>,
+    pub(crate) setting: Option<String>,
     details: Option<Box<Details>>,
 }
 impl Diagnostic {
@@ -258,11 +264,27 @@ impl Diagnostic {
             details: None,
         }
     }
+    /// Stable failure category.
+    pub fn code(&self) -> Code {
+        self.code
+    }
+    /// Exact source range when available; its owner is source_context().
+    pub fn location(&self) -> Option<&Location> {
+        self.location.as_ref()
+    }
+    /// Related ranges within the diagnostic's source owner.
+    pub fn related(&self) -> &[Location] {
+        &self.related
+    }
+    /// Corrective setting name, never a setting value.
+    pub fn setting(&self) -> Option<&str> {
+        self.setting.as_deref()
+    }
     pub(crate) fn at(mut self, location: Location) -> Self {
         self.location = Some(location);
         self
     }
-    pub(crate) fn setting(mut self, key: impl Into<String>) -> Self {
+    pub(crate) fn with_setting(mut self, key: impl Into<String>) -> Self {
         self.setting = Some(key.into());
         self
     }

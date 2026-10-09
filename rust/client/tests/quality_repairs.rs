@@ -130,7 +130,7 @@ fn r03_example_late_error_retains_decode_and_response() {
         .unwrap_err();
         assert!(matches!(e.reason, PolicyRefusal::Transport));
         assert_eq!(
-            e.outcome.error.as_ref().unwrap().code,
+            e.outcome.error.as_ref().unwrap().code(),
             Code::TransportFailure
         );
         assert_eq!(e.outcome.response.as_ref().unwrap().raw(), bytes);
@@ -138,7 +138,7 @@ fn r03_example_late_error_retains_decode_and_response() {
             assert!(e.decoded.is_some());
             assert!(e.decode_error.is_none());
         } else {
-            assert_eq!(e.decode_error.as_ref().unwrap().code, Code::InvalidJson);
+            assert_eq!(e.decode_error.as_ref().unwrap().code(), Code::InvalidJson);
         }
         assert!(std::error::Error::source(e.as_ref()).is_some());
         assert!(!format!("{e:?} {e}").contains("synthetic-host-secret"));
@@ -226,7 +226,7 @@ fn r08_numeric_reasons_and_exact_policy() {
             })
         );
         assert_eq!(error.source_context(), Some(value.source_context()));
-        assert_eq!(error.location, Some(value.location()));
+        assert_eq!(error.location().cloned(), Some(value.location()));
     }
     let v = ExactJson::parse(
         "123",
@@ -279,7 +279,7 @@ fn r09_corrective_input_selection_and_limits() {
         })
     ));
     assert_eq!(error.context(), Some(&DiagnosticContext::PreparedRequest));
-    assert!(error.location.is_none());
+    assert!(error.location().is_none());
     let error = operation(Limits {
         headers: 0,
         ..Default::default()
@@ -297,7 +297,7 @@ fn r09_corrective_input_selection_and_limits() {
             actual: 1
         })
     ));
-    assert!(error.location.is_none());
+    assert!(error.location().is_none());
     let value = ExactJson::from_ordinary(OrdinaryValue::U64(4), Limits::default())
         .unwrap()
         .root();
@@ -314,7 +314,7 @@ fn r09_corrective_input_selection_and_limits() {
     assert!(
         matches!(error.context(),Some(DiagnosticContext::Parameter{index:0,name,..})if name=="synthetic-secret-key")
     );
-    assert!(error.location.is_none());
+    assert!(error.location().is_none());
     assert!(!format!("{error} {error:?} {:?}", error.context()).contains("synthetic-secret-key"));
     for (kind, input) in [
         (
@@ -417,9 +417,9 @@ fn r11_construction_limits_and_duplicate_names() {
         },
     )
     .unwrap_err();
-    assert!(failure.source.is_empty());
+    assert!(failure.source_bytes().is_empty());
     assert!(matches!(
-        failure.diagnostic.reason(),
+        failure.diagnostic().reason(),
         Some(DiagnosticReason::Limit {
             kind: LimitKind::DocumentBytes,
             maximum: 8,
@@ -437,16 +437,16 @@ fn r11_construction_limits_and_duplicate_names() {
         );
         assert_eq!(result.is_ok(), maximum >= 3);
         if let Err(e) = result {
-            assert!(e.source.is_empty());
+            assert!(e.source_bytes().is_empty());
             assert!(matches!(
-                e.diagnostic.reason(),
+                e.diagnostic().reason(),
                 Some(DiagnosticReason::Limit {
                     kind: LimitKind::DocumentBytes,
                     ..
                 })
             ));
             assert_eq!(
-                e.diagnostic.context(),
+                e.diagnostic().context(),
                 Some(&DiagnosticContext::Construction)
             );
         }
@@ -476,8 +476,8 @@ fn r11_construction_limits_and_duplicate_names() {
         assert_eq!(
             ExactJson::from_ordinary(OrdinaryValue::Array(&array), limits)
                 .unwrap_err()
-                .diagnostic
-                .code,
+                .diagnostic()
+                .code(),
             Code::Limit
         );
     }
@@ -489,12 +489,12 @@ fn r11_construction_limits_and_duplicate_names() {
         Limits::default(),
     )
     .unwrap_err();
-    assert_eq!(error.diagnostic.code, Code::DuplicateMember);
+    assert_eq!(error.diagnostic().code(), Code::DuplicateMember);
     assert_eq!(
-        error.diagnostic.source_context().unwrap().origin,
+        error.diagnostic().source_context().unwrap().origin,
         SourceOrigin::Constructed
     );
-    assert!(!error.source.is_empty());
+    assert!(!error.source_bytes().is_empty());
 }
 #[test]
 fn r12_error_chaining_and_source_domains() {
@@ -507,10 +507,10 @@ fn r12_error_chaining_and_source_domains() {
         },
     )
     .unwrap_err();
-    assert!(failure.diagnostic.location.is_none());
-    assert!(failure.diagnostic.source_context().is_none());
+    assert!(failure.diagnostic().location().is_none());
+    assert!(failure.diagnostic().source_context().is_none());
     assert_eq!(
-        failure.diagnostic.context(),
+        failure.diagnostic().context(),
         Some(&DiagnosticContext::CallerInput)
     );
 
@@ -519,7 +519,7 @@ fn r12_error_chaining_and_source_domains() {
         .unwrap()
         .downcast_ref::<Diagnostic>()
         .unwrap();
-    assert_eq!(cause, &failure.diagnostic);
+    assert_eq!(cause, failure.diagnostic());
     assert_eq!(
         cause.source_context().unwrap().origin,
         SourceOrigin::Authored
@@ -532,7 +532,7 @@ fn r12_error_chaining_and_source_domains() {
         .root();
     let error = c.number().unwrap().to_f64_exact().unwrap_err();
     assert_eq!(error.source_context(), Some(c.source_context()));
-    assert_eq!(error.location, Some(c.location()));
+    assert_eq!(error.location().cloned(), Some(c.location()));
     let text = r#"{"openapi":"3.1.2","servers":[{"url":"https://api.example"}],"paths":{"/":{"get":{"operationId":"op","parameters":[{"name":"q","in":"query","schema":{}}]}}}}"#;
     let op = Document::parse(text, None, Limits::default())
         .unwrap()
@@ -550,7 +550,7 @@ fn r12_error_chaining_and_source_domains() {
         ..Default::default()
     };
     let error = op.prepare(&input).unwrap_err();
-    assert_eq!(error.code, Code::UnsupportedValue);
+    assert_eq!(error.code(), Code::UnsupportedValue);
     assert_eq!(error.source_context(), Some(bad.source_context()));
-    assert_eq!(error.location, Some(bad.location()));
+    assert_eq!(error.location().cloned(), Some(bad.location()));
 }

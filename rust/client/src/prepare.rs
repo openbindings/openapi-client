@@ -100,14 +100,62 @@ pub struct Input {
     /// Credentials keyed by declared security-scheme name.
     pub credentials: BTreeMap<String, Credential>,
 }
+/// One effective parameter with independently retained source/reference data.
 #[derive(Clone)]
-struct Parameter {
+pub struct Parameter {
+    resolved: crate::ResolvedReference,
     node: Value,
     name: String,
     location: ParameterLocation,
     required: bool,
     explode: bool,
     unsupported: bool,
+}
+/// Effective parameter declarations retaining their exact source owners.
+/// Structured refusal leaves Operation::inspect available for raw inspection.
+#[derive(Clone, Debug)]
+pub struct Parameters {
+    entries: Vec<Parameter>,
+}
+impl Parameters {
+    /// Effective order, with operation declarations overriding path declarations.
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = Parameter> + '_ {
+        self.entries.iter().cloned()
+    }
+}
+impl std::fmt::Debug for Parameter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Parameter")
+            .field("location", &self.location)
+            .field("required", &self.required)
+            .finish_non_exhaustive()
+    }
+}
+impl Parameter {
+    /// Exact declared name; untrusted explicit-access data.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+    /// Parameter namespace.
+    pub fn location(&self) -> ParameterLocation {
+        self.location
+    }
+    /// Effective required flag after declaration checks.
+    pub fn required(&self) -> bool {
+        self.required
+    }
+    /// Authored declaration/reference at its use site.
+    pub fn authored(&self) -> Value {
+        self.resolved.authored.clone()
+    }
+    /// Reference use-site siblings, chain and final target, retaining their owners.
+    pub fn resolved(&self) -> crate::ResolvedReference {
+        self.resolved.clone()
+    }
+    /// Raw Schema Object. None does not mean a content declaration is absent.
+    pub fn schema(&self) -> Option<Value> {
+        self.node.get("schema")
+    }
 }
 pub(crate) struct Compiled {
     parameters: Vec<Parameter>,
@@ -155,7 +203,13 @@ fn same_name(a: &str, b: &str, location: ParameterLocation) -> bool {
 }
 
 impl Operation {
-    fn compile(&self) -> Result<Arc<Compiled>, Diagnostic> {
+    /// Inspect effective parameters without compiling body/media/security requirements.
+    /// Unsupported editions and invalid parameter declarations refuse; raw inspection remains.
+    pub fn parameters(&self) -> Result<Parameters, Diagnostic> {
+        self.parameter_declarations()
+            .map(|(entries, _)| Parameters { entries })
+    }
+    fn parameter_declarations(&self) -> Result<(Vec<Parameter>, usize), Diagnostic> {
         let root = self.store.json.root();
         let node = self.value();
         if !root
@@ -188,8 +242,9 @@ impl Operation {
                     return Err(authored.error(Code::Limit));
                 }
                 budget -= 1;
-                let p = document::resolve(&root, &authored, ReferenceKind::Parameter, budget + 1)?
-                    .target;
+                let resolved =
+                    document::resolve(&root, &authored, ReferenceKind::Parameter, budget + 1)?;
+                let p = resolved.target.clone();
                 let name = required_string(&p, "name")?;
                 let location = ParameterLocation::parse(&required_string(&p, "in")?)
                     .ok_or_else(|| p.error(Code::UnsupportedParameter))?;
@@ -253,6 +308,7 @@ impl Operation {
                     || bool_field(&p, "allowReserved", false)?
                     || location == ParameterLocation::Header && name.eq_ignore_ascii_case("cookie");
                 let param = Parameter {
+                    resolved,
                     node: p.clone(),
                     name: name.clone(),
                     location,
@@ -270,6 +326,12 @@ impl Operation {
                 }
             }
         }
+        Ok((parameters, budget))
+    }
+    fn compile(&self) -> Result<Arc<Compiled>, Diagnostic> {
+        let (parameters, mut budget) = self.parameter_declarations()?;
+        let root = self.store.json.root();
+        let node = self.value();
         let body = node
             .get("requestBody")
             .map(|b| {
@@ -649,7 +711,7 @@ fn choose_server(
             if value.contains(['{', '}']) {
                 return Err(v
                     .error(Code::InvalidDestination)
-                    .setting(format!("server.variables.{name}"))
+                    .with_setting(format!("server.variables.{name}"))
                     .election(SelectionKind::ServerVariable, None, Some(name.clone())));
             }
             if let Some(en) = v.get("enum") {
@@ -668,7 +730,7 @@ fn choose_server(
                 if !values.contains(value) {
                     return Err(v
                         .error(Code::InvalidSelection)
-                        .setting(format!("server.variables.{name}"))
+                        .with_setting(format!("server.variables.{name}"))
                         .election(SelectionKind::ServerVariable, None, Some(name.clone())));
                 }
             }

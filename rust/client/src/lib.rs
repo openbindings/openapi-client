@@ -21,8 +21,8 @@ pub use error::{
     NumericTarget, SelectionKind,
 };
 pub use prepare::{
-    Body, Credential, CredentialValue, Input, ParameterInput, ParameterLocation, PreparedRequest,
-    Selection,
+    Body, Credential, CredentialValue, Input, Parameter, ParameterInput, ParameterLocation,
+    Parameters, PreparedRequest, Selection,
 };
 pub use transport::{
     BodyState, Cancellation, DeliveredBody, DispatchEvidence, DispatchRequest, Header,
