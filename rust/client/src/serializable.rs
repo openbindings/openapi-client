@@ -7,7 +7,7 @@ use serde::{
     Serialize, Serializer,
     ser::{self, SerializeMap, SerializeSeq},
 };
-use std::{fmt, io};
+use std::{fmt, io, sync::Arc};
 
 // Pinned serde_json 1.0.151 uses this protocol when another dependency enables
 // arbitrary_precision. Its shape and number text are checked, never trusted.
@@ -15,7 +15,7 @@ const NUMBER: &str = "$serde_json::private::Number";
 const PRIVATE: &str = "$serde_json::private::";
 
 #[derive(Clone, Debug)]
-struct Error(Diagnostic);
+struct Error(Arc<Diagnostic>);
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)
@@ -29,8 +29,16 @@ impl ser::Error for Error {
     }
 }
 impl Error {
+    fn new(diagnostic: Diagnostic) -> Self {
+        Self(Arc::new(diagnostic))
+    }
     fn reason(reason: SerializationReason) -> Self {
-        Self(Diagnostic::new(Code::Serialization).reasoned(DiagnosticReason::Serialization(reason)))
+        Self::new(
+            Diagnostic::new(Code::Serialization).reasoned(DiagnosticReason::Serialization(reason)),
+        )
+    }
+    fn into_diagnostic(self) -> Diagnostic {
+        Arc::unwrap_or_clone(self.0)
     }
 }
 
@@ -50,13 +58,15 @@ impl<'limits> Encoder<'limits> {
         self.latch(Error::reason(reason))
     }
     fn limit(&mut self, kind: LimitKind, maximum: usize, actual: usize) -> Error {
-        self.latch(Error(Diagnostic::limited(kind, maximum, actual)))
+        self.latch(Error::new(Diagnostic::limited(kind, maximum, actual)))
     }
     fn guard(&mut self) -> Result<(), Error> {
         if let Some(error) = &self.first {
             return Err(error.clone());
         }
-        self.cancellation.check().map_err(|e| self.latch(Error(e)))
+        self.cancellation
+            .check()
+            .map_err(|e| self.latch(Error::new(e)))
     }
     fn room(&mut self, bytes: usize) -> Result<(), Error> {
         self.guard()?;
@@ -193,7 +203,7 @@ impl fmt::Write for Capture<'_> {
             return Err(fmt::Error);
         }
         if let Err(error) = self.cancellation.check() {
-            self.first = Some(Error(error));
+            self.first = Some(Error::new(error));
             return Err(fmt::Error);
         }
         let actual = self
@@ -201,7 +211,7 @@ impl fmt::Write for Capture<'_> {
             .saturating_add(self.text.len())
             .saturating_add(text.len());
         if actual > self.maximum {
-            self.first = Some(Error(Diagnostic::limited(
+            self.first = Some(Error::new(Diagnostic::limited(
                 LimitKind::DocumentBytes,
                 self.maximum,
                 actual,
@@ -257,13 +267,16 @@ impl ExactJson {
             depth: 0,
             first: None,
         };
-        encoder
-            .child(value)
-            .map_err(|e| crate::ordinary::construction(e.0))?;
+        encoder.child(value).map_err(|error| {
+            // Release the encoder's alias before recovering the owned diagnostic.
+            // Caller Serialize code may retain an error, so uniqueness is not assumed.
+            encoder.first = None;
+            crate::ordinary::construction(error.into_diagnostic())
+        })?;
         // A custom serializer can abandon a compound without calling end().
         if encoder.depth != 0 || encoder.nodes == 0 {
             return Err(crate::ordinary::construction(
-                Error::reason(SerializationReason::InvalidRepresentation).0,
+                Error::reason(SerializationReason::InvalidRepresentation).into_diagnostic(),
             ));
         }
         Self::parse_in_origin(

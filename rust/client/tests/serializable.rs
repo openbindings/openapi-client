@@ -98,6 +98,40 @@ fn host_local_input_does_not_weaken_owned_auto_traits() {
 }
 
 #[test]
+fn serializer_errors_can_be_formatted_into_successful_output_without_custom_text() {
+    struct Secret;
+    impl fmt::Display for Secret {
+        fn fmt(&self, _: &mut fmt::Formatter<'_>) -> fmt::Result {
+            panic!("custom error input must not be formatted")
+        }
+    }
+    struct ErrorAsData;
+    impl Serialize for ErrorAsData {
+        fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            let error = <S::Error as serde::ser::Error>::custom(Secret);
+            assert!(std::error::Error::source(&error).is_none());
+            [
+                format!("{error}"),
+                format!("{error:#}"),
+                format!("{error:?}"),
+                format!("{error:#?}"),
+            ]
+            .serialize(serializer)
+        }
+    }
+    let owner = construct(&ErrorAsData);
+    let expected = [
+        "Serialization: Serialization(Custom)",
+        "Serialization: Serialization(Custom)",
+        "Error(Serialization: Serialization(Custom))",
+        "Error(\n    Serialization: Serialization(Custom),\n)",
+    ];
+    for (index, expected) in expected.into_iter().enumerate() {
+        assert_eq!(owner.root().at(index).unwrap().as_str(), Some(expected));
+    }
+}
+
+#[test]
 fn numbers_keep_exact_integer_and_finite_float_representation() {
     assert_eq!(construct(&i128::MIN).root().raw(), i128::MIN.to_string());
     assert_eq!(construct(&u128::MAX).root().raw(), u128::MAX.to_string());
