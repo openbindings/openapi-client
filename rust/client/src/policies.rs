@@ -1,5 +1,5 @@
 //! Explicit optional application acceptance policies. Invocation always returns Outcome.
-use crate::{Diagnostic, DispatchEvidence, ExactJson, Outcome, Response, UploadState};
+use crate::{Code, Diagnostic, DispatchEvidence, ExactJson, Outcome, Response, UploadState};
 
 /// Primary refusal under complete_2xx_json; independent facts remain in Outcome.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -22,6 +22,10 @@ pub struct CompletedJson {
     pub json: ExactJson,
 }
 /// Refused selected policy, retaining all available execution and decode evidence.
+/// Error::source follows the primary reason when represented by a Diagnostic:
+/// transport/preflight errors, decode errors, or an actual cancellation diagnostic.
+/// Status, upload and missing-response conditions have no diagnostic source;
+/// secondary errors remain available through the retained fields.
 #[derive(Debug)]
 pub struct JsonCallRefusal {
     /// Highest-priority failed condition of this explicitly selected policy.
@@ -40,10 +44,21 @@ impl std::fmt::Display for JsonCallRefusal {
 }
 impl std::error::Error for JsonCallRefusal {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        self.decode_error
-            .as_ref()
-            .or(self.outcome.error.as_ref())
-            .map(|e| e as _)
+        let diagnostic = match self.reason {
+            CompleteJsonRefusal::Transport | CompleteJsonRefusal::NotDispatched => {
+                self.outcome.error.as_ref()
+            }
+            CompleteJsonRefusal::Decode => self.decode_error.as_ref(),
+            CompleteJsonRefusal::Cancelled => self
+                .outcome
+                .error
+                .as_ref()
+                .filter(|error| error.code() == Code::Cancelled),
+            CompleteJsonRefusal::MissingResponse
+            | CompleteJsonRefusal::HttpStatus
+            | CompleteJsonRefusal::UploadUncertain => None,
+        };
+        diagnostic.map(|error| error as _)
     }
 }
 /// Select dispatched, uncancelled, transport-error-free, 2xx, complete-upload JSON.
