@@ -222,8 +222,17 @@ impl ExactJson {
     /// Output obeys document byte/node limits and container depth min(limits.depth,128).
     /// Complete generated source has Constructed origin; earlier failures have no
     /// source or location. Caller Serialize/Display work is not preempted or bounded.
-    /// Custom error text is not formatted or retained. RawValue must use parse;
-    /// pinned serde_json arbitrary_precision Number tokens are strictly validated.
+    /// Custom error text is not formatted or retained. When named Serde callbacks
+    /// reach this constructor, the pinned arbitrary_precision Number protocol is
+    /// strictly validated and RawValue/unknown private protocols refuse. Use parse
+    /// for raw JSON. Adapters such as `#[serde(flatten)]` can erase that protocol name
+    /// and emit ordinary map entries instead. Flattening Number/RawValue is an
+    /// unsupported composition whose origin cannot then be detected; literal map
+    /// keys, including private-marker spellings, remain ordinary keys and are
+    /// never interpreted as number or raw-JSON instructions.
+    /// The depth limit counts emitted JSON containers. Transparent Some/newtype
+    /// wrappers do not count; their callback recursion and stack use remain
+    /// caller work and can exceed a thread's stack even with shallow JSON output.
     /// Construction runs now; later builder cancellation cannot undo this work.
     pub fn from_serializable<T: Serialize + ?Sized>(
         value: &T,

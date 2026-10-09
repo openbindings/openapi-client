@@ -50,7 +50,8 @@ pub enum SerializationReason {
     UnsupportedRepresentation,
     /// A serializer emitted an invalid compound or private-number protocol.
     InvalidRepresentation,
-    /// Caller serialization or string formatting returned an error; its text is not retained.
+    /// A Serialize implementation (including derive adapters) or string formatter
+    /// returned an error; its text is not retained.
     Custom,
 }
 /// Caller election field, without the elected value.
@@ -134,7 +135,7 @@ pub enum DiagnosticContext {
     PreparedRequest,
     /// Aggregate caller data admission.
     CallerInput,
-    /// Typed ordinary-value construction before a complete JSON source exists.
+    /// Ordinary-value or checked Serde construction before a complete JSON source exists.
     Construction,
 }
 impl fmt::Debug for DiagnosticContext {
