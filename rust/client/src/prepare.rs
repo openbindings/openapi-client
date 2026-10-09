@@ -194,7 +194,7 @@ fn bool_field(node: &Value, key: &str, default: bool) -> Result<bool, Diagnostic
         Some(v) => v.as_bool().ok_or_else(|| v.error(Code::InvalidDeclaration)),
     }
 }
-fn same_name(a: &str, b: &str, location: ParameterLocation) -> bool {
+pub(crate) fn same_name(a: &str, b: &str, location: ParameterLocation) -> bool {
     if location == ParameterLocation::Header {
         a.eq_ignore_ascii_case(b)
     } else {

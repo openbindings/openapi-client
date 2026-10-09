@@ -34,3 +34,6 @@ pub use value::{
 };
 mod ordinary;
 pub use ordinary::OrdinaryValue;
+
+mod request;
+pub use request::{Argument, RequestBuilder, RequestError};

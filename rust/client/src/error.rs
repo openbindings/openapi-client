@@ -74,6 +74,13 @@ pub enum DiagnosticReason {
     UnknownParameter,
     /// Multiple caller entries target the same declared parameter.
     DuplicateParameter,
+    /// Two explicit builder events assigned the same field or key.
+    DuplicateAssignment {
+        /// Zero-based first assignment event.
+        first_assignment: usize,
+        /// Zero-based repeated assignment event.
+        repeated_assignment: usize,
+    },
     /// The caller must correct or supply the named election; Code distinguishes invalid/ambiguous forms.
     Selection(SelectionKind),
 }
@@ -99,6 +106,13 @@ pub enum DiagnosticContext {
         /// Explicit-access untrusted variable key, when applicable.
         key: Option<String>,
     },
+    /// Explicit finite body assignment.
+    Body,
+    /// Caller credential scheme; the name is explicit-access untrusted data.
+    Credential {
+        /// Declared scheme name, omitted from default formatting.
+        scheme: String,
+    },
     /// Derived request target or final header collection.
     PreparedRequest,
     /// Aggregate caller data admission.
@@ -121,6 +135,8 @@ impl fmt::Debug for DiagnosticContext {
                 .field("kind", kind)
                 .field("index", index)
                 .finish_non_exhaustive(),
+            Self::Body => f.write_str("Body"),
+            Self::Credential { .. } => f.write_str("Credential { .. }"),
             Self::PreparedRequest => f.write_str("PreparedRequest"),
             Self::CallerInput => f.write_str("CallerInput"),
             Self::Construction => f.write_str("Construction"),
@@ -132,6 +148,7 @@ struct Details {
     reason: Option<DiagnosticReason>,
     context: Option<DiagnosticContext>,
     source: Option<SourceContext>,
+    context_omitted_for_limit: bool,
 }
 
 /// Stable failure categories. Diagnostic text never includes input values.
@@ -300,6 +317,18 @@ impl Diagnostic {
     /// None means no exact source owner was associated; do not assume the OpenAPI document.
     pub fn source_context(&self) -> Option<SourceContext> {
         self.details.as_ref()?.source
+    }
+    /// Whether corrective context was omitted because its complete name exceeded the bound.
+    pub fn context_omitted_for_limit(&self) -> bool {
+        self.details
+            .as_ref()
+            .is_some_and(|d| d.context_omitted_for_limit)
+    }
+    pub(crate) fn omit_context(mut self) -> Self {
+        self.details
+            .get_or_insert_with(Default::default)
+            .context_omitted_for_limit = true;
+        self
     }
     pub(crate) fn reasoned(mut self, reason: DiagnosticReason) -> Self {
         self.details.get_or_insert_with(Default::default).reason = Some(reason);
