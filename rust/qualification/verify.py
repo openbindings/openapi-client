@@ -32,7 +32,7 @@ def run(name, command, cwd=root):
 
 
 run('format', ['cargo', 'fmt', '--all', '--check'])
-run('lint', ['cargo', 'clippy', '--locked', '--workspace', '--all-targets', '--', '-D', 'warnings'])
+run('lint', [sys.executable, root / 'qualification/lint.py'])
 run('tests', ['cargo', 'test', '--locked', '--workspace'])
 for inventory in ['cases', 'additions']:
     run('corpus-' + inventory, ['cargo', 'run', '--locked', '-p', 'oac-qualification',
