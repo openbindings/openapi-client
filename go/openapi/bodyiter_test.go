@@ -553,11 +553,21 @@ func TestIteratorStopsWhenTheBodyIsUnwanted(t *testing.T) {
 		c := parseAt(t, seqDoc(), srv.URL, srv.URL+"/openapi.json", nil)
 		ctx, _ := gateCtx(t)
 		stopped := make(chan bool, 1)
-		req := mustPrepare(t, c, "jsonl", &openapi.Input{Body: endless(ctx, stopped)})
+		entered := make(chan struct{})
+		body := func(yield func(any) bool) {
+			close(entered)
+			endless(ctx, stopped)(yield)
+		}
+		req := mustPrepare(t, c, "jsonl", &openapi.Input{Body: iter.Seq[any](body)})
 		resp, err := req.Send(ctx)
 		if err != nil {
 			t.Fatalf("Send: %v", err)
 		}
+		defer resp.Body.Close()
+		// Send promises headers, not iterator entry. Closing before entry may
+		// legitimately prevent the source from running, so it cannot report a
+		// false yield. Establish the active upload whose shutdown we assert.
+		awaitOr(t, entered, nil, "request iterator entry")
 		resp.Body.Close()
 		awaitStopped(t, stopped, "after Response.Body.Close")
 		wctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
