@@ -44,3 +44,56 @@ fn diagnostic_and_retained_value_trace_use_original_yaml_definition() {
     assert_eq!(trace.alias_uses[0].raw(), "*p");
     assert!(trace.authored.unwrap().raw().contains("name: id"));
 }
+
+#[test]
+fn server_and_body_refusals_keep_yaml_definition_and_alias_locations() {
+    let yaml = "openapi: 3.1.2\nx-server: &s {url: 'https://bad host'}\nservers: [*s]\npaths:\n  /items:\n    get:\n      operationId: list\n      responses: {'200': {description: ok}}\n";
+    let document = Document::parse(yaml, None, Limits::default()).unwrap();
+    let error = document
+        .operation_id("list")
+        .unwrap()
+        .request()
+        .prepare()
+        .unwrap_err();
+    let diagnostic = error.diagnostic();
+    let location = diagnostic.location().unwrap();
+    assert!(yaml[location.start..location.end].contains("https://bad host"));
+    assert_eq!(
+        diagnostic.source_context().unwrap().origin,
+        SourceOrigin::Authored
+    );
+    assert!(
+        diagnostic
+            .related()
+            .iter()
+            .any(|p| &yaml[p.start..p.end] == "*s")
+    );
+
+    let yaml = "openapi: 3.1.2\nservers: [{url: 'https://example.test'}]\nx-data: &data {message: longer-than-body-limit}\nx-use: *data\npaths:\n  /items:\n    post:\n      operationId: create\n      requestBody:\n        content:\n          application/json: {schema: {type: object}}\n      responses: {'200': {description: ok}}\n";
+    let limits = Limits {
+        body_bytes: 8,
+        ..Limits::default()
+    };
+    let document = Document::parse(yaml, None, limits).unwrap();
+    let error = document
+        .operation_id("create")
+        .unwrap()
+        .request()
+        .json(document.root().get("x-use").unwrap())
+        .prepare()
+        .unwrap_err();
+    let diagnostic = error.diagnostic();
+    assert_eq!(diagnostic.code(), Code::Limit);
+    let location = diagnostic.location().unwrap();
+    assert!(yaml[location.start..location.end].contains("message: longer-than-body-limit"));
+    assert_eq!(
+        diagnostic.source_context().unwrap().origin,
+        SourceOrigin::Authored
+    );
+    assert!(
+        diagnostic
+            .related()
+            .iter()
+            .any(|p| &yaml[p.start..p.end] == "*data")
+    );
+}

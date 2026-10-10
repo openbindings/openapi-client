@@ -1634,8 +1634,7 @@ fn choose_server(
             return Err(server.error(Code::InvalidSelection));
         }
         uri::server_target(&s, base).map_err(|mut e| {
-            e.location = Some(server.location());
-            e = e.sourced(server.source_context());
+            e = server.locate(e);
             if touched.len() == 1 {
                 let name = touched.iter().next().unwrap();
                 let variable = vars.as_ref().and_then(|v| v.get(name));
@@ -1975,13 +1974,11 @@ fn prepare_body(
         Body::Absent => unreachable!(),
         Body::Json(v) => {
             if v.raw().len() > limits.body_bytes {
-                return Err(Diagnostic::limited(
+                return Err(v.locate(Diagnostic::limited(
                     LimitKind::BodyBytes,
                     limits.body_bytes,
                     v.raw().len(),
-                )
-                .at(v.location())
-                .sourced(v.source_context()));
+                )));
             }
             if !media_type(&selected)?.1 {
                 return Err(source.error(Code::UnsupportedMedia));
