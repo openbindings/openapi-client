@@ -23,6 +23,16 @@ fn typed_projection_keeps_exact_source_and_uses_explicit_serde_numeric_semantics
         Code::NumericConversion
     );
     assert_eq!(exact.source(), "9007199254740993");
+    let negative_zero = ExactJson::parse("-0", Limits::default()).unwrap();
+    assert!(negative_zero.deserialize::<i64>().is_err());
+    assert!(
+        negative_zero
+            .deserialize::<f64>()
+            .unwrap()
+            .is_sign_negative()
+    );
+    assert_eq!(negative_zero.root().number().unwrap().to_i64().unwrap(), 0);
+    assert_eq!(negative_zero.source(), "-0");
     assert!(exact.deserialize::<u8>().is_err());
     let max = ExactJson::parse(u128::MAX.to_string(), Limits::default()).unwrap();
     assert_eq!(max.deserialize::<u128>().unwrap(), u128::MAX);

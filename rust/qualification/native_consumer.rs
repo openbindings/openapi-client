@@ -1843,6 +1843,10 @@ async fn main() {
         safe: u64,
         wide: u128,
         min: i128,
+    }
+    #[derive(Deserialize, Debug)]
+    struct NegativeInteger {
+        #[allow(dead_code)]
         neg: i64,
     }
     #[derive(Deserialize)]
@@ -1859,7 +1863,38 @@ async fn main() {
     assert_eq!(ints.safe, 9_007_199_254_740_993);
     assert_eq!(ints.wide, u128::MAX);
     assert_eq!(ints.min, i128::MIN);
-    assert_eq!(ints.neg, 0);
+    // Standard Serde treats the lexical -0 as floating negative zero and
+    // refuses an i64 destination. The core lexical convenience remains distinct.
+    let direct_negative_zero = serde_json::from_str::<NegativeInteger>(&source).unwrap_err();
+    let negative_zero = accepted.json.deserialize::<NegativeInteger>().unwrap_err();
+    assert_eq!(
+        negative_zero.detail().to_string(),
+        direct_negative_zero.to_string()
+    );
+    safe_error_chain(&negative_zero);
+    assert_eq!(
+        accepted
+            .json
+            .root()
+            .get("neg")
+            .unwrap()
+            .number()
+            .unwrap()
+            .token(),
+        "-0"
+    );
+    assert_eq!(
+        accepted
+            .json
+            .root()
+            .get("neg")
+            .unwrap()
+            .number()
+            .unwrap()
+            .to_i64()
+            .unwrap(),
+        0
+    );
     let float: Floating = accepted.json.deserialize().unwrap();
     assert_eq!(float.safe, 9_007_199_254_740_992.0);
     assert_eq!(float.neg.to_bits(), (-0.0_f64).to_bits());
@@ -1884,7 +1919,7 @@ async fn main() {
     assert!(std::error::Error::source(&overflow).is_none());
     assert_eq!(accepted.json.source(), source);
     assert_eq!(accepted.json.source().as_bytes(), fixture("numeric.json"));
-    observations.push(json!({"case":"typed-numbers-are-explicit-projections","u128Exact":true,"i128Exact":true,"u64OverflowRefused":true,"floatingRoundingExplicit":true,"exactSourceUnchanged":true}));
+    observations.push(json!({"case":"typed-numbers-are-explicit-projections","u128Exact":true,"i128Exact":true,"u64OverflowRefused":true,"integerNegativeZeroRefusalMatchesStandardSerde":true,"floatingRoundingExplicit":true,"exactSourceUnchanged":true}));
     #[derive(Deserialize, Debug)]
     enum Kind {
         Good,

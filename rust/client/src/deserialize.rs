@@ -45,6 +45,8 @@ impl ExactJson {
     /// Integer destination types reject overflow; supported i128/u128 values are
     /// parsed directly without a binary64 intermediate. Choosing f32/f64 explicitly
     /// selects ordinary floating-point rounding, unlike Number::to_f64_exact().
+    /// Serde token rules also apply: for example, i64 projection of `-0` refuses,
+    /// although the exact Number::to_i64() convenience returns zero.
     /// The original number spelling remains available through root(). Borrowed
     /// output can borrow unescaped strings from this owner.
     ///
