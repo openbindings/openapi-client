@@ -72,3 +72,6 @@ pub use schema::{
 
 #[cfg(test)]
 mod schema_tests;
+
+#[cfg(test)]
+mod schema_fact_repair_tests;
