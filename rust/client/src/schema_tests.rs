@@ -93,6 +93,7 @@ fn select_query(action: &str) -> FactQuery<'_> {
         "Types" => FactQuery::Types,
         "ContentEncoding" => FactQuery::ContentEncoding,
         "ContentMediaType" => FactQuery::ContentMediaType,
+        "LegacyFormat" => FactQuery::LegacyFormat,
         "ObjectShape" => FactQuery::ObjectShape,
         "Items" => FactQuery::Items,
         _ => FactQuery::Property(action.strip_prefix("Property:").unwrap()),
@@ -321,12 +322,7 @@ fn frozen_literal_contract() {
         }
         if let Some(expected) = case["expect"]["source_pointers"].as_array() {
             let actual = observed["source_pointers"].as_array().expect(name);
-            for pointer in expected {
-                assert!(
-                    actual.contains(pointer),
-                    "{name}: missing source {pointer} in {actual:?}"
-                );
-            }
+            assert_eq!(actual, expected, "{name}: exact ordered contributors");
         }
         executed += 1;
     }
@@ -334,6 +330,71 @@ fn frozen_literal_contract() {
 }
 
 const DRAFT: &str = "https://json-schema.org/draft/2020-12/schema";
+#[test]
+fn frozen_contributor_provenance_contract() {
+    let controls: Json = serde_json::from_str(include_str!(
+        "../tests/fixtures/schema-contributor-controls.json"
+    ))
+    .unwrap();
+    let cases = controls["cases"].as_array().unwrap();
+    assert_eq!(cases.len(), 20);
+    for case in cases {
+        let name = case["id"].as_str().unwrap();
+        let mut builder = DocumentBuilder::new(Limits::default(), GraphLimits::default());
+        let mut ids = HashMap::new();
+        for resource in case["resources"].as_array().unwrap() {
+            ids.insert(
+                resource["name"].as_str().unwrap(),
+                builder.add(input(resource)).unwrap(),
+            );
+        }
+        let doc = builder.build(ids["entry"]).unwrap();
+        let selection = SchemaSelection(
+            case["selection"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|s| {
+                    handle(
+                        &doc,
+                        ids[s["resource"].as_str().unwrap()],
+                        s["pointer"].as_str().unwrap(),
+                    )
+                    .unwrap()
+                    .key
+                })
+                .collect(),
+        );
+        let cancellation = Cancellation::default();
+        let mut work = FactWork::new(&doc.0.limits, &cancellation);
+        let fact = query(
+            &doc.0.graph,
+            &selection,
+            select_query(case["query"].as_str().unwrap()),
+            &mut work,
+        )
+        .unwrap();
+        let mut observed = fact_json(fact.clone(), &doc.0.graph);
+        let sites = match fact {
+            Fact::Known { provenance, .. } | Fact::Absent { provenance } => provenance,
+            Fact::Indeterminate { sites, .. } => sites,
+            _ => panic!("{name}: unexpected {observed}"),
+        };
+        observed["source_sites"] = json!(
+            sites
+                .into_iter()
+                .map(|key| {
+                    json!({"resource": ids.iter().find(|(_, id)| id.0 == key.0).unwrap().0,
+                "pointer": doc.0.graph.value(key).location().pointer})
+                })
+                .collect::<Vec<_>>()
+        );
+        for (field, expected) in case["expect"].as_object().unwrap() {
+            assert_eq!(&observed[field], expected, "{name}: {field}");
+        }
+    }
+}
+
 fn schema_doc(value: Json) -> Document {
     let mut builder = DocumentBuilder::new(Limits::default(), GraphLimits::default());
     let id = builder

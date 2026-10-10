@@ -81,6 +81,11 @@ session shares `Limits::schema_fact_work` (500,000 by default); fact traversal d
 Each query memoizes completed source nodes and accumulates unique contributions
 and provenance in deterministic order. Memo hits still consume work and enforce
 the full selected path's depth and hop limits; active recursion remains indeterminate.
+Known provenance identifies local Known contributions to the returned payload;
+Absent provenance identifies absence sites only when the whole result is Absent.
+Every relevant conjunct is still inspected and charged. Provenance is not a log of
+all visited reference, scope or absence evidence. Conflicts retain their incompatible
+Known contributors.
 Name membership grows incrementally, with incoming strings and joins charged before
 growth. Numeric type conjunction treats integer as a subset of number, without
 inspecting instances. Query scratch is released after the result is returned; no

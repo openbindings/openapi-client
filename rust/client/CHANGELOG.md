@@ -1,5 +1,7 @@
 # Unreleased (0.0.0)
 
+- Private schema facts retain only payload contributors for Known provenance;
+  absence checks still run and remain evidence when the complete fact is Absent.
 - Identity-collision diagnostics retain the earlier claimant as an owning
   SourcePosition in their typed reason. Authored JSON/YAML remains available
   after document handles are dropped; the later primary site is unchanged.

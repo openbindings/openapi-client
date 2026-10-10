@@ -263,7 +263,7 @@ pub(crate) fn query(
                 value: next,
                 provenance,
             } => {
-                result.sites(provenance, work, &value)?;
+                result.sites(provenance, true, work, &value)?;
                 if let Some(reason) = result.merge(next, work, &value)? {
                     return Ok(Fact::Indeterminate {
                         reason,
@@ -271,7 +271,7 @@ pub(crate) fn query(
                     });
                 }
             }
-            Fact::Absent { provenance } => result.sites(provenance, work, &value)?,
+            Fact::Absent { provenance } => result.sites(provenance, false, work, &value)?,
             other => return Ok(other),
         }
     }
@@ -551,12 +551,22 @@ impl Accumulator {
     fn sites(
         &mut self,
         sites: Vec<NodeKey>,
+        contributes: bool,
         work: &mut FactWork<'_>,
         at: &Value,
     ) -> Result<(), Diagnostic> {
+        // Before the first Known contribution these are absence sites. They do
+        // not contribute to a Known payload; reuse the same bounded storage.
+        if contributes && self.value.is_none() {
+            work.at(self.known_sites.capacity(), at, WorkStage::Provenance)?;
+            self.known_sites.clear();
+            self.provenance.clear();
+        }
         for site in sites {
             work.at(1, at, WorkStage::Provenance)?;
-            if self.known_sites.insert(site) {
+            // Later absence is still checked and charged, but does not explain
+            // the Known payload already accumulated.
+            if (contributes || self.value.is_none()) && self.known_sites.insert(site) {
                 self.provenance.push(site);
             }
         }
