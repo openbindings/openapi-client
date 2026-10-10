@@ -38,6 +38,10 @@ pub struct Limits {
     pub reference_steps: usize,
     /// Aggregate effective-descriptor declarations and reference hops, independent of chain depth.
     pub descriptor_work: usize,
+    /// Aggregate schema fact traversal, query, join and result work per session.
+    pub schema_fact_work: usize,
+    /// Active schema fact depth, independent of reference-chain hops and width.
+    pub schema_fact_depth: usize,
     /// Maximum finite request body and retained delivered response body bytes.
     pub body_bytes: usize,
     /// Maximum logical named form fields, independent of reference traversal.
@@ -74,6 +78,8 @@ impl Default for Limits {
             operations: 20_000,
             reference_steps: 128,
             descriptor_work: 500_000,
+            schema_fact_work: 500_000,
+            schema_fact_depth: 128,
             body_bytes: 4 * 1024 * 1024,
             form_fields: 128,
             form_parts: 1024,
@@ -812,6 +818,18 @@ impl Value {
             return deferred.root.clone();
         }
         self.node().span.clone()
+    }
+    pub(crate) fn at_identity(&self, id: usize) -> Option<Self> {
+        (id < self.store.nodes().len()).then(|| Self {
+            store: self.store.clone(),
+            id,
+        })
+    }
+    pub(crate) fn parent_value(&self) -> Option<Self> {
+        self.node().parent.map(|id| Self {
+            store: self.store.clone(),
+            id,
+        })
     }
     pub(crate) fn identity(&self) -> usize {
         self.id

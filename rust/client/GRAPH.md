@@ -11,7 +11,8 @@ use dynamic_openapi_client::*;
 # fn complete(document: &Document, error: &Diagnostic, bytes: &[u8]) -> Result<Document, Box<dyn std::error::Error>> {
 let need = error.resource_need().expect("a missing-resource diagnostic");
 let mut builder = DocumentBuilder::from_document(document);
-builder.supply(need, ResourceInput::at(need.requested_uri(), bytes)?)?;
+let uri = need.requested_uri().ok_or_else(|| Diagnostic::new(Code::MissingResourceBase))?;
+builder.supply(need, ResourceInput::at(uri, bytes)?)?;
 let completed = builder.build(document.entry_resource().id())?;
 // Reacquire operations/sites in the new snapshot before preparing again.
 # Ok(completed)
@@ -55,8 +56,8 @@ Request Body, Header, Example, Link, Callback, Security Scheme and Media Type
 positions. OpenAPI 3.2 nested/positional Encoding Header references are indexed;
 that inspection support does not enable structured multipart serialization.
 Referenced optional headers in currently supported finite forms use the graph;
-required/custom header refusal remains explicit. Schemas, examples' instance
-values and extension payloads remain inert. A direct Operation Object `$ref`
+required/custom header refusal remains explicit. Schema positions use the typed
+[schema graph](SCHEMAS.md); examples' instance values and extension payloads remain inert. A direct Operation Object `$ref`
 still reports `UnsupportedReferencePosition`.
 
 External Path Items contribute mounted operations. `operations()` is the known
@@ -94,7 +95,8 @@ library work; constructing a caller-owned ResourceInput/layout is caller work.
 
 Explicit Link operationRef/operationId connection resolution and discriminator
 URI inspection are not implemented by this Reference Object resolver; their raw
-fields remain inspectable. Dialect-aware schema identity/anchors/facts, selected
-encoder schema needs and file/HTTP/custom acquisition drivers remain subsequent slices. No evaluator,
+fields remain inspectable. Schema inspection and private bounded facts are described
+in [SCHEMAS.md](SCHEMAS.md). Selected encoder schema needs and file/HTTP/custom
+acquisition drivers remain subsequent slices. No evaluator,
 implicit fetching, synthetic base, document rewrite or complete-feature claim is
 introduced by this graph layer.

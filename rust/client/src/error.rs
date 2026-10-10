@@ -13,6 +13,8 @@ pub enum LimitKind {
     GraphReferenceEdges,
     GraphIdentities,
     GraphLayouts,
+    SchemaFactWork,
+    SchemaFactDepth,
     GraphMetadataBytes,
     ReferenceDepth,
     DocumentBytes,
@@ -105,6 +107,8 @@ pub enum VersionReason {
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum DiagnosticReason {
+    /// Selected schema interpretation or bounded fact refusal.
+    Schema(crate::SchemaReason),
     /// Why a finite named form could not be represented.
     Form(crate::FormReason),
     /// The declared style/type/explode combination has no supported defined serialization.
@@ -242,6 +246,8 @@ struct Details {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Code {
+    /// Selected schema semantics require a dialect capability outside this profile.
+    UnsupportedSchema,
     /// Referenced resource bytes have not been supplied to this immutable snapshot.
     ResourceUnavailable,
     /// A non-root reference into an untyped resource needs an explicit layout.
@@ -353,6 +359,7 @@ pub enum Code {
 impl Code {
     fn message(self) -> &'static str {
         match self {
+            Self::UnsupportedSchema => "the selected schema semantics are unsupported",
             Self::ResourceUnavailable => "referenced resource bytes are not available",
             Self::ResourceLayoutRequired => "the referenced resource needs an explicit layout",
             Self::IdentityCollision => "different sources claim the same resource identity",
@@ -385,7 +392,7 @@ impl Code {
             Self::UnsupportedVersion => {
                 "the document edition is missing, conflicting, malformed or unsupported"
             }
-            Self::InvalidDeclaration => "a required protocol declaration is invalid",
+            Self::InvalidDeclaration => "a required declaration is invalid",
             Self::AmbiguousOperation => "the operation ID identifies more than one operation",
             Self::MissingOperation => "the requested operation does not exist",
             Self::MissingBase => "a relative server URL requires a document base URL",
@@ -519,6 +526,9 @@ impl Diagnostic {
     /// and effective inspection. The need owns its originating immutable snapshot.
     pub fn resource_need(&self) -> Option<&crate::ResourceNeed> {
         self.details.as_ref()?.resource_need.as_ref()
+    }
+    pub(crate) fn need_data(&self) -> Option<&crate::graph::NeedFact> {
+        self.details.as_ref()?.need_fact.as_ref()
     }
     pub(crate) fn need_fact(mut self, fact: crate::graph::NeedFact) -> Self {
         self.details.get_or_insert_with(Default::default).need_fact = Some(fact);

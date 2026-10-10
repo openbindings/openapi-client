@@ -1,5 +1,12 @@
 # Unreleased (0.0.0)
 
+- Add immutable schema identity, dialect and anchor indexing, owning inspection
+  handles, one-edge static resolution and uniform missing-resource/layout recovery.
+  Add private bounded declaration facts without wiring them into request encoding.
+- Unpublished breaking migration: ResourceNeed URI, protocol-kind, edition and
+  target-pointer getters now return Option; new typed interpretation/fragment
+  getters distinguish schema needs and anonymous layout repair. See SCHEMAS.md.
+
 - Share private logical serialization atoms across parameters and forms. Add flat
   `deepObject`, component-safe reserved expansion, final-name credential collision
   checks, bounded parameter output planning and corrective style diagnostics.

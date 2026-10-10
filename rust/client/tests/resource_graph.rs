@@ -108,8 +108,8 @@ fn missing_bytes_recover_uniformly_without_mutating_old_snapshots() {
         assert_eq!(error.code(), Code::ResourceUnavailable);
         let need = error.resource_need().expect("uniform corrective need");
         assert_eq!(need.kind(), ResourceNeedKind::Bytes);
-        assert_eq!(need.requested_uri(), "https://docs.example/params");
-        assert_eq!(need.reference_kind(), ReferenceKind::Parameter);
+        assert_eq!(need.requested_uri(), Some("https://docs.example/params"));
+        assert_eq!(need.reference_kind(), Some(ReferenceKind::Parameter));
         assert_eq!(need.source().as_str(), Some("params"));
     }
     assert!(
@@ -286,8 +286,8 @@ fn security_uri_keys_recover_and_exact_uri_like_names_take_precedence() {
         let need = error
             .resource_need()
             .expect("URI-key need at every public boundary");
-        assert_eq!(need.requested_uri(), "https://docs.example/scheme");
-        assert_eq!(need.reference_kind(), ReferenceKind::SecurityScheme);
+        assert_eq!(need.requested_uri(), Some("https://docs.example/scheme"));
+        assert_eq!(need.reference_kind(), Some(ReferenceKind::SecurityScheme));
     }
     let mut builder = DocumentBuilder::from_document(&doc);
     builder
@@ -445,7 +445,7 @@ fn issues_and_first_corrective_need_follow_authored_path_order() {
     let error = doc.operation_id("unknown").unwrap_err();
     assert_eq!(
         error.resource_need().unwrap().requested_uri(),
-        "https://docs.example/z"
+        Some("https://docs.example/z")
     );
 }
 
@@ -631,8 +631,8 @@ fn selected_form_header_references_use_uniform_graph_recovery() {
             .unwrap_err();
         assert_eq!(error.diagnostic().code(), Code::ResourceUnavailable);
         let need = error.diagnostic().resource_need().unwrap();
-        assert_eq!(need.requested_uri(), "https://docs.example/header");
-        assert_eq!(need.reference_kind(), ReferenceKind::Header);
+        assert_eq!(need.requested_uri(), Some("https://docs.example/header"));
+        assert_eq!(need.reference_kind(), Some(ReferenceKind::Header));
         assert!(
             need.source()
                 .location()
@@ -698,7 +698,7 @@ fn mounted_resource_need_survives_later_local_path_validation_issue() {
     assert_eq!(error.code(), Code::IncompleteDiscovery);
     assert_eq!(
         error.resource_need().unwrap().requested_uri(),
-        "https://docs.example/missing"
+        Some("https://docs.example/missing")
     );
     assert_eq!(
         doc.graph_issues()
@@ -707,7 +707,7 @@ fn mounted_resource_need_survives_later_local_path_validation_issue() {
             .resource_need()
             .unwrap()
             .requested_uri(),
-        "https://docs.example/missing"
+        Some("https://docs.example/missing")
     );
 }
 

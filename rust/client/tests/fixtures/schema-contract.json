@@ -1,0 +1,1782 @@
+{
+  "status": "author acceptance proposal; not executed and not an independent oracle",
+  "source_baseline": "271ae8281203b2ad0b28e1f96387775059f4553c",
+  "governing_decision": "../SCHEMA-RULINGS.md",
+  "diagnostic_note": "Fact kinds/reasons are proposed internal contract names. Public existing resource/reference codes remain; UnsupportedSchema and Schema reasons are proposed additions. Root/independent review freezes mapping before implementation qualification. Hard limits/cancellation are Err, never Indeterminate.",
+  "fixture_encoding": "document values are literal JSON; serialize without rewrites. retrieval null means anonymous. layout is explicit only where present.",
+  "fixtures": {
+    "plain": {
+      "retrieval": "https://schemas.example/plain",
+      "document": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "string",
+        "default": "unchanged",
+        "enum": [
+          "x"
+        ]
+      }
+    },
+    "ref": {
+      "retrieval": "https://schemas.example/ref",
+      "document": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$ref": "plain"
+      }
+    },
+    "anchor": {
+      "retrieval": "https://schemas.example/a",
+      "document": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$defs": {
+          "T": {
+            "$anchor": "name",
+            "type": "string"
+          }
+        },
+        "$ref": "#name"
+      }
+    },
+    "missing-anchor": {
+      "retrieval": "https://schemas.example/a",
+      "document": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$ref": "#absent"
+      }
+    },
+    "bad-fragment": {
+      "retrieval": "https://schemas.example/a",
+      "document": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$ref": "#bad%ZZ"
+      }
+    },
+    "bad-utf8": {
+      "retrieval": "https://schemas.example/a",
+      "document": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$ref": "#%FF"
+      }
+    },
+    "escaped": {
+      "retrieval": "https://schemas.example/a",
+      "document": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "a/b": {
+            "type": "string"
+          },
+          "a%2Fb": {
+            "type": "number"
+          },
+          "a~b": {
+            "type": "boolean"
+          }
+        },
+        "$defs": {
+          "slash": {
+            "$ref": "#/properties/a~1b"
+          },
+          "percent": {
+            "$ref": "#/properties/a%252Fb"
+          },
+          "tilde": {
+            "$ref": "#/properties/a~0b"
+          }
+        }
+      }
+    },
+    "dynamic": {
+      "retrieval": "https://schemas.example/d",
+      "document": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$defs": {
+          "T": {
+            "$dynamicAnchor": "node",
+            "type": "string"
+          }
+        },
+        "$dynamicRef": "#node"
+      }
+    },
+    "dynamic-pointer": {
+      "retrieval": "https://schemas.example/d",
+      "document": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$defs": {
+          "T": {
+            "$dynamicAnchor": "node",
+            "type": "string"
+          }
+        },
+        "$dynamicRef": "#/$defs/T"
+      }
+    },
+    "dynamic-ordinary-anchor": {
+      "retrieval": "https://schemas.example/d",
+      "document": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$defs": {
+          "T": {
+            "$anchor": "node",
+            "type": "string"
+          }
+        },
+        "$dynamicRef": "#node"
+      }
+    },
+    "self-cycle": {
+      "retrieval": null,
+      "document": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$ref": ""
+      }
+    },
+    "opaque": {
+      "retrieval": "https://schemas.example/opaque",
+      "document": {
+        "$schema": "https://custom.example/dialect",
+        "type": "string",
+        "$ref": "#name"
+      }
+    },
+    "default32": {
+      "retrieval": "https://docs.example/api.json",
+      "document": {
+        "openapi": "3.2.0",
+        "info": {
+          "title": "literal schema case",
+          "version": "1"
+        },
+        "paths": {},
+        "components": {
+          "schemas": {
+            "X": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "custom-default": {
+      "retrieval": "https://docs.example/api.json",
+      "document": {
+        "openapi": "3.1.2",
+        "info": {
+          "title": "literal schema case",
+          "version": "1"
+        },
+        "paths": {},
+        "components": {
+          "schemas": {
+            "X": {
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "type": "string"
+            },
+            "Y": {
+              "type": "string"
+            }
+          }
+        },
+        "jsonSchemaDialect": "https://custom.example/dialect"
+      }
+    },
+    "bare-external-entry": {
+      "retrieval": "https://docs.example/api.json",
+      "document": {
+        "openapi": "3.1.2",
+        "info": {
+          "title": "literal schema case",
+          "version": "1"
+        },
+        "paths": {},
+        "components": {
+          "schemas": {
+            "X": {
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "$ref": "https://schemas.example/bare"
+            }
+          }
+        },
+        "jsonSchemaDialect": "https://custom.example/dialect"
+      }
+    },
+    "bare-external": {
+      "retrieval": "https://schemas.example/bare",
+      "document": {
+        "type": "string"
+      }
+    },
+    "legacy30": {
+      "retrieval": "https://docs.example/api.json",
+      "document": {
+        "openapi": "3.0.4",
+        "info": {
+          "title": "literal schema case",
+          "version": "1"
+        },
+        "paths": {},
+        "components": {
+          "schemas": {
+            "X": {
+              "$ref": "#/components/schemas/T",
+              "type": "object",
+              "contentEncoding": "base64"
+            },
+            "T": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "modern-siblings": {
+      "retrieval": "https://schemas.example/s",
+      "document": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$defs": {
+          "T": {
+            "type": "string"
+          }
+        },
+        "$ref": "#/$defs/T",
+        "contentEncoding": "base64"
+      }
+    },
+    "conflicting-coding": {
+      "retrieval": "https://schemas.example/s",
+      "document": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$defs": {
+          "T": {
+            "contentEncoding": "base64"
+          }
+        },
+        "$ref": "#/$defs/T",
+        "contentEncoding": "base64url"
+      }
+    },
+    "compatible-union": {
+      "retrieval": "https://schemas.example/u",
+      "document": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": [
+          "number",
+          "string"
+        ]
+      }
+    },
+    "anyof": {
+      "retrieval": "https://schemas.example/u",
+      "document": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "open": {
+      "retrieval": "https://schemas.example/o",
+      "document": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "known": {
+            "type": "string"
+          },
+          "remote": {
+            "$ref": "missing"
+          }
+        }
+      }
+    },
+    "dynamic-fields": {
+      "retrieval": "https://schemas.example/o",
+      "document": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "additionalProperties": {
+          "type": "number"
+        }
+      }
+    },
+    "closed": {
+      "retrieval": "https://schemas.example/o",
+      "document": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "additionalProperties": false
+      }
+    },
+    "pattern": {
+      "retrieval": "https://schemas.example/o",
+      "document": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "patternProperties": {
+          "^x": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "array": {
+      "retrieval": "https://schemas.example/a",
+      "document": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "array",
+        "items": {
+          "type": "string",
+          "contentEncoding": "base64"
+        }
+      }
+    },
+    "tuple": {
+      "retrieval": "https://schemas.example/a",
+      "document": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "array",
+        "prefixItems": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "number"
+          }
+        ]
+      }
+    },
+    "true": {
+      "retrieval": null,
+      "document": true,
+      "layout": [
+        {
+          "schema_root": "",
+          "profile": {
+            "JsonSchema": "https://json-schema.org/draft/2020-12/schema"
+          }
+        }
+      ]
+    },
+    "false": {
+      "retrieval": null,
+      "document": false,
+      "layout": [
+        {
+          "schema_root": "",
+          "profile": {
+            "JsonSchema": "https://json-schema.org/draft/2020-12/schema"
+          }
+        }
+      ]
+    },
+    "bad-type": {
+      "retrieval": "https://schemas.example/b",
+      "document": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": 42
+      }
+    },
+    "unknown-coding": {
+      "retrieval": "https://schemas.example/b",
+      "document": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "string",
+        "contentEncoding": "x-future"
+      }
+    },
+    "inert": {
+      "retrieval": "https://schemas.example/safe",
+      "document": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "examples": [
+          {
+            "$id": "https://evil.example/inert",
+            "$ref": "https://evil.example/fetch"
+          }
+        ],
+        "default": {
+          "$anchor": "fake"
+        },
+        "enum": [
+          {
+            "$dynamicAnchor": "fake"
+          }
+        ]
+      }
+    },
+    "relative-id-no-base": {
+      "retrieval": null,
+      "document": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "relative",
+        "type": "string"
+      }
+    },
+    "fragment-id": {
+      "retrieval": null,
+      "document": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "https://schemas.example/id#bad",
+        "type": "string"
+      }
+    },
+    "duplicate-anchor": {
+      "retrieval": "https://schemas.example/a",
+      "document": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$anchor": "a",
+        "$dynamicAnchor": "a"
+      }
+    },
+    "cross": {
+      "retrieval": "https://docs.example/api.json",
+      "document": {
+        "openapi": "3.1.2",
+        "info": {
+          "title": "literal schema case",
+          "version": "1"
+        },
+        "paths": {},
+        "components": {
+          "schemas": {
+            "ByPointer": {
+              "$ref": "#/components/schemas/Body"
+            },
+            "ById": {
+              "$ref": "https://schemas.example/forms/Body"
+            },
+            "Body": {
+              "$id": "https://schemas.example/forms/Body",
+              "type": "object",
+              "properties": {
+                "amount": {
+                  "$ref": "money"
+                },
+                "nested": {
+                  "$id": "nested",
+                  "properties": {
+                    "self": {
+                      "$ref": "#"
+                    },
+                    "empty": {
+                      "$ref": ""
+                    },
+                    "a/b": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "money": {
+      "retrieval": "https://schemas.example/forms/money",
+      "document": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "number"
+      }
+    },
+    "bundle-ref": {
+      "retrieval": "https://schemas.example/ref",
+      "document": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$ref": "https://schemas.example/bundle#/x"
+      }
+    },
+    "bundle": {
+      "retrieval": "https://schemas.example/bundle",
+      "document": {
+        "x": {
+          "type": "string"
+        },
+        "data": {
+          "$id": "https://inert.example/value"
+        }
+      }
+    },
+    "S47-anonymous-anchor": {
+      "retrieval": null,
+      "document": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$ref": "#name",
+        "$defs": {
+          "T": {
+            "$anchor": "name",
+            "type": "string"
+          }
+        }
+      }
+    },
+    "S48-invalid-pointer-escape": {
+      "retrieval": null,
+      "document": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$ref": "#/properties/a~2b",
+        "properties": {
+          "a~2b": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "S49-enum-is-not-type-inference": {
+      "retrieval": null,
+      "document": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "enum": [
+          "a",
+          "b"
+        ]
+      }
+    },
+    "S50-instance-target-not-schema": {
+      "retrieval": null,
+      "document": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$ref": "#/default",
+        "default": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "cases": [
+    {
+      "id": "S01-direct-type",
+      "slice": "G2a",
+      "resources": [
+        "plain"
+      ],
+      "site": {
+        "resource": "plain",
+        "pointer": ""
+      },
+      "action": "fact:Types",
+      "expect": {
+        "kind": "Known",
+        "value": [
+          "string"
+        ],
+        "source_pointers": [
+          "/type"
+        ]
+      }
+    },
+    {
+      "id": "S02-proved-absence",
+      "slice": "G2a",
+      "resources": [
+        "plain"
+      ],
+      "site": {
+        "resource": "plain",
+        "pointer": ""
+      },
+      "action": "fact:ContentEncoding",
+      "expect": {
+        "kind": "Absent",
+        "source_pointers": [
+          ""
+        ]
+      }
+    },
+    {
+      "id": "S03-external-static",
+      "slice": "G2a",
+      "resources": [
+        "ref",
+        "plain"
+      ],
+      "site": {
+        "resource": "ref",
+        "pointer": ""
+      },
+      "action": "resolve_static:$ref",
+      "expect": {
+        "kind": "Resolved",
+        "target_resource": "plain",
+        "target_pointer": "",
+        "canonical": true,
+        "requires_dynamic_scope": false
+      }
+    },
+    {
+      "id": "S04-missing-bytes",
+      "slice": "G2a",
+      "resources": [
+        "ref"
+      ],
+      "site": {
+        "resource": "ref",
+        "pointer": ""
+      },
+      "action": "fact:Types",
+      "expect": {
+        "kind": "Need",
+        "code": "ResourceUnavailable",
+        "source_pointer": "/$ref",
+        "action": "Bytes",
+        "requested_uri": "https://schemas.example/plain",
+        "fragment": {
+          "Root": null
+        },
+        "interpretation": {
+          "Schema": "https://json-schema.org/draft/2020-12/schema"
+        }
+      }
+    },
+    {
+      "id": "S05-anchor",
+      "slice": "G2a",
+      "resources": [
+        "anchor"
+      ],
+      "site": {
+        "resource": "anchor",
+        "pointer": ""
+      },
+      "action": "resolve_static:$ref",
+      "expect": {
+        "kind": "Resolved",
+        "target_resource": "anchor",
+        "target_pointer": "/$defs/T",
+        "requires_dynamic_scope": false
+      }
+    },
+    {
+      "id": "S06-known-missing-anchor",
+      "slice": "G2a",
+      "resources": [
+        "missing-anchor"
+      ],
+      "site": {
+        "resource": "missing-anchor",
+        "pointer": ""
+      },
+      "action": "resolve_static:$ref",
+      "expect": {
+        "kind": "Diagnostic",
+        "code": "MissingReference",
+        "source_pointer": "/$ref",
+        "resource_need": false
+      }
+    },
+    {
+      "id": "S07-invalid-percent",
+      "slice": "G2a",
+      "resources": [
+        "bad-fragment"
+      ],
+      "site": {
+        "resource": "bad-fragment",
+        "pointer": ""
+      },
+      "action": "resolve_static:$ref",
+      "expect": {
+        "kind": "Diagnostic",
+        "code": "InvalidReference",
+        "source_pointer": "/$ref",
+        "resource_need": false
+      }
+    },
+    {
+      "id": "S08-invalid-fragment-utf8",
+      "slice": "G2a",
+      "resources": [
+        "bad-utf8"
+      ],
+      "site": {
+        "resource": "bad-utf8",
+        "pointer": ""
+      },
+      "action": "resolve_static:$ref",
+      "expect": {
+        "kind": "Diagnostic",
+        "code": "InvalidReference",
+        "source_pointer": "/$ref",
+        "resource_need": false
+      }
+    },
+    {
+      "id": "S09-slash",
+      "slice": "G2a",
+      "resources": [
+        "escaped"
+      ],
+      "site": {
+        "resource": "escaped",
+        "pointer": "/$defs/slash"
+      },
+      "action": "fact:Types",
+      "expect": {
+        "kind": "Known",
+        "value": [
+          "string"
+        ],
+        "target_pointer": "/properties/a~1b"
+      }
+    },
+    {
+      "id": "S09-percent",
+      "slice": "G2a",
+      "resources": [
+        "escaped"
+      ],
+      "site": {
+        "resource": "escaped",
+        "pointer": "/$defs/percent"
+      },
+      "action": "fact:Types",
+      "expect": {
+        "kind": "Known",
+        "value": [
+          "number"
+        ],
+        "target_pointer": "/properties/a%2Fb"
+      }
+    },
+    {
+      "id": "S09-tilde",
+      "slice": "G2a",
+      "resources": [
+        "escaped"
+      ],
+      "site": {
+        "resource": "escaped",
+        "pointer": "/$defs/tilde"
+      },
+      "action": "fact:Types",
+      "expect": {
+        "kind": "Known",
+        "value": [
+          "boolean"
+        ],
+        "target_pointer": "/properties/a~0b"
+      }
+    },
+    {
+      "id": "S10-dynamic-initial",
+      "slice": "G2a",
+      "resources": [
+        "dynamic"
+      ],
+      "site": {
+        "resource": "dynamic",
+        "pointer": ""
+      },
+      "action": "resolve_static:$dynamicRef",
+      "expect": {
+        "kind": "Resolved",
+        "target_resource": "dynamic",
+        "target_pointer": "/$defs/T",
+        "requires_dynamic_scope": true
+      }
+    },
+    {
+      "id": "S11-dynamic-facts",
+      "slice": "G2a",
+      "resources": [
+        "dynamic"
+      ],
+      "site": {
+        "resource": "dynamic",
+        "pointer": ""
+      },
+      "action": "fact:Types",
+      "expect": {
+        "kind": "Indeterminate",
+        "reason": "RequiresDynamicScope",
+        "source_pointers": [
+          "/$dynamicRef"
+        ]
+      }
+    },
+    {
+      "id": "S12-dynamic-pointer-static",
+      "slice": "G2a",
+      "resources": [
+        "dynamic-pointer"
+      ],
+      "site": {
+        "resource": "dynamic-pointer",
+        "pointer": ""
+      },
+      "action": "fact:Types",
+      "expect": {
+        "kind": "Known",
+        "value": [
+          "string"
+        ],
+        "requires_dynamic_scope": false
+      }
+    },
+    {
+      "id": "S13-dynamic-ordinary-anchor-static",
+      "slice": "G2a",
+      "resources": [
+        "dynamic-ordinary-anchor"
+      ],
+      "site": {
+        "resource": "dynamic-ordinary-anchor",
+        "pointer": ""
+      },
+      "action": "fact:Types",
+      "expect": {
+        "kind": "Known",
+        "value": [
+          "string"
+        ],
+        "requires_dynamic_scope": false
+      }
+    },
+    {
+      "id": "S14-anonymous-empty-static-self",
+      "slice": "G2a",
+      "resources": [
+        "self-cycle"
+      ],
+      "site": {
+        "resource": "self-cycle",
+        "pointer": ""
+      },
+      "action": "resolve_static:$ref",
+      "expect": {
+        "kind": "Resolved",
+        "target_resource": "self-cycle",
+        "target_pointer": "",
+        "requires_dynamic_scope": false,
+        "invented_uri": false
+      }
+    },
+    {
+      "id": "S15-cycle-facts",
+      "slice": "G2a",
+      "resources": [
+        "self-cycle"
+      ],
+      "site": {
+        "resource": "self-cycle",
+        "pointer": ""
+      },
+      "action": "fact:Types",
+      "expect": {
+        "kind": "Indeterminate",
+        "reason": "RecursiveFact",
+        "source_pointers": [
+          "/$ref"
+        ]
+      }
+    },
+    {
+      "id": "S16-opaque-inspection",
+      "slice": "G2a",
+      "resources": [
+        "opaque"
+      ],
+      "site": {
+        "resource": "opaque",
+        "pointer": ""
+      },
+      "action": "references",
+      "expect": {
+        "kind": "Diagnostic",
+        "code": "UnsupportedSchema",
+        "source_pointer": "",
+        "resource_need": false,
+        "reason": "OpaqueDialect"
+      }
+    },
+    {
+      "id": "S17-opaque-not-absence",
+      "slice": "G2a",
+      "resources": [
+        "opaque"
+      ],
+      "site": {
+        "resource": "opaque",
+        "pointer": ""
+      },
+      "action": "fact:ContentEncoding",
+      "expect": {
+        "kind": "Indeterminate",
+        "reason": "OpaqueDialect"
+      }
+    },
+    {
+      "id": "S18-family-default",
+      "slice": "G2a",
+      "resources": [
+        "default32"
+      ],
+      "site": {
+        "resource": "default32",
+        "pointer": "/components/schemas/X"
+      },
+      "action": "profile",
+      "expect": {
+        "dialect": "https://spec.openapis.org/oas/3.2/dialect/2026-02-26",
+        "authored_version": "3.2.0"
+      }
+    },
+    {
+      "id": "S19-resource-override",
+      "slice": "G2a",
+      "resources": [
+        "custom-default"
+      ],
+      "site": {
+        "resource": "custom-default",
+        "pointer": "/components/schemas/X"
+      },
+      "action": "profile",
+      "expect": {
+        "dialect": "https://json-schema.org/draft/2020-12/schema",
+        "capability": "Supported"
+      }
+    },
+    {
+      "id": "S20-document-custom-opaque",
+      "slice": "G2a",
+      "resources": [
+        "custom-default"
+      ],
+      "site": {
+        "resource": "custom-default",
+        "pointer": "/components/schemas/Y"
+      },
+      "action": "profile",
+      "expect": {
+        "dialect": "https://custom.example/dialect",
+        "capability": "Opaque"
+      }
+    },
+    {
+      "id": "S21-standalone-default-not-custom",
+      "slice": "G2a",
+      "resources": [
+        "bare-external-entry",
+        "bare-external"
+      ],
+      "site": {
+        "resource": "bare-external-entry",
+        "pointer": "/components/schemas/X"
+      },
+      "action": "resolve_static:$ref",
+      "expect": {
+        "kind": "Resolved",
+        "target_resource": "bare-external",
+        "target_pointer": "",
+        "target_dialect": "https://spec.openapis.org/oas/3.1/dialect/base"
+      }
+    },
+    {
+      "id": "S22-legacy-ref-siblings-ignored",
+      "slice": "G2a",
+      "resources": [
+        "legacy30"
+      ],
+      "site": {
+        "resource": "legacy30",
+        "pointer": "/components/schemas/X"
+      },
+      "action": "fact:Types",
+      "expect": {
+        "kind": "Known",
+        "value": [
+          "string"
+        ],
+        "source_pointers": [
+          "/components/schemas/T/type"
+        ]
+      }
+    },
+    {
+      "id": "S23-modern-sibling-coding",
+      "slice": "G2a",
+      "resources": [
+        "modern-siblings"
+      ],
+      "site": {
+        "resource": "modern-siblings",
+        "pointer": ""
+      },
+      "action": "fact:ContentEncoding",
+      "expect": {
+        "kind": "Known",
+        "value": "base64",
+        "source_pointers": [
+          "/contentEncoding"
+        ]
+      }
+    },
+    {
+      "id": "S24-conflicting-coding",
+      "slice": "G2a",
+      "resources": [
+        "conflicting-coding"
+      ],
+      "site": {
+        "resource": "conflicting-coding",
+        "pointer": ""
+      },
+      "action": "fact:ContentEncoding",
+      "expect": {
+        "kind": "Indeterminate",
+        "reason": "ConflictingFacts",
+        "source_pointers": [
+          "/contentEncoding",
+          "/$defs/T/contentEncoding"
+        ]
+      }
+    },
+    {
+      "id": "S25-literal-compatible-union",
+      "slice": "G2a",
+      "resources": [
+        "compatible-union"
+      ],
+      "site": {
+        "resource": "compatible-union",
+        "pointer": ""
+      },
+      "action": "fact:Types",
+      "expect": {
+        "kind": "Known",
+        "value": [
+          "number",
+          "string"
+        ]
+      }
+    },
+    {
+      "id": "S26-composition-not-inferred",
+      "slice": "G2a",
+      "resources": [
+        "anyof"
+      ],
+      "site": {
+        "resource": "anyof",
+        "pointer": ""
+      },
+      "action": "fact:Types",
+      "expect": {
+        "kind": "Indeterminate",
+        "reason": "Composition",
+        "source_pointers": [
+          "/anyOf"
+        ]
+      }
+    },
+    {
+      "id": "S27-open-name",
+      "slice": "G2a",
+      "resources": [
+        "open"
+      ],
+      "site": {
+        "resource": "open",
+        "pointer": ""
+      },
+      "action": "fact:Property:extra",
+      "expect": {
+        "kind": "Absent",
+        "openness": "Open",
+        "reject_input": false
+      }
+    },
+    {
+      "id": "S28-selected-sibling-locality",
+      "slice": "G2a",
+      "resources": [
+        "open"
+      ],
+      "site": {
+        "resource": "open",
+        "pointer": "/properties/known"
+      },
+      "action": "fact:Types",
+      "expect": {
+        "kind": "Known",
+        "value": [
+          "string"
+        ],
+        "must_not_acquire": [
+          "https://schemas.example/missing"
+        ]
+      }
+    },
+    {
+      "id": "S29-additional-schema",
+      "slice": "G2a",
+      "resources": [
+        "dynamic-fields"
+      ],
+      "site": {
+        "resource": "dynamic-fields",
+        "pointer": ""
+      },
+      "action": "fact:Property:extra",
+      "expect": {
+        "kind": "Known",
+        "value": {
+          "schema_pointers": [
+            "/additionalProperties"
+          ]
+        }
+      }
+    },
+    {
+      "id": "S30-closed-shape-hint",
+      "slice": "G2a",
+      "resources": [
+        "closed"
+      ],
+      "site": {
+        "resource": "closed",
+        "pointer": ""
+      },
+      "action": "fact:ObjectShape",
+      "expect": {
+        "kind": "Known",
+        "value": {
+          "named": [],
+          "openness": "ClosedHint"
+        },
+        "reject_input": false
+      }
+    },
+    {
+      "id": "S31-pattern-needs-semantics",
+      "slice": "G2a",
+      "resources": [
+        "pattern"
+      ],
+      "site": {
+        "resource": "pattern",
+        "pointer": ""
+      },
+      "action": "fact:Property:xyz",
+      "expect": {
+        "kind": "Indeterminate",
+        "reason": "DynamicPropertyFacts",
+        "source_pointers": [
+          "/patternProperties"
+        ]
+      }
+    },
+    {
+      "id": "S32-homogeneous-items",
+      "slice": "G2a",
+      "resources": [
+        "array"
+      ],
+      "site": {
+        "resource": "array",
+        "pointer": ""
+      },
+      "action": "fact:Items",
+      "expect": {
+        "kind": "Known",
+        "value": {
+          "kind": "Homogeneous",
+          "schema_pointer": "/items"
+        }
+      }
+    },
+    {
+      "id": "S33-positional-items-visible",
+      "slice": "G2a",
+      "resources": [
+        "tuple"
+      ],
+      "site": {
+        "resource": "tuple",
+        "pointer": ""
+      },
+      "action": "fact:Items",
+      "expect": {
+        "kind": "Known",
+        "value": {
+          "kind": "Positional",
+          "prefix_pointers": [
+            "/prefixItems/0",
+            "/prefixItems/1"
+          ],
+          "tail": "Absent"
+        }
+      }
+    },
+    {
+      "id": "S34-true-no-type",
+      "slice": "G2a",
+      "resources": [
+        "true"
+      ],
+      "site": {
+        "resource": "true",
+        "pointer": ""
+      },
+      "action": "fact:Types",
+      "expect": {
+        "kind": "Absent"
+      }
+    },
+    {
+      "id": "S35-false-inspectable",
+      "slice": "G2a",
+      "resources": [
+        "false"
+      ],
+      "site": {
+        "resource": "false",
+        "pointer": ""
+      },
+      "action": "fact:Types",
+      "expect": {
+        "kind": "Indeterminate",
+        "reason": "ProhibitingSchema"
+      }
+    },
+    {
+      "id": "S36-malformed-selected-keyword",
+      "slice": "G2a",
+      "resources": [
+        "bad-type"
+      ],
+      "site": {
+        "resource": "bad-type",
+        "pointer": ""
+      },
+      "action": "fact:Types",
+      "expect": {
+        "kind": "Invalid",
+        "code": "InvalidDeclaration",
+        "reason": "InvalidKeyword",
+        "source_pointer": "/type"
+      }
+    },
+    {
+      "id": "S37-known-unsupported-codec",
+      "slice": "G2a",
+      "resources": [
+        "unknown-coding"
+      ],
+      "site": {
+        "resource": "unknown-coding",
+        "pointer": ""
+      },
+      "action": "fact:ContentEncoding",
+      "expect": {
+        "kind": "Known",
+        "value": "x-future",
+        "encoder_success": false
+      }
+    },
+    {
+      "id": "S38-instance-values-inert",
+      "slice": "G2a",
+      "resources": [
+        "inert"
+      ],
+      "site": {
+        "resource": "inert",
+        "pointer": ""
+      },
+      "action": "identity_inventory",
+      "expect": {
+        "canonical_ids": [
+          "https://schemas.example/safe"
+        ],
+        "reference_edges": 0,
+        "anchors": [],
+        "must_not_acquire": [
+          "https://evil.example/fetch"
+        ]
+      }
+    },
+    {
+      "id": "S39-relative-id-no-base",
+      "slice": "G2a",
+      "resources": [
+        "relative-id-no-base"
+      ],
+      "site": {
+        "resource": "relative-id-no-base",
+        "pointer": ""
+      },
+      "action": "schema_at",
+      "expect": {
+        "kind": "Diagnostic",
+        "code": "MissingResourceBase",
+        "source_pointer": "/$id",
+        "resource_need": false
+      }
+    },
+    {
+      "id": "S40-fragment-id-invalid",
+      "slice": "G2a",
+      "resources": [
+        "fragment-id"
+      ],
+      "site": {
+        "resource": "fragment-id",
+        "pointer": ""
+      },
+      "action": "schema_at",
+      "expect": {
+        "kind": "Diagnostic",
+        "code": "InvalidResourceUri",
+        "source_pointer": "/$id",
+        "resource_need": false
+      }
+    },
+    {
+      "id": "S41-duplicate-anchor-policy",
+      "slice": "G2a",
+      "resources": [
+        "duplicate-anchor"
+      ],
+      "site": {
+        "resource": "duplicate-anchor",
+        "pointer": ""
+      },
+      "action": "build",
+      "expect": {
+        "kind": "Diagnostic",
+        "code": "IdentityCollision",
+        "source_pointer": "/$dynamicAnchor",
+        "resource_need": false,
+        "policy": "strict refusal of undefined duplicate anchor identity"
+      }
+    },
+    {
+      "id": "S42-crossing-pointer-approved",
+      "slice": "G2a",
+      "resources": [
+        "cross",
+        "money"
+      ],
+      "site": {
+        "resource": "cross",
+        "pointer": "/components/schemas/ByPointer"
+      },
+      "action": "compare_routes",
+      "expect": {
+        "other_pointer": "/components/schemas/ById",
+        "same_target_context": true,
+        "canonical_routes": [
+          false,
+          true
+        ],
+        "amount_target_uri": "https://schemas.example/forms/money",
+        "amount_types": [
+          "number"
+        ],
+        "scope_rebased": false
+      },
+      "decision": "../SCHEMA-RULINGS.md"
+    },
+    {
+      "id": "S43-crossing-nested-id",
+      "slice": "G2a",
+      "resources": [
+        "cross"
+      ],
+      "site": {
+        "resource": "cross",
+        "pointer": "/components/schemas/Body/properties/nested"
+      },
+      "action": "inspect_and_resolve_self_edges",
+      "expect": {
+        "base": "https://schemas.example/forms/nested",
+        "resource_relative_pointer": "",
+        "self_targets": {
+          "/properties/self": "/components/schemas/Body/properties/nested",
+          "/properties/empty": "/components/schemas/Body/properties/nested"
+        }
+      },
+      "decision": "../SCHEMA-RULINGS.md"
+    },
+    {
+      "id": "S44-crossing-missing-dependency",
+      "slice": "G2a",
+      "resources": [
+        "cross"
+      ],
+      "site": {
+        "resource": "cross",
+        "pointer": "/components/schemas/ByPointer"
+      },
+      "action": "fact:Property:amount/Types",
+      "expect": {
+        "kind": "Need",
+        "code": "ResourceUnavailable",
+        "requested_uri": "https://schemas.example/forms/money",
+        "fragment": {
+          "Root": null
+        },
+        "source_pointer": "/components/schemas/Body/properties/amount/$ref"
+      },
+      "decision": "../SCHEMA-RULINGS.md"
+    },
+    {
+      "id": "S45-missing-layout",
+      "slice": "G2a",
+      "resources": [
+        "bundle-ref",
+        "bundle"
+      ],
+      "site": {
+        "resource": "bundle-ref",
+        "pointer": ""
+      },
+      "action": "fact:Types",
+      "expect": {
+        "kind": "Need",
+        "code": "ResourceLayoutRequired",
+        "action": "Layout",
+        "requested_uri": "https://schemas.example/bundle",
+        "fragment": {
+          "Pointer": "/x"
+        },
+        "target_resource": "bundle",
+        "source_pointer": "/$ref"
+      }
+    },
+    {
+      "id": "S46-layout-recovery",
+      "slice": "G2a",
+      "resources": [
+        "bundle-ref",
+        "bundle"
+      ],
+      "site": {
+        "resource": "bundle-ref",
+        "pointer": ""
+      },
+      "action": "apply_layout_then_reacquire",
+      "expect": {
+        "kind": "Known",
+        "value": [
+          "string"
+        ],
+        "old_snapshot_result": "ResourceLayoutRequired",
+        "source_identity_preserved": true,
+        "ignored_data_id": "https://inert.example/value"
+      },
+      "layout": {
+        "resource": "bundle",
+        "schema_root": "/x",
+        "profile": "https://json-schema.org/draft/2020-12/schema"
+      }
+    },
+    {
+      "id": "R01-edge-cap",
+      "slice": "G2a",
+      "procedure": "Generate one recognized schema $ref edge. Build with GraphLimits.reference_edges=0.",
+      "expect": {
+        "kind": "Limit",
+        "limit_kind": "GraphReferenceEdges",
+        "maximum": 0,
+        "actual": 1,
+        "before_index_growth": true
+      }
+    },
+    {
+      "id": "R02-hop-cap",
+      "slice": "G2a",
+      "procedure": "Resolve plain external one-step edge with Limits.reference_steps=0.",
+      "expect": {
+        "kind": "Limit",
+        "limit_kind": "ReferenceDepth",
+        "maximum": 0,
+        "actual": 1
+      }
+    },
+    {
+      "id": "R03-work-cap",
+      "slice": "G2a",
+      "procedure": "Query one direct type with schema_fact_work=0.",
+      "expect": {
+        "kind": "Limit",
+        "limit_kind": "SchemaFactWork",
+        "maximum": 0,
+        "actual": 1
+      }
+    },
+    {
+      "id": "R04-width-not-depth",
+      "slice": "G2a",
+      "procedure": "Query129 sibling properties each with a one-hop ref, using adequate work and reference_steps=1.",
+      "expect": {
+        "kind": "Success",
+        "siblings": 129,
+        "chain_limit": 1,
+        "no_depth_exhaustion": true
+      }
+    },
+    {
+      "id": "R05-shared-work",
+      "slice": "G2a",
+      "procedure": "Repeat selected field queries in one call with a small schema_fact_work cap. Memo hits count, no per-field budget reset.",
+      "expect": {
+        "kind": "Limit",
+        "limit_kind": "SchemaFactWork",
+        "counter_scope": "whole selected call"
+      }
+    },
+    {
+      "id": "R06-depth",
+      "slice": "G2a",
+      "procedure": "Traverse a129-hop selected schema reference chain under reference_steps=128 and generous other limits.",
+      "expect": {
+        "kind": "Limit",
+        "limit_kind": "ReferenceDepth",
+        "maximum": 128,
+        "actual": 129
+      }
+    },
+    {
+      "id": "R07-cancel",
+      "slice": "G2a",
+      "procedure": "Call resolve_static_with_cancellation using an already-cancelled token, including an already-resolvable self edge.",
+      "expect": {
+        "kind": "Cancelled",
+        "no_resource_need": true,
+        "no_new_index_or_result_growth": true
+      }
+    },
+    {
+      "id": "R08-growth-cancel",
+      "slice": "G2a",
+      "procedure": "Cancel at an injected deterministic indexing/fact-work checkpoint. Resume only by a new call/snapshot, not partial publication.",
+      "expect": {
+        "kind": "Cancelled",
+        "old_snapshot_unchanged": true,
+        "builder_transaction_unchanged": true
+      }
+    },
+    {
+      "id": "R09-identity-collision",
+      "slice": "G2a",
+      "procedure": "Provide two distinct physical nodes with the same absolute $id.",
+      "expect": {
+        "kind": "IdentityCollision",
+        "both_source_locations": true,
+        "no_first_or_last_wins": true
+      }
+    },
+    {
+      "id": "R10-budget-before-growth",
+      "slice": "G2a",
+      "procedure": "Use1 above configured identity/metadata/layout cap, including repeated idempotent layout admission.",
+      "expect": {
+        "kind": "Limit",
+        "correct_dimension": true,
+        "maximum_and_actual_present": true,
+        "before_owned_growth": true
+      }
+    },
+    {
+      "id": "R11-snapshot-binding",
+      "slice": "G2a",
+      "procedure": "Use a schema ResourceNeed from snapshotA in builder seeded from snapshotB sharing all physical ResourceIds.",
+      "expect": {
+        "kind": "SnapshotMismatch",
+        "no_mutation": true,
+        "reacquire_required": true
+      }
+    },
+    {
+      "id": "R12-owner-drop",
+      "slice": "G2a",
+      "procedure": "Hold cached success/failure, need, schema, edge and resolved target; drop every graph owner but retain raw Value.",
+      "expect": {
+        "kind": "Success",
+        "weak_store_upgrade": false,
+        "raw_value_readable": true,
+        "source_drop_alone_not_oracle": true
+      }
+    },
+    {
+      "id": "R13-no-unbounded-memo",
+      "slice": "G2a",
+      "procedure": "Run1000 sessions, each querying one distinct unknown property on the literal open object fixture using default work limits. Each session returns Absent and releases its memo.",
+      "expect": {
+        "kind": "Success",
+        "each_result": "Absent",
+        "no_snapshot_resident_query_growth": true,
+        "per_session_queries_accounted": true,
+        "retained_bytes_after_each_session": "constant after initial source/index creation"
+      }
+    },
+    {
+      "id": "R14-concurrent-old-new",
+      "slice": "G2a",
+      "procedure": "Resolve old owning edge after completion; reacquire new edge on new snapshot.",
+      "expect": {
+        "kind": "Success",
+        "old_edge_still_old_need": true,
+        "new_edge_resolves": true,
+        "no_cache_invalidation": true
+      }
+    },
+    {
+      "id": "P01-twilio-refs",
+      "slice": "G2b",
+      "provider": "twilio",
+      "procedure": "Original CreateMessage plus additive ContentRetention=retain,AddressRetention=retain,TrafficType=free,ScheduleType=fixed,RiskCheck=enable.",
+      "expect": {
+        "known_types": "string",
+        "coding": "Absent",
+        "ordinary_form_values_preserved": true,
+        "no_enum_validation": true
+      }
+    },
+    {
+      "id": "P02-flyn-number",
+      "slice": "G2b",
+      "provider": "flyn",
+      "procedure": "recordConversion URLencoded body click_id=V1StGXR8_Z5jdHi6,value=12.5.",
+      "expect": {
+        "value_types": [
+          "number",
+          "string"
+        ],
+        "compatible_default_media": "text/plain",
+        "decoded_value": "12.5",
+        "no_defaults_inserted": true
+      }
+    },
+    {
+      "id": "P03-flyn-string",
+      "slice": "G2b",
+      "provider": "flyn",
+      "procedure": "Same operation with value string12,5.",
+      "expect": {
+        "decoded_value": "12,5",
+        "no_numeric_coercion": true,
+        "no_defaults_inserted": true
+      }
+    },
+    {
+      "id": "P04-transmute-facts",
+      "slice": "G2b",
+      "provider": "transmute",
+      "procedure": "Inspect original upload file declaration and then original finite file scenario.",
+      "expect": {
+        "type": [
+          "string"
+        ],
+        "contentEncoding": "Absent",
+        "contentMediaType": "application/octet-stream",
+        "default_Encoding_contentType": "text/plain",
+        "original_workflow_qualified": false,
+        "security_mismatch_preserved": true
+      }
+    },
+    {
+      "id": "P05-selected-json",
+      "slice": "G2b",
+      "provider": "literal",
+      "procedure": "Logical JSON object with nested contentEncoding and explicit JSON codec; separate selected finite-byte field whose coding ref is missing.",
+      "expect": {
+        "json_recursively_transformed": false,
+        "byte_input_can_erase_missing_coding_via_media_election": false,
+        "byte_path_resource_need": true
+      }
+    },
+    {
+      "id": "P06-uniform-recovery",
+      "slice": "G2b",
+      "provider": "literal",
+      "procedure": "Run same selected missing schema through direct prepare, fluent prepare and effective selected-schema inspection; supply bytes/new snapshot/reacquire.",
+      "expect": {
+        "same_need_facts": true,
+        "owning_need_only_at_boundary": true,
+        "old_results_stable": true
+      }
+    },
+    {
+      "id": "S47-anonymous-anchor",
+      "slice": "G2a",
+      "resources": [
+        "S47-anonymous-anchor"
+      ],
+      "site": {
+        "resource": "S47-anonymous-anchor",
+        "pointer": ""
+      },
+      "action": "fact:Types",
+      "expect": {
+        "kind": "Known",
+        "value": [
+          "string"
+        ],
+        "invented_uri": false
+      }
+    },
+    {
+      "id": "S48-invalid-pointer-escape",
+      "slice": "G2a",
+      "resources": [
+        "S48-invalid-pointer-escape"
+      ],
+      "site": {
+        "resource": "S48-invalid-pointer-escape",
+        "pointer": ""
+      },
+      "action": "resolve_static:$ref",
+      "expect": {
+        "kind": "Diagnostic",
+        "code": "InvalidReference",
+        "source_pointer": "/$ref",
+        "resource_need": false
+      }
+    },
+    {
+      "id": "S49-enum-is-not-type-inference",
+      "slice": "G2a",
+      "resources": [
+        "S49-enum-is-not-type-inference"
+      ],
+      "site": {
+        "resource": "S49-enum-is-not-type-inference",
+        "pointer": ""
+      },
+      "action": "fact:Types",
+      "expect": {
+        "kind": "Absent",
+        "enum_remains_unvalidated": true
+      }
+    },
+    {
+      "id": "S50-instance-target-not-schema",
+      "slice": "G2a",
+      "resources": [
+        "S50-instance-target-not-schema"
+      ],
+      "site": {
+        "resource": "S50-instance-target-not-schema",
+        "pointer": ""
+      },
+      "action": "resolve_static:$ref",
+      "expect": {
+        "kind": "Diagnostic",
+        "code": "WrongReferenceKind",
+        "source_pointer": "/$ref",
+        "target_pointer": "/default",
+        "resource_need": false
+      }
+    }
+  ]
+}

@@ -13,6 +13,8 @@ mod error;
 mod graph;
 mod loading;
 mod prepare;
+mod schema;
+mod schema_facts;
 mod source;
 mod style;
 mod transport;
@@ -32,8 +34,8 @@ pub use error::{
     NumericTarget, SelectionKind, SerializationReason, VersionReason,
 };
 pub use graph::{
-    DocumentBuilder, GraphLimits, ProtocolSite, ResourceHandle, ResourceId, ResourceInput,
-    ResourceLayout, ResourceNeed, ResourceNeedKind,
+    DocumentBuilder, GraphLimits, ProtocolSite, ResourceFragment, ResourceHandle, ResourceId,
+    ResourceInput, ResourceInterpretation, ResourceLayout, ResourceNeed, ResourceNeedKind,
 };
 pub use prepare::{
     Body, BodyFieldDescription, BodyFields, Credential, CredentialValue,
@@ -62,3 +64,11 @@ pub use form::{FiniteBytes, FormField, FormReason, FormValue, Part};
 /// Explicit evidence-preserving application acceptance policies.
 pub mod policies;
 pub use policies::{CompleteJsonRefusal, CompletedJson, JsonCallRefusal};
+
+pub use schema::{
+    DialectCapability, ResolvedSchemaReference, SchemaAccessReason, SchemaHandle, SchemaProfile,
+    SchemaReason, SchemaReference, SchemaReferenceKind, SchemaReferences,
+};
+
+#[cfg(test)]
+mod schema_tests;
