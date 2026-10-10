@@ -150,3 +150,25 @@ fn default_errors_are_readable_and_explicit_location_formatting_is_escaped() {
     assert!(located.contains("secret\\nkey"));
     assert!(!located.contains('\n'));
 }
+
+#[test]
+fn repeated_response_json_calls_keep_independent_exact_owners() {
+    let outcome = outcome(UploadState::Complete, 200, Cancellation::default());
+    let response = outcome.response.as_ref().unwrap();
+    let first = response.json().unwrap();
+    let second = response.json().unwrap();
+    assert_eq!(first.source(), second.source());
+    assert_ne!(
+        first.root().source_context().id,
+        second.root().source_context().id
+    );
+    assert_eq!(first.root().source_context().origin, SourceOrigin::Authored);
+    let child = first.root().get("id").unwrap();
+    let context = child.source_context();
+    drop(first);
+    drop(second);
+    drop(outcome);
+    assert_eq!(child.raw(), "9007199254740993");
+    assert_eq!(child.location().pointer, "/id");
+    assert_eq!(child.source_context(), context);
+}

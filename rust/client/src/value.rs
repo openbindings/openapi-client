@@ -6,12 +6,15 @@ use serde::{
     de::{DeserializeSeed, MapAccess, SeqAccess, Visitor},
 };
 use serde_json::value::RawValue;
+mod response_admission;
+#[cfg(test)]
+mod response_tests;
 use std::{
     collections::HashMap,
     fmt,
     ops::Range,
     sync::{
-        Arc,
+        Arc, Mutex, OnceLock,
         atomic::{AtomicUsize, Ordering},
     },
 };
@@ -119,7 +122,7 @@ pub struct SourceContext {
 }
 static NEXT_SOURCE: AtomicUsize = AtomicUsize::new(1);
 
-/// An immutable, exact JSON owner. Clones share bytes and the flat index.
+/// An immutable, exact JSON owner. Clones share bytes and any materialized index.
 #[derive(Clone, Debug)]
 pub struct ExactJson(pub(crate) Value);
 /// An independently owned handle to an authored JSON value.
@@ -132,7 +135,7 @@ impl fmt::Debug for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Value")
             .field("kind", &self.kind())
-            .field("range", &self.node().span)
+            .field("range", &self.span())
             .finish()
     }
 }
@@ -169,8 +172,46 @@ struct Node {
 struct Store {
     source: Arc<str>,
     context: SourceContext,
-    nodes: Vec<Node>,
+    index: Index,
     limits: Limits,
+}
+enum Index {
+    Eager(Vec<Node>),
+    Deferred(Box<DeferredIndex>),
+}
+struct DeferredIndex {
+    root: Range<usize>,
+    kind: ValueKind,
+    admitted_bytes: usize,
+    admission: Mutex<Option<response_admission::Admission>>,
+    nodes: OnceLock<Vec<Node>>,
+}
+impl Store {
+    fn nodes(&self) -> &Vec<Node> {
+        match &self.index {
+            Index::Eager(nodes) => nodes,
+            Index::Deferred(deferred) => deferred.nodes.get_or_init(|| {
+                // Only this OnceLock initializer takes the admitted payloads.
+                // No user code, allocation, formatting or construction occurs
+                // under the guard, so poisoning is an internal invariant failure.
+                let admission = {
+                    let mut guard = deferred.admission.lock().expect("admission lock poisoned");
+                    guard.take().expect("admission payload already consumed")
+                };
+                // Admission already finished the canonical validation. This
+                // consumes owned payloads without parsing or new cancellation.
+                // Temporary metadata buffers drop before OnceLock publication.
+                admission.into_nodes(&self.source)
+            }),
+        }
+    }
+    #[cfg(test)]
+    fn indexed_nodes(&self) -> Option<&Vec<Node>> {
+        match &self.index {
+            Index::Eager(nodes) => Some(nodes),
+            Index::Deferred(deferred) => deferred.nodes.get(),
+        }
+    }
 }
 static LIVE: AtomicUsize = AtomicUsize::new(0);
 impl Drop for Store {
@@ -293,13 +334,25 @@ fn depth_guard(
 // serde_json remains the grammar authority. Count tokens while skipping quoted strings,
 // and exclude strings followed by ':' (member names). Exact reservation avoids repeated
 // large Vec reallocations and their substantial macOS allocator cache footprint.
-fn validated_node_count(text: &str) -> usize {
+#[derive(Default)]
+struct NodeCounts {
+    nodes: usize,
+    objects: usize,
+    arrays: usize,
+    strings: usize,
+}
+fn validated_node_count(text: &str) -> NodeCounts {
     let b = text.as_bytes();
-    let (mut i, mut count) = (0, 0);
+    let (mut i, mut count) = (0, NodeCounts::default());
     while i < b.len() {
         match b[i] {
             b'{' | b'[' => {
-                count += 1;
+                count.nodes += 1;
+                if b[i] == b'{' {
+                    count.objects += 1;
+                } else {
+                    count.arrays += 1;
+                }
                 i += 1;
             }
             b'"' => {
@@ -321,12 +374,13 @@ fn validated_node_count(text: &str) -> usize {
                     next += 1;
                 }
                 if b.get(next) != Some(&b':') {
-                    count += 1;
+                    count.nodes += 1;
+                    count.strings += 1;
                 }
             }
             b'}' | b']' | b':' | b',' | b' ' | b'\t' | b'\n' | b'\r' => i += 1,
             _ => {
-                count += 1;
+                count.nodes += 1;
                 while i < b.len() && !b[i].is_ascii_whitespace() && !b"[]{}:,".contains(&b[i]) {
                     i += 1;
                 }
@@ -334,6 +388,187 @@ fn validated_node_count(text: &str) -> usize {
         }
     }
     count
+}
+// The canonical breadth-first index builder. `root` is a token slice of `text`
+// already admitted by serde_json's RawValue grammar authority and the limits.
+fn build_index<B: IndexSink>(
+    text: &str,
+    root: &str,
+    node_count: usize,
+    limits: &Limits,
+    cancellation: &crate::Cancellation,
+    mut sink: B,
+) -> Result<B::Output, Diagnostic> {
+    let offset = |value: &str| {
+        let start = value.as_ptr() as usize - text.as_ptr() as usize;
+        start..start + value.len()
+    };
+    let mut queue = Vec::with_capacity(node_count);
+    queue.push(offset(root));
+    sink.child(queue[0].clone(), None, Segment::Root);
+    let mut cursor = 0;
+    while cursor < queue.len() {
+        cancellation.check()?;
+        if queue.len() > limits.nodes {
+            return Err(Diagnostic::new(Code::Limit));
+        }
+        let s = &text[queue[cursor].clone()];
+        match s.as_bytes()[0] {
+            b'{' => {
+                let entries: Entries = ObjectSeed(limits.nodes.saturating_sub(queue.len()))
+                    .deserialize(&mut serde_json::Deserializer::from_str(s))
+                    .map_err(|e| parse_error(e, queue[cursor].start))?;
+                if entries.0.len() > limits.nodes.saturating_sub(queue.len()) {
+                    return Err(Diagnostic::new(Code::Limit));
+                }
+                let mut members: Vec<Member> = Vec::with_capacity(entries.0.len());
+                let mut lookup = HashMap::with_capacity(entries.0.len());
+                let mut last = queue[cursor].start + 1;
+                let mut name_bytes = 0;
+                for (name, value) in entries.0 {
+                    let span = offset(value.get());
+                    // Locate the already-validated member key, without interpreting JSON grammar.
+                    let start = last
+                        + text.as_bytes()[last..span.start]
+                            .iter()
+                            .position(|b| *b == b'"')
+                            .unwrap_or(0);
+                    let (mut end, mut escaped) = (start + 1, false);
+                    while end < span.start {
+                        let b = text.as_bytes()[end];
+                        end += 1;
+                        if escaped {
+                            escaped = false;
+                        } else if b == b'\\' {
+                            escaped = true;
+                        } else if b == b'"' {
+                            break;
+                        }
+                    }
+                    if let Some(&previous) = lookup.get(name.as_str()) {
+                        let old: &Member = &members[previous];
+                        let mut error = Diagnostic::new(Code::DuplicateMember).at(Location {
+                            start,
+                            end,
+                            pointer: String::new(),
+                        });
+                        error.related.push(Location {
+                            start: old.key.start,
+                            end: old.key.end,
+                            pointer: String::new(),
+                        });
+                        return Err(error);
+                    }
+                    let name: Arc<str> = name.into();
+                    let id = queue.len();
+                    sink.child(span.clone(), Some(cursor), Segment::Name(&name));
+                    queue.push(span.clone());
+                    name_bytes += name.len();
+                    lookup.insert(name.clone(), members.len());
+                    members.push(Member {
+                        name,
+                        value: id,
+                        key: start..end,
+                    });
+                    last = span.end;
+                }
+                sink.object(cursor, members, lookup, name_bytes)
+            }
+            b'[' => {
+                let children: Vec<&RawValue> = ArraySeed(limits.nodes.saturating_sub(queue.len()))
+                    .deserialize(&mut serde_json::Deserializer::from_str(s))
+                    .map_err(|e| parse_error(e, queue[cursor].start))?;
+                if children.len() > limits.nodes.saturating_sub(queue.len()) {
+                    return Err(Diagnostic::new(Code::Limit));
+                }
+                let first = queue.len();
+                for (i, value) in children.into_iter().enumerate() {
+                    let span = offset(value.get());
+                    sink.child(span.clone(), Some(cursor), Segment::Index(i));
+                    queue.push(span);
+                }
+                sink.array(cursor, first..queue.len());
+            }
+            b'"' => sink.string(
+                cursor,
+                serde_json::from_str(s).map_err(|e| parse_error(e, queue[cursor].start))?,
+            ),
+            b't' => sink.scalar(cursor, Kind::Bool(true)),
+            b'f' => sink.scalar(cursor, Kind::Bool(false)),
+            b'n' => sink.scalar(cursor, Kind::Null),
+            _ => sink.scalar(cursor, Kind::Number),
+        };
+        cursor += 1;
+    }
+    debug_assert_eq!(queue.len(), node_count);
+    Ok(sink.finish(queue))
+}
+enum Segment<'a> {
+    Root,
+    Name(&'a Arc<str>),
+    Index(usize),
+}
+trait IndexSink {
+    type Output;
+    fn child(&mut self, span: Range<usize>, parent: Option<usize>, segment: Segment<'_>);
+    fn object(
+        &mut self,
+        id: usize,
+        members: Vec<Member>,
+        lookup: HashMap<Arc<str>, usize>,
+        name_bytes: usize,
+    );
+    fn array(&mut self, id: usize, children: Range<usize>);
+    fn string(&mut self, id: usize, value: String);
+    fn scalar(&mut self, id: usize, value: Kind);
+    fn finish(self, ranges: Vec<Range<usize>>) -> Self::Output;
+}
+struct EagerIndex(Vec<Node>);
+impl IndexSink for EagerIndex {
+    type Output = Vec<Node>;
+    fn child(&mut self, span: Range<usize>, parent: Option<usize>, segment: Segment<'_>) {
+        self.0.push(Node {
+            span,
+            parent,
+            segment: match segment {
+                Segment::Root => Arc::from(""),
+                Segment::Name(name) => name.clone(),
+                Segment::Index(index) => Arc::from(index.to_string()),
+            },
+            kind: Kind::Null,
+        });
+    }
+    fn object(
+        &mut self,
+        id: usize,
+        members: Vec<Member>,
+        lookup: HashMap<Arc<str>, usize>,
+        _: usize,
+    ) {
+        self.0[id].kind = Kind::Object(members, lookup);
+    }
+    fn array(&mut self, id: usize, children: Range<usize>) {
+        self.0[id].kind = Kind::Array(children.collect());
+    }
+    fn string(&mut self, id: usize, value: String) {
+        self.0[id].kind = Kind::String(value);
+    }
+    fn scalar(&mut self, id: usize, value: Kind) {
+        self.0[id].kind = value;
+    }
+    fn finish(self, _: Vec<Range<usize>>) -> Vec<Node> {
+        self.0
+    }
+}
+fn root_kind(root: &str) -> ValueKind {
+    match root.as_bytes()[0] {
+        b'{' => ValueKind::Object,
+        b'[' => ValueKind::Array,
+        b'"' => ValueKind::String,
+        b't' | b'f' => ValueKind::Boolean,
+        b'n' => ValueKind::Null,
+        _ => ValueKind::Number,
+    }
 }
 impl ExactJson {
     /// Validate and index exact UTF-8 JSON. Duplicate decoded keys are rejected.
@@ -354,6 +589,26 @@ impl ExactJson {
         limits: Limits,
         cancellation: &crate::Cancellation,
         origin: SourceOrigin,
+    ) -> Result<Self, ParseFailure> {
+        Self::parse_mode(bytes, limits, cancellation, origin, false)
+    }
+    // Response::json has no caller cancellation token. Public parsing and
+    // construction retain their eager indexing checkpoints and behavior.
+    pub(crate) fn parse_response(bytes: &[u8], limits: Limits) -> Result<Self, ParseFailure> {
+        Self::parse_mode(
+            bytes,
+            limits,
+            &crate::Cancellation::default(),
+            SourceOrigin::Authored,
+            true,
+        )
+    }
+    fn parse_mode(
+        bytes: &[u8],
+        limits: Limits,
+        cancellation: &crate::Cancellation,
+        origin: SourceOrigin,
+        deferred: bool,
     ) -> Result<Self, ParseFailure> {
         let id = NEXT_SOURCE
             .try_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
@@ -393,7 +648,8 @@ impl ExactJson {
                 let a = v.get().as_ptr() as usize - text.as_ptr() as usize;
                 a..a + v.get().len()
             };
-            let node_count = validated_node_count(root.get());
+            let counts = validated_node_count(root.get());
+            let node_count = counts.nodes;
             if node_count > limits.nodes {
                 return Err(Diagnostic::limited(
                     LimitKind::Nodes,
@@ -401,128 +657,40 @@ impl ExactJson {
                     node_count,
                 ));
             }
-            let mut nodes = Vec::with_capacity(node_count);
-            nodes.push(Node {
-                span: offset(root),
-                parent: None,
-                segment: Arc::from(""),
-                kind: Kind::Null,
-            });
-            let mut queue = Vec::with_capacity(node_count);
-            queue.push(root);
-            let mut cursor = 0;
-            while cursor < queue.len() {
-                cancellation.check()?;
-                if queue.len() > limits.nodes {
-                    return Err(Diagnostic::new(Code::Limit));
-                }
-                let raw = queue[cursor];
-                let s = raw.get();
-                let kind = match s.as_bytes()[0] {
-                    b'{' => {
-                        let entries: Entries = ObjectSeed(limits.nodes.saturating_sub(nodes.len()))
-                            .deserialize(&mut serde_json::Deserializer::from_str(s))
-                            .map_err(|e| parse_error(e, nodes[cursor].span.start))?;
-                        if entries.0.len() > limits.nodes.saturating_sub(nodes.len()) {
-                            return Err(Diagnostic::new(Code::Limit));
-                        }
-                        let mut members: Vec<Member> = Vec::with_capacity(entries.0.len());
-                        let mut lookup = HashMap::with_capacity(entries.0.len());
-                        let mut last = nodes[cursor].span.start + 1;
-                        for (name, value) in entries.0 {
-                            let span = offset(value);
-                            // Locate the already-validated member key, without interpreting JSON grammar.
-                            let start = last
-                                + text.as_bytes()[last..span.start]
-                                    .iter()
-                                    .position(|b| *b == b'"')
-                                    .unwrap_or(0);
-                            let (mut end, mut escaped) = (start + 1, false);
-                            while end < span.start {
-                                let b = text.as_bytes()[end];
-                                end += 1;
-                                if escaped {
-                                    escaped = false;
-                                } else if b == b'\\' {
-                                    escaped = true;
-                                } else if b == b'"' {
-                                    break;
-                                }
-                            }
-                            if let Some(&previous) = lookup.get(name.as_str()) {
-                                let old: &Member = &members[previous];
-                                let mut error =
-                                    Diagnostic::new(Code::DuplicateMember).at(Location {
-                                        start,
-                                        end,
-                                        pointer: String::new(),
-                                    });
-                                error.related.push(Location {
-                                    start: old.key.start,
-                                    end: old.key.end,
-                                    pointer: String::new(),
-                                });
-                                return Err(error);
-                            }
-                            let name: Arc<str> = name.into();
-                            let id = nodes.len();
-                            nodes.push(Node {
-                                span: span.clone(),
-                                parent: Some(cursor),
-                                segment: name.clone(),
-                                kind: Kind::Null,
-                            });
-                            queue.push(value);
-                            lookup.insert(name.clone(), members.len());
-                            members.push(Member {
-                                name,
-                                value: id,
-                                key: start..end,
-                            });
-                            last = span.end;
-                        }
-                        Kind::Object(members, lookup)
-                    }
-                    b'[' => {
-                        let children: Vec<&RawValue> =
-                            ArraySeed(limits.nodes.saturating_sub(nodes.len()))
-                                .deserialize(&mut serde_json::Deserializer::from_str(s))
-                                .map_err(|e| parse_error(e, nodes[cursor].span.start))?;
-                        if children.len() > limits.nodes.saturating_sub(nodes.len()) {
-                            return Err(Diagnostic::new(Code::Limit));
-                        }
-                        let mut ids = Vec::with_capacity(children.len());
-                        for (i, v) in children.into_iter().enumerate() {
-                            ids.push(nodes.len());
-                            nodes.push(Node {
-                                span: offset(v),
-                                parent: Some(cursor),
-                                segment: Arc::from(i.to_string()),
-                                kind: Kind::Null,
-                            });
-                            queue.push(v);
-                        }
-                        Kind::Array(ids)
-                    }
-                    b'"' => Kind::String(
-                        serde_json::from_str(s)
-                            .map_err(|e| parse_error(e, nodes[cursor].span.start))?,
-                    ),
-                    b't' => Kind::Bool(true),
-                    b'f' => Kind::Bool(false),
-                    b'n' => Kind::Null,
-                    _ => Kind::Number,
-                };
-                nodes[cursor].kind = kind;
-                cursor += 1;
-            }
-            debug_assert_eq!(nodes.len(), node_count);
+            // A scalar or empty container has only one Node, so retaining
+            // separate admission and synchronization storage cannot save space.
+            let index = if deferred && node_count > 1 {
+                let admission = build_index(
+                    text,
+                    root.get(),
+                    node_count,
+                    &limits,
+                    cancellation,
+                    response_admission::Builder::new(&counts),
+                )?;
+                Index::Deferred(Box::new(DeferredIndex {
+                    root: offset(root),
+                    kind: root_kind(root.get()),
+                    admitted_bytes: admission.retained_bytes(),
+                    admission: Mutex::new(Some(admission)),
+                    nodes: OnceLock::new(),
+                }))
+            } else {
+                Index::Eager(build_index(
+                    text,
+                    root.get(),
+                    node_count,
+                    &limits,
+                    cancellation,
+                    EagerIndex(Vec::with_capacity(node_count)),
+                )?)
+            };
             LIVE.fetch_add(1, Ordering::Relaxed);
             Ok(Self(Value {
                 store: Arc::new(Store {
                     source: Arc::from(text),
                     context,
-                    nodes,
+                    index,
                     limits,
                 }),
                 id: 0,
@@ -546,23 +714,38 @@ impl ExactJson {
         &self.0.store.source
     }
     /// Accounted retained source/index storage (not allocator RSS).
+    /// Response owners can materialize their index on dynamic access; this count
+    /// then increases. Reading this count does not materialize the index.
     pub fn retained_bytes(&self) -> usize {
         self.0.retained_bytes()
     }
 }
 impl Value {
     fn node(&self) -> &Node {
-        &self.store.nodes[self.id]
+        &self.store.nodes()[self.id]
+    }
+    fn span(&self) -> Range<usize> {
+        if self.id == 0
+            && let Index::Deferred(deferred) = &self.store.index
+        {
+            return deferred.root.clone();
+        }
+        self.node().span.clone()
     }
     pub(crate) fn identity(&self) -> usize {
         self.id
     }
     /// Exact original JSON token or subtree, without conversion.
     pub fn raw(&self) -> &str {
-        &self.store.source[self.node().span.clone()]
+        &self.store.source[self.span()]
     }
     /// Type of this JSON value.
     pub fn kind(&self) -> ValueKind {
+        if self.id == 0
+            && let Index::Deferred(deferred) = &self.store.index
+        {
+            return deferred.kind;
+        }
         match self.node().kind {
             Kind::Null => ValueKind::Null,
             Kind::Bool(_) => ValueKind::Boolean,
@@ -647,21 +830,25 @@ impl Value {
     }
     /// Source range and authored JSON Pointer.
     pub fn location(&self) -> Location {
+        let span = self.span();
+        if self.id == 0 {
+            return Location {
+                start: span.start,
+                end: span.end,
+                pointer: String::new(),
+            };
+        }
+        let nodes = self.store.nodes();
         let mut id = self.id;
         let mut segments = vec![];
-        while let Some(parent) = self.store.nodes[id].parent {
-            segments.push(
-                self.store.nodes[id]
-                    .segment
-                    .replace('~', "~0")
-                    .replace('/', "~1"),
-            );
+        while let Some(parent) = nodes[id].parent {
+            segments.push(nodes[id].segment.replace('~', "~0").replace('/', "~1"));
             id = parent;
         }
         segments.reverse();
         Location {
-            start: self.node().span.start,
-            end: self.node().span.end,
+            start: span.start,
+            end: span.end,
             pointer: if segments.is_empty() {
                 String::new()
             } else {
@@ -726,10 +913,21 @@ impl Value {
             .sourced(self.source_context())
     }
     /// Retained storage attributable to the shared owner, counted once per owner.
+    /// May increase after dynamic access to a response owner. This accessor does
+    /// not materialize a deferred index. Concurrent initialization reports the
+    /// admitted-storage snapshot until the index is published; temporary
+    /// construction overlap is excluded, as are allocator metadata and RSS.
     pub fn retained_bytes(&self) -> usize {
-        let mut bytes =
-            self.store.source.len() + self.store.nodes.capacity() * std::mem::size_of::<Node>();
-        for n in &self.store.nodes {
+        let mut bytes = self.store.source.len();
+        if let Index::Deferred(deferred) = &self.store.index {
+            bytes += std::mem::size_of::<DeferredIndex>();
+            if deferred.nodes.get().is_none() {
+                return bytes + deferred.admitted_bytes;
+            }
+        }
+        let nodes = self.store.nodes();
+        bytes += nodes.capacity() * std::mem::size_of::<Node>();
+        for n in nodes {
             bytes += n.segment.len();
             match &n.kind {
                 Kind::String(s) => bytes += s.capacity(),
