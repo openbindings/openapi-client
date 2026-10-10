@@ -14,11 +14,22 @@ use std::{fmt, io, sync::Arc};
 const NUMBER: &str = "$serde_json::private::Number";
 const PRIVATE: &str = "$serde_json::private::";
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 struct Error(Arc<Diagnostic>);
+impl fmt::Debug for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        struct Structured<'a>(&'a Diagnostic);
+        impl fmt::Debug for Structured<'_> {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                self.0.fmt_structured(f)
+            }
+        }
+        f.debug_tuple("Error").field(&Structured(&self.0)).finish()
+    }
+}
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
+        self.0.fmt_structured(f)
     }
 }
 impl std::error::Error for Error {}

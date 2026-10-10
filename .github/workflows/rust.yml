@@ -45,7 +45,9 @@ jobs:
         if: always()
         with:
           name: rust-native-${{ matrix.os }}
-          path: rust/target/qualification/*.log
+          path: |
+            rust/target/qualification/**/*.log
+            rust/target/qualification/**/commands.json
 
   rust-hosts:
     runs-on: ubuntu-latest

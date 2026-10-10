@@ -1,7 +1,7 @@
 //! Explicit optional application acceptance policies. Invocation always returns Outcome.
 use crate::{Code, Diagnostic, DispatchEvidence, ExactJson, Outcome, Response, UploadState};
 
-/// Primary refusal under complete_2xx_json; independent facts remain in Outcome.
+/// Primary refusal under the named JSON response policies; independent facts remain in Outcome.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[allow(missing_docs)]
 pub enum CompleteJsonRefusal {
@@ -13,7 +13,8 @@ pub enum CompleteJsonRefusal {
     UploadUncertain,
     Decode,
 }
-/// Accepted complete 2xx JSON call, retaining both execution evidence and decoded owner.
+/// Accepted complete 2xx JSON response, retaining execution evidence and decoded owner.
+/// Upload requirements depend on the explicitly selected acceptance policy.
 #[derive(Debug)]
 pub struct CompletedJson {
     /// Complete, independent execution evidence.
@@ -39,7 +40,32 @@ pub struct JsonCallRefusal {
 }
 impl std::fmt::Display for JsonCallRefusal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "application outcome policy refused: {:?}", self.reason)
+        match self.reason {
+            CompleteJsonRefusal::Cancelled => f.write_str("the local request was cancelled"),
+            CompleteJsonRefusal::NotDispatched => {
+                f.write_str("the request was refused before dispatch")
+            }
+            CompleteJsonRefusal::Transport => {
+                f.write_str("the HTTP transport failed; response evidence may still be available")
+            }
+            CompleteJsonRefusal::MissingResponse => {
+                f.write_str("the HTTP transport returned no response")
+            }
+            CompleteJsonRefusal::HttpStatus => match self.outcome.response.as_ref() {
+                Some(response) => write!(
+                    f,
+                    "HTTP status {} is outside the accepted 2xx range",
+                    response.status()
+                ),
+                None => f.write_str("the response did not satisfy the accepted 2xx status policy"),
+            },
+            CompleteJsonRefusal::UploadUncertain => {
+                f.write_str("upload completion was not established; inspect the retained response")
+            }
+            CompleteJsonRefusal::Decode => {
+                f.write_str("the response could not be decoded as complete JSON")
+            }
+        }
     }
 }
 impl std::error::Error for JsonCallRefusal {
@@ -70,6 +96,24 @@ impl std::error::Error for JsonCallRefusal {
 /// with uncertain upload by inspecting Outcome directly. This function does not invoke
 /// transport, retry, apply schema rules, or change PreparedRequest::invoke semantics.
 pub fn complete_2xx_json(outcome: Outcome) -> Result<CompletedJson, Box<JsonCallRefusal>> {
+    accept_json(outcome, true)
+}
+
+/// Accept a dispatched, uncancelled, transport-error-free, complete 2xx JSON
+/// response without requiring evidence that upload completed.
+///
+/// This explicitly permits an early response and Unknown/Incomplete upload.
+/// Upload evidence remains in the returned outcome; a response never proves
+/// upload completion or remote side effects. All other refusal conditions and
+/// their priority match complete_2xx_json, and JSON is decoded at most once.
+pub fn received_2xx_json(outcome: Outcome) -> Result<CompletedJson, Box<JsonCallRefusal>> {
+    accept_json(outcome, false)
+}
+
+fn accept_json(
+    outcome: Outcome,
+    require_upload: bool,
+) -> Result<CompletedJson, Box<JsonCallRefusal>> {
     // Inspect/decode available data even when execution also failed. Never discard
     // Outcome: dispatch, upload, cancellation, transport and response are independent.
     let (decoded, decode_error) = match outcome.response.as_ref().map(Response::json) {
@@ -91,7 +135,7 @@ pub fn complete_2xx_json(outcome: Outcome) -> Result<CompletedJson, Box<JsonCall
         .is_some_and(|r| (200..300).contains(&r.status()))
     {
         Some(CompleteJsonRefusal::HttpStatus)
-    } else if outcome.upload != UploadState::Complete {
+    } else if require_upload && outcome.upload != UploadState::Complete {
         // This application's explicit policy. Another application may accept
         // an early response while retaining/reporting upload uncertainty.
         Some(CompleteJsonRefusal::UploadUncertain)

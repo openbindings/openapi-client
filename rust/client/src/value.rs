@@ -18,17 +18,26 @@ use std::{
 
 /// Resource admission limits. Defaults are part of the qualified profile.
 #[derive(Clone, Debug)]
-#[allow(missing_docs)]
 pub struct Limits {
+    /// Maximum admitted source bytes, also bounding retained response-header metadata.
     pub document_bytes: usize,
+    /// Maximum JSON container depth (default 128); caller callbacks are outside this bound.
     pub depth: usize,
+    /// Maximum indexed JSON values in one owner.
     pub nodes: usize,
+    /// Maximum discovered operations in one document.
     pub operations: usize,
+    /// Maximum steps in one local protocol reference walk; also bounds caller input and security-requirement counts.
     pub reference_steps: usize,
+    /// Maximum finite request body and retained delivered response body bytes.
     pub body_bytes: usize,
+    /// Maximum prepared request-target bytes.
     pub target_bytes: usize,
+    /// Maximum request/retained response header lines.
     pub headers: usize,
+    /// Maximum token length inspected by checked numeric conveniences.
     pub number_conversion_chars: usize,
+    /// Maximum compiled operation entries retained by a document.
     pub cached_operations: usize,
 }
 impl Default for Limits {

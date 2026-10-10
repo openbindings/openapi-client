@@ -259,6 +259,69 @@ pub enum Code {
     UnsupportedCoding,
 }
 
+impl Code {
+    fn message(self) -> &'static str {
+        match self {
+            Self::Serialization => "application data could not be serialized as supported JSON",
+            Self::InvalidUtf8 => "input is not valid UTF-8",
+            Self::InvalidJson => "input is not valid JSON",
+            Self::UnsupportedString => "the string is outside the supported Unicode profile",
+            Self::DuplicateMember => "an object contains duplicate decoded member names",
+            Self::Limit => "a configured resource limit was exceeded",
+            Self::NumericConversion => {
+                "the number cannot be converted under the requested exact policy"
+            }
+            Self::InvalidPointer => "the JSON pointer is malformed",
+            Self::MissingReference => "the referenced value does not exist",
+            Self::InvalidReference => "the protocol reference is malformed",
+            Self::WrongReferenceKind => "the reference targets the wrong declaration kind",
+            Self::ReferenceCycle => "the reference chain contains a cycle",
+            Self::ExternalReference => "this profile requires a local reference",
+            Self::AmbiguousReference => "the reference and authored fields conflict",
+            Self::UnsupportedVersion => "request preparation requires OpenAPI 3.1",
+            Self::InvalidDeclaration => "a required protocol declaration is invalid",
+            Self::AmbiguousOperation => "the operation ID identifies more than one operation",
+            Self::MissingOperation => "the requested operation does not exist",
+            Self::MissingBase => "a relative server URL requires a document base URL",
+            Self::InvalidDestination => "the request target is not an admitted HTTP(S) destination",
+            Self::AmbiguousSelection => "more than one choice is available; select one explicitly",
+            Self::InvalidSelection => {
+                "the selected choice does not match the supported declarations"
+            }
+            Self::UnsupportedParameter => "the parameter style or location is unsupported",
+            Self::MissingInput => "a required parameter or template value is missing",
+            Self::UnsupportedValue => {
+                "the supplied value cannot be encoded by this parameter profile"
+            }
+            Self::InvalidHeader => "an HTTP header name or value is invalid",
+            Self::InvalidQuery => "the query input cannot be represented by this profile",
+            Self::MissingBody => "the operation requires a request body",
+            Self::InvalidMedia => "the media declaration or Content-Type is invalid",
+            Self::UnsupportedMedia => "the selected body codec does not support this media type",
+            Self::MissingCredential => {
+                "the selected security requirement needs a supplied credential"
+            }
+            Self::CredentialOrigin => {
+                "the credential is not authorized for this destination origin"
+            }
+            Self::UnsupportedSecurity => "the selected security scheme is unsupported",
+            Self::CredentialCollision => "a credential would overwrite another supplied field",
+            Self::Cancelled => "the local operation was cancelled",
+            Self::HostCapability => "the HTTP host cannot faithfully send this request",
+            Self::OpaqueRedirect => "the HTTP host returned an uninspectable redirect",
+            Self::TransportFailure => {
+                "the HTTP transport failed; inspect any retained response evidence"
+            }
+            Self::InvalidHostEvidence => {
+                "the HTTP host returned invalid or over-limit response metadata"
+            }
+            Self::EmptyBody => "JSON decoding requires a nonempty response body",
+            Self::IncompleteBody => "JSON decoding requires a complete response body",
+            Self::UnsupportedCoding => "the response needs unsupported content decoding",
+        }
+    }
+}
+
 /// Half-open source byte range and JSON Pointer. A diagnostic's source_context()
 /// identifies the exact authored or constructed source owning this range.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -308,6 +371,14 @@ impl Diagnostic {
     /// Exact source range when available; its owner is source_context().
     pub fn location(&self) -> Option<&Location> {
         self.location.as_ref()
+    }
+    /// Format a human-facing diagnostic including the JSON pointer and caller
+    /// name when available. These names come from untrusted documents or inputs
+    /// and can be sensitive; default Display/Debug deliberately omit them.
+    /// Each displayed name/pointer is escaped and limited to 256 characters.
+    /// The full values remain available through location() and context().
+    pub fn display_with_location(&self) -> impl fmt::Display + '_ {
+        LocatedDisplay(self)
     }
     /// Related ranges within the diagnostic's source owner.
     pub fn related(&self) -> &[Location] {
@@ -391,6 +462,14 @@ impl Diagnostic {
 }
 impl fmt::Display for Diagnostic {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}: ", self.code.message())?;
+        self.fmt_structured(f)
+    }
+}
+impl Diagnostic {
+    // Preserve the serializer's associated Error rendering: user Serialize code
+    // can embed that formatting into otherwise successful JSON output.
+    pub(crate) fn fmt_structured(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{:?}", self.code)?;
         if let Some(reason) = self.reason() {
             write!(f, ": {reason:?}")?;
@@ -413,4 +492,44 @@ impl fmt::Debug for Diagnostic {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(self, f)
     }
+}
+
+struct LocatedDisplay<'a>(&'a Diagnostic);
+impl fmt::Display for LocatedDisplay<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self.0, f)?;
+        if let Some(location) = self.0.location() {
+            f.write_str("; JSON pointer ")?;
+            display_name(f, &location.pointer)?;
+        }
+        match self.0.context() {
+            Some(DiagnosticContext::Parameter { name, .. }) => {
+                f.write_str("; parameter ")?;
+                display_name(f, name)?;
+            }
+            Some(DiagnosticContext::Selection { key: Some(key), .. }) => {
+                f.write_str("; variable ")?;
+                display_name(f, key)?;
+            }
+            Some(DiagnosticContext::Credential { scheme }) => {
+                f.write_str("; security scheme ")?;
+                display_name(f, scheme)?;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+}
+fn display_name(f: &mut fmt::Formatter<'_>, name: &str) -> fmt::Result {
+    f.write_str("\"")?;
+    let mut chars = name.chars();
+    for c in chars.by_ref().take(256) {
+        for escaped in c.escape_debug() {
+            write!(f, "{escaped}")?;
+        }
+    }
+    if chars.next().is_some() {
+        f.write_str("…")?;
+    }
+    f.write_str("\"")
 }

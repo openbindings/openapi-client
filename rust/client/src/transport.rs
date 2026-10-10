@@ -1,12 +1,5 @@
-use crate::{Code, Diagnostic, ExactJson, Limits, Method, PreparedRequest};
-use std::{
-    fmt,
-    future::Future,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
-};
+use crate::{Cancellation, Code, Diagnostic, ExactJson, Limits, Method, PreparedRequest};
+use std::{fmt, future::Future, sync::Arc};
 
 /// Ordered HTTP header field with explicit credential sensitivity.
 #[derive(Clone, PartialEq, Eq)]
@@ -66,27 +59,6 @@ impl fmt::Debug for Header {
             .field("bytes", &self.value.len())
             .field("sensitive", &self.sensitive)
             .finish()
-    }
-}
-/// Cooperative local cancellation. It never asserts that a remote action was undone.
-#[derive(Clone, Debug, Default)]
-pub struct Cancellation(Arc<AtomicBool>);
-impl Cancellation {
-    /// Request cancellation of owned work/the local wait.
-    pub fn cancel(&self) {
-        self.0.store(true, Ordering::Release);
-    }
-    /// Whether cancellation has been requested.
-    pub fn is_cancelled(&self) -> bool {
-        self.0.load(Ordering::Acquire)
-    }
-    /// Checkpoint for supplied host work.
-    pub fn check(&self) -> Result<(), Diagnostic> {
-        if self.is_cancelled() {
-            Err(Diagnostic::new(Code::Cancelled))
-        } else {
-            Ok(())
-        }
     }
 }
 /// Declared supplied-host restrictions. A declaration does not prove an arbitrary callback obeys it.
@@ -351,6 +323,19 @@ impl fmt::Debug for Outcome {
     }
 }
 impl Outcome {
+    /// Construct a transport adapter's pre-dispatch refusal. The adapter asserts
+    /// that it has not started I/O for this request. Upload is NotStarted and no
+    /// response exists. Optional detail remains explicit-access, untrusted text.
+    pub fn not_dispatched(error: Diagnostic, cancelled: bool, detail: Option<Arc<str>>) -> Self {
+        Self {
+            dispatch: DispatchEvidence::NotDispatched,
+            upload: UploadState::NotStarted,
+            response: None,
+            error: Some(error),
+            cancelled,
+            detail,
+        }
+    }
     /// Explicit access to untrusted caller-owned error detail; never safe to log by default.
     pub fn host_error_detail(&self) -> Option<&str> {
         self.detail.as_deref()

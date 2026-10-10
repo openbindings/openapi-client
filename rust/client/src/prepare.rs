@@ -48,16 +48,18 @@ pub enum Body {
     /// Explicit finite bytes for a concretely elected media type.
     Raw(Arc<[u8]>),
 }
-/// Explicit per-call elections. None permits only unique usable choices.
+/// Explicit per-call elections, with the default policy documented per field.
 #[derive(Clone, Default)]
 pub struct Selection {
-    /// Index in the effective authored server array.
+    /// Index in the effective authored server array. None selects a unique usable server.
     pub server: Option<usize>,
     /// Server-variable overrides; values are checked after substitution.
     pub variables: BTreeMap<String, String>,
     /// Exact concrete request media spelling (surrounding whitespace is trimmed).
+    /// None selects a unique concrete declaration compatible with the supplied body.
     pub media: Option<String>,
     /// Index in the effective security alternatives, including an allowed empty alternative.
+    /// Multiple authored alternatives require an election, regardless of supplied credentials.
     pub security: Option<usize>,
 }
 /// Supplied credential material. Debug is deliberately opaque.
@@ -514,6 +516,14 @@ impl Operation {
         }
         if path.contains(['{', '}']) {
             return Err(self.value().error(Code::MissingInput));
+        }
+        // Preparation safety policy: literal dot segments can change the target in
+        // HTTP URL stacks. Check the completed path because separate substitutions
+        // and authored text can compose a dot segment. Empty segments remain valid.
+        // Server reference resolution and encoded-dot host admission are independent.
+        if path.split('/').any(|segment| matches!(segment, "." | "..")) {
+            return Err(Diagnostic::new(Code::InvalidDestination)
+                .contextual(DiagnosticContext::PreparedRequest));
         }
         target.truncate(target.len() - usize::from(target.ends_with('/')));
         target.push_str(&path);
@@ -1079,15 +1089,22 @@ fn prepare_body(
             .iter()
             .filter(|(_, m, v)| !m.essence.contains('*') && v.kind() == ValueKind::Object)
             .collect::<Vec<_>>();
-        match concrete.len() {
+        let usable = concrete
+            .iter()
+            .filter(|(_, m, _)| !matches!(input.body, Body::Json(_)) || m.json)
+            .collect::<Vec<_>>();
+        match usable.len() {
             0 => {
+                if !concrete.is_empty() {
+                    return Err(decl.error(Code::UnsupportedMedia));
+                }
                 return Err(content.error(if media.is_empty() {
                     Code::InvalidMedia
                 } else {
                     Code::InvalidSelection
                 }));
             }
-            1 => concrete[0].0.clone(),
+            1 => usable[0].0.clone(),
             _ => return Err(content.error(Code::AmbiguousSelection)),
         }
     };

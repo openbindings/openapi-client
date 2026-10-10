@@ -6,11 +6,12 @@ An independent dynamic OpenAPI engine. Current development uses Rust in
 The unpublished `dynamic-openapi-client` foundation supports JSON/OpenAPI
 3.1.0–3.1.2, exact-document inspection, local protocol references, request
 preparation and finite JSON/raw invocation through caller-supplied async
-transport. The [Rust API guide](rust/client/README.md) shows complete dynamic
+transport. The optional [`dynamic-openapi-client-reqwest`](rust/reqwest/README.md)
+companion provides a reusable native HTTP client and a runnable getting-started example. The [Rust API guide](rust/client/README.md) shows complete dynamic
 calls, diagnostics, ownership and application outcome policy.
 
 The current Rust profile does not provide YAML or other OpenAPI editions,
-external acquisition, schema evaluation, production HTTP integration or streaming
+external acquisition, schema evaluation or streaming
 codecs. Browser/workerd test glue is qualification machinery, not a supported
 TypeScript package. See [supported scope and verification](rust/README.md).
 
