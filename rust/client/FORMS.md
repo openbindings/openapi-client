@@ -47,9 +47,12 @@ Sources: [Swagger parameters](https://spec.openapis.org/oas/v2.0.html#parameter-
 Schema evaluation is separate. The client reads only facts needed for an
 unambiguous wire representation and never applies defaults, selects schema
 branches, coerces values or projects objects. The original schema/encoding Values
-remain available. Explicit JSON media can encode a field whose schema contains
-references/composition. A missing required codec fact refuses rather than being
-inferred from supplied data. OAS schema `required` remains a hint; Swagger
+remain available. An inline field with explicit JSON media can retain an opaque
+field schema while copying its exact JSON value. This does not resolve schema
+references: a media-level schema reference still prevents field discovery, and
+field references cannot supply default media or hidden coding facts. Missing
+required facts refuse rather than being inferred from supplied data.
+OAS schema `required` remains a hint; Swagger
 `required` is a protocol requirement.
 
 ## Header and boundary policy
@@ -57,7 +60,8 @@ inferred from supplied data. OAS schema `required` remains a hint; Swagger
 Multipart/form-data follows [RFC7578 §4.8](https://www.rfc-editor.org/rfc/rfc7578#section-4.8).
 The library generates Content-Disposition and Content-Type. Omitted optional
 custom declarations remain inspectable and do not block a request. Required or
-supplied unsupported headers refuse precisely. Supplied framing headers refuse;
+supplied unsupported headers refuse precisely. Every nonempty `Part::headers`
+assignment currently refuses for the supported named-form profile. Supplied framing headers refuse;
 there is no silent discard. References whose unresolved target controls required
 header behavior remain an explicit reference dependency. Content-transfer coding
 support and an explicit interoperability policy remain open capabilities.

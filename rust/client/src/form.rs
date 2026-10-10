@@ -118,7 +118,8 @@ impl<'a> Part<'a> {
         self.media = Some(v.into());
         self
     }
-    /// Supply declared part-header values. Strict form-data framing restrictions apply.
+    /// Supply declared part-header values. Every nonempty assignment currently
+    /// refuses in the supported named-form profile; framing headers always refuse.
     pub fn headers(mut self, v: &'a [(&'a str, Argument<'a>)]) -> Self {
         self.duplicate |= self.headers.is_some();
         self.headers = Some(v);
