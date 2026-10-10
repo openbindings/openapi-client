@@ -311,3 +311,12 @@ facts; this is not instance validation or branch evaluation. Encoding algorithms
 MIME transfer headers, streams and general composition remain separate work.
 Finite `f64` uses the existing explicit `ExactJson::from_serializable` boundary;
 no direct floating-point `FormField` conversion was added.
+### Response admission
+
+Supplied transports receive immutable response bounds through
+`dispatch.response_admission()`; the same view is available on prepared requests.
+Adapters can report known metadata cutoff with `HeaderDelivery::Incomplete` while
+preserving the finite response. JSON then refuses with `IncompleteHeaders`; no
+transport failure is invented. See [HOSTS.md](HOSTS.md), the unpublished
+[construction migration](MIGRATION.md), and `cargo run -p dynamic-openapi-client
+--example response_admission` from the Rust workspace.

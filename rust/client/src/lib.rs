@@ -44,9 +44,9 @@ pub use prepare::{
     SecurityRequirement, SecurityScheme, Selection, ServerDescription,
 };
 pub use transport::{
-    BodyState, DeliveredBody, DispatchEvidence, DispatchRequest, Header, HeaderFidelity,
-    HostCapabilities, Outcome, Provenance, ReplayAssurance, ReplayPolicy, Response, ResponseInput,
-    TransportResult, UploadState,
+    BodyState, DeliveredBody, DispatchEvidence, DispatchRequest, Header, HeaderDelivery,
+    HeaderFidelity, HostCapabilities, Outcome, Provenance, ReplayAssurance, ReplayPolicy, Response,
+    ResponseAdmission, ResponseInput, TransportResult, UploadState,
 };
 pub use value::{
     ExactJson, Limits, Number, ParseFailure, SourceContext, SourceOrigin, Value, ValueKind,

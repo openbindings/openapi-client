@@ -250,6 +250,46 @@ pub enum HeaderFidelity {
     /// whitespace capture. Core bounds may separately omit supplied entries.
     ExactFields,
 }
+/// Whether the adapter finished enumerating the header entries exposed by its host.
+/// This is independent of host filtering, field fidelity and body completion.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum HeaderDelivery {
+    /// The adapter made no enumeration-completeness assertion.
+    #[default]
+    Unspecified,
+    /// Enumeration reached the end of the host-exposed entries.
+    /// This does not assert that the host exposed every original wire field.
+    Complete,
+    /// Enumeration or conversion stopped before all exposed entries were delivered.
+    /// The uninspected tail is unclassified; no omitted total is implied.
+    Incomplete,
+}
+
+/// Immutable response-retention bounds copied from the prepared request's Limits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ResponseAdmission {
+    body_bytes: usize,
+    header_entries: usize,
+    header_bytes: usize,
+}
+impl ResponseAdmission {
+    /// Maximum retained response body bytes, from Limits::body_bytes.
+    pub fn body_bytes(&self) -> usize {
+        self.body_bytes
+    }
+    /// Maximum retained whole header entries, from Limits::headers.
+    pub fn header_entries(&self) -> usize {
+        self.header_entries
+    }
+    /// Maximum aggregate UTF-8 name bytes plus value bytes, excluding framing.
+    /// This uses Limits::document_bytes under the current shared policy; it is
+    /// not a separately configurable response-header limit.
+    pub fn header_bytes(&self) -> usize {
+        self.header_bytes
+    }
+}
+
 /// Response metadata and finite body delivered by the host.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
@@ -264,10 +304,14 @@ pub struct ResponseInput {
     pub opaque_redirect: bool,
     /// Host declaration about delivered structured fields, independent of body bytes.
     pub header_fidelity: HeaderFidelity,
+    /// Completion of adapter enumeration of host-exposed entries. Core omissions
+    /// are counted separately and never change this supplied declaration.
+    pub header_delivery: HeaderDelivery,
 }
 impl ResponseInput {
-    /// Construct supplied evidence with Unknown header fidelity and no opaque redirect.
-    /// Adapters must set stronger fidelity or opaque-redirect evidence explicitly.
+    /// Construct evidence with Unknown fidelity, Unspecified header delivery and
+    /// no opaque redirect. These defaults preserve the supplied-host policy;
+    /// they do not assert that metadata was completely enumerated.
     pub fn new(status: u16, headers: Vec<Header>, body: DeliveredBody) -> Self {
         Self {
             status,
@@ -275,6 +319,7 @@ impl ResponseInput {
             body,
             opaque_redirect: false,
             header_fidelity: HeaderFidelity::Unknown,
+            header_delivery: HeaderDelivery::Unspecified,
         }
     }
 }
@@ -298,7 +343,22 @@ impl fmt::Debug for TransportResult {
     }
 }
 /// Owned finite data handed to the transport once.
+/// Obtain this envelope through PreparedRequest::invoke or invoke_with_replay;
+/// its response bounds are immutable prepared evidence.
+///
+/// ```compile_fail
+/// use dynamic_openapi_client::DispatchRequest;
+/// fn old_bound(request: DispatchRequest) -> usize { request.response_limit }
+/// ```
+/// ```compile_fail
+/// use dynamic_openapi_client::{DispatchRequest, Method};
+/// let request = DispatchRequest {
+///     method: Method::Get, target: "https://example.test/".into(),
+///     headers: vec![], body: None, response_limit: 64,
+/// };
+/// ```
 #[derive(Clone)]
+#[non_exhaustive]
 pub struct DispatchRequest {
     /// HTTP method.
     pub method: Method,
@@ -309,8 +369,13 @@ pub struct DispatchRequest {
     /// Absent or finite payload; sharing these bytes does not authorize retries.
     /// Cloneable bytes do not establish that the original request was unsent.
     pub body: Option<Arc<[u8]>>,
-    /// Required response-byte admission bound for the host.
-    pub response_limit: usize,
+    response_admission: ResponseAdmission,
+}
+impl DispatchRequest {
+    /// Required finite body and metadata bounds for the supplied transport.
+    pub fn response_admission(&self) -> ResponseAdmission {
+        self.response_admission
+    }
 }
 impl fmt::Debug for DispatchRequest {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -347,6 +412,13 @@ impl Response {
     pub fn header_fidelity(&self) -> HeaderFidelity {
         self.input.header_fidelity
     }
+
+    /// The adapter's original enumeration declaration, unchanged by core omission.
+    /// Complete means all host-exposed entries were supplied, not all wire fields.
+    /// Inspect omitted_header_lines separately for entries discarded by core.
+    pub fn header_delivery(&self) -> HeaderDelivery {
+        self.input.header_delivery
+    }
     /// Bounded bytes delivered by the host; provenance is reported separately.
     pub fn raw(&self) -> &[u8] {
         &self.input.body.bytes
@@ -365,6 +437,9 @@ impl Response {
     pub fn json(&self) -> Result<ExactJson, Diagnostic> {
         if let Some(e) = &self.validation {
             return Err(e.clone());
+        }
+        if self.header_delivery() == HeaderDelivery::Incomplete || self.omitted_header_lines > 0 {
+            return Err(Diagnostic::new(Code::IncompleteHeaders));
         }
         if self.body_state() != BodyState::Complete {
             return Err(Diagnostic::new(Code::IncompleteBody));
@@ -467,6 +542,15 @@ impl Outcome {
     }
 }
 impl PreparedRequest {
+    /// Immutable response admission bounds derived from this request's Limits.
+    pub fn response_admission(&self) -> ResponseAdmission {
+        ResponseAdmission {
+            body_bytes: self.limits.body_bytes,
+            header_entries: self.limits.headers,
+            header_bytes: self.limits.document_bytes,
+        }
+    }
+
     /// Invoke once through a supplied future-producing callback, without a universal Send bound.
     /// Dropping this future does not establish remote cancellation or upload completion.
     pub async fn invoke<F, Fut>(
@@ -518,7 +602,7 @@ impl PreparedRequest {
             target: self.target.clone(),
             headers: self.headers.clone(),
             body: self.body.clone(),
-            response_limit: self.limits.body_bytes,
+            response_admission: self.response_admission(),
         };
         let result = dispatch(request, cancellation.clone()).await;
         let mut error = result
@@ -546,14 +630,13 @@ impl PreparedRequest {
                 });
             }
             input.headers = kept;
-            if omitted_header_lines > 0 {
-                validation = Some(Diagnostic::new(Code::InvalidHostEvidence));
-            }
             if input.opaque_redirect {
                 validation = Some(Diagnostic::new(Code::OpaqueRedirect));
             } else if !(100..=599).contains(&input.status)
                 || input.headers.len() > self.limits.headers
                 || input.headers.iter().any(|h| h.validate().is_err())
+                || (input.header_fidelity == HeaderFidelity::ExactFields
+                    && input.header_delivery == HeaderDelivery::Incomplete)
             {
                 validation = Some(Diagnostic::new(Code::InvalidHostEvidence));
             }

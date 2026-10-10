@@ -568,3 +568,66 @@ async fn h0_native_preflight_preserves_absent_assurance() {
         dynamic_openapi_client::Code::HostCapability
     );
 }
+
+// H1 public counterpart to tiny private collector bounds: the source fits M=4096.
+#[tokio::test]
+async fn native_metadata_cutoff_is_partial_evidence_and_body_still_completes() {
+    use dynamic_openapi_client::{Code, HeaderDelivery, HeaderFidelity, ReplayAssurance};
+    let (origin, server) = one_reply(response(
+        "200 OK",
+        &format!("X-Large: {}\r\n", "a".repeat(4097)),
+        b"{}",
+    ))
+    .await;
+    let source = format!(
+        r#"{{"openapi":"3.2.1","servers":[{{"url":"{origin}"}}],"paths":{{"/":{{"get":{{"operationId":"read"}}}}}}}}"#
+    );
+    assert!(source.len() < 4096);
+    let doc = Document::parse(
+        source,
+        None,
+        Limits {
+            document_bytes: 4096,
+            body_bytes: 64,
+            headers: 16,
+            ..Limits::default()
+        },
+    )
+    .unwrap();
+    let request = doc
+        .operation_id("read")
+        .unwrap()
+        .request()
+        .prepare()
+        .unwrap();
+    let out = execute(&Client::new().unwrap(), &request, Cancellation::default()).await;
+    assert!(out.error.is_none());
+    assert_eq!(out.host_error_detail(), None);
+    assert_eq!(out.upload, UploadState::Unknown);
+    assert_eq!(
+        out.replay_assurance(),
+        Some(ReplayAssurance::NoReplayDeclared)
+    );
+    let response = out.response.as_ref().unwrap();
+    assert_eq!(response.raw(), b"{}");
+    assert_eq!(response.body_state(), BodyState::Complete);
+    assert_eq!(response.header_delivery(), HeaderDelivery::Incomplete);
+    assert_eq!(response.header_fidelity(), HeaderFidelity::HostProcessed);
+    assert_eq!(response.omitted_header_lines(), 0);
+    assert!(
+        response
+            .headers()
+            .iter()
+            .all(|header| header.name() != "x-large")
+    );
+    assert_eq!(response.json().unwrap_err().code(), Code::IncompleteHeaders);
+    assert_eq!(
+        policies::complete_2xx_json(out.clone()).unwrap_err().reason,
+        policies::CompleteJsonRefusal::UploadUncertain
+    );
+    assert_eq!(
+        policies::received_2xx_json(out).unwrap_err().reason,
+        policies::CompleteJsonRefusal::Decode
+    );
+    server.await.unwrap();
+}

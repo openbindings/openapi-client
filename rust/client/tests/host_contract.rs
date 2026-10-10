@@ -165,7 +165,10 @@ fn strict_host_keeps_declared_assurance_and_identical_dispatch_bytes_under_both_
                 assert_eq!(r.target, p.target());
                 assert_eq!(r.headers, p.headers());
                 assert_eq!(r.body.as_deref(), p.body());
-                assert_eq!(r.response_limit, Limits::default().body_bytes);
+                assert_eq!(
+                    r.response_admission().body_bytes(),
+                    Limits::default().body_bytes
+                );
                 async { result(Some(input()), UploadState::Unknown, None) }
             }),
         );
@@ -412,10 +415,9 @@ fn response_constructor_fidelity_and_core_omission_are_distinct() {
         ReplayPolicy::AllowHostManaged,
         result(Some(response), UploadState::Unknown, None),
     );
-    assert_eq!(
-        out.error.as_ref().unwrap().code(),
-        Code::InvalidHostEvidence
-    );
+    // H1 prospective correction: truthful core cutoff is a decode refusal,
+    // not fabricated invalid-host or transport evidence. Original H0 is archived.
+    assert!(out.error.is_none());
     let response = out.response.unwrap();
     assert_eq!(response.header_fidelity(), HeaderFidelity::ExactFields);
     assert_eq!(response.omitted_header_lines(), 1);
@@ -423,10 +425,7 @@ fn response_constructor_fidelity_and_core_omission_are_distinct() {
         response.headers(),
         [Header::new("X-A", "one"), Header::new("x-a", "two")]
     );
-    assert_eq!(
-        response.json().unwrap_err().code(),
-        Code::InvalidHostEvidence
-    );
+    assert_eq!(response.json().unwrap_err().code(), Code::IncompleteHeaders);
     let mut response = input();
     response.header_fidelity = HeaderFidelity::HostProcessed;
     let (out, _) = invoke(
@@ -709,10 +708,10 @@ fn invalid_public_inputs_refuse_in_preparation_and_delivered_bounds_remain_indep
             );
             assert_eq!(
                 response.json().unwrap_err().code(),
-                if kind == "body" {
-                    Code::IncompleteBody
-                } else {
-                    Code::InvalidHostEvidence
+                match kind {
+                    "body" => Code::IncompleteBody,
+                    "bytes" => Code::IncompleteHeaders,
+                    _ => Code::InvalidHostEvidence,
                 }
             );
         }

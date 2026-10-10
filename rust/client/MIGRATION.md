@@ -1,3 +1,40 @@
+# Response admission revision (unpublished candidate)
+
+**Changed:** `DispatchRequest` is produced by `PreparedRequest::invoke` (or
+`invoke_with_replay`) and is non-exhaustive. External struct literals no longer
+compile. Obtain genuine dispatches through those callbacks in custom adapters and
+tests. Replace `dispatch.response_limit` with
+`dispatch.response_admission().body_bytes()`. Read the same immutable view before
+invocation through `prepared.response_admission()`. There is no public admission
+constructor or mutable per-dispatch limits field.
+
+`ResponseAdmission` also exposes `header_entries()` and `header_bytes()`.
+The mappings are `Limits::body_bytes`, `Limits::headers` and
+`Limits::document_bytes`, respectively. The last is the existing shared policy,
+not a new dedicated response-header tuning option. Count UTF-8 name bytes plus
+value bytes, excluding HTTP framing, before allocating copied metadata.
+
+`ResponseInput::new` additionally sets `header_delivery` to
+`HeaderDelivery::Unspecified`. Existing constructor calls retain their acceptance
+behavior. Set `Complete` only after observing iterator EOF, or `Incomplete` after
+a known bounded cutoff/conversion failure. This describes host-exposed enumeration,
+not wire fidelity or hidden/filtered fields. The response getter preserves this
+host fact even when core limits omit entries; `omitted_header_lines()` still counts
+only actual supplied entries omitted by core, never an estimated adapter tail.
+
+**Changed:** known incomplete metadata now refuses JSON with
+`Code::IncompleteHeaders` and alone does not set `Outcome::error`. Existing code
+that expected `InvalidHostEvidence`/transport failure for core omissions must
+inspect decoding or acceptance instead. Raw finite evidence remains available.
+Opaque responses still take precedence, then invalid status/retained fields or
+contradictory `ExactFields` plus `Incomplete`; uninspected omitted fields are
+unclassified. Incomplete metadata precedes body, media and coding decode checks.
+Application policy retains cancellation/dispatch/transport/status/upload priority.
+The native companion reports `Complete` or `Incomplete` after bounded collection;
+its replay declaration and upload evidence remain unchanged.
+
+See the executable `response_admission` example and [HOSTS.md](HOSTS.md).
+
 # Supplied-host contract revision (unpublished candidate)
 
 **Changed:** `ResponseInput` is non-exhaustive. Replace external struct literals

@@ -59,12 +59,37 @@ is an explicit assertion that received structured field names, value bytes,
 duplicates and order are preserved without host omission. It does not promise
 raw HTTP framing, whitespace, transport-protocol bytes or response trailers.
 
-Core metadata bounds may omit supplied entries under any fidelity declaration;
-`omitted_header_lines()` counts those entries despite its historical name. Its
-zero value does not rule out filtering upstream. JSON decode refuses incomplete
-retained metadata. Complete decoded JSON can succeed with Unknown/HostProcessed;
-a combined invalid Content-Type is not heuristically split. Body `Provenance`
-independently determines whether listed content codings remain unresolved.
+`PreparedRequest::response_admission()` and `DispatchRequest::response_admission()`
+return one immutable view for adapters: retained body bytes, header entries and
+header bytes. These map to `Limits::body_bytes`, `Limits::headers` and the existing
+`Limits::document_bytes` policy. Header bytes sum UTF-8 name bytes plus value bytes,
+excluding HTTP framing. Inspect host-owned sizes before making core copies. An
+exact count/byte limit requires observing EOF or one extra entry to distinguish
+completion; stop on the first inadmissible entry. Host/parser buffering is separate.
+
+`HeaderDelivery` is independent evidence about enumerating the fields exposed by
+the host. `Unspecified` is the constructor default and adds no acceptance refusal;
+`Complete` records observed EOF; `Incomplete` records a known cutoff. It cannot
+establish absence of CORS filtering, combination, or other host transformations.
+`Response::header_delivery()` preserves this supplied fact after core admission.
+Core bounds may omit supplied entries under any fidelity declaration;
+`omitted_header_lines()` counts only those actual entries despite its historical
+name. Its zero value does not imply complete adapter delivery or wire fidelity.
+
+A truthful adapter cutoff or any core omission leaves raw evidence usable and
+alone does not create `Outcome::error` or transport detail. JSON refuses with
+`IncompleteHeaders`, including when the core omission count is zero. Omitted,
+uninspected fields remain unclassified. Opaque evidence takes priority, followed
+by invalid status/retained fields or the contradictory `ExactFields` plus
+`Incomplete` assertion (`InvalidHostEvidence`); then known metadata incompleteness,
+body completeness, media and coding checks. Both JSON acceptance policies retain
+their separate cancellation/dispatch/transport/status/upload priority and preserve
+the decode result. Metadata cutoff/conversion failure alone must not be passed as
+`TransportResult::error_detail`, which reports transport failure.
+
+Complete decoded JSON can succeed with Unknown/HostProcessed fidelity and
+Unspecified delivery. A combined invalid Content-Type is not heuristically split.
+Body `Provenance` independently determines whether listed codings remain unresolved.
 Nonopaque 3xx responses are ordinary evidence, not opaque redirects.
 
 The native companion uses strict defaults and retains its existing never-replay
@@ -75,3 +100,9 @@ historical programmable declaration is not qualified as a Fetch replay promise.
 A truthful supported Fetch companion, runtime characterization and TypeScript
 ownership/recovery APIs remain separate work. No H0 callback test establishes
 those host or product capabilities.
+
+The controlled `Unavailable`, `Method` and `RequestBody` host refusal reasons
+support adapter preflight without arbitrary platform rejection text or fabricated
+authored ranges. Prepared operation/source inspection remains available to callers.
+The executable `response_admission` example demonstrates bounded supplied evidence
+and corrective access without network I/O.

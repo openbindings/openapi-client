@@ -323,7 +323,7 @@ async fn complete_framing_and_application_refusals_do_not_require_eviction() {
         }
         events.wait(IDLE, index + 1).await;
     }
-    // Backend header parsing succeeds, but core retention refuses extra metadata.
+    // Backend parsing succeeds; adapter metadata admission retains a bounded prefix.
     let limits = Limits {
         headers: 4,
         ..Limits::default()
@@ -341,12 +341,20 @@ async fn complete_framing_and_application_refusals_do_not_require_eviction() {
         )
         .await;
     let outcome = done(task).await;
-    assert!(outcome.error.is_some());
+    assert!(outcome.error.is_none());
     let received = outcome.response.unwrap();
     assert_eq!(received.raw(), b"{}");
     assert_eq!(received.body_state(), BodyState::Complete);
     assert_eq!(received.headers().len(), 4);
-    assert_eq!(received.omitted_header_lines(), 1);
+    assert_eq!(received.omitted_header_lines(), 0);
+    assert_eq!(
+        received.header_delivery(),
+        dynamic_openapi_client::HeaderDelivery::Incomplete
+    );
+    assert_eq!(
+        received.json().unwrap_err().code(),
+        dynamic_openapi_client::Code::IncompleteHeaders
+    );
     events.wait(IDLE, 8).await;
     assert_eq!(
         good_followup(&server, &client, 8, "after-refusals").await,

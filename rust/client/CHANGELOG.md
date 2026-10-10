@@ -1,5 +1,13 @@
 # Unreleased (0.0.0)
 
+- Add immutable response admission views and HeaderDelivery evidence. DispatchRequest
+  is now produced by invocation; migrate response_limit to response_admission().
+- Truthful adapter metadata cutoffs and core omissions preserve raw responses and
+  refuse JSON with IncompleteHeaders, without inventing transport failure. Retained
+  malformed evidence and contradictory ExactFields/Incomplete remain invalid.
+- Bound native response metadata before copying names/values; retain strict replay,
+  upload, pooling and body provenance behavior. See HOSTS.md and MIGRATION.md.
+
 - Value-located diagnostics retain source bytes through an owning source_position()
   accessor. Same-resource YAML reference errors now use authored related ranges.
 - OAS 3.0 private type facts account for a local nullable declaration and retain

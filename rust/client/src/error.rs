@@ -119,6 +119,12 @@ pub enum HostRefusal {
     ForbiddenHeader,
     /// Strict admission requires a no-replay declaration.
     Replay,
+    /// The selected host's required execution APIs are unavailable.
+    Unavailable,
+    /// The host cannot represent or execute this request method.
+    Method,
+    /// The host prohibits the supplied body for this request method.
+    RequestBody,
 }
 impl From<HostRefusal> for Diagnostic {
     fn from(refusal: HostRefusal) -> Self {
@@ -384,6 +390,8 @@ pub enum Code {
     EmptyBody,
     /// JSON decoding was requested for incomplete/truncated body evidence.
     IncompleteBody,
+    /// JSON decoding was requested after known response-header delivery omission.
+    IncompleteHeaders,
     /// Delivered bytes require content decoding outside this convenience profile.
     UnsupportedCoding,
 }
@@ -458,10 +466,11 @@ impl Code {
                 "the HTTP transport failed; inspect any retained response evidence"
             }
             Self::InvalidHostEvidence => {
-                "the HTTP host returned invalid or over-limit response metadata"
+                "the HTTP host returned invalid or contradictory response metadata"
             }
             Self::EmptyBody => "JSON decoding requires a nonempty response body",
             Self::IncompleteBody => "JSON decoding requires a complete response body",
+            Self::IncompleteHeaders => "JSON decoding requires complete response-header delivery",
             Self::UnsupportedCoding => "the response needs unsupported content decoding",
         }
     }
