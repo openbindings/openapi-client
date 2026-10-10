@@ -1,4 +1,33 @@
-# Connection reuse revision (unpublished)
+# Edition and document-format revision (unpublished candidate)
+
+`Document::parse` now accepts original JSON or YAML documents from Swagger 2.0
+and OpenAPI 3.0, 3.1 and 3.2 through the same request flow. Applications do not
+choose a parser or rewrite version fields. `version()` retains the authored
+version; `edition()` and `format()` are optional inspection metadata. These
+changes extend the finite preparation profile, not every capability in each
+specification.
+
+Use `Operation::describe()` for effective server, parameter, request-body,
+response-media and security descriptions. `inspect()` continues to expose
+authored structure. Schema descriptions retain edition/dialect context rather
+than translating schemas into another edition. Opaque body fields do not imply
+an empty form or a fully interpreted schema.
+
+**Changed:** `Method` is `Clone` rather than `Copy` so it can retain validated
+extension method tokens. Clone a borrowed method when independent ownership is
+needed. `Method::from_token` validates a wire token; `Method::parse` recognizes
+fixed operation field names. OpenAPI 3.2 QUERY and `additionalOperations` use
+the same operation/request model.
+
+**Changed:** YAML values have `SourceOrigin::Normalized` for their semantic JSON
+representation. `Document::source()` retains the original YAML. Use
+`Value::source_trace()` to pair representation ranges with original authored
+ranges and alias use sites; never apply a normalized range directly to the
+original YAML. Exact JSON input keeps its existing token/range behavior, and
+`ExactJson::parse` remains a JSON-only API. See the API guide for the bounded
+YAML profile and new format-specific diagnostics.
+
+## Previous connection reuse revision
 
 Public Rust signatures are unchanged. **Changed:** `HostCapabilities::no_retries`
 now explicitly permits recovery only when a host proves the original request

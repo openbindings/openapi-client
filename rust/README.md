@@ -5,12 +5,15 @@ The maintained Rust implementation is `client/`, package
 qualification and independently verified API repairs. Version `0.0.0` is not a
 registry release. All packages retain `publish = false`.
 
-The supported profile is exact JSON/OpenAPI 3.1.0–3.1.2 parsing and inspection,
-local JSON-Pointer protocol references, request preparation and finite JSON/raw
-invocation through caller-supplied transport. Refer to [the API guide](client/README.md)
-for parameter/media/security coverage and explicit limitations. Schema evaluation,
-external document acquisition, streaming, additional
-OpenAPI editions and a supported npm API remain separate work.
+The compatibility candidate accepts JSON and YAML documents from Swagger 2.0
+and OpenAPI 3.0, 3.1 and 3.2 through one public API, retaining authored source
+and edition semantics. Local JSON-Pointer protocol references and finite
+JSON/raw invocation use caller-supplied transport. Refer to
+[the API guide](client/README.md) for the implemented parameter/media/security
+profile and explicit limitations. Acceptance of an edition does not imply
+complete support for its features. Schema evaluation, external resource graphs
+and acquisition, forms/multipart, richer parameter styles, streaming and a
+supported npm API remain open work.
 
 The optional [`dynamic-openapi-client-reqwest`](reqwest/README.md) companion supplies
 a configured native HTTP/1.1 client, origin-scoped credentials, finite responses

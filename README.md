@@ -3,16 +3,17 @@
 An independent dynamic OpenAPI engine. Current development uses Rust in
 [`rust/client`](rust/client); it has no OpenBindings SDK dependency.
 
-The unpublished `dynamic-openapi-client` foundation supports JSON/OpenAPI
-3.1.0–3.1.2, exact-document inspection, local protocol references, request
-preparation and finite JSON/raw invocation through caller-supplied async
-transport. The optional [`dynamic-openapi-client-reqwest`](rust/reqwest/README.md)
+The unpublished `dynamic-openapi-client` foundation accepts JSON and YAML
+Swagger 2.0 and OpenAPI 3.0, 3.1 and 3.2 documents through one API. The current
+compatibility candidate adds edition-aware inspection and finite JSON/raw
+request preparation; it does not implement every feature in those editions.
+The optional [`dynamic-openapi-client-reqwest`](rust/reqwest/README.md)
 companion provides a reusable native HTTP client and a runnable getting-started example. The [Rust API guide](rust/client/README.md) shows complete dynamic
 calls, diagnostics, ownership and application outcome policy.
 
-The current Rust profile does not provide YAML or other OpenAPI editions,
-external acquisition, schema evaluation or streaming
-codecs. Browser/workerd test glue is qualification machinery, not a supported
+External resource graphs and acquisition, schema evaluation, form and multipart
+serialization, richer parameter styles and streaming codecs remain open work.
+Browser/workerd test glue is qualification machinery, not a supported
 TypeScript package. See [supported scope and verification](rust/README.md).
 
 ## Develop and verify
