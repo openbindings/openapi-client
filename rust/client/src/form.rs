@@ -892,7 +892,8 @@ fn push_piece<'a>(
 ) -> Result<(), Diagnostic> {
     work.visit()?;
     // At most one stored piece per charged visit.
-    reserve_admitted(pieces, work.limits.form_work);
+    // Expanded fields commonly need exactly one piece per emission.
+    reserve_admitted_with_initial(pieces, work.limits.form_work, 1);
     pieces.push(piece);
     Ok(())
 }
@@ -901,9 +902,16 @@ fn push_piece<'a>(
 // allocations linear; the configured ceiling caps unused reserved slots. Never
 // trust a caller iterator's size hint or reserve the entire configured maximum.
 pub(crate) fn reserve_admitted<T>(values: &mut Vec<T>, maximum: usize) {
+    reserve_admitted_with_initial(values, maximum, 4);
+}
+fn reserve_admitted_with_initial<T>(values: &mut Vec<T>, maximum: usize, initial: usize) {
     debug_assert!(values.len() < maximum);
     if values.len() == values.capacity() {
-        let capacity = values.capacity().saturating_mul(2).max(4).min(maximum);
+        let capacity = values
+            .capacity()
+            .saturating_mul(2)
+            .max(initial)
+            .min(maximum);
         values.reserve_exact(capacity.saturating_sub(values.len()));
     }
 }
@@ -1512,6 +1520,91 @@ fn finish(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn piece_growth_admits_before_reserving_and_releases_payload_owners() {
+        let document = crate::Document::parse(
+            br#"{"openapi":"3.2.1","paths":{}}"#,
+            None,
+            Limits::default(),
+        )
+        .unwrap();
+        for maximum in [65, 0, 1, 2, 3, 4, 5, 8, 9] {
+            let limits = Limits {
+                form_work: maximum,
+                ..Limits::default()
+            };
+            let cancel = Cancellation::default();
+            let mut work = Work {
+                graph: &document.0.graph,
+                declarations: crate::prepare::DescriptorWork::new(&limits),
+                limits: &limits,
+                cancel: &cancel,
+                visits: 0,
+                metadata: 0,
+                headers: 0,
+                copied_data: 0,
+            };
+            let bytes: Arc<[u8]> = Arc::from(b"payload".as_slice());
+            let owner = Arc::downgrade(&bytes);
+            let mut pieces = Vec::new();
+            let mut reserved = 0;
+            for _ in 0..maximum {
+                let previous = pieces.capacity();
+                push_piece(&mut pieces, Piece::Bytes(bytes.clone().into()), &mut work).unwrap();
+                if pieces.capacity() != previous {
+                    reserved += pieces.capacity();
+                }
+                assert!(pieces.capacity() <= maximum);
+                if pieces.len() == 1 {
+                    eprintln!(
+                        "first piece: size={} capacity={}",
+                        std::mem::size_of::<Piece<'_>>(),
+                        pieces.capacity()
+                    );
+                    assert_eq!(pieces.capacity(), 1);
+                }
+                assert!(pieces.capacity() <= pieces.len().next_power_of_two());
+            }
+            // Cumulative requested slots remain linear across all growth steps.
+            assert!(reserved <= 4 * maximum);
+            let before = (pieces.len(), pieces.capacity(), Arc::strong_count(&bytes));
+            let error =
+                push_piece(&mut pieces, Piece::Bytes(bytes.clone().into()), &mut work).unwrap_err();
+            assert!(matches!(
+                error.reason(),
+                Some(DiagnosticReason::Limit {
+                    kind: LimitKind::FormWork,
+                    ..
+                })
+            ));
+            assert_eq!(
+                before,
+                (pieces.len(), pieces.capacity(), Arc::strong_count(&bytes))
+            );
+            // Cancellation likewise cannot reserve or retain the rejected piece.
+            work.visits = 0;
+            cancel.cancel();
+            assert_eq!(
+                push_piece(&mut pieces, Piece::Bytes(bytes.clone().into()), &mut work)
+                    .unwrap_err()
+                    .code(),
+                Code::Cancelled
+            );
+            assert_eq!(
+                before,
+                (pieces.len(), pieces.capacity(), Arc::strong_count(&bytes))
+            );
+            drop(bytes);
+            assert_eq!(owner.upgrade().is_some(), maximum > 0);
+            drop(pieces);
+            assert!(owner.upgrade().is_none());
+        }
+        // Other admitted vectors retain their existing initial growth policy.
+        let mut emissions: Vec<Emission<'_>> = Vec::new();
+        reserve_admitted(&mut emissions, 65);
+        assert_eq!(emissions.capacity(), 4);
+    }
+
     fn collision_body(value: Value, attempts: usize) -> Result<(Arc<[u8]>, String), Diagnostic> {
         let limits = Limits {
             boundary_attempts: attempts,

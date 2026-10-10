@@ -1,5 +1,8 @@
 # Unreleased (0.0.0)
 
+- Reduce finite form planning memory for expanded scalar fields by reserving one
+  piece initially while retaining bounded geometric growth for joined values.
+
 - Locate unsupported deepObject caller shapes and ambiguous member names at the
   supplied value, preserving exact or generated input ownership. Refuse explicit
   `explode: false` for OpenAPI 3.2 schema-based cookie parameters using `form` or
