@@ -373,3 +373,26 @@ fn memo_retains_first_path_limit_priority() {
         );
     }
 }
+
+#[test]
+fn frozen_memo_first_refusal_matches_unmemoized_path() {
+    let fixture:Json=serde_json::from_str(include_str!("../tests/fixtures/schema-memo-first-refusal.json")).unwrap();
+    let doc=document(&fixture);
+    let token=Cancellation::default();
+    let mut failures=Vec::new();
+    for (refs,depth,kind,pointer) in [(6,128,LimitKind::ReferenceDepth,"/components/schemas/T3/$ref"),(128,6,LimitKind::SchemaFactDepth,"/components/schemas/T4")] {
+        let limits=Limits{reference_steps:refs,schema_fact_depth:depth,..Limits::default()};
+        let mut previous: Option<(Option<SourceContext>, Option<Location>, Option<DiagnosticReason>)>=None;
+        for names in [vec!["L0".into()],vec!["T0".into(),"L0".into()]] {
+            let mut work=FactWork::new(&limits,&token);
+            let error=query(&doc.0.graph,&selection(&doc,&names),FactQuery::Types,&mut work).err().unwrap();
+            println!("FACT_REPAIR_OBSERVATION {}",json!({"control":"R15-first-refusal","selected":names,"reason":format!("{:?}",error.reason()),"pointer":error.location().map(|l|&l.pointer)}));
+            if error.reason()!=Some(&DiagnosticReason::Limit{kind,maximum:6,actual:7}) || error.location().is_none_or(|l|l.pointer!=pointer) {failures.push(format!("{kind:?} {names:?}"));}
+            if let Some((source,location,reason))=previous {
+                if error.source_context()!=source || error.location()!=location.as_ref() || error.reason()!=reason.as_ref() {failures.push("memo differs from standalone traversal".to_owned());}
+            }
+            previous=Some((error.source_context(),error.location().cloned(),error.reason().cloned()));
+        }
+    }
+    assert!(failures.is_empty(),"first-refusal controls failed: {failures:?}");
+}
