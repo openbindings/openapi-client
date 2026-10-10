@@ -624,8 +624,9 @@ impl<'a> RequestBuilder<'a> {
                 form = Some(
                     fields
                         .into_iter()
-                        .map(|field| field.lower(&mut exact))
-                        .collect::<Vec<_>>(),
+                        .map(|field| field.lower(&mut exact, cancellation))
+                        .collect::<Result<Vec<_>, _>>()
+                        .map_err(RequestError::Preparation)?,
                 );
                 Body::Absent
             }

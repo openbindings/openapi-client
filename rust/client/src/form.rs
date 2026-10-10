@@ -297,7 +297,8 @@ impl Form {
             crate::schema::checkpoint(cancellation).map_err(RequestError::Preparation)?;
             owned.push(
                 field
-                    .lower(&mut exact)
+                    .lower(&mut exact, cancellation)
+                    .map_err(RequestError::Preparation)?
                     .into_owned(cancellation)
                     .map_err(RequestError::Preparation)?,
             );
@@ -487,7 +488,12 @@ impl<'a> FormField<'a> {
         }
         Ok(())
     }
-    pub(crate) fn lower(self, exact: &mut impl FnMut(Argument<'a>) -> Value) -> ReadyField<'a> {
+    pub(crate) fn lower(
+        self,
+        exact: &mut impl FnMut(Argument<'a>) -> Value,
+        cancel: &Cancellation,
+    ) -> Result<ReadyField<'a>, Diagnostic> {
+        cancel.check()?;
         let content = match self.value {
             FormValue::Value(v) => ReadyValue::One(ReadyPart {
                 explicit: false,
@@ -496,34 +502,49 @@ impl<'a> FormField<'a> {
                 media: None,
                 headers: Vec::new(),
             }),
-            FormValue::Part(p) => ReadyValue::One(p.lower(exact)),
+            FormValue::Part(p) => ReadyValue::One(p.lower(exact, cancel)?),
             FormValue::Parts(ps) => {
-                ReadyValue::Many(ps.iter().cloned().map(|p| p.lower(exact)).collect())
+                let mut parts = Vec::with_capacity(ps.len());
+                for part in ps {
+                    cancel.check()?;
+                    parts.push(part.clone().lower(exact, cancel)?);
+                }
+                ReadyValue::Many(parts)
             }
         };
-        ReadyField {
+        cancel.check()?;
+        Ok(ReadyField {
             name: self.name,
             content,
-        }
+        })
     }
 }
 impl<'a> Part<'a> {
-    fn lower(self, exact: &mut impl FnMut(Argument<'a>) -> Value) -> ReadyPart<'a> {
-        ReadyPart {
+    fn lower(
+        self,
+        exact: &mut impl FnMut(Argument<'a>) -> Value,
+        cancel: &Cancellation,
+    ) -> Result<ReadyPart<'a>, Diagnostic> {
+        cancel.check()?;
+        let payload = match self.content {
+            Content::Value(v) => Payload::Value(exact(v)),
+            Content::Bytes(b) => Payload::Bytes(b.into()),
+        };
+        cancel.check()?;
+        let authored_headers = self.headers.unwrap_or(&[]);
+        let mut headers = Vec::with_capacity(authored_headers.len());
+        for (name, value) in authored_headers {
+            cancel.check()?;
+            headers.push((Cow::Borrowed(*name), exact(value.clone())));
+        }
+        cancel.check()?;
+        Ok(ReadyPart {
             explicit: true,
-            payload: match self.content {
-                Content::Value(v) => Payload::Value(exact(v)),
-                Content::Bytes(b) => Payload::Bytes(b.into()),
-            },
+            payload,
             filename: self.filename,
             media: self.media,
-            headers: self
-                .headers
-                .unwrap_or(&[])
-                .iter()
-                .map(|(n, v)| (Cow::Borrowed(*n), exact(v.clone())))
-                .collect(),
-        }
+            headers,
+        })
     }
 }
 #[derive(Clone)]
@@ -2032,6 +2053,73 @@ pub(crate) fn describe_representation(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn shared_lowering_cancels_before_entries_and_releases_partial_owners() {
+        let value = crate::ExactJson::parse(br#""x""#, Limits::default())
+            .unwrap()
+            .root();
+        let cancel = Cancellation::default();
+        cancel.cancel();
+        let mut calls = 0;
+        let result = FormField::new("p", value.clone()).lower(
+            &mut |argument| {
+                calls += 1;
+                match argument {
+                    Argument::Exact(value) => value,
+                    _ => unreachable!(),
+                }
+            },
+            &cancel,
+        );
+        assert!(matches!(result, Err(e) if e.code() == Code::Cancelled));
+        assert_eq!(calls, 0);
+
+        let bytes: Arc<[u8]> = Arc::from([0, 255]);
+        let parts = [
+            Part::bytes(bytes.clone()),
+            Part::value(value.clone()),
+            Part::bytes(bytes.clone()),
+        ];
+        let owners = Arc::strong_count(&bytes);
+        let cancel = Cancellation::default();
+        let result = FormField::new("p", FormValue::Parts(&parts)).lower(
+            &mut |argument| {
+                calls += 1;
+                cancel.cancel();
+                match argument {
+                    Argument::Exact(value) => value,
+                    _ => unreachable!(),
+                }
+            },
+            &cancel,
+        );
+        assert!(matches!(result, Err(e) if e.code() == Code::Cancelled));
+        assert_eq!(calls, 1);
+        assert_eq!(Arc::strong_count(&bytes), owners);
+
+        let headers = [
+            ("x-one", Argument::Exact(value.clone())),
+            ("x-two", Argument::Exact(value.clone())),
+            ("x-three", Argument::Exact(value.clone())),
+        ];
+        let cancel = Cancellation::default();
+        calls = 0;
+        let result = FormField::new("p", Part::value(value).headers(&headers)).lower(
+            &mut |argument| {
+                calls += 1;
+                if calls == 2 {
+                    cancel.cancel();
+                }
+                match argument {
+                    Argument::Exact(value) => value,
+                    _ => unreachable!(),
+                }
+            },
+            &cancel,
+        );
+        assert!(matches!(result, Err(e) if e.code() == Code::Cancelled));
+        assert_eq!(calls, 2);
+    }
     #[test]
     fn piece_growth_admits_before_reserving_and_releases_payload_owners() {
         let document = crate::Document::parse(
