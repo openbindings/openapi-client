@@ -1063,7 +1063,7 @@ impl Graph {
                     }
                 }
             }
-            graph.children(&node, context, &mut queue, cancellation)?;
+            graph.children(&node, context, &mut queue, &mut edges, cancellation)?;
         }
         Ok(graph)
     }
@@ -1094,6 +1094,7 @@ impl Graph {
         node: &Value,
         context: Context,
         queue: &mut VecDeque<(Value, Context)>,
+        edges: &mut usize,
         cancellation: &crate::Cancellation,
     ) -> Result<(), Diagnostic> {
         let edition = context.edition;
@@ -1327,6 +1328,14 @@ impl Graph {
                         {
                             continue;
                         }
+                        bound(
+                            *edges,
+                            1,
+                            self.limits.reference_edges,
+                            crate::LimitKind::GraphReferenceEdges,
+                        )
+                        .map_err(|e| source.locate(e))?;
+                        *edges += 1;
                         if let Ok((id, pointer, _)) = self.target_address(&source, name) {
                             let resource = self.resource(id).expect("target resource");
                             if pointer.is_empty()
@@ -1349,12 +1358,13 @@ impl Graph {
         reference: &str,
     ) -> Result<(ResourceId, String, bool), Diagnostic> {
         let owner = self.owner(source)?;
-        if reference.starts_with('#') && owner.base.is_none() {
+        if (reference.is_empty() || reference.starts_with('#')) && owner.base.is_none() {
             fluent_uri::UriRef::parse(reference)
                 .map_err(|_| source.error(Code::InvalidReference))?;
             return Ok((
                 owner.id,
-                crate::uri::percent_decode(&reference[1..]).map_err(|e| source.locate(e))?,
+                crate::uri::percent_decode(reference.strip_prefix('#').unwrap_or(reference))
+                    .map_err(|e| source.locate(e))?,
                 true,
             ));
         }

@@ -710,3 +710,112 @@ fn mounted_resource_need_survives_later_local_path_validation_issue() {
         "https://docs.example/missing"
     );
 }
+
+#[test]
+fn empty_anonymous_reference_is_same_document_and_still_checks_cycles() {
+    for retrieval in [None, Some("https://docs.example/part")] {
+        let mut builder = DocumentBuilder::new(Limits::default(), GraphLimits::default());
+        let entry = builder
+            .add(input(
+                "https://docs.example/root",
+                include_bytes!("graph-fixtures/repair-parts.json"),
+            ))
+            .unwrap();
+        let bytes = include_bytes!("graph-fixtures/repair-empty-part.json").as_slice();
+        let fragment = match retrieval {
+            Some(uri) => input(uri, bytes),
+            None => ResourceInput::anonymous(bytes),
+        }
+        .layout(ResourceLayout::new().protocol(
+            "",
+            ReferenceKind::PathItem,
+            Edition::OpenApi32,
+        ));
+        let id = builder.add(fragment).unwrap();
+        let document = builder.build(entry).unwrap();
+        let source = document.resource(id).unwrap();
+        assert_eq!(source.retrieval_uri(), retrieval);
+        assert_eq!(source.description_base(), retrieval);
+        let site = source.protocol_at("", ReferenceKind::PathItem).unwrap();
+        let error = document.resolve_protocol(&site).unwrap_err();
+        assert_eq!(error.code(), Code::ReferenceCycle);
+        assert_eq!(error.source_context(), Some(source.root().source_context()));
+        assert!(error.resource_need().is_none());
+    }
+}
+
+#[test]
+fn security_uri_edges_consume_graph_quota_but_exact_names_do_not() {
+    for maximum in [0, 1] {
+        let mut limits = GraphLimits::default();
+        limits.reference_edges = maximum;
+        let mut builder = DocumentBuilder::new(Limits::default(), limits);
+        let entry = builder
+            .add(input(
+                "https://docs.example/root",
+                include_bytes!("graph-fixtures/repair-security-edge-entry.json"),
+            ))
+            .unwrap();
+        builder
+            .add(input(
+                "https://defs.example/security",
+                include_bytes!("graph-fixtures/repair-security-edge-defs.json"),
+            ))
+            .unwrap();
+        let result = builder.build(entry);
+        if maximum == 0 {
+            let error = result.unwrap_err();
+            assert_eq!(error.code(), Code::Limit);
+            assert_eq!(
+                error.reason(),
+                Some(&DiagnosticReason::Limit {
+                    kind: LimitKind::GraphReferenceEdges,
+                    maximum: 0,
+                    actual: 1
+                })
+            );
+            assert_eq!(
+                error.location().unwrap().pointer,
+                "/paths/~1run/get/security/0/https:~1~1defs.example~1security#~1components~1securitySchemes~1T"
+            );
+        } else {
+            let doc = result.unwrap();
+            let request = doc
+                .operation("/run", Method::Get)
+                .unwrap()
+                .request()
+                .credential(
+                    "https://defs.example/security#/components/securitySchemes/T",
+                    Credential {
+                        value: CredentialValue::ApiKey("dummy".into()),
+                        origins: vec!["https://api.example".into()],
+                    },
+                )
+                .prepare()
+                .unwrap();
+            assert!(request.target().starts_with("https://api.example/run"));
+        }
+    }
+    let source = r#"{"openapi":"3.2.1","servers":[{"url":"https://api.example"}],"security":[{"https://defs.example/T":[]}],"components":{"securitySchemes":{"https://defs.example/T":{"type":"apiKey","in":"header","name":"X-Auth"}}},"paths":{"/":{"get":{}}}}"#;
+    let mut limits = GraphLimits::default();
+    limits.reference_edges = 0;
+    let mut builder = DocumentBuilder::new(Limits::default(), limits);
+    let entry = builder
+        .add(input("https://docs.example/root", source.as_bytes()))
+        .unwrap();
+    let doc = builder.build(entry).unwrap();
+    assert!(
+        doc.operation("/", Method::Get)
+            .unwrap()
+            .request()
+            .credential(
+                "https://defs.example/T",
+                Credential {
+                    value: CredentialValue::ApiKey("dummy".into()),
+                    origins: vec!["https://api.example".into()]
+                }
+            )
+            .prepare()
+            .is_ok()
+    );
+}
