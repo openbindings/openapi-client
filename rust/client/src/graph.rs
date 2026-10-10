@@ -308,6 +308,7 @@ pub(crate) struct Resource {
 /// An unpublished graph transaction. Published documents are never mutated.
 pub struct DocumentBuilder {
     resources: Vec<Arc<Resource>>,
+    admission: Admission,
     limits: Limits,
     graph_limits: GraphLimits,
     seed: Option<Arc<Store>>,
@@ -317,6 +318,7 @@ impl DocumentBuilder {
     pub fn new(limits: Limits, graph_limits: GraphLimits) -> Self {
         Self {
             resources: vec![],
+            admission: Admission::default(),
             limits,
             graph_limits,
             seed: None,
@@ -326,6 +328,7 @@ impl DocumentBuilder {
     pub fn from_document(document: &crate::Document) -> Self {
         Self {
             resources: document.0.graph.resources.clone(),
+            admission: document.0.graph.admission.clone(),
             limits: document.0.limits.clone(),
             graph_limits: document.0.graph.limits.clone(),
             seed: Some(document.0.clone()),
@@ -429,8 +432,9 @@ impl DocumentBuilder {
         }
         if let Some(uri) = &input.retrieval {
             let key = identity_key(uri).map_err(fail)?;
-            for (index, resource) in self.resources.iter().enumerate() {
-                cancellation.check().map_err(fail)?;
+            if let Some(id) = self.admission.aliases.get(&key) {
+                let index = self.admission.indices[id];
+                let resource = &self.resources[index];
                 if resource
                     .retrieval
                     .as_ref()
@@ -443,12 +447,11 @@ impl DocumentBuilder {
                         return Err(fail(Diagnostic::new(Code::ConflictingObjectContext)));
                     }
                     let id = resource.id;
-                    let mut known: HashSet<&str> =
-                        resource.aliases.iter().map(String::as_str).collect();
+                    let mut known = HashSet::new();
                     let mut pending = Vec::with_capacity(input.aliases.len());
                     for alias in &input.aliases {
                         cancellation.check().map_err(fail)?;
-                        if known.insert(alias) {
+                        if !resource.aliases.contains(alias) && known.insert(alias) {
                             pending.push(alias);
                         }
                     }
@@ -461,17 +464,26 @@ impl DocumentBuilder {
                         .plus(extra)
                         .check(&self.graph_limits)
                         .map_err(fail)?;
-                    let mut updated = (**resource).clone();
-                    updated.aliases.reserve_exact(pending.len());
-                    for alias in pending {
-                        updated.aliases.push(alias.clone());
+                    let identities = stage_aliases(
+                        id,
+                        &resource.json.root(),
+                        pending.iter().map(|s| s.as_str()),
+                        &self.admission.aliases,
+                        cancellation,
+                    )
+                    .map_err(fail)?;
+                    cancellation.check().map_err(fail)?;
+                    // All fallible checks precede the commit. A resource shared with
+                    // a published snapshot is copied only when it actually changes.
+                    if !pending.is_empty() {
+                        let updated = Arc::make_mut(&mut self.resources[index]);
+                        for alias in pending {
+                            reserve_vec(&mut updated.aliases, self.graph_limits.identities);
+                            updated.aliases.push(alias.clone());
+                        }
+                        self.admission.aliases.extend(identities);
+                        self.admission.metadata = self.admission.metadata.plus(extra);
                     }
-                    let mut identities = HashMap::new();
-                    for existing in &self.resources {
-                        register_aliases(existing, &mut identities, cancellation).map_err(fail)?;
-                    }
-                    register_aliases(&updated, &mut identities, cancellation).map_err(fail)?;
-                    self.resources[index] = Arc::new(updated);
                     return Ok(id);
                 }
             }
@@ -614,11 +626,27 @@ impl DocumentBuilder {
             layout: ResourceLayout { roots },
         };
         validate_layout(&resource, cancellation)?;
-        let mut identities = HashMap::new();
-        for existing in &self.resources {
-            register_aliases(existing, &mut identities, cancellation)?;
-        }
-        register_aliases(&resource, &mut identities, cancellation)?;
+        let identities = stage_aliases(
+            id,
+            &resource.json.root(),
+            resource
+                .aliases
+                .iter()
+                .map(String::as_str)
+                .chain(resource.canonical.as_deref())
+                .chain(resource.canonical.as_deref().map(without_fragment)),
+            &self.admission.aliases,
+            cancellation,
+        )?;
+        cancellation.check()?;
+        // Commit only the incoming resource and its validated identity delta.
+        // Rebuilding every earlier URI index here made graph admission quadratic.
+        self.admission.original_bytes = bytes.saturating_add(resource.json.original_source().len());
+        self.admission.nodes = nodes.saturating_add(resource.json.node_count());
+        self.admission.retained_bytes = retained.saturating_add(resource.json.retained_bytes());
+        self.admission.metadata = self.admission.metadata.plus(resource.metadata());
+        self.admission.aliases.extend(identities);
+        self.admission.indices.insert(id, self.resources.len());
         reserve_vec(&mut self.resources, self.graph_limits.resources);
         self.resources.push(Arc::new(resource));
         Ok(id)
@@ -664,9 +692,10 @@ impl DocumentBuilder {
             )?;
         }
         let index = self
-            .resources
-            .iter()
-            .position(|r| r.id == id)
+            .admission
+            .indices
+            .get(&id)
+            .copied()
             .ok_or_else(|| Diagnostic::new(Code::MissingReference))?;
         let mut known: HashMap<&str, (ReferenceKind, Edition)> = self.resources[index]
             .layout
@@ -707,7 +736,9 @@ impl DocumentBuilder {
             }
         }
         validate_layout(&updated, cancellation)?;
+        cancellation.check()?;
         self.resources[index] = Arc::new(updated);
+        self.admission.metadata = self.admission.metadata.plus(extra);
         Ok(())
     }
     /// Publish a closed graph with the selected entry OpenAPI source.
@@ -720,28 +751,40 @@ impl DocumentBuilder {
         entry: ResourceId,
         cancellation: &crate::Cancellation,
     ) -> Result<crate::Document, Diagnostic> {
-        let graph = Graph::new(self.resources, entry, self.graph_limits, cancellation)?;
+        let graph = Graph::new(
+            self.resources,
+            self.admission,
+            entry,
+            self.graph_limits,
+            cancellation,
+        )?;
         crate::Document::from_graph(graph, entry, self.limits, cancellation)
     }
     fn totals(&self) -> (usize, usize, usize) {
-        self.resources
-            .iter()
-            .fold((0usize, 0usize, 0usize), |(b, n, r), x| {
-                (
-                    b.saturating_add(x.json.original_source().len()),
-                    n.saturating_add(x.json.node_count()),
-                    r.saturating_add(x.json.retained_bytes()),
-                )
-            })
+        (
+            self.admission.original_bytes,
+            self.admission.nodes,
+            self.admission.retained_bytes,
+        )
     }
     fn metadata_total(&self) -> MetadataUse {
-        self.resources
-            .iter()
-            .fold(MetadataUse::default(), |used, r| used.plus(r.metadata()))
+        self.admission.metadata
     }
 }
 
-#[derive(Clone, Copy, Default)]
+// Bounded, owner-free admission indexes and exact retained-source counters.
+// Cloned once when forking a snapshot; moved without rebuilding on publication.
+#[derive(Clone, Default)]
+struct Admission {
+    aliases: HashMap<String, ResourceId>,
+    indices: HashMap<ResourceId, usize>,
+    original_bytes: usize,
+    nodes: usize,
+    retained_bytes: usize,
+    metadata: MetadataUse,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct MetadataUse {
     identities: usize,
     layouts: usize,
@@ -932,27 +975,28 @@ fn identity_key(uri: &str) -> Result<String, Diagnostic> {
     }
     Ok(String::from_utf8(bytes).expect("URI is UTF-8"))
 }
-fn register_aliases(
-    resource: &Resource,
-    aliases: &mut HashMap<String, ResourceId>,
+fn stage_aliases<'a>(
+    id: ResourceId,
+    source: &Value,
+    aliases: impl Iterator<Item = &'a str>,
+    existing: &HashMap<String, ResourceId>,
     cancellation: &crate::Cancellation,
-) -> Result<(), Diagnostic> {
-    for alias in resource
-        .aliases
-        .iter()
-        .map(String::as_str)
-        .chain(resource.canonical.as_deref())
-        .chain(resource.canonical.as_deref().map(without_fragment))
-    {
+) -> Result<HashMap<String, ResourceId>, Diagnostic> {
+    let mut pending = HashMap::new();
+    for alias in aliases {
         cancellation.check()?;
         let key = identity_key(alias)?;
-        if let Some(existing) = aliases.insert(key, resource.id)
-            && existing != resource.id
-        {
-            return Err(resource.json.root().error(Code::IdentityCollision));
+        match existing.get(&key) {
+            Some(previous) if *previous != id => {
+                return Err(source.error(Code::IdentityCollision));
+            }
+            Some(_) => {}
+            None => {
+                pending.insert(key, id);
+            }
         }
     }
-    Ok(())
+    Ok(pending)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -977,13 +1021,14 @@ fn key(value: &Value) -> NodeKey {
 pub(crate) struct Graph {
     pub resources: Vec<Arc<Resource>>,
     pub limits: GraphLimits,
-    aliases: HashMap<String, ResourceId>,
+    admission: Admission,
     contexts: HashMap<NodeKey, Context>,
     entry: ResourceId,
 }
 impl Graph {
     fn new(
         resources: Vec<Arc<Resource>>,
+        admission: Admission,
         entry: ResourceId,
         limits: GraphLimits,
         cancellation: &crate::Cancellation,
@@ -992,7 +1037,7 @@ impl Graph {
             resources,
             entry,
             limits,
-            aliases: HashMap::new(),
+            admission,
             contexts: HashMap::new(),
         };
         if graph.resource(entry).is_none() {
@@ -1001,7 +1046,6 @@ impl Graph {
         let mut queue = VecDeque::new();
         for resource in &graph.resources {
             cancellation.check()?;
-            register_aliases(resource, &mut graph.aliases, cancellation)?;
             if let Ok(edition) = Edition::detect(&resource.json.root()) {
                 enqueue(
                     &mut queue,
@@ -1068,10 +1112,10 @@ impl Graph {
         Ok(graph)
     }
     pub(crate) fn resource(&self, id: ResourceId) -> Option<&Resource> {
-        self.resources
-            .iter()
-            .find(|r| r.id == id)
-            .map(AsRef::as_ref)
+        self.admission
+            .indices
+            .get(&id)
+            .map(|index| self.resources[*index].as_ref())
     }
     fn owner(&self, value: &Value) -> Result<&Resource, Diagnostic> {
         self.resource(ResourceId(value.source_context().id))
@@ -1369,7 +1413,7 @@ impl Graph {
             ));
         }
         let uri = resolve_uri(reference, owner.base.as_deref()).map_err(|e| source.locate(e))?;
-        if let Some(id) = self.aliases.get(&identity_key(&uri)?) {
+        if let Some(id) = self.admission.aliases.get(&identity_key(&uri)?) {
             let target = self.resource(*id).expect("alias source");
             let canonical = target
                 .canonical
@@ -1378,7 +1422,7 @@ impl Graph {
             return Ok((*id, String::new(), canonical));
         }
         let access = without_fragment(&uri);
-        let Some(id) = self.aliases.get(&identity_key(access)?) else {
+        let Some(id) = self.admission.aliases.get(&identity_key(access)?) else {
             return Err(source.error(Code::ResourceUnavailable));
         };
         let pointer = uri
@@ -1658,6 +1702,199 @@ fn valid_kind(value: &Value, kind: ReferenceKind, edition: Edition) -> bool {
 #[cfg(test)]
 mod ownership_tests {
     use super::*;
+
+    fn check_admission(builder: &DocumentBuilder) {
+        let mut aliases = HashMap::new();
+        let mut totals = (0usize, 0usize, 0usize);
+        let mut metadata = MetadataUse::default();
+        for (index, resource) in builder.resources.iter().enumerate() {
+            assert_eq!(builder.admission.indices.get(&resource.id), Some(&index));
+            for alias in resource
+                .aliases
+                .iter()
+                .map(String::as_str)
+                .chain(resource.canonical.as_deref())
+                .chain(resource.canonical.as_deref().map(without_fragment))
+            {
+                let previous = aliases.insert(identity_key(alias).unwrap(), resource.id);
+                assert!(previous.is_none_or(|id| id == resource.id));
+            }
+            totals.0 += resource.json.original_source().len();
+            totals.1 += resource.json.node_count();
+            totals.2 += resource.json.retained_bytes();
+            metadata = metadata.plus(resource.metadata());
+        }
+        assert_eq!(builder.admission.indices.len(), builder.resources.len());
+        assert_eq!(builder.admission.aliases, aliases);
+        assert_eq!(builder.totals(), totals);
+        assert_eq!(builder.metadata_total(), metadata);
+    }
+
+    #[test]
+    fn admission_deltas_are_atomic_and_snapshot_forks_keep_exact_accounting() {
+        let bytes: Arc<[u8]> = Arc::from(br##"{"openapi":"3.2.1","$self":"https://canonical.example/root#named","paths":{},"x-p":{"name":"x","in":"query"}}"##.as_slice());
+        let input = || ResourceInput::at("https://docs.example/root", bytes.clone()).unwrap();
+        let mut builder = DocumentBuilder::new(Limits::default(), GraphLimits::default());
+        let entry = builder.add(input()).unwrap();
+        let other = builder
+            .add(
+                ResourceInput::at(
+                    "https://docs.example/other",
+                    Arc::<[u8]>::from(b"{}".as_slice()),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        check_admission(&builder);
+
+        // A late collision must not publish an earlier alias in the same call.
+        let failure = builder
+            .add(
+                input()
+                    .aliases([
+                        "https://docs.example/pending".into(),
+                        "https://docs.example/other".into(),
+                    ])
+                    .unwrap(),
+            )
+            .unwrap_err();
+        assert_eq!(failure.diagnostic.code(), Code::IdentityCollision);
+        assert!(
+            !builder
+                .admission
+                .aliases
+                .contains_key("https://docs.example/pending")
+        );
+        check_admission(&builder);
+        assert_eq!(
+            builder
+                .add(
+                    input()
+                        .aliases([
+                            "https://docs.example/pending".into(),
+                            "https://docs.example/pending".into(),
+                        ])
+                        .unwrap()
+                )
+                .unwrap(),
+            entry
+        );
+        assert_eq!(builder.resources[0].aliases.len(), 2);
+        check_admission(&builder);
+
+        // A new source's canonical collision also rolls back its retrieval key.
+        let failure = builder
+            .add(ResourceInput::at("https://docs.example/uncommitted", bytes.clone()).unwrap())
+            .unwrap_err();
+        assert_eq!(failure.diagnostic.code(), Code::IdentityCollision);
+        assert!(
+            !builder
+                .admission
+                .aliases
+                .contains_key("https://docs.example/uncommitted")
+        );
+        check_admission(&builder);
+
+        let doc = builder.build(entry).unwrap();
+        let weak = Arc::downgrade(&doc.0);
+        let mut fork = DocumentBuilder::from_document(&doc);
+        check_admission(&fork);
+        let layout =
+            ResourceLayout::new().protocol("/x-p", ReferenceKind::Parameter, Edition::OpenApi32);
+        fork.enrich_layout(entry, layout.clone()).unwrap();
+        fork.enrich_layout(entry, layout).unwrap();
+        check_admission(&fork);
+        let error = fork
+            .enrich_layout(
+                entry,
+                ResourceLayout::new().protocol("/x-p", ReferenceKind::Header, Edition::OpenApi32),
+            )
+            .unwrap_err();
+        assert_eq!(error.code(), Code::ConflictingObjectContext);
+        check_admission(&fork);
+        assert_eq!(
+            fork.add(
+                input()
+                    .aliases(["https://docs.example/later".into()])
+                    .unwrap()
+            )
+            .unwrap(),
+            entry
+        );
+        check_admission(&fork);
+        assert_eq!(doc.entry_resource().aliases().count(), 2);
+        assert_eq!(
+            doc.entry_resource()
+                .protocol_at("/x-p", ReferenceKind::Parameter)
+                .unwrap_err()
+                .code(),
+            Code::WrongReferenceKind
+        );
+        let next = fork.build(entry).unwrap();
+        assert_eq!(next.entry_resource().aliases().count(), 3);
+        assert!(next.resource(other).is_some());
+        assert!(
+            next.entry_resource()
+                .protocol_at("/x-p", ReferenceKind::Parameter)
+                .is_ok()
+        );
+        drop(doc);
+        assert!(
+            weak.upgrade().is_none(),
+            "new admission indexes may not retain the old Store"
+        );
+    }
+
+    #[test]
+    fn failed_or_cancelled_admission_does_not_spend_graph_allowances() {
+        let bytes: Arc<[u8]> = Arc::from(b"{\"openapi\":\"3.2.1\",\"paths\":{}}".as_slice());
+        let caps = GraphLimits {
+            identities: 2,
+            resources: 2,
+            ..GraphLimits::default()
+        };
+        let mut builder = DocumentBuilder::new(Limits::default(), caps);
+        let input = || ResourceInput::at("https://docs.example/root", bytes.clone()).unwrap();
+        let entry = builder.add(input()).unwrap();
+        let metadata = builder.metadata_total();
+        let failure = builder
+            .add(
+                input()
+                    .aliases([
+                        "https://docs.example/a".into(),
+                        "https://docs.example/b".into(),
+                    ])
+                    .unwrap(),
+            )
+            .unwrap_err();
+        assert_eq!(failure.diagnostic.code(), Code::Limit);
+        assert_eq!(builder.metadata_total(), metadata);
+        check_admission(&builder);
+        let cancelled = crate::Cancellation::default();
+        cancelled.cancel();
+        let failure = builder
+            .add_with_cancellation(input(), &cancelled)
+            .unwrap_err();
+        assert_eq!(failure.diagnostic.code(), Code::Cancelled);
+        check_admission(&builder);
+        let failure = builder
+            .add(
+                ResourceInput::at(
+                    "https://docs.example/bad",
+                    Arc::<[u8]>::from(b"{]".as_slice()),
+                )
+                .unwrap(),
+            )
+            .unwrap_err();
+        assert_ne!(failure.diagnostic.code(), Code::Limit);
+        check_admission(&builder);
+        builder
+            .add(ResourceInput::at("https://docs.example/second", bytes).unwrap())
+            .unwrap();
+        check_admission(&builder);
+        assert_eq!(builder.build(entry).unwrap().resources().len(), 2);
+    }
+
     #[test]
     fn bounded_vectors_and_index_queue_grow_geometrically() {
         let maximum = 1025;
