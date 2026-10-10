@@ -1,5 +1,7 @@
 # Unreleased (0.0.0)
 
+- Value-located diagnostics retain source bytes through an owning source_position()
+  accessor. Same-resource YAML reference errors now use authored related ranges.
 - OAS 3.0 private type facts account for a local nullable declaration and retain
   its contribution without treating declaration facts as instance validation.
 - Private schema facts retain only payload contributors for Known provenance;

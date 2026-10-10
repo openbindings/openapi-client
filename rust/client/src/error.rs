@@ -268,6 +268,7 @@ struct Details {
     reason: Option<DiagnosticReason>,
     context: Option<DiagnosticContext>,
     source: Option<SourceContext>,
+    primary_source: Option<std::sync::Arc<str>>,
     context_omitted_for_limit: bool,
     need_fact: Option<crate::graph::NeedFact>,
     resource_need: Option<crate::ResourceNeed>,
@@ -512,7 +513,8 @@ impl Diagnostic {
     pub fn code(&self) -> Code {
         self.code
     }
-    /// Exact source range when available; its owner is source_context().
+    /// Exact source range when available; source_context() identifies its source.
+    /// source_position() separately reports whether those bytes are retained.
     pub fn location(&self) -> Option<&Location> {
         self.location.as_ref()
     }
@@ -533,6 +535,9 @@ impl Diagnostic {
         self.setting.as_deref()
     }
     pub(crate) fn at(mut self, location: Location) -> Self {
+        if let Some(details) = &mut self.details {
+            details.primary_source = None;
+        }
         self.location = Some(location);
         self
     }
@@ -550,8 +555,24 @@ impl Diagnostic {
     }
     /// Process-local source identity and origin owning location and related ranges.
     /// None means no exact source owner was associated; do not assume the OpenAPI document.
+    /// This identity alone does not retain bytes; source_position() reports that separately.
     pub fn source_context(&self) -> Option<SourceContext> {
         self.details.as_ref()?.source
+    }
+    /// Retain an independently owning position for a value-located diagnostic.
+    /// The returned position shares the complete original source text and copies
+    /// its pointer; it does not retain the value index or document graph.
+    /// It remains usable after this diagnostic and its document/input are dropped.
+    /// Parser or unlocated diagnostics may return None; ParseFailure::source_bytes
+    /// remains the accessor for admitted parse-failure bytes, including invalid UTF-8.
+    pub fn source_position(&self) -> Option<crate::SourcePosition> {
+        let details = self.details.as_ref()?;
+        let source = details.primary_source.as_ref()?;
+        Some(crate::SourcePosition {
+            context: details.source?,
+            location: self.location.as_ref()?.clone(),
+            source: source.clone(),
+        })
     }
     /// Typed corrective resource need, consistently exposed by direct/fluent preparation
     /// and effective inspection. The need owns its originating immutable snapshot.
@@ -602,8 +623,25 @@ impl Diagnostic {
         self
     }
     pub(crate) fn sourced(mut self, source: SourceContext) -> Self {
-        self.details.get_or_insert_with(Default::default).source = Some(source);
+        let details = self.details.get_or_insert_with(Default::default);
+        details.primary_source = None;
+        details.source = Some(source);
         self
+    }
+    pub(crate) fn positioned(self, position: crate::SourcePosition) -> Self {
+        debug_assert!(
+            position
+                .source
+                .get(position.location.start..position.location.end)
+                .is_some()
+        );
+        let mut diagnostic = self.at(position.location).sourced(position.context);
+        diagnostic
+            .details
+            .as_mut()
+            .expect("source details")
+            .primary_source = Some(position.source);
+        diagnostic
     }
     pub(crate) fn limited(kind: LimitKind, maximum: usize, actual: usize) -> Self {
         Self::new(Code::Limit).reasoned(DiagnosticReason::Limit {

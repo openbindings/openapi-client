@@ -100,6 +100,7 @@ mod tests {
     fn reason(source: &str, expected: YamlReason) {
         let error = failure(source);
         assert_eq!(error.source_bytes(), source.as_bytes());
+        assert!(error.diagnostic().source_position().is_none());
         assert_eq!(
             error.diagnostic().reason(),
             Some(&DiagnosticReason::Yaml(expected))

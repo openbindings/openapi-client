@@ -1132,7 +1132,10 @@ impl Graph {
             }
             let mut error = source.error(Code::WrongReferenceKind);
             if target.0 == edge.0 {
-                error.related.push(self.value(target).location());
+                let previous = self.value(target).diagnostic_position();
+                if error.source_context() == Some(previous.context) {
+                    error.related.push(previous.location);
+                }
             }
             return Err(error);
         }

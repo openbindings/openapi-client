@@ -59,6 +59,10 @@ fn same_source_identity_claimants_retain_authored_positions() {
         assert_eq!(prior.source(), text);
         assert!(prior.raw().contains("string"));
         assert!(!prior.raw().contains("number"));
+        let primary = error.source_position().unwrap();
+        assert_eq!(primary.source(), text);
+        assert_eq!(primary.location(), error.location().unwrap());
+        assert!(primary.raw().contains("number"));
         assert!(error.related().is_empty());
     }
 }

@@ -10,6 +10,39 @@ mod response_admission;
 #[cfg(test)]
 mod response_tests;
 #[cfg(test)]
+mod diagnostic_source_tests {
+    use super::*;
+
+    #[test]
+    fn source_binding_retains_only_text_and_rewrites_invalidate_it() {
+        let input =
+            ExactJson::parse(r#"{"secret":{"caf\u00e9":"🦀"}}"#, Limits::default()).unwrap();
+        let value = input.root().get("secret").unwrap();
+        let weak_store = Arc::downgrade(&value.store);
+        let weak_source = Arc::downgrade(&value.store.source);
+        let error = value.error(Code::UnsupportedValue);
+        let context = error.source_context().unwrap();
+        let location = error.location().unwrap().clone();
+        assert!(error.clone().at(location).source_position().is_none());
+        assert!(error.clone().sourced(context).source_position().is_none());
+        let cloned = error.clone();
+        let position = cloned.source_position().unwrap();
+        let second = cloned.source_position().unwrap();
+        assert!(Arc::ptr_eq(&position.source, &second.source));
+        drop(second);
+        drop(cloned);
+        drop(value);
+        drop(input);
+        assert!(weak_store.upgrade().is_none());
+        assert!(weak_source.upgrade().is_some());
+        drop(error);
+        assert_eq!(position.raw(), r#"{"caf\u00e9":"🦀"}"#);
+        assert!(weak_source.upgrade().is_some());
+        drop(position);
+        assert!(weak_source.upgrade().is_none());
+    }
+}
+#[cfg(test)]
 mod member_name_tests {
     use super::*;
 
@@ -1102,22 +1135,18 @@ impl Value {
         }
     }
     pub(crate) fn locate(&self, mut diagnostic: Diagnostic) -> Diagnostic {
-        let mut location = self.location();
+        let position = self.diagnostic_position();
         if let Some(map) = &self.store.authored {
             let entry = &map.entries[self.id];
-            location.start = entry.span.start;
-            location.end = entry.span.end;
             diagnostic
                 .related
                 .extend(entry.aliases.iter().map(|span| Location {
                     start: span.start,
                     end: span.end,
-                    pointer: location.pointer.clone(),
+                    pointer: position.location.pointer.clone(),
                 }));
-            diagnostic.at(location).sourced(map.context)
-        } else {
-            diagnostic.at(location).sourced(self.source_context())
         }
+        diagnostic.positioned(position)
     }
     /// Retained storage attributable to the shared owner, counted once per owner.
     /// May increase after dynamic access to a response owner. This accessor does

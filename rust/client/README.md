@@ -241,6 +241,15 @@ A caller parameter refusal identifies its vector index, namespace and explicit-a
 
 Diagnostic metadata is immutable: use `code()`, `location()`, `related()` and `setting()` accessors, and `Diagnostic::new(code)` for a category-only diagnostic. `ParseFailure::diagnostic()` and `source_bytes()` expose its immutable source pair; standard `Error::source` remains available. Wrap errors to add application context. Bounded duplicate context names may be omitted; `context_omitted_for_limit()` makes that explicit. See [migration notes](MIGRATION.md) for this unpublished API revision.
 
+For a value-located diagnostic, `source_position()` returns an owning `SourcePosition`
+that remains usable after the error, input and document are dropped. Its `raw()`
+accessor selects the exact range from its `source()`, using authored YAML positions
+when available. It shares the complete source text without retaining its value
+index or document graph; keeping a diagnostic can therefore keep that text alive.
+`source_context()` identifies a source but does not by itself promise retained
+bytes. Parser and unlocated diagnostics can return no position; use the enclosing
+`ParseFailure::source_bytes()` for admitted parser input, including invalid UTF-8.
+
 ## Bounds and deliberate policies
 
 Each effective description or compiled operation has a shared allocation-admission ledger. Copied strings are bounded by `document_bytes`, descriptor entries and strings by `nodes`, and aggregate declarations/reference work by `descriptor_work`; each reference chain is independently bounded by `reference_steps`. These are separate budgets per construction: repeated shared OAuth or dialect metadata is charged for every copy before allocation; retaining a raw `Value` shares its existing owner. Located limit reasons distinguish `DescriptorBytes`, `DescriptorNodes`, and `DescriptorWork`. Caller-requested DTO clones and allocator overhead are outside these construction budgets. Supplied-token preparation validates security metadata through borrowed views without materializing OAuth acquisition descriptions.
