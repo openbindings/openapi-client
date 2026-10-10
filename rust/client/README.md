@@ -16,7 +16,7 @@ Schemas have owning typed [inspection handles and direct reference resolution](S
 
 Source and decoded strings are exact for Unicode scalar values. Unpaired surrogate escapes return a located limitation with source preserved. Numeric tokens remain exact; integer conveniences are checked, and binary64 conversion currently accepts exactly representable integer lexemes only. Mathematical conversion of decimal/exponent tokens remains explicit unsupported conversion. Null, empty-container and nested style-based parameter values receive located refusals; empty strings are supported. JSON content parameters accept these JSON shapes without schema evaluation.
 
-Supplied hosts must enforce no ambient authentication, automatic replay or redirects, disclose target/header restrictions and content decoding, and bound delivered response bytes. The `no_retries` capability permits recovery only when the host proves the original request was never serialized, such as after encountering a stale pooled connection. Once serialization has begun or may have begun, status responses, partial writes and ambiguous failures must not trigger another attempt. The core itself never retries. The core can validate its own data and returned evidence; it cannot limit an arbitrary callback's hidden allocation or undo remote effects. Use explicit accessors carefully: raw targets, header bytes, source values and host error details can contain secrets. SDK Debug/Display views omit credential values.
+Supplied hosts must enforce no ambient authentication or implicit redirects, disclose target/header restrictions and content decoding, and bound delivered response bytes. Default admission and invocation require a no-replay declaration. An explicit `ReplayPolicy::AllowHostManaged` permits a host without that declaration, while retaining every other admission rule. The `no_retries` capability permits recovery only when the host proves the original request was never serialized, such as after encountering a stale pooled connection. Under that declaration, once serialization has begun or may have begun, status responses, partial writes and ambiguous failures must not trigger another attempt. The core itself never retries. The core can validate its own data and returned evidence; it cannot limit an arbitrary callback's hidden allocation or undo remote effects. Use explicit accessors carefully: raw targets, header bytes, source values and host error details can contain secrets. SDK Debug/Display views omit arbitrary header names as well as values and opaque host details.
 
 ## Calling a real service
 
@@ -46,14 +46,10 @@ async fn inspect_and_call(text: &[u8]) -> Result<CompletedJson, Box<dyn std::err
             assert!(!cancellation.is_cancelled());
             assert_eq!(request.method, Method::Get);
             TransportResult {
-                response: Some(ResponseInput {
-                    status: 200,
-                    headers: vec![Header::new("Content-Type", "application/json")],
-                    body: DeliveredBody {
+                response: Some(ResponseInput::new(200, vec![Header::new("Content-Type", "application/json")], DeliveredBody {
                         bytes: br#"{"count":9007199254740993}"#.as_slice().into(),
                         state: BodyState::Complete, provenance: Provenance::Wire,
-                    }, opaque_redirect: false,
-                }), upload: UploadState::Complete, error_detail: None,
+                    })), upload: UploadState::Complete, error_detail: None,
             }
         },
     ).await;
@@ -72,6 +68,24 @@ parameters use the same `.parameter(...)` method. Style-based spaces use `%20`;
 content query parameters and URL forms use `+`.
 See [SERIALIZATION.md](SERIALIZATION.md) for applicability, exact-value ownership,
 corrective refusals and the real provider preparation example.
+
+## Supplied-host evidence
+
+`invoke` and `HostCapabilities::admit` remain strict defaults. The corresponding
+`invoke_with_replay` and `admit_with_replay` methods accept the explicit caller
+policy. `Outcome::replay_assurance()` records the admitted declaration at callback
+entry: `NoReplayDeclared` or `HostManaged`. It is absent on pre-dispatch outcomes
+and survives later caller mutation of public outcome fields. It proves neither
+network attempts nor server receipt. Native reqwest retains its strict path and
+exposes no replay opt-in. See [HOSTS.md](HOSTS.md).
+
+Construct delivered responses with `ResponseInput::new(status, headers, body)`.
+Header fidelity starts `Unknown`; adapters set `HostProcessed` or `ExactFields`
+only when their supplied evidence supports that declaration. `ExactFields` means
+received structured fields, including names, bytes, duplicates and order, without
+host omission; it does not mean raw framing or whitespace capture. Core omission
+counts and body provenance remain independent. Valid processed JSON metadata can
+be decoded without claiming exact headers or upload completion.
 
 ## Sending logical forms and finite files
 

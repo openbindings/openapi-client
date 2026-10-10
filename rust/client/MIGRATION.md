@@ -1,3 +1,29 @@
+# Supplied-host contract revision (unpublished candidate)
+
+**Changed:** `ResponseInput` is non-exhaustive. Replace external struct literals
+with `ResponseInput::new(status, headers, body)`, then assign `opaque_redirect`
+and `header_fidelity` explicitly where the host supplies that evidence. The
+constructor sets `false` and `HeaderFidelity::Unknown`; it never silently claims
+exact fields. The native HeaderMap and Fetch-derived bridge metadata explicitly
+use `HostProcessed`.
+
+`Response::headers()` exposes retained delivered entries in host delivery order.
+`header_fidelity()` describes their source; `omitted_header_lines()` retains its
+historical name but counts entries omitted by core bounds. Zero core omissions
+cannot establish absence of host filtering. `ExactFields` describes structured
+field metadata, never raw HTTP framing. Body provenance remains separate.
+
+`admit` and `invoke` retain strict defaults. Explicit `*_with_replay` methods take
+`ReplayPolicy`; replay assurance is privately recorded on callback entry and
+exposed by `Outcome::replay_assurance()`. Acceptance and mutations of public
+outcome fields do not rewrite that record. Native execution remains strict.
+External adapters can convert `HostRefusal` into a fixed HostCapability Diagnostic
+with its controlled Host reason; no generic mutable reason setter is introduced.
+
+Header and host Debug now omit arbitrary header names. Use explicit accessors
+for names/values and treat them as untrusted private data. See [HOSTS.md](HOSTS.md)
+for precedence, declaration limits and the separate Fetch/TypeScript work.
+
 # Resource graph revision (unpublished candidate)
 
 `Document::parse` and existing request calls keep their signatures. Add multiple

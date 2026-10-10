@@ -1,5 +1,13 @@
 # Unreleased (0.0.0)
 
+- Add explicit host replay admission/invocation policy with strict defaults and
+  private outcome assurance. Add controlled HostRefusal diagnostic conversion.
+- Make ResponseInput non-exhaustive with an Unknown-fidelity constructor; retain
+  delivered structured-field fidelity independently from core omission and body
+  provenance. Native and Fetch-derived metadata declare HostProcessed.
+- Redact arbitrary header names in Header and HostCapabilities Debug. See HOSTS.md
+  and MIGRATION.md for this unpublished construction change.
+
 - Add immutable schema identity, dialect and anchor indexing, owning inspection
   handles, one-edge static resolution and uniform missing-resource/layout recovery.
   Add private bounded declaration facts without wiring them into request encoding.

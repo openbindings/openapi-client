@@ -27,16 +27,15 @@ fn ready<F: Future>(f: F) -> F::Output {
 }
 fn response() -> TransportResult {
     TransportResult {
-        response: Some(ResponseInput {
-            status: 204,
-            headers: vec![],
-            body: DeliveredBody {
+        response: Some(ResponseInput::new(
+            204,
+            vec![],
+            DeliveredBody {
                 bytes: Arc::from([]),
                 state: BodyState::Complete,
                 provenance: Provenance::Wire,
             },
-            opaque_redirect: false,
-        }),
+        )),
         upload: UploadState::Complete,
         error_detail: None,
     }

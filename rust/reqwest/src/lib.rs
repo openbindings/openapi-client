@@ -4,9 +4,9 @@
 #![warn(missing_docs)]
 
 use dynamic_openapi_client::{
-    BodyState, Cancellation, Code, Credential, DeliveredBody, Diagnostic, Header, HostCapabilities,
-    Operation, Outcome, PreparedRequest, Provenance, RequestBuilder, ResponseInput,
-    TransportResult, UploadState,
+    BodyState, Cancellation, Code, Credential, DeliveredBody, Diagnostic, Header, HeaderFidelity,
+    HostCapabilities, Operation, Outcome, PreparedRequest, Provenance, RequestBuilder,
+    ResponseInput, TransportResult, UploadState,
 };
 use std::{fmt, sync::Arc, time::Duration};
 
@@ -238,15 +238,18 @@ impl Client {
             }
         };
         TransportResult {
-            response: Some(ResponseInput {
-                status,
-                headers,
-                opaque_redirect: false,
-                body: DeliveredBody {
-                    bytes: bytes.into(),
-                    state,
-                    provenance: Provenance::Wire,
-                },
+            response: Some({
+                let mut response = ResponseInput::new(
+                    status,
+                    headers,
+                    DeliveredBody {
+                        bytes: bytes.into(),
+                        state,
+                        provenance: Provenance::Wire,
+                    },
+                );
+                response.header_fidelity = HeaderFidelity::HostProcessed;
+                response
             }),
             upload: UploadState::Unknown,
             error_detail: detail.map(Arc::from),

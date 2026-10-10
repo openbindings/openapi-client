@@ -16,16 +16,15 @@ fn ready<F: Future>(f: F) -> F::Output {
 }
 fn result() -> TransportResult {
     TransportResult {
-        response: Some(ResponseInput {
-            status: 503,
-            headers: vec![Header::new("Content-Type", "application/json")],
-            body: DeliveredBody {
+        response: Some(ResponseInput::new(
+            503,
+            vec![Header::new("Content-Type", "application/json")],
+            DeliveredBody {
                 bytes: Arc::from(br#"{"n":9007199254740993}"#.as_slice()),
                 state: BodyState::Complete,
                 provenance: Provenance::Wire,
             },
-            opaque_redirect: false,
-        }),
+        )),
         upload: UploadState::Incomplete,
         error_detail: Some("private dummy host detail".into()),
     }

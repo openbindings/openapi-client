@@ -1,4 +1,6 @@
-use crate::{Cancellation, Code, Diagnostic, ExactJson, Limits, Method, PreparedRequest};
+use crate::{
+    Cancellation, Code, Diagnostic, ExactJson, HostRefusal, Limits, Method, PreparedRequest,
+};
 use std::{fmt, future::Future, sync::Arc};
 
 /// Ordered HTTP header field with explicit credential sensitivity.
@@ -17,7 +19,7 @@ impl Header {
             sensitive: false,
         }
     }
-    /// Create a credential-bearing field. All header values are omitted from Debug.
+    /// Create a credential-bearing field. All names and values are omitted from Debug.
     pub fn sensitive(name: impl Into<String>, value: impl AsRef<[u8]>) -> Self {
         Self {
             name: name.into(),
@@ -55,14 +57,14 @@ impl Header {
 impl fmt::Debug for Header {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Header")
-            .field("name", &self.name)
+            .field("name_bytes", &self.name.len())
             .field("bytes", &self.value.len())
             .field("sensitive", &self.sensitive)
             .finish()
     }
 }
 /// Declared supplied-host restrictions. A declaration does not prove an arbitrary callback obeys it.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct HostCapabilities {
     /// Host promises no implicit redirect handling.
     pub no_redirects: bool,
@@ -93,27 +95,93 @@ impl HostCapabilities {
             forbidden_headers: vec![],
         }
     }
-    /// Validate the complete prepared request before calling the host.
+    /// Validate using the strict replay policy. The declaration is not proof of host behavior.
     pub fn admit(&self, request: &PreparedRequest) -> Result<(), Diagnostic> {
-        if !self.no_redirects
-            || !self.no_retries
-            || !self.no_ambient_auth
-            || !self.exact_targets
-            || !self.encoded_dot_segments && crate::uri::has_encoded_dot_segment(request.target())
-            || request.headers().iter().any(|h| {
-                self.forbidden_headers
-                    .iter()
-                    .any(|n| n.eq_ignore_ascii_case(h.name()))
-            })
-        {
-            return Err(Diagnostic::new(Code::HostCapability));
+        self.admit_with_replay(request, ReplayPolicy::RequireNoReplay)
+            .map(|_| ())
+    }
+    /// Validate before callback entry, returning the replay declaration that would be recorded.
+    /// Non-replay restrictions and request validity precede replay policy. A Replay
+    /// refusal does not establish that a later adapter-specific preflight will succeed.
+    pub fn admit_with_replay(
+        &self,
+        request: &PreparedRequest,
+        replay: ReplayPolicy,
+    ) -> Result<ReplayAssurance, Diagnostic> {
+        if !self.no_redirects {
+            return Err(HostRefusal::Redirects.into());
+        }
+        if !self.no_ambient_auth {
+            return Err(HostRefusal::AmbientAuth.into());
+        }
+        if !self.exact_targets {
+            return Err(HostRefusal::ExactTargets.into());
+        }
+        if !self.encoded_dot_segments && crate::uri::has_encoded_dot_segment(request.target()) {
+            return Err(HostRefusal::EncodedDotSegment.into());
+        }
+        if request.headers().iter().any(|h| {
+            self.forbidden_headers
+                .iter()
+                .any(|n| n.eq_ignore_ascii_case(h.name()))
+        }) {
+            return Err(HostRefusal::ForbiddenHeader.into());
         }
         crate::uri::origin(request.target())?;
         for h in request.headers() {
             h.validate()?;
         }
-        Ok(())
+        if self.no_retries {
+            Ok(ReplayAssurance::NoReplayDeclared)
+        } else if replay == ReplayPolicy::AllowHostManaged {
+            Ok(ReplayAssurance::HostManaged)
+        } else {
+            Err(HostRefusal::Replay.into())
+        }
     }
+}
+impl fmt::Debug for HostCapabilities {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("HostCapabilities")
+            .field("no_redirects", &self.no_redirects)
+            .field("no_retries", &self.no_retries)
+            .field("no_ambient_auth", &self.no_ambient_auth)
+            .field("exact_targets", &self.exact_targets)
+            .field("encoded_dot_segments", &self.encoded_dot_segments)
+            .field("forbidden_header_count", &self.forbidden_headers.len())
+            .finish()
+    }
+}
+/// Caller authorization for host replay behavior; all other admission rules are unchanged.
+/// ```compile_fail
+/// use dynamic_openapi_client::ReplayPolicy;
+/// fn exhaustive(p: ReplayPolicy) { match p {
+///     ReplayPolicy::RequireNoReplay => (), ReplayPolicy::AllowHostManaged => (),
+/// } }
+/// ```
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ReplayPolicy {
+    /// Require the host's no-replay declaration; used by the default admission and invocation APIs.
+    #[default]
+    RequireNoReplay,
+    /// Accept host-managed repetition/retransmission, without an attempt bound or strict promise.
+    AllowHostManaged,
+}
+/// The admitted declaration under which the core entered its callback, not observed attempts.
+/// ```compile_fail
+/// use dynamic_openapi_client::ReplayAssurance;
+/// fn exhaustive(p: ReplayAssurance) { match p {
+///     ReplayAssurance::NoReplayDeclared => (), ReplayAssurance::HostManaged => (),
+/// } }
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ReplayAssurance {
+    /// The supplied host declared no automatic replay after serialization may have begun.
+    NoReplayDeclared,
+    /// The caller accepted host-managed replay and the host made no strict declaration.
+    HostManaged,
 }
 /// Evidence about crossing the host dispatch boundary, not server receipt.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -168,17 +236,47 @@ impl fmt::Debug for DeliveredBody {
             .finish()
     }
 }
+/// Meaning of delivered structured header metadata, independent of body provenance.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum HeaderFidelity {
+    /// No assertion about completeness, spelling, order or combination.
+    #[default]
+    Unknown,
+    /// The host may normalize, combine, reorder or filter fields.
+    HostProcessed,
+    /// Host asserts received structured names, value bytes, duplicates and order
+    /// are preserved without host omission. This is not raw HTTP framing or
+    /// whitespace capture. Core bounds may separately omit supplied entries.
+    ExactFields,
+}
 /// Response metadata and finite body delivered by the host.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct ResponseInput {
     /// HTTP status. Zero is permitted only to describe an opaque redirect refusal.
     pub status: u16,
-    /// Ordered field lines, including duplicates.
+    /// Delivered entries in host delivery order; interpreted through header_fidelity.
     pub headers: Vec<Header>,
     /// Body evidence.
     pub body: DeliveredBody,
     /// A browser returned an opaque redirect instead of inspectable response metadata.
     pub opaque_redirect: bool,
+    /// Host declaration about delivered structured fields, independent of body bytes.
+    pub header_fidelity: HeaderFidelity,
+}
+impl ResponseInput {
+    /// Construct supplied evidence with Unknown header fidelity and no opaque redirect.
+    /// Adapters must set stronger fidelity or opaque-redirect evidence explicitly.
+    pub fn new(status: u16, headers: Vec<Header>, body: DeliveredBody) -> Self {
+        Self {
+            status,
+            headers,
+            body,
+            opaque_redirect: false,
+            header_fidelity: HeaderFidelity::Unknown,
+        }
+    }
 }
 /// Host outcome; an arbitrary failure detail is retained privately and never formatted.
 #[derive(Clone)]
@@ -235,13 +333,19 @@ impl Response {
     pub fn status(&self) -> u16 {
         self.input.status
     }
-    /// All delivered header lines in order.
+    /// Retained delivered entries in host delivery order; see header_fidelity().
     pub fn headers(&self) -> &[Header] {
         &self.input.headers
     }
-    /// Header lines omitted because the host exceeded declared metadata bounds. JSON decode refuses such evidence.
+    /// Supplied entries omitted by core metadata bounds; the historical name does
+    /// not imply raw field lines. Zero does not rule out host filtering. JSON decode
+    /// refuses incomplete retained metadata, including with ExactFields fidelity.
     pub fn omitted_header_lines(&self) -> usize {
         self.omitted_header_lines
+    }
+    /// Host-supplied structured-field declaration, unchanged by core omission.
+    pub fn header_fidelity(&self) -> HeaderFidelity {
+        self.input.header_fidelity
     }
     /// Bounded bytes delivered by the host; provenance is reported separately.
     pub fn raw(&self) -> &[u8] {
@@ -317,6 +421,7 @@ pub struct Outcome {
     /// Cancellation observed locally, even if the host returned a response.
     pub cancelled: bool,
     detail: Option<Arc<str>>,
+    replay_assurance: Option<ReplayAssurance>,
 }
 impl fmt::Debug for Outcome {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -326,6 +431,7 @@ impl fmt::Debug for Outcome {
             .field("response", &self.response)
             .field("error", &self.error)
             .field("cancelled", &self.cancelled)
+            .field("replay_assurance", &self.replay_assurance)
             .finish()
     }
 }
@@ -341,7 +447,19 @@ impl Outcome {
             error: Some(error),
             cancelled,
             detail,
+            replay_assurance: None,
         }
+    }
+    /// Replay declaration recorded at callback entry. None on every core or adapter
+    /// refusal before entry. This is not server receipt or attempt-count evidence;
+    /// later mutation of public outcome fields does not rewrite this historical record.
+    /// ```compile_fail
+    /// use dynamic_openapi_client::{Code, Diagnostic, Outcome, ReplayAssurance};
+    /// let mut out = Outcome::not_dispatched(Diagnostic::new(Code::HostCapability), false, None);
+    /// out.replay_assurance = Some(ReplayAssurance::NoReplayDeclared);
+    /// ```
+    pub fn replay_assurance(&self) -> Option<ReplayAssurance> {
+        self.replay_assurance
     }
     /// Explicit access to untrusted caller-owned error detail; never safe to log by default.
     pub fn host_error_detail(&self) -> Option<&str> {
@@ -361,17 +479,40 @@ impl PreparedRequest {
         F: FnOnce(DispatchRequest, Cancellation) -> Fut,
         Fut: Future<Output = TransportResult>,
     {
-        let preflight = cancellation.check().and_then(|_| host.admit(self));
-        if let Err(error) = preflight {
-            return Outcome {
-                dispatch: DispatchEvidence::NotDispatched,
-                upload: UploadState::NotStarted,
-                response: None,
-                error: Some(error),
-                cancelled: cancellation.is_cancelled(),
-                detail: None,
-            };
-        }
+        self.invoke_with_replay(cancellation, host, ReplayPolicy::RequireNoReplay, dispatch)
+            .await
+    }
+    /// Invoke the callback once under the caller's explicit replay policy.
+    /// Host-managed permission does not change bytes or other admission rules.
+    /// The callback may itself use a host that retransmits; its entry is not an attempt count.
+    pub async fn invoke_with_replay<F, Fut>(
+        &self,
+        cancellation: Cancellation,
+        host: &HostCapabilities,
+        replay: ReplayPolicy,
+        dispatch: F,
+    ) -> Outcome
+    where
+        F: FnOnce(DispatchRequest, Cancellation) -> Fut,
+        Fut: Future<Output = TransportResult>,
+    {
+        let preflight = cancellation
+            .check()
+            .and_then(|_| host.admit_with_replay(self, replay));
+        let replay_assurance = match preflight {
+            Ok(assurance) => assurance,
+            Err(error) => {
+                return Outcome {
+                    dispatch: DispatchEvidence::NotDispatched,
+                    upload: UploadState::NotStarted,
+                    response: None,
+                    error: Some(error),
+                    cancelled: cancellation.is_cancelled(),
+                    detail: None,
+                    replay_assurance: None,
+                };
+            }
+        };
         let request = DispatchRequest {
             method: self.method.clone(),
             target: self.target.clone(),
@@ -440,6 +581,7 @@ impl PreparedRequest {
             error,
             cancelled: cancellation.is_cancelled(),
             detail: result.error_detail,
+            replay_assurance: Some(replay_assurance),
         }
     }
 }

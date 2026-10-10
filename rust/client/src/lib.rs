@@ -30,8 +30,8 @@ pub use document::{
     ResolvedReference,
 };
 pub use error::{
-    Code, Diagnostic, DiagnosticContext, DiagnosticReason, LimitKind, Location, NumericReason,
-    NumericTarget, SelectionKind, SerializationReason, VersionReason,
+    Code, Diagnostic, DiagnosticContext, DiagnosticReason, HostRefusal, LimitKind, Location,
+    NumericReason, NumericTarget, SelectionKind, SerializationReason, VersionReason,
 };
 pub use graph::{
     DocumentBuilder, GraphLimits, ProtocolSite, ResourceFragment, ResourceHandle, ResourceId,
@@ -45,8 +45,9 @@ pub use prepare::{
     SecurityAlternative, SecurityRequirement, SecurityScheme, Selection, ServerDescription,
 };
 pub use transport::{
-    BodyState, DeliveredBody, DispatchEvidence, DispatchRequest, Header, HostCapabilities, Outcome,
-    Provenance, Response, ResponseInput, TransportResult, UploadState,
+    BodyState, DeliveredBody, DispatchEvidence, DispatchRequest, Header, HeaderFidelity,
+    HostCapabilities, Outcome, Provenance, ReplayAssurance, ReplayPolicy, Response, ResponseInput,
+    TransportResult, UploadState,
 };
 pub use value::{
     ExactJson, Limits, Number, ParseFailure, SourceContext, SourceOrigin, Value, ValueKind,

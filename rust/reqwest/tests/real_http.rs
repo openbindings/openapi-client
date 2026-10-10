@@ -539,3 +539,32 @@ async fn https_checks_trust_and_additional_roots_are_additive() {
         server.await.unwrap();
     }
 }
+
+// H1-S-12: valid core spelling that the backend would normalize. No network call
+// is permitted and no callback-entry assurance may be manufactured by preflight.
+#[tokio::test]
+async fn h0_native_preflight_preserves_absent_assurance() {
+    let document = Document::parse(
+        r#"{"openapi":"3.2.1","servers":[{"url":"https://EXAMPLE.test"}],"paths":{"/echo":{"get":{"operationId":"echo"}}}}"#,
+        None,
+        Limits::default(),
+    ).unwrap();
+    let request = document
+        .operation_id("echo")
+        .unwrap()
+        .request()
+        .prepare()
+        .unwrap();
+    assert_eq!(request.target(), "https://EXAMPLE.test/echo");
+    let outcome = Client::new()
+        .unwrap()
+        .execute(&request, Cancellation::default())
+        .await;
+    assert_eq!(outcome.dispatch, DispatchEvidence::NotDispatched);
+    assert_eq!(outcome.replay_assurance(), None);
+    assert_eq!(outcome.upload, UploadState::NotStarted);
+    assert_eq!(
+        outcome.error.as_ref().unwrap().code(),
+        dynamic_openapi_client::Code::HostCapability
+    );
+}
