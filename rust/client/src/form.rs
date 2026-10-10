@@ -1218,6 +1218,7 @@ enum Sink<'a> {
     Count,
     Scan {
         needle: &'a [u8],
+        fallback: &'a [usize],
         matched: usize,
         found: bool,
     },
@@ -1247,18 +1248,20 @@ impl Writer<'_, '_> {
                 Sink::Output(out) => out.extend_from_slice(chunk),
                 Sink::Scan {
                     needle,
+                    fallback,
                     matched,
                     found,
                 } => {
                     for &b in chunk {
+                        while *matched > 0 && b != needle[*matched] {
+                            *matched = fallback[*matched - 1];
+                        }
                         if b == needle[*matched] {
                             *matched += 1;
                             if *matched == needle.len() {
                                 *found = true;
-                                *matched = 0;
+                                *matched = fallback[*matched - 1];
                             }
-                        } else {
-                            *matched = usize::from(b == needle[0]);
                         }
                     }
                 }
@@ -1350,6 +1353,25 @@ fn write_body(
     }
     Ok(())
 }
+// The generated boundary is nonempty and at most 70 bytes. A fixed-size KMP
+// table preserves overlapping matches across every Writer call and chunk without
+// a payload-sized buffer or rescanning an arbitrarily long prefix.
+fn boundary_fallback(needle: &[u8]) -> [usize; 70] {
+    assert!(!needle.is_empty() && needle.len() <= 70);
+    let mut fallback = [0; 70];
+    let mut matched = 0;
+    for i in 1..needle.len() {
+        while matched > 0 && needle[i] != needle[matched] {
+            matched = fallback[matched - 1];
+        }
+        if needle[i] == needle[matched] {
+            matched += 1;
+        }
+        fallback[i] = matched;
+    }
+    fallback
+}
+
 fn finish(
     parts: Vec<Emission<'_>>,
     selected: &str,
@@ -1360,12 +1382,12 @@ fn finish(
         let mut chosen = None;
         for attempt in 0..work.limits.boundary_attempts {
             work.visit()?;
-            // This fixed prefix has no internal occurrence of its first byte;
-            // the incremental scanner's one-byte fallback is therefore sufficient.
             let candidate = format!("openapi-boundary-{attempt:016x}");
+            let fallback = boundary_fallback(candidate.as_bytes());
             let mut scan = Writer {
                 sink: Sink::Scan {
                     needle: candidate.as_bytes(),
+                    fallback: &fallback,
                     matched: 0,
                     found: false,
                 },
@@ -1485,11 +1507,13 @@ mod tests {
     #[test]
     fn collision_scanner_tracks_candidates_across_payload_piece_and_chunk_edges() {
         let needle = b"openapi-boundary-0000000000000000";
+        let fallback = boundary_fallback(needle);
         let cancellation = Cancellation::default();
         let mut work = 0;
         let mut scanner = Writer {
             sink: Sink::Scan {
                 needle,
+                fallback: &fallback,
                 matched: 0,
                 found: false,
             },
@@ -1503,5 +1527,80 @@ mod tests {
         scanner.put(&needle[..15]).unwrap();
         scanner.put(&needle[15..]).unwrap();
         assert!(matches!(scanner.sink, Sink::Scan { found: true, .. }));
+    }
+
+    fn scans(needle: &[u8], bytes: &[u8], split: usize) -> bool {
+        let fallback = boundary_fallback(needle);
+        let cancellation = Cancellation::default();
+        let mut work = 0;
+        let mut scanner = Writer {
+            sink: Sink::Scan {
+                needle,
+                fallback: &fallback,
+                matched: 0,
+                found: false,
+            },
+            count: 0,
+            maximum: usize::MAX,
+            cancel: &cancellation,
+            work: &mut work,
+            maximum_work: usize::MAX,
+        };
+        scanner.put(&bytes[..split]).unwrap();
+        scanner.put(&bytes[split..]).unwrap();
+        matches!(scanner.sink, Sink::Scan { found: true, .. })
+    }
+
+    #[test]
+    fn boundary_overlap_is_rejected_before_emission() {
+        let value = crate::ExactJson::parse(
+            br#""openapi-bopenapi-boundary-0000000000000000""#,
+            Limits::default(),
+        )
+        .unwrap();
+        let (_, media) = collision_body(value.root(), 2).unwrap();
+        assert!(media.ends_with("openapi-boundary-0000000000000001"));
+        assert!(matches!(
+            collision_body(value.root(), 1).unwrap_err().reason(),
+            Some(DiagnosticReason::Limit {
+                kind: LimitKind::BoundaryAttempts,
+                ..
+            })
+        ));
+
+        let needle = b"openapi-boundary-0000000000000000";
+        // Move the overlap and full occurrence across the writer's 4096-byte
+        // boundary, and split every byte around both prefixes between calls.
+        for padding in 4080..4100 {
+            let mut bytes = vec![b'x'; padding];
+            bytes.extend_from_slice(b"openapi-b");
+            bytes.extend_from_slice(needle);
+            for split in padding..=bytes.len() {
+                assert!(scans(needle, &bytes, split));
+            }
+        }
+    }
+
+    #[test]
+    fn scanner_agrees_with_independent_windows_oracle_for_overlapping_patterns() {
+        fn word(length: usize, bits: usize) -> Vec<u8> {
+            (0..length)
+                .map(|i| if bits & (1 << i) == 0 { b'a' } else { b'b' })
+                .collect()
+        }
+        for needle_length in 1..=5 {
+            for needle_bits in 0..1 << needle_length {
+                let needle = word(needle_length, needle_bits);
+                for length in 0..=7 {
+                    for bits in 0..1 << length {
+                        let bytes = word(length, bits);
+                        let expected = bytes.windows(needle.len()).any(|w| w == needle);
+                        for split in 0..=bytes.len() {
+                            assert_eq!(scans(&needle, &bytes, split), expected);
+                        }
+                    }
+                }
+            }
+        }
     }
 }
