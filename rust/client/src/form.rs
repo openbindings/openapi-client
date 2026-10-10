@@ -398,7 +398,7 @@ enum Piece<'a> {
     Bytes(FiniteBytes<'a>),
     Separator(&'static [u8]),
     Delimiter(&'static [u8]),
-    Key(FiniteBytes<'a>),
+    Key(Arc<str>),
 }
 impl Piece<'_> {
     fn bytes(&self) -> Result<&[u8], Diagnostic> {
@@ -409,7 +409,8 @@ impl Piece<'_> {
                 _ => return Err(located(v, Code::UnsupportedValue, FormReason::ValueShape)),
             },
             Self::Json(v) => v.raw().as_bytes(),
-            Self::Bytes(b) | Self::Key(b) => b.bytes(),
+            Self::Bytes(b) => b.bytes(),
+            Self::Key(name) => name.as_bytes(),
             Self::Separator(v) | Self::Delimiter(v) => v,
         })
     }
@@ -429,7 +430,7 @@ struct Work<'a> {
     visits: usize,
     metadata: usize,
     headers: usize,
-    copied_data: usize,
+    key_data: usize,
 }
 impl Work<'_> {
     fn visit(&mut self) -> Result<(), Diagnostic> {
@@ -537,7 +538,7 @@ pub(crate) fn encode<'a>(
         visits: 0,
         metadata: 0,
         headers: 0,
-        copied_data: 0,
+        key_data: 0,
     };
     let mut out = Vec::new();
     for declared in known {
@@ -862,12 +863,15 @@ fn plan_style<'a>(
                     Atom::Separator(bytes) => Piece::Separator(bytes),
                     Atom::Key(key) => {
                         add(
-                            &mut work.copied_data,
+                            &mut work.key_data,
                             key.len(),
                             work.limits.body_bytes,
                             LimitKind::BodyBytes,
                         )?;
-                        Piece::Key(FiniteBytes::Shared(Arc::from(key.as_bytes())))
+                        // Form's accepted styles emit Key only for a member of
+                        // this object. Keep the logical key-byte admission above
+                        // even though its immutable ownership can now be shared.
+                        Piece::Key(value.member_name_owner(key).expect("form style object key"))
                     }
                 };
                 push_piece(&mut pieces, piece, work)?;
@@ -1548,7 +1552,7 @@ mod tests {
                 visits: 0,
                 metadata: 0,
                 headers: 0,
-                copied_data: 0,
+                key_data: 0,
             };
             let bytes: Arc<[u8]> = Arc::from(b"payload".as_slice());
             let owner = Arc::downgrade(&bytes);
@@ -1631,7 +1635,7 @@ mod tests {
             visits: 0,
             metadata: 0,
             headers: 0,
-            copied_data: 0,
+            key_data: 0,
         };
         finish(
             vec![Emission {

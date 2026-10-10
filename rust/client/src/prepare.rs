@@ -2013,7 +2013,15 @@ impl Operation {
                         )
                         .contextual(parameter_context(index, value)));
                     }
-                    path = path.replace(&marker, &scalar.value)
+                    // String::replace can grow geometrically when a large
+                    // replacement is followed by a small suffix. Admit the whole
+                    // result above, then allocate its exact completed length.
+                    if count != 0 {
+                        let size = path.len() - count * marker.len() + count * scalar.value.len();
+                        path =
+                            replace_path_marker(&path, &marker, &scalar.value, size, cancellation)
+                                .map_err(|e| e.contextual(parameter_context(index, value)))?;
+                    }
                 }
                 ParameterLocation::Header => {
                     headers.push(Header::new(&p.name, scalar.value.as_bytes()))
@@ -2054,7 +2062,9 @@ impl Operation {
             )
             .contextual(DiagnosticContext::PreparedRequest));
         }
-        target.push_str(&path);
+        target.reserve_exact(path.len());
+        append_path_piece(&mut target, &path, cancellation)?;
+        drop(path);
         let (body, body_kind, media) = prepare_body(
             &self.store.graph,
             compiled.body.as_ref(),
@@ -2424,6 +2434,45 @@ fn choose_server(
     }
 }
 
+// A marker is matched only in the existing path. Replacement bytes are never
+// reinterpreted during this substitution. The caller admits the complete size
+// before allocation; byte offsets from match_indices are valid UTF-8 boundaries.
+fn replace_path_marker(
+    path: &str,
+    marker: &str,
+    replacement: &str,
+    size: usize,
+    cancellation: &crate::Cancellation,
+) -> Result<String, Diagnostic> {
+    cancellation.check()?;
+    let mut result = String::with_capacity(size);
+    let mut cursor = 0;
+    for (offset, _) in path.match_indices(marker) {
+        append_path_piece(&mut result, &path[cursor..offset], cancellation)?;
+        append_path_piece(&mut result, replacement, cancellation)?;
+        cursor = offset + marker.len();
+    }
+    append_path_piece(&mut result, &path[cursor..], cancellation)?;
+    debug_assert_eq!(result.len(), size);
+    Ok(result)
+}
+fn append_path_piece(
+    out: &mut String,
+    text: &str,
+    cancellation: &crate::Cancellation,
+) -> Result<(), Diagnostic> {
+    let mut cursor = 0;
+    while cursor < text.len() {
+        cancellation.check()?;
+        let mut end = cursor.saturating_add(4096).min(text.len());
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        out.push_str(&text[cursor..end]);
+        cursor = end;
+    }
+    cancellation.check()
+}
 struct Serialized {
     value: String,
     pairs: Vec<(String, String)>,

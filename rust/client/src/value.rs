@@ -9,6 +9,32 @@ use serde_json::value::RawValue;
 mod response_admission;
 #[cfg(test)]
 mod response_tests;
+#[cfg(test)]
+mod member_name_tests {
+    use super::*;
+
+    #[test]
+    fn shared_decoded_name_is_independent_of_the_source_owner() {
+        let input = ExactJson::parse(r#"{"caf\u00e9":"payload"}"#, Limits::default()).unwrap();
+        let root = input.root();
+        let store = Arc::downgrade(&root.store);
+        let name = root.member_name_owner("café").unwrap();
+        let again = root.member_name_owner("café").unwrap();
+        assert!(Arc::ptr_eq(&name, &again));
+        assert!(root.member_name_owner("missing").is_none());
+        assert!(
+            root.get("café")
+                .unwrap()
+                .member_name_owner("café")
+                .is_none()
+        );
+        drop(root);
+        drop(input);
+        assert!(store.upgrade().is_none());
+        assert_eq!(&*name, "café");
+        assert_eq!(&*again, "café");
+    }
+}
 use std::{
     collections::HashMap,
     fmt,
@@ -887,6 +913,16 @@ impl Value {
                 store: self.store.clone(),
                 id: m[i].value,
             })
+        } else {
+            None
+        }
+    }
+    // Share an already decoded, immutable indexed member name independently of
+    // this Value/source owner. Used only after a form style event identifies a
+    // key in this exact object; never reparse or manufacture a different name.
+    pub(crate) fn member_name_owner(&self, name: &str) -> Option<Arc<str>> {
+        if let Kind::Object(members, index) = &self.node().kind {
+            index.get(name).map(|&i| members[i].name.clone())
         } else {
             None
         }
