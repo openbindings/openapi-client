@@ -250,7 +250,9 @@ impl Response {
     pub fn provenance(&self) -> Provenance {
         self.input.body.provenance
     }
-    /// Decode delivered JSON once. Failure leaves this response and raw bytes available.
+    /// Validate delivered JSON into a new, independent exact owner on each call.
+    /// All admission checks finish here; dynamic access may materialize its index later.
+    /// Failure leaves this response and raw bytes available.
     pub fn json(&self) -> Result<ExactJson, Diagnostic> {
         if let Some(e) = &self.validation {
             return Err(e.clone());
@@ -293,7 +295,7 @@ impl Response {
         }
         let mut limits = self.limits.clone();
         limits.document_bytes = limits.body_bytes;
-        ExactJson::parse(self.raw(), limits).map_err(|e| e.diagnostic)
+        ExactJson::parse_response(self.raw(), limits).map_err(|e| e.diagnostic)
     }
 }
 /// Honest combined outcome. Inspect the response independently from any failure.

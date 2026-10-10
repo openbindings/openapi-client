@@ -79,6 +79,8 @@ assert_eq!(json.root().get("id").unwrap().raw(), "9007199254740993");
 
 `DeserializationError` safely reports the conversion failure and line/column. Its `detail()` is explicit access to the underlying Serde error, which can include response values or custom error text; default Display, Debug and error chaining omit that text. A projection failure leaves the exact JSON and original Outcome available to the caller.
 
+Response decoding may defer the dynamic lookup index until its first structural access. Validation still finishes before `Response::json()` or a JSON policy accepts the response, including duplicate names, Unicode and resource limits. Typed projection reads the original bytes and can avoid building that index. Cloned owners share any later index; `retained_bytes()` can increase after dynamic access, and reading the count does not itself build the index. Public `ExactJson::parse`, document parsing and input construction remain eager.
+
 ## Constructing ordinary inputs
 
 For a normal dynamic call, the operation owns a per-call builder using its configured limits:

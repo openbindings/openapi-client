@@ -6,12 +6,15 @@ use serde::{
     de::{DeserializeSeed, MapAccess, SeqAccess, Visitor},
 };
 use serde_json::value::RawValue;
+mod response_admission;
+#[cfg(test)]
+mod response_tests;
 use std::{
     collections::HashMap,
     fmt,
     ops::Range,
     sync::{
-        Arc,
+        Arc, OnceLock,
         atomic::{AtomicUsize, Ordering},
     },
 };
@@ -119,7 +122,7 @@ pub struct SourceContext {
 }
 static NEXT_SOURCE: AtomicUsize = AtomicUsize::new(1);
 
-/// An immutable, exact JSON owner. Clones share bytes and the flat index.
+/// An immutable, exact JSON owner. Clones share bytes and any materialized index.
 #[derive(Clone, Debug)]
 pub struct ExactJson(pub(crate) Value);
 /// An independently owned handle to an authored JSON value.
@@ -132,7 +135,7 @@ impl fmt::Debug for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Value")
             .field("kind", &self.kind())
-            .field("range", &self.node().span)
+            .field("range", &self.span())
             .finish()
     }
 }
@@ -169,8 +172,49 @@ struct Node {
 struct Store {
     source: Arc<str>,
     context: SourceContext,
-    nodes: Vec<Node>,
+    index: Index,
     limits: Limits,
+}
+enum Index {
+    Eager(Vec<Node>),
+    Deferred {
+        root: Range<usize>,
+        kind: ValueKind,
+        node_count: usize,
+        nodes: OnceLock<Vec<Node>>,
+    },
+}
+impl Store {
+    fn nodes(&self) -> &Vec<Node> {
+        match &self.index {
+            Index::Eager(nodes) => nodes,
+            Index::Deferred {
+                root,
+                node_count,
+                nodes,
+                ..
+            } => nodes.get_or_init(|| {
+                // Complete admission already established grammar, Unicode,
+                // duplicate-name and resource invariants. Immutable source and
+                // identical limits make canonical indexing infallible here.
+                // No user callback or externally cancellable token is involved.
+                build_index(
+                    &self.source,
+                    &self.source[root.clone()],
+                    *node_count,
+                    &self.limits,
+                    &crate::Cancellation::default(),
+                )
+                .expect("admitted immutable JSON must index successfully")
+            }),
+        }
+    }
+    fn indexed_nodes(&self) -> Option<&Vec<Node>> {
+        match &self.index {
+            Index::Eager(nodes) => Some(nodes),
+            Index::Deferred { nodes, .. } => nodes.get(),
+        }
+    }
 }
 static LIVE: AtomicUsize = AtomicUsize::new(0);
 impl Drop for Store {
@@ -335,6 +379,143 @@ fn validated_node_count(text: &str) -> usize {
     }
     count
 }
+// The canonical breadth-first index builder. `root` is a token slice of `text`
+// already admitted by serde_json's RawValue grammar authority and the limits.
+fn build_index(
+    text: &str,
+    root: &str,
+    node_count: usize,
+    limits: &Limits,
+    cancellation: &crate::Cancellation,
+) -> Result<Vec<Node>, Diagnostic> {
+    let offset = |value: &str| {
+        let start = value.as_ptr() as usize - text.as_ptr() as usize;
+        start..start + value.len()
+    };
+    let mut nodes = Vec::with_capacity(node_count);
+    nodes.push(Node {
+        span: offset(root),
+        parent: None,
+        segment: Arc::from(""),
+        kind: Kind::Null,
+    });
+    let mut queue = Vec::with_capacity(node_count);
+    queue.push(root);
+    let mut cursor = 0;
+    while cursor < queue.len() {
+        cancellation.check()?;
+        if queue.len() > limits.nodes {
+            return Err(Diagnostic::new(Code::Limit));
+        }
+        let s = queue[cursor];
+        let kind = match s.as_bytes()[0] {
+            b'{' => {
+                let entries: Entries = ObjectSeed(limits.nodes.saturating_sub(nodes.len()))
+                    .deserialize(&mut serde_json::Deserializer::from_str(s))
+                    .map_err(|e| parse_error(e, nodes[cursor].span.start))?;
+                if entries.0.len() > limits.nodes.saturating_sub(nodes.len()) {
+                    return Err(Diagnostic::new(Code::Limit));
+                }
+                let mut members: Vec<Member> = Vec::with_capacity(entries.0.len());
+                let mut lookup = HashMap::with_capacity(entries.0.len());
+                let mut last = nodes[cursor].span.start + 1;
+                for (name, value) in entries.0 {
+                    let span = offset(value.get());
+                    // Locate the already-validated member key, without interpreting JSON grammar.
+                    let start = last
+                        + text.as_bytes()[last..span.start]
+                            .iter()
+                            .position(|b| *b == b'"')
+                            .unwrap_or(0);
+                    let (mut end, mut escaped) = (start + 1, false);
+                    while end < span.start {
+                        let b = text.as_bytes()[end];
+                        end += 1;
+                        if escaped {
+                            escaped = false;
+                        } else if b == b'\\' {
+                            escaped = true;
+                        } else if b == b'"' {
+                            break;
+                        }
+                    }
+                    if let Some(&previous) = lookup.get(name.as_str()) {
+                        let old: &Member = &members[previous];
+                        let mut error = Diagnostic::new(Code::DuplicateMember).at(Location {
+                            start,
+                            end,
+                            pointer: String::new(),
+                        });
+                        error.related.push(Location {
+                            start: old.key.start,
+                            end: old.key.end,
+                            pointer: String::new(),
+                        });
+                        return Err(error);
+                    }
+                    let name: Arc<str> = name.into();
+                    let id = nodes.len();
+                    nodes.push(Node {
+                        span: span.clone(),
+                        parent: Some(cursor),
+                        segment: name.clone(),
+                        kind: Kind::Null,
+                    });
+                    queue.push(value.get());
+                    lookup.insert(name.clone(), members.len());
+                    members.push(Member {
+                        name,
+                        value: id,
+                        key: start..end,
+                    });
+                    last = span.end;
+                }
+                Kind::Object(members, lookup)
+            }
+            b'[' => {
+                let children: Vec<&RawValue> = ArraySeed(limits.nodes.saturating_sub(nodes.len()))
+                    .deserialize(&mut serde_json::Deserializer::from_str(s))
+                    .map_err(|e| parse_error(e, nodes[cursor].span.start))?;
+                if children.len() > limits.nodes.saturating_sub(nodes.len()) {
+                    return Err(Diagnostic::new(Code::Limit));
+                }
+                let mut ids = Vec::with_capacity(children.len());
+                for (i, v) in children.into_iter().enumerate() {
+                    ids.push(nodes.len());
+                    nodes.push(Node {
+                        span: offset(v.get()),
+                        parent: Some(cursor),
+                        segment: Arc::from(i.to_string()),
+                        kind: Kind::Null,
+                    });
+                    queue.push(v.get());
+                }
+                Kind::Array(ids)
+            }
+            b'"' => Kind::String(
+                serde_json::from_str(s).map_err(|e| parse_error(e, nodes[cursor].span.start))?,
+            ),
+            b't' => Kind::Bool(true),
+            b'f' => Kind::Bool(false),
+            b'n' => Kind::Null,
+            _ => Kind::Number,
+        };
+        nodes[cursor].kind = kind;
+        cursor += 1;
+    }
+    debug_assert_eq!(nodes.len(), node_count);
+    Ok(nodes)
+}
+fn root_kind(root: &str) -> ValueKind {
+    match root.as_bytes()[0] {
+        b'{' => ValueKind::Object,
+        b'[' => ValueKind::Array,
+        b'"' => ValueKind::String,
+        b't' | b'f' => ValueKind::Boolean,
+        b'n' => ValueKind::Null,
+        _ => ValueKind::Number,
+    }
+}
 impl ExactJson {
     /// Validate and index exact UTF-8 JSON. Duplicate decoded keys are rejected.
     /// String values containing unpaired UTF-16 surrogate escapes return UnsupportedString.
@@ -354,6 +535,26 @@ impl ExactJson {
         limits: Limits,
         cancellation: &crate::Cancellation,
         origin: SourceOrigin,
+    ) -> Result<Self, ParseFailure> {
+        Self::parse_mode(bytes, limits, cancellation, origin, false)
+    }
+    // Response::json has no caller cancellation token. Public parsing and
+    // construction retain their eager indexing checkpoints and behavior.
+    pub(crate) fn parse_response(bytes: &[u8], limits: Limits) -> Result<Self, ParseFailure> {
+        Self::parse_mode(
+            bytes,
+            limits,
+            &crate::Cancellation::default(),
+            SourceOrigin::Authored,
+            true,
+        )
+    }
+    fn parse_mode(
+        bytes: &[u8],
+        limits: Limits,
+        cancellation: &crate::Cancellation,
+        origin: SourceOrigin,
+        deferred: bool,
     ) -> Result<Self, ParseFailure> {
         let id = NEXT_SOURCE
             .try_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
@@ -401,128 +602,32 @@ impl ExactJson {
                     node_count,
                 ));
             }
-            let mut nodes = Vec::with_capacity(node_count);
-            nodes.push(Node {
-                span: offset(root),
-                parent: None,
-                segment: Arc::from(""),
-                kind: Kind::Null,
-            });
-            let mut queue = Vec::with_capacity(node_count);
-            queue.push(root);
-            let mut cursor = 0;
-            while cursor < queue.len() {
-                cancellation.check()?;
-                if queue.len() > limits.nodes {
-                    return Err(Diagnostic::new(Code::Limit));
-                }
-                let raw = queue[cursor];
-                let s = raw.get();
-                let kind = match s.as_bytes()[0] {
-                    b'{' => {
-                        let entries: Entries = ObjectSeed(limits.nodes.saturating_sub(nodes.len()))
-                            .deserialize(&mut serde_json::Deserializer::from_str(s))
-                            .map_err(|e| parse_error(e, nodes[cursor].span.start))?;
-                        if entries.0.len() > limits.nodes.saturating_sub(nodes.len()) {
-                            return Err(Diagnostic::new(Code::Limit));
-                        }
-                        let mut members: Vec<Member> = Vec::with_capacity(entries.0.len());
-                        let mut lookup = HashMap::with_capacity(entries.0.len());
-                        let mut last = nodes[cursor].span.start + 1;
-                        for (name, value) in entries.0 {
-                            let span = offset(value);
-                            // Locate the already-validated member key, without interpreting JSON grammar.
-                            let start = last
-                                + text.as_bytes()[last..span.start]
-                                    .iter()
-                                    .position(|b| *b == b'"')
-                                    .unwrap_or(0);
-                            let (mut end, mut escaped) = (start + 1, false);
-                            while end < span.start {
-                                let b = text.as_bytes()[end];
-                                end += 1;
-                                if escaped {
-                                    escaped = false;
-                                } else if b == b'\\' {
-                                    escaped = true;
-                                } else if b == b'"' {
-                                    break;
-                                }
-                            }
-                            if let Some(&previous) = lookup.get(name.as_str()) {
-                                let old: &Member = &members[previous];
-                                let mut error =
-                                    Diagnostic::new(Code::DuplicateMember).at(Location {
-                                        start,
-                                        end,
-                                        pointer: String::new(),
-                                    });
-                                error.related.push(Location {
-                                    start: old.key.start,
-                                    end: old.key.end,
-                                    pointer: String::new(),
-                                });
-                                return Err(error);
-                            }
-                            let name: Arc<str> = name.into();
-                            let id = nodes.len();
-                            nodes.push(Node {
-                                span: span.clone(),
-                                parent: Some(cursor),
-                                segment: name.clone(),
-                                kind: Kind::Null,
-                            });
-                            queue.push(value);
-                            lookup.insert(name.clone(), members.len());
-                            members.push(Member {
-                                name,
-                                value: id,
-                                key: start..end,
-                            });
-                            last = span.end;
-                        }
-                        Kind::Object(members, lookup)
+            let index =
+                if deferred && response_admission::validate(root.get(), limits.nodes).is_ok() {
+                    Index::Deferred {
+                        root: offset(root),
+                        kind: root_kind(root.get()),
+                        node_count,
+                        nodes: OnceLock::new(),
                     }
-                    b'[' => {
-                        let children: Vec<&RawValue> =
-                            ArraySeed(limits.nodes.saturating_sub(nodes.len()))
-                                .deserialize(&mut serde_json::Deserializer::from_str(s))
-                                .map_err(|e| parse_error(e, nodes[cursor].span.start))?;
-                        if children.len() > limits.nodes.saturating_sub(nodes.len()) {
-                            return Err(Diagnostic::new(Code::Limit));
-                        }
-                        let mut ids = Vec::with_capacity(children.len());
-                        for (i, v) in children.into_iter().enumerate() {
-                            ids.push(nodes.len());
-                            nodes.push(Node {
-                                span: offset(v),
-                                parent: Some(cursor),
-                                segment: Arc::from(i.to_string()),
-                                kind: Kind::Null,
-                            });
-                            queue.push(v);
-                        }
-                        Kind::Array(ids)
-                    }
-                    b'"' => Kind::String(
-                        serde_json::from_str(s)
-                            .map_err(|e| parse_error(e, nodes[cursor].span.start))?,
-                    ),
-                    b't' => Kind::Bool(true),
-                    b'f' => Kind::Bool(false),
-                    b'n' => Kind::Null,
-                    _ => Kind::Number,
+                } else {
+                    // Fast admission is only an optimization. Replay its refusals in
+                    // canonical order, after all temporary visitor state is dropped,
+                    // with the already reserved source identity and admitted root.
+                    Index::Eager(build_index(
+                        text,
+                        root.get(),
+                        node_count,
+                        &limits,
+                        cancellation,
+                    )?)
                 };
-                nodes[cursor].kind = kind;
-                cursor += 1;
-            }
-            debug_assert_eq!(nodes.len(), node_count);
             LIVE.fetch_add(1, Ordering::Relaxed);
             Ok(Self(Value {
                 store: Arc::new(Store {
                     source: Arc::from(text),
                     context,
-                    nodes,
+                    index,
                     limits,
                 }),
                 id: 0,
@@ -546,23 +651,38 @@ impl ExactJson {
         &self.0.store.source
     }
     /// Accounted retained source/index storage (not allocator RSS).
+    /// Response owners can materialize their index on dynamic access; this count
+    /// then increases. Reading this count does not materialize the index.
     pub fn retained_bytes(&self) -> usize {
         self.0.retained_bytes()
     }
 }
 impl Value {
     fn node(&self) -> &Node {
-        &self.store.nodes[self.id]
+        &self.store.nodes()[self.id]
+    }
+    fn span(&self) -> Range<usize> {
+        if self.id == 0
+            && let Index::Deferred { root, .. } = &self.store.index
+        {
+            return root.clone();
+        }
+        self.node().span.clone()
     }
     pub(crate) fn identity(&self) -> usize {
         self.id
     }
     /// Exact original JSON token or subtree, without conversion.
     pub fn raw(&self) -> &str {
-        &self.store.source[self.node().span.clone()]
+        &self.store.source[self.span()]
     }
     /// Type of this JSON value.
     pub fn kind(&self) -> ValueKind {
+        if self.id == 0
+            && let Index::Deferred { kind, .. } = &self.store.index
+        {
+            return *kind;
+        }
         match self.node().kind {
             Kind::Null => ValueKind::Null,
             Kind::Bool(_) => ValueKind::Boolean,
@@ -647,21 +767,25 @@ impl Value {
     }
     /// Source range and authored JSON Pointer.
     pub fn location(&self) -> Location {
+        let span = self.span();
+        if self.id == 0 {
+            return Location {
+                start: span.start,
+                end: span.end,
+                pointer: String::new(),
+            };
+        }
+        let nodes = self.store.nodes();
         let mut id = self.id;
         let mut segments = vec![];
-        while let Some(parent) = self.store.nodes[id].parent {
-            segments.push(
-                self.store.nodes[id]
-                    .segment
-                    .replace('~', "~0")
-                    .replace('/', "~1"),
-            );
+        while let Some(parent) = nodes[id].parent {
+            segments.push(nodes[id].segment.replace('~', "~0").replace('/', "~1"));
             id = parent;
         }
         segments.reverse();
         Location {
-            start: self.node().span.start,
-            end: self.node().span.end,
+            start: span.start,
+            end: span.end,
             pointer: if segments.is_empty() {
                 String::new()
             } else {
@@ -726,10 +850,14 @@ impl Value {
             .sourced(self.source_context())
     }
     /// Retained storage attributable to the shared owner, counted once per owner.
+    /// May increase after dynamic access to a response owner. This accessor does
+    /// not materialize a deferred index.
     pub fn retained_bytes(&self) -> usize {
-        let mut bytes =
-            self.store.source.len() + self.store.nodes.capacity() * std::mem::size_of::<Node>();
-        for n in &self.store.nodes {
+        let Some(nodes) = self.store.indexed_nodes() else {
+            return self.store.source.len();
+        };
+        let mut bytes = self.store.source.len() + nodes.capacity() * std::mem::size_of::<Node>();
+        for n in nodes {
             bytes += n.segment.len();
             match &n.kind {
                 Kind::String(s) => bytes += s.capacity(),
