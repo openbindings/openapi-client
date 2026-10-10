@@ -28,6 +28,12 @@ def run(name, command, cwd=root):
     with log.open('w') as stream:
         result = subprocess.run(list(map(str, command)), cwd=cwd, env=env,
                                 stdout=stream, stderr=subprocess.STDOUT)
+    if cwd != root:
+        # Preserve resolved consumer inputs even when a first attempt fails.
+        for filename in ['Cargo.toml', 'Cargo.lock']:
+            source = cwd / filename
+            if source.exists():
+                shutil.copy2(source, output / ('consumer-' + filename))
     results.append({'name': name, 'command': list(map(str, command)),
                     'exitCode': result.returncode, 'log': log.name})
     (output / 'commands.json').write_text(json.dumps(results, indent=2) + '\n')
@@ -82,5 +88,4 @@ with tempfile.TemporaryDirectory(prefix='native-consumer-', dir=output) as tempo
         if features:
             command += ['--features', features]
         run('independent-consumer-' + label, command, consumer)
-    shutil.copy2(consumer / 'Cargo.lock', output / 'consumer-Cargo.lock')
 print(json.dumps({'passed': True, 'commands': len(results)}))

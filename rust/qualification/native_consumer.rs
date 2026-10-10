@@ -8,7 +8,7 @@ mod server {
         io::{Read, Write},
         net::{Shutdown, TcpListener, TcpStream},
         sync::{
-            Arc, Mutex,
+            Arc, Condvar, Mutex,
             atomic::{AtomicBool, Ordering},
         },
         thread,
@@ -48,7 +48,25 @@ mod server {
         requests: Arc<Mutex<Vec<Wire>>>,
         stop: Arc<AtomicBool>,
         failures: Arc<Mutex<Vec<String>>>,
+        releases: Arc<Mutex<Vec<(String, Arc<Release>)>>>,
         listener: Option<thread::JoinHandle<()>>,
+    }
+    #[derive(Default)]
+    struct Release(Mutex<bool>, Condvar);
+    impl Release {
+        fn release(&self) {
+            *self.0.lock().unwrap() = true;
+            self.1.notify_all();
+        }
+        fn wait(&self) {
+            let (released, _) = self
+                .1
+                .wait_timeout_while(self.0.lock().unwrap(), Duration::from_secs(5), |released| {
+                    !*released
+                })
+                .unwrap();
+            assert!(*released, "independent response-release deadlock guard");
+        }
     }
     fn read_request(stream: &mut TcpStream) -> Result<Wire, String> {
         stream
@@ -110,7 +128,12 @@ mod server {
     fn body(name: &str) -> Vec<u8> {
         super::fixture(name)
     }
-    fn send(stream: &mut TcpStream, port: u16, target: &str) -> std::io::Result<()> {
+    fn send(
+        stream: &mut TcpStream,
+        port: u16,
+        target: &str,
+        release: &Release,
+    ) -> std::io::Result<()> {
         let path = target.split('?').next().unwrap();
         if path == "/v1/once" {
             return Ok(());
@@ -127,8 +150,7 @@ mod server {
             _ => (200, "application/json", body("success.json")),
         };
         if path == "/v1/wait" {
-            let mut byte = [0];
-            let _ = stream.read(&mut byte);
+            release.wait();
             return Ok(());
         }
         let declared = if matches!(path, "/v1/broken" | "/v1/wait-body") {
@@ -155,8 +177,7 @@ mod server {
         } else if path == "/v1/wait-body" {
             stream.write_all(&body("pending-prefix.bin"))?;
             stream.flush()?;
-            let mut byte = [0];
-            let _ = stream.read(&mut byte);
+            release.wait();
         } else {
             stream.write_all(&content)?;
         }
@@ -171,24 +192,43 @@ mod server {
             let requests = Arc::new(Mutex::new(vec![]));
             let stop = Arc::new(AtomicBool::new(false));
             let failures = Arc::new(Mutex::new(vec![]));
-            let (r, s, f) = (requests.clone(), stop.clone(), failures.clone());
+            let releases = Arc::new(Mutex::new(vec![]));
+            let (r, s, f, gates) = (
+                requests.clone(),
+                stop.clone(),
+                failures.clone(),
+                releases.clone(),
+            );
             let join = thread::spawn(move || {
+                let mut handlers = Vec::new();
                 while !s.load(Ordering::Acquire) {
                     match listener.accept() {
                         Ok((mut stream, _)) => {
+                            // Darwin accept inherits the listener's O_NONBLOCK flag.
+                            // Request parsing and scripted waits require blocking sockets.
+                            if let Err(error) = stream.set_nonblocking(false) {
+                                f.lock().unwrap().push(error.to_string());
+                                continue;
+                            }
                             let (requests, failures) = (r.clone(), f.clone());
-                            thread::spawn(move || {
+                            let gates = gates.clone();
+                            handlers.push(thread::spawn(move || {
                                 match read_request(&mut stream) {
                                     Ok(wire) => {
                                         let target = wire.target.clone();
+                                        let release = Arc::new(Release::default());
+                                        gates
+                                            .lock()
+                                            .unwrap()
+                                            .push((target.clone(), release.clone()));
                                         requests.lock().unwrap().push(wire);
                                         // Writes may fail when the client legitimately cancels or stops at its byte bound.
-                                        let _ = send(&mut stream, port, &target);
+                                        let _ = send(&mut stream, port, &target, &release);
                                     }
                                     Err(error) => failures.lock().unwrap().push(error),
                                 }
                                 let _ = stream.shutdown(Shutdown::Both);
-                            });
+                            }));
                         }
                         Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                             thread::sleep(Duration::from_millis(2))
@@ -199,12 +239,20 @@ mod server {
                         }
                     }
                 }
+                for handler in handlers {
+                    if handler.join().is_err() {
+                        f.lock()
+                            .unwrap()
+                            .push("independent request handler panicked".into());
+                    }
+                }
             });
             Self {
                 port,
                 requests,
                 stop,
                 failures,
+                releases,
                 listener: Some(join),
             }
         }
@@ -221,6 +269,31 @@ mod server {
                 .iter()
                 .filter(|r| r.target == target)
                 .count()
+        }
+        pub fn release(&self, target: &str) {
+            let release = self
+                .releases
+                .lock()
+                .unwrap()
+                .iter()
+                .rev()
+                .find(|(path, _)| path == target)
+                .expect("recorded request release")
+                .1
+                .clone();
+            release.release();
+        }
+        fn release_all(&self) {
+            let releases = self
+                .releases
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|(_, release)| release.clone())
+                .collect::<Vec<_>>();
+            for release in releases {
+                release.release();
+            }
         }
         pub async fn observed(&self, target: &str) -> Wire {
             for _ in 0..200 {
@@ -240,6 +313,7 @@ mod server {
         }
         pub fn finish(mut self) -> Vec<Wire> {
             self.stop.store(true, Ordering::Release);
+            self.release_all();
             self.listener.take().unwrap().join().unwrap();
             let failures = self.failures.lock().unwrap().clone();
             assert!(
@@ -252,6 +326,7 @@ mod server {
     impl Drop for Server {
         fn drop(&mut self) {
             self.stop.store(true, Ordering::Release);
+            self.release_all();
             if let Some(join) = self.listener.take() {
                 let _ = join.join();
             }
@@ -1595,6 +1670,7 @@ async fn main() {
             .await
             .expect("pending cancellation functional deadline")
             .unwrap();
+        server.release(path);
         assert!(outcome.cancelled);
         assert_eq!(outcome.dispatch, DispatchEvidence::Dispatched);
         assert_eq!(outcome.upload, UploadState::Unknown);
@@ -1889,6 +1965,7 @@ async fn main() {
         .unwrap();
     let timeout_request = request(&timed, &doc, "wait", &server);
     let outcome = execute(&timed, &timeout_request).await;
+    server.release("/v1/wait");
     assert!(!outcome.cancelled);
     assert_eq!(
         outcome.error.as_ref().unwrap().code(),
