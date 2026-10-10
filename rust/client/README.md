@@ -8,6 +8,8 @@ Preparation interprets each supported edition's own server, parameter, body, med
 
 Edition coverage is not full-feature coverage. Form and multipart serialization, richer parameter styles, external reference graphs, streaming and WebSocket connections remain unqualified or unimplemented. Effective descriptors retain unsupported declarations for discovery; an available descriptor does not guarantee preparation or execution support.
 
+The [document loading guide](LOADING.md) documents YAML scalar/key policies, exact numeric normalization, alias bounds and original source traces. `ExactJson::parse` remains JSON-only; the version-neutral entrypoint for OpenAPI documents is `Document::parse`.
+
 Schemas and unknown fields are inspection data. The core performs no schema evaluation/default insertion, acquisition, automatic redirect/retry, streaming codec or OpenBindings adaptation. For native HTTP calls, use the optional [`dynamic-openapi-client-reqwest` companion](../reqwest/README.md); it owns the HTTP stack and configuration while this crate remains runtime-independent. Browser/workerd qualification glue is separate and is not a supported npm client.
 
 Source and decoded strings are exact for Unicode scalar values. Unpaired surrogate escapes return a located limitation with source preserved. Numeric tokens remain exact; integer conveniences are checked, and binary64 conversion currently accepts exactly representable integer lexemes only. Mathematical conversion of decimal/exponent tokens remains explicit unsupported conversion. Null, empty-container and nested parameter values receive located refusals; empty strings are supported.
@@ -153,7 +155,7 @@ drop(owner); // The parameter's handle retains its constructed owner.
 # Ok::<(), ParseFailure>(())
 ```
 
-Generated ranges identify this constructed JSON, never the OpenAPI document. `SourceContext.id` distinguishes owners within one process/Wasm instance and is not a persistent or cross-instance identifier. Parse accepts externally supplied bytes and marks them Authored; this name is not a claim about their historical origin. Pre-serialization failures carry Construction context and no complete source; parse failures after serialization retain the generated source. Null is distinct from omitted members and Body::Absent. Parameter policy can still refuse null or nested/empty containers even though the JSON owner represents them faithfully.
+Generated ranges identify this constructed JSON, never the OpenAPI document. `SourceContext.id` distinguishes owners within one process/Wasm instance and is not a persistent or cross-instance identifier. Exact JSON parsing marks externally supplied bytes Authored; this name is not a claim about their historical origin. YAML document values use Normalized representation ranges paired with authored source positions through `source_trace()`. Pre-serialization failures carry Construction context and no complete source; parse failures after serialization retain the generated source. Null is distinct from omitted members and Body::Absent. Parameter policy can still refuse null or nested/empty containers even though the JSON owner represents them faithfully.
 
 ## Effective parameter inspection
 
@@ -175,7 +177,7 @@ Cancellation is cooperative. Cancellable parse/prepare methods check owned work;
 
 Media election supports concrete types and matching declaration ranges, with explicit concrete selection required for range-only declarations. Malformed keys do not govern. More-specific matching declarations take precedence; equivalent best matches are ambiguous. Quoted media parameters are parsed as HTTP field parameters. Duplicate parameter names are refused. No codec or encoding metadata is applied to opaque schemas or raw caller bytes. UTF-8 is the explicit Basic credential policy. Header controls and surrounding whitespace are refused; header parameter values are not URI encoded. Cookies use `; ` between pairs.
 
-`retained_bytes()` is a storage estimate for the immutable JSON owner, excluding document descriptors, compiled caches, allocator metadata and reserved pages. Qualification reports measure allocator traffic, live allocation sizes and process RSS separately. Exact value handles use the source owner's identity and do not imply equality across distinct documents.
+`retained_bytes()` is a storage estimate for the immutable JSON owner, including retained YAML source mappings when present, and excluding document descriptors, compiled caches, allocator metadata and reserved pages. Qualification reports measure allocator traffic, live allocation sizes and process RSS separately. Exact value handles use the source owner's identity and do not imply equality across distinct documents.
 
 ## Corrective diagnostics and request choices
 

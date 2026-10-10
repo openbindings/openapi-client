@@ -1,4 +1,4 @@
-//! Exact JSON/OpenAPI 3.1 document inspection and finite programmable invocation.
+//! Dynamic OpenAPI document inspection and finite programmable invocation.
 //!
 //! No acquisition, executor, HTTP implementation, schema evaluator or application
 //! framework is required. See the capability profile in the package README.
