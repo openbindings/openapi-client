@@ -174,11 +174,16 @@ dependencies = [
  "bytes",
  "dynamic-openapi-client",
  "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "reqwest",
  "serde",
  "serde_json",
  "tokio",
  "tokio-rustls",
+ "tower",
+ "tracing",
 ]
 
 [[package]]

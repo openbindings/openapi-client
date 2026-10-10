@@ -66,7 +66,11 @@ impl fmt::Debug for Header {
 pub struct HostCapabilities {
     /// Host promises no implicit redirect handling.
     pub no_redirects: bool,
-    /// Host promises no automatic retries.
+    /// Host promises no automatic replay once request serialization has begun
+    /// or may have begun. Recovery is allowed only when the host proves the
+    /// original request was never serialized, for example on a stale pooled
+    /// connection. Status responses, partial writes and ambiguous failures must
+    /// not trigger another attempt. The core itself never retries.
     pub no_retries: bool,
     /// Host promises no ambient authentication or cookie jar.
     pub no_ambient_auth: bool,
@@ -205,6 +209,7 @@ pub struct DispatchRequest {
     /// Complete ordered header lines.
     pub headers: Vec<Header>,
     /// Absent or finite payload; sharing these bytes does not authorize retries.
+    /// Cloneable bytes do not establish that the original request was unsent.
     pub body: Option<Arc<[u8]>>,
     /// Required response-byte admission bound for the host.
     pub response_limit: usize,
