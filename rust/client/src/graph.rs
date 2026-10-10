@@ -689,7 +689,9 @@ impl DocumentBuilder {
             crate::LimitKind::GraphRetainedBytes,
         )?;
         let id = ResourceId(json.root().source_context().id);
-        let canonical = if Edition::detect(&json.root()) == Ok(Edition::OpenApi32) {
+        let canonical = if json.root().get("openapi").is_some()
+            && Edition::detect(&json.root()) == Ok(Edition::OpenApi32)
+        {
             json.root()
                 .get("$self")
                 .map(|v| {
@@ -1210,7 +1212,10 @@ impl Graph {
         let mut queue = VecDeque::new();
         for resource in &graph.resources {
             cancellation.check()?;
-            if let Ok(edition) = Edition::detect(&resource.json.root()) {
+            let root = resource.json.root();
+            if (root.get("openapi").is_some() || root.get("swagger").is_some())
+                && let Ok(edition) = Edition::detect(&root)
+            {
                 enqueue(
                     &mut queue,
                     resource.json.root(),
@@ -1264,7 +1269,6 @@ impl Graph {
                     // Only a selected fragment root can infer its interpretation.
                     // A non-root pointer into an untyped bundle needs a layout.
                     if target.identity() == 0
-                        && Edition::detect(&resource.json.root()).is_err()
                         && resource.json.root().get("openapi").is_none()
                         && resource.json.root().get("swagger").is_none()
                     {
@@ -1696,7 +1700,6 @@ impl Graph {
         };
         let target = self.owner(&value)?;
         if !self.contexts.contains_key(&key(&value))
-            && Edition::detect(&target.json.root()).is_err()
             && target.json.root().get("openapi").is_none()
             && target.json.root().get("swagger").is_none()
         {

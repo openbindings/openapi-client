@@ -1099,21 +1099,28 @@ impl Value {
         }
         let mut current = self.clone();
         for token in pointer[1..].split('/') {
-            let mut decoded = String::new();
-            let mut chars = token.chars();
-            while let Some(c) = chars.next() {
-                if c == '~' {
-                    decoded.push(match chars.next() {
-                        Some('0') => '~',
-                        Some('1') => '/',
-                        _ => return Err(self.error(Code::InvalidPointer)),
-                    });
-                } else {
-                    decoded.push(c);
+            let owned;
+            let decoded = if token.contains('~') {
+                let mut decoded = String::with_capacity(token.len());
+                let mut chars = token.chars();
+                while let Some(c) = chars.next() {
+                    if c == '~' {
+                        decoded.push(match chars.next() {
+                            Some('0') => '~',
+                            Some('1') => '/',
+                            _ => return Err(self.error(Code::InvalidPointer)),
+                        });
+                    } else {
+                        decoded.push(c);
+                    }
                 }
-            }
+                owned = decoded;
+                owned.as_str()
+            } else {
+                token
+            };
             current = match current.kind() {
-                ValueKind::Object => current.get(&decoded),
+                ValueKind::Object => current.get(decoded),
                 ValueKind::Array => {
                     if decoded.is_empty()
                         || (decoded.starts_with('0') && decoded.len() > 1)
