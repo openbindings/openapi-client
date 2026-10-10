@@ -323,3 +323,52 @@ fn retained_storage_snapshot_survives_the_initialization_handoff() {
         Some("decoded\ntext")
     );
 }
+
+#[test]
+fn materialized_response_index_matches_eager_nodes_and_every_payload() {
+    for text in [
+        " null ",
+        "true",
+        "false",
+        "-0",
+        "1e9999",
+        r#""escaped\u0061\n""#,
+        "[]",
+        "{}",
+        // Mixed ancestry, equal-valued occurrences and decoded pointer segments.
+        r#" {"01":{"~/":[null,{"":"kept"}]},"same":[7,7]} "#,
+        // Interleaved per-kind payloads in BFS order, including empty containers.
+        r#"[{"left":["decoded\ntext",{"nested":"more"}],"right":{}},[[],{"flag":false},true],"tail"]"#,
+        // Multi-digit array segments and escaped, Unicode and NUL member names.
+        r#"{"a":[0,1,2,3,4,5,6,7,8,9,10,11],"\u006b/\u007e":{"\u0000":"𝄞","":""}}"#,
+        // Exact tokens and literal marker names are ordinary indexed data.
+        r#"{"$serde_json::private::Number":[1e9999,-0,340282366920938463463374607431768211455],"$serde_json::private::RawValue":{"token":"1e400"}}"#,
+    ] {
+        let response = response(text);
+        let eager = ExactJson::parse(text, Limits::default()).unwrap();
+        let actual = response.0.store.nodes();
+        let expected = eager.0.store.nodes();
+        assert_eq!(actual.len(), expected.len(), "{text}");
+        for (id, (actual, expected)) in actual.iter().zip(expected).enumerate() {
+            assert_eq!(actual.span, expected.span, "node {id}: {text}");
+            assert_eq!(actual.parent, expected.parent, "node {id}: {text}");
+            assert_eq!(actual.segment, expected.segment, "node {id}: {text}");
+            match (&actual.kind, &expected.kind) {
+                (Kind::Null, Kind::Null) | (Kind::Number, Kind::Number) => {}
+                (Kind::Bool(a), Kind::Bool(b)) => assert_eq!(a, b, "node {id}: {text}"),
+                (Kind::String(a), Kind::String(b)) => assert_eq!(a, b, "node {id}: {text}"),
+                (Kind::Array(a), Kind::Array(b)) => assert_eq!(a, b, "node {id}: {text}"),
+                (Kind::Object(a, lookup_a), Kind::Object(b, lookup_b)) => {
+                    assert_eq!(a.len(), b.len(), "node {id}: {text}");
+                    assert_eq!(lookup_a, lookup_b, "node {id}: {text}");
+                    for (a, b) in a.iter().zip(b) {
+                        assert_eq!(a.name, b.name, "node {id}: {text}");
+                        assert_eq!(a.value, b.value, "node {id}: {text}");
+                        assert_eq!(a.key, b.key, "node {id}: {text}");
+                    }
+                }
+                _ => panic!("different kinds at node {id}: {text}"),
+            }
+        }
+    }
+}

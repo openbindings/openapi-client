@@ -83,6 +83,8 @@ Response decoding may defer construction of the full dynamic value index. Valida
 
 `retained_bytes()` reports accounted source and index storage without forcing index construction. Its count can increase after dynamic access. During concurrent construction it reports the admitted-storage snapshot until the completed index is published; temporary construction overlap, allocator overhead and RSS are outside this estimate.
 
+This estimate is not a physical heap measurement: shared member-name text is counted in multiple roles in the materialized index, and opaque platform synchronization storage is outside the estimate. Compare allocation measurements when evaluating memory savings between representations. Deferred response indexing reduces typed-only allocation, with extra allocation when dynamic access later materializes the index; the repository's `rust/qualification/response-indexing.md` records the measured tradeoff and qualification limits.
+
 ## Constructing ordinary inputs
 
 For a normal dynamic call, the operation owns a per-call builder using its configured limits:
