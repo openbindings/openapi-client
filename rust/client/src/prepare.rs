@@ -1082,7 +1082,7 @@ impl Operation {
                 .members()
                 .ok_or_else(|| authored.error(Code::InvalidDeclaration))?
             {
-                let declared = security_source(&root, name)?;
+                let declared = security_source(&root, name, &scopes_source)?;
                 let declaration = work.resolve(&root, &declared, ReferenceKind::SecurityScheme)?;
                 let scheme = describe_security(&declaration.target, edition, work)?;
                 let mut scopes = vec![];
@@ -1125,16 +1125,18 @@ impl Operation {
     }
 }
 
-fn security_source(root: &Value, name: &str) -> Result<Value, Diagnostic> {
+fn security_source(root: &Value, name: &str, requirement: &Value) -> Result<Value, Diagnostic> {
     let schemes = if Edition::detect(root)? == Edition::Swagger20 {
         root.get("securityDefinitions")
     } else {
         root.get("components")
             .and_then(|v| v.get("securitySchemes"))
     };
-    schemes
-        .and_then(|v| v.get(name))
-        .ok_or_else(|| root.error(Code::InvalidDeclaration))
+    schemes.and_then(|v| v.get(name)).ok_or_else(|| {
+        requirement
+            .error(Code::InvalidDeclaration)
+            .reasoned(DiagnosticReason::UndefinedSecurityScheme)
+    })
 }
 fn string_value(source: &Value, key: &str) -> Result<Value, Diagnostic> {
     source
@@ -1402,6 +1404,14 @@ impl Operation {
         }
         if node.kind() != ValueKind::Object {
             return Err(node.error(Code::InvalidDeclaration));
+        }
+        // Operation Objects are not Reference Object positions. Treating a
+        // source-composed operation as empty would silently omit its contract.
+        // Unknown inspection fields elsewhere remain inert.
+        if let Some(reference) = node.get("$ref") {
+            return Err(reference
+                .error(Code::InvalidDeclaration)
+                .reasoned(DiagnosticReason::UnsupportedReferencePosition));
         }
         let mut parameters: Vec<Parameter> = vec![];
         for resolved in self.effective_parameter_references(work)? {
@@ -2360,7 +2370,7 @@ fn apply_security(
         if scopes.kind() != ValueKind::Array {
             return Err(scopes.error(Code::InvalidDeclaration));
         }
-        let source = security_source(root, name)?;
+        let source = security_source(root, name, &scopes)?;
         let scheme =
             document::resolve(root, &source, ReferenceKind::SecurityScheme, budget)?.target;
         let kind = security_mechanism(&scheme, Edition::detect(root)?)?;

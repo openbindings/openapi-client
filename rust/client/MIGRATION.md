@@ -27,6 +27,21 @@ original YAML. Exact JSON input keeps its existing token/range behavior, and
 `ExactJson::parse` remains a JSON-only API. See the API guide for the bounded
 YAML profile and new format-specific diagnostics.
 
+## Corpus diagnostic revision
+
+**Changed:** preparation and effective operation inspection refuse direct
+Operation Object `$ref` fields with `InvalidDeclaration` and the typed reason
+`UnsupportedReferencePosition`. OpenAPI does not admit references at this
+position; previously the field could be ignored and an incomplete operation
+prepared. Operation inventory and authored `inspect()`/`value()` remain available.
+This targeted guard does not introduce whole-document validation. Valid Path Item
+reference behavior and inert references inside extensions or schemas are unchanged.
+
+**Added:** undefined security schemes report `UndefinedSecurityScheme` at the
+named security requirement entry, for both `describe()` and preparation. Original
+JSON/YAML source ownership and alias provenance remain available. Scheme names and
+authored reference values are not included in default diagnostic formatting.
+
 ## Previous connection reuse revision
 
 Public Rust signatures are unchanged. **Changed:** `HostCapabilities::no_retries`

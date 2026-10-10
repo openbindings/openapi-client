@@ -115,6 +115,12 @@ pub enum DiagnosticReason {
     },
     /// No declared parameter matches this caller entry.
     UnknownParameter,
+    /// A security requirement names a scheme absent from the edition's definitions.
+    /// The source location identifies the requirement entry, including its name.
+    UndefinedSecurityScheme,
+    /// A direct `$ref` appears where the OpenAPI object does not admit a reference.
+    /// The original value remains inspectable; preparation cannot ignore it.
+    UnsupportedReferencePosition,
     /// Multiple caller entries target the same declared parameter.
     DuplicateParameter,
     /// Two explicit builder events assigned the same field or key.
