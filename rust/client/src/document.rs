@@ -240,7 +240,8 @@ pub struct OperationDescription {
     pub responses: Option<Value>,
 }
 impl Document {
-    /// Index JSON bytes. Unsupported editions and malformed operations remain inspectable.
+    /// Detect JSON/YAML bytes and index a document with original source provenance.
+    /// Unsupported editions and malformed operations remain inspectable.
     pub fn parse(
         bytes: impl AsRef<[u8]>,
         base: Option<&str>,
@@ -255,8 +256,7 @@ impl Document {
         limits: Limits,
         cancellation: &crate::Cancellation,
     ) -> Result<Self, ParseFailure> {
-        let json =
-            ExactJson::parse_with_cancellation(bytes.as_ref(), limits.clone(), cancellation)?;
+        let json = crate::loading::parse(bytes.as_ref(), limits.clone(), cancellation)?;
         let root = json.root();
         if base.is_some_and(|b| b.len() > limits.target_bytes) {
             return Err(ParseFailure {
@@ -347,11 +347,15 @@ impl Document {
     }
     /// Exact original bytes/text, including unknown declarations.
     pub fn source(&self) -> &str {
-        self.0.json.source()
+        self.0.json.original_source()
     }
     /// Owned root JSON inspection handle.
     pub fn root(&self) -> Value {
         self.0.json.root()
+    }
+    /// Serialization detected from the original document bytes.
+    pub fn format(&self) -> crate::SourceFormat {
+        self.0.json.source_format()
     }
     /// Version spelling, with missing/non-string represented as absent.
     pub fn version(&self) -> Option<String> {
