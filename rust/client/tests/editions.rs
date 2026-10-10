@@ -749,3 +749,295 @@ fn valid_media_key_with_invalid_value_refuses_instead_of_using_wildcard() {
         );
     }
 }
+
+#[test]
+fn form_descriptions_use_media_essence_and_preserve_authored_spelling() {
+    for version in ["3.0.4", "3.1.2", "3.2.1"] {
+        for media in [
+            "application/x-www-form-urlencoded; charset=UTF-8",
+            "Application/X-WWW-Form-Urlencoded",
+            "Multipart/form-data",
+        ] {
+            let doc = document(&json!({"openapi":version,"paths":{"/":{"post":{
+                "operationId":"send","requestBody":{"content":{media:{"schema":{"type":"object"}}}}
+            }}}}));
+            let op = doc.operation_id("send").unwrap();
+            let description = op.describe().unwrap();
+            let body = description.request_body.unwrap();
+            assert!(
+                matches!(body.fields, BodyFields::Opaque),
+                "{version} {media}"
+            );
+            assert_eq!(body.media[0].media_type, media);
+            let input = Input {
+                body: Body::Raw(b"field=value".as_slice().into()),
+                selection: Selection {
+                    media: Some(media.into()),
+                    ..Selection::default()
+                },
+                ..Input::default()
+            };
+            assert_eq!(
+                op.prepare(&input).unwrap().body(),
+                Some(b"field=value".as_slice())
+            );
+        }
+    }
+}
+
+fn oauth_description_fixture(
+    version: &str,
+    description: &str,
+    alternatives: usize,
+) -> serde_json::Value {
+    let mut value = json!({"paths":{"/":{"get":{"operationId":"read"}}},"security":vec![json!({"auth":["read"]});alternatives]});
+    if version == "2.0" {
+        value["swagger"] = json!(version);
+        value["host"] = json!("api.example");
+        value["schemes"] = json!(["https"]);
+        value["securityDefinitions"] = json!({"auth":{"type":"oauth2","flow":"application","tokenUrl":"https://issuer.test/token","scopes":{"read":description}}});
+    } else {
+        value["openapi"] = json!(version);
+        value["servers"] = json!([{"url":"https://api.example"}]);
+        value["components"] = json!({"securitySchemes":{"auth":{"type":"oauth2","flows":{"clientCredentials":{"tokenUrl":"https://issuer.test/token","scopes":{"read":description}}}}}});
+    }
+    value
+}
+
+fn oauth_input() -> Input {
+    Input {
+        credentials: [(
+            "auth".into(),
+            Credential {
+                value: CredentialValue::Bearer("access-token".into()),
+                origins: vec!["https://api.example".into()],
+            },
+        )]
+        .into(),
+        selection: Selection {
+            security: Some(0),
+            ..Selection::default()
+        },
+        ..Input::default()
+    }
+}
+
+fn assert_descriptor_limit(error: &Diagnostic, kind: LimitKind, maximum: usize, doc: &Document) {
+    assert_eq!(error.code(), Code::Limit);
+    assert!(
+        matches!(error.reason(), Some(DiagnosticReason::Limit {kind: actual_kind, maximum: actual_maximum, actual}) if *actual_kind == kind && *actual_maximum == maximum && *actual > maximum),
+        "{error:?}"
+    );
+    assert_eq!(error.source_context(), Some(doc.root().source_context()));
+    assert!(error.location().is_some());
+}
+
+#[test]
+fn descriptor_security_work_is_aggregate_and_located() {
+    let value = json!({"openapi":"3.1.2","paths":{"/":{"get":{"operationId":"read"}}},
+        "components":{"securitySchemes":{"a":{"type":"apiKey","in":"query","name":"a"},"b":{"type":"apiKey","in":"query","name":"b"}}},
+        "security":[{"a":[],"b":[]}]
+    });
+    let doc = Document::parse(
+        value.to_string(),
+        Some("https://api.example/openapi.json"),
+        Limits {
+            reference_steps: 1,
+            ..Limits::default()
+        },
+    )
+    .unwrap();
+    let op = doc.operation_id("read").unwrap();
+    let error = op.describe().unwrap_err();
+    assert_descriptor_limit(&error, LimitKind::DescriptorWork, 1, &doc);
+    assert_eq!(
+        op.prepare(&Input::default()).unwrap_err().code(),
+        Code::Limit
+    );
+    let mut single = value;
+    single["security"] = json!([{"a":[]}]);
+    let single = Document::parse(
+        single.to_string(),
+        Some("https://api.example/openapi.json"),
+        Limits {
+            reference_steps: 1,
+            ..Limits::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        single
+            .operation_id("read")
+            .unwrap()
+            .describe()
+            .unwrap()
+            .security[0]
+            .requirements
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn descriptor_repeated_oauth_metadata_is_admitted_before_copying() {
+    for version in ["2.0", "3.0.4", "3.1.2", "3.2.1"] {
+        let value = oauth_description_fixture(version, &"s".repeat(4096), 16);
+        let source = value.to_string();
+        assert!(source.len() < 8192);
+        let doc = Document::parse(
+            source,
+            Some("https://api.example/openapi.json"),
+            Limits {
+                document_bytes: 8192,
+                ..Limits::default()
+            },
+        )
+        .unwrap();
+        let op = doc.operation_id("read").unwrap();
+        let error = op.describe().unwrap_err();
+        assert_descriptor_limit(&error, LimitKind::DescriptorBytes, 8192, &doc);
+        assert!(error.location().unwrap().pointer.ends_with("/scopes/read"));
+        // Invocation validates borrowed acquisition metadata and only prepares the
+        // selected credential, so inspection's copied-metadata refusal is independent.
+        let request = op.prepare(&oauth_input()).unwrap();
+        assert_eq!(
+            request
+                .headers()
+                .iter()
+                .find(|h| h.name() == "Authorization")
+                .unwrap()
+                .value(),
+            b"Bearer access-token"
+        );
+    }
+}
+
+#[test]
+fn descriptor_repeated_entries_have_a_separate_node_budget() {
+    let value = oauth_description_fixture("3.1.2", "read", 30);
+    let doc = Document::parse(
+        value.to_string(),
+        Some("https://api.example/openapi.json"),
+        Limits {
+            nodes: 200,
+            ..Limits::default()
+        },
+    )
+    .unwrap();
+    let op = doc.operation_id("read").unwrap();
+    let error = op.describe().unwrap_err();
+    assert_descriptor_limit(&error, LimitKind::DescriptorNodes, 200, &doc);
+    assert!(op.prepare(&oauth_input()).is_ok());
+}
+
+#[test]
+fn descriptor_reference_chain_growth_uses_the_remaining_work_budget() {
+    let value = json!({"openapi":"3.1.2","paths":{"/":{"get":{"operationId":"read","parameters":[{"$ref":"#/components/parameters/A"}]}}},"components":{"parameters":{"A":{"$ref":"#/components/parameters/B"},"B":{"name":"q","in":"query","schema":{"type":"string"}}}}});
+    let doc = Document::parse(
+        value.to_string(),
+        Some("https://api.example/openapi.json"),
+        Limits {
+            reference_steps: 2,
+            ..Limits::default()
+        },
+    )
+    .unwrap();
+    let error = doc.operation_id("read").unwrap().describe().unwrap_err();
+    assert_descriptor_limit(&error, LimitKind::DescriptorWork, 2, &doc);
+    assert_eq!(
+        error.location().unwrap().pointer,
+        "/components/parameters/A/$ref"
+    );
+}
+
+#[test]
+fn descriptor_shared_root_dialect_is_bounded_for_inspection_and_compilation() {
+    for version in ["3.1.2", "3.2.1"] {
+        let value = json!({"openapi":version,"jsonSchemaDialect":format!("https://example.test/{}", "d".repeat(4096)),"paths":{"/":{"post":{"operationId":"send","requestBody":{"content":{"application/json":{"schema":{}},"application/problem+json":{"schema":{}}}}}}}});
+        let source = value.to_string();
+        assert!(source.len() < 8192);
+        let doc = Document::parse(
+            source,
+            Some("https://api.example/openapi.json"),
+            Limits {
+                document_bytes: 8192,
+                ..Limits::default()
+            },
+        )
+        .unwrap();
+        let op = doc.operation_id("send").unwrap();
+        for error in [
+            op.describe().unwrap_err(),
+            op.prepare(&Input::default()).unwrap_err(),
+        ] {
+            assert_descriptor_limit(&error, LimitKind::DescriptorBytes, 8192, &doc);
+            assert_eq!(error.location().unwrap().pointer, "/jsonSchemaDialect");
+        }
+    }
+}
+
+#[test]
+fn descriptor_budgets_are_per_construction_and_do_not_charge_shared_source_owners() {
+    let value = oauth_description_fixture("3.1.2", &"s".repeat(4096), 1);
+    let source = value.to_string();
+    let doc = Document::parse(
+        source,
+        Some("https://api.example/openapi.json"),
+        Limits {
+            document_bytes: 8192,
+            ..Limits::default()
+        },
+    )
+    .unwrap();
+    let op = doc.operation_id("read").unwrap();
+    let first = op.describe().unwrap();
+    let second = op.describe().unwrap();
+    for description in [&first, &second] {
+        let SecurityScheme::OAuth2 { flows } = &description.security[0].requirements[0].scheme
+        else {
+            panic!("OAuth2")
+        };
+        assert_eq!(flows[0].scopes["read"].len(), 4096);
+    }
+    assert!(op.prepare(&oauth_input()).is_ok());
+}
+
+#[test]
+fn borrowed_security_validation_preserves_malformed_flow_refusals() {
+    for version in ["2.0", "3.0.4", "3.1.2", "3.2.1"] {
+        for defect in ["endpoint", "scope", "refresh", "optional-endpoint"] {
+            let mut value = oauth_description_fixture(version, "read", 1);
+            let flow = if version == "2.0" {
+                &mut value["securityDefinitions"]["auth"]
+            } else {
+                &mut value["components"]["securitySchemes"]["auth"]["flows"]["clientCredentials"]
+            };
+            match defect {
+                "endpoint" => {
+                    flow.as_object_mut().unwrap().remove("tokenUrl");
+                }
+                "scope" => {
+                    flow["scopes"]["read"] = json!(false);
+                }
+                "refresh" => {
+                    flow["refreshUrl"] = json!(42);
+                }
+                _ => {
+                    flow["authorizationUrl"] = json!(false);
+                }
+            }
+            let doc = document(&value);
+            let op = doc.operation_id("read").unwrap();
+            assert_eq!(
+                op.describe().unwrap_err().code(),
+                Code::InvalidDeclaration,
+                "{version} {defect}"
+            );
+            assert_eq!(
+                op.prepare(&oauth_input()).unwrap_err().code(),
+                Code::InvalidDeclaration,
+                "{version} {defect}"
+            );
+        }
+    }
+}

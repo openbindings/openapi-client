@@ -9,6 +9,12 @@ pub enum LimitKind {
     DocumentBytes,
     NormalizedBytes,
     AliasSteps,
+    /// Copied descriptor string bytes, bounded separately by Limits::document_bytes.
+    DescriptorBytes,
+    /// Descriptor entries and copied strings, bounded separately by Limits::nodes.
+    DescriptorNodes,
+    /// Aggregate descriptor declarations/reference steps, bounded by Limits::reference_steps.
+    DescriptorWork,
     Depth,
     Nodes,
     TargetBytes,

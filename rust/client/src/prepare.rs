@@ -385,48 +385,181 @@ pub(crate) fn same_name(a: &str, b: &str, location: ParameterLocation) -> bool {
     }
 }
 
-fn optional_string(node: &Value, key: &str) -> Result<Option<String>, Diagnostic> {
-    node.get(key)
-        .map(|v| {
-            v.as_str()
-                .map(str::to_owned)
-                .ok_or_else(|| v.error(Code::InvalidDeclaration))
-        })
-        .transpose()
+/// Admission for newly allocated per-operation descriptions. Original Value owners
+/// are shared and are not charged as copied source bytes. Limits are per construction,
+/// independent from both the admitted source owner and other compiled cache entries.
+struct DescriptorWork<'a> {
+    limits: &'a Limits,
+    bytes: usize,
+    nodes: usize,
+    references: usize,
+}
+impl<'a> DescriptorWork<'a> {
+    fn new(limits: &'a Limits) -> Self {
+        Self {
+            limits,
+            bytes: 0,
+            nodes: 0,
+            references: 0,
+        }
+    }
+    fn admit(
+        used: &mut usize,
+        amount: usize,
+        maximum: usize,
+        kind: LimitKind,
+        source: &Value,
+    ) -> Result<(), Diagnostic> {
+        let actual = used.saturating_add(amount);
+        if actual > maximum {
+            return Err(source.error(Code::Limit).reasoned(DiagnosticReason::Limit {
+                kind,
+                maximum,
+                actual,
+            }));
+        }
+        *used = actual;
+        Ok(())
+    }
+    fn entry(&mut self, source: &Value) -> Result<(), Diagnostic> {
+        Self::admit(
+            &mut self.nodes,
+            1,
+            self.limits.nodes,
+            LimitKind::DescriptorNodes,
+            source,
+        )
+    }
+    fn declaration(&mut self, source: &Value) -> Result<(), Diagnostic> {
+        Self::admit(
+            &mut self.references,
+            1,
+            self.limits.reference_steps,
+            LimitKind::DescriptorWork,
+            source,
+        )?;
+        self.entry(source)
+    }
+    fn text(&mut self, source: &Value, text: &str) -> Result<String, Diagnostic> {
+        self.entry(source)?;
+        Self::admit(
+            &mut self.bytes,
+            text.len(),
+            self.limits.document_bytes,
+            LimitKind::DescriptorBytes,
+            source,
+        )?;
+        Ok(text.to_owned())
+    }
+    fn required(&mut self, source: &Value, key: &str) -> Result<String, Diagnostic> {
+        let value = source
+            .get(key)
+            .ok_or_else(|| source.error(Code::InvalidDeclaration))?;
+        self.text(
+            &value,
+            value
+                .as_str()
+                .ok_or_else(|| value.error(Code::InvalidDeclaration))?,
+        )
+    }
+    fn optional(&mut self, source: &Value, key: &str) -> Result<Option<String>, Diagnostic> {
+        source
+            .get(key)
+            .map(|value| {
+                self.text(
+                    &value,
+                    value
+                        .as_str()
+                        .ok_or_else(|| value.error(Code::InvalidDeclaration))?,
+                )
+            })
+            .transpose()
+    }
+    fn resolve(
+        &mut self,
+        root: &Value,
+        source: &Value,
+        kind: ReferenceKind,
+    ) -> Result<crate::ResolvedReference, Diagnostic> {
+        // Reserve the terminal declaration before the resolver grows its chain. The
+        // remaining work/node budgets bound every additional chain entry it may grow.
+        self.declaration(source)?;
+        let remaining =
+            (self.limits.reference_steps - self.references).min(self.limits.nodes - self.nodes);
+        let resolved = document::resolve(root, source, kind, remaining).map_err(|error| {
+            if error.code() == Code::Limit {
+                let (kind, maximum, actual) = if self.limits.reference_steps - self.references
+                    <= self.limits.nodes - self.nodes
+                {
+                    (
+                        LimitKind::DescriptorWork,
+                        self.limits.reference_steps,
+                        self.limits.reference_steps.saturating_add(1),
+                    )
+                } else {
+                    (
+                        LimitKind::DescriptorNodes,
+                        self.limits.nodes,
+                        self.limits.nodes.saturating_add(1),
+                    )
+                };
+                error.reasoned(DiagnosticReason::Limit {
+                    kind,
+                    maximum,
+                    actual,
+                })
+            } else {
+                error
+            }
+        })?;
+        let hops = resolved.chain.len().saturating_sub(1);
+        self.references += hops;
+        self.nodes += hops;
+        Ok(resolved)
+    }
 }
 
 impl Operation {
-    fn schema_description(&self, value: Value) -> SchemaDescription {
+    fn schema_description(
+        &self,
+        value: Value,
+        work: &mut DescriptorWork<'_>,
+    ) -> Result<SchemaDescription, Diagnostic> {
+        work.entry(&value)?;
         let edition = self.store.edition.clone().expect("edition checked");
         let dialect = if matches!(edition, Edition::OpenApi31 | Edition::OpenApi32) {
-            value
+            if let Some(declared) = value
                 .get("$schema")
                 .or_else(|| self.store.json.root().get("jsonSchemaDialect"))
-                .and_then(|v| v.as_str().map(str::to_owned))
-                .or_else(|| {
-                    Some(
-                        if edition == Edition::OpenApi31 {
-                            "https://spec.openapis.org/oas/3.1/dialect/base"
-                        } else {
-                            "https://spec.openapis.org/oas/3.2/dialect/base"
-                        }
-                        .into(),
-                    )
-                })
+                .filter(|v| v.as_str().is_some())
+            {
+                Some(work.text(&declared, declared.as_str().expect("string dialect"))?)
+            } else {
+                Some(work.text(
+                    &value,
+                    if edition == Edition::OpenApi31 {
+                        "https://spec.openapis.org/oas/3.1/dialect/base"
+                    } else {
+                        "https://spec.openapis.org/oas/3.2/dialect/base"
+                    },
+                )?)
+            }
         } else {
             None
         };
-        SchemaDescription {
+        Ok(SchemaDescription {
             value,
             edition,
             dialect,
-        }
+        })
     }
-    fn effective_parameter_references(&self) -> Result<Vec<crate::ResolvedReference>, Diagnostic> {
+    fn effective_parameter_references(
+        &self,
+        work: &mut DescriptorWork<'_>,
+    ) -> Result<Vec<crate::ResolvedReference>, Diagnostic> {
         self.store.edition.clone()?;
         let root = self.store.json.root();
         let mut parameters: Vec<crate::ResolvedReference> = vec![];
-        let mut budget = self.store.limits.reference_steps;
         for list in [
             self.path_field("parameters"),
             self.value().get("parameters"),
@@ -439,23 +572,18 @@ impl Operation {
                 .elements()
                 .ok_or_else(|| list.error(Code::InvalidDeclaration))?
             {
-                if budget == 0 {
-                    return Err(authored.error(Code::Limit));
-                }
-                budget -= 1;
-                let resolved =
-                    document::resolve(&root, &authored, ReferenceKind::Parameter, budget + 1)?;
+                let resolved = work.resolve(&root, &authored, ReferenceKind::Parameter)?;
                 let p = &resolved.target;
-                let location = required_string(p, "in")?;
-                let name = required_string(p, "name")?;
-                let identity = (
-                    location.clone(),
+                let location = work.required(p, "in")?;
+                let name = work.required(p, "name")?;
+                let identity = (work.text(p, &location)?, {
+                    let mut identity = work.text(p, &name)?;
                     if location == "header" {
-                        name.to_ascii_lowercase()
-                    } else {
-                        name.clone()
-                    },
-                );
+                        identity.make_ascii_lowercase();
+                    }
+                    identity
+                });
+                work.entry(p)?;
                 if !local.insert(identity) {
                     return Err(p.error(Code::InvalidDeclaration));
                 }
@@ -476,6 +604,7 @@ impl Operation {
                 }) {
                     parameters[index] = resolved;
                 } else {
+                    work.entry(p)?;
                     parameters.push(resolved);
                 }
             }
@@ -486,6 +615,7 @@ impl Operation {
         &self,
         node: &Value,
         legacy_key: Option<&str>,
+        work: &mut DescriptorWork<'_>,
     ) -> Result<Vec<MediaDescription>, Diagnostic> {
         if let Some(key) = legacy_key {
             let declared = self
@@ -497,14 +627,20 @@ impl Operation {
                     v.elements()
                         .ok_or_else(|| v.error(Code::InvalidDeclaration))?
                         .map(|media| {
-                            let media_type = media
-                                .as_str()
-                                .ok_or_else(|| media.error(Code::InvalidDeclaration))?
-                                .to_owned();
+                            work.entry(&media)?;
+                            let media_type = work.text(
+                                &media,
+                                media
+                                    .as_str()
+                                    .ok_or_else(|| media.error(Code::InvalidDeclaration))?,
+                            )?;
                             Ok(MediaDescription {
                                 media_type,
                                 authored: media,
-                                schema: node.get("schema").map(|v| self.schema_description(v)),
+                                schema: node
+                                    .get("schema")
+                                    .map(|v| self.schema_description(v, work))
+                                    .transpose()?,
                                 encoding: None,
                                 item_schema: None,
                             })
@@ -523,6 +659,7 @@ impl Operation {
             // other entries before inspecting their value; raw declarations retain them.
             .filter(|(key, _)| parse_media(key, true).is_ok())
             .map(|(key, value)| {
+                work.entry(&value)?;
                 if value.kind() != ValueKind::Object {
                     return Err(value.error(Code::InvalidDeclaration));
                 }
@@ -531,85 +668,86 @@ impl Operation {
                     if self.store.edition != Ok(Edition::OpenApi32) {
                         return Err(value.error(Code::InvalidDeclaration));
                     }
-                    document::resolve(
-                        &self.store.json.root(),
-                        &value,
-                        ReferenceKind::MediaType,
-                        self.store.limits.reference_steps,
-                    )?
-                    .target
+                    work.resolve(&self.store.json.root(), &value, ReferenceKind::MediaType)?
+                        .target
                 } else {
                     value.clone()
                 };
                 Ok(MediaDescription {
-                    media_type: key.into(),
+                    media_type: work.text(&value, key)?,
                     authored: value,
-                    schema: resolved.get("schema").map(|v| self.schema_description(v)),
+                    schema: resolved
+                        .get("schema")
+                        .map(|v| self.schema_description(v, work))
+                        .transpose()?,
                     encoding: resolved.get("encoding"),
                     item_schema: resolved
                         .get("itemSchema")
-                        .map(|v| self.schema_description(v)),
+                        .map(|v| self.schema_description(v, work))
+                        .transpose()?,
                 })
             })
             .collect()
     }
-    fn body_description(&self) -> Result<Option<RequestBodyDescription>, Diagnostic> {
+    fn body_description(
+        &self,
+        work: &mut DescriptorWork<'_>,
+    ) -> Result<Option<RequestBodyDescription>, Diagnostic> {
         let edition = self.store.edition.clone()?;
         if edition == Edition::Swagger20 {
-            let parameters = self.effective_parameter_references()?;
-            let bodies: Vec<_> = parameters
-                .iter()
-                .filter(|p| {
-                    p.target
-                        .get("in")
-                        .is_some_and(|v| v.as_str() == Some("body"))
-                })
-                .collect();
-            let forms: Vec<_> = parameters
-                .iter()
-                .filter(|p| {
-                    p.target
-                        .get("in")
-                        .is_some_and(|v| v.as_str() == Some("formData"))
-                })
-                .collect();
-            if bodies.len() > 1 || !bodies.is_empty() && !forms.is_empty() {
+            let mut parameters = self.effective_parameter_references(work)?;
+            let is_body = |p: &crate::ResolvedReference| {
+                p.target
+                    .get("in")
+                    .is_some_and(|v| v.as_str() == Some("body"))
+            };
+            let is_form = |p: &crate::ResolvedReference| {
+                p.target
+                    .get("in")
+                    .is_some_and(|v| v.as_str() == Some("formData"))
+            };
+            let body_count = parameters.iter().filter(|p| is_body(p)).count();
+            let has_forms = parameters.iter().any(is_form);
+            if body_count > 1 || body_count != 0 && has_forms {
                 return Err(self.value().error(Code::InvalidDeclaration));
             }
-            let Some(declaration) = bodies.first().or_else(|| forms.first()) else {
+            let Some(index) = parameters.iter().position(|p| is_body(p) || is_form(p)) else {
                 return Ok(None);
             };
-            if !bodies.is_empty() && declaration.target.get("schema").is_none() {
-                return Err(declaration.target.error(Code::InvalidDeclaration));
+            if body_count != 0 && parameters[index].target.get("schema").is_none() {
+                return Err(parameters[index].target.error(Code::InvalidDeclaration));
             }
-            let fields = if forms.is_empty() {
+            let fields = if !has_forms {
                 BodyFields::NotApplicable
             } else {
                 BodyFields::Declared(
-                    forms
+                    parameters
                         .iter()
+                        .filter(|p| is_form(p))
                         .map(|field| {
+                            work.entry(&field.target)?;
                             Ok(BodyFieldDescription {
-                                name: required_string(&field.target, "name")?,
+                                name: work.required(&field.target, "name")?,
                                 required: bool_field(&field.target, "required", false)?,
-                                schema: self.schema_description(field.target.clone()),
+                                schema: self.schema_description(field.target.clone(), work)?,
                                 authored: field.authored.clone(),
                             })
                         })
                         .collect::<Result<Vec<_>, Diagnostic>>()?,
                 )
             };
-            let required = if forms.is_empty() {
-                bool_field(&declaration.target, "required", false)?
-            } else {
-                forms.iter().try_fold(false, |required, f| {
-                    Ok::<_, Diagnostic>(required || bool_field(&f.target, "required", false)?)
-                })?
+            // Move the resolved declaration so its provenance chain is not copied.
+            let declaration = parameters.swap_remove(index);
+            let required = match &fields {
+                BodyFields::Declared(fields) => fields.iter().any(|f| f.required),
+                _ => bool_field(&declaration.target, "required", false)?,
             };
+            let media = self.media_descriptions(&declaration.target, Some("consumes"), work)?;
+            work.entry(&declaration.target)?;
             return Ok(Some(RequestBodyDescription {
-                declaration: (*declaration).clone(),
+                declaration,
                 required,
-                media: self.media_descriptions(&declaration.target, Some("consumes"))?,
+                media,
                 media_unrestricted: self
                     .value()
                     .get("consumes")
@@ -630,21 +768,20 @@ impl Operation {
         let Some(body) = self.value().get("requestBody") else {
             return Ok(None);
         };
-        let declaration = document::resolve(
-            &self.store.json.root(),
-            &body,
-            ReferenceKind::RequestBody,
-            self.store.limits.reference_steps,
-        )?;
-        let media = self.media_descriptions(&declaration.target, None)?;
+        let declaration =
+            work.resolve(&self.store.json.root(), &body, ReferenceKind::RequestBody)?;
+        let media = self.media_descriptions(&declaration.target, None, work)?;
         let fields = if media.iter().any(|m| {
-            m.media_type.starts_with("multipart/")
-                || m.media_type == "application/x-www-form-urlencoded"
+            parse_media(&m.media_type, true).is_ok_and(|media| {
+                media.essence.starts_with("multipart/")
+                    || media.essence == "application/x-www-form-urlencoded"
+            })
         }) {
             BodyFields::Opaque
         } else {
             BodyFields::NotApplicable
         };
+        work.entry(&declaration.target)?;
         Ok(Some(RequestBodyDescription {
             required: bool_field(&declaration.target, "required", false)?,
             declaration,
@@ -653,29 +790,43 @@ impl Operation {
             fields,
         }))
     }
-    fn server_descriptions(&self) -> Result<Vec<ServerDescription>, Diagnostic> {
+    fn server_descriptions(
+        &self,
+        work: &mut DescriptorWork<'_>,
+    ) -> Result<Vec<ServerDescription>, Diagnostic> {
         if self.store.edition.clone()? != Edition::Swagger20 {
-            return match self.inspect().servers {
-                None => Ok(vec![ServerDescription {
-                    url: "/".into(),
-                    variables: None,
-                    authored: vec![],
-                }]),
+            return match self
+                .value()
+                .get("servers")
+                .or_else(|| self.path_field("servers"))
+                .or_else(|| self.store.json.root().get("servers"))
+            {
+                None => {
+                    work.entry(&self.value())?;
+                    Ok(vec![ServerDescription {
+                        url: work.text(&self.value(), "/")?,
+                        variables: None,
+                        authored: vec![],
+                    }])
+                }
                 Some(list) => {
                     let result = list
                         .elements()
                         .ok_or_else(|| list.error(Code::InvalidDeclaration))?
                         .map(|v| {
+                            work.entry(&v)?;
+                            work.entry(&v)?; // Retained authored contributor.
                             Ok(ServerDescription {
-                                url: required_string(&v, "url")?,
+                                url: work.required(&v, "url")?,
                                 variables: v.get("variables"),
                                 authored: vec![v],
                             })
                         })
                         .collect::<Result<Vec<_>, Diagnostic>>()?;
                     Ok(if result.is_empty() {
+                        work.entry(&self.value())?;
                         vec![ServerDescription {
-                            url: "/".into(),
+                            url: work.text(&self.value(), "/")?,
                             variables: None,
                             authored: vec![],
                         }]
@@ -695,12 +846,23 @@ impl Operation {
             .map(fluent_uri::UriRef::parse)
             .transpose()
             .map_err(|_| root.error(Code::InvalidDestination))?;
-        let host = optional_string(&root, "host")?
-            .or_else(|| {
+        let host = match work.optional(&root, "host")? {
+            Some(host) => host,
+            None => work.text(
+                &root,
                 base.as_ref()
-                    .and_then(|b| b.authority().map(|a| a.as_str().into()))
-            })
-            .ok_or_else(|| root.error(Code::MissingBase))?;
+                    .and_then(|b| b.authority())
+                    .ok_or_else(|| root.error(Code::MissingBase))?
+                    .as_str(),
+            )?,
+        };
+        DescriptorWork::admit(
+            &mut work.bytes,
+            host.len().saturating_add(2),
+            work.limits.document_bytes,
+            LimitKind::DescriptorBytes,
+            host_node.as_ref().unwrap_or(&root),
+        )?;
         let authority = fluent_uri::UriRef::parse(format!("//{host}"))
             .map_err(|_| root.error(Code::InvalidDestination))?;
         if authority.authority().is_none()
@@ -713,7 +875,7 @@ impl Operation {
                 .unwrap_or(&root)
                 .error(Code::InvalidDeclaration));
         }
-        let path = optional_string(&root, "basePath")?.unwrap_or_default();
+        let path = work.optional(&root, "basePath")?.unwrap_or_default();
         if !path.is_empty() && !path.starts_with('/') || path.contains(['?', '#']) {
             return Err(path_node
                 .as_ref()
@@ -726,18 +888,27 @@ impl Operation {
                 .elements()
                 .ok_or_else(|| v.error(Code::InvalidDeclaration))?
                 .map(|v| {
-                    v.as_str()
-                        .map(|s| (s.to_owned(), Some(v.clone())))
-                        .ok_or_else(|| v.error(Code::InvalidDeclaration))
+                    work.entry(&v)?;
+                    work.text(
+                        &v,
+                        v.as_str()
+                            .ok_or_else(|| v.error(Code::InvalidDeclaration))?,
+                    )
+                    .map(|s| (s, Some(v.clone())))
                 })
                 .collect::<Result<Vec<_>, _>>()?,
             None => vec![],
         };
         if scheme_values.is_empty() {
+            work.entry(&root)?;
             scheme_values.push((
-                base.as_ref()
-                    .and_then(|b| b.scheme().map(|s| s.as_str().to_owned()))
-                    .ok_or_else(|| root.error(Code::MissingBase))?,
+                work.text(
+                    &root,
+                    base.as_ref()
+                        .and_then(|b| b.scheme())
+                        .ok_or_else(|| root.error(Code::MissingBase))?
+                        .as_str(),
+                )?,
                 None,
             ));
         }
@@ -750,13 +921,30 @@ impl Operation {
                         .unwrap_or(&root)
                         .error(Code::InvalidDeclaration));
                 }
+                work.entry(&root)?;
+                DescriptorWork::admit(
+                    &mut work.bytes,
+                    scheme
+                        .len()
+                        .saturating_add(3)
+                        .saturating_add(host.len())
+                        .saturating_add(path.len()),
+                    work.limits.document_bytes,
+                    LimitKind::DescriptorBytes,
+                    source.as_ref().unwrap_or(&root),
+                )?;
+                let mut authored = vec![];
+                for contributor in [host_node.clone(), path_node.clone(), source]
+                    .into_iter()
+                    .flatten()
+                {
+                    work.entry(&contributor)?;
+                    authored.push(contributor);
+                }
                 Ok(ServerDescription {
                     url: format!("{scheme}://{host}{path}"),
                     variables: None,
-                    authored: [host_node.clone(), path_node.clone(), source]
-                        .into_iter()
-                        .flatten()
-                        .collect(),
+                    authored,
                 })
             })
             .collect()
@@ -775,7 +963,7 @@ impl Operation {
         if !selection.variables.is_empty() {
             return Err(root.error(Code::InvalidSelection));
         }
-        let servers = self.server_descriptions()?;
+        let servers = self.server_descriptions(&mut DescriptorWork::new(&self.store.limits))?;
         let expand = |s: &ServerDescription| uri::server_target(&s.url, self.store.base.as_deref());
         if let Some(i) = selection.server {
             return expand(
@@ -797,210 +985,348 @@ impl Operation {
     }
     /// Inspect effective edition-independent inputs, target choices, representations and security.
     /// This performs no request preparation, credential acquisition or schema evaluation.
+    /// Newly copied strings, entries and declaration/reference work have per-construction
+    /// budgets controlled by document_bytes, nodes and reference_steps respectively.
+    /// Retained source owners and other compiled cache entries are separate resource domains.
     pub fn describe(&self) -> Result<EffectiveOperationDescription, Diagnostic> {
-        let compiled = self.compiled()?;
+        let mut work = DescriptorWork::new(&self.store.limits);
+        let parameters = self.parameter_declarations(&mut work)?;
+        let request_body = self.body_description(&mut work)?;
         let mut responses = vec![];
-        if let Some(values) = self.value().get("responses") {
-            for (status, value) in values
-                .members()
-                .ok_or_else(|| values.error(Code::InvalidDeclaration))?
-            {
-                if status.starts_with("x-") {
-                    continue;
-                }
-                let declaration = document::resolve(
-                    &self.store.json.root(),
-                    &value,
-                    ReferenceKind::Response,
-                    self.store.limits.reference_steps,
-                )?;
-                let media = self.media_descriptions(
-                    &declaration.target,
-                    (self.store.edition == Ok(Edition::Swagger20)).then_some("produces"),
-                )?;
-                responses.push(ResponseDescription {
-                    status: status.into(),
-                    declaration,
-                    media,
-                });
-            }
+        for (status, declaration) in self.response_declarations(&mut work)? {
+            let media = self.media_descriptions(
+                &declaration.target,
+                (self.store.edition == Ok(Edition::Swagger20)).then_some("produces"),
+                &mut work,
+            )?;
+            work.entry(&declaration.target)?;
+            responses.push(ResponseDescription {
+                status,
+                declaration,
+                media,
+            });
         }
+        let node = self.value();
         Ok(EffectiveOperationDescription {
-            path: self.path().into(),
+            path: work.text(&node, self.path())?,
             method: self.method(),
-            operation_id: self.id(),
+            operation_id: node
+                .get("operationId")
+                .filter(|v| v.as_str().is_some())
+                .map(|v| work.text(&v, v.as_str().expect("string operation ID")))
+                .transpose()?,
             parameters: Parameters {
-                entries: compiled.parameters.clone(),
+                entries: parameters,
             },
-            servers: self.server_descriptions()?,
-            request_body: compiled.body.clone(),
+            servers: self.server_descriptions(&mut work)?,
+            request_body,
             responses,
-            security: self.security_descriptions()?,
+            security: self.security_descriptions(&mut work)?,
         })
     }
-    fn security_descriptions(&self) -> Result<Vec<SecurityAlternative>, Diagnostic> {
-        let Some(security) = self.inspect().security else {
+    fn response_declarations(
+        &self,
+        work: &mut DescriptorWork<'_>,
+    ) -> Result<Vec<(String, crate::ResolvedReference)>, Diagnostic> {
+        let root = self.store.json.root();
+        let mut result = vec![];
+        if let Some(responses) = self.value().get("responses") {
+            for (key, value) in responses
+                .members()
+                .ok_or_else(|| responses.error(Code::InvalidDeclaration))?
+            {
+                if key.starts_with("x-") {
+                    continue;
+                }
+                let valid = key == "default"
+                    || key.len() == 3
+                        && key.as_bytes()[0] >= b'1'
+                        && key.as_bytes()[0] <= b'5'
+                        && (self.store.edition.clone()? != Edition::Swagger20 && &key[1..] == "XX"
+                            || key.bytes().all(|b| b.is_ascii_digit()));
+                if !valid {
+                    return Err(value.error(Code::InvalidDeclaration));
+                }
+                let declaration = work.resolve(&root, &value, ReferenceKind::Response)?;
+                let key = work.text(&value, key)?;
+                work.entry(&value)?;
+                result.push((key, declaration));
+            }
+            if result.is_empty() {
+                return Err(responses.error(Code::InvalidDeclaration));
+            }
+        }
+        Ok(result)
+    }
+    fn security_descriptions(
+        &self,
+        work: &mut DescriptorWork<'_>,
+    ) -> Result<Vec<SecurityAlternative>, Diagnostic> {
+        let Some(security) = self
+            .value()
+            .get("security")
+            .or_else(|| self.store.json.root().get("security"))
+        else {
             return Ok(vec![]);
         };
         let root = self.store.json.root();
         let edition = self.store.edition.clone()?;
-        security
+        let mut alternatives = vec![];
+        for authored in security
             .elements()
             .ok_or_else(|| security.error(Code::InvalidDeclaration))?
-            .map(|authored| {
-                let requirements = authored
-                    .members()
-                    .ok_or_else(|| authored.error(Code::InvalidDeclaration))?
-                    .map(|(name, scopes)| {
-                        let scopes_source = scopes.clone();
-                        let scopes: Vec<String> = scopes
-                            .elements()
-                            .ok_or_else(|| scopes.error(Code::InvalidDeclaration))?
-                            .map(|v| {
-                                v.as_str()
-                                    .map(str::to_owned)
-                                    .ok_or_else(|| v.error(Code::InvalidDeclaration))
-                            })
-                            .collect::<Result<_, _>>()?;
-                        let declaration =
-                            security_declaration(&root, name, self.store.limits.reference_steps)?;
-                        let scheme = describe_security(&declaration.target, edition)?;
-                        if matches!(edition, Edition::Swagger20 | Edition::OpenApi30)
-                            && !matches!(
-                                scheme,
-                                SecurityScheme::OAuth2 { .. }
-                                    | SecurityScheme::OpenIdConnect { .. }
-                            )
-                            && !scopes.is_empty()
-                        {
-                            return Err(scopes_source.error(Code::InvalidDeclaration));
-                        }
-                        Ok(SecurityRequirement {
-                            name: name.into(),
-                            scopes,
-                            declaration,
-                            scheme,
-                        })
-                    })
-                    .collect::<Result<_, Diagnostic>>()?;
-                Ok(SecurityAlternative {
-                    authored,
-                    requirements,
-                })
-            })
-            .collect()
+        {
+            work.entry(&authored)?;
+            let mut requirements = vec![];
+            for (name, scopes_source) in authored
+                .members()
+                .ok_or_else(|| authored.error(Code::InvalidDeclaration))?
+            {
+                let declared = security_source(&root, name)?;
+                let declaration = work.resolve(&root, &declared, ReferenceKind::SecurityScheme)?;
+                let scheme = describe_security(&declaration.target, edition, work)?;
+                let mut scopes = vec![];
+                for scope in scopes_source
+                    .elements()
+                    .ok_or_else(|| scopes_source.error(Code::InvalidDeclaration))?
+                {
+                    scopes.push(
+                        work.text(
+                            &scope,
+                            scope
+                                .as_str()
+                                .ok_or_else(|| scope.error(Code::InvalidDeclaration))?,
+                        )?,
+                    );
+                }
+                if matches!(edition, Edition::Swagger20 | Edition::OpenApi30)
+                    && !matches!(
+                        scheme,
+                        SecurityScheme::OAuth2 { .. } | SecurityScheme::OpenIdConnect { .. }
+                    )
+                    && !scopes.is_empty()
+                {
+                    return Err(scopes_source.error(Code::InvalidDeclaration));
+                }
+                work.entry(&scopes_source)?;
+                requirements.push(SecurityRequirement {
+                    name: work.text(&authored, name)?,
+                    scopes,
+                    declaration,
+                    scheme,
+                });
+            }
+            alternatives.push(SecurityAlternative {
+                authored,
+                requirements,
+            });
+        }
+        Ok(alternatives)
     }
 }
 
-fn security_declaration(
-    root: &Value,
-    name: &str,
-    budget: usize,
-) -> Result<crate::ResolvedReference, Diagnostic> {
+fn security_source(root: &Value, name: &str) -> Result<Value, Diagnostic> {
     let schemes = if Edition::detect(root)? == Edition::Swagger20 {
         root.get("securityDefinitions")
     } else {
         root.get("components")
             .and_then(|v| v.get("securitySchemes"))
     };
-    let declared = schemes
+    schemes
         .and_then(|v| v.get(name))
-        .ok_or_else(|| root.error(Code::InvalidDeclaration))?;
-    document::resolve(root, &declared, ReferenceKind::SecurityScheme, budget)
+        .ok_or_else(|| root.error(Code::InvalidDeclaration))
 }
-fn describe_security(scheme: &Value, edition: Edition) -> Result<SecurityScheme, Diagnostic> {
-    let ty = required_string(scheme, "type")?;
-    Ok(match ty.as_str() {
-        "basic" if edition == Edition::Swagger20 => SecurityScheme::Basic,
-        "http" if edition != Edition::Swagger20 => match required_string(scheme, "scheme")?
-            .to_ascii_lowercase()
-            .as_str()
+fn string_value(source: &Value, key: &str) -> Result<Value, Diagnostic> {
+    source
+        .get(key)
+        .filter(|value| value.as_str().is_some())
+        .ok_or_else(|| source.error(Code::InvalidDeclaration))
+}
+fn optional_string_value(source: &Value, key: &str) -> Result<Option<Value>, Diagnostic> {
+    source
+        .get(key)
+        .map(|value| {
+            if value.as_str().is_some() {
+                Ok(value)
+            } else {
+                Err(value.error(Code::InvalidDeclaration))
+            }
+        })
+        .transpose()
+}
+#[derive(Clone, Copy)]
+enum SecurityMechanism {
+    Basic,
+    Bearer,
+    ApiKey,
+    OAuth2,
+    OpenIdConnect,
+    MutualTls,
+    Unsupported,
+}
+fn visit_oauth_flows(
+    mut visit: impl FnMut(&'static str, &Value) -> Result<(), Diagnostic>,
+    scheme: &Value,
+    edition: Edition,
+) -> Result<(), Diagnostic> {
+    let mut flow = |name: &str, value: &Value| {
+        let name = match name {
+            "implicit" => "implicit",
+            "password" => "password",
+            "clientCredentials" | "application" => "clientCredentials",
+            "authorizationCode" | "accessCode" => "authorizationCode",
+            _ => return Err(value.error(Code::InvalidDeclaration)),
+        };
+        if matches!(name, "implicit" | "authorizationCode") {
+            string_value(value, "authorizationUrl")?;
+        }
+        if matches!(name, "password" | "clientCredentials" | "authorizationCode") {
+            string_value(value, "tokenUrl")?;
+        }
+        // Even endpoints unused by this flow must retain their declared string shape.
+        optional_string_value(value, "authorizationUrl")?;
+        optional_string_value(value, "tokenUrl")?;
+        optional_string_value(value, "refreshUrl")?;
+        let scopes = value
+            .get("scopes")
+            .ok_or_else(|| value.error(Code::InvalidDeclaration))?;
+        for (_, description) in scopes
+            .members()
+            .ok_or_else(|| scopes.error(Code::InvalidDeclaration))?
         {
-            "basic" => SecurityScheme::Basic,
-            "bearer" => SecurityScheme::Bearer {
-                format: optional_string(scheme, "bearerFormat")?,
-            },
-            other => SecurityScheme::Unsupported {
-                type_name: format!("http:{other}"),
-            },
-        },
+            if description.as_str().is_none() {
+                return Err(description.error(Code::InvalidDeclaration));
+            }
+        }
+        visit(name, value)
+    };
+    if edition == Edition::Swagger20 {
+        flow(string_value(scheme, "flow")?.as_str().unwrap(), scheme)
+    } else {
+        let flows = scheme
+            .get("flows")
+            .ok_or_else(|| scheme.error(Code::InvalidDeclaration))?;
+        for (name, value) in flows
+            .members()
+            .ok_or_else(|| flows.error(Code::InvalidDeclaration))?
+        {
+            if !name.starts_with("x-") {
+                flow(name, &value)?;
+            }
+        }
+        Ok(())
+    }
+}
+/// Validate without allocating descriptions, scope maps or endpoint strings.
+fn security_mechanism(scheme: &Value, edition: Edition) -> Result<SecurityMechanism, Diagnostic> {
+    Ok(match string_value(scheme, "type")?.as_str().unwrap() {
+        "basic" if edition == Edition::Swagger20 => SecurityMechanism::Basic,
+        "http" if edition != Edition::Swagger20 => {
+            let mechanism = string_value(scheme, "scheme")?;
+            if mechanism.as_str().unwrap().eq_ignore_ascii_case("basic") {
+                SecurityMechanism::Basic
+            } else if mechanism.as_str().unwrap().eq_ignore_ascii_case("bearer") {
+                optional_string_value(scheme, "bearerFormat")?;
+                SecurityMechanism::Bearer
+            } else {
+                SecurityMechanism::Unsupported
+            }
+        }
         "apiKey" => {
-            let location = ParameterLocation::parse(&required_string(scheme, "in")?)
+            string_value(scheme, "name")?;
+            let location = string_value(scheme, "in")?;
+            ParameterLocation::parse(location.as_str().unwrap())
                 .filter(|l| {
                     *l != ParameterLocation::Path
                         && (edition != Edition::Swagger20 || *l != ParameterLocation::Cookie)
                 })
                 .ok_or_else(|| scheme.error(Code::InvalidDeclaration))?;
-            SecurityScheme::ApiKey {
-                name: required_string(scheme, "name")?,
-                location,
-            }
+            SecurityMechanism::ApiKey
         }
         "oauth2" => {
-            let flow = |name: &str, value: &Value| -> Result<OAuthFlowDescription, Diagnostic> {
-                let flow = match name {
-                    "accessCode" => "authorizationCode",
-                    "application" => "clientCredentials",
-                    name => name,
-                };
-                if !matches!(
-                    flow,
-                    "implicit" | "password" | "clientCredentials" | "authorizationCode"
-                ) {
-                    return Err(value.error(Code::InvalidDeclaration));
-                }
-                let scopes = value
-                    .get("scopes")
-                    .ok_or_else(|| value.error(Code::InvalidDeclaration))?;
-                let scopes = scopes
-                    .members()
-                    .ok_or_else(|| scopes.error(Code::InvalidDeclaration))?
-                    .map(|(name, description)| {
-                        Ok((
-                            name.into(),
-                            description
-                                .as_str()
-                                .ok_or_else(|| description.error(Code::InvalidDeclaration))?
-                                .into(),
-                        ))
-                    })
-                    .collect::<Result<_, Diagnostic>>()?;
-                if matches!(flow, "implicit" | "authorizationCode") {
-                    required_string(value, "authorizationUrl")?;
-                }
-                if matches!(flow, "password" | "clientCredentials" | "authorizationCode") {
-                    required_string(value, "tokenUrl")?;
-                }
-                Ok(OAuthFlowDescription {
-                    flow: flow.into(),
-                    authorization_url: optional_string(value, "authorizationUrl")?,
-                    token_url: optional_string(value, "tokenUrl")?,
-                    refresh_url: optional_string(value, "refreshUrl")?,
-                    scopes,
-                })
-            };
-            let flows = if edition == Edition::Swagger20 {
-                vec![flow(&required_string(scheme, "flow")?, scheme)?]
-            } else {
-                let values = scheme
-                    .get("flows")
-                    .ok_or_else(|| scheme.error(Code::InvalidDeclaration))?;
-                values
-                    .members()
-                    .ok_or_else(|| values.error(Code::InvalidDeclaration))?
-                    .filter(|(name, _)| !name.starts_with("x-"))
-                    .map(|(name, value)| flow(name, &value))
-                    .collect::<Result<_, _>>()?
-            };
+            visit_oauth_flows(|_, _| Ok(()), scheme, edition)?;
+            SecurityMechanism::OAuth2
+        }
+        "openIdConnect" if edition != Edition::Swagger20 => {
+            string_value(scheme, "openIdConnectUrl")?;
+            SecurityMechanism::OpenIdConnect
+        }
+        "mutualTLS" if matches!(edition, Edition::OpenApi31 | Edition::OpenApi32) => {
+            SecurityMechanism::MutualTls
+        }
+        _ => SecurityMechanism::Unsupported,
+    })
+}
+fn describe_security(
+    scheme: &Value,
+    edition: Edition,
+    work: &mut DescriptorWork<'_>,
+) -> Result<SecurityScheme, Diagnostic> {
+    work.entry(scheme)?;
+    Ok(match security_mechanism(scheme, edition)? {
+        SecurityMechanism::Basic => SecurityScheme::Basic,
+        SecurityMechanism::Bearer => SecurityScheme::Bearer {
+            format: work.optional(scheme, "bearerFormat")?,
+        },
+        SecurityMechanism::ApiKey => SecurityScheme::ApiKey {
+            name: work.required(scheme, "name")?,
+            location: ParameterLocation::parse(string_value(scheme, "in")?.as_str().unwrap())
+                .expect("validated mechanism"),
+        },
+        SecurityMechanism::OAuth2 => {
+            let mut flows = vec![];
+            visit_oauth_flows(
+                |name, value| {
+                    work.entry(value)?;
+                    let mut scopes = BTreeMap::new();
+                    let source = value.get("scopes").expect("validated scopes");
+                    for (name, description) in source.members().expect("validated scope map") {
+                        work.entry(&description)?;
+                        let name = work.text(&source, name)?;
+                        let description = work.text(
+                            &description,
+                            description.as_str().expect("validated scope description"),
+                        )?;
+                        scopes.insert(name, description);
+                    }
+                    flows.push(OAuthFlowDescription {
+                        flow: work.text(value, name)?,
+                        authorization_url: work.optional(value, "authorizationUrl")?,
+                        token_url: work.optional(value, "tokenUrl")?,
+                        refresh_url: work.optional(value, "refreshUrl")?,
+                        scopes,
+                    });
+                    Ok(())
+                },
+                scheme,
+                edition,
+            )?;
             SecurityScheme::OAuth2 { flows }
         }
-        "openIdConnect" if edition != Edition::Swagger20 => SecurityScheme::OpenIdConnect {
-            url: required_string(scheme, "openIdConnectUrl")?,
+        SecurityMechanism::OpenIdConnect => SecurityScheme::OpenIdConnect {
+            url: work.required(scheme, "openIdConnectUrl")?,
         },
-        "mutualTLS" if matches!(edition, Edition::OpenApi31 | Edition::OpenApi32) => {
-            SecurityScheme::MutualTls
+        SecurityMechanism::MutualTls => SecurityScheme::MutualTls,
+        SecurityMechanism::Unsupported => {
+            let ty = string_value(scheme, "type")?;
+            let type_name = if ty.as_str() == Some("http") && edition != Edition::Swagger20 {
+                let mut mechanism = work.required(scheme, "scheme")?;
+                mechanism.make_ascii_lowercase();
+                let extra = 5;
+                DescriptorWork::admit(
+                    &mut work.bytes,
+                    extra,
+                    work.limits.document_bytes,
+                    LimitKind::DescriptorBytes,
+                    scheme,
+                )?;
+                mechanism.insert_str(0, "http:");
+                mechanism
+            } else {
+                work.text(&ty, ty.as_str().unwrap())?
+            };
+            SecurityScheme::Unsupported { type_name }
         }
-        _ => SecurityScheme::Unsupported { type_name: ty },
     })
 }
 fn serialize_legacy(
@@ -1056,13 +1382,15 @@ impl Operation {
     /// Inspect effective parameters without compiling body/media/security requirements.
     /// Unsupported editions and invalid parameter declarations refuse; raw inspection remains.
     pub fn parameters(&self) -> Result<Parameters, Diagnostic> {
-        self.parameter_declarations()
-            .map(|(entries, _)| Parameters { entries })
+        self.parameter_declarations(&mut DescriptorWork::new(&self.store.limits))
+            .map(|entries| Parameters { entries })
     }
-    fn parameter_declarations(&self) -> Result<(Vec<Parameter>, usize), Diagnostic> {
+    fn parameter_declarations(
+        &self,
+        work: &mut DescriptorWork<'_>,
+    ) -> Result<Vec<Parameter>, Diagnostic> {
         let node = self.value();
         let edition = self.store.edition.clone()?;
-        Method::from_token(self.method().as_str())?;
         if matches!(self.method(), Method::Query | Method::Extension(_))
             && edition != Edition::OpenApi32
             || self.method() == Method::Trace && edition == Edition::Swagger20
@@ -1076,12 +1404,7 @@ impl Operation {
             return Err(node.error(Code::InvalidDeclaration));
         }
         let mut parameters: Vec<Parameter> = vec![];
-        let mut budget = self.store.limits.reference_steps;
-        for resolved in self.effective_parameter_references()? {
-            if budget == 0 {
-                return Err(resolved.authored.error(Code::Limit));
-            }
-            budget -= 1;
+        for resolved in self.effective_parameter_references(work)? {
             let p = resolved.target.clone();
             if edition == Edition::Swagger20
                 && p.get("in")
@@ -1089,8 +1412,8 @@ impl Operation {
             {
                 continue;
             }
-            let name = required_string(&p, "name")?;
-            let location = ParameterLocation::parse(&required_string(&p, "in")?)
+            let name = work.required(&p, "name")?;
+            let location = ParameterLocation::parse(&work.required(&p, "in")?)
                 .ok_or_else(|| p.error(Code::UnsupportedParameter))?;
             if edition != Edition::Swagger20
                 && location == ParameterLocation::Header
@@ -1102,7 +1425,12 @@ impl Operation {
             }
             let required = bool_field(&p, "required", false)?;
             if location == ParameterLocation::Path
-                && (!required || !self.path().contains(&format!("{{{name}}}")))
+                && (!required
+                    || !self.path().match_indices('{').any(|(index, _)| {
+                        self.path()[index + 1..]
+                            .strip_prefix(&name)
+                            .is_some_and(|tail| tail.starts_with('}'))
+                    }))
             {
                 return Err(p.error(Code::InvalidDeclaration));
             }
@@ -1112,7 +1440,7 @@ impl Operation {
                 if location == ParameterLocation::Cookie {
                     return Err(p.error(Code::InvalidDeclaration));
                 }
-                let ty = required_string(&p, "type")?;
+                let ty = work.required(&p, "type")?;
                 if !matches!(
                     ty.as_str(),
                     "string" | "number" | "integer" | "boolean" | "array"
@@ -1123,8 +1451,9 @@ impl Operation {
                     if p.get("items").is_none() {
                         return Err(p.error(Code::InvalidDeclaration));
                     }
-                    let format =
-                        optional_string(&p, "collectionFormat")?.unwrap_or_else(|| "csv".into());
+                    let format = work
+                        .optional(&p, "collectionFormat")?
+                        .map_or_else(|| work.text(&p, "csv"), Ok)?;
                     if !matches!(format.as_str(), "csv" | "ssv" | "tsv" | "pipes" | "multi")
                         || format == "multi" && location != ParameterLocation::Query
                     {
@@ -1138,19 +1467,24 @@ impl Operation {
                     false,
                     false,
                     collection,
-                    Some(self.schema_description(p.clone())),
+                    Some(self.schema_description(p.clone(), work)?),
                 )
             } else {
-                let style = optional_string(&p, "style")?.unwrap_or_else(|| {
-                    if matches!(
-                        location,
-                        ParameterLocation::Path | ParameterLocation::Header
-                    ) {
-                        "simple".into()
-                    } else {
-                        "form".into()
-                    }
-                });
+                let style = work.optional(&p, "style")?.map_or_else(
+                    || {
+                        work.text(&p, {
+                            if matches!(
+                                location,
+                                ParameterLocation::Path | ParameterLocation::Header
+                            ) {
+                                "simple"
+                            } else {
+                                "form"
+                            }
+                        })
+                    },
+                    Ok,
+                )?;
                 let expected = if matches!(
                     location,
                     ParameterLocation::Path | ParameterLocation::Header
@@ -1170,13 +1504,16 @@ impl Operation {
                     bool_field(&p, "explode", style == "form")?,
                     unsupported,
                     None,
-                    p.get("schema").map(|v| self.schema_description(v)),
+                    p.get("schema")
+                        .map(|v| self.schema_description(v, work))
+                        .transpose()?,
                 )
             };
+            work.entry(&p)?;
             let param = Parameter {
                 resolved,
                 node: p.clone(),
-                name: name.clone(),
+                name: work.text(&p, &name)?,
                 location,
                 required,
                 explode,
@@ -1193,48 +1530,21 @@ impl Operation {
                 parameters.push(param);
             }
         }
-        Ok((parameters, budget))
+        Ok(parameters)
     }
     fn compile(&self) -> Result<Arc<Compiled>, Diagnostic> {
-        let (parameters, mut budget) = self.parameter_declarations()?;
-        let root = self.store.json.root();
-        let node = self.value();
-        let body = self.body_description()?;
-        let mut matched = vec![];
-        if let Some(responses) = node.get("responses") {
-            for (key, value) in responses
-                .members()
-                .ok_or_else(|| responses.error(Code::InvalidDeclaration))?
-            {
-                if key.starts_with("x-") {
-                    continue;
-                }
-                let valid = key == "default"
-                    || key.len() == 3
-                        && ((key.as_bytes()[0] >= b'1' && key.as_bytes()[0] <= b'5')
-                            && (self.store.edition.clone()? != Edition::Swagger20
-                                && key[1..] == *"XX"
-                                || key.bytes().all(|b| b.is_ascii_digit())));
-                if !valid {
-                    return Err(value.error(Code::InvalidDeclaration));
-                }
-                if budget == 0 {
-                    return Err(value.error(Code::Limit));
-                }
-                budget -= 1;
-                matched.push((
-                    key.to_owned(),
-                    document::resolve(&root, &value, ReferenceKind::Response, budget + 1)?.target,
-                ));
-            }
-            if matched.is_empty() {
-                return Err(responses.error(Code::InvalidDeclaration));
-            }
+        let mut work = DescriptorWork::new(&self.store.limits);
+        let parameters = self.parameter_declarations(&mut work)?;
+        let body = self.body_description(&mut work)?;
+        let mut responses = vec![];
+        for (key, value) in self.response_declarations(&mut work)? {
+            work.entry(&value.target)?;
+            responses.push((key, value.target));
         }
         Ok(Arc::new(Compiled {
             parameters,
             body,
-            responses: matched,
+            responses,
         }))
     }
     fn compiled(&self) -> Result<Arc<Compiled>, Diagnostic> {
@@ -2050,11 +2360,13 @@ fn apply_security(
         if scopes.kind() != ValueKind::Array {
             return Err(scopes.error(Code::InvalidDeclaration));
         }
-        let scheme = security_declaration(root, name, budget)?.target;
-        let kind = describe_security(&scheme, Edition::detect(root)?)?;
+        let source = security_source(root, name)?;
+        let scheme =
+            document::resolve(root, &source, ReferenceKind::SecurityScheme, budget)?.target;
+        let kind = security_mechanism(&scheme, Edition::detect(root)?)?;
         if matches!(
             kind,
-            SecurityScheme::Unsupported { .. } | SecurityScheme::MutualTls
+            SecurityMechanism::Unsupported | SecurityMechanism::MutualTls
         ) {
             return Err(scheme.error(Code::UnsupportedSecurity));
         }
@@ -2066,7 +2378,7 @@ fn apply_security(
             Edition::Swagger20 | Edition::OpenApi30
         ) && !matches!(
             kind,
-            SecurityScheme::OAuth2 { .. } | SecurityScheme::OpenIdConnect { .. }
+            SecurityMechanism::OAuth2 | SecurityMechanism::OpenIdConnect
         ) && scopes.elements().unwrap().next().is_some()
         {
             return Err(scopes.error(Code::InvalidDeclaration));
@@ -2082,8 +2394,8 @@ fn apply_security(
         {
             return Err(scheme.error(Code::CredentialOrigin));
         }
-        let (location, name, value) = if !matches!(kind, SecurityScheme::ApiKey { .. }) {
-            let mechanism = if matches!(kind, SecurityScheme::Basic) {
+        let (location, name, value) = if !matches!(kind, SecurityMechanism::ApiKey) {
+            let mechanism = if matches!(kind, SecurityMechanism::Basic) {
                 "basic"
             } else {
                 "bearer"
