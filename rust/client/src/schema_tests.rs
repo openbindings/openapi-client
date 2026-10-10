@@ -221,8 +221,7 @@ fn frozen_literal_contract() {
                     .0
                     .graph
                     .schemas
-                    .identities
-                    .keys()
+                    .identity_keys()
                     .cloned()
                     .collect::<Vec<_>>();
                 if let Some(uri) = schema.schema_resource_uri() {

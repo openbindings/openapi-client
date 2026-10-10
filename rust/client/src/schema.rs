@@ -159,8 +159,7 @@ impl SchemaHandle {
         if let Some(issue) = store
             .graph
             .schemas
-            .nodes
-            .get(&node)
+            .node(node)
             .and_then(|n| n.issue.as_ref())
         {
             return Err(issue.clone());
@@ -381,9 +380,13 @@ struct Node {
 }
 #[derive(Default)]
 pub(crate) struct SchemaIndex {
+    state: Option<Box<SchemaState>>,
+}
+#[derive(Default)]
+struct SchemaState {
     nodes: HashMap<NodeKey, Node>,
     scopes: Vec<Scope>,
-    pub identities: HashMap<String, NodeKey>,
+    identities: HashMap<String, NodeKey>,
     anchors: HashMap<NodeKey, HashMap<String, (NodeKey, bool)>>,
     roots: HashSet<NodeKey>,
     inferred: HashMap<NodeKey, (Arc<SchemaProfile>, NodeKey)>,
@@ -392,18 +395,42 @@ pub(crate) struct SchemaIndex {
     anonymous_anchors: usize,
 }
 impl SchemaIndex {
+    // Reads never initialize storage. Only an admitted first schema seed does.
+    fn node(&self, node: NodeKey) -> Option<&Node> {
+        self.state.as_ref()?.nodes.get(&node)
+    }
+    fn contains(&self, node: NodeKey) -> bool {
+        self.node(node).is_some()
+    }
+    fn anchor(&self, root: NodeKey, name: &str) -> Option<&(NodeKey, bool)> {
+        self.state.as_ref()?.anchors.get(&root)?.get(name)
+    }
+    pub(crate) fn indexed_identity(&self, normalized: &str) -> Option<NodeKey> {
+        self.state.as_ref()?.identities.get(normalized).copied()
+    }
+    #[cfg(test)]
+    pub(crate) fn identity_keys(&self) -> impl Iterator<Item = &String> {
+        self.state.iter().flat_map(|state| state.identities.keys())
+    }
+    // Mutation and direct storage access are confined to admitted seed indexing.
+    fn state(&self) -> &SchemaState {
+        self.state.as_deref().expect("admitted schema seed")
+    }
+    fn state_mut(&mut self) -> &mut SchemaState {
+        self.state.as_deref_mut().expect("admitted schema seed")
+    }
     pub(crate) fn scope(&self, node: NodeKey) -> Option<&Scope> {
-        self.nodes.get(&node).map(|n| &self.scopes[n.scope])
+        let state = self.state.as_ref()?;
+        state.nodes.get(&node).map(|n| &state.scopes[n.scope])
     }
     pub(crate) fn check(&self, node: NodeKey, graph: &Graph) -> Result<(), Diagnostic> {
         let item = self
-            .nodes
-            .get(&node)
+            .node(node)
             .ok_or_else(|| graph.value(node).error(Code::WrongReferenceKind))?;
         if let Some(issue) = &item.issue {
             return Err(issue.clone());
         }
-        if self.scopes[item.scope].profile.capability() == DialectCapability::Opaque {
+        if self.state().scopes[item.scope].profile.capability() == DialectCapability::Opaque {
             return Err(schema_error(
                 &graph.value(node),
                 Code::UnsupportedSchema,
@@ -419,35 +446,40 @@ impl SchemaIndex {
         value: &Value,
     ) -> Result<(), Diagnostic> {
         let (existing_identities, existing_bytes) = graph.metadata_usage();
+        let (schema_bytes, schema_identities) =
+            graph.schemas.state.as_ref().map_or((0, 0), |state| {
+                (
+                    state.bytes,
+                    state
+                        .identities
+                        .len()
+                        .saturating_add(state.anonymous_anchors),
+                )
+            });
         bound(
             existing_bytes,
-            graph.schemas.bytes.saturating_add(bytes),
+            schema_bytes.saturating_add(bytes),
             graph.limits.metadata_bytes,
             LimitKind::GraphMetadataBytes,
         )
         .map_err(|e| value.locate(e))?;
         bound(
             existing_identities,
-            graph
-                .schemas
-                .identities
-                .len()
-                .saturating_add(graph.schemas.anonymous_anchors)
-                .saturating_add(identities),
+            schema_identities.saturating_add(identities),
             graph.limits.identities,
             LimitKind::GraphIdentities,
         )
         .map_err(|e| value.locate(e))?;
-        graph.schemas.bytes += bytes;
+        // Preserve admission before the first state allocation. An empty index
+        // never constructs even the RandomState seeds of its maps and set.
+        graph.schemas.state.get_or_insert_with(Box::default).bytes += bytes;
         Ok(())
     }
     fn identity(graph: &mut Graph, uri: &str, value: &Value) -> Result<(), Diagnostic> {
         let identity = identity_key(uri).map_err(|e| value.locate(e))?;
         let previous = graph
             .schemas
-            .identities
-            .get(&identity)
-            .copied()
+            .indexed_identity(&identity)
             .or(graph.physical_identity(uri)?);
         if let Some(previous) = previous {
             if previous != key(value) {
@@ -456,7 +488,11 @@ impl SchemaIndex {
             return Ok(());
         }
         Self::charge(graph, identity.len(), 1, value)?;
-        graph.schemas.identities.insert(identity, key(value));
+        graph
+            .schemas
+            .state_mut()
+            .identities
+            .insert(identity, key(value));
         Ok(())
     }
     pub(crate) fn build(
@@ -644,7 +680,7 @@ impl SchemaIndex {
             {
                 continue;
             }
-            if let Some((previous, previous_edge)) = graph.schemas.inferred.get(&target) {
+            if let Some((previous, previous_edge)) = graph.schemas.state().inferred.get(&target) {
                 if previous.as_ref() != scope.fallback.as_ref() {
                     let other = graph.value(*previous_edge);
                     return Err(schema_error(
@@ -656,9 +692,10 @@ impl SchemaIndex {
                         },
                     ));
                 }
-            } else if !graph.schemas.nodes.contains_key(&target) {
+            } else if !graph.schemas.contains(target) {
                 graph
                     .schemas
+                    .state_mut()
                     .inferred
                     .insert(target, (scope.fallback.clone(), edge));
                 Self::index_root(
@@ -702,8 +739,8 @@ impl SchemaIndex {
         while let Some((value, mut scope, entry)) = queue.pop_front() {
             checkpoint(cancellation)?;
             bound(
-                graph.schemas.nodes.len(),
-                usize::from(!graph.schemas.nodes.contains_key(&key(&value))),
+                graph.schemas.state().nodes.len(),
+                usize::from(!graph.schemas.contains(key(&value))),
                 graph.limits.nodes,
                 LimitKind::GraphNodes,
             )
@@ -819,10 +856,10 @@ impl SchemaIndex {
                     SchemaReason::InvalidKeyword,
                 ));
             }
-            graph.schemas.roots.insert(scope.root);
-            let scope_id = graph.schemas.scopes.len();
-            graph.schemas.scopes.push(scope.clone());
-            graph.schemas.nodes.insert(
+            graph.schemas.state_mut().roots.insert(scope.root);
+            let scope_id = graph.schemas.state().scopes.len();
+            graph.schemas.state_mut().scopes.push(scope.clone());
+            graph.schemas.state_mut().nodes.insert(
                 key(&value),
                 Node {
                     scope: scope_id,
@@ -830,7 +867,12 @@ impl SchemaIndex {
                 },
             );
             if scope.profile.capability() == DialectCapability::Opaque
-                || graph.schemas.nodes[&key(&value)].issue.is_some()
+                || graph
+                    .schemas
+                    .node(key(&value))
+                    .expect("indexed")
+                    .issue
+                    .is_some()
             {
                 continue;
             }
@@ -840,6 +882,7 @@ impl SchemaIndex {
                         let Some(name) = anchor.as_str().filter(|s| anchor_name(s)) else {
                             graph
                                 .schemas
+                                .state_mut()
                                 .nodes
                                 .get_mut(&key(&value))
                                 .expect("indexed")
@@ -850,12 +893,7 @@ impl SchemaIndex {
                             ));
                             continue;
                         };
-                        if let Some(&(previous, dynamic)) = graph
-                            .schemas
-                            .anchors
-                            .get(&scope.root)
-                            .and_then(|anchors| anchors.get(name))
-                        {
+                        if let Some(&(previous, dynamic)) = graph.schemas.anchor(scope.root, name) {
                             let previous = graph
                                 .value(previous)
                                 .get(if dynamic { "$dynamicAnchor" } else { "$anchor" })
@@ -868,10 +906,11 @@ impl SchemaIndex {
                             Self::identity(graph, &uri, &value)?;
                         } else {
                             Self::charge(graph, 0, 1, &anchor)?;
-                            graph.schemas.anonymous_anchors += 1;
+                            graph.schemas.state_mut().anonymous_anchors += 1;
                         }
                         graph
                             .schemas
+                            .state_mut()
                             .anchors
                             .entry(scope.root)
                             .or_default()
@@ -886,12 +925,12 @@ impl SchemaIndex {
                 if let Some(edge) = value.get(keyword) {
                     bound(
                         graph.reference_count,
-                        graph.schemas.edges.saturating_add(1),
+                        graph.schemas.state().edges.saturating_add(1),
                         graph.limits.reference_edges,
                         LimitKind::GraphReferenceEdges,
                     )
                     .map_err(|e| edge.locate(e))?;
-                    graph.schemas.edges += 1;
+                    graph.schemas.state_mut().edges += 1;
                     edges.push_back((key(&value), key(&edge)));
                 }
             }
@@ -905,7 +944,7 @@ impl SchemaIndex {
                     let mut enqueue = |child: Value| -> Result<(), Diagnostic> {
                         checkpoint(cancellation)?;
                         bound(
-                            graph.schemas.nodes.len(),
+                            graph.schemas.state().nodes.len(),
                             queue.len().saturating_add(1),
                             graph.limits.nodes,
                             LimitKind::GraphNodes,
@@ -1095,59 +1134,53 @@ impl Graph {
         let untyped = Edition::detect(&resource.json.root()).is_err()
             && resource.json.root().get("openapi").is_none()
             && resource.json.root().get("swagger").is_none();
-        let (target, dynamic) = if let Some(exact) = address.exact {
-            let dynamic = matches!(&address.fragment, ResourceFragment::Anchor(name)
-                if self.schemas.anchors.get(&root).and_then(|anchors| anchors.get(name)).is_some_and(|(_, d)| *d));
-            (exact, dynamic)
-        } else {
-            match &address.fragment {
-                ResourceFragment::Root => (root, false),
-                ResourceFragment::Pointer(pointer) => {
-                    let target = self.value(root).pointer(pointer).map_err(|e| {
-                        if e.code() == Code::InvalidPointer {
-                            source.error(Code::InvalidReference)
+        let (target, dynamic) =
+            if let Some(exact) = address.exact {
+                let dynamic = matches!(&address.fragment, ResourceFragment::Anchor(name)
+                if self.schemas.anchor(root, name).is_some_and(|(_, d)| *d));
+                (exact, dynamic)
+            } else {
+                match &address.fragment {
+                    ResourceFragment::Root => (root, false),
+                    ResourceFragment::Pointer(pointer) => {
+                        let target = self.value(root).pointer(pointer).map_err(|e| {
+                            if e.code() == Code::InvalidPointer {
+                                source.error(Code::InvalidReference)
+                            } else {
+                                source.locate(e)
+                            }
+                        })?;
+                        (key(&target), false)
+                    }
+                    ResourceFragment::Anchor(name) => {
+                        if !anchor_name(name) {
+                            return Err(source.error(Code::InvalidReference));
+                        }
+                        if let Some(target) = self.schemas.anchor(root, name) {
+                            *target
+                        } else if self.schemas.contains(root) || !untyped {
+                            if self.schemas.scope(root).is_some() {
+                                self.schemas.check(root, self)?;
+                            }
+                            return Err(source.error(Code::MissingReference));
+                        } else if untyped {
+                            return Err(source.error(Code::ResourceLayoutRequired).need_fact(
+                                need(ResourceNeedKind::Layout, Some(resource.id), request),
+                            ));
                         } else {
-                            source.locate(e)
+                            return Err(source.error(Code::MissingReference));
                         }
-                    })?;
-                    (key(&target), false)
-                }
-                ResourceFragment::Anchor(name) => {
-                    if !anchor_name(name) {
-                        return Err(source.error(Code::InvalidReference));
-                    }
-                    if let Some(target) = self
-                        .schemas
-                        .anchors
-                        .get(&root)
-                        .and_then(|anchors| anchors.get(name))
-                    {
-                        *target
-                    } else if self.schemas.nodes.contains_key(&root) || !untyped {
-                        if self.schemas.scope(root).is_some() {
-                            self.schemas.check(root, self)?;
-                        }
-                        return Err(source.error(Code::MissingReference));
-                    } else if untyped {
-                        return Err(source.error(Code::ResourceLayoutRequired).need_fact(need(
-                            ResourceNeedKind::Layout,
-                            Some(resource.id),
-                            request,
-                        )));
-                    } else {
-                        return Err(source.error(Code::MissingReference));
                     }
                 }
-            }
-        };
-        if !self.schemas.nodes.contains_key(&target) {
+            };
+        if !self.schemas.contains(target) {
             // Data under a known schema/protocol tree is deliberately inert.
             // Only an untyped region is recoverable by adding a layout.
             let mut parent = self.value(target).parent_value();
             let mut inside = false;
             while let Some(value) = parent {
                 checkpoint(cancellation)?;
-                if self.schemas.nodes.contains_key(&key(&value)) {
+                if self.schemas.contains(key(&value)) {
                     inside = true;
                     break;
                 }
@@ -1223,4 +1256,237 @@ impl Drop for TestCancelGuard {
 pub(crate) fn cancel_after_for_test(steps: usize) -> TestCancelGuard {
     TEST_CANCEL_AFTER.with(|remaining| remaining.set(Some(steps)));
     TestCancelGuard
+}
+
+#[cfg(test)]
+mod lazy_index_tests {
+    use super::*;
+    use crate::{Document, DocumentBuilder, GraphLimits, Input, ResourceInput, ResourceLayout};
+    use serde_json::json;
+
+    fn document(value: serde_json::Value) -> Document {
+        Document::parse(
+            value.to_string(),
+            Some("https://docs.example/api"),
+            Limits::default(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn empty_and_inert_reads_never_initialize_schema_state() {
+        for components in [json!({}), json!({"schemas":{}}), json!({"schemas":42})] {
+            let doc = document(json!({"openapi":"3.1.2","paths":{},"components":components,
+                "x-schema":{"$schema":DRAFT2020,"$id":"https://ignored.example","type":"string"}}));
+            assert!(doc.0.graph.schemas.state.is_none());
+            for pointer in ["", "/x-schema"] {
+                for _ in 0..3 {
+                    let error = doc.entry_resource().schema_at(pointer).unwrap_err();
+                    assert_eq!(error.code(), Code::WrongReferenceKind);
+                    assert_eq!(error.location().unwrap().pointer, pointer);
+                    let node = key(&doc.entry_resource().root().pointer(pointer).unwrap());
+                    assert!(doc.0.graph.schemas.scope(node).is_none());
+                    assert!(!doc.0.graph.schemas.contains(node));
+                    assert!(doc.0.graph.schemas.anchor(node, "unused").is_none());
+                    assert_eq!(
+                        doc.0
+                            .graph
+                            .schemas
+                            .check(node, &doc.0.graph)
+                            .unwrap_err()
+                            .code(),
+                        Code::WrongReferenceKind
+                    );
+                    assert!(
+                        doc.0
+                            .graph
+                            .schemas
+                            .indexed_identity("https://ignored.example")
+                            .is_none()
+                    );
+                    assert!(doc.0.graph.schemas.state.is_none());
+                }
+            }
+        }
+        let swagger = document(json!({"swagger":"2.0","paths":{},"definitions":{}}));
+        assert!(swagger.0.graph.schemas.state.is_none());
+    }
+
+    #[test]
+    fn protocol_references_keep_physical_identities_without_schema_state() {
+        let mut builder = DocumentBuilder::new(Limits::default(), GraphLimits::default());
+        let entry = builder
+            .add(
+                ResourceInput::at(
+                    "https://docs.example/api",
+                    json!({
+                        "openapi":"3.1.2","servers":[{"url":"https://api.example"}],
+                        "paths":{"/send":{"$ref":"parts#/item"}}
+                    })
+                    .to_string()
+                    .into_bytes(),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        builder.add(ResourceInput::at("https://docs.example/parts", json!({
+            "item":{"get":{"operationId":"send","responses":{"204":{"description":"done"}}}}
+        }).to_string().into_bytes()).unwrap().layout(ResourceLayout::new().protocol("/item", ReferenceKind::PathItem, Edition::OpenApi31))).unwrap();
+        let doc = builder.build(entry).unwrap();
+        assert!(doc.0.graph.schemas.state.is_none());
+        for _ in 0..3 {
+            let op = doc.operation_id("send").unwrap();
+            assert_eq!(
+                op.prepare(&Input::default()).unwrap().target(),
+                "https://api.example/send"
+            );
+            assert_eq!(op.describe().unwrap().responses.len(), 1);
+            assert!(
+                doc.0
+                    .graph
+                    .physical_identity("https://docs.example/parts")
+                    .unwrap()
+                    .is_some()
+            );
+            assert!(
+                doc.0
+                    .graph
+                    .schemas
+                    .indexed_identity("https://docs.example/parts")
+                    .is_none()
+            );
+            assert!(doc.0.graph.schemas.state.is_none());
+        }
+    }
+
+    #[test]
+    fn genuine_malformed_and_opaque_seeds_keep_their_meaning() {
+        for schema in [
+            json!({}),
+            json!(true),
+            json!(42),
+            json!({"$schema":"https://unknown.example/dialect"}),
+        ] {
+            let doc = document(
+                json!({"openapi":"3.1.2","paths":{},"components":{"schemas":{"S":schema}}}),
+            );
+            assert!(doc.0.graph.schemas.state.is_some());
+            let result = doc.entry_resource().schema_at("/components/schemas/S");
+            if schema == json!(42) {
+                let error = result.unwrap_err();
+                assert_eq!(error.code(), Code::InvalidDeclaration);
+                assert_eq!(
+                    error.reason(),
+                    Some(&DiagnosticReason::Schema(SchemaReason::InvalidKeyword))
+                );
+                assert_eq!(error.location().unwrap().pointer, "/components/schemas/S");
+            } else {
+                let schema = result.unwrap();
+                if schema.dialect_capability() == DialectCapability::Opaque {
+                    assert_eq!(
+                        schema.references().err().unwrap().code(),
+                        Code::UnsupportedSchema
+                    );
+                } else {
+                    assert_eq!(schema.references().unwrap().count(), 0);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn layout_completion_initializes_only_the_new_snapshot() {
+        let old = document(json!({"openapi":"3.1.2","paths":{},"x-schema":{"type":"string"}}));
+        let id = old.entry_resource().id();
+        let mut builder = DocumentBuilder::from_document(&old);
+        builder
+            .enrich_layout(
+                id,
+                ResourceLayout::new().schema(
+                    "/x-schema",
+                    SchemaProfile::JsonSchema {
+                        dialect_uri: DRAFT2020.into(),
+                    },
+                ),
+            )
+            .unwrap();
+        let next = builder.build(id).unwrap();
+        assert!(old.0.graph.schemas.state.is_none());
+        assert_eq!(
+            old.entry_resource()
+                .schema_at("/x-schema")
+                .unwrap_err()
+                .code(),
+            Code::WrongReferenceKind
+        );
+        assert!(next.0.graph.schemas.state.is_some());
+        let current = next
+            .entry_resource()
+            .schema_at("/x-schema")
+            .unwrap()
+            .authored();
+        let original = old.entry_resource().root().pointer("/x-schema").unwrap();
+        assert_eq!(current.source_context(), original.source_context());
+        assert_eq!(current.identity(), original.identity());
+        assert_eq!(current.raw(), original.raw());
+    }
+
+    #[test]
+    fn first_seed_bounds_precede_allocation_and_cancelled_state_releases_owners() {
+        let doc = document(
+            json!({"openapi":"3.1.2","paths":{},"x-schema":{"properties":{"p":{"type":"string"}}}}),
+        );
+        let value = doc.entry_resource().root().pointer("/x-schema").unwrap();
+        let mut graph = Arc::try_unwrap(doc.0).ok().unwrap().graph;
+        let profile = Arc::new(SchemaProfile::JsonSchema {
+            dialect_uri: DRAFT2020.into(),
+        });
+        let seed = || Seed {
+            value: value.clone(),
+            profile: profile.clone(),
+            fallback: profile.clone(),
+            origin: None,
+        };
+        let before = graph.limits.metadata_bytes;
+        let admitted = graph.metadata_usage().1;
+        graph.limits.metadata_bytes = admitted;
+        let error = SchemaIndex::index_root(
+            &mut graph,
+            seed(),
+            &mut VecDeque::new(),
+            &Limits::default(),
+            &Cancellation::default(),
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.reason(),
+            Some(&DiagnosticReason::Limit {
+                kind: LimitKind::GraphMetadataBytes,
+                maximum: admitted,
+                actual: admitted + "https://docs.example/api".len()
+            })
+        );
+        assert_eq!(error.location().unwrap().pointer, "/x-schema");
+        assert!(graph.schemas.state.is_none());
+        graph.limits.metadata_bytes = before;
+        let weak = Arc::downgrade(&profile);
+        let token = Cancellation::default();
+        let guard = cancel_after_for_test(2);
+        let error = SchemaIndex::index_root(
+            &mut graph,
+            seed(),
+            &mut VecDeque::new(),
+            &Limits::default(),
+            &token,
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), Code::Cancelled);
+        assert!(graph.schemas.state.is_some());
+        assert_eq!(graph.schemas.state().nodes.len(), 1);
+        drop(guard);
+        drop(profile);
+        assert!(weak.upgrade().is_some());
+        drop(graph);
+        assert!(weak.upgrade().is_none());
+    }
 }

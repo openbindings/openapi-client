@@ -1585,9 +1585,7 @@ impl Graph {
     }
     fn indexed_identity(&self, normalized: &str) -> Option<NodeKey> {
         self.schemas
-            .identities
-            .get(normalized)
-            .copied()
+            .indexed_identity(normalized)
             .or_else(|| self.admission.aliases.get(normalized).map(|id| (id.0, 0)))
     }
     pub(crate) fn metadata_usage(&self) -> (usize, usize) {
