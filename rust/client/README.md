@@ -4,9 +4,9 @@ An independent Rust client for dynamic OpenAPI documents and finite requests thr
 
 `Document::parse` detects format and edition, retains source and provides immutable owned handles. Inspect `Document::operations`, effective `Operation::describe` or `Operation::parameters`, then use `Operation::request` for ordinary calls. `Operation::inspect` and raw `Value` handles expose authored declarations. Use `Operation::prepare` with explicit `Input` when you already manage exact values and selections. `PreparedRequest::invoke` accepts a host capability declaration and an async callback. Native concurrent and host-local callbacks can use the same semantic types without a required executor.
 
-Preparation interprets each supported edition's own server, parameter, body, media and security declarations. The current profile includes source-preserving local and supplied-resource JSON-Pointer protocol references, explicit server/media/security choices, Swagger primitive and collection parameters, supported 3.x simple/form parameters, scoped supplied Basic/Bearer/API-key credentials, supplied OAuth2/OpenID Connect bearer tokens and finite JSON/raw bodies and named URL-encoded/multipart forms. OAuth token acquisition remains caller-owned. Response metadata, delivered bytes/provenance, upload state, cancellation and decode failures remain independent.
+Preparation interprets each supported edition's own server, parameter, body, media and security declarations. The current profile includes source-preserving local and supplied-resource JSON-Pointer protocol references, explicit server/media/security choices, Swagger primitive and collection parameters, supported 3.x logical parameter styles and JSON/text content parameters, scoped supplied Basic/Bearer/API-key credentials, supplied OAuth2/OpenID Connect bearer tokens and finite JSON/raw bodies and named URL-encoded/multipart forms. OAuth token acquisition remains caller-owned. Response metadata, delivered bytes/provenance, upload state, cancellation and decode failures remain independent.
 
-Edition coverage is not full-feature coverage. Richer form styles, content codings, schema-reference-dependent form decoding, positional/nested multipart, richer parameter styles, schema reference graphs, resource acquisition, streaming and WebSocket connections remain unqualified or unimplemented. Effective descriptors retain unsupported declarations for discovery; an available descriptor does not guarantee preparation or execution support.
+Edition coverage is not full-feature coverage. Custom serialization conventions, content codings, schema-reference-dependent form decoding, positional/nested multipart, 3.2 cookie/querystring styles, richer content codecs, schema reference graphs, resource acquisition, streaming and WebSocket connections remain unqualified or unimplemented. Effective descriptors retain unsupported declarations for discovery; an available descriptor does not guarantee preparation or execution support.
 
 For multiple supplied resources, use `DocumentBuilder` and the same Document/Operation request APIs. Missing bytes or explicit fragment layouts yield typed corrective needs; publish a new snapshot after supplying them. See [immutable resource graphs](GRAPH.md) for recovery, identity, discovery and current limits.
 
@@ -14,7 +14,7 @@ The [document loading guide](LOADING.md) documents YAML scalar/key policies, exa
 
 Schemas and unknown fields are inspection data. A direct `$ref` on an Operation Object is an explicit exception: OpenAPI does not define that reference position, and preparation refuses with `UnsupportedReferencePosition` instead of silently sending an incomplete request. Raw inspection remains available. The core performs no schema evaluation/default insertion, acquisition, automatic redirect/retry, streaming codec or OpenBindings adaptation. For native HTTP calls, use the optional [`dynamic-openapi-client-reqwest` companion](../reqwest/README.md); it owns the HTTP stack and configuration while this crate remains runtime-independent. Browser/workerd qualification glue is separate and is not a supported npm client.
 
-Source and decoded strings are exact for Unicode scalar values. Unpaired surrogate escapes return a located limitation with source preserved. Numeric tokens remain exact; integer conveniences are checked, and binary64 conversion currently accepts exactly representable integer lexemes only. Mathematical conversion of decimal/exponent tokens remains explicit unsupported conversion. Null, empty-container and nested parameter values receive located refusals; empty strings are supported.
+Source and decoded strings are exact for Unicode scalar values. Unpaired surrogate escapes return a located limitation with source preserved. Numeric tokens remain exact; integer conveniences are checked, and binary64 conversion currently accepts exactly representable integer lexemes only. Mathematical conversion of decimal/exponent tokens remains explicit unsupported conversion. Null, empty-container and nested style-based parameter values receive located refusals; empty strings are supported. JSON content parameters accept these JSON shapes without schema evaluation.
 
 Supplied hosts must enforce no ambient authentication, automatic replay or redirects, disclose target/header restrictions and content decoding, and bound delivered response bytes. The `no_retries` capability permits recovery only when the host proves the original request was never serialized, such as after encountering a stale pooled connection. Once serialization has begun or may have begun, status responses, partial writes and ambiguous failures must not trigger another attempt. The core itself never retries. The core can validate its own data and returned evidence; it cannot limit an arbitrary callback's hidden allocation or undo remote effects. Use explicit accessors carefully: raw targets, header bytes, source values and host error details can contain secrets. SDK Debug/Display views omit credential values.
 
@@ -66,8 +66,10 @@ async fn inspect_and_call(text: &[u8]) -> Result<CompletedJson, Box<dyn std::err
 
 ## Shared parameter and form styles
 
-Flat `deepObject` and component-safe reserved expansion use the existing logical
-parameter/form inputs. Style-based spaces use `%20`; content URL forms use `+`.
+Defined label/matrix path, space/pipe query/form and flat `deepObject` styles use
+the existing logical parameter/form inputs. Single-media JSON/text content
+parameters use the same `.parameter(...)` method. Style-based spaces use `%20`;
+content query parameters and URL forms use `+`.
 See [SERIALIZATION.md](SERIALIZATION.md) for applicability, exact-value ownership,
 corrective refusals and the real provider preparation example.
 

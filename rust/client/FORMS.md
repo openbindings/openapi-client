@@ -24,6 +24,8 @@ internally inconsistent default-content-type prose in 3.1.0 using 3.1.2.
   explicit style fields, content-based encoding uses declared/elected media or
   the edition's schema-driven defaults. `form` style supports scalar values,
   flat objects and scalar arrays; `deepObject` supports flat scalar-member objects.
+  `spaceDelimited` and `pipeDelimited` support arrays and flat objects with
+  `explode: false`, subject to the 3.2 outer-item rule below.
   Component-safe reserved expansion and the shared name/data rules are documented
   in [SERIALIZATION.md](SERIALIZATION.md). OAS 3.0 ignores multipart style/explode/
   allowReserved. OAS 3.1 applies multipart style without URI escaping.
@@ -113,8 +115,8 @@ plan structures, allocator overhead and RSS are separate measured resource domai
 
 ## Remaining capabilities
 
-Schema/external-reference resolution needed for default codecs, advanced styles
-(including allowReserved URL behavior), content encodings such as base64,
+Schema/external-reference resolution needed for default codecs, custom
+serialization conventions, content encodings such as base64,
 non-UTF-8 charsets, nested/positional multipart and streaming are explicit open
 capabilities. A declaration/refusal is not positive support for them. General
 multipart types need their own header/framing rules. The name-free Part/value
