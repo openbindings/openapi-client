@@ -646,16 +646,15 @@ fn actual_loopback_wire_uses_one_consumer_for_all_editions_and_new_methods() {
                 let end = response.windows(4).position(|v| v == b"\r\n\r\n").unwrap();
                 assert!(response.starts_with(b"HTTP/1.1 200 OK\r\n"));
                 TransportResult {
-                    response: Some(ResponseInput {
-                        status: 200,
-                        headers: vec![Header::new("Content-Type", "application/json")],
-                        body: DeliveredBody {
+                    response: Some(ResponseInput::new(
+                        200,
+                        vec![Header::new("Content-Type", "application/json")],
+                        DeliveredBody {
                             bytes: response[end + 4..].into(),
                             state: BodyState::Complete,
                             provenance: Provenance::Wire,
                         },
-                        opaque_redirect: false,
-                    }),
+                    )),
                     upload: UploadState::Complete,
                     error_detail: None,
                 }

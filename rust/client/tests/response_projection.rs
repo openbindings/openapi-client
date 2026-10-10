@@ -85,16 +85,15 @@ fn outcome(upload: UploadState, status: u16, token: Cancellation) -> Outcome {
         &HostCapabilities::programmable(),
         |_, _| async move {
             TransportResult {
-                response: Some(ResponseInput {
+                response: Some(ResponseInput::new(
                     status,
-                    headers: vec![Header::new("Content-Type", "application/json")],
-                    body: DeliveredBody {
+                    vec![Header::new("Content-Type", "application/json")],
+                    DeliveredBody {
                         bytes: Arc::from(br#"{"id":9007199254740993}"#.as_slice()),
                         state: BodyState::Complete,
                         provenance: Provenance::Wire,
                     },
-                    opaque_redirect: false,
-                }),
+                )),
                 upload,
                 error_detail: None,
             }

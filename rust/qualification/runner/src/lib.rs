@@ -136,33 +136,35 @@ pub fn operation(d: &Document, c: &J) -> Result<Operation, Diagnostic> {
     }
 }
 pub fn response_input(r: &J) -> ResponseInput {
-    ResponseInput {
-        status: r.get("status").and_then(J::as_u64).unwrap_or(200) as u16,
-        headers: r
-            .get("headers")
-            .and_then(J::as_array)
-            .map(|a| {
-                a.iter()
-                    .map(|v| Header::new(v[0].as_str().unwrap(), v[1].as_str().unwrap()))
-                    .collect()
-            })
-            .unwrap_or_default(),
-        body: DeliveredBody {
-            bytes: unhex(r.get("body_hex").and_then(J::as_str).unwrap_or("")).into(),
-            state: if r.get("body_error").is_some() {
-                BodyState::Failed
-            } else if r.get("truncated").and_then(J::as_bool) == Some(true) {
-                BodyState::Truncated
-            } else {
-                BodyState::Complete
+    {
+        let mut response = ResponseInput::new(
+            r.get("status").and_then(J::as_u64).unwrap_or(200) as u16,
+            r.get("headers")
+                .and_then(J::as_array)
+                .map(|a| {
+                    a.iter()
+                        .map(|v| Header::new(v[0].as_str().unwrap(), v[1].as_str().unwrap()))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            DeliveredBody {
+                bytes: unhex(r.get("body_hex").and_then(J::as_str).unwrap_or("")).into(),
+                state: if r.get("body_error").is_some() {
+                    BodyState::Failed
+                } else if r.get("truncated").and_then(J::as_bool) == Some(true) {
+                    BodyState::Truncated
+                } else {
+                    BodyState::Complete
+                },
+                provenance: match r.get("provenance").and_then(J::as_str) {
+                    Some("wire") => Provenance::Wire,
+                    Some("decoded") => Provenance::Decoded,
+                    _ => Provenance::Unknown,
+                },
             },
-            provenance: match r.get("provenance").and_then(J::as_str) {
-                Some("wire") => Provenance::Wire,
-                Some("decoded") => Provenance::Decoded,
-                _ => Provenance::Unknown,
-            },
-        },
-        opaque_redirect: r.get("opaque_redirect").and_then(J::as_bool) == Some(true),
+        );
+        response.opaque_redirect = r.get("opaque_redirect").and_then(J::as_bool) == Some(true);
+        response
     }
 }
 pub fn upload(r: &J) -> UploadState {
@@ -563,16 +565,15 @@ pub fn campaign(family: &str, seconds: u64, seed: u64) -> J {
                     .unwrap();
                 let host = HostCapabilities::programmable();
                 let result = TransportResult {
-                    response: Some(ResponseInput {
-                        status: (rng % 700) as u16,
-                        headers: vec![Header::new("Content-Type", &bytes)],
-                        body: DeliveredBody {
+                    response: Some(ResponseInput::new(
+                        (rng % 700) as u16,
+                        vec![Header::new("Content-Type", &bytes)],
+                        DeliveredBody {
                             bytes: bytes.clone().into(),
                             state: BodyState::Complete,
                             provenance: Provenance::Unknown,
                         },
-                        opaque_redirect: false,
-                    }),
+                    )),
                     upload: UploadState::Unknown,
                     error_detail: None,
                 };

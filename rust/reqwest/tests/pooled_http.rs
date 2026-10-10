@@ -3,7 +3,8 @@
 mod support;
 use dynamic_openapi_client::{
     BodyState, Cancellation, Credential, CredentialValue, DispatchEvidence, Document, ExactJson,
-    Limits, Outcome, ParameterLocation, PreparedRequest, Provenance, UploadState, policies,
+    HeaderFidelity, Limits, Outcome, ParameterLocation, PreparedRequest, Provenance,
+    ReplayAssurance, UploadState, policies,
 };
 use dynamic_openapi_client_reqwest::{Certificate, Client};
 use std::time::Duration;
@@ -65,10 +66,15 @@ fn complete(outcome: Outcome, body: &[u8]) {
     assert!(outcome.error.is_none(), "{outcome:?}");
     assert_eq!(outcome.dispatch, DispatchEvidence::Dispatched);
     assert_eq!(outcome.upload, UploadState::Unknown);
+    assert_eq!(
+        outcome.replay_assurance(),
+        Some(ReplayAssurance::NoReplayDeclared)
+    );
     let received = outcome.response.unwrap();
     assert_eq!(received.body_state(), BodyState::Complete);
     assert_eq!(received.raw(), body);
     assert_eq!(received.provenance(), Provenance::Wire);
+    assert_eq!(received.header_fidelity(), HeaderFidelity::HostProcessed);
 }
 async fn good_followup(server: &Server, client: &Client, index: usize, id: &str) -> usize {
     let task = call(client, &server.origin, id);

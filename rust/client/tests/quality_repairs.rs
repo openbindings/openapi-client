@@ -45,16 +45,15 @@ fn outcome(
             TransportResult {
                 upload,
                 error_detail: late.then(|| "synthetic-host-secret".into()),
-                response: Some(ResponseInput {
+                response: Some(ResponseInput::new(
                     status,
-                    headers: vec![Header::new("Content-Type", "application/json")],
-                    body: DeliveredBody {
+                    vec![Header::new("Content-Type", "application/json")],
+                    DeliveredBody {
                         bytes: body.into(),
                         state: BodyState::Complete,
                         provenance: Provenance::Wire,
                     },
-                    opaque_redirect: false,
-                }),
+                )),
             }
         },
     ))

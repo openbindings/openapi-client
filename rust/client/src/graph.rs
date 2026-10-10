@@ -672,7 +672,7 @@ impl DocumentBuilder {
                         crate::LimitKind::TargetBytes,
                     )
                     .map_err(|e| v.locate(e))?;
-                    Ok(resolved)
+                    Ok::<_, Diagnostic>(resolved)
                 })
                 .transpose()?
         } else {

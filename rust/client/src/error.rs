@@ -103,6 +103,28 @@ pub enum VersionReason {
     /// The declared major or minor family is not supported.
     UnsupportedFamily,
 }
+/// Controlled reason a supplied host cannot admit the request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum HostRefusal {
+    /// The host may follow redirects implicitly.
+    Redirects,
+    /// The host may supply ambient authentication or cookies.
+    AmbientAuth,
+    /// The host cannot declare exact target preservation.
+    ExactTargets,
+    /// The URL stack cannot preserve this encoded dot segment.
+    EncodedDotSegment,
+    /// The host cannot faithfully supply a request header.
+    ForbiddenHeader,
+    /// Strict admission requires a no-replay declaration.
+    Replay,
+}
+impl From<HostRefusal> for Diagnostic {
+    fn from(refusal: HostRefusal) -> Self {
+        Self::new(Code::HostCapability).reasoned(DiagnosticReason::Host(refusal))
+    }
+}
 /// Corrective information with privacy-safe default formatting.
 /// Retained source evidence is available only through explicit accessors.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -114,6 +136,8 @@ pub enum DiagnosticReason {
         /// Earlier claimant, in authored source when available.
         previous: crate::SourcePosition,
     },
+    /// A controlled host capability or replay policy refusal.
+    Host(HostRefusal),
     /// Selected schema interpretation or bounded fact refusal.
     Schema(crate::SchemaReason),
     /// Why a finite named form could not be represented.
