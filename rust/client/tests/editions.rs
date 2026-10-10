@@ -110,9 +110,8 @@ fn effective_description_retains_schema_dialects_and_source_without_conversion()
         assert_eq!(body.media[0].media_type, "application/json");
         let schema = body.media[0].schema.as_ref().unwrap();
         assert_eq!(schema.value.source_context(), doc.root().source_context());
-        assert_eq!(schema.edition, doc.edition().unwrap());
         assert_eq!(
-            schema.dialect.as_deref(),
+            dialect(schema),
             if version.starts_with("3.1") || version.starts_with("3.2") {
                 Some("https://example.test/dialect")
             } else {
@@ -469,29 +468,24 @@ fn raw_and_form_descriptions_report_field_completeness() {
         .unwrap()
         .request_body
         .unwrap();
-    let BodyFields::Declared(fields) = &body.media[0].fields else {
+    let BodyFields::Declared { fields, .. } = &body.media[0].fields else {
         panic!("explicit logical form fields expected")
     };
     assert_eq!(fields[0].name, "file");
     assert_eq!(fields[0].requirement, FieldRequirement::ProtocolRequired);
     assert_eq!(
-        fields[0].schema.value.get("type").unwrap().as_str(),
+        fields[0].schemas[0].value.get("type").unwrap().as_str(),
         Some("file")
     );
     let doc = document(
         &json!({"openapi":"3.2.1","paths":{"/":{"post":{"operationId":"upload","requestBody":{"content":{"multipart/form-data":{"schema":{"$ref":"external.json"}}}}}}}}),
     );
-    assert!(matches!(
-        doc.operation_id("upload")
-            .unwrap()
-            .describe()
-            .unwrap()
-            .request_body
-            .unwrap()
-            .media[0]
-            .fields,
-        BodyFields::Opaque(_)
-    ));
+    let error = doc.operation_id("upload").unwrap().describe().unwrap_err();
+    assert_eq!(error.code(), Code::ResourceUnavailable);
+    assert_eq!(
+        error.resource_need().unwrap().kind(),
+        ResourceNeedKind::Bytes
+    );
 }
 
 #[test]
@@ -793,7 +787,7 @@ fn form_descriptions_use_media_essence_and_preserve_authored_spelling() {
             let description = op.describe().unwrap();
             let body = description.request_body.unwrap();
             assert!(
-                matches!(body.media[0].fields, BodyFields::Opaque(_)),
+                matches!(&body.media[0].fields, BodyFields::Declared { fields, openness: FieldOpenness::Open } if fields.is_empty()),
                 "{version} {media}"
             );
             assert_eq!(body.media[0].media_type, media);
@@ -1090,7 +1084,7 @@ fn implicit_schema_dialects_follow_applied_minor_profile_and_explicit_precedence
                         .unwrap();
                 let description = doc.operation_id("create").unwrap().describe().unwrap();
                 let body = description.request_body.unwrap();
-                let actual = body.media[0].schema.as_ref().unwrap().dialect.as_deref();
+                let actual = dialect(body.media[0].schema.as_ref().unwrap());
                 let expected = if version.starts_with("3.1") || version.starts_with("3.2") {
                     Some(match explicit {
                         1 => "https://example.test/root-dialect",
@@ -1228,5 +1222,12 @@ fn device_flow_required_endpoints_and_scope_shape_refuse_with_original_sources()
                 }
             }
         }
+    }
+}
+
+fn dialect(schema: &SchemaDescription) -> Option<&str> {
+    match &schema.profile {
+        SchemaProfile::JsonSchema { dialect_uri } => Some(dialect_uri),
+        _ => None,
     }
 }

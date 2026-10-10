@@ -1,0 +1,25 @@
+{
+  "openapi": "3.1.2",
+  "servers": [
+    {
+      "url": "https://api.example"
+    }
+  ],
+  "paths": {
+    "/send": {
+      "get": {
+        "operationId": "send",
+        "parameters": [
+          {
+            "name": "p",
+            "in": "query",
+            "style": "form",
+            "schema": {
+              "$ref": "not-supplied"
+            }
+          }
+        ]
+      }
+    }
+  }
+}

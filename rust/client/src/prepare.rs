@@ -41,6 +41,7 @@ pub struct ParameterInput {
 }
 /// Finite request body with absence distinct from JSON null and empty raw bytes.
 #[derive(Clone, Default)]
+#[non_exhaustive]
 pub enum Body {
     /// No request body.
     #[default]
@@ -49,6 +50,26 @@ pub enum Body {
     Json(Value),
     /// Explicit finite bytes for a concretely elected media type.
     Raw(Arc<[u8]>),
+    /// Reusable admitted logical fields, encoded by the selected operation.
+    Form(crate::Form),
+}
+// One internal body view is authoritative for owned and borrowed routes.
+#[derive(Clone, Copy)]
+pub(crate) enum AdmittedBody<'a> {
+    Absent,
+    Json(&'a Value),
+    Raw(&'a Arc<[u8]>),
+    Form(&'a [crate::form::ReadyField<'a>]),
+}
+impl<'a> From<&'a Body> for AdmittedBody<'a> {
+    fn from(body: &'a Body) -> Self {
+        match body {
+            Body::Absent => Self::Absent,
+            Body::Json(v) => Self::Json(v),
+            Body::Raw(v) => Self::Raw(v),
+            Body::Form(v) => Self::Form(v.fields()),
+        }
+    }
 }
 /// Explicit per-call elections, with the default policy documented per field.
 #[derive(Clone, Default)]
@@ -118,7 +139,7 @@ pub struct Parameter {
     unsupported: bool,
     content: Option<crate::style::ContentCodec>,
     collection: Option<String>,
-    schema_context: Option<SchemaDescription>,
+    schema_context: Option<SchemaDeclaration>,
 }
 /// Effective parameter declarations retaining their exact source owners.
 /// Structured refusal leaves Operation::inspect available for raw inspection.
@@ -166,36 +187,48 @@ impl Parameter {
         self.schema_context.as_ref().map(|s| s.value.clone())
     }
     /// Opaque schema with retained edition and dialect context.
-    pub fn schema_description(&self) -> Option<SchemaDescription> {
-        self.schema_context.clone()
+    pub fn schema_description(&self) -> Option<crate::SchemaDescription> {
+        self.schema_context
+            .as_ref()
+            .map(SchemaDeclaration::describe)
     }
 }
 /// A schema value and its interpretation context; no evaluation is performed.
 #[derive(Clone, Debug)]
-pub struct SchemaDescription {
-    /// Original schema value, including dialect and reference keywords.
+pub(crate) struct SchemaDeclaration {
     pub value: Value,
-    /// The surrounding OpenAPI vocabulary.
-    pub edition: crate::Edition,
-    /// Effective JSON Schema dialect URI, absent for Swagger/OAS 3.0 vocabularies.
-    pub dialect: Option<String>,
+    pub profile: crate::SchemaProfile,
+}
+impl SchemaDeclaration {
+    pub(crate) fn into_description(self) -> crate::SchemaDescription {
+        crate::SchemaDescription {
+            value: self.value,
+            profile: self.profile,
+        }
+    }
+    pub(crate) fn describe(&self) -> crate::SchemaDescription {
+        crate::SchemaDescription {
+            value: self.value.clone(),
+            profile: self.profile.clone(),
+        }
+    }
 }
 /// An effective representation, retaining its original declaration.
 #[derive(Clone, Debug)]
-pub struct MediaDescription {
+pub(crate) struct MediaDeclaration {
     /// Effective media type or range, including protocol-defined form choices.
     pub media_type: String,
     /// Original Media Type Object, Swagger consumes/produces string, or form
     /// parameter establishing an implicit Swagger form representation.
     pub authored: Value,
     /// Opaque payload schema.
-    pub schema: Option<SchemaDescription>,
+    pub schema: Option<SchemaDeclaration>,
     /// Opaque encoding declarations.
     pub encoding: Option<Value>,
     /// Opaque sequential-item schema when declared.
-    pub item_schema: Option<SchemaDescription>,
+    pub item_schema: Option<SchemaDeclaration>,
     /// Authoritative form shape for this representation only.
-    pub fields: BodyFields,
+    pub fields: FieldDeclarations,
     /// Positional encoding declarations, when authored in OAS 3.2.
     pub prefix_encoding: Option<Value>,
     /// Repeated positional encoding declaration, when authored in OAS 3.2.
@@ -203,27 +236,27 @@ pub struct MediaDescription {
 }
 /// A logical request body independent of the edition's declaration syntax.
 #[derive(Clone, Debug)]
-pub struct RequestBodyDescription {
+pub(crate) struct BodyDeclaration {
     /// Original declaration and local-reference provenance.
     pub declaration: crate::ResolvedReference,
     /// Whether omitting the logical body is permitted.
     pub required: bool,
     /// Effective request representations. Malformed media keys are excluded;
     /// their original values remain accessible through `declaration`.
-    pub media: Vec<MediaDescription>,
+    pub media: Vec<MediaDeclaration>,
     /// No media constraint was declared; an explicit concrete type or the JSON codec determines it.
     /// Swagger form parameters still constrain the body to form representations.
     pub media_unrestricted: bool,
 }
 /// A logical form field; automatic form serialization is qualified separately.
 #[derive(Clone, Debug)]
-pub struct BodyFieldDescription {
+pub(crate) struct FieldDeclaration {
     /// Logical field name.
     pub name: String,
     /// Protocol obligation or a schema-validation hint; these are not interchangeable.
     pub requirement: FieldRequirement,
     /// Opaque field schema and vocabulary.
-    pub schema: SchemaDescription,
+    pub schema: SchemaDeclaration,
     /// Authored declaration, retaining format/encoding details.
     pub authored: Value,
     /// Original field-specific Encoding Object, if present.
@@ -231,13 +264,16 @@ pub struct BodyFieldDescription {
 }
 /// Meaning of a field's requiredness declaration.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum FieldRequirement {
     /// No unconditional requirement is declared.
     Optional,
     /// A Swagger form parameter must be supplied.
     ProtocolRequired,
-    /// A direct schema required hint; preparation does not evaluate schemas.
+    /// A supported static schema required hint; preparation does not enforce it.
     SchemaRequired,
+    /// Supported static inspection could not establish a complete required hint.
+    UnknownHint,
 }
 /// Why field inspection cannot provide a complete shape.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -264,20 +300,11 @@ pub struct FieldShapeIssue {
 }
 /// Completeness of logical form-field inspection.
 #[derive(Clone, Debug)]
-pub enum BodyFields {
+pub(crate) enum FieldDeclarations {
     /// The body has no form representations.
     NotApplicable,
     /// Explicit logical fields are available.
-    Declared(Vec<BodyFieldDescription>),
-    /// Form representations exist but schema-derived fields have not been resolved.
-    Opaque(FieldShapeIssue),
-    /// Direct fields are known, but another declaration can affect the shape.
-    Partial {
-        /// Directly described fields, without claiming completeness.
-        fields: Vec<BodyFieldDescription>,
-        /// Source and reason of the unresolved remainder.
-        issue: FieldShapeIssue,
-    },
+    Declared(Vec<FieldDeclaration>),
 }
 /// An effective response declaration and its representations.
 #[derive(Clone, Debug)]
@@ -288,7 +315,7 @@ pub struct ResponseDescription {
     pub declaration: crate::ResolvedReference,
     /// Effective response representations. Malformed media keys are excluded;
     /// their original values remain accessible through `declaration`.
-    pub media: Vec<MediaDescription>,
+    pub media: Vec<crate::MediaDescription>,
 }
 /// One effective target choice. Swagger components become a URL template without source rewriting.
 #[derive(Clone, Debug)]
@@ -387,7 +414,7 @@ pub struct EffectiveOperationDescription {
     /// Effective target choices, in election order.
     pub servers: Vec<ServerDescription>,
     /// Effective logical body; ignored edition-specific body declarations are absent here.
-    pub request_body: Option<RequestBodyDescription>,
+    pub request_body: Option<crate::RequestBodyDescription>,
     /// Effective status and representation declarations.
     pub responses: Vec<ResponseDescription>,
     /// Effective security alternatives.
@@ -396,7 +423,7 @@ pub struct EffectiveOperationDescription {
 
 pub(crate) struct Compiled {
     parameters: Vec<Parameter>,
-    body: Option<RequestBodyDescription>,
+    body: Option<BodyDeclaration>,
     pub responses: Vec<(String, Value)>,
 }
 /// Immutable request plan. Preparing or cloning it does not authorize a retry.
@@ -447,6 +474,7 @@ pub(crate) struct DescriptorWork<'a> {
     bytes: usize,
     nodes: usize,
     references: usize,
+    cancellation: Option<&'a crate::Cancellation>,
 }
 impl<'a> DescriptorWork<'a> {
     pub(crate) fn new(limits: &'a Limits) -> Self {
@@ -455,7 +483,20 @@ impl<'a> DescriptorWork<'a> {
             bytes: 0,
             nodes: 0,
             references: 0,
+            cancellation: None,
         }
+    }
+    pub(crate) fn with_cancellation(
+        limits: &'a Limits,
+        cancellation: &'a crate::Cancellation,
+    ) -> Self {
+        Self {
+            cancellation: Some(cancellation),
+            ..Self::new(limits)
+        }
+    }
+    fn checkpoint(&self) -> Result<(), Diagnostic> {
+        self.cancellation.map_or(Ok(()), crate::schema::checkpoint)
     }
     fn admit(
         used: &mut usize,
@@ -475,7 +516,8 @@ impl<'a> DescriptorWork<'a> {
         *used = actual;
         Ok(())
     }
-    fn entry(&mut self, source: &Value) -> Result<(), Diagnostic> {
+    pub(crate) fn entry(&mut self, source: &Value) -> Result<(), Diagnostic> {
+        self.checkpoint()?;
         Self::admit(
             &mut self.nodes,
             1,
@@ -484,7 +526,7 @@ impl<'a> DescriptorWork<'a> {
             source,
         )
     }
-    fn declaration(&mut self, source: &Value) -> Result<(), Diagnostic> {
+    pub(crate) fn declaration(&mut self, source: &Value) -> Result<(), Diagnostic> {
         Self::admit(
             &mut self.references,
             1,
@@ -494,7 +536,7 @@ impl<'a> DescriptorWork<'a> {
         )?;
         self.entry(source)
     }
-    fn text(&mut self, source: &Value, text: &str) -> Result<String, Diagnostic> {
+    pub(crate) fn text(&mut self, source: &Value, text: &str) -> Result<String, Diagnostic> {
         self.entry(source)?;
         Self::admit(
             &mut self.bytes,
@@ -503,7 +545,19 @@ impl<'a> DescriptorWork<'a> {
             LimitKind::DescriptorBytes,
             source,
         )?;
-        Ok(text.to_owned())
+        let mut copy = String::with_capacity(text.len());
+        // Respect UTF-8 boundaries while observing cancellation during large copies.
+        let mut start = 0;
+        while start < text.len() {
+            self.checkpoint()?;
+            let mut end = (start + 8192).min(text.len());
+            while !text.is_char_boundary(end) {
+                end -= 1;
+            }
+            copy.push_str(&text[start..end]);
+            start = end;
+        }
+        Ok(copy)
     }
     fn required(&mut self, source: &Value, key: &str) -> Result<String, Diagnostic> {
         let value = source
@@ -516,7 +570,11 @@ impl<'a> DescriptorWork<'a> {
                 .ok_or_else(|| value.error(Code::InvalidDeclaration))?,
         )
     }
-    fn optional(&mut self, source: &Value, key: &str) -> Result<Option<String>, Diagnostic> {
+    pub(crate) fn optional(
+        &mut self,
+        source: &Value,
+        key: &str,
+    ) -> Result<Option<String>, Diagnostic> {
         source
             .get(key)
             .map(|value| {
@@ -563,44 +621,42 @@ impl<'a> DescriptorWork<'a> {
 }
 
 impl Operation {
-    fn schema_description(
+    pub(crate) fn schema_description(
         &self,
         value: Value,
         work: &mut DescriptorWork<'_>,
-    ) -> Result<SchemaDescription, Diagnostic> {
+    ) -> Result<SchemaDeclaration, Diagnostic> {
         work.entry(&value)?;
-        let edition = self.store.edition.clone().expect("edition checked");
-        let dialect = if matches!(edition, Edition::OpenApi31 | Edition::OpenApi32) {
-            if let Some(declared) = value
-                .get("$schema")
-                .or_else(|| {
-                    self.store
+        let profile = if let Some(scope) = self.store.graph.schemas.scope(crate::graph::key(&value))
+        {
+            match scope.profile.as_ref() {
+                crate::SchemaProfile::JsonSchema { dialect_uri } => {
+                    let dialect_source = self
+                        .store
                         .graph
-                        .resource_root(&value)
-                        .ok()?
-                        .get("jsonSchemaDialect")
-                })
-                .filter(|v| v.as_str().is_some())
-            {
-                Some(work.text(&declared, declared.as_str().expect("string dialect"))?)
-            } else {
-                Some(work.text(
-                    &value,
-                    if edition == Edition::OpenApi31 {
-                        "https://spec.openapis.org/oas/3.1/dialect/base"
-                    } else {
-                        "https://spec.openapis.org/oas/3.2/dialect/2026-02-26"
-                    },
-                )?)
+                        .value(scope.root)
+                        .get("$schema")
+                        .or_else(|| {
+                            self.store
+                                .graph
+                                .resource_root(&value)
+                                .ok()?
+                                .get("jsonSchemaDialect")
+                        })
+                        .unwrap_or_else(|| value.clone());
+                    crate::SchemaProfile::JsonSchema {
+                        dialect_uri: work.text(&dialect_source, dialect_uri)?,
+                    }
+                }
+                profile => profile.clone(),
             }
+        } else if self.store.edition == Ok(Edition::Swagger20) {
+            // Swagger's non-body parameter constraints are protocol positions.
+            crate::SchemaProfile::Swagger20
         } else {
-            None
+            return Err(value.error(Code::UnsupportedSchema));
         };
-        Ok(SchemaDescription {
-            value,
-            edition,
-            dialect,
-        })
+        Ok(SchemaDeclaration { value, profile })
     }
     fn effective_parameter_references(
         &self,
@@ -665,7 +721,7 @@ impl Operation {
         node: &Value,
         legacy_key: Option<&str>,
         work: &mut DescriptorWork<'_>,
-    ) -> Result<Vec<MediaDescription>, Diagnostic> {
+    ) -> Result<Vec<MediaDeclaration>, Diagnostic> {
         if let Some(key) = legacy_key {
             let declared = self
                 .value()
@@ -683,7 +739,7 @@ impl Operation {
                                     .as_str()
                                     .ok_or_else(|| media.error(Code::InvalidDeclaration))?,
                             )?;
-                            Ok(MediaDescription {
+                            Ok(MediaDeclaration {
                                 media_type,
                                 authored: media,
                                 schema: node
@@ -692,7 +748,7 @@ impl Operation {
                                     .transpose()?,
                                 encoding: None,
                                 item_schema: None,
-                                fields: BodyFields::NotApplicable,
+                                fields: FieldDeclarations::NotApplicable,
                                 prefix_encoding: None,
                                 item_encoding: None,
                             })
@@ -712,11 +768,15 @@ impl Operation {
             .filter(|(key, _)| parse_media(key, true).is_ok())
             .map(|(key, value)| {
                 let resolved = self.resolve_media(&value, work)?;
-                let fields = self.form_fields(key, &resolved, work)?;
-                Ok(MediaDescription {
+                let fields = FieldDeclarations::NotApplicable;
+                Ok(MediaDeclaration {
                     fields,
-                    prefix_encoding: resolved.get("prefixEncoding"),
-                    item_encoding: resolved.get("itemEncoding"),
+                    prefix_encoding: (self.store.edition == Ok(Edition::OpenApi32))
+                        .then(|| resolved.get("prefixEncoding"))
+                        .flatten(),
+                    item_encoding: (self.store.edition == Ok(Edition::OpenApi32))
+                        .then(|| resolved.get("itemEncoding"))
+                        .flatten(),
                     media_type: work.text(&value, key)?,
                     authored: value,
                     schema: resolved
@@ -724,8 +784,9 @@ impl Operation {
                         .map(|v| self.schema_description(v, work))
                         .transpose()?,
                     encoding: resolved.get("encoding"),
-                    item_schema: resolved
-                        .get("itemSchema")
+                    item_schema: (self.store.edition == Ok(Edition::OpenApi32))
+                        .then(|| resolved.get("itemSchema"))
+                        .flatten()
                         .map(|v| self.schema_description(v, work))
                         .transpose()?,
                 })
@@ -754,95 +815,10 @@ impl Operation {
             Ok(value.clone())
         }
     }
-    fn form_fields(
-        &self,
-        media: &str,
-        node: &Value,
-        work: &mut DescriptorWork<'_>,
-    ) -> Result<BodyFields, Diagnostic> {
-        let parsed = parse_media(media, true)?;
-        if !parsed.essence.starts_with("multipart/")
-            && parsed.essence != "application/x-www-form-urlencoded"
-        {
-            return Ok(BodyFields::NotApplicable);
-        }
-        let opaque = |reason, source: Value| BodyFields::Opaque(FieldShapeIssue { reason, source });
-        if node.get("prefixEncoding").is_some() || node.get("itemEncoding").is_some() {
-            return Ok(opaque(FieldShapeReason::PositionalEncoding, node.clone()));
-        }
-        let Some(schema) = node.get("schema") else {
-            return Ok(opaque(FieldShapeReason::MissingSchema, node.clone()));
-        };
-        if schema.kind() != ValueKind::Object {
-            return Ok(opaque(FieldShapeReason::SchemaShape, schema));
-        }
-        let issue = if schema.get("$ref").is_some() || schema.get("$dynamicRef").is_some() {
-            Some(FieldShapeReason::SchemaReference)
-        } else if ["allOf", "anyOf", "oneOf", "if", "then", "else"]
-            .iter()
-            .any(|key| schema.get(key).is_some())
-        {
-            Some(FieldShapeReason::Composition)
-        } else if schema
-            .get("type")
-            .is_some_and(|v| v.as_str() != Some("object"))
-        {
-            Some(FieldShapeReason::SchemaShape)
-        } else {
-            None
-        };
-        let Some(properties) = schema.get("properties") else {
-            return Ok(opaque(
-                issue.unwrap_or(FieldShapeReason::SchemaShape),
-                schema,
-            ));
-        };
-        let Some(properties) = properties.members() else {
-            return Err(schema.error(Code::InvalidDeclaration));
-        };
-        let required = schema.get("required");
-        let encoding = node.get("encoding");
-        let mut fields = Vec::new();
-        for (name, property) in properties {
-            work.entry(&property)?;
-            let mut schema_required = false;
-            if let Some(items) = required.as_ref().and_then(Value::elements) {
-                for item in items {
-                    work.entry(&item)?;
-                    if item.as_str() == Some(name) {
-                        schema_required = true;
-                        break;
-                    }
-                }
-            }
-            let requirement = if schema_required {
-                FieldRequirement::SchemaRequired
-            } else {
-                FieldRequirement::Optional
-            };
-            fields.push(BodyFieldDescription {
-                name: work.text(&property, name)?,
-                requirement,
-                schema: self.schema_description(property.clone(), work)?,
-                authored: property,
-                encoding: encoding.as_ref().and_then(|e| e.get(name)),
-            });
-        }
-        Ok(match issue {
-            Some(reason) => BodyFields::Partial {
-                fields,
-                issue: FieldShapeIssue {
-                    reason,
-                    source: schema,
-                },
-            },
-            None => BodyFields::Declared(fields),
-        })
-    }
-    fn body_description(
+    pub(crate) fn body_description(
         &self,
         work: &mut DescriptorWork<'_>,
-    ) -> Result<Option<RequestBodyDescription>, Diagnostic> {
+    ) -> Result<Option<BodyDeclaration>, Diagnostic> {
         let edition = self.store.edition.clone()?;
         if edition == Edition::Swagger20 {
             let mut parameters = self.effective_parameter_references(work)?;
@@ -868,15 +844,15 @@ impl Operation {
                 return Err(parameters[index].target.error(Code::InvalidDeclaration));
             }
             let fields = if !has_forms {
-                BodyFields::NotApplicable
+                FieldDeclarations::NotApplicable
             } else {
-                BodyFields::Declared(
+                FieldDeclarations::Declared(
                     parameters
                         .iter()
                         .filter(|p| is_form(p))
                         .map(|field| {
                             work.entry(&field.target)?;
-                            Ok(BodyFieldDescription {
+                            Ok(FieldDeclaration {
                                 name: work.required(&field.target, "name")?,
                                 requirement: if bool_field(&field.target, "required", false)? {
                                     FieldRequirement::ProtocolRequired
@@ -894,7 +870,7 @@ impl Operation {
             // Move the resolved declaration so its provenance chain is not copied.
             let declaration = parameters.swap_remove(index);
             let required = match &fields {
-                BodyFields::Declared(fields) => fields
+                FieldDeclarations::Declared(fields) => fields
                     .iter()
                     .any(|f| f.requirement == FieldRequirement::ProtocolRequired),
                 _ => bool_field(&declaration.target, "required", false)?,
@@ -911,13 +887,13 @@ impl Operation {
                 // application preference or send a JSON body for form fields.
                 for media_type in ["application/x-www-form-urlencoded", "multipart/form-data"] {
                     work.entry(&declaration.target)?;
-                    media.push(MediaDescription {
+                    media.push(MediaDeclaration {
                         media_type: work.text(&declaration.target, media_type)?,
                         authored: declaration.target.clone(),
                         schema: None,
                         encoding: None,
                         item_schema: None,
-                        fields: BodyFields::NotApplicable,
+                        fields: FieldDeclarations::NotApplicable,
                         prefix_encoding: None,
                         item_encoding: None,
                     });
@@ -927,13 +903,13 @@ impl Operation {
                 if parse_media(&representation.media_type, true).is_ok_and(|m| {
                     m.essence.starts_with("multipart/")
                         || m.essence == "application/x-www-form-urlencoded"
-                }) && let BodyFields::Declared(fields) = &fields
+                }) && let FieldDeclarations::Declared(fields) = &fields
                 {
                     let mut copied = Vec::new();
                     for field in fields {
                         work.entry(&field.authored)?;
                         let name = work.text(&field.authored, &field.name)?;
-                        copied.push(BodyFieldDescription {
+                        copied.push(FieldDeclaration {
                             name,
                             requirement: field.requirement,
                             schema: field.schema.clone(),
@@ -941,11 +917,11 @@ impl Operation {
                             authored: field.authored.clone(),
                         });
                     }
-                    representation.fields = BodyFields::Declared(copied);
+                    representation.fields = FieldDeclarations::Declared(copied);
                 }
             }
             work.entry(&declaration.target)?;
-            return Ok(Some(RequestBodyDescription {
+            return Ok(Some(BodyDeclaration {
                 declaration,
                 required,
                 media,
@@ -967,7 +943,7 @@ impl Operation {
         let declaration = work.resolve(&self.store.graph, &body, ReferenceKind::RequestBody)?;
         let media = self.media_descriptions(&declaration.target, None, work)?;
         work.entry(&declaration.target)?;
-        Ok(Some(RequestBodyDescription {
+        Ok(Some(BodyDeclaration {
             required: bool_field(&declaration.target, "required", false)?,
             declaration,
             media,
@@ -1173,12 +1149,27 @@ impl Operation {
     /// Each reference chain is independently bounded by reference_steps.
     /// Retained source owners and other compiled cache entries are separate resource domains.
     pub fn describe(&self) -> Result<EffectiveOperationDescription, Diagnostic> {
-        self.describe_inner().map_err(|e| e.bind_graph(&self.store))
+        self.describe_with_cancellation(&crate::Cancellation::default())
     }
-    fn describe_inner(&self) -> Result<EffectiveOperationDescription, Diagnostic> {
-        let mut work = DescriptorWork::new(&self.store.limits);
+    /// Inspect effective declarations with bounded selected schema work and cancellation.
+    pub fn describe_with_cancellation(
+        &self,
+        cancellation: &crate::Cancellation,
+    ) -> Result<EffectiveOperationDescription, Diagnostic> {
+        self.describe_inner(cancellation)
+            .map_err(|e| e.bind_graph(&self.store))
+    }
+    fn describe_inner(
+        &self,
+        cancellation: &crate::Cancellation,
+    ) -> Result<EffectiveOperationDescription, Diagnostic> {
+        let mut work = DescriptorWork::with_cancellation(&self.store.limits, cancellation);
+        let mut facts = crate::schema_facts::FactWork::new(&self.store.limits, cancellation);
         let parameters = self.parameter_declarations(&mut work)?;
-        let request_body = self.body_description(&mut work)?;
+        let request_body = self
+            .body_description(&mut work)?
+            .map(|body| self.describe_body(body, &mut work, &mut facts))
+            .transpose()?;
         let mut responses = vec![];
         for (status, declaration) in self.response_declarations(&mut work)? {
             let media = self.media_descriptions(
@@ -1190,7 +1181,10 @@ impl Operation {
             responses.push(ResponseDescription {
                 status,
                 declaration,
-                media,
+                media: media
+                    .into_iter()
+                    .map(|media| self.describe_media(media, &mut work, &mut facts))
+                    .collect::<Result<_, _>>()?,
             });
         }
         let node = self.value();
@@ -1896,15 +1890,15 @@ impl Operation {
         input: &Input,
         cancellation: &crate::Cancellation,
     ) -> Result<PreparedRequest, Diagnostic> {
-        self.prepare_with_form(input, None, cancellation)
+        self.prepare_admitted(input, AdmittedBody::from(&input.body), cancellation)
     }
-    pub(crate) fn prepare_with_form(
+    pub(crate) fn prepare_admitted(
         &self,
         input: &Input,
-        form: Option<&[crate::form::ReadyField<'_>]>,
+        body: AdmittedBody<'_>,
         cancellation: &crate::Cancellation,
     ) -> Result<PreparedRequest, Diagnostic> {
-        self.prepare_inner(input, form, cancellation)
+        self.prepare_inner(input, body, cancellation)
             .map_err(|mut e| {
                 if e.location.is_none() && e.context().is_none() {
                     e = e.contextual(DiagnosticContext::PreparedRequest);
@@ -1915,12 +1909,15 @@ impl Operation {
     fn prepare_inner(
         &self,
         input: &Input,
-        form: Option<&[crate::form::ReadyField<'_>]>,
+        body: AdmittedBody<'_>,
         cancellation: &crate::Cancellation,
     ) -> Result<PreparedRequest, Diagnostic> {
         cancellation.check()?;
         let compiled = self.compiled()?;
         admit_input(input, &self.store.limits)?;
+        if let AdmittedBody::Form(fields) = body {
+            crate::form::admit_ready(fields, &self.store.limits, cancellation)?;
+        }
         let root = self.store.json.root();
         let desc = self.inspect();
         let limits = self.store.limits.clone();
@@ -2069,7 +2066,7 @@ impl Operation {
             &self.store.graph,
             compiled.body.as_ref(),
             input,
-            form,
+            body,
             self.store.edition.clone()?,
             &limits,
             cancellation,
@@ -2881,14 +2878,14 @@ pub(crate) fn token(b: u8) -> bool {
 type BodyEncoding = (Option<Arc<[u8]>>, &'static str, Option<String>);
 fn prepare_body(
     graph: &crate::graph::Graph,
-    decl: Option<&RequestBodyDescription>,
+    decl: Option<&BodyDeclaration>,
     input: &Input,
-    form: Option<&[crate::form::ReadyField<'_>]>,
+    body: AdmittedBody<'_>,
     edition: Edition,
     limits: &Limits,
     cancellation: &crate::Cancellation,
 ) -> Result<BodyEncoding, Diagnostic> {
-    let absent = form.is_none() && matches!(input.body, Body::Absent);
+    let absent = matches!(body, AdmittedBody::Absent);
     let Some(decl) = decl else {
         if absent && input.selection.media.is_none() {
             return Ok((None, "absent", None));
@@ -2917,7 +2914,7 @@ fn prepare_body(
         if let Some(s) = &input.selection.media {
             parse_media(s, false).map_err(|e| source.error(e.code))?;
             s.trim_matches([' ', '\t']).to_owned()
-        } else if matches!(input.body, Body::Json(_)) {
+        } else if matches!(body, AdmittedBody::Json(_)) {
             "application/json".into()
         } else {
             return Err(source.error(Code::InvalidSelection));
@@ -2945,8 +2942,8 @@ fn prepare_body(
         let usable = concrete
             .iter()
             .filter(|(_, m, _)| {
-                (!matches!(input.body, Body::Json(_)) || m.json)
-                    && (form.is_none()
+                (!matches!(body, AdmittedBody::Json(_)) || m.json)
+                    && (!matches!(body, AdmittedBody::Form(_))
                         || m.essence.starts_with("multipart/")
                         || m.essence == "application/x-www-form-urlencoded")
             })
@@ -2977,7 +2974,7 @@ fn prepare_body(
     {
         return Err(source.error(Code::UnsupportedMedia));
     }
-    if let Some(form) = form {
+    if let AdmittedBody::Form(form) = body {
         let selected_parsed = parse_media(&selected, false)?;
         let representation = decl
             .media
@@ -3001,9 +2998,9 @@ fn prepare_body(
         )?;
         return Ok((Some(bytes), "form", Some(media)));
     }
-    let (bytes, kind) = match &input.body {
-        Body::Absent => unreachable!(),
-        Body::Json(v) => {
+    let (bytes, kind) = match body {
+        AdmittedBody::Absent | AdmittedBody::Form(_) => unreachable!(),
+        AdmittedBody::Json(v) => {
             if v.raw().len() > limits.body_bytes {
                 return Err(v.locate(Diagnostic::limited(
                     LimitKind::BodyBytes,
@@ -3016,7 +3013,7 @@ fn prepare_body(
             }
             (Arc::<[u8]>::from(v.raw().as_bytes()), "json")
         }
-        Body::Raw(b) => (b.clone(), "raw"),
+        AdmittedBody::Raw(b) => (b.clone(), "raw"),
     };
     if bytes.len() > limits.body_bytes {
         return Err(
@@ -3262,6 +3259,7 @@ impl std::fmt::Debug for Body {
             Self::Absent => f.write_str("Body::Absent"),
             Self::Json(v) => f.debug_tuple("Body::Json").field(&v.raw().len()).finish(),
             Self::Raw(b) => f.debug_tuple("Body::Raw").field(&b.len()).finish(),
+            Self::Form(form) => form.fmt(f),
         }
     }
 }

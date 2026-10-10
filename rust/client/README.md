@@ -271,3 +271,43 @@ Automatic request media selection considers the supplied body: `.json(...)` can 
 Completed operation-path segments equal to `.` or `..` refuse before dispatch, including segments assembled from template literals and parameter values. This is a preparation safety policy because normalizing HTTP stacks can route such paths elsewhere. Empty values/segments and embedded dots remain supported. Server-reference resolution is unchanged; transports still disclose and check percent-encoded-dot support and other URL normalization restrictions.
 
 Target composition uses an explicit boundary policy: resolve and expand the effective server first, then append the complete operation path. When the server ends with `/` and the path begins with `/`, remove exactly one final server slash. Implicit and explicit root servers behave identically. Other repeated slashes and the operation's trailing slash remain intact; the path is never resolved as a relative URL or new authority. For example, `https://api.example/v1/` plus `/items/` yields `https://api.example/v1/items/`, while `/v1//` plus `/items/` preserves `/v1//items/`. OpenAPI specifies appending but leaves the exact boundary-byte rule ambiguous; this is the client's documented interpretation, not a claim that every service treats repeated slashes equivalently.
+
+### Reusable finite forms and selected field inspection
+
+`Form::new(fields, limits)` admits one immutable owned logical form for
+`Input { body: Body::Form(form), ..Input::default() }`. Cloning a form shares its
+storage. Exact values retain their original source and numeric tokens. Ordinary
+values share one generated source. Constructing an owned form from borrowed bytes
+copies those bytes once; supplying `Arc<[u8]>` retains that owner. The fluent
+`.form(fields)` route keeps borrowed binary data through preparation and uses the
+same private admitted view and encoder. Reuse checks the receiving operation's
+logical limits without reparsing an existing exact owner. Cancellation is checked
+before caller iterator conversion, before each pull, and throughout owned work;
+it cannot preempt caller iterator or serialization code.
+
+`operation.describe_form_field(media, name)` reports the selected field's
+applicable default representation and original schema contributors. Both it and
+`describe()` have cancellation counterparts. Missing schema resources return the
+same `Diagnostic::resource_need()` as direct and fluent preparation. Supply bytes
+or add layout through `DocumentBuilder`, build a new immutable snapshot, and
+reacquire the operation. Old snapshots and their needs keep their original meaning.
+
+The unpublished descriptor API now uses `SchemaDescription.profile` instead of
+`edition`/`dialect`, and `BodyFieldDescription.schemas` instead of `schema`.
+`BodyFields::Declared { fields, openness }` exposes an explicit openness hint.
+`Partial` retains incomplete directly authored applicable sources; it does not
+claim complete property selection. `FieldRequirement::UnknownHint` distinguishes
+uncertainty from supported static nonmembership (`Optional`). Schema required
+hints never enforce missing form fields. Successful descriptors retain source
+owners, not the document graph; outward recovery needs intentionally own the
+originating snapshot.
+
+`representation: None` means representation facts were not requested.
+`content_encoding: None` inside a representation means no applicable effective
+coding: supported content paths prove absence, while an applicable style makes
+coding irrelevant. Media election cannot erase unresolved relevant coding facts.
+Supported schema references and compatible type unions supply finite declaration
+facts; this is not instance validation or branch evaluation. Encoding algorithms,
+MIME transfer headers, streams and general composition remain separate work.
+Finite `f64` uses the existing explicit `ExactJson::from_serializable` boundary;
+no direct floating-point `FormField` conversion was added.

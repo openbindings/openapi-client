@@ -380,6 +380,7 @@ impl<'a> RequestBuilder<'a> {
             Body::Absent => 0,
             Body::Json(v) => v.raw().len(),
             Body::Raw(v) => v.len(),
+            Body::Form(_) => 0,
         };
         if self.body_bytes(bytes) {
             self.body = Some((BodyDraft::Explicit(body), event));
@@ -570,11 +571,13 @@ impl<'a> RequestBuilder<'a> {
         };
         if let Some((BodyDraft::Form(fields), _)) = &self.body {
             for field in fields {
-                field.arguments(&mut |argument| {
-                    if let Argument::Ordinary(value) = argument {
-                        ordinary.push(*value);
-                    }
-                });
+                field
+                    .arguments(cancellation, &mut |argument| {
+                        if let Argument::Ordinary(value) = argument {
+                            ordinary.push(*value);
+                        }
+                    })
+                    .map_err(RequestError::Preparation)?;
             }
         }
         let owner = if ordinary.is_empty() {
@@ -642,8 +645,12 @@ impl<'a> RequestBuilder<'a> {
                 .insert(credential.scheme.into_owned(), credential.value);
         }
         input.headers = self.headers;
+        let body = match form.as_deref() {
+            Some(fields) => crate::prepare::AdmittedBody::Form(fields),
+            None => crate::prepare::AdmittedBody::from(&input.body),
+        };
         self.operation
-            .prepare_with_form(&input, form.as_deref(), cancellation)
+            .prepare_admitted(&input, body, cancellation)
             .map_err(RequestError::Preparation)
     }
 }

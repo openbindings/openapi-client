@@ -1,0 +1,805 @@
+{
+  "base": "7cf39eb7f02d017af2bd61a7a02e1cb4a49072e9",
+  "status": "prospective before source implementation or execution",
+  "preserved": {
+    "author_controls": 35,
+    "independent_controls": 16,
+    "obligation_groups": [
+      6,
+      23,
+      23
+    ]
+  },
+  "sources": [
+    "https://spec.openapis.org/oas/v3.0.4.html#schema-object",
+    "https://datatracker.ietf.org/doc/html/draft-wright-json-schema-validation-00#section-5.15",
+    "https://json-schema.org/draft-04/draft-fge-json-schema-validation-00#rfc.section.5.4.3",
+    "https://json-schema.org/draft/2020-12/json-schema-validation#name-required"
+  ],
+  "controls": [
+    {
+      "id": "ROOT-G2B-required-2.0-absent",
+      "edition": "2.0",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        }
+      },
+      "referenced_Base": {
+        "type": "object",
+        "required": [
+          "p"
+        ],
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        }
+      },
+      "expected_requested_hint": "Optional",
+      "preparation_enforces_hint": false,
+      "legacy_reference_siblings_ignored": false
+    },
+    {
+      "id": "ROOT-G2B-required-2.0-empty",
+      "edition": "2.0",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        },
+        "required": []
+      },
+      "referenced_Base": {
+        "type": "object",
+        "required": [
+          "p"
+        ],
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        }
+      },
+      "expected_requested_hint": "InvalidDeclaration/SchemaReason::InvalidKeyword",
+      "preparation_enforces_hint": false,
+      "legacy_reference_siblings_ignored": false
+    },
+    {
+      "id": "ROOT-G2B-required-2.0-one",
+      "edition": "2.0",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "p"
+        ]
+      },
+      "referenced_Base": {
+        "type": "object",
+        "required": [
+          "p"
+        ],
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        }
+      },
+      "expected_requested_hint": "SchemaRequired",
+      "preparation_enforces_hint": false,
+      "legacy_reference_siblings_ignored": false
+    },
+    {
+      "id": "ROOT-G2B-required-2.0-duplicate",
+      "edition": "2.0",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "p",
+          "p"
+        ]
+      },
+      "referenced_Base": {
+        "type": "object",
+        "required": [
+          "p"
+        ],
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        }
+      },
+      "expected_requested_hint": "InvalidDeclaration/SchemaReason::InvalidKeyword",
+      "preparation_enforces_hint": false,
+      "legacy_reference_siblings_ignored": false
+    },
+    {
+      "id": "ROOT-G2B-required-2.0-nonstring",
+      "edition": "2.0",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        },
+        "required": [
+          1
+        ]
+      },
+      "referenced_Base": {
+        "type": "object",
+        "required": [
+          "p"
+        ],
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        }
+      },
+      "expected_requested_hint": "InvalidDeclaration/SchemaReason::InvalidKeyword",
+      "preparation_enforces_hint": false,
+      "legacy_reference_siblings_ignored": false
+    },
+    {
+      "id": "ROOT-G2B-required-2.0-scalar",
+      "edition": "2.0",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        },
+        "required": "p"
+      },
+      "referenced_Base": {
+        "type": "object",
+        "required": [
+          "p"
+        ],
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        }
+      },
+      "expected_requested_hint": "InvalidDeclaration/SchemaReason::InvalidKeyword",
+      "preparation_enforces_hint": false,
+      "legacy_reference_siblings_ignored": false
+    },
+    {
+      "id": "ROOT-G2B-required-2.0-ignored-ref-empty",
+      "edition": "2.0",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        },
+        "required": [],
+        "$ref": "#/definitions/Base"
+      },
+      "referenced_Base": {
+        "type": "object",
+        "required": [
+          "p"
+        ],
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        }
+      },
+      "expected_requested_hint": "SchemaRequired",
+      "preparation_enforces_hint": false,
+      "legacy_reference_siblings_ignored": true
+    },
+    {
+      "id": "ROOT-G2B-required-3.0.4-absent",
+      "edition": "3.0.4",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        }
+      },
+      "referenced_Base": {
+        "type": "object",
+        "required": [
+          "p"
+        ],
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        }
+      },
+      "expected_requested_hint": "Optional",
+      "preparation_enforces_hint": false,
+      "legacy_reference_siblings_ignored": false
+    },
+    {
+      "id": "ROOT-G2B-required-3.0.4-empty",
+      "edition": "3.0.4",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        },
+        "required": []
+      },
+      "referenced_Base": {
+        "type": "object",
+        "required": [
+          "p"
+        ],
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        }
+      },
+      "expected_requested_hint": "InvalidDeclaration/SchemaReason::InvalidKeyword",
+      "preparation_enforces_hint": false,
+      "legacy_reference_siblings_ignored": false
+    },
+    {
+      "id": "ROOT-G2B-required-3.0.4-one",
+      "edition": "3.0.4",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "p"
+        ]
+      },
+      "referenced_Base": {
+        "type": "object",
+        "required": [
+          "p"
+        ],
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        }
+      },
+      "expected_requested_hint": "SchemaRequired",
+      "preparation_enforces_hint": false,
+      "legacy_reference_siblings_ignored": false
+    },
+    {
+      "id": "ROOT-G2B-required-3.0.4-duplicate",
+      "edition": "3.0.4",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "p",
+          "p"
+        ]
+      },
+      "referenced_Base": {
+        "type": "object",
+        "required": [
+          "p"
+        ],
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        }
+      },
+      "expected_requested_hint": "InvalidDeclaration/SchemaReason::InvalidKeyword",
+      "preparation_enforces_hint": false,
+      "legacy_reference_siblings_ignored": false
+    },
+    {
+      "id": "ROOT-G2B-required-3.0.4-nonstring",
+      "edition": "3.0.4",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        },
+        "required": [
+          1
+        ]
+      },
+      "referenced_Base": {
+        "type": "object",
+        "required": [
+          "p"
+        ],
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        }
+      },
+      "expected_requested_hint": "InvalidDeclaration/SchemaReason::InvalidKeyword",
+      "preparation_enforces_hint": false,
+      "legacy_reference_siblings_ignored": false
+    },
+    {
+      "id": "ROOT-G2B-required-3.0.4-scalar",
+      "edition": "3.0.4",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        },
+        "required": "p"
+      },
+      "referenced_Base": {
+        "type": "object",
+        "required": [
+          "p"
+        ],
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        }
+      },
+      "expected_requested_hint": "InvalidDeclaration/SchemaReason::InvalidKeyword",
+      "preparation_enforces_hint": false,
+      "legacy_reference_siblings_ignored": false
+    },
+    {
+      "id": "ROOT-G2B-required-3.0.4-ignored-ref-empty",
+      "edition": "3.0.4",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        },
+        "required": [],
+        "$ref": "#/components/schemas/Base"
+      },
+      "referenced_Base": {
+        "type": "object",
+        "required": [
+          "p"
+        ],
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        }
+      },
+      "expected_requested_hint": "SchemaRequired",
+      "preparation_enforces_hint": false,
+      "legacy_reference_siblings_ignored": true
+    },
+    {
+      "id": "ROOT-G2B-required-3.1.2-absent",
+      "edition": "3.1.2",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        }
+      },
+      "referenced_Base": {
+        "type": "object",
+        "required": [
+          "p"
+        ],
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        }
+      },
+      "expected_requested_hint": "Optional",
+      "preparation_enforces_hint": false,
+      "legacy_reference_siblings_ignored": false
+    },
+    {
+      "id": "ROOT-G2B-required-3.1.2-empty",
+      "edition": "3.1.2",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        },
+        "required": []
+      },
+      "referenced_Base": {
+        "type": "object",
+        "required": [
+          "p"
+        ],
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        }
+      },
+      "expected_requested_hint": "Optional",
+      "preparation_enforces_hint": false,
+      "legacy_reference_siblings_ignored": false
+    },
+    {
+      "id": "ROOT-G2B-required-3.1.2-one",
+      "edition": "3.1.2",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "p"
+        ]
+      },
+      "referenced_Base": {
+        "type": "object",
+        "required": [
+          "p"
+        ],
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        }
+      },
+      "expected_requested_hint": "SchemaRequired",
+      "preparation_enforces_hint": false,
+      "legacy_reference_siblings_ignored": false
+    },
+    {
+      "id": "ROOT-G2B-required-3.1.2-duplicate",
+      "edition": "3.1.2",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "p",
+          "p"
+        ]
+      },
+      "referenced_Base": {
+        "type": "object",
+        "required": [
+          "p"
+        ],
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        }
+      },
+      "expected_requested_hint": "InvalidDeclaration/SchemaReason::InvalidKeyword",
+      "preparation_enforces_hint": false,
+      "legacy_reference_siblings_ignored": false
+    },
+    {
+      "id": "ROOT-G2B-required-3.1.2-nonstring",
+      "edition": "3.1.2",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        },
+        "required": [
+          1
+        ]
+      },
+      "referenced_Base": {
+        "type": "object",
+        "required": [
+          "p"
+        ],
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        }
+      },
+      "expected_requested_hint": "InvalidDeclaration/SchemaReason::InvalidKeyword",
+      "preparation_enforces_hint": false,
+      "legacy_reference_siblings_ignored": false
+    },
+    {
+      "id": "ROOT-G2B-required-3.1.2-scalar",
+      "edition": "3.1.2",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        },
+        "required": "p"
+      },
+      "referenced_Base": {
+        "type": "object",
+        "required": [
+          "p"
+        ],
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        }
+      },
+      "expected_requested_hint": "InvalidDeclaration/SchemaReason::InvalidKeyword",
+      "preparation_enforces_hint": false,
+      "legacy_reference_siblings_ignored": false
+    },
+    {
+      "id": "ROOT-G2B-required-3.1.2-ignored-ref-empty",
+      "edition": "3.1.2",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        },
+        "required": [],
+        "$ref": "#/components/schemas/Base"
+      },
+      "referenced_Base": {
+        "type": "object",
+        "required": [
+          "p"
+        ],
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        }
+      },
+      "expected_requested_hint": "SchemaRequired",
+      "preparation_enforces_hint": false,
+      "legacy_reference_siblings_ignored": false
+    },
+    {
+      "id": "ROOT-G2B-required-3.2.1-absent",
+      "edition": "3.2.1",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        }
+      },
+      "referenced_Base": {
+        "type": "object",
+        "required": [
+          "p"
+        ],
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        }
+      },
+      "expected_requested_hint": "Optional",
+      "preparation_enforces_hint": false,
+      "legacy_reference_siblings_ignored": false
+    },
+    {
+      "id": "ROOT-G2B-required-3.2.1-empty",
+      "edition": "3.2.1",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        },
+        "required": []
+      },
+      "referenced_Base": {
+        "type": "object",
+        "required": [
+          "p"
+        ],
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        }
+      },
+      "expected_requested_hint": "Optional",
+      "preparation_enforces_hint": false,
+      "legacy_reference_siblings_ignored": false
+    },
+    {
+      "id": "ROOT-G2B-required-3.2.1-one",
+      "edition": "3.2.1",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "p"
+        ]
+      },
+      "referenced_Base": {
+        "type": "object",
+        "required": [
+          "p"
+        ],
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        }
+      },
+      "expected_requested_hint": "SchemaRequired",
+      "preparation_enforces_hint": false,
+      "legacy_reference_siblings_ignored": false
+    },
+    {
+      "id": "ROOT-G2B-required-3.2.1-duplicate",
+      "edition": "3.2.1",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "p",
+          "p"
+        ]
+      },
+      "referenced_Base": {
+        "type": "object",
+        "required": [
+          "p"
+        ],
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        }
+      },
+      "expected_requested_hint": "InvalidDeclaration/SchemaReason::InvalidKeyword",
+      "preparation_enforces_hint": false,
+      "legacy_reference_siblings_ignored": false
+    },
+    {
+      "id": "ROOT-G2B-required-3.2.1-nonstring",
+      "edition": "3.2.1",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        },
+        "required": [
+          1
+        ]
+      },
+      "referenced_Base": {
+        "type": "object",
+        "required": [
+          "p"
+        ],
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        }
+      },
+      "expected_requested_hint": "InvalidDeclaration/SchemaReason::InvalidKeyword",
+      "preparation_enforces_hint": false,
+      "legacy_reference_siblings_ignored": false
+    },
+    {
+      "id": "ROOT-G2B-required-3.2.1-scalar",
+      "edition": "3.2.1",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        },
+        "required": "p"
+      },
+      "referenced_Base": {
+        "type": "object",
+        "required": [
+          "p"
+        ],
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        }
+      },
+      "expected_requested_hint": "InvalidDeclaration/SchemaReason::InvalidKeyword",
+      "preparation_enforces_hint": false,
+      "legacy_reference_siblings_ignored": false
+    },
+    {
+      "id": "ROOT-G2B-required-3.2.1-ignored-ref-empty",
+      "edition": "3.2.1",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        },
+        "required": [],
+        "$ref": "#/components/schemas/Base"
+      },
+      "referenced_Base": {
+        "type": "object",
+        "required": [
+          "p"
+        ],
+        "properties": {
+          "p": {
+            "type": "string"
+          }
+        }
+      },
+      "expected_requested_hint": "SchemaRequired",
+      "preparation_enforces_hint": false,
+      "legacy_reference_siblings_ignored": false
+    }
+  ]
+}

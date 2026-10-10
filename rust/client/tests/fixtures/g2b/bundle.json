@@ -1,0 +1,8 @@
+{
+  "x": {
+    "type": "string"
+  },
+  "inert": {
+    "$id": "https://inert.example/not-a-schema"
+  }
+}

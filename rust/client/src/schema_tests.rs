@@ -102,6 +102,7 @@ fn fact_json(fact: Fact<FactValue>, graph: &crate::graph::Graph) -> Json {
                 FactValue::Selection(s) => json!({"schema_pointers": s.0.into_iter().map(|k| graph.value(k).location().pointer).collect::<Vec<_>>() }),
                 FactValue::Items(crate::schema_facts::Items::Homogeneous(s)) => json!({"kind":"Homogeneous", "schema_pointer": graph.value(s.0[0]).location().pointer}),
                 FactValue::Items(crate::schema_facts::Items::Positional(s)) => json!({"kind":"Positional", "prefix_pointers": s.into_iter().map(|s| graph.value(s.0[0]).location().pointer).collect::<Vec<_>>(), "tail":"Absent"}),
+                FactValue::RequiredHint => json!(true),
                 FactValue::Shape(s) => json!({"named":s.names, "openness":if s.open {"Open"} else {"ClosedHint"}}),
             }})
         }

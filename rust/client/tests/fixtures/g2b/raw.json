@@ -1,0 +1,29 @@
+{
+  "openapi": "3.1.2",
+  "servers": [
+    {
+      "url": "https://api.example"
+    }
+  ],
+  "paths": {
+    "/send": {
+      "post": {
+        "operationId": "send",
+        "requestBody": {
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "$ref": "not-supplied"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "ok"
+          }
+        }
+      }
+    }
+  }
+}

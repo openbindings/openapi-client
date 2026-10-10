@@ -1,0 +1,53 @@
+{
+  "openapi": "3.1.2",
+  "servers": [
+    {
+      "url": "https://api.example"
+    }
+  ],
+  "paths": {
+    "/send": {
+      "post": {
+        "operationId": "send",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "p": {
+                    "$ref": "#/components/schemas/T0"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "ok"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "T0": {
+        "$ref": "#/components/schemas/T1"
+      },
+      "T1": {
+        "$ref": "#/components/schemas/T2"
+      },
+      "T2": {
+        "$ref": "#/components/schemas/T3"
+      },
+      "T3": {
+        "$ref": "#/components/schemas/T4"
+      },
+      "T4": {
+        "type": "string"
+      }
+    }
+  }
+}

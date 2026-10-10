@@ -1,6 +1,6 @@
-//! Owner-free, demand-driven declaration facts for the future shared encoder.
+//! Owner-free, demand-driven declaration facts for selected forms and inspection.
 //! No instance validation, branches, defaults, coercion, acquisition or Store cache.
-#![allow(dead_code)] // G2a qualifies this seam privately; G2b owns encoder integration.
+#![allow(dead_code)] // Unconsumed facts remain private for subsequent finite coding work.
 use crate::graph::{Graph, NeedFact, NodeKey, bound, key};
 use crate::schema::{SchemaProfile, SchemaReason, SchemaReferenceKind};
 use crate::{Cancellation, Code, Diagnostic, DiagnosticReason, LimitKind, Limits, Value};
@@ -12,11 +12,14 @@ pub(crate) struct SchemaSelection(pub Vec<NodeKey>);
 pub(crate) enum FactQuery<'a> {
     Types,
     ContentEncoding,
+    EffectiveEncoding,
+    LegacyBinary,
     ContentMediaType,
     LegacyFormat,
     Property(&'a str),
     Items,
     ObjectShape,
+    RequiredHint(&'a str),
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum SchemaType {
@@ -46,6 +49,7 @@ pub(crate) enum FactValue {
     Selection(SchemaSelection),
     Items(Items),
     Shape(Shape),
+    RequiredHint,
 }
 #[derive(Clone)]
 pub(crate) enum Fact<T> {
@@ -67,6 +71,7 @@ pub(crate) struct FactWork<'a> {
     limits: &'a Limits,
     cancellation: &'a Cancellation,
     used: usize,
+    required: HashMap<NodeKey, HashSet<String>>,
 }
 impl<'a> FactWork<'a> {
     pub fn new(limits: &'a Limits, cancellation: &'a Cancellation) -> Self {
@@ -74,12 +79,13 @@ impl<'a> FactWork<'a> {
             limits,
             cancellation,
             used: 0,
+            required: HashMap::new(),
         }
     }
     pub fn used(&self) -> usize {
         self.used
     }
-    fn charge(&mut self, amount: usize, value: &Value) -> Result<(), Diagnostic> {
+    pub(crate) fn charge(&mut self, amount: usize, value: &Value) -> Result<(), Diagnostic> {
         crate::schema::checkpoint(self.cancellation)?;
         bound(
             self.used,
@@ -377,8 +383,15 @@ fn local_fact(
     let source_keyword = match query {
         FactQuery::Types => Some("type"),
         FactQuery::ContentEncoding => Some("contentEncoding"),
+        FactQuery::EffectiveEncoding => Some(if profile == &SchemaProfile::OpenApi30 {
+            "format"
+        } else {
+            "contentEncoding"
+        }),
+        FactQuery::LegacyBinary => Some("format"),
         FactQuery::ContentMediaType => Some("contentMediaType"),
         FactQuery::LegacyFormat => Some("format"),
+        FactQuery::RequiredHint(_) => Some("required"),
         FactQuery::Items => Some(if value.get("prefixItems").is_some() {
             "prefixItems"
         } else {
@@ -400,8 +413,34 @@ fn local_fact(
             SchemaReason::InvalidKeyword,
         ))
     };
+    if matches!(query, FactQuery::LegacyBinary)
+        || matches!(query, FactQuery::EffectiveEncoding) && !profile.modern()
+    {
+        if profile != &SchemaProfile::OpenApi30 {
+            return Ok(absent());
+        }
+        let Some(site) = value.get("format") else {
+            return Ok(absent());
+        };
+        let Some(text) = site.as_str() else {
+            return Ok(invalid(&site));
+        };
+        work.charge(text.len().saturating_add(1), &site)?;
+        return Ok(
+            if matches!(query, FactQuery::EffectiveEncoding) && text == "byte" {
+                known(FactValue::Text("base64".into()))
+            } else if matches!(query, FactQuery::LegacyBinary) && matches!(text, "byte" | "binary")
+            {
+                known(FactValue::Text("binary".into()))
+            } else {
+                absent()
+            },
+        );
+    }
     let text = match query {
-        FactQuery::ContentEncoding if profile.modern() => Some("contentEncoding"),
+        FactQuery::ContentEncoding | FactQuery::EffectiveEncoding if profile.modern() => {
+            Some("contentEncoding")
+        }
         FactQuery::ContentMediaType if profile.modern() => Some("contentMediaType"),
         FactQuery::LegacyFormat => Some("format"),
         _ => None,
@@ -420,7 +459,42 @@ fn local_fact(
     }
     Ok(match query {
         FactQuery::ContentEncoding | FactQuery::ContentMediaType => absent(),
-        FactQuery::LegacyFormat => unreachable!(),
+        FactQuery::LegacyFormat | FactQuery::EffectiveEncoding | FactQuery::LegacyBinary => {
+            unreachable!()
+        }
+        FactQuery::RequiredHint(name) => {
+            let Some(site) = value.get("required") else {
+                return Ok(absent());
+            };
+            let node = key(&site);
+            work.charge(name.len().saturating_add(1), &site)?;
+            if !work.required.contains_key(&node) {
+                let Some(items) = site.elements() else {
+                    return Ok(invalid(&site));
+                };
+                let mut names = HashSet::new();
+                for item in items {
+                    work.charge(1, &item)?;
+                    let Some(name) = item.as_str() else {
+                        return Ok(invalid(&item));
+                    };
+                    work.charge(name.len().saturating_add(1), &item)?;
+                    if !names.insert(name.to_owned()) {
+                        return Ok(invalid(&item));
+                    }
+                }
+                if names.is_empty() && !profile.modern() {
+                    return Ok(invalid(&site));
+                }
+                work.charge(1, &site)?;
+                work.required.insert(node, names);
+            }
+            if work.required[&node].contains(*name) {
+                known(FactValue::RequiredHint)
+            } else {
+                absent()
+            }
+        }
         FactQuery::Types => {
             let Some(site) = value.get("type") else {
                 return Ok(absent());
@@ -627,6 +701,9 @@ impl Accumulator {
     ) -> Result<Option<SchemaReason>, Diagnostic> {
         work.at(1, at, WorkStage::Accumulator)?;
         match next {
+            FactValue::RequiredHint => {
+                self.value = Some(FactValue::RequiredHint);
+            }
             FactValue::Types(mut next) => {
                 // At most seven primitive declarations. Number denotes both
                 // integer and non-integer numbers; no instances are inspected.

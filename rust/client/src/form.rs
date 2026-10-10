@@ -1,8 +1,9 @@
 //! Finite logical named forms. Encoding is internal to shared request preparation.
+use crate::prepare::{FieldDeclarations, MediaDeclaration};
+use crate::schema_facts::{FactWork, SchemaSelection};
 use crate::{
-    Argument, BodyFields, Cancellation, Code, Diagnostic, DiagnosticContext, DiagnosticReason,
-    Edition, FieldRequirement, LimitKind, Limits, MediaDescription, OrdinaryValue, Value,
-    ValueKind,
+    Argument, Cancellation, Code, Diagnostic, DiagnosticContext, DiagnosticReason, Edition,
+    FieldRequirement, LimitKind, Limits, OrdinaryValue, RequestError, Value, ValueKind,
 };
 use std::{borrow::Cow, fmt, sync::Arc};
 
@@ -198,6 +199,125 @@ impl fmt::Debug for FormField<'_> {
         f.write_str("FormField([redacted])")
     }
 }
+/// Immutable reusable logical form data. Construction owns borrowed data once;
+/// the fluent request form route keeps its borrows until preparation finishes.
+/// Cloning shares admitted immutable storage and never copies payloads.
+#[derive(Clone)]
+pub struct Form {
+    fields: Arc<Vec<ReadyField<'static>>>,
+}
+impl fmt::Debug for Form {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Form")
+            .field("fields", &self.len())
+            .finish_non_exhaustive()
+    }
+}
+impl Form {
+    /// Admit and own finite logical fields with one generated ordinary value owner.
+    pub fn new<'a>(
+        fields: impl IntoIterator<Item = FormField<'a>>,
+        limits: Limits,
+    ) -> Result<Self, RequestError> {
+        Self::new_with_cancellation(fields, limits, &Cancellation::default())
+    }
+    /// Check cancellation before converting the caller iterator and pulling each entry and throughout
+    /// library-owned admission/copy work. Caller iterator code is not preempted.
+    pub fn new_with_cancellation<'a>(
+        fields: impl IntoIterator<Item = FormField<'a>>,
+        limits: Limits,
+        cancellation: &Cancellation,
+    ) -> Result<Self, RequestError> {
+        crate::schema::checkpoint(cancellation).map_err(RequestError::Preparation)?;
+        let mut fields = fields.into_iter();
+        let mut admitted: Vec<FormField<'a>> = Vec::new();
+        let mut budget = Admission::default();
+        loop {
+            crate::schema::checkpoint(cancellation).map_err(RequestError::Preparation)?;
+            let Some(field) = fields.next() else { break };
+            let result = (|| {
+                if admitted.len() >= limits.form_fields {
+                    return Err(Diagnostic::limited(
+                        LimitKind::FormFields,
+                        limits.form_fields,
+                        admitted.len().saturating_add(1),
+                    ));
+                }
+                budget.name(&field, &limits)?;
+                budget.comparisons(admitted.len(), &limits)?;
+                for previous in &admitted {
+                    cancellation.check()?;
+                    if previous.name == field.name {
+                        return Err(refusal(Code::InvalidSelection, FormReason::DuplicateField));
+                    }
+                }
+                budget.field_cancel(&field, &limits, Some(cancellation))
+            })();
+            result.map_err(|e| {
+                RequestError::Preparation(field_context(e, admitted.len(), &field.name, None))
+            })?;
+            reserve_admitted(&mut admitted, limits.form_fields);
+            admitted.push(field);
+        }
+        let mut ordinary = Vec::new();
+        for field in &admitted {
+            crate::schema::checkpoint(cancellation).map_err(RequestError::Preparation)?;
+            field
+                .arguments(cancellation, &mut |a| {
+                    if let Argument::Ordinary(v) = a {
+                        ordinary.push(*v)
+                    }
+                })
+                .map_err(RequestError::Preparation)?;
+        }
+        let owner = if ordinary.is_empty() {
+            None
+        } else {
+            Some(
+                crate::ordinary::request_values(&ordinary, None, limits, cancellation)
+                    .map_err(RequestError::Input)?,
+            )
+        };
+        let mut ordinal = 0;
+        let mut exact = |argument| match argument {
+            Argument::Exact(v) => v,
+            Argument::Ordinary(_) => {
+                let value = owner
+                    .as_ref()
+                    .expect("ordinary owner")
+                    .root()
+                    .at(ordinal)
+                    .expect("admitted ordinal");
+                ordinal += 1;
+                value
+            }
+        };
+        let mut owned = Vec::with_capacity(admitted.len());
+        for field in admitted {
+            crate::schema::checkpoint(cancellation).map_err(RequestError::Preparation)?;
+            owned.push(
+                field
+                    .lower(&mut exact)
+                    .into_owned(cancellation)
+                    .map_err(RequestError::Preparation)?,
+            );
+        }
+        Ok(Self {
+            fields: Arc::new(owned),
+        })
+    }
+    /// Number of unique logical fields.
+    pub fn len(&self) -> usize {
+        self.fields.len()
+    }
+    /// Whether the form has no logical fields. This remains a present body.
+    pub fn is_empty(&self) -> bool {
+        self.fields.is_empty()
+    }
+    pub(crate) fn fields(&self) -> &[ReadyField<'static>] {
+        &self.fields
+    }
+}
 fn refusal(code: Code, reason: FormReason) -> Diagnostic {
     Diagnostic::new(code).reasoned(DiagnosticReason::Form(reason))
 }
@@ -236,9 +356,20 @@ impl Admission {
         )
     }
     pub(crate) fn field(&mut self, f: &FormField<'_>, limits: &Limits) -> Result<(), Diagnostic> {
+        self.field_cancel(f, limits, None)
+    }
+    fn field_cancel(
+        &mut self,
+        f: &FormField<'_>,
+        limits: &Limits,
+        cancel: Option<&Cancellation>,
+    ) -> Result<(), Diagnostic> {
+        if let Some(cancel) = cancel {
+            cancel.check()?;
+        }
         match &f.value {
             FormValue::Value(v) => self.arg(v, limits),
-            FormValue::Part(p) => self.part(p, limits),
+            FormValue::Part(p) => self.part(p, limits, cancel),
             FormValue::Parts(parts) => {
                 if parts.len() > limits.form_parts {
                     return Err(Diagnostic::limited(
@@ -248,7 +379,7 @@ impl Admission {
                     ));
                 }
                 for p in *parts {
-                    self.part(p, limits)?;
+                    self.part(p, limits, cancel)?;
                 }
                 Ok(())
             }
@@ -266,7 +397,15 @@ impl Admission {
         };
         add(&mut self.bytes, minimum, l.body_bytes, LimitKind::BodyBytes)
     }
-    fn part(&mut self, p: &Part<'_>, l: &Limits) -> Result<(), Diagnostic> {
+    fn part(
+        &mut self,
+        p: &Part<'_>,
+        l: &Limits,
+        cancel: Option<&Cancellation>,
+    ) -> Result<(), Diagnostic> {
+        if let Some(cancel) = cancel {
+            cancel.check()?;
+        }
         add(&mut self.work, 1, l.form_work, LimitKind::FormWork)?;
         if p.duplicate {
             return Err(refusal(
@@ -291,6 +430,9 @@ impl Admission {
                 LimitKind::HeaderCount,
             )?;
             for (name, value) in headers {
+                if let Some(cancel) = cancel {
+                    cancel.check()?;
+                }
                 add(&mut self.work, 1, l.form_work, LimitKind::FormWork)?;
                 add(
                     &mut self.metadata,
@@ -313,30 +455,42 @@ impl Admission {
     }
 }
 impl<'a> FormField<'a> {
-    pub(crate) fn arguments(&self, visit: &mut impl FnMut(&Argument<'a>)) {
-        let mut part = |p: &Part<'a>| {
+    pub(crate) fn arguments(
+        &self,
+        cancel: &Cancellation,
+        visit: &mut impl FnMut(&Argument<'a>),
+    ) -> Result<(), Diagnostic> {
+        let mut part = |p: &Part<'a>| -> Result<(), Diagnostic> {
+            cancel.check()?;
             if let Content::Value(v) = &p.content {
-                visit(v)
-            };
+                visit(v);
+            }
             if let Some(headers) = p.headers {
                 for (_, v) in headers {
-                    visit(v)
+                    cancel.check()?;
+                    visit(v);
                 }
             }
+            Ok(())
         };
         match &self.value {
-            FormValue::Value(v) => visit(v),
-            FormValue::Part(p) => part(p),
+            FormValue::Value(v) => {
+                cancel.check()?;
+                visit(v);
+            }
+            FormValue::Part(p) => part(p)?,
             FormValue::Parts(ps) => {
                 for p in *ps {
-                    part(p)
+                    part(p)?;
                 }
             }
         }
+        Ok(())
     }
     pub(crate) fn lower(self, exact: &mut impl FnMut(Argument<'a>) -> Value) -> ReadyField<'a> {
         let content = match self.value {
             FormValue::Value(v) => ReadyValue::One(ReadyPart {
+                explicit: false,
                 payload: Payload::Value(exact(v)),
                 filename: None,
                 media: None,
@@ -356,9 +510,10 @@ impl<'a> FormField<'a> {
 impl<'a> Part<'a> {
     fn lower(self, exact: &mut impl FnMut(Argument<'a>) -> Value) -> ReadyPart<'a> {
         ReadyPart {
+            explicit: true,
             payload: match self.content {
                 Content::Value(v) => Payload::Value(exact(v)),
-                Content::Bytes(b) => Payload::Bytes(b),
+                Content::Bytes(b) => Payload::Bytes(b.into()),
             },
             filename: self.filename,
             media: self.media,
@@ -366,15 +521,38 @@ impl<'a> Part<'a> {
                 .headers
                 .unwrap_or(&[])
                 .iter()
-                .map(|(n, v)| (*n, exact(v.clone())))
+                .map(|(n, v)| (Cow::Borrowed(*n), exact(v.clone())))
                 .collect(),
+        }
+    }
+}
+#[derive(Clone)]
+enum AdmittedBytes<'a> {
+    Borrowed(&'a [u8]),
+    Shared(Arc<[u8]>),
+    Owned(Arc<Vec<u8>>),
+}
+impl<'a> From<FiniteBytes<'a>> for AdmittedBytes<'a> {
+    fn from(bytes: FiniteBytes<'a>) -> Self {
+        match bytes {
+            FiniteBytes::Borrowed(v) => Self::Borrowed(v),
+            FiniteBytes::Shared(v) => Self::Shared(v),
+        }
+    }
+}
+impl AdmittedBytes<'_> {
+    fn bytes(&self) -> &[u8] {
+        match self {
+            Self::Borrowed(v) => v,
+            Self::Shared(v) => v,
+            Self::Owned(v) => v,
         }
     }
 }
 #[derive(Clone)]
 enum Payload<'a> {
     Value(Value),
-    Bytes(FiniteBytes<'a>),
+    Bytes(AdmittedBytes<'a>),
 }
 pub(crate) struct ReadyField<'a> {
     name: Cow<'a, str>,
@@ -386,16 +564,179 @@ enum ReadyValue<'a> {
 }
 #[derive(Clone)]
 struct ReadyPart<'a> {
+    explicit: bool,
     payload: Payload<'a>,
     filename: Option<Cow<'a, str>>,
     media: Option<Cow<'a, str>>,
-    headers: Vec<(&'a str, Value)>,
+    headers: Vec<(Cow<'a, str>, Value)>,
+}
+// Convert only at the explicitly elected ownership boundary. Fluent lowering
+// never calls these helpers. Metadata has already been admitted before copying.
+fn owned_text(text: Cow<'_, str>, cancel: &Cancellation) -> Result<Cow<'static, str>, Diagnostic> {
+    cancel.check()?;
+    match text {
+        Cow::Owned(text) => Ok(Cow::Owned(text)),
+        Cow::Borrowed(text) => {
+            let mut bytes = Vec::with_capacity(text.len());
+            for chunk in text.as_bytes().chunks(8192) {
+                crate::schema::checkpoint(cancel)?;
+                bytes.extend_from_slice(chunk);
+            }
+            Ok(Cow::Owned(
+                String::from_utf8(bytes).expect("original UTF-8"),
+            ))
+        }
+    }
+}
+impl ReadyField<'_> {
+    fn into_owned(self, cancel: &Cancellation) -> Result<ReadyField<'static>, Diagnostic> {
+        Ok(ReadyField {
+            name: owned_text(self.name, cancel)?,
+            content: match self.content {
+                ReadyValue::One(p) => ReadyValue::One(p.into_owned(cancel)?),
+                ReadyValue::Many(parts) => {
+                    let mut owned = Vec::with_capacity(parts.len());
+                    for part in parts {
+                        cancel.check()?;
+                        owned.push(part.into_owned(cancel)?);
+                    }
+                    ReadyValue::Many(owned)
+                }
+            },
+        })
+    }
+}
+impl ReadyPart<'_> {
+    fn into_owned(self, cancel: &Cancellation) -> Result<ReadyPart<'static>, Diagnostic> {
+        cancel.check()?;
+        let payload = match self.payload {
+            Payload::Value(v) => Payload::Value(v),
+            Payload::Bytes(AdmittedBytes::Shared(v)) => Payload::Bytes(AdmittedBytes::Shared(v)),
+            Payload::Bytes(AdmittedBytes::Owned(v)) => Payload::Bytes(AdmittedBytes::Owned(v)),
+            Payload::Bytes(AdmittedBytes::Borrowed(v)) => {
+                let mut bytes = Vec::with_capacity(v.len());
+                for chunk in v.chunks(8192) {
+                    crate::schema::checkpoint(cancel)?;
+                    bytes.extend_from_slice(chunk);
+                }
+                // Arc<Vec> shares the completed allocation without a second
+                // data-sized Vec-to-Arc-slice relocation or unsafe initialization.
+                Payload::Bytes(AdmittedBytes::Owned(Arc::new(bytes)))
+            }
+        };
+        let mut headers = Vec::with_capacity(self.headers.len());
+        for (name, value) in self.headers {
+            headers.push((owned_text(name, cancel)?, value));
+        }
+        Ok(ReadyPart {
+            explicit: self.explicit,
+            payload,
+            filename: self.filename.map(|v| owned_text(v, cancel)).transpose()?,
+            media: self.media.map(|v| owned_text(v, cancel)).transpose()?,
+            headers,
+        })
+    }
+}
+/// Reapply ordered logical use admission without copying payloads or reparsing exact values.
+pub(crate) fn admit_ready(
+    fields: &[ReadyField<'_>],
+    limits: &Limits,
+    cancel: &Cancellation,
+) -> Result<(), Diagnostic> {
+    let mut budget = Admission::default();
+    for (index, field) in fields.iter().enumerate() {
+        cancel.check()?;
+        let result = (|| {
+            if index >= limits.form_fields {
+                return Err(Diagnostic::limited(
+                    LimitKind::FormFields,
+                    limits.form_fields,
+                    index.saturating_add(1),
+                ));
+            }
+            add(&mut budget.work, 1, limits.form_work, LimitKind::FormWork)?;
+            add(
+                &mut budget.metadata,
+                field.name.len(),
+                limits.form_metadata_bytes,
+                LimitKind::FormMetadataBytes,
+            )?;
+            budget.comparisons(index, limits)?;
+            match &field.content {
+                ReadyValue::One(p) => budget.ready_part(p, limits, cancel),
+                ReadyValue::Many(parts) => {
+                    if parts.len() > limits.form_parts {
+                        return Err(Diagnostic::limited(
+                            LimitKind::FormParts,
+                            limits.form_parts,
+                            parts.len(),
+                        ));
+                    }
+                    for part in parts {
+                        budget.ready_part(part, limits, cancel)?;
+                    }
+                    Ok(())
+                }
+            }
+        })();
+        result.map_err(|e| field_context(e, index, &field.name, None))?;
+    }
+    Ok(())
+}
+impl Admission {
+    fn ready_part(
+        &mut self,
+        part: &ReadyPart<'_>,
+        limits: &Limits,
+        cancel: &Cancellation,
+    ) -> Result<(), Diagnostic> {
+        cancel.check()?;
+        // Plain values don't charge Part metadata/count, matching initial admission.
+        if part.explicit {
+            add(&mut self.work, 1, limits.form_work, LimitKind::FormWork)?;
+            add(&mut self.parts, 1, limits.form_parts, LimitKind::FormParts)?;
+        }
+        for text in [&part.filename, &part.media].into_iter().flatten() {
+            add(
+                &mut self.metadata,
+                text.len(),
+                limits.form_metadata_bytes,
+                LimitKind::FormMetadataBytes,
+            )?;
+        }
+        add(
+            &mut self.headers,
+            part.headers.len(),
+            limits.headers,
+            LimitKind::HeaderCount,
+        )?;
+        for (name, value) in &part.headers {
+            cancel.check()?;
+            add(&mut self.work, 1, limits.form_work, LimitKind::FormWork)?;
+            add(
+                &mut self.metadata,
+                name.len(),
+                limits.form_metadata_bytes,
+                LimitKind::FormMetadataBytes,
+            )?;
+            self.arg(&Argument::Exact(value.clone()), limits)?;
+        }
+        match &part.payload {
+            Payload::Value(v) => self.arg(&Argument::Exact(v.clone()), limits),
+            Payload::Bytes(b) => add(
+                &mut self.bytes,
+                b.bytes().len(),
+                limits.body_bytes,
+                LimitKind::BodyBytes,
+            ),
+        }
+    }
 }
 #[derive(Clone)]
 enum Piece<'a> {
     Scalar(Value),
     Json(Value),
-    Bytes(FiniteBytes<'a>),
+    Bytes(AdmittedBytes<'a>),
     Separator(&'static [u8]),
     Delimiter(&'static [u8]),
     Key(Arc<str>),
@@ -431,6 +772,7 @@ struct Work<'a> {
     metadata: usize,
     headers: usize,
     key_data: usize,
+    facts: FactWork<'a>,
 }
 impl Work<'_> {
     fn visit(&mut self) -> Result<(), Diagnostic> {
@@ -486,7 +828,7 @@ fn field_context(error: Diagnostic, index: usize, name: &str, item: Option<usize
 pub(crate) fn encode<'a>(
     graph: &crate::graph::Graph,
     fields: &[ReadyField<'a>],
-    media: &MediaDescription,
+    media: &MediaDeclaration,
     selected: &str,
     edition: Edition,
     limits: &Limits,
@@ -526,8 +868,7 @@ pub(crate) fn encode<'a>(
         ));
     }
     let known = match &media.fields {
-        BodyFields::Declared(fs) => fs.as_slice(),
-        BodyFields::Partial { fields, .. } => fields.as_slice(),
+        FieldDeclarations::Declared(fs) => fs.as_slice(),
         _ => &[],
     };
     let mut work = Work {
@@ -539,6 +880,7 @@ pub(crate) fn encode<'a>(
         metadata: 0,
         headers: 0,
         key_data: 0,
+        facts: FactWork::new(limits, cancel),
     };
     let mut out = Vec::new();
     for declared in known {
@@ -566,22 +908,25 @@ pub(crate) fn encode<'a>(
                     break;
                 }
             }
-            // Direct properties can be encoded independently of unrelated schema
-            // composition. Missing facts must still refuse before choosing a codec.
-            if desc.is_none()
-                && let BodyFields::Opaque(issue) | BodyFields::Partial { issue, .. } = &media.fields
-            {
-                return Err(located(
-                    &issue.source,
-                    Code::UnsupportedMedia,
-                    FormReason::UnresolvedShape,
-                ));
-            }
             if edition == Edition::Swagger20 && desc.is_none() {
                 return Err(refusal(Code::InvalidSelection, FormReason::UnknownField));
             }
             let schema = desc.map(|d| d.schema.value.clone());
-            let encoding = desc.and_then(|d| d.encoding.clone());
+            let encoding = desc
+                .and_then(|d| d.encoding.clone())
+                .or_else(|| media.encoding.as_ref().and_then(|e| e.get(&field.name)));
+            let styled = style(encoding.as_ref(), edition, multipart)?.is_some();
+            let selection = if edition != Edition::Swagger20 && !styled {
+                Some(crate::form_description::selected_property(
+                    graph,
+                    &crate::form_description::root_selection(media),
+                    &field.name,
+                    &mut work.facts,
+                    &media.authored,
+                )?)
+            } else {
+                None
+            };
             let source = encoding
                 .as_ref()
                 .or(schema.as_ref())
@@ -592,6 +937,7 @@ pub(crate) fn encode<'a>(
                     part,
                     Rules {
                         schema: schema.as_ref(),
+                        selection: selection.as_ref(),
                         encoding: encoding.as_ref(),
                         source,
                         edition,
@@ -618,6 +964,17 @@ pub(crate) fn encode<'a>(
                         ));
                     }
                     let item = schema.as_ref().and_then(|s| s.get("items"));
+                    let item_selection = selection
+                        .as_ref()
+                        .map(|s| {
+                            crate::form_description::selected_items(
+                                graph,
+                                s,
+                                &mut work.facts,
+                                source,
+                            )
+                        })
+                        .transpose()?;
                     for (i, part) in parts.iter().enumerate() {
                         plan_one(
                             &field.name,
@@ -625,6 +982,7 @@ pub(crate) fn encode<'a>(
                             &part.payload,
                             Rules {
                                 schema: item.as_ref(),
+                                selection: item_selection.as_ref(),
                                 encoding: encoding.as_ref(),
                                 source,
                                 edition,
@@ -643,7 +1001,7 @@ pub(crate) fn encode<'a>(
     }
     finish(out, selected, multipart, &mut work)
 }
-fn style(
+pub(crate) fn style(
     encoding: Option<&Value>,
     edition: Edition,
     multipart: bool,
@@ -697,6 +1055,7 @@ fn style(
 #[derive(Clone, Copy)]
 struct Rules<'s> {
     schema: Option<&'s Value>,
+    selection: Option<&'s SchemaSelection>,
     encoding: Option<&'s Value>,
     source: &'s Value,
     edition: Edition,
@@ -711,6 +1070,7 @@ fn plan<'a>(
 ) -> Result<(), Diagnostic> {
     let Rules {
         schema,
+        selection,
         encoding,
         source,
         edition,
@@ -734,6 +1094,20 @@ fn plan<'a>(
         }
         if value.kind() == ValueKind::Array {
             let item = schema.and_then(|s| s.get("items"));
+            let item_selection = if styled.is_none() {
+                selection
+                    .map(|s| {
+                        crate::form_description::selected_items(
+                            work.graph,
+                            s,
+                            &mut work.facts,
+                            source,
+                        )
+                    })
+                    .transpose()?
+            } else {
+                None
+            };
             let legacy = if edition == Edition::Swagger20 {
                 let schema = schema.unwrap();
                 if schema
@@ -809,6 +1183,7 @@ fn plan<'a>(
                         &payload,
                         Rules {
                             schema: item.as_ref(),
+                            selection: item_selection.as_ref(),
                             ..rules
                         },
                         out,
@@ -973,17 +1348,6 @@ fn validate_part(
         ));
     }
     if let Some(s) = schema {
-        if edition != Edition::Swagger20
-            && (s.get("contentEncoding").is_some()
-                || edition == Edition::OpenApi30
-                    && s.get("format").is_some_and(|v| v.as_str() == Some("byte")))
-        {
-            return Err(located(
-                s,
-                Code::UnsupportedMedia,
-                FormReason::UnsupportedCoding,
-            ));
-        }
         if edition == Edition::Swagger20
             && s.get("type").is_some_and(|v| v.as_str() == Some("file"))
             && !matches!(part.payload, Payload::Bytes(_))
@@ -1009,6 +1373,7 @@ fn plan_one<'a>(
 ) -> Result<(), Diagnostic> {
     let Rules {
         schema,
+        selection,
         encoding,
         source,
         edition,
@@ -1027,12 +1392,34 @@ fn plan_one<'a>(
         }
         return plan_style(name, part, value, config, rules, out, work);
     }
+    if styled.is_none()
+        && let Some(selection) = selection
+    {
+        let (coding, sites) = crate::form_description::effective_coding(
+            work.graph,
+            selection,
+            &mut work.facts,
+            source,
+        )?;
+        if coding.is_some() {
+            let site = sites
+                .first()
+                .map(|n| work.graph.value(*n))
+                .unwrap_or_else(|| source.clone());
+            return Err(located(
+                &site,
+                Code::UnsupportedMedia,
+                FormReason::UnsupportedCoding,
+            ));
+        }
+    }
     let content_type = if styled.is_some() {
         work.text("text/plain")?
     } else {
         choose_part_media(
             part.media.as_deref(),
             schema,
+            selection,
             encoding,
             source,
             edition,
@@ -1113,6 +1500,7 @@ fn plan_one<'a>(
 fn choose_part_media(
     elected: Option<&str>,
     schema: Option<&Value>,
+    selection: Option<&SchemaSelection>,
     encoding: Option<&Value>,
     source: &Value,
     edition: Edition,
@@ -1123,6 +1511,11 @@ fn choose_part_media(
     let text = if let Some(v) = &declared {
         v.as_str()
             .ok_or_else(|| v.error(Code::InvalidDeclaration))?
+    } else if let Some(selection) = selection {
+        default =
+            crate::form_description::default_media(work.graph, selection, &mut work.facts, source)?
+                .0;
+        default
     } else {
         let s = schema;
         if s.is_some_and(|s| {
@@ -1527,6 +1920,115 @@ fn finish(
     Ok((Arc::from(bytes), media))
 }
 
+/// Use the same style applicability and default-media/coding facts as preparation.
+/// No payload is inspected here and no codec support is asserted.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn describe_representation(
+    graph: &crate::graph::Graph,
+    selection: &SchemaSelection,
+    legacy: Option<&Value>,
+    encoding: Option<&Value>,
+    source: &Value,
+    edition: Edition,
+    multipart: bool,
+    work: &mut crate::prepare::DescriptorWork<'_>,
+    facts: &mut FactWork<'_>,
+) -> Result<crate::FormRepresentationDescription, Diagnostic> {
+    if style(encoding, edition, multipart)?.is_some() {
+        return Ok(crate::FormRepresentationDescription {
+            media_types: vec![work.text(source, "text/plain")?],
+            content_encoding: None,
+            sources: Vec::new(),
+        });
+    }
+    let mut sources = Vec::new();
+    let mut record = |sites: Vec<crate::graph::NodeKey>,
+                      work: &mut crate::prepare::DescriptorWork<'_>|
+     -> Result<(), Diagnostic> {
+        for node in sites {
+            let value = graph.value(node);
+            work.entry(&value)?;
+            sources.push(value.diagnostic_position());
+        }
+        Ok(())
+    };
+    let coding = if edition == Edition::Swagger20 {
+        None
+    } else {
+        let (coding, sites) =
+            crate::form_description::effective_coding(graph, selection, facts, source)?;
+        record(sites, work)?;
+        coding.map(|s| work.text(source, &s)).transpose()?
+    };
+    let declared = encoding.and_then(|e| e.get("contentType"));
+    let default;
+    let text = if let Some(declared) = &declared {
+        declared
+            .as_str()
+            .ok_or_else(|| declared.error(Code::InvalidDeclaration))?
+    } else if edition == Edition::Swagger20 {
+        let schema = legacy.ok_or_else(|| source.error(Code::InvalidDeclaration))?;
+        default = match schema
+            .get("type")
+            .and_then(|v| v.as_str().map(str::to_owned))
+            .as_deref()
+        {
+            Some("file") => "application/octet-stream",
+            Some("string" | "number" | "integer" | "boolean") => "text/plain",
+            Some("array") => "text/plain",
+            _ => return Err(schema.error(Code::UnsupportedMedia)),
+        };
+        default
+    } else {
+        let (media, sites) =
+            crate::form_description::default_media(graph, selection, facts, source)?;
+        record(sites, work)?;
+        default = media;
+        default
+    };
+    // Admit the complete declaration before scanning, parsing or copying entries.
+    let text = work.text(declared.as_ref().unwrap_or(source), text)?;
+    let mut entries = Vec::new();
+    let mut start = 0;
+    let mut quoted = false;
+    let mut escaped = false;
+    for (index, ch) in text.char_indices() {
+        if index % 8192 == 0 {
+            work.declaration(source)?;
+        }
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if quoted && ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if ch == '"' {
+            quoted = !quoted
+        }
+        if ch == ',' && !quoted {
+            work.declaration(source)?;
+            let entry = &text[start..index];
+            crate::prepare::parse_media(entry, true)?;
+            entries.push(work.text(source, entry.trim())?);
+            start = index + 1;
+        }
+    }
+    if quoted || escaped {
+        return Err(source.error(Code::InvalidMedia));
+    }
+    work.declaration(source)?;
+    let entry = &text[start..];
+    crate::prepare::parse_media(entry, true)?;
+    entries.push(work.text(source, entry.trim())?);
+    Ok(crate::FormRepresentationDescription {
+        media_types: entries,
+        content_encoding: coding,
+        sources,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1553,6 +2055,7 @@ mod tests {
                 metadata: 0,
                 headers: 0,
                 key_data: 0,
+                facts: FactWork::new(&limits, &cancel),
             };
             let bytes: Arc<[u8]> = Arc::from(b"payload".as_slice());
             let owner = Arc::downgrade(&bytes);
@@ -1560,7 +2063,12 @@ mod tests {
             let mut reserved = 0;
             for _ in 0..maximum {
                 let previous = pieces.capacity();
-                push_piece(&mut pieces, Piece::Bytes(bytes.clone().into()), &mut work).unwrap();
+                push_piece(
+                    &mut pieces,
+                    Piece::Bytes(AdmittedBytes::Shared(bytes.clone())),
+                    &mut work,
+                )
+                .unwrap();
                 if pieces.capacity() != previous {
                     reserved += pieces.capacity();
                 }
@@ -1578,8 +2086,12 @@ mod tests {
             // Cumulative requested slots remain linear across all growth steps.
             assert!(reserved <= 4 * maximum);
             let before = (pieces.len(), pieces.capacity(), Arc::strong_count(&bytes));
-            let error =
-                push_piece(&mut pieces, Piece::Bytes(bytes.clone().into()), &mut work).unwrap_err();
+            let error = push_piece(
+                &mut pieces,
+                Piece::Bytes(AdmittedBytes::Shared(bytes.clone())),
+                &mut work,
+            )
+            .unwrap_err();
             assert!(matches!(
                 error.reason(),
                 Some(DiagnosticReason::Limit {
@@ -1595,9 +2107,13 @@ mod tests {
             work.visits = 0;
             cancel.cancel();
             assert_eq!(
-                push_piece(&mut pieces, Piece::Bytes(bytes.clone().into()), &mut work)
-                    .unwrap_err()
-                    .code(),
+                push_piece(
+                    &mut pieces,
+                    Piece::Bytes(AdmittedBytes::Shared(bytes.clone())),
+                    &mut work
+                )
+                .unwrap_err()
+                .code(),
                 Code::Cancelled
             );
             assert_eq!(
@@ -1636,6 +2152,7 @@ mod tests {
             metadata: 0,
             headers: 0,
             key_data: 0,
+            facts: FactWork::new(&limits, &cancel),
         };
         finish(
             vec![Emission {

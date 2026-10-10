@@ -1,0 +1,39 @@
+{
+  "openapi": "3.1.2",
+  "servers": [
+    {
+      "url": "https://api.example"
+    }
+  ],
+  "paths": {
+    "/send": {
+      "post": {
+        "operationId": "send",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "p": {
+                    "$ref": "field"
+                  }
+                }
+              },
+              "encoding": {
+                "p": {
+                  "contentType": "application/json"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "ok"
+          }
+        }
+      }
+    }
+  }
+}

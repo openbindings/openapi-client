@@ -202,7 +202,7 @@ fn strict_header_rules_do_not_drop_supplied_values_or_optional_declarations() {
     );
 }
 #[test]
-fn explicit_json_needs_no_unrelated_schema_evaluation_and_keeps_number_lexemes() {
+fn explicit_json_cannot_erase_unknown_coding_but_keeps_partial_inventory() {
     let spec = json!({"openapi":"3.1.2","servers":[{"url":"https://api.example"}],"paths":{"/":{"post":{"operationId":"send","requestBody":{"content":{"multipart/form-data":{"schema":{"allOf":[{"$ref":"external.json"}],"required":["ignored"],"properties":{"metadata":{"$ref":"other.json"}}},"encoding":{"metadata":{"contentType":"application/json"}}}}}}}}});
     let doc = Document::parse(spec.to_string(), None, Limits::default()).unwrap();
     assert!(matches!(
@@ -221,18 +221,23 @@ fn explicit_json_needs_no_unrelated_schema_evaluation_and_keeps_number_lexemes()
         Limits::default(),
     )
     .unwrap();
-    let req = doc
+    let error = doc
         .operation_id("send")
         .unwrap()
         .request()
         .form([FormField::new("metadata", exact.root())])
         .prepare()
-        .unwrap();
-    assert!(
-        std::str::from_utf8(req.body().unwrap())
-            .unwrap()
-            .contains(exact.root().raw())
+        .unwrap_err();
+    assert_eq!(error.diagnostic().code(), Code::UnsupportedSchema);
+    assert_eq!(
+        error.diagnostic().reason(),
+        Some(&DiagnosticReason::Schema(SchemaReason::Composition))
     );
+    assert_eq!(
+        error.diagnostic().location().unwrap().pointer,
+        "/paths/~1/post/requestBody/content/multipart~1form-data/schema/allOf"
+    );
+    assert!(matches!(error, RequestError::Preparation(_)));
 }
 #[test]
 fn field_iterator_stops_at_first_refusal_and_does_not_convert_later_data() {
@@ -341,7 +346,7 @@ fn media_fields_remain_representation_specific_and_schema_required_is_a_hint() {
     let op = doc.operation_id("send").unwrap();
     let body = op.describe().unwrap().request_body.unwrap();
     for media in &body.media {
-        let BodyFields::Declared(fields) = &media.fields else {
+        let BodyFields::Declared { fields, .. } = &media.fields else {
             panic!("declared")
         };
         if media.media_type.starts_with("application/") {
@@ -526,7 +531,7 @@ fn swagger_implicit_form_media_preserves_fields_and_requires_a_choice() {
             assert!(!body.media_unrestricted);
             assert_eq!(body.media.len(), 2);
             for representation in &body.media {
-                let BodyFields::Declared(fields) = &representation.fields else {
+                let BodyFields::Declared { fields, .. } = &representation.fields else {
                     panic!("known form fields")
                 };
                 assert_eq!(fields.len(), 1);
