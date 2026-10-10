@@ -1101,7 +1101,7 @@ impl Value {
         for token in pointer[1..].split('/') {
             let owned;
             let decoded = if token.contains('~') {
-                let mut decoded = String::with_capacity(token.len());
+                let mut decoded = String::new();
                 let mut chars = token.chars();
                 while let Some(c) = chars.next() {
                     if c == '~' {
