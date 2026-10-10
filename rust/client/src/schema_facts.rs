@@ -98,8 +98,8 @@ impl<'a> FactWork<'a> {
 #[derive(Clone, Copy)]
 struct Suffix {
     hops: usize,
-    leaf: NodeKey,
-    last_edge: NodeKey,
+    // Immediate edges retain source order. No copied transitive paths.
+    children: [Option<(NodeKey, NodeKey)>; 2],
 }
 enum Task {
     Visit(NodeKey, usize, Option<NodeKey>),
@@ -158,25 +158,11 @@ pub(crate) fn query(
         let (node, depth, incoming) = match task {
             Task::Exit(node, children) => {
                 let value = graph.value(node);
-                let mut suffix = Suffix {
-                    hops: 0,
-                    leaf: node,
-                    last_edge: node,
-                };
-                for (child, edge) in children.into_iter().flatten() {
+                let mut suffix = Suffix { hops: 0, children };
+                for (child, _) in children.into_iter().flatten() {
                     work.charge(1, &value)?;
                     let child = completed.get(&child).expect("completed child");
-                    if child.hops + 1 > suffix.hops {
-                        suffix = Suffix {
-                            hops: child.hops + 1,
-                            leaf: child.leaf,
-                            last_edge: if child.hops == 0 {
-                                edge
-                            } else {
-                                child.last_edge
-                            },
-                        };
-                    }
+                    suffix.hops = suffix.hops.max(child.hops + 1);
                 }
                 work.charge(1, &value)?;
                 active.remove(&node);
@@ -203,27 +189,12 @@ pub(crate) fn query(
         }
         if let Some(suffix) = completed.get(&node) {
             work.at(1, &value, WorkStage::Memo)?;
-            // A memo is an optimization, not a change to path admission. The
-            // first reached ceiling wins; a reference edge is checked before
-            // entering its target when both ceilings coincide.
-            let reference = (
-                work.limits.reference_steps,
-                LimitKind::ReferenceDepth,
-                suffix.last_edge,
-            );
-            let facts = (
-                work.limits.schema_fact_depth,
-                LimitKind::SchemaFactDepth,
-                suffix.leaf,
-            );
-            let checks = if reference.0 <= facts.0 {
-                [reference, facts]
-            } else {
-                [facts, reference]
-            };
-            for (maximum, kind, site) in checks {
-                bound(depth, suffix.hops, maximum, kind)
-                    .map_err(|e| graph.value(site).locate(e))?;
+            let maximum = work
+                .limits
+                .reference_steps
+                .min(work.limits.schema_fact_depth);
+            if depth.saturating_add(suffix.hops) > maximum {
+                check_memo_path(graph, &completed, node, depth, work)?;
             }
             continue;
         }
@@ -313,6 +284,62 @@ pub(crate) fn query(
             provenance: result.provenance,
         },
     })
+}
+// A failing memo hit needs the first refused edge/node, not the deepest leaf.
+// Successful subgraphs are pruned by their suffix bound. At most two immediate
+// edges are inspected per step; the first failing path is traced once and exits.
+fn check_memo_path(
+    graph: &Graph,
+    completed: &HashMap<NodeKey, Suffix>,
+    mut node: NodeKey,
+    mut depth: usize,
+    work: &mut FactWork<'_>,
+) -> Result<(), Diagnostic> {
+    loop {
+        let value = graph.value(node);
+        work.at(1, &value, WorkStage::Memo)?;
+        let suffix = completed.get(&node).expect("completed memo path");
+        // Query resolves/checks its immediate edges in keyword order before
+        // visiting either child. Preserve that order, including ties.
+        for (_, edge) in suffix.children.into_iter().flatten() {
+            work.charge(1, &value)?;
+            bound(
+                0,
+                depth.saturating_add(1),
+                work.limits.reference_steps,
+                LimitKind::ReferenceDepth,
+            )
+            .map_err(|e| graph.value(edge).locate(e))?;
+        }
+        let maximum = work
+            .limits
+            .reference_steps
+            .min(work.limits.schema_fact_depth);
+        let mut next = None;
+        // The iterative DFS stack visits $ref before $dynamicRef. Choose the
+        // first child whose completed path cannot fit; earlier fitting children
+        // cannot supply a refusal and need not be expanded again.
+        for (child, _) in suffix.children.into_iter().rev().flatten() {
+            work.charge(1, &value)?;
+            let child_suffix = completed.get(&child).expect("completed child");
+            if depth.saturating_add(1).saturating_add(child_suffix.hops) > maximum {
+                bound(
+                    0,
+                    depth.saturating_add(1),
+                    work.limits.schema_fact_depth,
+                    LimitKind::SchemaFactDepth,
+                )
+                .map_err(|e| graph.value(child).locate(e))?;
+                next = Some(child);
+                break;
+            }
+        }
+        let Some(child) = next else {
+            return Ok(());
+        };
+        node = child;
+        depth += 1;
+    }
 }
 fn indeterminate(reason: SchemaReason, node: NodeKey) -> Fact<FactValue> {
     Fact::Indeterminate {
