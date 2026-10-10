@@ -418,7 +418,8 @@ fn limit_case(c: &J) -> J {
             d["components"] = json!({"parameters":params});
             let d = Document::parse(d.to_string(), None, l).unwrap();
             result = d
-                .resolve_protocol("/components/parameters/p0", ReferenceKind::Parameter)
+                .protocol_at("/components/parameters/p0", ReferenceKind::Parameter)
+                .and_then(|site| d.resolve_protocol(&site))
                 .map(|_| ())
                 .map_err(|e| e.code());
         }

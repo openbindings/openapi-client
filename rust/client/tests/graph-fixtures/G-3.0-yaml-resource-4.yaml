@@ -1,0 +1,23 @@
+"openapi": "3.0.4"
+"info":
+  "title": "Independent graph oracle"
+  "version": "1"
+"paths": {}
+"servers":
+  -
+    "url": "https://api.example"
+"components":
+  "examples":
+    "Real":
+      "value":
+        "$ref": "https://evil.example/example-data"
+  "links":
+    "Real":
+      "operationRef": "parts#/paths/~1part/get"
+  "callbacks":
+    "Real":
+      "{$request.query.callback}":
+        "post":
+          "responses":
+            "200":
+              "description": "ok"

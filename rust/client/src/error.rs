@@ -6,6 +6,15 @@ use std::fmt;
 #[non_exhaustive]
 #[allow(missing_docs)]
 pub enum LimitKind {
+    GraphResources,
+    GraphOriginalBytes,
+    GraphRetainedBytes,
+    GraphNodes,
+    GraphReferenceEdges,
+    GraphIdentities,
+    GraphLayouts,
+    GraphMetadataBytes,
+    ReferenceDepth,
     DocumentBytes,
     NormalizedBytes,
     AliasSteps,
@@ -219,12 +228,32 @@ struct Details {
     context: Option<DiagnosticContext>,
     source: Option<SourceContext>,
     context_omitted_for_limit: bool,
+    need_fact: Option<crate::graph::NeedFact>,
+    resource_need: Option<crate::ResourceNeed>,
 }
 
 /// Stable failure categories. Diagnostic text never includes input values.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Code {
+    /// Referenced resource bytes have not been supplied to this immutable snapshot.
+    ResourceUnavailable,
+    /// A non-root reference into an untyped resource needs an explicit layout.
+    ResourceLayoutRequired,
+    /// Two different sources claim the same resource identity.
+    IdentityCollision,
+    /// A source node is requested under incompatible object interpretations.
+    ConflictingObjectContext,
+    /// A protocol reference crosses an unsupported feature-family boundary.
+    ReferencedEditionMismatch,
+    /// Unknown mounted paths prevent a complete or unique operation-ID lookup.
+    IncompleteDiscovery,
+    /// A handle/need belongs to a different immutable snapshot.
+    SnapshotMismatch,
+    /// An authored or supplied resource URI violates the strict admission policy.
+    InvalidResourceUri,
+    /// A relative resource reference has no actual supplied or authored base.
+    MissingResourceBase,
     /// Checked Serde construction refused; inspect its Serialization reason.
     Serialization,
     /// Input bytes are not valid UTF-8; the range marks the decoding failure.
@@ -318,6 +347,17 @@ pub enum Code {
 impl Code {
     fn message(self) -> &'static str {
         match self {
+            Self::ResourceUnavailable => "referenced resource bytes are not available",
+            Self::ResourceLayoutRequired => "the referenced resource needs an explicit layout",
+            Self::IdentityCollision => "different sources claim the same resource identity",
+            Self::ConflictingObjectContext => "the source has conflicting object interpretations",
+            Self::ReferencedEditionMismatch => {
+                "the protocol target uses a different feature family"
+            }
+            Self::IncompleteDiscovery => "operation discovery is incomplete",
+            Self::SnapshotMismatch => "the handle belongs to another document snapshot",
+            Self::InvalidResourceUri => "the resource URI is not admitted",
+            Self::MissingResourceBase => "a relative resource reference requires a real base",
             Self::Serialization => "application data could not be serialized as supported JSON",
             Self::InvalidUtf8 => "input is not valid UTF-8",
             Self::InvalidYaml => "input is not valid YAML",
@@ -468,6 +508,26 @@ impl Diagnostic {
     /// None means no exact source owner was associated; do not assume the OpenAPI document.
     pub fn source_context(&self) -> Option<SourceContext> {
         self.details.as_ref()?.source
+    }
+    /// Typed corrective resource need, consistently exposed by direct/fluent preparation
+    /// and effective inspection. The need owns its originating immutable snapshot.
+    pub fn resource_need(&self) -> Option<&crate::ResourceNeed> {
+        self.details.as_ref()?.resource_need.as_ref()
+    }
+    pub(crate) fn need_fact(mut self, fact: crate::graph::NeedFact) -> Self {
+        self.details.get_or_insert_with(Default::default).need_fact = Some(fact);
+        self
+    }
+    pub(crate) fn bind_graph(mut self, store: &std::sync::Arc<crate::document::Store>) -> Self {
+        if let Some(details) = &mut self.details
+            && let Some(fact) = &details.need_fact
+        {
+            details.resource_need = Some(crate::ResourceNeed {
+                store: store.clone(),
+                fact: fact.clone(),
+            });
+        }
+        self
     }
     /// Whether corrective context was omitted because its complete name exceeded the bound.
     pub fn context_omitted_for_limit(&self) -> bool {

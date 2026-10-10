@@ -1,3 +1,32 @@
+# Resource graph revision (unpublished candidate)
+
+`Document::parse` and existing request calls keep their signatures. Add multiple
+caller-supplied resources with `DocumentBuilder` and `ResourceInput`; incomplete
+protocol dependencies expose `Diagnostic::resource_need()` uniformly. Recovery
+publishes a new snapshot and preserves old values/caches. See [GRAPH.md](GRAPH.md).
+
+**Changed:** direct reference inspection first obtains a typed site through
+`Document::protocol_at(pointer, kind)` or a resource handle's `protocol_at`, then
+calls `Document::resolve_protocol(&site)`. The old raw Value/kind resolver is
+replaced by this one context-checked path. Sites and needs cannot be transferred
+between snapshots. References to nonstandard declaration positions refuse.
+
+**Changed:** operation-ID lookup refuses unresolved mounted Path Item discovery
+because unknown mounts can introduce duplicate IDs. Explicit path/method lookup
+can still select unaffected operations. Visible local validation errors alone do
+not block ID lookup. Graph issues retain authored path order and source locations.
+
+**Changed:** `Limits::descriptor_work` replaces the former aggregate descriptor
+use of `reference_steps`; reference chains keep their own `reference_steps` cap.
+Callers testing/customizing descriptor width should set `descriptor_work`.
+New graph limits independently bound resources and URI/layout metadata.
+
+**Changed:** an OpenAPI 3.2 security key absent from entry-root securitySchemes is
+a URI reference, with typed recovery for missing resources. Exact names retain
+precedence, including URI-looking names. Earlier families retain undefined-name
+refusal. Encoding Header references use the same graph during finite form
+preparation; required/custom header restrictions remain unchanged.
+
 # Edition and document-format revision (unpublished candidate)
 
 `Document::parse` now accepts original JSON or YAML documents from Swagger 2.0

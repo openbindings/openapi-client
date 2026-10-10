@@ -62,13 +62,26 @@ fn undefined_scheme_locates_inherited_and_operation_requirement_in_every_family(
                     op.prepare(&Input::default()).unwrap_err(),
                     op.request().prepare().unwrap_err().diagnostic().clone(),
                 ] {
-                    assert_location(
-                        &error,
-                        DiagnosticReason::UndefinedSecurityScheme,
-                        pointer,
-                        &source,
-                        "[]",
-                    );
+                    if version == "3.2.1" {
+                        assert_eq!(error.code(), Code::ResourceUnavailable);
+                        assert_eq!(error.location().unwrap().pointer, pointer);
+                        let location = error.location().unwrap();
+                        assert_eq!(&source[location.start..location.end], "[]");
+                        let need = error.resource_need().unwrap();
+                        assert_eq!(need.requested_uri(), "https://example.test/missing~/scheme");
+                        assert_eq!(
+                            need.reference_kind(),
+                            dynamic_openapi_client::ReferenceKind::SecurityScheme
+                        );
+                    } else {
+                        assert_location(
+                            &error,
+                            DiagnosticReason::UndefinedSecurityScheme,
+                            pointer,
+                            &source,
+                            "[]",
+                        );
+                    }
                     assert!(!format!("{error:?} {error}").contains("missing~/scheme"));
                 }
                 assert_eq!(doc.source().as_bytes(), source.as_bytes());
@@ -185,8 +198,12 @@ fn operation_references_are_visible_but_never_silently_prepared() {
                     );
                 }
             }
+            assert_eq!(
+                doc.operation_id("healthy").unwrap_err().code(),
+                Code::IncompleteDiscovery
+            );
             assert!(
-                doc.operation_id("healthy")
+                doc.operation("/healthy", Method::Get)
                     .unwrap()
                     .request()
                     .prepare()
@@ -194,7 +211,7 @@ fn operation_references_are_visible_but_never_silently_prepared() {
             );
             assert_eq!(
                 doc.operation("/path-ref", Method::Get).unwrap_err().code(),
-                Code::ExternalReference
+                Code::ResourceUnavailable
             );
         }
     }

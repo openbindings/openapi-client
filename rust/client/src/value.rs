@@ -34,8 +34,10 @@ pub struct Limits {
     /// Maximum discovered operations in one document.
     pub operations: usize,
     /// Maximum steps in one protocol reference or YAML alias chain; also bounds caller input
-    /// and security-requirement counts, and aggregate descriptor declarations/hops per construction.
+    /// and security-requirement counts, while descriptor_work independently bounds aggregate descriptor work.
     pub reference_steps: usize,
+    /// Aggregate effective-descriptor declarations and reference hops, independent of chain depth.
+    pub descriptor_work: usize,
     /// Maximum finite request body and retained delivered response body bytes.
     pub body_bytes: usize,
     /// Maximum logical named form fields, independent of reference traversal.
@@ -71,6 +73,7 @@ impl Default for Limits {
             nodes: 500_000,
             operations: 20_000,
             reference_steps: 128,
+            descriptor_work: 500_000,
             body_bytes: 4 * 1024 * 1024,
             form_fields: 128,
             form_parts: 1024,
@@ -608,6 +611,9 @@ fn root_kind(root: &str) -> ValueKind {
     }
 }
 impl ExactJson {
+    pub(crate) fn node_count(&self) -> usize {
+        self.0.store.nodes().len()
+    }
     /// Validate and index exact UTF-8 JSON. Duplicate decoded keys are rejected.
     /// String values containing unpaired UTF-16 surrogate escapes return UnsupportedString.
     pub fn parse(bytes: impl AsRef<[u8]>, limits: Limits) -> Result<Self, ParseFailure> {

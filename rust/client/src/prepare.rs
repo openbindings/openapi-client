@@ -1,7 +1,7 @@
 use crate::{
     Code, Diagnostic, Edition, Header, Limits, Method, Operation, ReferenceKind, Value, ValueKind,
 };
-use crate::{DiagnosticContext, DiagnosticReason, LimitKind, SelectionKind, document, uri};
+use crate::{DiagnosticContext, DiagnosticReason, LimitKind, SelectionKind, uri};
 use base64::Engine;
 use std::{
     collections::{BTreeMap, HashSet},
@@ -439,14 +439,14 @@ pub(crate) fn same_name(a: &str, b: &str, location: ParameterLocation) -> bool {
 /// Admission for newly allocated per-operation descriptions. Original Value owners
 /// are shared and are not charged as copied source bytes. Limits are per construction,
 /// independent from both the admitted source owner and other compiled cache entries.
-struct DescriptorWork<'a> {
+pub(crate) struct DescriptorWork<'a> {
     limits: &'a Limits,
     bytes: usize,
     nodes: usize,
     references: usize,
 }
 impl<'a> DescriptorWork<'a> {
-    fn new(limits: &'a Limits) -> Self {
+    pub(crate) fn new(limits: &'a Limits) -> Self {
         Self {
             limits,
             bytes: 0,
@@ -485,7 +485,7 @@ impl<'a> DescriptorWork<'a> {
         Self::admit(
             &mut self.references,
             1,
-            self.limits.reference_steps,
+            self.limits.descriptor_work,
             LimitKind::DescriptorWork,
             source,
         )?;
@@ -526,38 +526,27 @@ impl<'a> DescriptorWork<'a> {
             })
             .transpose()
     }
-    fn resolve(
+    pub(crate) fn resolve(
         &mut self,
-        root: &Value,
+        graph: &crate::graph::Graph,
         source: &Value,
         kind: ReferenceKind,
     ) -> Result<crate::ResolvedReference, Diagnostic> {
-        // Reserve the terminal declaration before the resolver grows its chain. The
-        // remaining work/node budgets bound every additional chain entry it may grow.
         self.declaration(source)?;
-        let remaining =
-            (self.limits.reference_steps - self.references).min(self.limits.nodes - self.nodes);
-        let resolved = document::resolve(root, source, kind, remaining).map_err(|error| {
-            if error.code() == Code::Limit {
-                let (kind, maximum, actual) = if self.limits.reference_steps - self.references
-                    <= self.limits.nodes - self.nodes
-                {
-                    (
-                        LimitKind::DescriptorWork,
-                        self.limits.reference_steps,
-                        self.limits.reference_steps.saturating_add(1),
-                    )
+        let work_left = self.limits.descriptor_work - self.references;
+        let nodes_left = self.limits.nodes - self.nodes;
+        let remaining = work_left.min(nodes_left).min(self.limits.reference_steps);
+        let resolved = graph.resolve(source, kind, remaining).map_err(|error| {
+            if error.code() == Code::Limit && remaining < self.limits.reference_steps {
+                let (kind, maximum) = if work_left <= nodes_left {
+                    (LimitKind::DescriptorWork, self.limits.descriptor_work)
                 } else {
-                    (
-                        LimitKind::DescriptorNodes,
-                        self.limits.nodes,
-                        self.limits.nodes.saturating_add(1),
-                    )
+                    (LimitKind::DescriptorNodes, self.limits.nodes)
                 };
                 error.reasoned(DiagnosticReason::Limit {
                     kind,
                     maximum,
-                    actual,
+                    actual: maximum.saturating_add(1),
                 })
             } else {
                 error
@@ -581,7 +570,13 @@ impl Operation {
         let dialect = if matches!(edition, Edition::OpenApi31 | Edition::OpenApi32) {
             if let Some(declared) = value
                 .get("$schema")
-                .or_else(|| self.store.json.root().get("jsonSchemaDialect"))
+                .or_else(|| {
+                    self.store
+                        .graph
+                        .resource_root(&value)
+                        .ok()?
+                        .get("jsonSchemaDialect")
+                })
                 .filter(|v| v.as_str().is_some())
             {
                 Some(work.text(&declared, declared.as_str().expect("string dialect"))?)
@@ -609,7 +604,6 @@ impl Operation {
         work: &mut DescriptorWork<'_>,
     ) -> Result<Vec<crate::ResolvedReference>, Diagnostic> {
         self.store.edition.clone()?;
-        let root = self.store.json.root();
         let mut parameters: Vec<crate::ResolvedReference> = vec![];
         for list in [
             self.path_field("parameters"),
@@ -623,7 +617,8 @@ impl Operation {
                 .elements()
                 .ok_or_else(|| list.error(Code::InvalidDeclaration))?
             {
-                let resolved = work.resolve(&root, &authored, ReferenceKind::Parameter)?;
+                let resolved =
+                    work.resolve(&self.store.graph, &authored, ReferenceKind::Parameter)?;
                 let p = &resolved.target;
                 let location = work.required(p, "in")?;
                 let name = work.required(p, "name")?;
@@ -722,7 +717,7 @@ impl Operation {
                     if self.store.edition != Ok(Edition::OpenApi32) {
                         return Err(value.error(Code::InvalidDeclaration));
                     }
-                    work.resolve(&self.store.json.root(), &value, ReferenceKind::MediaType)?
+                    work.resolve(&self.store.graph, &value, ReferenceKind::MediaType)?
                         .target
                 } else {
                     value.clone()
@@ -957,8 +952,7 @@ impl Operation {
         let Some(body) = self.value().get("requestBody") else {
             return Ok(None);
         };
-        let declaration =
-            work.resolve(&self.store.json.root(), &body, ReferenceKind::RequestBody)?;
+        let declaration = work.resolve(&self.store.graph, &body, ReferenceKind::RequestBody)?;
         let media = self.media_descriptions(&declaration.target, None, work)?;
         work.entry(&declaration.target)?;
         Ok(Some(RequestBodyDescription {
@@ -1130,13 +1124,12 @@ impl Operation {
     fn choose_target(&self, selection: &Selection) -> Result<String, Diagnostic> {
         let root = self.store.json.root();
         if self.store.edition.clone()? != Edition::Swagger20 {
-            return choose_server(
-                self.inspect().servers.as_ref(),
-                self.store.base.as_deref(),
-                selection,
-                &root,
-                &self.store.limits,
-            );
+            let servers = self.inspect().servers;
+            let base = match &servers {
+                Some(value) => self.store.graph.retrieval_base(value),
+                None => self.store.base.as_deref(),
+            };
+            return choose_server(servers.as_ref(), base, selection, &root, &self.store.limits);
         }
         if !selection.variables.is_empty() {
             return Err(root.error(Code::InvalidSelection));
@@ -1164,9 +1157,13 @@ impl Operation {
     /// Inspect effective edition-independent inputs, target choices, representations and security.
     /// This performs no request preparation, credential acquisition or schema evaluation.
     /// Newly copied strings, entries and declaration/reference work have per-construction
-    /// budgets controlled by document_bytes, nodes and reference_steps respectively.
+    /// budgets controlled by document_bytes, nodes and descriptor_work respectively.
+    /// Each reference chain is independently bounded by reference_steps.
     /// Retained source owners and other compiled cache entries are separate resource domains.
     pub fn describe(&self) -> Result<EffectiveOperationDescription, Diagnostic> {
+        self.describe_inner().map_err(|e| e.bind_graph(&self.store))
+    }
+    fn describe_inner(&self) -> Result<EffectiveOperationDescription, Diagnostic> {
         let mut work = DescriptorWork::new(&self.store.limits);
         let parameters = self.parameter_declarations(&mut work)?;
         let request_body = self.body_description(&mut work)?;
@@ -1206,7 +1203,6 @@ impl Operation {
         &self,
         work: &mut DescriptorWork<'_>,
     ) -> Result<Vec<(String, crate::ResolvedReference)>, Diagnostic> {
-        let root = self.store.json.root();
         let mut result = vec![];
         if let Some(responses) = self.value().get("responses") {
             for (key, value) in responses
@@ -1225,7 +1221,8 @@ impl Operation {
                 if !valid {
                     return Err(value.error(Code::InvalidDeclaration));
                 }
-                let declaration = work.resolve(&root, &value, ReferenceKind::Response)?;
+                let declaration =
+                    work.resolve(&self.store.graph, &value, ReferenceKind::Response)?;
                 let key = work.text(&value, key)?;
                 work.entry(&value)?;
                 result.push((key, declaration));
@@ -1260,8 +1257,9 @@ impl Operation {
                 .members()
                 .ok_or_else(|| authored.error(Code::InvalidDeclaration))?
             {
-                let declared = security_source(&root, name, &scopes_source)?;
-                let declaration = work.resolve(&root, &declared, ReferenceKind::SecurityScheme)?;
+                let declared = security_source(&self.store.graph, &root, name, &scopes_source)?;
+                let declaration =
+                    work.resolve(&self.store.graph, &declared, ReferenceKind::SecurityScheme)?;
                 let scheme = describe_security(&declaration.target, edition, work)?;
                 let mut scopes = vec![];
                 for scope in scopes_source
@@ -1303,18 +1301,34 @@ impl Operation {
     }
 }
 
-fn security_source(root: &Value, name: &str, requirement: &Value) -> Result<Value, Diagnostic> {
+fn security_source(
+    graph: &crate::graph::Graph,
+    root: &Value,
+    name: &str,
+    requirement: &Value,
+) -> Result<Value, Diagnostic> {
     let schemes = if Edition::detect(root)? == Edition::Swagger20 {
         root.get("securityDefinitions")
     } else {
         root.get("components")
             .and_then(|v| v.get("securitySchemes"))
     };
-    schemes.and_then(|v| v.get(name)).ok_or_else(|| {
-        requirement
-            .error(Code::InvalidDeclaration)
-            .reasoned(DiagnosticReason::UndefinedSecurityScheme)
-    })
+    if let Some(scheme) = schemes.and_then(|v| v.get(name)) {
+        return Ok(scheme);
+    }
+    if Edition::detect(root)? == Edition::OpenApi32 {
+        return graph
+            .target(
+                requirement,
+                name,
+                ReferenceKind::SecurityScheme,
+                Edition::OpenApi32,
+            )
+            .map(|(value, _)| value);
+    }
+    Err(requirement
+        .error(Code::InvalidDeclaration)
+        .reasoned(DiagnosticReason::UndefinedSecurityScheme))
 }
 fn string_value(source: &Value, key: &str) -> Result<Value, Diagnostic> {
     source
@@ -1585,6 +1599,7 @@ impl Operation {
     pub fn parameters(&self) -> Result<Parameters, Diagnostic> {
         self.parameter_declarations(&mut DescriptorWork::new(&self.store.limits))
             .map(|entries| Parameters { entries })
+            .map_err(|e| e.bind_graph(&self.store))
     }
     fn parameter_declarations(
         &self,
@@ -1799,7 +1814,7 @@ impl Operation {
                 if e.location.is_none() && e.context().is_none() {
                     e = e.contextual(DiagnosticContext::PreparedRequest);
                 }
-                e
+                e.bind_graph(&self.store)
             })
     }
     fn prepare_inner(
@@ -1918,6 +1933,7 @@ impl Operation {
         target.truncate(target.len() - usize::from(target.ends_with('/')));
         target.push_str(&path);
         let (body, body_kind, media) = prepare_body(
+            &self.store.graph,
             compiled.body.as_ref(),
             input,
             form,
@@ -1936,6 +1952,7 @@ impl Operation {
             headers.push(Header::new("Content-Type", media.as_bytes()));
         }
         apply_security(
+            &self.store.graph,
             &root,
             desc.security.as_ref(),
             &target,
@@ -1945,7 +1962,7 @@ impl Operation {
                 query: &mut query,
                 cookies: &mut cookies,
             },
-            limits.reference_steps,
+            &limits,
         )
         .map_err(|e| e.election(SelectionKind::Security, input.selection.security, None))?;
         if !cookies.is_empty() {
@@ -2434,6 +2451,7 @@ pub(crate) fn token(b: u8) -> bool {
 }
 type BodyEncoding = (Option<Arc<[u8]>>, &'static str, Option<String>);
 fn prepare_body(
+    graph: &crate::graph::Graph,
     decl: Option<&RequestBodyDescription>,
     input: &Input,
     form: Option<&[crate::form::ReadyField<'_>]>,
@@ -2544,6 +2562,7 @@ fn prepare_body(
             .map(|(_, m)| m)
             .ok_or_else(|| source.error(Code::UnsupportedMedia))?;
         let (bytes, media) = crate::form::encode(
+            graph,
             form,
             representation,
             &selected,
@@ -2584,12 +2603,13 @@ struct SecurityFields<'a> {
     cookies: &'a mut Vec<(String, String)>,
 }
 fn apply_security(
+    graph: &crate::graph::Graph,
     root: &Value,
     requirements: Option<&Value>,
     target: &str,
     input: &Input,
     fields: SecurityFields<'_>,
-    budget: usize,
+    limits: &Limits,
 ) -> Result<(), Diagnostic> {
     let SecurityFields {
         headers,
@@ -2620,17 +2640,30 @@ fn apply_security(
     let entries = choice
         .members()
         .ok_or_else(|| choice.error(Code::InvalidDeclaration))?;
-    if entries.len() > budget {
-        return Err(choice.error(Code::Limit));
+    if entries.len() > limits.reference_steps {
+        return Err(choice.locate(Diagnostic::limited(
+            LimitKind::InputCount,
+            limits.reference_steps,
+            entries.len(),
+        )));
     }
+    if entries.len() > limits.descriptor_work {
+        return Err(choice.locate(Diagnostic::limited(
+            LimitKind::DescriptorWork,
+            limits.descriptor_work,
+            entries.len(),
+        )));
+    }
+    let mut work = DescriptorWork::new(limits);
     let origin = uri::origin(target)?;
     for (name, scopes) in entries {
         if scopes.kind() != ValueKind::Array {
             return Err(scopes.error(Code::InvalidDeclaration));
         }
-        let source = security_source(root, name, &scopes)?;
-        let scheme =
-            document::resolve(root, &source, ReferenceKind::SecurityScheme, budget)?.target;
+        let source = security_source(graph, root, name, &scopes)?;
+        let scheme = work
+            .resolve(graph, &source, ReferenceKind::SecurityScheme)?
+            .target;
         let kind = security_mechanism(&scheme, Edition::detect(root)?)?;
         if matches!(
             kind,

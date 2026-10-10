@@ -10,6 +10,7 @@ mod cancellation;
 mod deserialize;
 mod document;
 mod error;
+mod graph;
 mod loading;
 mod prepare;
 mod source;
@@ -28,6 +29,10 @@ pub use document::{
 pub use error::{
     Code, Diagnostic, DiagnosticContext, DiagnosticReason, LimitKind, Location, NumericReason,
     NumericTarget, SelectionKind, SerializationReason, VersionReason,
+};
+pub use graph::{
+    DocumentBuilder, GraphLimits, ProtocolSite, ResourceHandle, ResourceId, ResourceInput,
+    ResourceLayout, ResourceNeed, ResourceNeedKind,
 };
 pub use prepare::{
     Body, BodyFieldDescription, BodyFields, Credential, CredentialValue,

@@ -418,6 +418,8 @@ struct Emission<'a> {
     pieces: Vec<Piece<'a>>,
 }
 struct Work<'a> {
+    graph: &'a crate::graph::Graph,
+    declarations: crate::prepare::DescriptorWork<'a>,
     limits: &'a Limits,
     cancel: &'a Cancellation,
     visits: usize,
@@ -477,6 +479,7 @@ fn field_context(error: Diagnostic, index: usize, name: &str, item: Option<usize
 }
 
 pub(crate) fn encode<'a>(
+    graph: &crate::graph::Graph,
     fields: &[ReadyField<'a>],
     media: &MediaDescription,
     selected: &str,
@@ -523,6 +526,8 @@ pub(crate) fn encode<'a>(
         _ => &[],
     };
     let mut work = Work {
+        graph,
+        declarations: crate::prepare::DescriptorWork::new(limits),
         limits,
         cancel,
         visits: 0,
@@ -892,13 +897,10 @@ fn validate_part(
             if name.eq_ignore_ascii_case("content-type") {
                 continue;
             }
-            if header.get("$ref").is_some() {
-                return Err(located(
-                    &header,
-                    Code::UnsupportedMedia,
-                    FormReason::UnresolvedShape,
-                ));
-            }
+            let resolved =
+                work.declarations
+                    .resolve(work.graph, &header, crate::ReferenceKind::Header)?;
+            let header = resolved.target;
             if bool_field(&header, "required", false)? {
                 return Err(located(
                     &header,
@@ -1460,7 +1462,15 @@ mod tests {
             ..Limits::default()
         };
         let cancel = Cancellation::default();
+        let document = crate::Document::parse(
+            br#"{"openapi":"3.2.1","paths":{}}"#,
+            None,
+            Limits::default(),
+        )
+        .unwrap();
         let mut work = Work {
+            graph: &document.0.graph,
+            declarations: crate::prepare::DescriptorWork::new(&limits),
             limits: &limits,
             cancel: &cancel,
             visits: 0,

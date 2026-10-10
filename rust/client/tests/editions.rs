@@ -168,7 +168,7 @@ fn legacy_collections_servers_and_bodyless_calls_follow_original_declarations() 
 }
 
 #[test]
-fn local_references_respect_edition_siblings_and_legacy_body_inheritance() {
+fn root_parameter_definitions_are_only_a_swagger_protocol_position() {
     for version in ["2.0", "3.0.4", "3.1.2", "3.2.1"] {
         let mut fixture = fixture(version);
         let parameter = if version == "2.0" {
@@ -179,6 +179,34 @@ fn local_references_respect_edition_siblings_and_legacy_body_inheritance() {
         fixture["parameters"] = json!({"Id":parameter});
         fixture["paths"]["/items/{id}"]["post"]["parameters"][0] =
             json!({"$ref":"#/parameters/Id","description":"use site"});
+        let doc = document(&fixture);
+        let result = doc.operation_id("create").unwrap().parameters();
+        if version == "2.0" {
+            assert!(result.is_ok());
+        } else {
+            assert_eq!(result.unwrap_err().code(), Code::WrongReferenceKind);
+        }
+    }
+}
+
+#[test]
+fn local_references_respect_edition_siblings_and_legacy_body_inheritance() {
+    for version in ["2.0", "3.0.4", "3.1.2", "3.2.1"] {
+        let mut fixture = fixture(version);
+        let parameter = if version == "2.0" {
+            json!({"name":"id","in":"path","required":true,"type":"string","description":"target"})
+        } else {
+            json!({"name":"id","in":"path","required":true,"schema":{},"description":"target"})
+        };
+        let reference = if version == "2.0" {
+            fixture["parameters"] = json!({"Id":parameter});
+            "#/parameters/Id"
+        } else {
+            fixture["components"]["parameters"] = json!({"Id":parameter});
+            "#/components/parameters/Id"
+        };
+        fixture["paths"]["/items/{id}"]["post"]["parameters"][0] =
+            json!({"$ref":reference,"description":"use site"});
         let doc = document(&fixture);
         let op = doc.operation_id("create").unwrap();
         let resolved = op.parameters().unwrap().iter().next().unwrap().resolved();
@@ -843,7 +871,7 @@ fn descriptor_security_work_is_aggregate_and_located() {
         value.to_string(),
         Some("https://api.example/openapi.json"),
         Limits {
-            reference_steps: 1,
+            descriptor_work: 1,
             ..Limits::default()
         },
     )
@@ -861,7 +889,7 @@ fn descriptor_security_work_is_aggregate_and_located() {
         single.to_string(),
         Some("https://api.example/openapi.json"),
         Limits {
-            reference_steps: 1,
+            descriptor_work: 1,
             ..Limits::default()
         },
     )
@@ -938,7 +966,7 @@ fn descriptor_reference_chain_growth_uses_the_remaining_work_budget() {
         value.to_string(),
         Some("https://api.example/openapi.json"),
         Limits {
-            reference_steps: 2,
+            descriptor_work: 2,
             ..Limits::default()
         },
     )

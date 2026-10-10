@@ -1,4 +1,4 @@
-use crate::{Code, Diagnostic, ExactJson, Limits, ParseFailure, Value, ValueKind};
+use crate::{Code, Diagnostic, ExactJson, Limits, ParseFailure, Value};
 use std::{
     collections::{HashMap, HashSet},
     sync::{
@@ -136,6 +136,7 @@ pub struct ExtensionMethod(Arc<str>);
 /// Expected protocol-object kind. Schema references are intentionally absent.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[allow(missing_docs)]
+#[non_exhaustive]
 pub enum ReferenceKind {
     Parameter,
     RequestBody,
@@ -143,9 +144,14 @@ pub enum ReferenceKind {
     SecurityScheme,
     PathItem,
     MediaType,
+    Header,
+    Example,
+    Link,
+    Callback,
 }
-/// Local reference result with authored siblings and destination kept separate.
+/// Reference result retaining original wrappers, source arenas and targets.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct ResolvedReference {
     /// Original object at the use site.
     pub authored: Value,
@@ -157,109 +163,8 @@ pub struct ResolvedReference {
     pub description: Option<Value>,
     /// Authored local chain in traversal order, including the terminal target.
     pub chain: Vec<Value>,
-}
-pub(crate) fn resolve(
-    root: &Value,
-    node: &Value,
-    kind: ReferenceKind,
-    limit: usize,
-) -> Result<ResolvedReference, Diagnostic> {
-    let edition = Edition::detect(root)?;
-    let mut current = node.clone();
-    let mut seen = HashSet::new();
-    let (mut summary, mut description) = (None, None);
-    let mut steps = 0;
-    let mut chain: Vec<Value> = vec![];
-    let mut path_fields = HashSet::new();
-    loop {
-        if current.kind() != ValueKind::Object {
-            return Err(current.error(Code::WrongReferenceKind));
-        }
-        if !seen.insert(current.identity()) {
-            return Err(current.error(Code::ReferenceCycle));
-        }
-        if kind == ReferenceKind::PathItem {
-            for (name, _) in current.members().unwrap() {
-                if name != "$ref" && !name.starts_with("x-") && !path_fields.insert(name.to_owned())
-                {
-                    return Err(current.error(Code::AmbiguousReference));
-                }
-            }
-        }
-        chain.push(current.clone());
-        let Some(reference) = current.get("$ref") else {
-            break;
-        };
-        if steps >= limit {
-            return Err(reference.error(Code::Limit));
-        }
-        steps += 1;
-        if description.is_none()
-            && (kind == ReferenceKind::PathItem || edition.reference_siblings())
-        {
-            description = current.get("description");
-        }
-        if summary.is_none() && kind == ReferenceKind::PathItem {
-            summary = current.get("summary");
-        }
-        let s = reference
-            .as_str()
-            .ok_or_else(|| reference.error(Code::InvalidReference))?;
-        if !s.starts_with('#') {
-            return Err(reference.error(Code::ExternalReference));
-        }
-        fluent_uri::UriRef::parse(s).map_err(|_| reference.error(Code::InvalidReference))?;
-        let pointer = crate::uri::percent_decode(&s[1..]).map_err(|e| reference.error(e.code))?;
-        let next = root
-            .pointer(&pointer)
-            .map_err(|e| reference.error(e.code))?;
-        if kind == ReferenceKind::PathItem {
-            for (name, _) in current.members().expect("object checked") {
-                if name != "$ref" && !name.starts_with("x-") && next.get(name).is_some() {
-                    return Err(current.error(Code::AmbiguousReference));
-                }
-            }
-        }
-        current = next;
-    }
-    let valid = match kind {
-        ReferenceKind::MediaType => edition == Edition::OpenApi32,
-        ReferenceKind::Parameter => {
-            current.get("name").is_some_and(|v| v.as_str().is_some())
-                && current.get("in").is_some_and(|v| v.as_str().is_some())
-        }
-        ReferenceKind::RequestBody => current
-            .get("content")
-            .is_some_and(|v| v.kind() == ValueKind::Object),
-        ReferenceKind::Response => current
-            .get("description")
-            .is_some_and(|v| v.as_str().is_some()),
-        ReferenceKind::SecurityScheme => current.get("type").is_some_and(|v| v.as_str().is_some()),
-        ReferenceKind::PathItem => current.members().unwrap().all(|(name, _)| {
-            name.starts_with("x-")
-                || matches!(
-                    name,
-                    "summary" | "description" | "servers" | "parameters" | "additionalOperations"
-                )
-                || Method::parse(name).is_some_and(|_| name == name.to_ascii_lowercase())
-        }),
-    };
-    if !valid {
-        return Err(current.error(Code::WrongReferenceKind));
-    }
-    if description.is_none() {
-        description = current.get("description");
-    }
-    if summary.is_none() && kind == ReferenceKind::PathItem {
-        summary = current.get("summary");
-    }
-    Ok(ResolvedReference {
-        authored: node.clone(),
-        target: current,
-        summary,
-        description,
-        chain,
-    })
+    /// False when an authored identity exists but resolution used a retrieval alias.
+    pub canonical: bool,
 }
 pub(crate) struct Record {
     pub path: String,
@@ -271,6 +176,8 @@ pub(crate) struct Record {
     pub compiled: OnceLock<Result<Arc<crate::prepare::Compiled>, Diagnostic>>,
 }
 pub(crate) struct Store {
+    pub graph: crate::graph::Graph,
+    pub entry: crate::ResourceId,
     pub json: ExactJson,
     pub edition: Result<Edition, Diagnostic>,
     pub base: Option<String>,
@@ -279,6 +186,8 @@ pub(crate) struct Store {
     pub ids: HashMap<String, Vec<usize>>,
     pub paths: HashMap<(String, Method), usize>,
     pub path_errors: HashMap<String, Diagnostic>,
+    incomplete_paths: HashSet<String>,
+    pub path_order: Vec<String>,
     pub cached: AtomicUsize,
 }
 /// Immutable OpenAPI document with stable owned operation handles.
@@ -349,51 +258,120 @@ impl Document {
         limits: Limits,
         cancellation: &crate::Cancellation,
     ) -> Result<Self, ParseFailure> {
-        let json = crate::loading::parse(bytes.as_ref(), limits.clone(), cancellation)?;
-        let root = json.root();
-        if base.is_some_and(|b| b.len() > limits.target_bytes) {
+        cancellation.check().map_err(|diagnostic| ParseFailure {
+            diagnostic,
+            source: Arc::from([]),
+        })?;
+        if bytes.as_ref().len() > limits.document_bytes {
             return Err(ParseFailure {
                 diagnostic: Diagnostic::limited(
-                    crate::LimitKind::TargetBytes,
-                    limits.target_bytes,
-                    base.unwrap().len(),
-                )
-                .contextual(crate::DiagnosticContext::CallerInput),
-                source: Arc::from(bytes.as_ref()),
+                    crate::LimitKind::DocumentBytes,
+                    limits.document_bytes,
+                    bytes.as_ref().len(),
+                ),
+                source: Arc::from([]),
             });
         }
+        if let Some(base) = base {
+            crate::graph::bound(
+                0,
+                base.len(),
+                limits.target_bytes,
+                crate::LimitKind::TargetBytes,
+            )
+            .map_err(|diagnostic| ParseFailure {
+                diagnostic: diagnostic.contextual(crate::DiagnosticContext::CallerInput),
+                source: Arc::from([]),
+            })?;
+        }
+        let json = crate::loading::parse(bytes.as_ref(), limits.clone(), cancellation)?;
+        let metadata = match base {
+            Some(base) => {
+                crate::ResourceInput::at(base, Arc::<[u8]>::from([])).map_err(|diagnostic| {
+                    ParseFailure {
+                        diagnostic,
+                        source: Arc::from(bytes.as_ref()),
+                    }
+                })?
+            }
+            None => crate::ResourceInput::anonymous(Arc::<[u8]>::from([])),
+        };
+        let mut builder = crate::DocumentBuilder::new(limits, crate::GraphLimits::default());
+        let entry = builder
+            .admit_parsed(json, metadata, cancellation)
+            .map_err(|diagnostic| ParseFailure {
+                diagnostic,
+                source: Arc::from(bytes.as_ref()),
+            })?;
+        builder
+            .build_with_cancellation(entry, cancellation)
+            .map_err(|diagnostic| ParseFailure {
+                diagnostic,
+                source: Arc::from(bytes.as_ref()),
+            })
+    }
+
+    pub(crate) fn from_graph(
+        graph: crate::graph::Graph,
+        entry: crate::ResourceId,
+        limits: Limits,
+        cancellation: &crate::Cancellation,
+    ) -> Result<Self, Diagnostic> {
+        let resource = graph
+            .resource(entry)
+            .ok_or_else(|| Diagnostic::new(Code::MissingReference))?;
+        let json = resource.json.clone();
+        let base = resource.retrieval.clone();
+        let root = json.root();
         let edition = Edition::detect(&root);
         let mut store = Store {
+            graph,
+            entry,
             json,
             edition,
-            base: base.map(str::to_owned),
+            base,
             limits,
             records: vec![],
             ids: HashMap::new(),
             paths: HashMap::new(),
             path_errors: HashMap::new(),
+            incomplete_paths: HashSet::new(),
+            path_order: vec![],
             cached: AtomicUsize::new(0),
         };
         if let Some(paths) = root.get("paths")
             && let Some(items) = paths.members()
         {
             for (path, item) in items {
-                cancellation.check().map_err(|diagnostic| ParseFailure {
-                    diagnostic,
-                    source: Arc::from(bytes.as_ref()),
-                })?;
+                cancellation.check()?;
                 if !path.starts_with('/') {
                     continue;
                 }
-                let resolved = resolve(
-                    &root,
-                    &item,
-                    ReferenceKind::PathItem,
-                    store.limits.reference_steps,
-                );
+                store.path_order.push(path.to_owned());
+                // Unsupported editions still expose authored operations for raw inspection.
+                // Semantic consumers report the edition diagnostic before compiling them.
+                let resolved = if store.edition.is_err() {
+                    Ok(ResolvedReference {
+                        authored: item.clone(),
+                        target: item.clone(),
+                        summary: None,
+                        description: None,
+                        chain: vec![item.clone()],
+                        canonical: true,
+                    })
+                } else {
+                    store.graph.resolve(
+                        &item,
+                        ReferenceKind::PathItem,
+                        store.limits.reference_steps,
+                    )
+                };
                 let (path_chain, path_error) = match resolved {
                     Ok(r) => (r.chain, None),
                     Err(e) => {
+                        if item.get("$ref").is_some() {
+                            store.incomplete_paths.insert(path.to_owned());
+                        }
                         store.path_errors.insert(path.to_owned(), e.clone());
                         (vec![item.clone()], Some(e))
                     }
@@ -409,10 +387,7 @@ impl Document {
                                 if store.records.len().saturating_add(operations.len())
                                     >= store.limits.operations
                                 {
-                                    return Err(ParseFailure {
-                                        diagnostic: node.error(Code::Limit),
-                                        source: Arc::from(bytes.as_ref()),
-                                    });
+                                    return Err(node.error(Code::Limit));
                                 }
                                 operations.push((method, node, None));
                             } else if name == "additionalOperations" {
@@ -431,26 +406,25 @@ impl Document {
                                                     .saturating_add(operations.len())
                                                     >= store.limits.operations
                                                 {
-                                                    return Err(ParseFailure {
-                                                        diagnostic: operation.error(Code::Limit),
-                                                        source: Arc::from(bytes.as_ref()),
-                                                    });
+                                                    return Err(operation.error(Code::Limit));
                                                 }
                                                 operations.push((method, operation, error));
                                             }
                                             Err(_) => {
-                                                store.path_errors.insert(
-                                                    path.to_owned(),
-                                                    operation.error(Code::InvalidDeclaration),
-                                                );
+                                                store
+                                                    .path_errors
+                                                    .entry(path.to_owned())
+                                                    .or_insert_with(|| {
+                                                        operation.error(Code::InvalidDeclaration)
+                                                    });
                                             }
                                         }
                                     }
                                 } else {
-                                    store.path_errors.insert(
-                                        path.to_owned(),
-                                        node.error(Code::InvalidDeclaration),
-                                    );
+                                    store
+                                        .path_errors
+                                        .entry(path.to_owned())
+                                        .or_insert_with(|| node.error(Code::InvalidDeclaration));
                                 }
                             }
                         }
@@ -459,10 +433,7 @@ impl Document {
                                 continue;
                             }
                             if store.records.len() >= store.limits.operations {
-                                return Err(ParseFailure {
-                                    diagnostic: node.error(Code::Limit),
-                                    source: Arc::from(bytes.as_ref()),
-                                });
+                                return Err(node.error(Code::Limit));
                             }
                             let index = store.records.len();
                             if let Some(id) = node
@@ -526,13 +497,24 @@ impl Document {
                 index,
             })
         } else if let Some(e) = self.0.path_errors.get(path) {
-            Err(e.clone())
+            Err(e.clone().bind_graph(&self.0))
         } else {
             Err(self.root().error(Code::MissingOperation))
         }
     }
     /// Select by a unique operation ID; duplicates are not silently resolved.
     pub fn operation_id(&self, id: &str) -> Result<Operation, Diagnostic> {
+        if let Some(error) = self
+            .0
+            .path_order
+            .iter()
+            .filter(|path| self.0.incomplete_paths.contains(*path))
+            .find_map(|path| self.0.path_errors.get(path))
+        {
+            let mut error = error.clone();
+            error.code = Code::IncompleteDiscovery;
+            return Err(error.bind_graph(&self.0));
+        }
         match self.0.ids.get(id) {
             Some(v) if v.len() == 1 => Ok(Operation {
                 store: self.0.clone(),
@@ -542,20 +524,73 @@ impl Document {
             None => Err(self.root().error(Code::MissingOperation)),
         }
     }
-    /// Resolve a meaningful protocol Reference Object at a caller-selected document pointer.
-    /// This never follows Schema Object references or performs acquisition.
-    pub fn resolve_protocol(
+    /// Obtain a typed protocol site in the entry source.
+    pub fn protocol_at(
         &self,
         pointer: &str,
         kind: ReferenceKind,
+    ) -> Result<crate::ProtocolSite, Diagnostic> {
+        self.entry_resource().protocol_at(pointer, kind)
+    }
+    /// Resolve a validated site from this exact snapshot. This never acquires resources.
+    pub fn resolve_protocol(
+        &self,
+        site: &crate::ProtocolSite,
     ) -> Result<ResolvedReference, Diagnostic> {
-        let root = self.root();
-        let node = root.pointer(pointer)?;
-        resolve(&root, &node, kind, self.0.limits.reference_steps)
+        if !Arc::ptr_eq(&self.0, &site.store) {
+            return Err(Diagnostic::new(Code::SnapshotMismatch));
+        }
+        self.0
+            .graph
+            .resolve(&site.node, site.kind, self.0.limits.reference_steps)
+            .map_err(|e| e.bind_graph(&self.0))
+    }
+    /// Entry source handle, retaining its original identity and bytes.
+    pub fn entry_resource(&self) -> crate::ResourceHandle {
+        crate::ResourceHandle {
+            store: self.0.clone(),
+            id: self.0.entry,
+        }
+    }
+    /// Select an admitted source by its stable identity.
+    pub fn resource(&self, id: crate::ResourceId) -> Option<crate::ResourceHandle> {
+        self.0.graph.resource(id).map(|_| crate::ResourceHandle {
+            store: self.0.clone(),
+            id,
+        })
+    }
+    /// All admitted original sources in admission order.
+    pub fn resources(&self) -> impl ExactSizeIterator<Item = crate::ResourceHandle> + '_ {
+        self.0
+            .graph
+            .resources
+            .iter()
+            .map(|r| crate::ResourceHandle {
+                store: self.0.clone(),
+                id: r.id,
+            })
+    }
+    /// Whether all mounted entry paths were discovered without local path errors.
+    pub fn discovery_complete(&self) -> bool {
+        self.0.incomplete_paths.is_empty()
+    }
+    /// Located path issues, with uniformly available typed resource needs.
+    pub fn graph_issues(&self) -> impl Iterator<Item = Diagnostic> + '_ {
+        self.0
+            .path_order
+            .iter()
+            .filter_map(|path| self.0.path_errors.get(path))
+            .cloned()
+            .map(|e| e.bind_graph(&self.0))
     }
     /// Accounted immutable JSON storage; caches are reported separately.
     pub fn retained_bytes(&self) -> usize {
-        self.0.json.retained_bytes()
+        self.0
+            .graph
+            .resources
+            .iter()
+            .map(|r| r.json.retained_bytes())
+            .sum()
     }
     /// Number of retained operation compilation entries, bounded by configuration.
     pub fn cached_operations(&self) -> usize {
