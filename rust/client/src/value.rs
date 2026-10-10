@@ -23,15 +23,18 @@ use std::{
 #[derive(Clone, Debug)]
 pub struct Limits {
     /// Maximum admitted source bytes and, independently, normalized YAML output bytes.
-    /// Also bounds retained response-header metadata.
+    /// Also independently bounds retained response-header metadata and copied
+    /// descriptor strings per effective-description/compiled-operation construction.
     pub document_bytes: usize,
     /// Maximum JSON/YAML container depth (default 128); caller callbacks are outside this bound.
     pub depth: usize,
-    /// Maximum indexed JSON values; also independently caps YAML nodes and expanded values.
+    /// Maximum indexed JSON values; also independently caps YAML nodes and expanded values,
+    /// and descriptor entries, strings and reference chains per construction.
     pub nodes: usize,
     /// Maximum discovered operations in one document.
     pub operations: usize,
-    /// Maximum steps in one protocol reference or YAML alias chain; also bounds caller input and security-requirement counts.
+    /// Maximum steps in one protocol reference or YAML alias chain; also bounds caller input
+    /// and security-requirement counts, and aggregate descriptor declarations/hops per construction.
     pub reference_steps: usize,
     /// Maximum finite request body and retained delivered response body bytes.
     pub body_bytes: usize,
