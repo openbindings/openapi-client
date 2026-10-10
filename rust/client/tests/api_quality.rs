@@ -53,7 +53,7 @@ fn parameter_views_share_resolution_override_and_retained_sources() {
 #[test]
 fn parameter_views_refuse_invalid_typed_facts_without_losing_raw_inspection() {
     for (version, location, required, expected) in [
-        ("3.0.3", "query", "", Code::UnsupportedVersion),
+        ("3.3.0", "query", "", Code::UnsupportedVersion),
         ("3.1.0", "path", "", Code::InvalidDeclaration),
         (
             "3.1.0",

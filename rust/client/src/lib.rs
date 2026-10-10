@@ -22,15 +22,19 @@ pub use source::{SourceFormat, SourcePosition, SourceTrace, YamlReason};
 pub use cancellation::Cancellation;
 pub use deserialize::DeserializationError;
 pub use document::{
-    Document, Method, Operation, OperationDescription, ReferenceKind, ResolvedReference,
+    Document, Edition, ExtensionMethod, Method, Operation, OperationDescription, ReferenceKind,
+    ResolvedReference,
 };
 pub use error::{
     Code, Diagnostic, DiagnosticContext, DiagnosticReason, LimitKind, Location, NumericReason,
-    NumericTarget, SelectionKind, SerializationReason,
+    NumericTarget, SelectionKind, SerializationReason, VersionReason,
 };
 pub use prepare::{
-    Body, Credential, CredentialValue, Input, Parameter, ParameterInput, ParameterLocation,
-    Parameters, PreparedRequest, Selection,
+    Body, BodyFieldDescription, BodyFields, Credential, CredentialValue,
+    EffectiveOperationDescription, Input, MediaDescription, OAuthFlowDescription, Parameter,
+    ParameterInput, ParameterLocation, Parameters, PreparedRequest, RequestBodyDescription,
+    ResponseDescription, SchemaDescription, SecurityAlternative, SecurityRequirement,
+    SecurityScheme, Selection, ServerDescription,
 };
 pub use transport::{
     BodyState, DeliveredBody, DispatchEvidence, DispatchRequest, Header, HostCapabilities, Outcome,

@@ -7,8 +7,66 @@ use std::{
     },
 };
 
-/// HTTP operation methods recognized by OpenAPI 3.1.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+/// Semantic OpenAPI family. Calling an operation never requires selecting this value.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum Edition {
+    /// Swagger 2.0.
+    Swagger20,
+    /// OpenAPI 3.0, including compatible patch editions.
+    OpenApi30,
+    /// OpenAPI 3.1, including compatible patch editions.
+    OpenApi31,
+    /// OpenAPI 3.2, including compatible patch editions.
+    OpenApi32,
+}
+impl Edition {
+    pub(crate) fn detect(root: &Value) -> Result<Self, Diagnostic> {
+        use crate::VersionReason;
+        let fail = |node: &Value, reason| {
+            node.error(Code::UnsupportedVersion)
+                .reasoned(crate::DiagnosticReason::Version(reason))
+        };
+        match (root.get("swagger"), root.get("openapi")) {
+            (Some(_), Some(_)) => Err(fail(root, VersionReason::Conflicting)),
+            (None, None) => Err(fail(root, VersionReason::Missing)),
+            (Some(v), None) => match v.as_str() {
+                Some("2.0") => Ok(Self::Swagger20),
+                Some(_) => Err(fail(&v, VersionReason::UnsupportedFamily)),
+                None => Err(fail(&v, VersionReason::Malformed)),
+            },
+            (None, Some(v)) => {
+                let text = v
+                    .as_str()
+                    .ok_or_else(|| fail(&v, VersionReason::Malformed))?;
+                let mut pieces = text.split('.');
+                let parts = [pieces.next(), pieces.next(), pieces.next()];
+                if pieces.next().is_some()
+                    || parts.iter().any(|p| {
+                        p.is_none_or(|p| {
+                            p.is_empty()
+                                || !p.bytes().all(|b| b.is_ascii_digit())
+                                || p.len() > 1 && p.starts_with('0')
+                        })
+                    })
+                {
+                    return Err(fail(&v, VersionReason::Malformed));
+                }
+                match (parts[0].unwrap(), parts[1].unwrap()) {
+                    ("3", "0") => Ok(Self::OpenApi30),
+                    ("3", "1") => Ok(Self::OpenApi31),
+                    ("3", "2") => Ok(Self::OpenApi32),
+                    _ => Err(fail(&v, VersionReason::UnsupportedFamily)),
+                }
+            }
+        }
+    }
+    pub(crate) fn reference_siblings(self) -> bool {
+        matches!(self, Self::OpenApi31 | Self::OpenApi32)
+    }
+}
+/// HTTP method with standard conveniences and exact extension-token spelling.
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
 #[allow(missing_docs)]
 pub enum Method {
     Get,
@@ -19,10 +77,16 @@ pub enum Method {
     Head,
     Patch,
     Trace,
+    Query,
+    Extension(ExtensionMethod),
 }
 impl Method {
-    /// Parse an OpenAPI method field case-insensitively for caller lookup.
+    /// Parse a standard OpenAPI method field case-insensitively for caller lookup.
+    /// Use `from_token` for case-sensitive HTTP wire tokens and extension methods.
     pub fn parse(s: &str) -> Option<Self> {
+        if s.len() > 7 {
+            return None;
+        }
         Some(match s.to_ascii_lowercase().as_str() {
             "get" => Self::Get,
             "put" => Self::Put,
@@ -32,11 +96,25 @@ impl Method {
             "head" => Self::Head,
             "patch" => Self::Patch,
             "trace" => Self::Trace,
+            "query" => Self::Query,
             _ => return None,
         })
     }
-    /// Uppercase HTTP method.
-    pub fn as_str(self) -> &'static str {
+    /// Validate an HTTP token, preserving its case-sensitive wire spelling.
+    /// Known uppercase tokens use the corresponding standard variant.
+    pub fn from_token(token: &str) -> Result<Self, Diagnostic> {
+        if token.is_empty() || !token.bytes().all(crate::prepare::token) {
+            return Err(Diagnostic::new(Code::InvalidDeclaration));
+        }
+        if token.bytes().all(|b| !b.is_ascii_lowercase())
+            && let Some(known) = Self::parse(token)
+        {
+            return Ok(known);
+        }
+        Ok(Self::Extension(ExtensionMethod(Arc::from(token))))
+    }
+    /// HTTP wire spelling: uppercase for standard variants, exact for extensions.
+    pub fn as_str(&self) -> &str {
         match self {
             Self::Get => "GET",
             Self::Put => "PUT",
@@ -46,9 +124,15 @@ impl Method {
             Self::Head => "HEAD",
             Self::Patch => "PATCH",
             Self::Trace => "TRACE",
+            Self::Query => "QUERY",
+            Self::Extension(token) => &token.0,
         }
     }
 }
+/// Validated case-sensitive HTTP extension method token.
+/// Construct using `Method::from_token`; use `Method::as_str` for its spelling.
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub struct ExtensionMethod(Arc<str>);
 /// Expected protocol-object kind. Schema references are intentionally absent.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[allow(missing_docs)]
@@ -58,6 +142,7 @@ pub enum ReferenceKind {
     Response,
     SecurityScheme,
     PathItem,
+    MediaType,
 }
 /// Local reference result with authored siblings and destination kept separate.
 #[derive(Clone, Debug)]
@@ -79,6 +164,7 @@ pub(crate) fn resolve(
     kind: ReferenceKind,
     limit: usize,
 ) -> Result<ResolvedReference, Diagnostic> {
+    let edition = Edition::detect(root)?;
     let mut current = node.clone();
     let mut seen = HashSet::new();
     let (mut summary, mut description) = (None, None);
@@ -108,7 +194,9 @@ pub(crate) fn resolve(
             return Err(reference.error(Code::Limit));
         }
         steps += 1;
-        if description.is_none() {
+        if description.is_none()
+            && (kind == ReferenceKind::PathItem || edition.reference_siblings())
+        {
             description = current.get("description");
         }
         if summary.is_none() && kind == ReferenceKind::PathItem {
@@ -135,6 +223,7 @@ pub(crate) fn resolve(
         current = next;
     }
     let valid = match kind {
+        ReferenceKind::MediaType => edition == Edition::OpenApi32,
         ReferenceKind::Parameter => {
             current.get("name").is_some_and(|v| v.as_str().is_some())
                 && current.get("in").is_some_and(|v| v.as_str().is_some())
@@ -148,7 +237,10 @@ pub(crate) fn resolve(
         ReferenceKind::SecurityScheme => current.get("type").is_some_and(|v| v.as_str().is_some()),
         ReferenceKind::PathItem => current.members().unwrap().all(|(name, _)| {
             name.starts_with("x-")
-                || matches!(name, "summary" | "description" | "servers" | "parameters")
+                || matches!(
+                    name,
+                    "summary" | "description" | "servers" | "parameters" | "additionalOperations"
+                )
                 || Method::parse(name).is_some_and(|_| name == name.to_ascii_lowercase())
         }),
     };
@@ -180,6 +272,7 @@ pub(crate) struct Record {
 }
 pub(crate) struct Store {
     pub json: ExactJson,
+    pub edition: Result<Edition, Diagnostic>,
     pub base: Option<String>,
     pub limits: Limits,
     pub records: Vec<Record>,
@@ -215,7 +308,7 @@ impl std::fmt::Debug for Operation {
             .finish()
     }
 }
-/// Selected authored/effective operation declarations; raw schemas are retained.
+/// Raw operation declarations with inherited raw fields; use `Operation::describe` for common semantics.
 #[derive(Clone, Debug)]
 pub struct OperationDescription {
     /// Authored path spelling.
@@ -269,8 +362,10 @@ impl Document {
                 source: Arc::from(bytes.as_ref()),
             });
         }
+        let edition = Edition::detect(&root);
         let mut store = Store {
             json,
+            edition,
             base: base.map(str::to_owned),
             limits,
             records: vec![],
@@ -306,13 +401,61 @@ impl Document {
                 let mut methods = HashSet::new();
                 for container in &path_chain {
                     if let Some(members) = container.members() {
+                        let mut operations = vec![];
                         for (name, node) in members {
-                            let Some(method) =
+                            if let Some(method) =
                                 Method::parse(name).filter(|_| name == name.to_ascii_lowercase())
-                            else {
-                                continue;
-                            };
-                            if !methods.insert(method) {
+                            {
+                                if store.records.len().saturating_add(operations.len())
+                                    >= store.limits.operations
+                                {
+                                    return Err(ParseFailure {
+                                        diagnostic: node.error(Code::Limit),
+                                        source: Arc::from(bytes.as_ref()),
+                                    });
+                                }
+                                operations.push((method, node, None));
+                            } else if name == "additionalOperations" {
+                                if let Some(additional) = node.members() {
+                                    for (token, operation) in additional {
+                                        match Method::from_token(token) {
+                                            Ok(method) => {
+                                                let error = (!matches!(
+                                                    method,
+                                                    Method::Extension(_)
+                                                ))
+                                                .then(|| operation.error(Code::InvalidDeclaration));
+                                                if store
+                                                    .records
+                                                    .len()
+                                                    .saturating_add(operations.len())
+                                                    >= store.limits.operations
+                                                {
+                                                    return Err(ParseFailure {
+                                                        diagnostic: operation.error(Code::Limit),
+                                                        source: Arc::from(bytes.as_ref()),
+                                                    });
+                                                }
+                                                operations.push((method, operation, error));
+                                            }
+                                            Err(_) => {
+                                                store.path_errors.insert(
+                                                    path.to_owned(),
+                                                    operation.error(Code::InvalidDeclaration),
+                                                );
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    store.path_errors.insert(
+                                        path.to_owned(),
+                                        node.error(Code::InvalidDeclaration),
+                                    );
+                                }
+                            }
+                        }
+                        for (method, node, operation_error) in operations {
+                            if !methods.insert(method.clone()) && operation_error.is_none() {
                                 continue;
                             }
                             if store.records.len() >= store.limits.operations {
@@ -328,13 +471,13 @@ impl Document {
                             {
                                 store.ids.entry(id).or_default().push(index);
                             }
-                            store.paths.insert((path.to_owned(), method), index);
+                            store.paths.insert((path.to_owned(), method.clone()), index);
                             store.records.push(Record {
                                 path: path.to_owned(),
                                 method,
                                 node,
                                 path_chain: path_chain.clone(),
-                                path_error: path_error.clone(),
+                                path_error: operation_error.or_else(|| path_error.clone()),
                                 cache_slot: OnceLock::new(),
                                 compiled: OnceLock::new(),
                             });
@@ -361,7 +504,12 @@ impl Document {
     pub fn version(&self) -> Option<String> {
         self.root()
             .get("openapi")
+            .or_else(|| self.root().get("swagger"))
             .and_then(|v| v.as_str().map(str::to_owned))
+    }
+    /// Detected semantic family; invalid or unsupported declarations remain inspectable.
+    pub fn edition(&self) -> Result<Edition, Diagnostic> {
+        self.0.edition.clone()
     }
     /// Operations in authored path/method order.
     pub fn operations(&self) -> impl ExactSizeIterator<Item = Operation> + '_ {
@@ -424,7 +572,7 @@ impl Operation {
     }
     /// HTTP method.
     pub fn method(&self) -> Method {
-        self.record().method
+        self.record().method.clone()
     }
     /// Original operation value, even when its declaration is malformed.
     pub fn value(&self) -> Value {
@@ -439,7 +587,8 @@ impl Operation {
     pub(crate) fn path_field(&self, key: &str) -> Option<Value> {
         self.record().path_chain.iter().find_map(|v| v.get(key))
     }
-    /// Effective declarations and raw inspection handles without preparing the operation.
+    /// Raw declarations and inherited raw fields without semantic preparation.
+    /// Use `describe` for edition-independent body, server and security descriptions.
     pub fn inspect(&self) -> OperationDescription {
         let n = self.value();
         OperationDescription {

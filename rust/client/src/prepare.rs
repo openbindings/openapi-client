@@ -1,4 +1,6 @@
-use crate::{Code, Diagnostic, Header, Limits, Method, Operation, ReferenceKind, Value, ValueKind};
+use crate::{
+    Code, Diagnostic, Edition, Header, Limits, Method, Operation, ReferenceKind, Value, ValueKind,
+};
 use crate::{DiagnosticContext, DiagnosticReason, LimitKind, SelectionKind, document, uri};
 use base64::Engine;
 use std::{
@@ -112,6 +114,8 @@ pub struct Parameter {
     required: bool,
     explode: bool,
     unsupported: bool,
+    collection: Option<String>,
+    schema_context: Option<SchemaDescription>,
 }
 /// Effective parameter declarations retaining their exact source owners.
 /// Structured refusal leaves Operation::inspect available for raw inspection.
@@ -156,12 +160,187 @@ impl Parameter {
     }
     /// Raw Schema Object. None does not mean a content declaration is absent.
     pub fn schema(&self) -> Option<Value> {
-        self.node.get("schema")
+        self.schema_context.as_ref().map(|s| s.value.clone())
+    }
+    /// Opaque schema with retained edition and dialect context.
+    pub fn schema_description(&self) -> Option<SchemaDescription> {
+        self.schema_context.clone()
     }
 }
+/// A schema value and its interpretation context; no evaluation is performed.
+#[derive(Clone, Debug)]
+pub struct SchemaDescription {
+    /// Original schema value, including dialect and reference keywords.
+    pub value: Value,
+    /// The surrounding OpenAPI vocabulary.
+    pub edition: crate::Edition,
+    /// Effective JSON Schema dialect URI, absent for Swagger/OAS 3.0 vocabularies.
+    pub dialect: Option<String>,
+}
+/// An effective representation, retaining its original declaration.
+#[derive(Clone, Debug)]
+pub struct MediaDescription {
+    /// Authored media type or range.
+    pub media_type: String,
+    /// Original Media Type Object, or Swagger consumes/produces string.
+    pub authored: Value,
+    /// Opaque payload schema.
+    pub schema: Option<SchemaDescription>,
+    /// Opaque encoding declarations.
+    pub encoding: Option<Value>,
+    /// Opaque sequential-item schema when declared.
+    pub item_schema: Option<SchemaDescription>,
+}
+/// A logical request body independent of the edition's declaration syntax.
+#[derive(Clone, Debug)]
+pub struct RequestBodyDescription {
+    /// Original declaration and local-reference provenance.
+    pub declaration: crate::ResolvedReference,
+    /// Whether omitting the logical body is permitted.
+    pub required: bool,
+    /// Effective request representations.
+    pub media: Vec<MediaDescription>,
+    /// No media constraint was declared; an explicit concrete type or the JSON codec determines it.
+    pub media_unrestricted: bool,
+    /// Logical form fields, or an explicit unresolved schema-derived shape.
+    pub fields: BodyFields,
+}
+/// A logical form field; automatic form serialization is qualified separately.
+#[derive(Clone, Debug)]
+pub struct BodyFieldDescription {
+    /// Logical field name.
+    pub name: String,
+    /// Whether this field is required.
+    pub required: bool,
+    /// Opaque field schema and vocabulary.
+    pub schema: SchemaDescription,
+    /// Authored declaration, retaining format/encoding details.
+    pub authored: Value,
+}
+/// Completeness of logical form-field inspection.
+#[derive(Clone, Debug)]
+pub enum BodyFields {
+    /// The body has no form representations.
+    NotApplicable,
+    /// Explicit logical fields are available.
+    Declared(Vec<BodyFieldDescription>),
+    /// Form representations exist but schema-derived fields have not been resolved.
+    Opaque,
+}
+/// An effective response declaration and its representations.
+#[derive(Clone, Debug)]
+pub struct ResponseDescription {
+    /// Exact, range or default status selector.
+    pub status: String,
+    /// Original declaration and local-reference provenance.
+    pub declaration: crate::ResolvedReference,
+    /// Effective response representations.
+    pub media: Vec<MediaDescription>,
+}
+/// One effective target choice. Swagger components become a URL template without source rewriting.
+#[derive(Clone, Debug)]
+pub struct ServerDescription {
+    /// Effective URL or URL template before variable substitution.
+    pub url: String,
+    /// Original variable declarations, when applicable.
+    pub variables: Option<Value>,
+    /// Original values contributing to this target; an empty list denotes the protocol default.
+    pub authored: Vec<Value>,
+}
+/// A normalized OAuth flow, with original source retained by the owning requirement.
+#[derive(Clone, Debug)]
+pub struct OAuthFlowDescription {
+    /// Common flow name: implicit, password, clientCredentials or authorizationCode.
+    pub flow: String,
+    /// Authorization endpoint when applicable.
+    pub authorization_url: Option<String>,
+    /// Token endpoint when applicable.
+    pub token_url: Option<String>,
+    /// Refresh endpoint when declared.
+    pub refresh_url: Option<String>,
+    /// Declared scope names and descriptions.
+    pub scopes: BTreeMap<String, String>,
+}
+/// Edition-independent security mechanism classification.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub enum SecurityScheme {
+    /// HTTP Basic credentials.
+    Basic,
+    /// HTTP bearer token; format is descriptive only.
+    Bearer {
+        /// Optional format hint.
+        format: Option<String>,
+    },
+    /// API key sent under a declared name/location.
+    ApiKey {
+        /// Wire name.
+        name: String,
+        /// Wire location.
+        location: ParameterLocation,
+    },
+    /// Caller-supplied OAuth bearer token; flows describe acquisition separately.
+    OAuth2 {
+        /// Normalized acquisition flows.
+        flows: Vec<OAuthFlowDescription>,
+    },
+    /// OpenID Connect discovery description; caller supplies bearer token.
+    OpenIdConnect {
+        /// Discovery URL.
+        url: String,
+    },
+    /// Mutual TLS host identity; finite credential input does not implement it.
+    MutualTls,
+    /// Retained mechanism outside this implementation's recognized profile.
+    Unsupported {
+        /// Original mechanism identifier.
+        type_name: String,
+    },
+}
+/// One declared scheme in a conjunctive security requirement.
+#[derive(Clone, Debug)]
+pub struct SecurityRequirement {
+    /// Declared scheme identity.
+    pub name: String,
+    /// Required OAuth scopes or later-edition roles; verifying credentials remains caller-owned.
+    pub scopes: Vec<String>,
+    /// Original scheme declaration and reference provenance.
+    pub declaration: crate::ResolvedReference,
+    /// Normalized security mechanism; credentials remain separate per-call inputs.
+    pub scheme: SecurityScheme,
+}
+/// One effective security alternative; an empty requirement list permits anonymous calls.
+#[derive(Clone, Debug)]
+pub struct SecurityAlternative {
+    /// Original requirement object.
+    pub authored: Value,
+    /// All these schemes apply together.
+    pub requirements: Vec<SecurityRequirement>,
+}
+/// Common effective declarations for an explorer or dynamic caller.
+#[derive(Clone, Debug)]
+pub struct EffectiveOperationDescription {
+    /// Authored path template.
+    pub path: String,
+    /// Exact HTTP method.
+    pub method: Method,
+    /// Optional operation ID.
+    pub operation_id: Option<String>,
+    /// Effective non-body parameter declarations.
+    pub parameters: Parameters,
+    /// Effective target choices, in election order.
+    pub servers: Vec<ServerDescription>,
+    /// Effective logical body; ignored edition-specific body declarations are absent here.
+    pub request_body: Option<RequestBodyDescription>,
+    /// Effective status and representation declarations.
+    pub responses: Vec<ResponseDescription>,
+    /// Effective security alternatives.
+    pub security: Vec<SecurityAlternative>,
+}
+
 pub(crate) struct Compiled {
     parameters: Vec<Parameter>,
-    body: Option<Value>,
+    body: Option<RequestBodyDescription>,
     pub responses: Vec<(String, Value)>,
 }
 /// Immutable request plan. Preparing or cloning it does not authorize a retry.
@@ -204,6 +383,670 @@ pub(crate) fn same_name(a: &str, b: &str, location: ParameterLocation) -> bool {
     }
 }
 
+fn optional_string(node: &Value, key: &str) -> Result<Option<String>, Diagnostic> {
+    node.get(key)
+        .map(|v| {
+            v.as_str()
+                .map(str::to_owned)
+                .ok_or_else(|| v.error(Code::InvalidDeclaration))
+        })
+        .transpose()
+}
+
+impl Operation {
+    fn schema_description(&self, value: Value) -> SchemaDescription {
+        let edition = self.store.edition.clone().expect("edition checked");
+        let dialect = if matches!(edition, Edition::OpenApi31 | Edition::OpenApi32) {
+            value
+                .get("$schema")
+                .or_else(|| self.store.json.root().get("jsonSchemaDialect"))
+                .and_then(|v| v.as_str().map(str::to_owned))
+                .or_else(|| {
+                    Some(
+                        if edition == Edition::OpenApi31 {
+                            "https://spec.openapis.org/oas/3.1/dialect/base"
+                        } else {
+                            "https://spec.openapis.org/oas/3.2/dialect/base"
+                        }
+                        .into(),
+                    )
+                })
+        } else {
+            None
+        };
+        SchemaDescription {
+            value,
+            edition,
+            dialect,
+        }
+    }
+    fn effective_parameter_references(&self) -> Result<Vec<crate::ResolvedReference>, Diagnostic> {
+        self.store.edition.clone()?;
+        let root = self.store.json.root();
+        let mut parameters: Vec<crate::ResolvedReference> = vec![];
+        let mut budget = self.store.limits.reference_steps;
+        for list in [
+            self.path_field("parameters"),
+            self.value().get("parameters"),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let mut local = HashSet::new();
+            for authored in list
+                .elements()
+                .ok_or_else(|| list.error(Code::InvalidDeclaration))?
+            {
+                if budget == 0 {
+                    return Err(authored.error(Code::Limit));
+                }
+                budget -= 1;
+                let resolved =
+                    document::resolve(&root, &authored, ReferenceKind::Parameter, budget + 1)?;
+                let p = &resolved.target;
+                let location = required_string(p, "in")?;
+                let name = required_string(p, "name")?;
+                let identity = (
+                    location.clone(),
+                    if location == "header" {
+                        name.to_ascii_lowercase()
+                    } else {
+                        name.clone()
+                    },
+                );
+                if !local.insert(identity) {
+                    return Err(p.error(Code::InvalidDeclaration));
+                }
+                if let Some(index) = parameters.iter().position(|previous| {
+                    let p = &previous.target;
+                    p.get("in").is_some_and(|v| v.as_str() == Some(&location))
+                        && p.get("name")
+                            .and_then(|v| {
+                                v.as_str().map(|old| {
+                                    if location == "header" {
+                                        old.eq_ignore_ascii_case(&name)
+                                    } else {
+                                        old == name
+                                    }
+                                })
+                            })
+                            .unwrap_or(false)
+                }) {
+                    parameters[index] = resolved;
+                } else {
+                    parameters.push(resolved);
+                }
+            }
+        }
+        Ok(parameters)
+    }
+    fn media_descriptions(
+        &self,
+        node: &Value,
+        legacy_key: Option<&str>,
+    ) -> Result<Vec<MediaDescription>, Diagnostic> {
+        if let Some(key) = legacy_key {
+            let declared = self
+                .value()
+                .get(key)
+                .or_else(|| self.store.json.root().get(key));
+            return declared
+                .map(|v| {
+                    v.elements()
+                        .ok_or_else(|| v.error(Code::InvalidDeclaration))?
+                        .map(|media| {
+                            let media_type = media
+                                .as_str()
+                                .ok_or_else(|| media.error(Code::InvalidDeclaration))?
+                                .to_owned();
+                            Ok(MediaDescription {
+                                media_type,
+                                authored: media,
+                                schema: node.get("schema").map(|v| self.schema_description(v)),
+                                encoding: None,
+                                item_schema: None,
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_else(|| Ok(vec![]));
+        }
+        let Some(content) = node.get("content") else {
+            return Ok(vec![]);
+        };
+        content
+            .members()
+            .ok_or_else(|| content.error(Code::InvalidDeclaration))?
+            .map(|(key, value)| {
+                if value.kind() != ValueKind::Object {
+                    return Err(value.error(Code::InvalidDeclaration));
+                }
+                // Media Type Object references were added in 3.2; resolve them intentionally.
+                let resolved = if value.get("$ref").is_some() {
+                    if self.store.edition != Ok(Edition::OpenApi32) {
+                        return Err(value.error(Code::InvalidDeclaration));
+                    }
+                    document::resolve(
+                        &self.store.json.root(),
+                        &value,
+                        ReferenceKind::MediaType,
+                        self.store.limits.reference_steps,
+                    )?
+                    .target
+                } else {
+                    value.clone()
+                };
+                Ok(MediaDescription {
+                    media_type: key.into(),
+                    authored: value,
+                    schema: resolved.get("schema").map(|v| self.schema_description(v)),
+                    encoding: resolved.get("encoding"),
+                    item_schema: resolved
+                        .get("itemSchema")
+                        .map(|v| self.schema_description(v)),
+                })
+            })
+            .collect()
+    }
+    fn body_description(&self) -> Result<Option<RequestBodyDescription>, Diagnostic> {
+        let edition = self.store.edition.clone()?;
+        if edition == Edition::Swagger20 {
+            let parameters = self.effective_parameter_references()?;
+            let bodies: Vec<_> = parameters
+                .iter()
+                .filter(|p| {
+                    p.target
+                        .get("in")
+                        .is_some_and(|v| v.as_str() == Some("body"))
+                })
+                .collect();
+            let forms: Vec<_> = parameters
+                .iter()
+                .filter(|p| {
+                    p.target
+                        .get("in")
+                        .is_some_and(|v| v.as_str() == Some("formData"))
+                })
+                .collect();
+            if bodies.len() > 1 || !bodies.is_empty() && !forms.is_empty() {
+                return Err(self.value().error(Code::InvalidDeclaration));
+            }
+            let Some(declaration) = bodies.first().or_else(|| forms.first()) else {
+                return Ok(None);
+            };
+            if !bodies.is_empty() && declaration.target.get("schema").is_none() {
+                return Err(declaration.target.error(Code::InvalidDeclaration));
+            }
+            let fields = if forms.is_empty() {
+                BodyFields::NotApplicable
+            } else {
+                BodyFields::Declared(
+                    forms
+                        .iter()
+                        .map(|field| {
+                            Ok(BodyFieldDescription {
+                                name: required_string(&field.target, "name")?,
+                                required: bool_field(&field.target, "required", false)?,
+                                schema: self.schema_description(field.target.clone()),
+                                authored: field.authored.clone(),
+                            })
+                        })
+                        .collect::<Result<Vec<_>, Diagnostic>>()?,
+                )
+            };
+            let required = if forms.is_empty() {
+                bool_field(&declaration.target, "required", false)?
+            } else {
+                forms.iter().try_fold(false, |required, f| {
+                    Ok::<_, Diagnostic>(required || bool_field(&f.target, "required", false)?)
+                })?
+            };
+            return Ok(Some(RequestBodyDescription {
+                declaration: (*declaration).clone(),
+                required,
+                media: self.media_descriptions(&declaration.target, Some("consumes"))?,
+                media_unrestricted: self
+                    .value()
+                    .get("consumes")
+                    .or_else(|| self.store.json.root().get("consumes"))
+                    .is_none_or(|v| v.elements().is_some_and(|mut v| v.next().is_none())),
+                fields,
+            }));
+        }
+        // 3.0 requires consumers to ignore requestBody where HTTP semantics are undefined.
+        if edition == Edition::OpenApi30
+            && !matches!(
+                self.method(),
+                Method::Post | Method::Put | Method::Patch | Method::Options
+            )
+        {
+            return Ok(None);
+        }
+        let Some(body) = self.value().get("requestBody") else {
+            return Ok(None);
+        };
+        let declaration = document::resolve(
+            &self.store.json.root(),
+            &body,
+            ReferenceKind::RequestBody,
+            self.store.limits.reference_steps,
+        )?;
+        let media = self.media_descriptions(&declaration.target, None)?;
+        let fields = if media.iter().any(|m| {
+            m.media_type.starts_with("multipart/")
+                || m.media_type == "application/x-www-form-urlencoded"
+        }) {
+            BodyFields::Opaque
+        } else {
+            BodyFields::NotApplicable
+        };
+        Ok(Some(RequestBodyDescription {
+            required: bool_field(&declaration.target, "required", false)?,
+            declaration,
+            media,
+            media_unrestricted: false,
+            fields,
+        }))
+    }
+    fn server_descriptions(&self) -> Result<Vec<ServerDescription>, Diagnostic> {
+        if self.store.edition.clone()? != Edition::Swagger20 {
+            return match self.inspect().servers {
+                None => Ok(vec![ServerDescription {
+                    url: "/".into(),
+                    variables: None,
+                    authored: vec![],
+                }]),
+                Some(list) => {
+                    let result = list
+                        .elements()
+                        .ok_or_else(|| list.error(Code::InvalidDeclaration))?
+                        .map(|v| {
+                            Ok(ServerDescription {
+                                url: required_string(&v, "url")?,
+                                variables: v.get("variables"),
+                                authored: vec![v],
+                            })
+                        })
+                        .collect::<Result<Vec<_>, Diagnostic>>()?;
+                    Ok(if result.is_empty() {
+                        vec![ServerDescription {
+                            url: "/".into(),
+                            variables: None,
+                            authored: vec![],
+                        }]
+                    } else {
+                        result
+                    })
+                }
+            };
+        }
+        let root = self.store.json.root();
+        let host_node = root.get("host");
+        let path_node = root.get("basePath");
+        let base = self
+            .store
+            .base
+            .as_deref()
+            .map(fluent_uri::UriRef::parse)
+            .transpose()
+            .map_err(|_| root.error(Code::InvalidDestination))?;
+        let host = optional_string(&root, "host")?
+            .or_else(|| {
+                base.as_ref()
+                    .and_then(|b| b.authority().map(|a| a.as_str().into()))
+            })
+            .ok_or_else(|| root.error(Code::MissingBase))?;
+        let authority = fluent_uri::UriRef::parse(format!("//{host}"))
+            .map_err(|_| root.error(Code::InvalidDestination))?;
+        if authority.authority().is_none()
+            || !authority.path().is_empty()
+            || authority.query().is_some()
+            || authority.fragment().is_some()
+        {
+            return Err(host_node
+                .as_ref()
+                .unwrap_or(&root)
+                .error(Code::InvalidDeclaration));
+        }
+        let path = optional_string(&root, "basePath")?.unwrap_or_default();
+        if !path.is_empty() && !path.starts_with('/') || path.contains(['?', '#']) {
+            return Err(path_node
+                .as_ref()
+                .unwrap_or(&root)
+                .error(Code::InvalidDeclaration));
+        }
+        let schemes = self.value().get("schemes").or_else(|| root.get("schemes"));
+        let mut scheme_values = match schemes.as_ref() {
+            Some(v) => v
+                .elements()
+                .ok_or_else(|| v.error(Code::InvalidDeclaration))?
+                .map(|v| {
+                    v.as_str()
+                        .map(|s| (s.to_owned(), Some(v.clone())))
+                        .ok_or_else(|| v.error(Code::InvalidDeclaration))
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+            None => vec![],
+        };
+        if scheme_values.is_empty() {
+            scheme_values.push((
+                base.as_ref()
+                    .and_then(|b| b.scheme().map(|s| s.as_str().to_owned()))
+                    .ok_or_else(|| root.error(Code::MissingBase))?,
+                None,
+            ));
+        }
+        scheme_values
+            .into_iter()
+            .map(|(scheme, source)| {
+                if !matches!(scheme.as_str(), "http" | "https" | "ws" | "wss") {
+                    return Err(source
+                        .as_ref()
+                        .unwrap_or(&root)
+                        .error(Code::InvalidDeclaration));
+                }
+                Ok(ServerDescription {
+                    url: format!("{scheme}://{host}{path}"),
+                    variables: None,
+                    authored: [host_node.clone(), path_node.clone(), source]
+                        .into_iter()
+                        .flatten()
+                        .collect(),
+                })
+            })
+            .collect()
+    }
+    fn choose_target(&self, selection: &Selection) -> Result<String, Diagnostic> {
+        let root = self.store.json.root();
+        if self.store.edition.clone()? != Edition::Swagger20 {
+            return choose_server(
+                self.inspect().servers.as_ref(),
+                self.store.base.as_deref(),
+                selection,
+                &root,
+                &self.store.limits,
+            );
+        }
+        if !selection.variables.is_empty() {
+            return Err(root.error(Code::InvalidSelection));
+        }
+        let servers = self.server_descriptions()?;
+        let expand = |s: &ServerDescription| uri::server_target(&s.url, self.store.base.as_deref());
+        if let Some(i) = selection.server {
+            return expand(
+                servers
+                    .get(i)
+                    .ok_or_else(|| root.error(Code::InvalidSelection))?,
+            );
+        }
+        let usable: Vec<_> = servers.iter().map(expand).collect();
+        let good: Vec<_> = usable.iter().filter_map(|r| r.as_ref().ok()).collect();
+        match good.as_slice() {
+            [one] => Ok((*one).clone()),
+            [] => Err(usable
+                .into_iter()
+                .find_map(Result::err)
+                .unwrap_or_else(|| root.error(Code::InvalidSelection))),
+            _ => Err(root.error(Code::AmbiguousSelection)),
+        }
+    }
+    /// Inspect effective edition-independent inputs, target choices, representations and security.
+    /// This performs no request preparation, credential acquisition or schema evaluation.
+    pub fn describe(&self) -> Result<EffectiveOperationDescription, Diagnostic> {
+        let compiled = self.compiled()?;
+        let mut responses = vec![];
+        if let Some(values) = self.value().get("responses") {
+            for (status, value) in values
+                .members()
+                .ok_or_else(|| values.error(Code::InvalidDeclaration))?
+            {
+                if status.starts_with("x-") {
+                    continue;
+                }
+                let declaration = document::resolve(
+                    &self.store.json.root(),
+                    &value,
+                    ReferenceKind::Response,
+                    self.store.limits.reference_steps,
+                )?;
+                let media = self.media_descriptions(
+                    &declaration.target,
+                    (self.store.edition == Ok(Edition::Swagger20)).then_some("produces"),
+                )?;
+                responses.push(ResponseDescription {
+                    status: status.into(),
+                    declaration,
+                    media,
+                });
+            }
+        }
+        Ok(EffectiveOperationDescription {
+            path: self.path().into(),
+            method: self.method(),
+            operation_id: self.id(),
+            parameters: Parameters {
+                entries: compiled.parameters.clone(),
+            },
+            servers: self.server_descriptions()?,
+            request_body: compiled.body.clone(),
+            responses,
+            security: self.security_descriptions()?,
+        })
+    }
+    fn security_descriptions(&self) -> Result<Vec<SecurityAlternative>, Diagnostic> {
+        let Some(security) = self.inspect().security else {
+            return Ok(vec![]);
+        };
+        let root = self.store.json.root();
+        let edition = self.store.edition.clone()?;
+        security
+            .elements()
+            .ok_or_else(|| security.error(Code::InvalidDeclaration))?
+            .map(|authored| {
+                let requirements = authored
+                    .members()
+                    .ok_or_else(|| authored.error(Code::InvalidDeclaration))?
+                    .map(|(name, scopes)| {
+                        let scopes_source = scopes.clone();
+                        let scopes: Vec<String> = scopes
+                            .elements()
+                            .ok_or_else(|| scopes.error(Code::InvalidDeclaration))?
+                            .map(|v| {
+                                v.as_str()
+                                    .map(str::to_owned)
+                                    .ok_or_else(|| v.error(Code::InvalidDeclaration))
+                            })
+                            .collect::<Result<_, _>>()?;
+                        let declaration =
+                            security_declaration(&root, name, self.store.limits.reference_steps)?;
+                        let scheme = describe_security(&declaration.target, edition)?;
+                        if matches!(edition, Edition::Swagger20 | Edition::OpenApi30)
+                            && !matches!(
+                                scheme,
+                                SecurityScheme::OAuth2 { .. }
+                                    | SecurityScheme::OpenIdConnect { .. }
+                            )
+                            && !scopes.is_empty()
+                        {
+                            return Err(scopes_source.error(Code::InvalidDeclaration));
+                        }
+                        Ok(SecurityRequirement {
+                            name: name.into(),
+                            scopes,
+                            declaration,
+                            scheme,
+                        })
+                    })
+                    .collect::<Result<_, Diagnostic>>()?;
+                Ok(SecurityAlternative {
+                    authored,
+                    requirements,
+                })
+            })
+            .collect()
+    }
+}
+
+fn security_declaration(
+    root: &Value,
+    name: &str,
+    budget: usize,
+) -> Result<crate::ResolvedReference, Diagnostic> {
+    let schemes = if Edition::detect(root)? == Edition::Swagger20 {
+        root.get("securityDefinitions")
+    } else {
+        root.get("components")
+            .and_then(|v| v.get("securitySchemes"))
+    };
+    let declared = schemes
+        .and_then(|v| v.get(name))
+        .ok_or_else(|| root.error(Code::InvalidDeclaration))?;
+    document::resolve(root, &declared, ReferenceKind::SecurityScheme, budget)
+}
+fn describe_security(scheme: &Value, edition: Edition) -> Result<SecurityScheme, Diagnostic> {
+    let ty = required_string(scheme, "type")?;
+    Ok(match ty.as_str() {
+        "basic" if edition == Edition::Swagger20 => SecurityScheme::Basic,
+        "http" if edition != Edition::Swagger20 => match required_string(scheme, "scheme")?
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "basic" => SecurityScheme::Basic,
+            "bearer" => SecurityScheme::Bearer {
+                format: optional_string(scheme, "bearerFormat")?,
+            },
+            other => SecurityScheme::Unsupported {
+                type_name: format!("http:{other}"),
+            },
+        },
+        "apiKey" => {
+            let location = ParameterLocation::parse(&required_string(scheme, "in")?)
+                .filter(|l| {
+                    *l != ParameterLocation::Path
+                        && (edition != Edition::Swagger20 || *l != ParameterLocation::Cookie)
+                })
+                .ok_or_else(|| scheme.error(Code::InvalidDeclaration))?;
+            SecurityScheme::ApiKey {
+                name: required_string(scheme, "name")?,
+                location,
+            }
+        }
+        "oauth2" => {
+            let flow = |name: &str, value: &Value| -> Result<OAuthFlowDescription, Diagnostic> {
+                let flow = match name {
+                    "accessCode" => "authorizationCode",
+                    "application" => "clientCredentials",
+                    name => name,
+                };
+                if !matches!(
+                    flow,
+                    "implicit" | "password" | "clientCredentials" | "authorizationCode"
+                ) {
+                    return Err(value.error(Code::InvalidDeclaration));
+                }
+                let scopes = value
+                    .get("scopes")
+                    .ok_or_else(|| value.error(Code::InvalidDeclaration))?;
+                let scopes = scopes
+                    .members()
+                    .ok_or_else(|| scopes.error(Code::InvalidDeclaration))?
+                    .map(|(name, description)| {
+                        Ok((
+                            name.into(),
+                            description
+                                .as_str()
+                                .ok_or_else(|| description.error(Code::InvalidDeclaration))?
+                                .into(),
+                        ))
+                    })
+                    .collect::<Result<_, Diagnostic>>()?;
+                if matches!(flow, "implicit" | "authorizationCode") {
+                    required_string(value, "authorizationUrl")?;
+                }
+                if matches!(flow, "password" | "clientCredentials" | "authorizationCode") {
+                    required_string(value, "tokenUrl")?;
+                }
+                Ok(OAuthFlowDescription {
+                    flow: flow.into(),
+                    authorization_url: optional_string(value, "authorizationUrl")?,
+                    token_url: optional_string(value, "tokenUrl")?,
+                    refresh_url: optional_string(value, "refreshUrl")?,
+                    scopes,
+                })
+            };
+            let flows = if edition == Edition::Swagger20 {
+                vec![flow(&required_string(scheme, "flow")?, scheme)?]
+            } else {
+                let values = scheme
+                    .get("flows")
+                    .ok_or_else(|| scheme.error(Code::InvalidDeclaration))?;
+                values
+                    .members()
+                    .ok_or_else(|| values.error(Code::InvalidDeclaration))?
+                    .filter(|(name, _)| !name.starts_with("x-"))
+                    .map(|(name, value)| flow(name, &value))
+                    .collect::<Result<_, _>>()?
+            };
+            SecurityScheme::OAuth2 { flows }
+        }
+        "openIdConnect" if edition != Edition::Swagger20 => SecurityScheme::OpenIdConnect {
+            url: required_string(scheme, "openIdConnectUrl")?,
+        },
+        "mutualTLS" if matches!(edition, Edition::OpenApi31 | Edition::OpenApi32) => {
+            SecurityScheme::MutualTls
+        }
+        _ => SecurityScheme::Unsupported { type_name: ty },
+    })
+}
+fn serialize_legacy(
+    v: &Value,
+    loc: ParameterLocation,
+    collection: Option<&str>,
+    name: &str,
+) -> Result<Serialized, Diagnostic> {
+    if v.kind() == ValueKind::Object {
+        return Err(v.error(Code::UnsupportedValue));
+    }
+    if v.kind() != ValueKind::Array {
+        return serialize(v, loc, false, name);
+    }
+    let collection = collection.ok_or_else(|| v.error(Code::UnsupportedValue))?;
+    let mut serialized = serialize(v, loc, collection == "multi", name)?;
+    if collection != "csv" && collection != "multi" {
+        let separator = match (collection, loc == ParameterLocation::Header) {
+            ("ssv", true) => " ",
+            ("ssv", false) => "%20",
+            ("tsv", true) => "\t",
+            ("tsv", false) => "%09",
+            ("pipes", true) => "|",
+            ("pipes", false) => "%7C",
+            _ => unreachable!(),
+        };
+        let values = v
+            .elements()
+            .unwrap()
+            .map(|v| {
+                scalar(&v).map(|s| {
+                    if loc == ParameterLocation::Header {
+                        s
+                    } else {
+                        uri::encode(&s)
+                    }
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        serialized.value = values.join(separator);
+        serialized.pairs = vec![(
+            if loc == ParameterLocation::Header {
+                name.into()
+            } else {
+                uri::encode(name)
+            },
+            serialized.value.clone(),
+        )];
+    }
+    Ok(serialized)
+}
 impl Operation {
     /// Inspect effective parameters without compiling body/media/security requirements.
     /// Unsupported editions and invalid parameter declarations refuse; raw inspection remains.
@@ -212,16 +1055,14 @@ impl Operation {
             .map(|(entries, _)| Parameters { entries })
     }
     fn parameter_declarations(&self) -> Result<(Vec<Parameter>, usize), Diagnostic> {
-        let root = self.store.json.root();
         let node = self.value();
-        if !root
-            .get("openapi")
-            .is_some_and(|v| matches!(v.as_str(), Some("3.1.0" | "3.1.1" | "3.1.2")))
+        let edition = self.store.edition.clone()?;
+        Method::from_token(self.method().as_str())?;
+        if matches!(self.method(), Method::Query | Method::Extension(_))
+            && edition != Edition::OpenApi32
+            || self.method() == Method::Trace && edition == Edition::Swagger20
         {
-            return Err(root
-                .get("openapi")
-                .unwrap_or(root)
-                .error(Code::UnsupportedVersion));
+            return Err(node.error(Code::InvalidDeclaration));
         }
         if let Some(e) = &self.record().path_error {
             return Err(e.clone());
@@ -231,67 +1072,80 @@ impl Operation {
         }
         let mut parameters: Vec<Parameter> = vec![];
         let mut budget = self.store.limits.reference_steps;
-        for list in [self.path_field("parameters"), node.get("parameters")]
-            .into_iter()
-            .flatten()
-        {
-            let entries = list
-                .elements()
-                .ok_or_else(|| list.error(Code::InvalidDeclaration))?;
-            let mut local = HashSet::new();
-            for authored in entries {
-                if budget == 0 {
-                    return Err(authored.error(Code::Limit));
+        for resolved in self.effective_parameter_references()? {
+            if budget == 0 {
+                return Err(resolved.authored.error(Code::Limit));
+            }
+            budget -= 1;
+            let p = resolved.target.clone();
+            if edition == Edition::Swagger20
+                && p.get("in")
+                    .is_some_and(|v| matches!(v.as_str(), Some("body" | "formData")))
+            {
+                continue;
+            }
+            let name = required_string(&p, "name")?;
+            let location = ParameterLocation::parse(&required_string(&p, "in")?)
+                .ok_or_else(|| p.error(Code::UnsupportedParameter))?;
+            if edition != Edition::Swagger20
+                && location == ParameterLocation::Header
+                && ["accept", "content-type", "authorization"]
+                    .iter()
+                    .any(|n| name.eq_ignore_ascii_case(n))
+            {
+                continue;
+            }
+            let required = bool_field(&p, "required", false)?;
+            if location == ParameterLocation::Path
+                && (!required || !self.path().contains(&format!("{{{name}}}")))
+            {
+                return Err(p.error(Code::InvalidDeclaration));
+            }
+            let (explode, unsupported, collection, schema_context) = if edition
+                == Edition::Swagger20
+            {
+                if location == ParameterLocation::Cookie {
+                    return Err(p.error(Code::InvalidDeclaration));
                 }
-                budget -= 1;
-                let resolved =
-                    document::resolve(&root, &authored, ReferenceKind::Parameter, budget + 1)?;
-                let p = resolved.target.clone();
-                let name = required_string(&p, "name")?;
-                let location = ParameterLocation::parse(&required_string(&p, "in")?)
-                    .ok_or_else(|| p.error(Code::UnsupportedParameter))?;
-                if location == ParameterLocation::Header
-                    && ["accept", "content-type", "authorization"]
-                        .iter()
-                        .any(|n| name.eq_ignore_ascii_case(n))
-                {
-                    continue;
+                let ty = required_string(&p, "type")?;
+                if !matches!(
+                    ty.as_str(),
+                    "string" | "number" | "integer" | "boolean" | "array"
+                ) {
+                    return Err(p.error(Code::InvalidDeclaration));
                 }
-                let identity = (
-                    if location == ParameterLocation::Header {
-                        name.to_ascii_lowercase()
+                let collection = if ty == "array" {
+                    if p.get("items").is_none() {
+                        return Err(p.error(Code::InvalidDeclaration));
+                    }
+                    let format =
+                        optional_string(&p, "collectionFormat")?.unwrap_or_else(|| "csv".into());
+                    if !matches!(format.as_str(), "csv" | "ssv" | "tsv" | "pipes" | "multi")
+                        || format == "multi" && location != ParameterLocation::Query
+                    {
+                        return Err(p.error(Code::InvalidDeclaration));
+                    }
+                    Some(format)
+                } else {
+                    None
+                };
+                (
+                    false,
+                    false,
+                    collection,
+                    Some(self.schema_description(p.clone())),
+                )
+            } else {
+                let style = optional_string(&p, "style")?.unwrap_or_else(|| {
+                    if matches!(
+                        location,
+                        ParameterLocation::Path | ParameterLocation::Header
+                    ) {
+                        "simple".into()
                     } else {
-                        name.clone()
-                    },
-                    format!("{location:?}"),
-                );
-                if !local.insert(identity) {
-                    return Err(p.error(Code::InvalidDeclaration));
-                }
-                let required = bool_field(&p, "required", false)?;
-                if location == ParameterLocation::Path
-                    && (!required || !self.path().contains(&format!("{{{name}}}")))
-                {
-                    return Err(p.error(Code::InvalidDeclaration));
-                }
-                let style = p
-                    .get("style")
-                    .map(|v| {
-                        v.as_str()
-                            .map(str::to_owned)
-                            .ok_or_else(|| v.error(Code::InvalidDeclaration))
-                    })
-                    .transpose()?
-                    .unwrap_or_else(|| {
-                        if matches!(
-                            location,
-                            ParameterLocation::Path | ParameterLocation::Header
-                        ) {
-                            "simple".into()
-                        } else {
-                            "form".into()
-                        }
-                    });
+                        "form".into()
+                    }
+                });
                 let expected = if matches!(
                     location,
                     ParameterLocation::Path | ParameterLocation::Header
@@ -300,32 +1154,38 @@ impl Operation {
                 } else {
                     "form"
                 };
-                if p.get("schema").is_none() && p.get("content").is_none()
-                    || p.get("schema").is_some() && p.get("content").is_some()
-                {
+                if p.get("schema").is_none() == p.get("content").is_none() {
                     return Err(p.error(Code::InvalidDeclaration));
                 }
                 let unsupported = style != expected
                     || p.get("content").is_some()
                     || bool_field(&p, "allowReserved", false)?
                     || location == ParameterLocation::Header && name.eq_ignore_ascii_case("cookie");
-                let param = Parameter {
-                    resolved,
-                    node: p.clone(),
-                    name: name.clone(),
-                    location,
-                    required,
-                    explode: bool_field(&p, "explode", style == "form")?,
+                (
+                    bool_field(&p, "explode", style == "form")?,
                     unsupported,
-                };
-                if let Some(i) = parameters
-                    .iter()
-                    .position(|p| p.location == location && same_name(&p.name, &name, location))
-                {
-                    parameters[i] = param;
-                } else {
-                    parameters.push(param);
-                }
+                    None,
+                    p.get("schema").map(|v| self.schema_description(v)),
+                )
+            };
+            let param = Parameter {
+                resolved,
+                node: p.clone(),
+                name: name.clone(),
+                location,
+                required,
+                explode,
+                unsupported,
+                collection,
+                schema_context,
+            };
+            if let Some(i) = parameters
+                .iter()
+                .position(|p| p.location == location && same_name(&p.name, &name, location))
+            {
+                parameters[i] = param;
+            } else {
+                parameters.push(param);
             }
         }
         Ok((parameters, budget))
@@ -334,12 +1194,7 @@ impl Operation {
         let (parameters, mut budget) = self.parameter_declarations()?;
         let root = self.store.json.root();
         let node = self.value();
-        let body = node
-            .get("requestBody")
-            .map(|b| {
-                document::resolve(&root, &b, ReferenceKind::RequestBody, budget).map(|r| r.target)
-            })
-            .transpose()?;
+        let body = self.body_description()?;
         let mut matched = vec![];
         if let Some(responses) = node.get("responses") {
             for (key, value) in responses
@@ -352,7 +1207,9 @@ impl Operation {
                 let valid = key == "default"
                     || key.len() == 3
                         && ((key.as_bytes()[0] >= b'1' && key.as_bytes()[0] <= b'5')
-                            && (key[1..] == *"XX" || key.bytes().all(|b| b.is_ascii_digit())));
+                            && (self.store.edition.clone()? != Edition::Swagger20
+                                && key[1..] == *"XX"
+                                || key.bytes().all(|b| b.is_ascii_digit())));
                 if !valid {
                     return Err(value.error(Code::InvalidDeclaration));
                 }
@@ -423,14 +1280,9 @@ impl Operation {
         let root = self.store.json.root();
         let desc = self.inspect();
         let limits = self.store.limits.clone();
-        let mut target = choose_server(
-            desc.servers.as_ref(),
-            self.store.base.as_deref(),
-            &input.selection,
-            &root,
-            &limits,
-        )
-        .map_err(|e| e.election(SelectionKind::Server, input.selection.server, None))?;
+        let mut target = self
+            .choose_target(&input.selection)
+            .map_err(|e| e.election(SelectionKind::Server, input.selection.server, None))?;
         let mut path = self.path().to_owned();
         if path.contains('?') || path.contains('#') || !path.starts_with('/') {
             return Err(self.value().error(Code::InvalidDeclaration));
@@ -475,8 +1327,12 @@ impl Operation {
             if p.unsupported {
                 return Err(p.node.error(Code::UnsupportedParameter));
             }
-            let scalar = serialize(&value.value, p.location, p.explode, &p.name)
-                .map_err(|e| e.contextual(parameter_context(index, value)))?;
+            let scalar = if self.store.edition == Ok(Edition::Swagger20) {
+                serialize_legacy(&value.value, p.location, p.collection.as_deref(), &p.name)
+            } else {
+                serialize(&value.value, p.location, p.explode, &p.name)
+            }
+            .map_err(|e| e.contextual(parameter_context(index, value)))?;
             match p.location {
                 ParameterLocation::Path => {
                     let marker = format!("{{{}}}", p.name);
@@ -1038,7 +1894,7 @@ pub(crate) fn token(b: u8) -> bool {
 }
 type BodyEncoding = (Option<Arc<[u8]>>, &'static str, Option<String>);
 fn prepare_body(
-    decl: Option<&Value>,
+    decl: Option<&RequestBodyDescription>,
     input: &Input,
     limits: &Limits,
 ) -> Result<BodyEncoding, Diagnostic> {
@@ -1049,25 +1905,34 @@ fn prepare_body(
         }
         return Err(Diagnostic::new(Code::InvalidSelection));
     };
+    let source = &decl.declaration.target;
     if absent {
-        if bool_field(decl, "required", false)? {
-            return Err(decl.error(Code::MissingBody));
+        if decl.required {
+            return Err(source.error(Code::MissingBody));
         }
         return Ok((None, "absent", None));
     }
-    let content = decl
-        .get("content")
-        .ok_or_else(|| decl.error(Code::InvalidDeclaration))?;
     let mut media = vec![];
-    for (k, v) in content
-        .members()
-        .ok_or_else(|| content.error(Code::InvalidDeclaration))?
-    {
-        if let Ok(parsed) = parse_media(k, true) {
-            media.push((k.to_owned(), parsed, v));
+    for representation in &decl.media {
+        if let Ok(parsed) = parse_media(&representation.media_type, true) {
+            media.push((
+                representation.media_type.clone(),
+                parsed,
+                representation.authored.clone(),
+            ));
         }
     }
-    let selected = if let Some(s) = &input.selection.media {
+    let content = source;
+    let selected = if decl.media_unrestricted {
+        if let Some(s) = &input.selection.media {
+            parse_media(s, false).map_err(|e| source.error(e.code))?;
+            s.trim_matches([' ', '\t']).to_owned()
+        } else if matches!(input.body, Body::Json(_)) {
+            "application/json".into()
+        } else {
+            return Err(source.error(Code::InvalidSelection));
+        }
+    } else if let Some(s) = &input.selection.media {
         let selected = parse_media(s, false).map_err(|e| content.error(e.code))?;
         let mut matching = media
             .iter()
@@ -1080,14 +1945,12 @@ fn prepare_body(
         if matching.last().is_some_and(|(r, _)| *r == rank) {
             return Err(content.error(Code::AmbiguousSelection));
         }
-        if value.kind() != ValueKind::Object {
-            return Err(value.error(Code::InvalidDeclaration));
-        }
+        let _ = value;
         s.trim_matches([' ', '\t']).to_owned()
     } else {
         let concrete = media
             .iter()
-            .filter(|(_, m, v)| !m.essence.contains('*') && v.kind() == ValueKind::Object)
+            .filter(|(_, m, _)| !m.essence.contains('*'))
             .collect::<Vec<_>>();
         let usable = concrete
             .iter()
@@ -1096,7 +1959,7 @@ fn prepare_body(
         match usable.len() {
             0 => {
                 if !concrete.is_empty() {
-                    return Err(decl.error(Code::UnsupportedMedia));
+                    return Err(source.error(Code::UnsupportedMedia));
                 }
                 return Err(content.error(if media.is_empty() {
                     Code::InvalidMedia
@@ -1121,7 +1984,7 @@ fn prepare_body(
                 .sourced(v.source_context()));
             }
             if !media_type(&selected)?.1 {
-                return Err(decl.error(Code::UnsupportedMedia));
+                return Err(source.error(Code::UnsupportedMedia));
             }
             (Arc::<[u8]>::from(v.raw().as_bytes()), "json")
         }
@@ -1185,19 +2048,25 @@ fn apply_security(
         if scopes.kind() != ValueKind::Array {
             return Err(scopes.error(Code::InvalidDeclaration));
         }
-        let schemes = root
-            .get("components")
-            .and_then(|c| c.get("securitySchemes"));
-        let declared = schemes
-            .and_then(|s| s.get(name))
-            .ok_or_else(|| choice.error(Code::InvalidDeclaration))?;
-        let scheme =
-            document::resolve(root, &declared, ReferenceKind::SecurityScheme, budget)?.target;
-        let ty = required_string(&scheme, "type")?;
-        if !matches!(ty.as_str(), "http" | "apiKey") {
+        let scheme = security_declaration(root, name, budget)?.target;
+        let kind = describe_security(&scheme, Edition::detect(root)?)?;
+        if matches!(
+            kind,
+            SecurityScheme::Unsupported { .. } | SecurityScheme::MutualTls
+        ) {
             return Err(scheme.error(Code::UnsupportedSecurity));
         }
         if scopes.elements().unwrap().any(|v| v.as_str().is_none()) {
+            return Err(scopes.error(Code::InvalidDeclaration));
+        }
+        if matches!(
+            Edition::detect(root)?,
+            Edition::Swagger20 | Edition::OpenApi30
+        ) && !matches!(
+            kind,
+            SecurityScheme::OAuth2 { .. } | SecurityScheme::OpenIdConnect { .. }
+        ) && scopes.elements().unwrap().next().is_some()
+        {
             return Err(scopes.error(Code::InvalidDeclaration));
         }
         let credential = input
@@ -1211,9 +2080,13 @@ fn apply_security(
         {
             return Err(scheme.error(Code::CredentialOrigin));
         }
-        let (location, name, value) = if ty == "http" {
-            let mechanism = required_string(&scheme, "scheme")?;
-            let value = match (mechanism.to_ascii_lowercase().as_str(), &credential.value) {
+        let (location, name, value) = if !matches!(kind, SecurityScheme::ApiKey { .. }) {
+            let mechanism = if matches!(kind, SecurityScheme::Basic) {
+                "basic"
+            } else {
+                "bearer"
+            };
+            let value = match (mechanism, &credential.value) {
                 ("basic", CredentialValue::Basic { username, password }) => {
                     if username.contains(':')
                         || username
@@ -1284,7 +2157,7 @@ fn apply_security(
 impl PreparedRequest {
     /// Selected HTTP method.
     pub fn method(&self) -> Method {
-        self.method
+        self.method.clone()
     }
     /// Exact resolved transport target. May contain query credentials; do not log indiscriminately.
     pub fn target(&self) -> &str {

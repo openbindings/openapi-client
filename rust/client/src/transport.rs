@@ -373,7 +373,7 @@ impl PreparedRequest {
             };
         }
         let request = DispatchRequest {
-            method: self.method,
+            method: self.method.clone(),
             target: self.target.clone(),
             headers: self.headers.clone(),
             body: self.body.clone(),

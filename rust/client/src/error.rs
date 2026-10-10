@@ -68,12 +68,27 @@ pub enum SelectionKind {
     /// Index in the effective security alternatives.
     Security,
 }
+/// Why the document's edition cannot be interpreted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum VersionReason {
+    /// Neither discriminator is present.
+    Missing,
+    /// Both Swagger and OpenAPI discriminators are present.
+    Conflicting,
+    /// The discriminator is not a valid supported version spelling.
+    Malformed,
+    /// The declared major or minor family is not supported.
+    UnsupportedFamily,
+}
 /// Safe corrective information; no input values are stored in reasons.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum DiagnosticReason {
     /// YAML syntax-to-JSON profile refusal.
     Yaml(crate::YamlReason),
+    /// Edition discrimination failed without rewriting the authored source.
+    Version(VersionReason),
     /// Checked Serde construction refused the emitted representation.
     Serialization(SerializationReason),
     /// A resource exceeds its configured maximum. Actual can be a lower bound when admission stopped early.
@@ -288,7 +303,9 @@ impl Code {
             Self::ReferenceCycle => "the reference chain contains a cycle",
             Self::ExternalReference => "this profile requires a local reference",
             Self::AmbiguousReference => "the reference and authored fields conflict",
-            Self::UnsupportedVersion => "request preparation requires OpenAPI 3.1",
+            Self::UnsupportedVersion => {
+                "the document edition is missing, conflicting, malformed or unsupported"
+            }
             Self::InvalidDeclaration => "a required protocol declaration is invalid",
             Self::AmbiguousOperation => "the operation ID identifies more than one operation",
             Self::MissingOperation => "the requested operation does not exist",
