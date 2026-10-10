@@ -1,4 +1,25 @@
-# Real HTTP consumer revision (unpublished)
+# Connection reuse revision (unpublished)
+
+Public Rust signatures are unchanged. **Changed:** `HostCapabilities::no_retries`
+now explicitly permits recovery only when a host proves the original request
+was never serialized. It still forbids automatic replay once serialization has
+begun or may have begun, including partial writes, status responses and ambiguous
+failures. Hosts that cannot uphold that distinction must not assert this capability.
+The core still invokes its supplied callback once and performs no retry itself.
+
+The optional native companion now shares eligible HTTP/1.1 connections between a
+client and its clones. It retains at most eight idle connections per origin with
+a ninety-second idle timeout; this is not a limit on active concurrency or the number of origins.
+An unusable pooled connection can cause recovery of a provably unsent request
+within the original total deadline. This does not establish upload completion:
+upload evidence after backend execution starts remains `Unknown`.
+
+Connection reuse follows complete HTTP framing and backend readiness, separately
+from application acceptance. A complete non-2xx response or a retention refusal
+does not necessarily evict the connection. Cancellation still stops the local
+wait without promising remote rollback.
+
+## Previous real HTTP consumer revision
 
 The optional `dynamic-openapi-client-reqwest` companion now supplies native HTTP execution without application-written callbacks. Core `PreparedRequest::invoke` remains available and runtime-independent. This adds no OpenAPI editions, schema evaluation, acquisition or OpenBindings adaptation.
 

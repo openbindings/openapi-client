@@ -43,6 +43,13 @@ def run(name, command, cwd=root):
 
 
 lock_before = (root / 'Cargo.lock').read_bytes()
+backend_names = {'reqwest', 'hyper', 'hyper-util'}
+qualified_backend = sorted([
+    (package['name'], package['version'], package['checksum'])
+    for package in tomllib.loads(lock_before.decode())['package']
+    if package['name'] in backend_names
+])
+assert {name for name, _, _ in qualified_backend} == backend_names
 run('package-native', ['cargo', 'package', '--locked', '--no-verify',
                       '-p', 'dynamic-openapi-client-reqwest', '--config',
                       'patch.crates-io.dynamic-openapi-client.path='
@@ -58,8 +65,28 @@ with tempfile.TemporaryDirectory(prefix='native-consumer-', dir=output) as tempo
     consumer = work / 'consumer'
     (consumer / 'src').mkdir(parents=True)
     (consumer / 'src/bin').mkdir()
-    deps = tomllib.loads((native / 'Cargo.toml').read_text())['dependencies']
+    native_manifest = tomllib.loads((native / 'Cargo.toml').read_text())
+    deps = native_manifest['dependencies']
+    native_dev_deps = native_manifest['dev-dependencies']
     core_deps = tomllib.loads((core / 'Cargo.toml').read_text())['dependencies']
+    # Run the archived companion's socket tests as an external public consumer,
+    # including its test-only observation dependencies. Read constraints/features
+    # from the actual normalized archive instead of duplicating their versions.
+    extra_dev_deps = []
+    # Archived integration tests can use their crate's ordinary dependencies as
+    # well as its dev dependencies. Expose the former only to this consumer's
+    # tests, so the ordinary example still uses the original public API inputs.
+    test_dependencies = {
+        name: dependency for name, dependency in deps.items()
+        if name not in {'dynamic-openapi-client', 'reqwest', 'tokio'}
+    }
+    test_dependencies.update(native_dev_deps)
+    for name, dependency in test_dependencies.items():
+        if name in {'serde', 'serde_json'}:
+            continue
+        assert set(dependency) <= {'version', 'features', 'default-features', 'package'}, dependency
+        extra_dev_deps.append(name + '={' + ','.join(
+            key + '=' + json.dumps(value) for key, value in dependency.items()) + '}\n')
     (consumer / 'Cargo.toml').write_text(
         '[package]\nname="openapi-native-package-consumer"\nversion="0.0.0"\n'
         'edition="2024"\n[workspace]\n'
@@ -74,11 +101,32 @@ with tempfile.TemporaryDirectory(prefix='native-consumer-', dir=output) as tempo
         'serde_json={version=' + json.dumps(core_deps['serde_json']['version']) + ',features=["raw_value"]}\n'
         'reqwest={version=' + json.dumps(deps['reqwest']['version'])
         + ',default-features=false}\n'
-        '[patch.crates-io]\ndynamic-openapi-client={path=' + json.dumps(str(core)) + '}\n')
+        '[dev-dependencies]\n' + ''.join(extra_dev_deps)
+        + '[patch.crates-io]\ndynamic-openapi-client={path=' + json.dumps(str(core)) + '}\n')
     shutil.copy2(native / 'examples/real_http.rs', consumer / 'src/main.rs')
     shutil.copy2(root / 'qualification/native_consumer.rs', consumer / 'src/bin/independent-consumer.rs')
+    shutil.copytree(native / 'tests', consumer / 'tests')
     run('example', ['cargo', 'run', '--manifest-path', consumer / 'Cargo.toml',
                     '--bin', 'openapi-native-package-consumer'], consumer)
+    selected_packages = tomllib.loads((consumer / 'Cargo.lock').read_text())['package']
+    selected_backend = sorted([
+        (package['name'], package['version'], package['checksum'])
+        for package in selected_packages
+        if package['name'] in backend_names
+    ])
+    backend_edges = {
+        package['name']: [dependency for dependency in package.get('dependencies', [])
+                          if dependency.split()[0] in backend_names]
+        for package in selected_packages if package['name'] in backend_names
+    }
+    (output / 'backend-graph.json').write_text(json.dumps({
+        'qualified': qualified_backend, 'selected': selected_backend,
+        'dependencyEdges': backend_edges,
+        'matches': selected_backend == qualified_backend,
+    }, indent=2) + '\n')
+    assert selected_backend == qualified_backend, 'consumer backend needs a new no-replay audit'
+    assert {edge.split()[0] for edge in backend_edges['reqwest']} == {'hyper', 'hyper-util'}
+    assert {edge.split()[0] for edge in backend_edges['hyper-util']} == {'hyper'}
     for label, features in [('default', None),
                             ('arbitrary-precision', 'arbitrary_precision'),
                             ('backend-unified', 'backend_unified'),
@@ -88,4 +136,8 @@ with tempfile.TemporaryDirectory(prefix='native-consumer-', dir=output) as tempo
         if features:
             command += ['--features', features]
         run('independent-consumer-' + label, command, consumer)
+        command = ['cargo', 'test', '--locked', '--manifest-path', consumer / 'Cargo.toml', '--tests']
+        if features:
+            command += ['--features', features]
+        run('archived-native-tests-' + label, command, consumer)
 print(json.dumps({'passed': True, 'commands': len(results)}))

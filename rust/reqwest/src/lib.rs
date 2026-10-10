@@ -29,8 +29,9 @@ const FORBIDDEN: &[&str] = &[
 
 /// Reusable configuration, credentials and TLS state for native Tokio HTTP/1.1.
 ///
-/// This profile opens a fresh connection per request to exclude hidden pooled
-/// connection retries. Cloning this value does not enable connection pooling.
+/// Clones share eligible HTTP/1.1 connections. The backend may recover a request
+/// proven never serialized when an idle connection is unusable; it never
+/// automatically repeats a request after serialization began or may have begun.
 #[derive(Clone)]
 pub struct Client {
     inner: reqwest::Client,
@@ -103,7 +104,8 @@ impl Client {
     }
 
     /// Begin configuring a client. It cannot acquire ambient authentication,
-    /// cookies or proxy configuration, follow redirects or retry a request.
+    /// cookies or proxy configuration, follow redirects or replay a started request.
+    /// Proven-never-serialized recovery is permitted within the request deadline.
     pub fn builder() -> ClientBuilder {
         let inner = reqwest::Client::builder()
             .tls_backend_rustls()
@@ -116,7 +118,8 @@ impl Client {
             .no_deflate()
             .no_zstd()
             .http1_only()
-            .pool_max_idle_per_host(0)
+            .pool_max_idle_per_host(8)
+            .pool_idle_timeout(Duration::from_secs(90))
             .http1_max_headers(256)
             .timeout(Duration::from_secs(30))
             .connect_timeout(Duration::from_secs(10));
@@ -136,7 +139,9 @@ impl Client {
         request
     }
 
-    /// Execute a prepared request once and preserve available response evidence.
+    /// Execute a prepared request and preserve available response evidence.
+    /// An unusable idle connection may be replaced only while the backend can
+    /// recover the original request before serialization has begun.
     ///
     /// Unsupported URL spelling or transport-controlled headers refuse before
     /// dispatch. After entering backend execution, upload completion is unknown.
