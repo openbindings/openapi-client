@@ -1042,3 +1042,164 @@ fn borrowed_security_validation_preserves_malformed_flow_refusals() {
         }
     }
 }
+
+#[test]
+fn implicit_schema_dialects_follow_applied_minor_profile_and_explicit_precedence() {
+    for version in VERSIONS.iter().copied().chain(["3.1.99", "3.2.99"]) {
+        for yaml in [false, true] {
+            let mut value = fixture(version);
+            for explicit in [0, 1, 2] {
+                let schema = &mut value["paths"]["/items/{id}"]["post"]["requestBody"]["content"]["application/json"]
+                    ["schema"];
+                if explicit == 2 {
+                    schema["$schema"] = json!("https://example.test/schema-dialect");
+                }
+                if explicit > 0 {
+                    value["jsonSchemaDialect"] = json!("https://example.test/root-dialect");
+                }
+                let source = format!("{}{}", if yaml { "---\n" } else { "" }, value);
+                let doc =
+                    Document::parse(source, Some("https://api.example/spec"), Limits::default())
+                        .unwrap();
+                let description = doc.operation_id("create").unwrap().describe().unwrap();
+                let body = description.request_body.unwrap();
+                let actual = body.media[0].schema.as_ref().unwrap().dialect.as_deref();
+                let expected = if version.starts_with("3.1") || version.starts_with("3.2") {
+                    Some(match explicit {
+                        1 => "https://example.test/root-dialect",
+                        2 => "https://example.test/schema-dialect",
+                        _ if version.starts_with("3.1") => {
+                            "https://spec.openapis.org/oas/3.1/dialect/base"
+                        }
+                        _ => "https://spec.openapis.org/oas/3.2/dialect/2026-02-26",
+                    })
+                } else {
+                    None
+                };
+                assert_eq!(
+                    actual, expected,
+                    "{version} yaml={yaml} explicit={explicit}"
+                );
+                assert_eq!(doc.version().as_deref(), Some(version));
+            }
+        }
+    }
+}
+
+#[test]
+fn oauth_flow_vocabulary_is_edition_aware_and_device_tokens_use_the_same_request() {
+    for version in VERSIONS.iter().copied().chain(["3.2.99"]) {
+        for yaml in [false, true] {
+            for flow_name in [
+                "implicit",
+                "password",
+                "application",
+                "accessCode",
+                "clientCredentials",
+                "authorizationCode",
+                "deviceAuthorization",
+                "DeviceAuthorization",
+            ] {
+                let mut value = oauth_description_fixture(version, "read", 1);
+                let flow = json!({"authorizationUrl":"https://issuer.test/authorize","deviceAuthorizationUrl":"https://issuer.test/device","tokenUrl":"https://issuer.test/token","refreshUrl":"https://issuer.test/refresh","scopes":{"read":"Read"}});
+                if version == "2.0" {
+                    value["securityDefinitions"]["auth"] = flow;
+                    value["securityDefinitions"]["auth"]["type"] = json!("oauth2");
+                    value["securityDefinitions"]["auth"]["flow"] = json!(flow_name);
+                } else {
+                    value["components"]["securitySchemes"]["auth"]["flows"] =
+                        json!({flow_name:flow});
+                }
+                let source = format!("{}{}", if yaml { "---\n" } else { "" }, value);
+                let doc =
+                    Document::parse(source, Some("https://api.example/spec"), Limits::default())
+                        .unwrap();
+                let operation = doc.operation_id("read").unwrap();
+                let allowed = match flow_name {
+                    "implicit" | "password" => true,
+                    "application" | "accessCode" => version == "2.0",
+                    "clientCredentials" | "authorizationCode" => version != "2.0",
+                    "deviceAuthorization" => version.starts_with("3.2."),
+                    _ => false,
+                };
+                if !allowed {
+                    assert_eq!(
+                        operation.describe().unwrap_err().code(),
+                        Code::InvalidDeclaration,
+                        "{version} {flow_name}"
+                    );
+                    assert_eq!(
+                        operation.prepare(&oauth_input()).unwrap_err().code(),
+                        Code::InvalidDeclaration,
+                        "{version} {flow_name}"
+                    );
+                    continue;
+                }
+                let description = operation.describe().unwrap();
+                let SecurityScheme::OAuth2 { flows } =
+                    &description.security[0].requirements[0].scheme
+                else {
+                    panic!("OAuth2")
+                };
+                assert_eq!(
+                    flows[0].device_authorization_url.as_deref(),
+                    version
+                        .starts_with("3.2.")
+                        .then_some("https://issuer.test/device")
+                );
+                assert_eq!(
+                    flows[0].flow,
+                    match flow_name {
+                        "application" => "clientCredentials",
+                        "accessCode" => "authorizationCode",
+                        other => other,
+                    }
+                );
+                let prepared = operation.prepare(&oauth_input()).unwrap();
+                assert_eq!(prepared.target(), "https://api.example/");
+                assert!(
+                    prepared
+                        .headers()
+                        .iter()
+                        .any(|h| h.name().eq_ignore_ascii_case("authorization")
+                            && h.value() == b"Bearer access-token")
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn device_flow_required_endpoints_and_scope_shape_refuse_with_original_sources() {
+    for version in ["3.2.0", "3.2.1"] {
+        for key in ["deviceAuthorizationUrl", "tokenUrl", "scopes"] {
+            for wrong_shape in [false, true] {
+                let mut value = oauth_description_fixture(version, "read", 1);
+                let mut flow = json!({"deviceAuthorizationUrl":"https://issuer.test/device","tokenUrl":"https://issuer.test/token","scopes":{"read":"Read"}});
+                if wrong_shape {
+                    flow[key] = json!(42);
+                } else {
+                    flow.as_object_mut().unwrap().remove(key);
+                }
+                value["components"]["securitySchemes"]["auth"]["flows"] =
+                    json!({"deviceAuthorization":flow});
+                let doc = document(&value);
+                let operation = doc.operation_id("read").unwrap();
+                for error in [
+                    operation.describe().unwrap_err(),
+                    operation.prepare(&oauth_input()).unwrap_err(),
+                ] {
+                    assert_eq!(error.code(), Code::InvalidDeclaration);
+                    assert!(
+                        error
+                            .location()
+                            .unwrap()
+                            .pointer
+                            .contains("/flows/deviceAuthorization")
+                    );
+                    assert_eq!(error.source_context(), Some(doc.root().source_context()));
+                }
+            }
+        }
+    }
+}

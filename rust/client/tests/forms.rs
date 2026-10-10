@@ -499,3 +499,128 @@ fn admission_precedes_expensive_name_comparisons_and_counts_supplied_parts() {
         .unwrap_err();
     assert_eq!(limit_kind(error.diagnostic()), LimitKind::FormWork);
 }
+
+#[test]
+fn swagger_implicit_form_media_preserves_fields_and_requires_a_choice() {
+    for yaml in [false, true] {
+        for declaration in [
+            "absent",
+            "root-empty",
+            "operation-empty",
+            "operation-overrides-root",
+        ] {
+            let mut value = json!({"swagger":"2.0","host":"api.example","schemes":["https"],"paths":{"/send":{"post":{"operationId":"send","parameters":[{"in":"formData","name":"message","type":"string","required":true}]}}}});
+            match declaration {
+                "root-empty" => value["consumes"] = json!([]),
+                "operation-empty" => value["paths"]["/send"]["post"]["consumes"] = json!([]),
+                "operation-overrides-root" => {
+                    value["consumes"] = json!(["application/json"]);
+                    value["paths"]["/send"]["post"]["consumes"] = json!([]);
+                }
+                _ => (),
+            }
+            let source = format!("{}{}", if yaml { "---\n" } else { "" }, value);
+            let doc = Document::parse(source, None, Limits::default()).unwrap();
+            let op = doc.operation_id("send").unwrap();
+            let body = op.describe().unwrap().request_body.unwrap();
+            assert!(!body.media_unrestricted);
+            assert_eq!(body.media.len(), 2);
+            for representation in &body.media {
+                let BodyFields::Declared(fields) = &representation.fields else {
+                    panic!("known form fields")
+                };
+                assert_eq!(fields.len(), 1);
+                assert_eq!(fields[0].name, "message");
+                assert_eq!(fields[0].requirement, FieldRequirement::ProtocolRequired);
+                assert_eq!(
+                    representation.authored.source_context(),
+                    doc.root().source_context()
+                );
+            }
+            assert_eq!(
+                op.request()
+                    .form([FormField::new("message", "a b")])
+                    .prepare()
+                    .unwrap_err()
+                    .diagnostic()
+                    .code(),
+                Code::AmbiguousSelection
+            );
+            let json_body = ExactJson::parse(br#"{"message":"a b"}"#, Limits::default()).unwrap();
+            assert_eq!(
+                op.request()
+                    .json(json_body.root())
+                    .prepare()
+                    .unwrap_err()
+                    .diagnostic()
+                    .code(),
+                Code::UnsupportedMedia
+            );
+            for media in ["application/x-www-form-urlencoded", "multipart/form-data"] {
+                let request = op
+                    .request()
+                    .selection(Selection {
+                        media: Some(media.into()),
+                        ..Selection::default()
+                    })
+                    .form([FormField::new("message", "a b")])
+                    .prepare()
+                    .unwrap();
+                if media.starts_with("application/") {
+                    assert_eq!(request.body(), Some(b"message=a+b".as_slice()));
+                } else {
+                    assert!(
+                        String::from_utf8_lossy(request.body().unwrap()).contains(
+                            "name=\"message\"\r\nContent-Type: text/plain\r\n\r\na b\r\n"
+                        )
+                    );
+                }
+                let error = op
+                    .request()
+                    .selection(Selection {
+                        media: Some(media.into()),
+                        ..Selection::default()
+                    })
+                    .form(std::iter::empty::<FormField<'static>>())
+                    .prepare()
+                    .unwrap_err();
+                assert_eq!(error.diagnostic().code(), Code::MissingInput);
+            }
+        }
+    }
+}
+
+#[test]
+fn swagger_form_parameters_cannot_be_sent_as_json_even_when_consumes_is_invalid() {
+    let doc = document(
+        "2.0",
+        "application/json",
+        json!({"message":{"type":"string"}}),
+        json!({}),
+        Limits::default(),
+    );
+    let op = doc.operation_id("send").unwrap();
+    let payload = ExactJson::parse(br#"{"message":"hi"}"#, Limits::default()).unwrap();
+    assert_eq!(
+        op.request()
+            .json(payload.root())
+            .prepare()
+            .unwrap_err()
+            .diagnostic()
+            .code(),
+        Code::UnsupportedMedia
+    );
+    assert_eq!(
+        op.request()
+            .selection(Selection {
+                media: Some("application/json".into()),
+                ..Selection::default()
+            })
+            .body(Body::Raw(b"{}".as_slice().into()))
+            .prepare()
+            .unwrap_err()
+            .diagnostic()
+            .code(),
+        Code::UnsupportedMedia
+    );
+}

@@ -180,9 +180,10 @@ pub struct SchemaDescription {
 /// An effective representation, retaining its original declaration.
 #[derive(Clone, Debug)]
 pub struct MediaDescription {
-    /// Authored media type or range.
+    /// Effective media type or range, including protocol-defined form choices.
     pub media_type: String,
-    /// Original Media Type Object, or Swagger consumes/produces string.
+    /// Original Media Type Object, Swagger consumes/produces string, or form
+    /// parameter establishing an implicit Swagger form representation.
     pub authored: Value,
     /// Opaque payload schema.
     pub schema: Option<SchemaDescription>,
@@ -208,6 +209,7 @@ pub struct RequestBodyDescription {
     /// their original values remain accessible through `declaration`.
     pub media: Vec<MediaDescription>,
     /// No media constraint was declared; an explicit concrete type or the JSON codec determines it.
+    /// Swagger form parameters still constrain the body to form representations.
     pub media_unrestricted: bool,
 }
 /// A logical form field; automatic form serialization is qualified separately.
@@ -298,10 +300,13 @@ pub struct ServerDescription {
 /// A normalized OAuth flow, with original source retained by the owning requirement.
 #[derive(Clone, Debug)]
 pub struct OAuthFlowDescription {
-    /// Common flow name: implicit, password, clientCredentials or authorizationCode.
+    /// Common flow name: implicit, password, clientCredentials, authorizationCode
+    /// or deviceAuthorization.
     pub flow: String,
     /// Authorization endpoint when applicable.
     pub authorization_url: Option<String>,
+    /// Device authorization endpoint for the OpenAPI 3.2 flow.
+    pub device_authorization_url: Option<String>,
     /// Token endpoint when applicable.
     pub token_url: Option<String>,
     /// Refresh endpoint when declared.
@@ -586,7 +591,7 @@ impl Operation {
                     if edition == Edition::OpenApi31 {
                         "https://spec.openapis.org/oas/3.1/dialect/base"
                     } else {
-                        "https://spec.openapis.org/oas/3.2/dialect/base"
+                        "https://spec.openapis.org/oas/3.2/dialect/2026-02-26"
                     },
                 )?)
             }
@@ -888,6 +893,29 @@ impl Operation {
                 _ => bool_field(&declaration.target, "required", false)?,
             };
             let mut media = self.media_descriptions(&declaration.target, Some("consumes"), work)?;
+            let media_unrestricted = self
+                .value()
+                .get("consumes")
+                .or_else(|| self.store.json.root().get("consumes"))
+                .is_none_or(|v| v.elements().is_some_and(|mut v| v.next().is_none()));
+            if has_forms && media_unrestricted {
+                // formData itself supplies a protocol constraint even without
+                // consumes. Keep both legal choices visible; do not guess an
+                // application preference or send a JSON body for form fields.
+                for media_type in ["application/x-www-form-urlencoded", "multipart/form-data"] {
+                    work.entry(&declaration.target)?;
+                    media.push(MediaDescription {
+                        media_type: work.text(&declaration.target, media_type)?,
+                        authored: declaration.target.clone(),
+                        schema: None,
+                        encoding: None,
+                        item_schema: None,
+                        fields: BodyFields::NotApplicable,
+                        prefix_encoding: None,
+                        item_encoding: None,
+                    });
+                }
+            }
             for representation in &mut media {
                 if parse_media(&representation.media_type, true).is_ok_and(|m| {
                     m.essence.starts_with("multipart/")
@@ -914,11 +942,7 @@ impl Operation {
                 declaration,
                 required,
                 media,
-                media_unrestricted: self
-                    .value()
-                    .get("consumes")
-                    .or_else(|| self.store.json.root().get("consumes"))
-                    .is_none_or(|v| v.elements().is_some_and(|mut v| v.next().is_none())),
+                media_unrestricted: media_unrestricted && !has_forms,
             }));
         }
         // 3.0 requires consumers to ignore requestBody where HTTP semantics are undefined.
@@ -1326,23 +1350,39 @@ fn visit_oauth_flows(
     edition: Edition,
 ) -> Result<(), Diagnostic> {
     let mut flow = |name: &str, value: &Value| {
-        let name = match name {
-            "implicit" => "implicit",
-            "password" => "password",
-            "clientCredentials" | "application" => "clientCredentials",
-            "authorizationCode" | "accessCode" => "authorizationCode",
+        let name = match (edition, name) {
+            (_, "implicit") => "implicit",
+            (_, "password") => "password",
+            (Edition::Swagger20, "application") => "clientCredentials",
+            (Edition::Swagger20, "accessCode") => "authorizationCode",
+            (Edition::OpenApi30 | Edition::OpenApi31 | Edition::OpenApi32, "clientCredentials") => {
+                "clientCredentials"
+            }
+            (Edition::OpenApi30 | Edition::OpenApi31 | Edition::OpenApi32, "authorizationCode") => {
+                "authorizationCode"
+            }
+            (Edition::OpenApi32, "deviceAuthorization") => "deviceAuthorization",
             _ => return Err(value.error(Code::InvalidDeclaration)),
         };
         if matches!(name, "implicit" | "authorizationCode") {
             string_value(value, "authorizationUrl")?;
         }
-        if matches!(name, "password" | "clientCredentials" | "authorizationCode") {
+        if name == "deviceAuthorization" {
+            string_value(value, "deviceAuthorizationUrl")?;
+        }
+        if matches!(
+            name,
+            "password" | "clientCredentials" | "authorizationCode" | "deviceAuthorization"
+        ) {
             string_value(value, "tokenUrl")?;
         }
         // Even endpoints unused by this flow must retain their declared string shape.
         optional_string_value(value, "authorizationUrl")?;
         optional_string_value(value, "tokenUrl")?;
         optional_string_value(value, "refreshUrl")?;
+        if edition == Edition::OpenApi32 {
+            optional_string_value(value, "deviceAuthorizationUrl")?;
+        }
         let scopes = value
             .get("scopes")
             .ok_or_else(|| value.error(Code::InvalidDeclaration))?;
@@ -1448,6 +1488,11 @@ fn describe_security(
                     flows.push(OAuthFlowDescription {
                         flow: work.text(value, name)?,
                         authorization_url: work.optional(value, "authorizationUrl")?,
+                        device_authorization_url: if edition == Edition::OpenApi32 {
+                            work.optional(value, "deviceAuthorizationUrl")?
+                        } else {
+                            None
+                        },
                         token_url: work.optional(value, "tokenUrl")?,
                         refresh_url: work.optional(value, "refreshUrl")?,
                         scopes,
@@ -2474,6 +2519,17 @@ fn prepare_body(
             _ => return Err(content.error(Code::AmbiguousSelection)),
         }
     };
+    if edition == Edition::Swagger20
+        && source
+            .get("in")
+            .is_some_and(|v| v.as_str() == Some("formData"))
+        && !matches!(
+            parse_media(&selected, false)?.essence.as_str(),
+            "application/x-www-form-urlencoded" | "multipart/form-data"
+        )
+    {
+        return Err(source.error(Code::UnsupportedMedia));
+    }
     if let Some(form) = form {
         let selected_parsed = parse_media(&selected, false)?;
         let representation = decl

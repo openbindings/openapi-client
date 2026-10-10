@@ -135,3 +135,27 @@ bool with `requirement: FieldRequirement`: `ProtocolRequired` is enforced,
 intend the defaults. `LimitKind` and `DiagnosticReason::Form(FormReason)` expose
 corrective refusals. Debug remains redacted. This release implements the bounded
 profile in [FORMS.md](FORMS.md), not every form/multipart feature.
+
+
+## Independent compatibility review repairs
+
+OAuth flow names now follow the authored OpenAPI minor family. OpenAPI 3.2
+`deviceAuthorization` uses the same supplied bearer-token preparation path and
+adds `OAuthFlowDescription::device_authorization_url`; this is a returned
+descriptor field, not token acquisition. Swagger `application`/`accessCode`
+normalize to `clientCredentials`/`authorizationCode` only in Swagger documents.
+
+The applied 3.2.1 clarification profile uses the published default schema dialect
+`https://spec.openapis.org/oas/3.2/dialect/2026-02-26` for every 3.2 patch spelling.
+Authored `$schema` and `jsonSchemaDialect` still take precedence. The original
+version spelling is retained; patch versions do not fork the caller's API.
+
+Swagger `formData` with absent or empty effective `consumes` now exposes both
+protocol-defined form representations, including each representation's fields.
+Choose one with the existing `Selection::media` field. The default is ambiguous,
+not an invented server preference. Such a body is constrained by `formData` and
+is not `media_unrestricted`; JSON cannot substitute for its form encoding.
+The contributing form parameter owns each implicit representation's provenance.
+
+Multipart collision scanning now preserves overlapping prefixes across chunks.
+No public boundary spelling or new builder path is introduced.
