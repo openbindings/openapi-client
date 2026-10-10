@@ -198,7 +198,8 @@ pub struct RequestBodyDescription {
     pub declaration: crate::ResolvedReference,
     /// Whether omitting the logical body is permitted.
     pub required: bool,
-    /// Effective request representations.
+    /// Effective request representations. Malformed media keys are excluded;
+    /// their original values remain accessible through `declaration`.
     pub media: Vec<MediaDescription>,
     /// No media constraint was declared; an explicit concrete type or the JSON codec determines it.
     pub media_unrestricted: bool,
@@ -234,7 +235,8 @@ pub struct ResponseDescription {
     pub status: String,
     /// Original declaration and local-reference provenance.
     pub declaration: crate::ResolvedReference,
-    /// Effective response representations.
+    /// Effective response representations. Malformed media keys are excluded;
+    /// their original values remain accessible through `declaration`.
     pub media: Vec<MediaDescription>,
 }
 /// One effective target choice. Swagger components become a URL template without source rewriting.
@@ -517,6 +519,9 @@ impl Operation {
         content
             .members()
             .ok_or_else(|| content.error(Code::InvalidDeclaration))?
+            // Only syntactically valid media keys govern a representation. Exclude
+            // other entries before inspecting their value; raw declarations retain them.
+            .filter(|(key, _)| parse_media(key, true).is_ok())
             .map(|(key, value)| {
                 if value.kind() != ValueKind::Object {
                     return Err(value.error(Code::InvalidDeclaration));

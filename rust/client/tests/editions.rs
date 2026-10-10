@@ -648,3 +648,104 @@ fn actual_loopback_wire_uses_one_consumer_for_all_editions_and_new_methods() {
         assert!(wire.ends_with(br#"{"integer":9007199254740993}"#));
     }
 }
+
+#[test]
+fn malformed_media_keys_are_excluded_before_values_in_effective_descriptions() {
+    for version in ["3.0.4", "3.1.2", "3.2.1"] {
+        let doc = document(&json!({"openapi":version,"paths":{"/":{"post":{
+            "operationId":"post",
+            "requestBody":{"content":{"application/json;broken":false,"*/*":{}}},
+            "responses":{"200":{"description":"ok","content":{"application/json;broken":false,"*/*":{}}}}
+        }}}}));
+        let operation = doc.operation_id("post").unwrap();
+        let payload = ExactJson::parse(b"null", Limits::default()).unwrap();
+        let prepared = operation
+            .request()
+            .json(payload.root())
+            .selection(Selection {
+                media: Some("application/json".into()),
+                ..Selection::default()
+            })
+            .prepare()
+            .unwrap();
+        assert_eq!(prepared.body(), Some(b"null".as_slice()));
+        assert_eq!(
+            prepared
+                .headers()
+                .iter()
+                .find(|header| header.name().eq_ignore_ascii_case("content-type"))
+                .unwrap()
+                .value(),
+            b"application/json"
+        );
+        let description = operation.describe().unwrap();
+        let body = description.request_body.unwrap();
+        assert_eq!(
+            body.media
+                .iter()
+                .map(|m| m.media_type.as_str())
+                .collect::<Vec<_>>(),
+            ["*/*"]
+        );
+        assert_eq!(
+            description.responses[0]
+                .media
+                .iter()
+                .map(|m| m.media_type.as_str())
+                .collect::<Vec<_>>(),
+            ["*/*"]
+        );
+        assert_eq!(
+            body.declaration
+                .target
+                .get("content")
+                .unwrap()
+                .get("application/json;broken")
+                .unwrap()
+                .as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            operation
+                .inspect()
+                .request_body
+                .unwrap()
+                .get("content")
+                .unwrap()
+                .get("application/json;broken")
+                .unwrap()
+                .as_bool(),
+            Some(false)
+        );
+    }
+}
+
+#[test]
+fn valid_media_key_with_invalid_value_refuses_instead_of_using_wildcard() {
+    for version in ["3.0.4", "3.1.2", "3.2.1"] {
+        let doc = document(&json!({"openapi":version,"paths":{"/":{"post":{
+            "operationId":"post",
+            "requestBody":{"content":{"application/json":false,"*/*":{}}}
+        }}}}));
+        let operation = doc.operation_id("post").unwrap();
+        let payload = ExactJson::parse(b"null", Limits::default()).unwrap();
+        let refused = operation
+            .request()
+            .json(payload.root())
+            .selection(Selection {
+                media: Some("application/json".into()),
+                ..Selection::default()
+            })
+            .prepare()
+            .unwrap_err();
+        assert_eq!(refused.diagnostic().code(), Code::InvalidDeclaration);
+        assert_eq!(
+            refused.diagnostic().location().unwrap().pointer,
+            "/paths/~1/post/requestBody/content/application~1json"
+        );
+        assert_eq!(
+            operation.describe().unwrap_err().code(),
+            Code::InvalidDeclaration
+        );
+    }
+}
