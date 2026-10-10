@@ -277,8 +277,25 @@ struct Store {
     source: Arc<str>,
     context: SourceContext,
     index: Index,
-    limits: Limits,
+    limits: AccessLimits,
     authored: Option<crate::source::AuthoredMap>,
+}
+// Parsing consumes the complete admission policy before publication. A retained
+// value needs only these access bounds; unrelated request/schema policy must not
+// enlarge every independent JSON owner as the client gains capabilities.
+struct AccessLimits {
+    document_bytes: usize,
+    depth: usize,
+    number_conversion_chars: usize,
+}
+impl From<&Limits> for AccessLimits {
+    fn from(limits: &Limits) -> Self {
+        Self {
+            document_bytes: limits.document_bytes,
+            depth: limits.depth,
+            number_conversion_chars: limits.number_conversion_chars,
+        }
+    }
 }
 enum Index {
     Eager(Vec<Node>),
@@ -799,7 +816,7 @@ impl ExactJson {
                     source: Arc::from(text),
                     context,
                     index,
-                    limits,
+                    limits: AccessLimits::from(&limits),
                     authored: None,
                 }),
                 id: 0,
