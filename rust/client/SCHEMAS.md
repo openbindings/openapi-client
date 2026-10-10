@@ -71,6 +71,13 @@ on open schemas remain absent facts, not an input rejection rule.
 `GraphLimits` also bounds schema identity and reference indexing. Each private fact
 session shares `Limits::schema_fact_work` (500,000 by default); fact traversal depth
 (128 by default) is independent of reference-chain depth and descriptor work.
+Each query memoizes completed source nodes and accumulates unique contributions
+and provenance in deterministic order. Memo hits still consume work and enforce
+the full selected path's depth and hop limits; active recursion remains indeterminate.
+Name membership grows incrementally, with incoming strings and joins charged before
+growth. Numeric type conjunction treats integer as a subset of number, without
+inspecting instances. Query scratch is released after the result is returned; no
+caller-name cache persists in the snapshot.
 Facts and retained caches contain owner-free keys, never handles owning the same
 snapshot. Raw authored values retain only their source arenas after graph owners drop.
 

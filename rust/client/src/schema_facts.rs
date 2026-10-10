@@ -4,7 +4,7 @@
 use crate::graph::{Graph, NeedFact, NodeKey, bound, key};
 use crate::schema::{SchemaProfile, SchemaReason, SchemaReferenceKind};
 use crate::{Cancellation, Code, Diagnostic, DiagnosticReason, LimitKind, Limits, Value};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct SchemaSelection(pub Vec<NodeKey>);
@@ -92,9 +92,52 @@ impl<'a> FactWork<'a> {
         Ok(())
     }
 }
+// One query owns one memo and accumulator. Keys are source identities; no Store
+// owners or caller field names survive the call. A completed node contributes
+// once because conjunction is idempotent, but every incoming path is admitted.
+#[derive(Clone, Copy)]
+struct Suffix {
+    hops: usize,
+    leaf: NodeKey,
+    last_edge: NodeKey,
+}
 enum Task {
-    Visit(NodeKey, usize, usize, Option<NodeKey>),
-    Exit(NodeKey),
+    Visit(NodeKey, usize, Option<NodeKey>),
+    Exit(NodeKey, [Option<(NodeKey, NodeKey)>; 2]),
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WorkStage {
+    Memo,
+    Accumulator,
+    Provenance,
+}
+impl FactWork<'_> {
+    fn at(&mut self, amount: usize, value: &Value, stage: WorkStage) -> Result<(), Diagnostic> {
+        #[cfg(test)]
+        TEST_CANCEL_STAGE.with(|selected| {
+            if selected.get() == Some(stage) {
+                self.cancellation.cancel();
+            }
+        });
+        #[cfg(not(test))]
+        let _ = stage;
+        self.charge(amount, value)
+    }
+}
+#[cfg(test)]
+thread_local! {static TEST_CANCEL_STAGE: std::cell::Cell<Option<WorkStage>> = const {std::cell::Cell::new(None)};}
+#[cfg(test)]
+pub(crate) struct StageGuard;
+#[cfg(test)]
+impl Drop for StageGuard {
+    fn drop(&mut self) {
+        TEST_CANCEL_STAGE.with(|selected| selected.set(None));
+    }
+}
+#[cfg(test)]
+pub(crate) fn cancel_at_for_test(stage: WorkStage) -> StageGuard {
+    TEST_CANCEL_STAGE.with(|selected| selected.set(Some(stage)));
+    StageGuard
 }
 pub(crate) fn query(
     graph: &Graph,
@@ -106,20 +149,44 @@ pub(crate) fn query(
     let mut stack = Vec::new();
     for &node in selection.0.iter().rev() {
         work.charge(1, &graph.value(node))?;
-        stack.push(Task::Visit(node, 0, 0, None));
+        stack.push(Task::Visit(node, 0, None));
     }
     let mut active = HashSet::new();
-    let mut provenance = Vec::new();
-    let mut result = None;
+    let mut completed: HashMap<NodeKey, Suffix> = HashMap::new();
+    let mut result = Accumulator::default();
     while let Some(task) = stack.pop() {
-        let (node, depth, refs, incoming) = match task {
-            Task::Exit(node) => {
+        let (node, depth, incoming) = match task {
+            Task::Exit(node, children) => {
+                let value = graph.value(node);
+                let mut suffix = Suffix {
+                    hops: 0,
+                    leaf: node,
+                    last_edge: node,
+                };
+                for (child, edge) in children.into_iter().flatten() {
+                    work.charge(1, &value)?;
+                    let child = completed.get(&child).expect("completed child");
+                    if child.hops + 1 > suffix.hops {
+                        suffix = Suffix {
+                            hops: child.hops + 1,
+                            leaf: child.leaf,
+                            last_edge: if child.hops == 0 {
+                                edge
+                            } else {
+                                child.last_edge
+                            },
+                        };
+                    }
+                }
+                work.charge(1, &value)?;
                 active.remove(&node);
+                completed.insert(node, suffix);
                 continue;
             }
-            Task::Visit(node, d, r, incoming) => (node, d, r, incoming),
+            Task::Visit(node, depth, incoming) => (node, depth, incoming),
         };
         let value = graph.value(node);
+        // Hash lookups and possible insertion are admitted before doing them.
         work.charge(1, &value)?;
         bound(
             0,
@@ -128,35 +195,61 @@ pub(crate) fn query(
             LimitKind::SchemaFactDepth,
         )
         .map_err(|e| value.locate(e))?;
-        if !active.insert(node) {
+        if active.contains(&node) {
             return Ok(indeterminate(
                 SchemaReason::RecursiveFact,
                 incoming.unwrap_or(node),
             ));
         }
+        if let Some(suffix) = completed.get(&node) {
+            work.at(1, &value, WorkStage::Memo)?;
+            // A memo is an optimization, not a change to path admission. The
+            // first reached ceiling wins; a reference edge is checked before
+            // entering its target when both ceilings coincide.
+            let reference = (
+                work.limits.reference_steps,
+                LimitKind::ReferenceDepth,
+                suffix.last_edge,
+            );
+            let facts = (
+                work.limits.schema_fact_depth,
+                LimitKind::SchemaFactDepth,
+                suffix.leaf,
+            );
+            let checks = if reference.0 <= facts.0 {
+                [reference, facts]
+            } else {
+                [facts, reference]
+            };
+            for (maximum, kind, site) in checks {
+                bound(depth, suffix.hops, maximum, kind)
+                    .map_err(|e| graph.value(site).locate(e))?;
+            }
+            continue;
+        }
+        active.insert(node);
         if let Err(error) = graph.schemas.check(node, graph) {
             return failure(error);
         }
         let profile = &graph.schemas.scope(node).expect("checked").profile;
-        work.charge(1, &value)?;
-        stack.push(Task::Exit(node));
         if value.as_bool() == Some(false) {
             return Ok(indeterminate(SchemaReason::ProhibitingSchema, node));
         }
-        if value.as_bool() == Some(true) {
-            continue;
-        }
+        let mut children = [None; 2];
         let mut has_reference = false;
-        for keyword in ["$dynamicRef", "$ref"] {
+        for (index, keyword) in ["$dynamicRef", "$ref"].into_iter().enumerate() {
             if keyword == "$dynamicRef" && !profile.modern() {
                 continue;
             }
             if let Some(edge) = value.get(keyword) {
                 has_reference = true;
-                work.charge(1, &edge)?;
+                work.charge(
+                    edge.as_str().map_or(1, |s| s.len().saturating_add(1)),
+                    &edge,
+                )?;
                 bound(
                     0,
-                    refs.saturating_add(1),
+                    depth.saturating_add(1),
                     work.limits.reference_steps,
                     LimitKind::ReferenceDepth,
                 )
@@ -176,15 +269,16 @@ pub(crate) fn query(
                         key(&edge),
                     ));
                 }
-                stack.push(Task::Visit(
-                    target.target,
-                    depth.saturating_add(1),
-                    refs + 1,
-                    Some(key(&edge)),
-                ));
+                children[index] = Some((target.target, key(&edge)));
             }
         }
-        if has_reference && !profile.modern() {
+        work.charge(1, &value)?;
+        stack.push(Task::Exit(node, children));
+        for (child, edge) in children.into_iter().flatten() {
+            work.charge(1, &value)?;
+            stack.push(Task::Visit(child, depth.saturating_add(1), Some(edge)));
+        }
+        if value.as_bool() == Some(true) || (has_reference && !profile.modern()) {
             continue;
         }
         if let Some(applicator) = ["allOf", "anyOf", "oneOf", "not", "if", "then", "else"]
@@ -193,32 +287,31 @@ pub(crate) fn query(
         {
             return Ok(indeterminate(SchemaReason::Composition, key(&applicator)));
         }
-        let local = local_fact(&value, profile, &query, work)?;
-        match local {
+        match local_fact(&value, profile, &query, work)? {
             Fact::Known {
-                value,
-                provenance: sites,
+                value: next,
+                provenance,
             } => {
-                provenance.extend(sites);
-                match merge(result, value) {
-                    Ok(value) => result = Some(value),
-                    Err(reason) => {
-                        return Ok(Fact::Indeterminate {
-                            reason,
-                            sites: provenance,
-                        });
-                    }
+                result.sites(provenance, work, &value)?;
+                if let Some(reason) = result.merge(next, work, &value)? {
+                    return Ok(Fact::Indeterminate {
+                        reason,
+                        sites: result.provenance,
+                    });
                 }
             }
-            Fact::Absent { provenance: sites } => {
-                provenance.extend(sites);
-            }
+            Fact::Absent { provenance } => result.sites(provenance, work, &value)?,
             other => return Ok(other),
         }
     }
-    Ok(match result {
-        Some(value) => Fact::Known { value, provenance },
-        None => Fact::Absent { provenance },
+    Ok(match result.value {
+        Some(value) => Fact::Known {
+            value,
+            provenance: result.provenance,
+        },
+        None => Fact::Absent {
+            provenance: result.provenance,
+        },
     })
 }
 fn indeterminate(reason: SchemaReason, node: NodeKey) -> Fact<FactValue> {
@@ -250,6 +343,7 @@ fn local_fact(
     query: &FactQuery<'_>,
     work: &mut FactWork<'_>,
 ) -> Result<Fact<FactValue>, Diagnostic> {
+    work.charge(1, value)?;
     let absent = || Fact::Absent {
         provenance: vec![key(value)],
     };
@@ -418,42 +512,185 @@ fn local_fact(
         }
     })
 }
-fn merge(previous: Option<FactValue>, next: FactValue) -> Result<FactValue, SchemaReason> {
-    let Some(previous) = previous else {
-        return Ok(next);
-    };
-    if previous == next {
-        return Ok(previous);
-    }
-    Ok(match (previous, next) {
-        (FactValue::Selection(mut a), FactValue::Selection(b)) => {
-            a.0.extend(b.0);
-            FactValue::Selection(a)
-        }
-        (FactValue::Types(a), FactValue::Types(b)) => {
-            let common: Vec<_> = a.into_iter().filter(|x| b.contains(x)).collect();
-            if common.is_empty() {
-                return Err(SchemaReason::ConflictingFacts);
+#[derive(Default)]
+struct Accumulator {
+    value: Option<FactValue>,
+    provenance: Vec<NodeKey>,
+    known_sites: HashSet<NodeKey>,
+    known_names: HashSet<String>,
+    known_selections: HashSet<NodeKey>,
+}
+impl Accumulator {
+    fn sites(
+        &mut self,
+        sites: Vec<NodeKey>,
+        work: &mut FactWork<'_>,
+        at: &Value,
+    ) -> Result<(), Diagnostic> {
+        for site in sites {
+            work.at(1, at, WorkStage::Provenance)?;
+            if self.known_sites.insert(site) {
+                self.provenance.push(site);
             }
-            FactValue::Types(common)
         }
-        (FactValue::Items(Items::Homogeneous(mut a)), FactValue::Items(Items::Homogeneous(b))) => {
-            a.0.extend(b.0);
-            FactValue::Items(Items::Homogeneous(a))
+        Ok(())
+    }
+    fn selection(
+        &mut self,
+        next: SchemaSelection,
+        items: bool,
+        work: &mut FactWork<'_>,
+        at: &Value,
+    ) -> Result<bool, Diagnostic> {
+        if self.value.is_none() {
+            let empty = SchemaSelection(Vec::new());
+            self.value = Some(if items {
+                FactValue::Items(Items::Homogeneous(empty))
+            } else {
+                FactValue::Selection(empty)
+            });
         }
-        (FactValue::Shape(mut a), FactValue::Shape(b)) => {
-            let mut known: HashSet<String> = a.names.iter().cloned().collect();
-            for name in b.names {
-                if known.insert(name.clone()) {
-                    a.names.push(name);
+        let selected = match self.value.as_mut().expect("initialized") {
+            FactValue::Selection(s) if !items => s,
+            FactValue::Items(Items::Homogeneous(s)) if items => s,
+            _ => return Ok(true),
+        };
+        for node in next.0 {
+            work.charge(1, at)?;
+            if self.known_selections.insert(node) {
+                selected.0.push(node);
+            }
+        }
+        Ok(false)
+    }
+    fn merge(
+        &mut self,
+        next: FactValue,
+        work: &mut FactWork<'_>,
+        at: &Value,
+    ) -> Result<Option<SchemaReason>, Diagnostic> {
+        work.at(1, at, WorkStage::Accumulator)?;
+        match next {
+            FactValue::Types(mut next) => {
+                // At most seven primitive declarations. Number denotes both
+                // integer and non-integer numbers; no instances are inspected.
+                if let Some(FactValue::Types(previous)) = &self.value {
+                    work.charge(28, at)?;
+                    let mask = type_mask(previous) & type_mask(&next);
+                    if mask == 0 {
+                        return Ok(Some(SchemaReason::ConflictingFacts));
+                    }
+                    self.value = Some(FactValue::Types(types_from_mask(mask)));
+                } else if self.value.is_none() {
+                    work.charge(next.len(), at)?;
+                    if next.contains(&SchemaType::Number) {
+                        next.retain(|t| *t != SchemaType::Integer);
+                    }
+                    self.value = Some(FactValue::Types(next));
+                } else {
+                    return Ok(Some(SchemaReason::ConflictingFacts));
                 }
             }
-            a.open &= b.open;
-            a.incomplete |= b.incomplete;
-            FactValue::Shape(a)
+            FactValue::Text(next) => {
+                if let Some(FactValue::Text(previous)) = &self.value {
+                    work.charge(previous.len().min(next.len()).saturating_add(1), at)?;
+                    if previous != &next {
+                        return Ok(Some(SchemaReason::ConflictingFacts));
+                    }
+                } else if self.value.is_none() {
+                    self.value = Some(FactValue::Text(next));
+                } else {
+                    return Ok(Some(SchemaReason::ConflictingFacts));
+                }
+            }
+            FactValue::Selection(next) => {
+                if self.selection(next, false, work, at)? {
+                    return Ok(Some(SchemaReason::ConflictingFacts));
+                }
+            }
+            FactValue::Items(Items::Homogeneous(next)) => {
+                if self.selection(next, true, work, at)? {
+                    return Ok(Some(SchemaReason::ConflictingFacts));
+                }
+            }
+            FactValue::Items(Items::Positional(next)) => {
+                if let Some(FactValue::Items(Items::Positional(previous))) = &self.value {
+                    work.charge(1, at)?;
+                    if previous.len() != next.len() {
+                        return Ok(Some(SchemaReason::ConflictingFacts));
+                    }
+                    for (a, b) in previous.iter().zip(&next) {
+                        work.charge(a.0.len().min(b.0.len()).saturating_add(1), at)?;
+                        if a != b {
+                            return Ok(Some(SchemaReason::ConflictingFacts));
+                        }
+                    }
+                } else if self.value.is_none() {
+                    self.value = Some(FactValue::Items(Items::Positional(next)));
+                } else {
+                    return Ok(Some(SchemaReason::ConflictingFacts));
+                }
+            }
+            FactValue::Shape(next) => {
+                if self.value.is_none() {
+                    self.value = Some(FactValue::Shape(Shape {
+                        names: Vec::new(),
+                        open: true,
+                        incomplete: false,
+                    }));
+                }
+                let Some(FactValue::Shape(previous)) = &mut self.value else {
+                    return Ok(Some(SchemaReason::ConflictingFacts));
+                };
+                for name in next.names {
+                    // One hash/copy for this incoming name, never a clone of all
+                    // accumulated names. Membership and output grow geometrically.
+                    work.at(
+                        name.len().saturating_mul(3).saturating_add(3),
+                        at,
+                        WorkStage::Accumulator,
+                    )?;
+                    if !self.known_names.contains(&name) {
+                        self.known_names.insert(name.clone());
+                        previous.names.push(name);
+                    }
+                }
+                previous.open &= next.open;
+                previous.incomplete |= next.incomplete;
+            }
         }
-        _ => return Err(SchemaReason::ConflictingFacts),
+        Ok(None)
+    }
+}
+fn type_mask(types: &[SchemaType]) -> u8 {
+    types.iter().fold(0, |mask, ty| {
+        mask | match ty {
+            SchemaType::Null => 1,
+            SchemaType::Boolean => 2,
+            SchemaType::Object => 4,
+            SchemaType::Array => 8,
+            SchemaType::Number => 16 | 32,
+            SchemaType::Integer => 32,
+            SchemaType::String => 64,
+        }
     })
+}
+fn types_from_mask(mask: u8) -> Vec<SchemaType> {
+    let mut types = Vec::new();
+    for (bit, ty) in [
+        (1, SchemaType::Null),
+        (2, SchemaType::Boolean),
+        (4, SchemaType::Object),
+        (8, SchemaType::Array),
+        (16, SchemaType::Number),
+        (32, SchemaType::Integer),
+        (64, SchemaType::String),
+    ] {
+        if mask & bit != 0 && !(ty == SchemaType::Integer && mask & 16 != 0) {
+            types.push(ty);
+        }
+    }
+    types
 }
 fn schema_type(name: &str) -> Option<SchemaType> {
     Some(match name {
