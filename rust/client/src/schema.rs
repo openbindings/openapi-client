@@ -570,13 +570,13 @@ impl SchemaIndex {
             let root = resource.json.root();
             for layout in &resource.layout.roots {
                 checkpoint(cancellation)?;
-                if let ResourceInterpretation::Schema { default_profile } = &layout.interpretation {
+                if let Some(default_profile) = layout.schema_profile() {
                     validate_profile(default_profile).map_err(|e| root.locate(e))?;
                     let profile = Arc::new(default_profile.clone());
                     push_seed(
                         &mut seeds,
                         Seed {
-                            value: root.pointer(&layout.pointer)?,
+                            value: root.pointer(layout.pointer())?,
                             profile: profile.clone(),
                             fallback: profile,
                             origin: None,
@@ -640,7 +640,7 @@ impl SchemaIndex {
                     .layout
                     .roots
                     .iter()
-                    .any(|r| r.pointer.is_empty())
+                    .any(|r| r.pointer().is_empty())
             {
                 continue;
             }

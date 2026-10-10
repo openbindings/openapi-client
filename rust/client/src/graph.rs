@@ -54,21 +54,63 @@ pub struct ResourceLayout {
     pub(crate) roots: Vec<LayoutRoot>,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct LayoutRoot {
-    pub pointer: String,
-    pub interpretation: ResourceInterpretation,
+pub(crate) enum LayoutRoot {
+    Protocol {
+        pointer: String,
+        kind: ReferenceKind,
+        edition: Edition,
+    },
+    Schema(Box<SchemaLayoutRoot>),
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SchemaLayoutRoot {
+    pointer: String,
+    profile: crate::SchemaProfile,
 }
 impl LayoutRoot {
+    pub(crate) fn pointer(&self) -> &str {
+        match self {
+            Self::Protocol { pointer, .. } => pointer,
+            Self::Schema(root) => &root.pointer,
+        }
+    }
+    pub(crate) fn schema_profile(&self) -> Option<&crate::SchemaProfile> {
+        match self {
+            Self::Schema(root) => Some(&root.profile),
+            Self::Protocol { .. } => None,
+        }
+    }
+    fn matches_interpretation(&self, interpretation: &ResourceInterpretation) -> bool {
+        match (self, interpretation) {
+            (
+                Self::Protocol { kind, edition, .. },
+                ResourceInterpretation::Protocol {
+                    kind: other_kind,
+                    edition: other_edition,
+                },
+            ) => kind == other_kind && edition == other_edition,
+            (Self::Schema(root), ResourceInterpretation::Schema { default_profile }) => {
+                &root.profile == default_profile
+            }
+            _ => false,
+        }
+    }
+    fn compact(mut self) -> Self {
+        let pointer = match &mut self {
+            Self::Protocol { pointer, .. } => pointer,
+            Self::Schema(root) => &mut root.pointer,
+        };
+        *pointer = std::mem::take(pointer).into_boxed_str().into_string();
+        self
+    }
     fn profile_bytes(&self) -> usize {
-        match &self.interpretation {
-            ResourceInterpretation::Schema {
-                default_profile: crate::SchemaProfile::JsonSchema { dialect_uri },
-            } => dialect_uri.len(),
+        match self.schema_profile() {
+            Some(crate::SchemaProfile::JsonSchema { dialect_uri }) => dialect_uri.len(),
             _ => 0,
         }
     }
     fn metadata_bytes(&self) -> usize {
-        self.pointer.len().saturating_add(self.profile_bytes())
+        self.pointer().len().saturating_add(self.profile_bytes())
     }
 }
 impl ResourceLayout {
@@ -83,20 +125,20 @@ impl ResourceLayout {
         kind: ReferenceKind,
         edition: Edition,
     ) -> Self {
-        self.roots.push(LayoutRoot {
+        self.roots.push(LayoutRoot::Protocol {
             pointer: pointer.into(),
-            interpretation: ResourceInterpretation::Protocol { kind, edition },
+            kind,
+            edition,
         });
         self
     }
     /// Declare a schema root in an otherwise untyped resource.
     pub fn schema(mut self, pointer: impl Into<String>, profile: crate::SchemaProfile) -> Self {
-        self.roots.push(LayoutRoot {
-            pointer: pointer.into(),
-            interpretation: ResourceInterpretation::Schema {
-                default_profile: profile,
-            },
-        });
+        self.roots
+            .push(LayoutRoot::Schema(Box::new(SchemaLayoutRoot {
+                pointer: pointer.into(),
+                profile,
+            })));
         self
     }
 }
@@ -476,22 +518,20 @@ impl DocumentBuilder {
             return Err(Diagnostic::new(Code::ConflictingObjectContext));
         }
         if !layout.roots.iter().any(|r| {
-            r.interpretation == need.fact.interpretation
+            r.matches_interpretation(&need.fact.interpretation)
                 && match &need.fact.fragment {
-                    ResourceFragment::Root => r.pointer.is_empty(),
+                    ResourceFragment::Root => r.pointer().is_empty(),
                     ResourceFragment::Pointer(p) => {
-                        if matches!(r.interpretation, ResourceInterpretation::Schema { .. }) {
-                            p == &r.pointer
-                                || r.pointer.is_empty()
-                                || p.strip_prefix(&r.pointer)
+                        if r.schema_profile().is_some() {
+                            p == r.pointer()
+                                || r.pointer().is_empty()
+                                || p.strip_prefix(r.pointer())
                                     .is_some_and(|s| s.starts_with('/'))
                         } else {
-                            p == &r.pointer
+                            p == r.pointer()
                         }
                     }
-                    ResourceFragment::Anchor(_) => {
-                        matches!(r.interpretation, ResourceInterpretation::Schema { .. })
-                    }
+                    ResourceFragment::Anchor(_) => r.schema_profile().is_some(),
                 }
         }) {
             return Err(Diagnostic::new(Code::ConflictingObjectContext));
@@ -709,10 +749,7 @@ impl DocumentBuilder {
             aliases.push(uri.clone());
         }
         let mut roots = Vec::with_capacity(input.layout.roots.len());
-        roots.extend(input.layout.roots.into_iter().map(|mut root| {
-            root.pointer = root.pointer.into_boxed_str().into_string();
-            root
-        }));
+        roots.extend(input.layout.roots.into_iter().map(LayoutRoot::compact));
         let resource = Resource {
             id,
             json,
@@ -783,7 +820,7 @@ impl DocumentBuilder {
             cancellation.check()?;
             bound(
                 0,
-                root.pointer.len(),
+                root.pointer().len(),
                 self.limits.target_bytes,
                 crate::LimitKind::TargetBytes,
             )?;
@@ -801,17 +838,17 @@ impl DocumentBuilder {
             .get(&id)
             .copied()
             .ok_or_else(|| Diagnostic::new(Code::MissingReference))?;
-        let mut known: HashMap<&str, &ResourceInterpretation> = self.resources[index]
+        let mut known: HashMap<&str, &LayoutRoot> = self.resources[index]
             .layout
             .roots
             .iter()
-            .map(|r| (r.pointer.as_str(), &r.interpretation))
+            .map(|r| (r.pointer(), r))
             .collect();
         let mut extra = MetadataUse::default();
         for root in &layout.roots {
             cancellation.check()?;
-            if let Some(previous) = known.insert(&root.pointer, &root.interpretation) {
-                if previous != &root.interpretation {
+            if let Some(previous) = known.insert(root.pointer(), root) {
+                if previous != root {
                     return Err(Diagnostic::new(Code::ConflictingObjectContext));
                 }
             } else {
@@ -828,15 +865,13 @@ impl DocumentBuilder {
             .layout
             .roots
             .iter()
-            .map(|r| r.pointer.clone())
+            .map(|r| r.pointer().to_owned())
             .collect();
         updated.layout.roots.reserve_exact(extra.layouts);
         for root in layout.roots {
             cancellation.check()?;
-            if known.insert(root.pointer.clone()) {
-                let mut root = root;
-                root.pointer = root.pointer.into_boxed_str().into_string();
-                updated.layout.roots.push(root);
+            if known.insert(root.pointer().to_owned()) {
+                updated.layout.roots.push(root.compact());
             }
         }
         validate_layout(&updated, cancellation)?;
@@ -979,7 +1014,7 @@ fn metadata_input(
         .iter()
         .chain(input.retrieval.iter())
         .map(String::as_str)
-        .chain(input.layout.roots.iter().map(|r| r.pointer.as_str()))
+        .chain(input.layout.roots.iter().map(LayoutRoot::pointer))
     {
         cancellation.check()?;
         bound(
@@ -1007,9 +1042,9 @@ fn validate_layout(
     let mut roots = HashMap::new();
     for root in &resource.layout.roots {
         cancellation.check()?;
-        let value = resource.json.root().pointer(&root.pointer)?;
-        if let Some(previous) = roots.insert(root.pointer.as_str(), &root.interpretation)
-            && previous != &root.interpretation
+        let value = resource.json.root().pointer(root.pointer())?;
+        if let Some(previous) = roots.insert(root.pointer(), root)
+            && previous != root
         {
             return Err(value.error(Code::ConflictingObjectContext));
         }
@@ -1186,12 +1221,17 @@ impl Graph {
             }
             for root in &resource.layout.roots {
                 cancellation.check()?;
-                if let ResourceInterpretation::Protocol { kind, edition } = root.interpretation {
+                if let LayoutRoot::Protocol {
+                    pointer,
+                    kind,
+                    edition,
+                } = root
+                {
                     enqueue(
                         &mut queue,
-                        resource.json.root().pointer(&root.pointer)?,
-                        ObjectKind::Reference(kind),
-                        edition,
+                        resource.json.root().pointer(pointer)?,
+                        ObjectKind::Reference(*kind),
+                        *edition,
                         graph.limits.nodes,
                     )?;
                 }
@@ -1218,12 +1258,12 @@ impl Graph {
                 .map_err(|e| node.locate(e))?;
                 edges += 1;
                 if let Some(text) = reference.as_str()
-                    && let Ok((resource, pointer, _)) = graph.target_address(&reference, text)
+                    && let Ok((target, _)) = graph.target_address(&reference, text)
                 {
-                    let resource = graph.resource(resource).expect("resolved resource");
+                    let resource = graph.owner(&target)?;
                     // Only a selected fragment root can infer its interpretation.
                     // A non-root pointer into an untyped bundle needs a layout.
-                    if pointer.is_empty()
+                    if target.identity() == 0
                         && Edition::detect(&resource.json.root()).is_err()
                         && resource.json.root().get("openapi").is_none()
                         && resource.json.root().get("swagger").is_none()
@@ -1512,9 +1552,9 @@ impl Graph {
                         )
                         .map_err(|e| source.locate(e))?;
                         *edges += 1;
-                        if let Ok((id, pointer, _)) = self.target_address(&source, name) {
-                            let resource = self.resource(id).expect("target resource");
-                            if pointer.is_empty()
+                        if let Ok((target, _)) = self.target_address(&source, name) {
+                            let resource = self.owner(&target)?;
+                            if target.identity() == 0
                                 && resource.json.root().get("openapi").is_none()
                                 && resource.json.root().get("swagger").is_none()
                             {
@@ -1542,6 +1582,13 @@ impl Graph {
             .aliases
             .get(&identity_key(uri)?)
             .map(|id| (id.0, 0)))
+    }
+    fn indexed_identity(&self, normalized: &str) -> Option<NodeKey> {
+        self.schemas
+            .identities
+            .get(normalized)
+            .copied()
+            .or_else(|| self.admission.aliases.get(normalized).map(|id| (id.0, 0)))
     }
     pub(crate) fn metadata_usage(&self) -> (usize, usize) {
         (
@@ -1579,18 +1626,13 @@ impl Graph {
         }
         let uri = resolve_uri(reference, base).map_err(|e| source.locate(e))?;
         let fragment = decode_fragment(uri.split_once('#').map_or("", |(_, f)| f), source)?;
-        let exact = self
-            .schemas
-            .identities
-            .get(&identity_key(&uri)?)
-            .copied()
-            .or(self.physical_identity(&uri)?);
-        let root = self
-            .schemas
-            .identities
-            .get(&identity_key(without_fragment(&uri))?)
-            .copied()
-            .or(self.physical_identity(without_fragment(&uri))?);
+        let exact = self.indexed_identity(&identity_key(&uri)?);
+        let root_uri = without_fragment(&uri);
+        let root = if root_uri == uri {
+            exact
+        } else {
+            self.indexed_identity(&identity_key(root_uri)?)
+        };
         Ok(Address {
             root,
             exact,
@@ -1598,11 +1640,7 @@ impl Graph {
             uri: Some(uri),
         })
     }
-    fn target_address(
-        &self,
-        source: &Value,
-        reference: &str,
-    ) -> Result<(ResourceId, String, bool), Diagnostic> {
+    fn target_address(&self, source: &Value, reference: &str) -> Result<(Value, bool), Diagnostic> {
         let owner = self.owner(source)?;
         let address = self.address(source, reference, owner.base.as_deref(), (owner.id.0, 0))?;
         let target = if let Some(exact) = address.exact {
@@ -1626,7 +1664,7 @@ impl Graph {
                     == identity_key(without_fragment(uri)).ok()
             })
         });
-        Ok((resource.id, target.location().pointer, canonical))
+        Ok((target, canonical))
     }
     pub(crate) fn target(
         &self,
@@ -1636,7 +1674,7 @@ impl Graph {
         edition: Edition,
     ) -> Result<(Value, bool), Diagnostic> {
         let owner = self.owner(source)?;
-        let (id, pointer, canonical) = match self.target_address(source, reference) {
+        let (value, canonical) = match self.target_address(source, reference) {
             Ok(value) => value,
             Err(error) if error.code() == Code::ResourceUnavailable => {
                 let requested =
@@ -1656,12 +1694,7 @@ impl Graph {
             }
             Err(error) => return Err(error),
         };
-        let target = self.resource(id).expect("target source");
-        let value = target
-            .json
-            .root()
-            .pointer(&pointer)
-            .map_err(|e| source.locate(e))?;
+        let target = self.owner(&value)?;
         if !self.contexts.contains_key(&key(&value))
             && Edition::detect(&target.json.root()).is_err()
             && target.json.root().get("openapi").is_none()
@@ -1673,8 +1706,8 @@ impl Graph {
                     source: owner.id,
                     pointer: source.location().pointer,
                     requested_uri: target.retrieval.clone().or(target.base.clone()),
-                    fragment: ResourceFragment::pointer(pointer),
-                    target: Some(id),
+                    fragment: ResourceFragment::pointer(value.location().pointer),
+                    target: Some(target.id),
                     interpretation: ResourceInterpretation::Protocol { kind, edition },
                     need: ResourceNeedKind::Layout,
                 }));
