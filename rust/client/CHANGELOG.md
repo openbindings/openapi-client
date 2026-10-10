@@ -1,5 +1,8 @@
 # Unreleased (0.0.0)
 
+- Identity-collision diagnostics retain the earlier claimant as an owning
+  SourcePosition in their typed reason. Authored JSON/YAML remains available
+  after document handles are dropped; the later primary site is unchanged.
 - Add immutable schema identity, dialect and anchor indexing, owning inspection
   handles, one-edge static resolution and uniform missing-resource/layout recovery.
   Add private bounded declaration facts without wiring them into request encoding.

@@ -57,6 +57,13 @@ This unpublished slice changes several ResourceNeed getters:
 | `fragment()` | `Root`, `Pointer`, or `Anchor`. |
 | `kind()` / `target_resource()` / `source()` | Retain their prior meanings. |
 
+Identity-collision diagnostics keep the later declaration as their primary site.
+`DiagnosticReason::IdentityCollision { previous }` identifies the earlier claimant
+with its owning `SourcePosition`, using authored JSON/YAML when available.
+The position retains its source independently of the document. Its `source()` and
+`raw()` accessors explicitly expose original content; routine formatting does not.
+`Diagnostic::related()` continues to contain only locations in the primary source.
+
 Default diagnostics and handle/profile Debug output omit document-controlled URI
 and name text. Explicit getters retain it as untrusted authored data.
 

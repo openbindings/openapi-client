@@ -537,7 +537,7 @@ impl DocumentBuilder {
                     .is_some_and(|s| identity_key(s).is_ok_and(|s| s == key))
                 {
                     if resource.json.original_source().as_bytes() != input.bytes.as_ref() {
-                        return Err(fail(Diagnostic::new(Code::IdentityCollision)));
+                        return Err(fail(Diagnostic::identity_collision(&resource.json.root())));
                     }
                     if resource.layout != input.layout && !input.layout.roots.is_empty() {
                         return Err(fail(Diagnostic::new(Code::ConflictingObjectContext)));
@@ -565,6 +565,7 @@ impl DocumentBuilder {
                         &resource.json.root(),
                         pending.iter().map(|s| s.as_str()),
                         &self.admission.aliases,
+                        |id| self.resources[self.admission.indices[&id]].json.root(),
                         cancellation,
                     )
                     .map_err(fail)?;
@@ -732,6 +733,7 @@ impl DocumentBuilder {
                 .chain(resource.canonical.as_deref())
                 .chain(resource.canonical.as_deref().map(without_fragment)),
             &self.admission.aliases,
+            |id| self.resources[self.admission.indices[&id]].json.root(),
             cancellation,
         )?;
         cancellation.check()?;
@@ -1097,6 +1099,7 @@ fn stage_aliases<'a>(
     source: &Value,
     aliases: impl Iterator<Item = &'a str>,
     existing: &HashMap<String, ResourceId>,
+    previous_source: impl Fn(ResourceId) -> Value,
     cancellation: &crate::Cancellation,
 ) -> Result<HashMap<String, ResourceId>, Diagnostic> {
     let mut pending = HashMap::new();
@@ -1105,7 +1108,9 @@ fn stage_aliases<'a>(
         let key = identity_key(alias)?;
         match existing.get(&key) {
             Some(previous) if *previous != id => {
-                return Err(source.error(Code::IdentityCollision));
+                return Err(
+                    source.locate(Diagnostic::identity_collision(&previous_source(*previous)))
+                );
             }
             Some(_) => {}
             None => {

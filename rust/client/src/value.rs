@@ -1048,6 +1048,23 @@ impl Value {
     pub(crate) fn error(&self, code: Code) -> Diagnostic {
         self.locate(Diagnostic::new(code))
     }
+    /// Retain one authored position without materializing unused alias-use evidence.
+    pub(crate) fn diagnostic_position(&self) -> crate::SourcePosition {
+        let mut location = self.location();
+        let (context, source) = if let Some(map) = &self.store.authored {
+            let entry = &map.entries[self.id];
+            location.start = entry.span.start;
+            location.end = entry.span.end;
+            (map.context, map.source.clone())
+        } else {
+            (self.store.context, self.store.source.clone())
+        };
+        crate::SourcePosition {
+            context,
+            location,
+            source,
+        }
+    }
     pub(crate) fn locate(&self, mut diagnostic: Diagnostic) -> Diagnostic {
         let mut location = self.location();
         if let Some(map) = &self.store.authored {

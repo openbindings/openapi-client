@@ -450,7 +450,7 @@ impl SchemaIndex {
             .or(graph.physical_identity(uri)?);
         if let Some(previous) = previous {
             if previous != key(value) {
-                return Err(value.error(Code::IdentityCollision));
+                return Err(value.locate(Diagnostic::identity_collision(&graph.value(previous))));
             }
             return Ok(());
         }
@@ -857,13 +857,17 @@ impl SchemaIndex {
                             ));
                             continue;
                         };
-                        if graph
+                        if let Some(&(previous, dynamic)) = graph
                             .schemas
                             .anchors
                             .get(&scope.root)
-                            .is_some_and(|anchors| anchors.contains_key(name))
+                            .and_then(|anchors| anchors.get(name))
                         {
-                            return Err(anchor.error(Code::IdentityCollision));
+                            let previous = graph
+                                .value(previous)
+                                .get(if dynamic { "$dynamicAnchor" } else { "$anchor" })
+                                .expect("indexed anchor declaration");
+                            return Err(anchor.locate(Diagnostic::identity_collision(&previous)));
                         }
                         Self::charge(graph, name.len(), 0, &anchor)?;
                         if let Some(base) = &scope.base {

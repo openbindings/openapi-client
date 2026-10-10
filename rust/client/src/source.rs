@@ -13,7 +13,7 @@ pub enum SourceFormat {
 
 /// A location paired with the exact immutable source that owns its byte offsets.
 /// Default formatting omits source text and document-controlled pointers.
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct SourcePosition {
     pub(crate) context: SourceContext,
     pub(crate) location: Location,

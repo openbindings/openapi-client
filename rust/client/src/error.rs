@@ -103,10 +103,17 @@ pub enum VersionReason {
     /// The declared major or minor family is not supported.
     UnsupportedFamily,
 }
-/// Safe corrective information; no input values are stored in reasons.
+/// Corrective information with privacy-safe default formatting.
+/// Retained source evidence is available only through explicit accessors.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum DiagnosticReason {
+    /// Different declarations claim one identity. The diagnostic's primary site
+    /// remains the later declaration; this position owns the earlier source.
+    IdentityCollision {
+        /// Earlier claimant, in authored source when available.
+        previous: crate::SourcePosition,
+    },
     /// Selected schema interpretation or bounded fact refusal.
     Schema(crate::SchemaReason),
     /// Why a finite named form could not be represented.
@@ -560,6 +567,11 @@ impl Diagnostic {
     pub(crate) fn reasoned(mut self, reason: DiagnosticReason) -> Self {
         self.details.get_or_insert_with(Default::default).reason = Some(reason);
         self
+    }
+    pub(crate) fn identity_collision(previous: &crate::Value) -> Self {
+        Self::new(Code::IdentityCollision).reasoned(DiagnosticReason::IdentityCollision {
+            previous: previous.diagnostic_position(),
+        })
     }
     pub(crate) fn contextual(mut self, context: DiagnosticContext) -> Self {
         self.details.get_or_insert_with(Default::default).context = Some(context);
