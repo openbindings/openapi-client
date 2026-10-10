@@ -75,14 +75,16 @@ fn server_and_body_refusals_keep_yaml_definition_and_alias_locations() {
         ..Limits::default()
     };
     let document = Document::parse(yaml, None, limits).unwrap();
-    let error = document
+    // Explicit Input reaches the body preparation diagnostic. The ordinary
+    // builder applies its earlier body-size admission with caller Body context.
+    let diagnostic = document
         .operation_id("create")
         .unwrap()
-        .request()
-        .json(document.root().get("x-use").unwrap())
-        .prepare()
+        .prepare(&dynamic_openapi_client::Input {
+            body: dynamic_openapi_client::Body::Json(document.root().get("x-use").unwrap()),
+            ..Default::default()
+        })
         .unwrap_err();
-    let diagnostic = error.diagnostic();
     assert_eq!(diagnostic.code(), Code::Limit);
     let location = diagnostic.location().unwrap();
     assert!(yaml[location.start..location.end].contains("message: longer-than-body-limit"));
