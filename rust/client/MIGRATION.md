@@ -90,3 +90,11 @@ Assignments are explicit: populated selection fields compose, `None`/missing ent
 Select `policies::complete_2xx_json(outcome)` to require dispatched, uncancelled, transport-error-free, 2xx, complete-upload JSON. It replaces the copied example policy. `CompletedJson`/`JsonCallRefusal` retain the full Outcome; refusals retain decoded data or a decode diagnostic. `CompleteJsonRefusal` identifies the primary failed condition in documented order. Raw `invoke -> Outcome` is unchanged and remains the boundary for custom policies, local non-Send callbacks and native Send futures. No production transport is added.
 
 The named policy's standard `Error::source` follows its primary reason when represented by a Diagnostic. Transport/preflight points to `outcome.error`, Decode to `decode_error`, and Cancelled only to an actual Cancelled diagnostic. Other conditions return no source; independent secondary errors remain available through the retained fields. In particular, a late transport error accompanied by malformed JSON chains to the transport diagnostic while keeping the decode diagnostic separately.
+
+## JSON/YAML source provenance
+
+`Document::parse` now accepts the documented YAML profile through the same bytes/base/limits entrypoint. `ExactJson::parse` remains exact JSON-only. `Document::source()` returns original input text and `Document::format()` reports the detected serialization.
+
+`Value::raw()` and `location()` still identify indexed JSON. YAML's exact semantic representation has the new `SourceOrigin::Normalized` variant; update exhaustive matches on `SourceOrigin`. Use the additive `Value::source_trace()` to access the original YAML definition and alias use sites. Numeric source spelling belongs to the authored trace, while numeric token conveniences consume the exact normalized JSON token. Constructed caller values have no authored trace.
+
+Malformed non-JSON input is now diagnosed through YAML admission and can yield `InvalidYaml` or `UnsupportedYaml` with a typed `DiagnosticReason::Yaml`; callers should inspect codes/reasons rather than assuming every document parse failure is `InvalidJson`. See [the loading profile](LOADING.md) for key identity, scalar, alias and limit policies.

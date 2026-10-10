@@ -7,6 +7,8 @@ use std::fmt;
 #[allow(missing_docs)]
 pub enum LimitKind {
     DocumentBytes,
+    NormalizedBytes,
+    AliasSteps,
     Depth,
     Nodes,
     TargetBytes,
@@ -70,6 +72,8 @@ pub enum SelectionKind {
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum DiagnosticReason {
+    /// YAML syntax-to-JSON profile refusal.
+    Yaml(crate::YamlReason),
     /// Checked Serde construction refused the emitted representation.
     Serialization(SerializationReason),
     /// A resource exceeds its configured maximum. Actual can be a lower bound when admission stopped early.
@@ -179,6 +183,10 @@ pub enum Code {
     InvalidUtf8,
     /// Input is not valid JSON under the supported grammar.
     InvalidJson,
+    /// Input is not syntactically valid YAML.
+    InvalidYaml,
+    /// YAML uses a representation outside the admitted JSON-compatible profile.
+    UnsupportedYaml,
     /// A JSON string cannot be represented under the Unicode-scalar policy.
     UnsupportedString,
     /// Two object names decode to the same key; related contains the previous position.
@@ -264,6 +272,8 @@ impl Code {
         match self {
             Self::Serialization => "application data could not be serialized as supported JSON",
             Self::InvalidUtf8 => "input is not valid UTF-8",
+            Self::InvalidYaml => "input is not valid YAML",
+            Self::UnsupportedYaml => "YAML cannot be admitted under the documented profile",
             Self::InvalidJson => "input is not valid JSON",
             Self::UnsupportedString => "the string is outside the supported Unicode profile",
             Self::DuplicateMember => "an object contains duplicate decoded member names",
@@ -323,14 +333,14 @@ impl Code {
 }
 
 /// Half-open source byte range and JSON Pointer. A diagnostic's source_context()
-/// identifies the exact authored or constructed source owning this range.
+/// identifies the exact authored, constructed or normalized source owning this range.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Location {
     /// Inclusive UTF-8 byte offset.
     pub start: usize,
     /// Exclusive UTF-8 byte offset.
     pub end: usize,
-    /// Authored JSON Pointer. Treat document-controlled names as untrusted data.
+    /// Semantic JSON Pointer. Treat document-controlled names as untrusted data.
     pub pointer: String,
 }
 

@@ -10,10 +10,14 @@ mod cancellation;
 mod deserialize;
 mod document;
 mod error;
+mod loading;
 mod prepare;
+mod source;
 mod transport;
 pub mod uri;
 mod value;
+mod yaml;
+pub use source::{SourceFormat, SourcePosition, SourceTrace, YamlReason};
 
 pub use cancellation::Cancellation;
 pub use deserialize::DeserializationError;
