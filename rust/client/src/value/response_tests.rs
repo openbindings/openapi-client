@@ -14,6 +14,8 @@ fn response_projection_and_metadata_leave_the_index_unmaterialized() {
     }
     let text = " \n{\"name\":\"borrowed\",\"id\":9007199254740993} \t";
     let owner = response(text);
+    let admitted_storage = owner.retained_bytes();
+    assert!(admitted_storage > text.len());
     let root = owner.root();
     assert!(owner.0.store.indexed_nodes().is_none());
     let projected: Item<'_> = owner.deserialize().unwrap();
@@ -38,8 +40,8 @@ fn response_projection_and_metadata_leave_the_index_unmaterialized() {
         }
     );
     assert_eq!(root.source_context().origin, SourceOrigin::Authored);
-    assert_eq!(owner.retained_bytes(), text.len());
-    assert_eq!(root.retained_bytes(), text.len());
+    assert_eq!(owner.retained_bytes(), admitted_storage);
+    assert_eq!(root.retained_bytes(), admitted_storage);
     assert!(!format!("{owner:?}").contains("borrowed"));
     assert!(root.pointer("").is_ok());
     assert!(owner.0.store.indexed_nodes().is_none());
@@ -49,7 +51,30 @@ fn response_projection_and_metadata_leave_the_index_unmaterialized() {
 }
 
 #[test]
-fn response_refusals_replay_every_canonical_diagnostic_field() {
+fn single_node_responses_keep_the_eager_owner_and_storage_accounting() {
+    for text in [
+        " null ",
+        "true",
+        "-0",
+        "1e9999",
+        r#""escaped\u0061\n""#,
+        "[]",
+        "{}",
+    ] {
+        let response = response(text);
+        let eager = ExactJson::parse(text, Limits::default()).unwrap();
+        assert!(matches!(response.0.store.index, Index::Eager(_)));
+        assert_eq!(response.0.store.nodes().len(), 1);
+        assert_eq!(response.retained_bytes(), eager.retained_bytes(), "{text}");
+        assert_eq!(response.root().kind(), eager.root().kind());
+        assert_eq!(response.root().raw(), eager.root().raw());
+        assert_eq!(response.root().location(), eager.root().location());
+        assert_eq!(response.root().as_str(), eager.root().as_str());
+    }
+}
+
+#[test]
+fn response_refusals_preserve_every_canonical_diagnostic_field() {
     let cases: &[(&[u8], Limits)] = &[
         (br#"{"same":1,"same":2}"#, Limits::default()),
         (br#"{"same":1,"sa\u006de":2}"#, Limits::default()),
@@ -269,4 +294,32 @@ fn tiny_response_node_budgets_count_tokens_not_private_number_callbacks() {
             }
         }
     }
+}
+
+#[test]
+fn retained_storage_snapshot_survives_the_initialization_handoff() {
+    let owner = response(r#"{"a":["decoded\ntext",1],"b":true}"#);
+    let Index::Deferred(deferred) = &owner.0.store.index else {
+        panic!("response index must be deferred")
+    };
+    let before = owner.retained_bytes();
+    let mut guard = deferred.admission.lock().unwrap();
+    let admission = guard.take().unwrap();
+    // Simulate the initializer's ownership handoff before publication. Holding
+    // this private guard also verifies that accounting doesn't try to lock it.
+    let other = owner.clone();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let reader = std::thread::spawn(move || tx.send(other.retained_bytes()).unwrap());
+    let observed = rx.recv_timeout(std::time::Duration::from_secs(2));
+    drop(guard);
+    reader.join().unwrap();
+    assert_eq!(observed.unwrap(), before);
+    assert!(deferred.nodes.get().is_none());
+    let nodes = admission.into_nodes(owner.source());
+    assert!(deferred.nodes.set(nodes).is_ok());
+    assert!(owner.retained_bytes() > before);
+    assert_eq!(
+        owner.root().pointer("/a/0").unwrap().as_str(),
+        Some("decoded\ntext")
+    );
 }
