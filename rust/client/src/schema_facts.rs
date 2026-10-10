@@ -72,6 +72,7 @@ pub(crate) struct FactWork<'a> {
     cancellation: &'a Cancellation,
     used: usize,
     required: HashMap<NodeKey, HashSet<String>>,
+    traversal: Traversal,
 }
 impl<'a> FactWork<'a> {
     pub fn new(limits: &'a Limits, cancellation: &'a Cancellation) -> Self {
@@ -80,6 +81,7 @@ impl<'a> FactWork<'a> {
             cancellation,
             used: 0,
             required: HashMap::new(),
+            traversal: Traversal::default(),
         }
     }
     pub fn used(&self) -> usize {
@@ -110,6 +112,21 @@ struct Suffix {
 enum Task {
     Visit(NodeKey, usize, Option<NodeKey>),
     Exit(NodeKey, [Option<(NodeKey, NodeKey)>; 2]),
+}
+// Only empty storage is reused between selected queries. No fact, source owner,
+// caller name or resolved target survives a query, and nothing enters Store.
+#[derive(Default)]
+struct Traversal {
+    stack: Vec<Task>,
+    active: HashSet<NodeKey>,
+    completed: HashMap<NodeKey, Suffix>,
+}
+impl Traversal {
+    fn clear(&mut self) {
+        self.stack.clear();
+        self.active.clear();
+        self.completed.clear();
+    }
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WorkStage {
@@ -151,14 +168,33 @@ pub(crate) fn query(
     query: FactQuery<'_>,
     work: &mut FactWork<'_>,
 ) -> Result<Fact<FactValue>, Diagnostic> {
+    let mut traversal = std::mem::take(&mut work.traversal);
+    let result = query_inner(graph, selection, query, work, &mut traversal);
+    // Clear on every normal return, including refusal, work-limit and
+    // cancellation errors. Subsequent queries still traverse and charge every
+    // admitted path, using only the previous allocation capacity.
+    traversal.clear();
+    work.traversal = traversal;
+    result
+}
+
+fn query_inner(
+    graph: &Graph,
+    selection: &SchemaSelection,
+    query: FactQuery<'_>,
+    work: &mut FactWork<'_>,
+    traversal: &mut Traversal,
+) -> Result<Fact<FactValue>, Diagnostic> {
     crate::schema::checkpoint(work.cancellation)?;
-    let mut stack = Vec::new();
+    let Traversal {
+        stack,
+        active,
+        completed,
+    } = traversal;
     for &node in selection.0.iter().rev() {
         work.charge(1, &graph.value(node))?;
         stack.push(Task::Visit(node, 0, None));
     }
-    let mut active = HashSet::new();
-    let mut completed: HashMap<NodeKey, Suffix> = HashMap::new();
     let mut result = Accumulator::default();
     while let Some(task) = stack.pop() {
         let (node, depth, incoming) = match task {
@@ -200,7 +236,7 @@ pub(crate) fn query(
                 .reference_steps
                 .min(work.limits.schema_fact_depth);
             if depth.saturating_add(suffix.hops) > maximum {
-                check_memo_path(graph, &completed, node, depth, work)?;
+                check_memo_path(graph, completed, node, depth, work)?;
             }
             continue;
         }

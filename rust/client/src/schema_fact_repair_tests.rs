@@ -45,6 +45,88 @@ fn unique_provenance(fact: &Fact<FactValue>) -> bool {
     }
 }
 #[test]
+fn repeated_fact_queries_keep_answers_provenance_and_work_independent() {
+    let doc = document(&json!({
+        "openapi":"3.1.2", "paths":{}, "components":{"schemas":{
+            "Good":{"$ref":"#/components/schemas/Text"},
+            "Text":{"type":"string"},
+            "Other":{"type":"integer"},
+            "Bad":{"$ref":"#/components/schemas/Missing"},
+            "Cycle":{"$ref":"#/components/schemas/Cycle"}
+        }}
+    }));
+    let limits = Limits::default();
+    let token = Cancellation::default();
+    let mut shared = FactWork::new(&limits, &token);
+    for (name, expected) in [
+        ("Good", json!({"Known":["string"]})),
+        ("Bad", json!({"Invalid":"MissingReference"})),
+        ("Other", json!({"Known":["integer"]})),
+        ("Cycle", json!({"Indeterminate":"RecursiveFact"})),
+        ("Good", json!({"Known":["string"]})),
+    ] {
+        let selected = selection(&doc, &[name.into()]);
+        let before = shared.used();
+        let observed = query(&doc.0.graph, &selected, FactQuery::Types, &mut shared).unwrap();
+        assert_eq!(answer(&observed), expected);
+        let mut fresh = FactWork::new(&limits, &token);
+        let control = query(&doc.0.graph, &selected, FactQuery::Types, &mut fresh).unwrap();
+        assert_eq!(shared.used() - before, fresh.used());
+        if let (
+            Fact::Known { provenance, .. },
+            Fact::Known {
+                provenance: fresh, ..
+            },
+        ) = (&observed, &control)
+        {
+            assert_eq!(provenance, fresh);
+        }
+    }
+    let empty = query(
+        &doc.0.graph,
+        &SchemaSelection(vec![]),
+        FactQuery::Types,
+        &mut shared,
+    )
+    .unwrap();
+    assert!(matches!(empty, Fact::Absent { provenance } if provenance.is_empty()));
+    let weak = Arc::downgrade(&doc.0);
+    drop(doc);
+    assert!(
+        weak.upgrade().is_none(),
+        "query workspace cannot retain a graph"
+    );
+    drop(shared);
+}
+
+#[test]
+fn repeated_fact_queries_still_exhaust_the_shared_work_budget() {
+    let fixtures = fixtures();
+    let doc = document(&fixtures["diamond-20"]);
+    let selected = selection(&doc, &["S0".into()]);
+    let token = Cancellation::default();
+    let mut measured = FactWork::new(&doc.0.limits, &token);
+    query(&doc.0.graph, &selected, FactQuery::Types, &mut measured).unwrap();
+    let limits = Limits {
+        schema_fact_work: measured.used() * 2 - 1,
+        ..Limits::default()
+    };
+    let mut shared = FactWork::new(&limits, &token);
+    query(&doc.0.graph, &selected, FactQuery::Types, &mut shared).unwrap();
+    let error = query(&doc.0.graph, &selected, FactQuery::Types, &mut shared)
+        .err()
+        .unwrap();
+    assert!(matches!(
+        error.reason(),
+        Some(DiagnosticReason::Limit {
+            kind: LimitKind::SchemaFactWork,
+            ..
+        })
+    ));
+    assert!(error.location().is_some());
+    assert_eq!(shared.used(), limits.schema_fact_work);
+}
+#[test]
 fn frozen_shared_dag_controls() {
     let fixtures = fixtures();
     let mut failures = Vec::new();

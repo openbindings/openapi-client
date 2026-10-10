@@ -1106,10 +1106,14 @@ impl Graph {
         let scope = self.schemas.scope(node).expect("checked");
         let address = self.address(&source, reference, scope.base.as_deref(), scope.root)?;
         checkpoint(cancellation)?;
-        let request = address
-            .uri
-            .as_deref()
-            .map(|u| without_fragment(u).to_owned());
+        // A requested-resource string is diagnostic data. Successful traversal
+        // needs only the borrowed address and must not allocate this copy.
+        let request = || {
+            address
+                .uri
+                .as_deref()
+                .map(|u| without_fragment(u).to_owned())
+        };
         let need = |kind, target, uri| NeedFact {
             source: ResourceId(node.0),
             pointer: source.location().pointer,
@@ -1125,14 +1129,13 @@ impl Graph {
             return Err(source.error(Code::ResourceUnavailable).need_fact(need(
                 ResourceNeedKind::Bytes,
                 None,
-                request,
+                request(),
             )));
         };
         let resource = self
             .resource(ResourceId(root.0))
             .expect("target physical resource");
-        let untyped = Edition::detect(&resource.json.root()).is_err()
-            && resource.json.root().get("openapi").is_none()
+        let untyped = resource.json.root().get("openapi").is_none()
             && resource.json.root().get("swagger").is_none();
         let (target, dynamic) =
             if let Some(exact) = address.exact {
@@ -1165,7 +1168,7 @@ impl Graph {
                             return Err(source.error(Code::MissingReference));
                         } else if untyped {
                             return Err(source.error(Code::ResourceLayoutRequired).need_fact(
-                                need(ResourceNeedKind::Layout, Some(resource.id), request),
+                                need(ResourceNeedKind::Layout, Some(resource.id), request()),
                             ));
                         } else {
                             return Err(source.error(Code::MissingReference));
@@ -1190,7 +1193,7 @@ impl Graph {
                 return Err(source.error(Code::ResourceLayoutRequired).need_fact(need(
                     ResourceNeedKind::Layout,
                     Some(resource.id),
-                    request.or_else(|| resource.retrieval.clone()),
+                    request().or_else(|| resource.retrieval.clone()),
                 )));
             }
             let mut error = source.error(Code::WrongReferenceKind);
@@ -1213,8 +1216,9 @@ impl Graph {
         {
             Some(SchemaAccessReason::CrossingPointer)
         } else if let (Some(uri), Some(canonical)) = (&address.uri, &target_scope.uri) {
-            (identity_key(without_fragment(uri))? != identity_key(canonical)?)
-                .then_some(SchemaAccessReason::RetrievalAlias)
+            (without_fragment(uri) != canonical.as_ref()
+                && identity_key(without_fragment(uri))? != identity_key(canonical)?)
+            .then_some(SchemaAccessReason::RetrievalAlias)
         } else {
             None
         };

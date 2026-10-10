@@ -3,6 +3,7 @@
 //! percent-encoded dot segments and absent/empty components remain distinct.
 use crate::{Code, Diagnostic};
 use fluent_uri::UriRef;
+use std::borrow::Cow;
 
 fn invalid() -> Diagnostic {
     Diagnostic::new(Code::InvalidDestination)
@@ -18,21 +19,21 @@ pub fn resolve(reference: &str, base: &str) -> Result<String, Diagnostic> {
         (
             r.scheme().map(|x| x.as_str()),
             r.authority().map(|x| x.as_str()),
-            remove_dots(r.path().as_str()),
+            Cow::Owned(remove_dots(r.path().as_str())),
             r.query().map(|x| x.as_str()),
         )
     } else if r.authority().is_some() {
         (
             b.scheme().map(|x| x.as_str()),
             r.authority().map(|x| x.as_str()),
-            remove_dots(r.path().as_str()),
+            Cow::Owned(remove_dots(r.path().as_str())),
             r.query().map(|x| x.as_str()),
         )
     } else if r.path().is_empty() {
         (
             b.scheme().map(|x| x.as_str()),
             b.authority().map(|x| x.as_str()),
-            b.path().as_str().to_owned(),
+            Cow::Borrowed(b.path().as_str()),
             r.query().or(b.query()).map(|x| x.as_str()),
         )
     } else {
@@ -53,11 +54,18 @@ pub fn resolve(reference: &str, base: &str) -> Result<String, Diagnostic> {
         (
             b.scheme().map(|x| x.as_str()),
             b.authority().map(|x| x.as_str()),
-            remove_dots(&path),
+            Cow::Owned(remove_dots(&path)),
             r.query().map(|x| x.as_str()),
         )
     };
-    let mut result = String::new();
+    // Each component is already known. Reserve once rather than repeatedly
+    // reallocating the destination while appending a schema-reference fragment.
+    let capacity = scheme.map_or(0, |s| s.len() + 1)
+        + authority.map_or(0, |a| a.len() + 2)
+        + path.len()
+        + query.map_or(0, |q| q.len() + 1)
+        + r.fragment().map_or(0, |f| f.as_str().len() + 1);
+    let mut result = String::with_capacity(capacity);
     if let Some(s) = scheme {
         result.push_str(s);
         result.push(':');
