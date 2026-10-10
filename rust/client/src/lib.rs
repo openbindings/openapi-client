@@ -14,6 +14,7 @@ mod graph;
 mod loading;
 mod prepare;
 mod source;
+mod style;
 mod transport;
 pub mod uri;
 mod value;

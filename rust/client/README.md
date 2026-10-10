@@ -64,6 +64,13 @@ async fn inspect_and_call(text: &[u8]) -> Result<CompletedJson, Box<dyn std::err
 
 `HostCapabilities::programmable()` is a caller promise for controlled callbacks, not proof about an arbitrary HTTP stack. `cargo run --example dynamic` executes the complete fixture flow. Real asynchronous I/O requires the caller's host/executor. `Response::json()` parses on each call: retain the returned ExactJson when reusing decoded data. For a different application policy, inspect raw `Outcome` directly and choose your own order/acceptance rule. Preserve dispatch, upload, cancellation, error and response facts; a response alone does not establish execution success. Calling the named policy is never implicit in `invoke`.
 
+## Shared parameter and form styles
+
+Flat `deepObject` and component-safe reserved expansion use the existing logical
+parameter/form inputs. Style-based spaces use `%20`; content URL forms use `+`.
+See [SERIALIZATION.md](SERIALIZATION.md) for applicability, exact-value ownership,
+corrective refusals and the real provider preparation example.
+
 ## Sending logical forms and finite files
 
 Use the same `.form(...)` call for a declared URL-encoded or multipart/form-data

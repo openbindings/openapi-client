@@ -107,6 +107,12 @@ pub enum VersionReason {
 pub enum DiagnosticReason {
     /// Why a finite named form could not be represented.
     Form(crate::FormReason),
+    /// The declared style/type/explode combination has no supported defined serialization.
+    UnsupportedStyleCombination,
+    /// A nested or null value requires a separately selected serialization convention.
+    UnsupportedStyleValue,
+    /// A data delimiter needs an explicit interoperability convention.
+    AmbiguousStyleDelimiter,
     /// YAML syntax-to-JSON profile refusal.
     Yaml(crate::YamlReason),
     /// Edition discrimination failed without rewriting the authored source.

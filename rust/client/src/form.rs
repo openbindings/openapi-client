@@ -397,6 +397,7 @@ enum Piece<'a> {
     Json(Value),
     Bytes(FiniteBytes<'a>),
     Separator(&'static [u8]),
+    Key(FiniteBytes<'a>),
 }
 impl Piece<'_> {
     fn bytes(&self) -> Result<&[u8], Diagnostic> {
@@ -407,7 +408,7 @@ impl Piece<'_> {
                 _ => return Err(located(v, Code::UnsupportedValue, FormReason::ValueShape)),
             },
             Self::Json(v) => v.raw().as_bytes(),
-            Self::Bytes(b) => b.bytes(),
+            Self::Bytes(b) | Self::Key(b) => b.bytes(),
             Self::Separator(v) => v,
         })
     }
@@ -417,6 +418,7 @@ struct Emission<'a> {
     filename: Option<String>,
     media: String,
     pieces: Vec<Piece<'a>>,
+    style: Option<crate::style::Escape>,
 }
 struct Work<'a> {
     graph: &'a crate::graph::Graph,
@@ -605,7 +607,7 @@ pub(crate) fn encode<'a>(
                         ));
                     }
                     if edition != Edition::OpenApi32
-                        && style(encoding.as_ref(), edition, multipart)? == Some(false)
+                        && style(encoding.as_ref(), edition, multipart)?.is_some_and(|s| !s.explode)
                     {
                         return Err(located(
                             source,
@@ -643,7 +645,7 @@ fn style(
     encoding: Option<&Value>,
     edition: Edition,
     multipart: bool,
-) -> Result<Option<bool>, Diagnostic> {
+) -> Result<Option<crate::style::Config>, Diagnostic> {
     let Some(e) = encoding else { return Ok(None) };
     if e.kind() != ValueKind::Object {
         return Err(e.error(Code::InvalidDeclaration));
@@ -668,16 +670,25 @@ fn style(
     {
         return Ok(None);
     }
-    if str_field(e, "style")?.is_some_and(|s| s.as_str() != Some("form"))
-        || (!multipart && bool_field(e, "allowReserved", false)?)
-    {
-        return Err(located(
-            e,
-            Code::UnsupportedMedia,
-            FormReason::UnsupportedStyle,
-        ));
-    }
-    Ok(Some(bool_field(e, "explode", true)?))
+    let declared = str_field(e, "style")?;
+    let kind = match declared.as_ref().and_then(Value::as_str).unwrap_or("form") {
+        "form" => crate::style::Style::Form,
+        "deepObject" => crate::style::Style::DeepObject,
+        _ => {
+            return Err(located(
+                e,
+                Code::UnsupportedMedia,
+                FormReason::UnsupportedStyle,
+            ));
+        }
+    };
+    let explode = bool_field(e, "explode", kind == crate::style::Style::Form)?;
+    Ok(Some(crate::style::Config {
+        style: kind,
+        explode: explode
+            || kind == crate::style::Style::DeepObject && edition == Edition::OpenApi32,
+        reserved: bool_field(e, "allowReserved", false)? && !multipart,
+    }))
 }
 #[derive(Clone, Copy)]
 struct Rules<'s> {
@@ -712,6 +723,11 @@ fn plan<'a>(
         ));
     }
     if let Payload::Value(value) = &part.payload {
+        if let Some(config) = styled
+            && !(edition == Edition::OpenApi32 && value.kind() == ValueKind::Array)
+        {
+            return plan_style(name, part, value, config, rules, out, work);
+        }
         if value.kind() == ValueKind::Array {
             let item = schema.and_then(|s| s.get("items"));
             let legacy = if edition == Edition::Swagger20 {
@@ -749,9 +765,6 @@ fn plan<'a>(
                     Some("pipes") => Some(b"|".as_slice()),
                     Some("multi") => None,
                     Some(_) => return Err(schema.unwrap().error(Code::InvalidDeclaration)),
-                    None if styled == Some(false) && edition != Edition::OpenApi32 => {
-                        Some(b",".as_slice())
-                    }
                     None => None,
                 };
             if let Some(separator) = join {
@@ -801,60 +814,77 @@ fn plan<'a>(
             }
             return Ok(());
         }
-        if let Some(explode) = styled
-            && value.kind() == ValueKind::Object
-        {
-            let mut pieces = Vec::new();
-            for (key, value) in value.members().unwrap() {
-                work.visit()?;
-                Piece::Scalar(value.clone()).bytes()?;
-                if explode {
-                    emit(
-                        key,
-                        part,
-                        work.text("text/plain")?,
-                        vec![Piece::Scalar(value)],
-                        multipart,
-                        out,
-                        work,
-                    )?;
-                } else {
-                    if !pieces.is_empty() {
-                        push_piece(&mut pieces, Piece::Separator(b","), work)?;
-                    }
-                    // Exact JSON ownership is reused for values; object keys require one bounded copy.
-                    add(
-                        &mut work.copied_data,
-                        key.len(),
-                        work.limits.body_bytes,
-                        LimitKind::BodyBytes,
-                    )?;
-                    work.visit()?; // Admit the key-copy operation before allocation.
-                    push_piece(
-                        &mut pieces,
-                        Piece::Bytes(FiniteBytes::Shared(Arc::from(key.as_bytes()))),
-                        work,
-                    )?;
-                    push_piece(&mut pieces, Piece::Separator(b","), work)?;
-                    push_piece(&mut pieces, Piece::Scalar(value), work)?;
-                }
-            }
-            if !explode && !pieces.is_empty() {
-                emit(
-                    name,
-                    part,
-                    work.text("text/plain")?,
-                    pieces,
-                    multipart,
-                    out,
-                    work,
-                )?;
-            }
-            return Ok(());
-        }
     }
     plan_one(name, part, &part.payload, rules, out, work)
 }
+fn plan_style<'a>(
+    name: &str,
+    part: &ReadyPart<'_>,
+    value: &Value,
+    config: crate::style::Config,
+    rules: Rules<'_>,
+    out: &mut Vec<Emission<'a>>,
+    work: &mut Work<'_>,
+) -> Result<(), Diagnostic> {
+    use crate::style::{Atom, Escape, Event};
+    let mode = Escape::Style {
+        reserved: config.reserved,
+        path: false,
+        cookie: false,
+        comma: !config.explode && matches!(value.kind(), ValueKind::Array | ValueKind::Object),
+    };
+    let mut emitted_name = String::new();
+    let mut pieces = Vec::new();
+    crate::style::walk(value, name, config, true, rules.source, |event| {
+        work.visit()?;
+        match event {
+            Event::Check => {}
+            Event::Begin(name) => {
+                add(
+                    &mut work.metadata,
+                    name.len(),
+                    work.limits.form_metadata_bytes,
+                    LimitKind::FormMetadataBytes,
+                )?;
+                emitted_name = String::with_capacity(name.len());
+                for text in name.pieces() {
+                    emitted_name.push_str(text);
+                }
+            }
+            Event::Atom(atom) => {
+                let piece = match atom {
+                    Atom::Scalar(value) => Piece::Scalar(value.clone()),
+                    Atom::Separator(bytes) => Piece::Separator(bytes),
+                    Atom::Key(key) => {
+                        add(
+                            &mut work.copied_data,
+                            key.len(),
+                            work.limits.body_bytes,
+                            LimitKind::BodyBytes,
+                        )?;
+                        Piece::Key(FiniteBytes::Shared(Arc::from(key.as_bytes())))
+                    }
+                };
+                push_piece(&mut pieces, piece, work)?;
+            }
+            Event::End => {
+                let media = work.text("text/plain")?;
+                emit_named(
+                    std::mem::take(&mut emitted_name),
+                    part,
+                    media,
+                    std::mem::take(&mut pieces),
+                    rules.multipart,
+                    out,
+                    work,
+                )?;
+                out.last_mut().unwrap().style = Some(mode);
+            }
+        }
+        Ok(())
+    })
+}
+
 fn push_piece<'a>(
     pieces: &mut Vec<Piece<'a>>,
     piece: Piece<'a>,
@@ -970,6 +1000,16 @@ fn plan_one<'a>(
     work.visit()?;
     let styled = style(encoding, edition, multipart)?;
     validate_part(part, schema, encoding, source, edition, multipart, work)?;
+    if let (Some(config), Payload::Value(value)) = (styled, payload) {
+        if part.media.is_some() {
+            return Err(located(
+                source,
+                Code::InvalidSelection,
+                FormReason::PartMediaMismatch,
+            ));
+        }
+        return plan_style(name, part, value, config, rules, out, work);
+    }
     let content_type = if styled.is_some() {
         work.text("text/plain")?
     } else {
@@ -1037,7 +1077,21 @@ fn plan_one<'a>(
             ));
         }
     };
-    emit(name, part, content_type, vec![piece], multipart, out, work)
+    if styled.is_some_and(|config| config.style == crate::style::Style::DeepObject) {
+        return Err(source
+            .error(Code::UnsupportedValue)
+            .reasoned(DiagnosticReason::UnsupportedStyleCombination));
+    }
+    emit(name, part, content_type, vec![piece], multipart, out, work)?;
+    if let Some(config) = styled {
+        out.last_mut().unwrap().style = Some(crate::style::Escape::Style {
+            reserved: config.reserved,
+            path: false,
+            cookie: false,
+            comma: false,
+        });
+    }
+    Ok(())
 }
 fn choose_part_media(
     elected: Option<&str>,
@@ -1176,6 +1230,18 @@ fn emit<'a>(
     out: &mut Vec<Emission<'a>>,
     work: &mut Work<'_>,
 ) -> Result<(), Diagnostic> {
+    let name = work.text(name)?;
+    emit_named(name, part, media, pieces, multipart, out, work)
+}
+fn emit_named<'a>(
+    name: String,
+    part: &ReadyPart<'_>,
+    media: String,
+    pieces: Vec<Piece<'a>>,
+    multipart: bool,
+    out: &mut Vec<Emission<'a>>,
+    work: &mut Work<'_>,
+) -> Result<(), Diagnostic> {
     if out.len() >= work.limits.form_parts {
         return Err(Diagnostic::limited(
             LimitKind::FormParts,
@@ -1186,7 +1252,6 @@ fn emit<'a>(
     if !multipart && part.filename.is_some() {
         return Err(refusal(Code::UnsupportedValue, FormReason::ValueShape));
     }
-    let name = work.text(name)?;
     if let Some(filename) = &part.filename {
         add(
             &mut work.metadata,
@@ -1214,6 +1279,7 @@ fn emit<'a>(
         filename: part.filename.as_deref().map(str::to_owned),
         media,
         pieces,
+        style: None,
     });
     Ok(())
 }
@@ -1275,29 +1341,8 @@ impl Writer<'_, '_> {
         }
         Ok(())
     }
-    fn encoded(&mut self, bytes: &[u8]) -> Result<(), Diagnostic> {
-        const HEX: &[u8] = b"0123456789ABCDEF";
-        // One bounded stack chunk; no allocation proportional to escape expansion.
-        let mut buf = [0u8; 3072];
-        for input in bytes.chunks(1024) {
-            let mut len = 0;
-            for &b in input {
-                if b.is_ascii_alphanumeric() || b"*-._".contains(&b) {
-                    buf[len] = b;
-                    len += 1;
-                } else if b == b' ' {
-                    buf[len] = b'+';
-                    len += 1;
-                } else {
-                    buf[len] = b'%';
-                    buf[len + 1] = HEX[(b >> 4) as usize];
-                    buf[len + 2] = HEX[(b & 15) as usize];
-                    len += 3;
-                }
-            }
-            self.put(&buf[..len])?;
-        }
-        Ok(())
+    fn encoded(&mut self, bytes: &[u8], mode: crate::style::Escape) -> Result<(), Diagnostic> {
+        crate::style::encode(bytes, mode, |chunk| self.put(chunk))
     }
     fn quoted(&mut self, text: &str) -> Result<(), Diagnostic> {
         let mut start = 0;
@@ -1350,10 +1395,20 @@ fn write_body(
             if i != 0 {
                 writer.put(b"&")?;
             }
-            writer.encoded(part.name.as_bytes())?;
+            writer.encoded(
+                part.name.as_bytes(),
+                part.style
+                    .map_or(crate::style::Escape::FormContent, |mode| mode.name()),
+            )?;
             writer.put(b"=")?;
             for piece in &part.pieces {
-                writer.encoded(piece.bytes()?)?;
+                let mode = match (part.style, piece) {
+                    (Some(_), Piece::Separator(_)) => crate::style::Escape::Literal,
+                    (Some(mode), Piece::Key(_)) => mode.name(),
+                    (Some(mode), _) => mode,
+                    (None, _) => crate::style::Escape::FormContent,
+                };
+                writer.encoded(piece.bytes()?, mode)?;
             }
         }
     }
@@ -1485,6 +1540,7 @@ mod tests {
                 filename: None,
                 media: "text/plain".into(),
                 pieces: vec![Piece::Scalar(value)],
+                style: None,
             }],
             "multipart/form-data",
             true,

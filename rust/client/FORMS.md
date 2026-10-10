@@ -23,14 +23,16 @@ internally inconsistent default-content-type prose in 3.1.0 using 3.1.2.
 - OAS 3.x keeps each media schema/encoding independently. With no applicable
   explicit style fields, content-based encoding uses declared/elected media or
   the edition's schema-driven defaults. `form` style supports scalar values,
-  flat objects and scalar arrays. OAS 3.0 ignores multipart style/explode/
+  flat objects and scalar arrays; `deepObject` supports flat scalar-member objects.
+  Component-safe reserved expansion and the shared name/data rules are documented
+  in [SERIALIZATION.md](SERIALIZATION.md). OAS 3.0 ignores multipart style/explode/
   allowReserved. OAS 3.1 applies multipart style without URI escaping.
 - OAS 3.2 expands named array properties before applying encoding to each item,
   for both named form media. This differs from 3.1 `explode: false` on an array.
   Arrays of Parts with joining styles in pre-3.2 editions currently refuse;
   ordinary/exact scalar arrays support the declared joining styles.
-- Text is UTF-8. URL forms use `+` for spaces and percent encoding for literal
-  plus, percent and separator characters. Multipart retains Unicode text,
+- Text is UTF-8. Content-based URL forms use `+` for spaces; explicitly selected
+  styles use `%20` and preserve structural separators independently of data. Multipart retains Unicode text,
   quotes/backslashes filenames safely, and rejects control characters in names
   and filenames. Filenames are never paths to open.
 - Primitive default parts are text; object parts are JSON; binary/default octet

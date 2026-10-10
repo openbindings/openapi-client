@@ -1,5 +1,12 @@
 # Unreleased (0.0.0)
 
+- Share private logical serialization atoms across parameters and forms. Add flat
+  `deepObject`, component-safe reserved expansion, final-name credential collision
+  checks, bounded parameter output planning and corrective style diagnostics.
+- Canonicalize style spaces as `%20` while retaining `+` for content URL forms;
+  preserve structural commas separately from data. Keep 3.0 multipart ignoring
+  style fields and 3.2 outer-array item expansion. See SERIALIZATION.md.
+
 - Add immutable caller-supplied resource graphs, typed protocol sites, external
   Path Item discovery and uniform corrective resource/layout needs. New snapshots
   share original source arenas and reject stale sites/needs. See GRAPH.md.
