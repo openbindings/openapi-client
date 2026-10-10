@@ -6,11 +6,17 @@ An independent Rust client for exact JSON/OpenAPI 3.1 documents and finite reque
 
 Supported preparation covers OpenAPI 3.1.0–3.1.2, local JSON-Pointer protocol references, server/media/security elections, path/header simple and query/cookie form parameters, supplied scoped Basic/Bearer/API-key credentials, and finite exact JSON/raw bodies. Response metadata, delivered bytes/provenance, upload state, cancellation and decode failures remain independent.
 
-Schemas and unknown fields are inspection data. The library performs no schema evaluation/default insertion, acquisition, automatic redirect/retry, streaming codec, production HTTP integration or OpenBindings adaptation. Browser/workerd qualification glue is separate and is not a supported npm client.
+Schemas and unknown fields are inspection data. The core performs no schema evaluation/default insertion, acquisition, automatic redirect/retry, streaming codec or OpenBindings adaptation. For native HTTP calls, use the optional [`dynamic-openapi-client-reqwest` companion](../reqwest/README.md); it owns the HTTP stack and configuration while this crate remains runtime-independent. Browser/workerd qualification glue is separate and is not a supported npm client.
 
 Source and decoded strings are exact for Unicode scalar values. Unpaired surrogate escapes return a located limitation with source preserved. Numeric tokens remain exact; integer conveniences are checked, and binary64 conversion currently accepts exactly representable integer lexemes only. Mathematical conversion of decimal/exponent tokens remains explicit unsupported conversion. Null, empty-container and nested parameter values receive located refusals; empty strings are supported.
 
 Supplied hosts must enforce no ambient authentication, retries or redirects, disclose target/header restrictions and content decoding, and bound delivered response bytes. The core can validate its own data and returned evidence; it cannot limit an arbitrary callback's hidden allocation or undo remote effects. Use explicit accessors carefully: raw targets, header bytes, source values and host error details can contain secrets. SDK Debug/Display views omit credential values.
+
+## Calling a real service
+
+Use the optional [native HTTP companion](../reqwest/README.md) to configure a client and origin-scoped credentials once. It supplies `client.request(&operation)` and `client.execute(&prepared, cancellation)`, so application code uses the same request builder without implementing a transport callback. Its getting-started example runs against a local HTTP server and includes typed input and output.
+
+A native HTTP response does not prove complete upload. Select `policies::received_2xx_json(outcome)` when your application accepts a complete, uncancelled, transport-error-free 2xx JSON response while retaining upload uncertainty. The stricter `complete_2xx_json` below requires known complete upload. Both return the same evidence-bearing types; neither policy changes invocation or retries.
 
 ## A dynamic Rust call
 
@@ -51,6 +57,27 @@ async fn inspect_and_call(text: &[u8]) -> Result<CompletedJson, Box<dyn std::err
 ```
 
 `HostCapabilities::programmable()` is a caller promise for controlled callbacks, not proof about an arbitrary HTTP stack. `cargo run --example dynamic` executes the complete fixture flow. Real asynchronous I/O requires the caller's host/executor. `Response::json()` parses on each call: retain the returned ExactJson when reusing decoded data. For a different application policy, inspect raw `Outcome` directly and choose your own order/acceptance rule. Preserve dispatch, upload, cancellation, error and response facts; a response alone does not establish execution success. Calling the named policy is never implicit in `invoke`.
+
+## Reading an application type
+
+After accepting the outcome, project the retained exact JSON into a Rust type:
+
+```rust
+use dynamic_openapi_client::{ExactJson, Limits};
+use serde::Deserialize;
+#[derive(Deserialize)]
+struct Item { id: u64, name: String }
+let json = ExactJson::parse(br#"{"id":9007199254740993,"name":"sample"}"#, Limits::default())?;
+let item: Item = json.deserialize()?;
+assert_eq!(item.id, 9_007_199_254_740_993);
+assert_eq!(item.name, "sample");
+assert_eq!(json.root().get("id").unwrap().raw(), "9007199254740993");
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+`deserialize` uses standard Serde JSON conversion directly on the original bytes, without an intermediate `serde_json::Value`. Integer destinations reject overflow and support i128/u128. Choosing f32/f64 explicitly selects ordinary floating-point rounding; it does **not** make the promise of `Number::to_f64_exact`. Keep the exact owner when original spelling or mathematical precision matters. Borrowed output can borrow unescaped strings from the owner. Custom Deserialize implementations are caller work; projection applies Serde's own recursion policy and performs no schema evaluation.
+
+`DeserializationError` safely reports the conversion failure and line/column. Its `detail()` is explicit access to the underlying Serde error, which can include response values or custom error text; default Display, Debug and error chaining omit that text. A projection failure leaves the exact JSON and original Outcome available to the caller.
 
 ## Constructing ordinary inputs
 
@@ -136,8 +163,16 @@ Diagnostic metadata is immutable: use `code()`, `location()`, `related()` and `s
 
 Defaults admit 8 MiB documents/caller metadata, nesting 128, 500,000 JSON nodes, 20,000 operations, 128 reference steps, 4 MiB bodies, 64 KiB targets, 256 header lines and 1,024 cached operations. Caller input counts and security requirements are bounded by the reference-work budget. Limits are per owner/call and may be configured; depth above 128 still refuses pending qualification. A byte-limit refusal does not copy an oversized input: `ParseFailure::source_bytes()` is empty in that case. Other admitted parse failures retain exact bytes. JSON indexing checks node admission before growing its owned work queue. Intermediate encoding allocation is bounded by admitted input bytes, even when the resulting target subsequently exceeds its smaller limit.
 
-Cancellation is cooperative. Cancellable parse/prepare methods check owned work; invocation checks before dispatch and records cancellation after the callback returns. A callback must observe its token to interrupt its own wait. Future drop establishes no remote outcome. Response metadata over the count/byte limits produces `InvalidHostEvidence` and an explicit omitted-line count; available status and bounded body remain inspectable, and JSON convenience decoding refuses incomplete metadata.
+Cancellation is cooperative. Cancellable parse/prepare methods check owned work; invocation checks before dispatch and records cancellation after the callback returns. A callback can select `cancellation.cancelled().await` against its I/O to interrupt a pending local wait. Each wait has its own registration; cancellation wakes all waiters and dropping a wait unregisters it. The native companion does this automatically. Cancellation is irreversible and repeated requests are harmless. Future drop establishes no remote outcome. Response metadata over the count/byte limits produces `InvalidHostEvidence` and an explicit omitted-line count; available status and bounded body remain inspectable, and JSON convenience decoding refuses incomplete metadata.
 
 Media election supports concrete types and matching declaration ranges, with explicit concrete selection required for range-only declarations. Malformed keys do not govern. More-specific matching declarations take precedence; equivalent best matches are ambiguous. Quoted media parameters are parsed as HTTP field parameters. Duplicate parameter names are refused. No codec or encoding metadata is applied to opaque schemas or raw caller bytes. UTF-8 is the explicit Basic credential policy. Header controls and surrounding whitespace are refused; header parameter values are not URI encoded. Cookies use `; ` between pairs.
 
 `retained_bytes()` is a storage estimate for the immutable JSON owner, excluding document descriptors, compiled caches, allocator metadata and reserved pages. Qualification reports measure allocator traffic, live allocation sizes and process RSS separately. Exact value handles use the source owner's identity and do not imply equality across distinct documents.
+
+## Corrective diagnostics and request choices
+
+Default diagnostic text explains the failure in plain language and retains its structured code/reason; it omits document-controlled names and values. For an interactive UI that deliberately displays source locations, use `error.display_with_location()`. This opt-in formatter includes escaped JSON pointers and caller parameter/variable/scheme names, limited to 256 characters per displayed field. Names can contain sensitive data; the full source and typed facts remain available through explicit accessors. Default logging behavior remains value-safe.
+
+Automatic request media selection considers the supplied body: `.json(...)` can uniquely select a JSON media type alongside incompatible XML/form choices. Multiple compatible JSON media types still require `Selection::media`. Raw bodies can use any supported concrete media and therefore retain their election requirements. Security is a separate policy: more than one authored alternative requires explicit `Selection::security`, even when only one credential is supplied or an anonymous alternative exists.
+
+Completed operation-path segments equal to `.` or `..` refuse before dispatch, including segments assembled from template literals and parameter values. This is a preparation safety policy because normalizing HTTP stacks can route such paths elsewhere. Empty values/segments and embedded dots remain supported. Server-reference resolution is unchanged; transports still disclose and check percent-encoded-dot support and other URL normalization restrictions.

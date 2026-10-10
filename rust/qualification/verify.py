@@ -67,6 +67,8 @@ with tempfile.TemporaryDirectory(prefix='openapi-consumer-', dir=output) as temp
     (consumer / 'tests').mkdir()
     shutil.copy2(root / 'qualification/serializable_consumer.rs',
                  consumer / 'tests/serializable.rs')
+    shutil.copy2(root / 'client/tests/response_projection.rs',
+                 consumer / 'tests/response_projection.rs')
     # Features belong to this external consumer and unify with the actual archive.
     # Read version constraints from the packaged manifest; do not add product features
     # or maintain a second dependency-version list here.
@@ -75,8 +77,10 @@ with tempfile.TemporaryDirectory(prefix='openapi-consumer-', dir=output) as temp
                             ('preserve-order', 'preserve_order'),
                             ('combined', 'arbitrary_precision,preserve_order')]:
         command = ['cargo', 'test', '--locked', '--manifest-path', consumer / 'Cargo.toml',
-                   '--test', 'serializable']
+                   '--test', 'serializable', '--test', 'response_projection']
         if features:
             command += ['--features', features]
         run('external-serde-' + label, command, consumer)
+run('native-package-consumer', [sys.executable, root / 'qualification/native_consumer.py',
+                                output / 'native-consumer'])
 print(json.dumps({'passed': True, 'commands': len(results), 'output': str(output)}))

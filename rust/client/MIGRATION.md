@@ -1,4 +1,17 @@
-# API quality revision (unpublished)
+# Real HTTP consumer revision (unpublished)
+
+The optional `dynamic-openapi-client-reqwest` companion now supplies native HTTP execution without application-written callbacks. Core `PreparedRequest::invoke` remains available and runtime-independent. This adds no OpenAPI editions, schema evaluation, acquisition or OpenBindings adaptation.
+
+`Cancellation::cancelled().await` wakes pending local waits and supports multiple waiters. Existing polling/checkpoint APIs remain. `ExactJson::deserialize` explicitly selects standard Serde projection of the original bytes; typed floating-point results can round, while exact source remains unchanged. Projection errors hide arbitrary Serde text by default and expose it only through `detail()`.
+
+Select `policies::received_2xx_json` to accept a complete 2xx JSON response without requiring known complete upload. It retains all Outcome evidence. The existing `complete_2xx_json` policy still refuses Unknown/Incomplete upload.
+
+**Changed:** completed literal dot-only operation-path segments refuse with InvalidDestination as an explicit safety policy. Empty path segments remain supported. Automatic media election now filters by body compatibility; no compatible concrete media yields UnsupportedMedia. Multiple compatible media still require an election. Multiple security alternatives still require an explicit index.
+
+**Changed:** public Diagnostic Display/Debug begins with a human-readable explanation. Structured codes/reasons remain the programmatic interface. An opt-in `display_with_location()` includes escaped, bounded document-controlled pointers/names. Default output still omits them. The serializer's associated error formatting is deliberately unchanged because a custom Serialize implementation can embed it into successful JSON output.
+
+## Previous API quality revision
+
 
 This pre-stabilization revision preserves the JSON/OpenAPI 3.1 finite supplied-transport profile. It does not add HTTP acquisition, a production transport, schema evaluation or an OpenBindings dependency.
 

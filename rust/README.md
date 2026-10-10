@@ -9,8 +9,13 @@ The supported profile is exact JSON/OpenAPI 3.1.0–3.1.2 parsing and inspection
 local JSON-Pointer protocol references, request preparation and finite JSON/raw
 invocation through caller-supplied transport. Refer to [the API guide](client/README.md)
 for parameter/media/security coverage and explicit limitations. Schema evaluation,
-external document acquisition, production transports, streaming, additional
+external document acquisition, streaming, additional
 OpenAPI editions and a supported npm API remain separate work.
+
+The optional [`dynamic-openapi-client-reqwest`](reqwest/README.md) companion supplies
+a configured native HTTP/1.1 client, origin-scoped credentials, finite responses
+and cancellation while waiting for I/O. Its stricter host profile is documented
+separately; the core has no reqwest or Tokio dependency.
 
 ## Source and evidence
 

@@ -6,6 +6,8 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+mod cancellation;
+mod deserialize;
 mod document;
 mod error;
 mod prepare;
@@ -13,6 +15,8 @@ mod transport;
 pub mod uri;
 mod value;
 
+pub use cancellation::Cancellation;
+pub use deserialize::DeserializationError;
 pub use document::{
     Document, Method, Operation, OperationDescription, ReferenceKind, ResolvedReference,
 };
@@ -25,8 +29,8 @@ pub use prepare::{
     Parameters, PreparedRequest, Selection,
 };
 pub use transport::{
-    BodyState, Cancellation, DeliveredBody, DispatchEvidence, DispatchRequest, Header,
-    HostCapabilities, Outcome, Provenance, Response, ResponseInput, TransportResult, UploadState,
+    BodyState, DeliveredBody, DispatchEvidence, DispatchRequest, Header, HostCapabilities, Outcome,
+    Provenance, Response, ResponseInput, TransportResult, UploadState,
 };
 pub use value::{
     ExactJson, Limits, Number, ParseFailure, SourceContext, SourceOrigin, Value, ValueKind,

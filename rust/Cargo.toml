@@ -1,7 +1,7 @@
 [workspace]
 resolver = "3"
-members = ["client", "qualification/runner", "qualification/bridge"]
-default-members = ["client", "qualification/runner"]
+members = ["client", "reqwest", "qualification/runner", "qualification/bridge"]
+default-members = ["client", "reqwest", "qualification/runner"]
 
 [workspace.package]
 edition = "2024"

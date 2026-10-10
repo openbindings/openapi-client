@@ -620,6 +620,165 @@
       "expected": {
         "error": "Limit"
       }
+    },
+    {
+      "id": "path-literal-dot-refused",
+      "group": "P05",
+      "action": "prepare",
+      "document": "{\"openapi\":\"3.1.2\",\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items/{p}\":{\"get\":{\"operationId\":\"items\",\"parameters\":[{\"name\":\"p\",\"in\":\"path\",\"required\":true,\"schema\":{}}]}}}}",
+      "authority": "Explicit preparation safety policy: reject complete literal dot segments; RFC3986/WHATWG normalization hazard; empty segments remain supported",
+      "expected": {
+        "error": "InvalidDestination"
+      },
+      "path": "/items/{p}",
+      "parameters": [
+        {
+          "location": "path",
+          "name": "p",
+          "value": "\".\""
+        }
+      ]
+    },
+    {
+      "id": "path-literal-double-dot-refused",
+      "group": "P05",
+      "action": "prepare",
+      "document": "{\"openapi\":\"3.1.2\",\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items/{p}\":{\"get\":{\"operationId\":\"items\",\"parameters\":[{\"name\":\"p\",\"in\":\"path\",\"required\":true,\"schema\":{}}]}}}}",
+      "authority": "Explicit preparation safety policy: reject complete literal dot segments; RFC3986/WHATWG normalization hazard; empty segments remain supported",
+      "expected": {
+        "error": "InvalidDestination"
+      },
+      "path": "/items/{p}",
+      "parameters": [
+        {
+          "location": "path",
+          "name": "p",
+          "value": "\"..\""
+        }
+      ]
+    },
+    {
+      "id": "path-composed-dot-empty-refused",
+      "group": "P05",
+      "action": "prepare",
+      "document": "{\"openapi\":\"3.1.2\",\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items/.{p}\":{\"get\":{\"operationId\":\"items\",\"parameters\":[{\"name\":\"p\",\"in\":\"path\",\"required\":true,\"schema\":{}}]}}}}",
+      "authority": "Explicit preparation safety policy: reject complete literal dot segments; RFC3986/WHATWG normalization hazard; empty segments remain supported",
+      "expected": {
+        "error": "InvalidDestination"
+      },
+      "path": "/items/.{p}",
+      "parameters": [
+        {
+          "location": "path",
+          "name": "p",
+          "value": "\"\""
+        }
+      ]
+    },
+    {
+      "id": "path-adjacent-dot-values-refused",
+      "group": "P05",
+      "action": "prepare",
+      "document": "{\"openapi\":\"3.1.2\",\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items/{p}{q}\":{\"get\":{\"operationId\":\"items\",\"parameters\":[{\"name\":\"p\",\"in\":\"path\",\"required\":true,\"schema\":{}},{\"name\":\"q\",\"in\":\"path\",\"required\":true,\"schema\":{}}]}}}}",
+      "authority": "Explicit preparation safety policy: reject complete literal dot segments; RFC3986/WHATWG normalization hazard; empty segments remain supported",
+      "expected": {
+        "error": "InvalidDestination"
+      },
+      "path": "/items/{p}{q}",
+      "parameters": [
+        {
+          "location": "path",
+          "name": "p",
+          "value": "\".\""
+        },
+        {
+          "location": "path",
+          "name": "q",
+          "value": "\".\""
+        }
+      ]
+    },
+    {
+      "id": "path-empty-interior-preserved",
+      "group": "P05",
+      "action": "prepare",
+      "document": "{\"openapi\":\"3.1.2\",\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items/{p}/tail\":{\"get\":{\"operationId\":\"items\",\"parameters\":[{\"name\":\"p\",\"in\":\"path\",\"required\":true,\"schema\":{}}]}}}}",
+      "authority": "Explicit preparation safety policy: reject complete literal dot segments; RFC3986/WHATWG normalization hazard; empty segments remain supported",
+      "expected": {
+        "target": "https://api.example/v1/items//tail"
+      },
+      "path": "/items/{p}/tail",
+      "parameters": [
+        {
+          "location": "path",
+          "name": "p",
+          "value": "\"\""
+        }
+      ]
+    },
+    {
+      "id": "json-media-unique-compatible",
+      "group": "P06",
+      "action": "prepare",
+      "document": "{\"openapi\":\"3.1.2\",\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"requestBody\":{\"content\":{\"application/json\":{},\"text/plain\":{}}}}}}}",
+      "authority": "Explicit unique body-compatible media election policy; OAS3.1.2 request-body content declarations",
+      "expected": {
+        "headers": [
+          [
+            "Content-Type",
+            "application/json"
+          ]
+        ],
+        "body_hex": "39303037313939323534373430393933"
+      },
+      "body": {
+        "json": "9007199254740993"
+      }
+    },
+    {
+      "id": "json-suffix-media-unique-compatible",
+      "group": "P06",
+      "action": "prepare",
+      "document": "{\"openapi\":\"3.1.2\",\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"requestBody\":{\"content\":{\"application/problem+json\":{},\"application/xml\":{}}}}}}}",
+      "authority": "Explicit unique body-compatible media election policy; OAS3.1.2 request-body content declarations",
+      "expected": {
+        "headers": [
+          [
+            "Content-Type",
+            "application/problem+json"
+          ]
+        ],
+        "body_hex": "7b7d"
+      },
+      "body": {
+        "json": "{}"
+      }
+    },
+    {
+      "id": "json-media-no-compatible-concrete",
+      "group": "P06",
+      "action": "prepare",
+      "document": "{\"openapi\":\"3.1.2\",\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"requestBody\":{\"content\":{\"text/plain\":{},\"application/xml\":{}}}}}}}",
+      "authority": "Explicit unique body-compatible media election policy; OAS3.1.2 request-body content declarations",
+      "expected": {
+        "error": "UnsupportedMedia"
+      },
+      "body": {
+        "json": "{}"
+      }
+    },
+    {
+      "id": "raw-media-multiple-compatible",
+      "group": "P06",
+      "action": "prepare",
+      "document": "{\"openapi\":\"3.1.2\",\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"requestBody\":{\"content\":{\"application/json\":{},\"text/plain\":{}}}}}}}",
+      "authority": "Explicit unique body-compatible media election policy; OAS3.1.2 request-body content declarations",
+      "expected": {
+        "error": "AmbiguousSelection"
+      },
+      "body": {
+        "raw_hex": "7b7d"
+      }
     }
   ]
 }
