@@ -31,10 +31,10 @@ pub use error::{
 };
 pub use prepare::{
     Body, BodyFieldDescription, BodyFields, Credential, CredentialValue,
-    EffectiveOperationDescription, Input, MediaDescription, OAuthFlowDescription, Parameter,
-    ParameterInput, ParameterLocation, Parameters, PreparedRequest, RequestBodyDescription,
-    ResponseDescription, SchemaDescription, SecurityAlternative, SecurityRequirement,
-    SecurityScheme, Selection, ServerDescription,
+    EffectiveOperationDescription, FieldRequirement, FieldShapeIssue, FieldShapeReason, Input,
+    MediaDescription, OAuthFlowDescription, Parameter, ParameterInput, ParameterLocation,
+    Parameters, PreparedRequest, RequestBodyDescription, ResponseDescription, SchemaDescription,
+    SecurityAlternative, SecurityRequirement, SecurityScheme, Selection, ServerDescription,
 };
 pub use transport::{
     BodyState, DeliveredBody, DispatchEvidence, DispatchRequest, Header, HostCapabilities, Outcome,
@@ -50,6 +50,8 @@ pub use ordinary::OrdinaryValue;
 
 mod request;
 pub use request::{Argument, RequestBuilder, RequestError};
+mod form;
+pub use form::{FiniteBytes, FormField, FormReason, FormValue, Part};
 
 /// Explicit evidence-preserving application acceptance policies.
 pub mod policies;

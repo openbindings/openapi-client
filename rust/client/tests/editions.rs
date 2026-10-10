@@ -441,11 +441,11 @@ fn raw_and_form_descriptions_report_field_completeness() {
         .unwrap()
         .request_body
         .unwrap();
-    let BodyFields::Declared(fields) = body.fields else {
+    let BodyFields::Declared(fields) = &body.media[0].fields else {
         panic!("explicit logical form fields expected")
     };
     assert_eq!(fields[0].name, "file");
-    assert!(fields[0].required);
+    assert_eq!(fields[0].requirement, FieldRequirement::ProtocolRequired);
     assert_eq!(
         fields[0].schema.value.get("type").unwrap().as_str(),
         Some("file")
@@ -460,8 +460,9 @@ fn raw_and_form_descriptions_report_field_completeness() {
             .unwrap()
             .request_body
             .unwrap()
+            .media[0]
             .fields,
-        BodyFields::Opaque
+        BodyFields::Opaque(_)
     ));
 }
 
@@ -765,7 +766,7 @@ fn form_descriptions_use_media_essence_and_preserve_authored_spelling() {
             let description = op.describe().unwrap();
             let body = description.request_body.unwrap();
             assert!(
-                matches!(body.fields, BodyFields::Opaque),
+                matches!(body.media[0].fields, BodyFields::Opaque(_)),
                 "{version} {media}"
             );
             assert_eq!(body.media[0].media_type, media);

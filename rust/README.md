@@ -8,11 +8,11 @@ registry release. All packages retain `publish = false`.
 The compatibility candidate accepts JSON and YAML documents from Swagger 2.0
 and OpenAPI 3.0, 3.1 and 3.2 through one public API, retaining authored source
 and edition semantics. Local JSON-Pointer protocol references and finite
-JSON/raw invocation use caller-supplied transport. Refer to
+JSON/raw/named-form invocation use caller-supplied transport. Refer to
 [the API guide](client/README.md) for the implemented parameter/media/security
 profile and explicit limitations. Acceptance of an edition does not imply
 complete support for its features. Schema evaluation, external resource graphs
-and acquisition, forms/multipart, richer parameter styles, streaming and a
+and acquisition, richer form styles/codings, positional/nested multipart, streaming and a
 supported npm API remain open work.
 
 The optional [`dynamic-openapi-client-reqwest`](reqwest/README.md) companion supplies

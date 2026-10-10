@@ -38,9 +38,25 @@ pub struct Limits {
     pub reference_steps: usize,
     /// Maximum finite request body and retained delivered response body bytes.
     pub body_bytes: usize,
+    /// Maximum logical named form fields, independent of reference traversal.
+    pub form_fields: usize,
+    /// Maximum emitted form values or multipart parts.
+    pub form_parts: usize,
+    /// Independent caller-admission and emitted-plan ceilings for copied form metadata.
+    /// Admission counts field names once and filename/media/header names per Part;
+    /// planning counts emitted names, filenames and effective media per emission.
+    /// Header argument data uses ordinary/exact admission. Fixed framing uses body_bytes.
+    pub form_metadata_bytes: usize,
+    /// Independent admission/planning work ceilings. Charges structural visits,
+    /// name comparisons, boundary attempts and each at-most-4096-byte wire chunk
+    /// in count/scan/write passes. This does not bound caller iterator/Serialize work.
+    pub form_work: usize,
+    /// Maximum collision-checked multipart boundary candidates.
+    pub boundary_attempts: usize,
     /// Maximum prepared request-target bytes.
     pub target_bytes: usize,
-    /// Maximum request/retained response header lines.
+    /// Maximum request/retained response header lines; independently bounds the
+    /// aggregate generated and supplied multipart part header lines.
     pub headers: usize,
     /// Maximum token length inspected by checked numeric conveniences.
     pub number_conversion_chars: usize,
@@ -56,6 +72,11 @@ impl Default for Limits {
             operations: 20_000,
             reference_steps: 128,
             body_bytes: 4 * 1024 * 1024,
+            form_fields: 128,
+            form_parts: 1024,
+            form_metadata_bytes: 65_536,
+            form_work: 500_000,
+            boundary_attempts: 16,
             target_bytes: 65_536,
             headers: 256,
             number_conversion_chars: 256,

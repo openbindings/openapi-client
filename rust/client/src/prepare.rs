@@ -190,6 +190,12 @@ pub struct MediaDescription {
     pub encoding: Option<Value>,
     /// Opaque sequential-item schema when declared.
     pub item_schema: Option<SchemaDescription>,
+    /// Authoritative form shape for this representation only.
+    pub fields: BodyFields,
+    /// Positional encoding declarations, when authored in OAS 3.2.
+    pub prefix_encoding: Option<Value>,
+    /// Repeated positional encoding declaration, when authored in OAS 3.2.
+    pub item_encoding: Option<Value>,
 }
 /// A logical request body independent of the edition's declaration syntax.
 #[derive(Clone, Debug)]
@@ -203,20 +209,53 @@ pub struct RequestBodyDescription {
     pub media: Vec<MediaDescription>,
     /// No media constraint was declared; an explicit concrete type or the JSON codec determines it.
     pub media_unrestricted: bool,
-    /// Logical form fields, or an explicit unresolved schema-derived shape.
-    pub fields: BodyFields,
 }
 /// A logical form field; automatic form serialization is qualified separately.
 #[derive(Clone, Debug)]
 pub struct BodyFieldDescription {
     /// Logical field name.
     pub name: String,
-    /// Whether this field is required.
-    pub required: bool,
+    /// Protocol obligation or a schema-validation hint; these are not interchangeable.
+    pub requirement: FieldRequirement,
     /// Opaque field schema and vocabulary.
     pub schema: SchemaDescription,
     /// Authored declaration, retaining format/encoding details.
     pub authored: Value,
+    /// Original field-specific Encoding Object, if present.
+    pub encoding: Option<Value>,
+}
+/// Meaning of a field's requiredness declaration.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FieldRequirement {
+    /// No unconditional requirement is declared.
+    Optional,
+    /// A Swagger form parameter must be supplied.
+    ProtocolRequired,
+    /// A direct schema required hint; preparation does not evaluate schemas.
+    SchemaRequired,
+}
+/// Why field inspection cannot provide a complete shape.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FieldShapeReason {
+    /// No schema was supplied for this representation.
+    MissingSchema,
+    /// A schema reference needs schema-aware resolution.
+    SchemaReference,
+    /// Composition or conditional schemas may contribute fields.
+    Composition,
+    /// The schema vocabulary or shape cannot be mechanically inspected.
+    SchemaShape,
+    /// A positional or nested multipart representation needs another body model.
+    PositionalEncoding,
+}
+/// A typed unresolved fact with its actual source owner.
+#[derive(Clone, Debug)]
+pub struct FieldShapeIssue {
+    /// Unresolved fact classification.
+    pub reason: FieldShapeReason,
+    /// Authored schema or media declaration requiring interpretation.
+    pub source: Value,
 }
 /// Completeness of logical form-field inspection.
 #[derive(Clone, Debug)]
@@ -226,7 +265,14 @@ pub enum BodyFields {
     /// Explicit logical fields are available.
     Declared(Vec<BodyFieldDescription>),
     /// Form representations exist but schema-derived fields have not been resolved.
-    Opaque,
+    Opaque(FieldShapeIssue),
+    /// Direct fields are known, but another declaration can affect the shape.
+    Partial {
+        /// Directly described fields, without claiming completeness.
+        fields: Vec<BodyFieldDescription>,
+        /// Source and reason of the unresolved remainder.
+        issue: FieldShapeIssue,
+    },
 }
 /// An effective response declaration and its representations.
 #[derive(Clone, Debug)]
@@ -643,6 +689,9 @@ impl Operation {
                                     .transpose()?,
                                 encoding: None,
                                 item_schema: None,
+                                fields: BodyFields::NotApplicable,
+                                prefix_encoding: None,
+                                item_encoding: None,
                             })
                         })
                         .collect()
@@ -673,7 +722,11 @@ impl Operation {
                 } else {
                     value.clone()
                 };
+                let fields = self.form_fields(key, &resolved, work)?;
                 Ok(MediaDescription {
+                    fields,
+                    prefix_encoding: resolved.get("prefixEncoding"),
+                    item_encoding: resolved.get("itemEncoding"),
                     media_type: work.text(&value, key)?,
                     authored: value,
                     schema: resolved
@@ -688,6 +741,91 @@ impl Operation {
                 })
             })
             .collect()
+    }
+    fn form_fields(
+        &self,
+        media: &str,
+        node: &Value,
+        work: &mut DescriptorWork<'_>,
+    ) -> Result<BodyFields, Diagnostic> {
+        let parsed = parse_media(media, true)?;
+        if !parsed.essence.starts_with("multipart/")
+            && parsed.essence != "application/x-www-form-urlencoded"
+        {
+            return Ok(BodyFields::NotApplicable);
+        }
+        let opaque = |reason, source: Value| BodyFields::Opaque(FieldShapeIssue { reason, source });
+        if node.get("prefixEncoding").is_some() || node.get("itemEncoding").is_some() {
+            return Ok(opaque(FieldShapeReason::PositionalEncoding, node.clone()));
+        }
+        let Some(schema) = node.get("schema") else {
+            return Ok(opaque(FieldShapeReason::MissingSchema, node.clone()));
+        };
+        if schema.kind() != ValueKind::Object {
+            return Ok(opaque(FieldShapeReason::SchemaShape, schema));
+        }
+        let issue = if schema.get("$ref").is_some() || schema.get("$dynamicRef").is_some() {
+            Some(FieldShapeReason::SchemaReference)
+        } else if ["allOf", "anyOf", "oneOf", "if", "then", "else"]
+            .iter()
+            .any(|key| schema.get(key).is_some())
+        {
+            Some(FieldShapeReason::Composition)
+        } else if schema
+            .get("type")
+            .is_some_and(|v| v.as_str() != Some("object"))
+        {
+            Some(FieldShapeReason::SchemaShape)
+        } else {
+            None
+        };
+        let Some(properties) = schema.get("properties") else {
+            return Ok(opaque(
+                issue.unwrap_or(FieldShapeReason::SchemaShape),
+                schema,
+            ));
+        };
+        let Some(properties) = properties.members() else {
+            return Err(schema.error(Code::InvalidDeclaration));
+        };
+        let required = schema.get("required");
+        let encoding = node.get("encoding");
+        let mut fields = Vec::new();
+        for (name, property) in properties {
+            work.entry(&property)?;
+            let mut schema_required = false;
+            if let Some(items) = required.as_ref().and_then(Value::elements) {
+                for item in items {
+                    work.entry(&item)?;
+                    if item.as_str() == Some(name) {
+                        schema_required = true;
+                        break;
+                    }
+                }
+            }
+            let requirement = if schema_required {
+                FieldRequirement::SchemaRequired
+            } else {
+                FieldRequirement::Optional
+            };
+            fields.push(BodyFieldDescription {
+                name: work.text(&property, name)?,
+                requirement,
+                schema: self.schema_description(property.clone(), work)?,
+                authored: property,
+                encoding: encoding.as_ref().and_then(|e| e.get(name)),
+            });
+        }
+        Ok(match issue {
+            Some(reason) => BodyFields::Partial {
+                fields,
+                issue: FieldShapeIssue {
+                    reason,
+                    source: schema,
+                },
+            },
+            None => BodyFields::Declared(fields),
+        })
     }
     fn body_description(
         &self,
@@ -728,7 +866,12 @@ impl Operation {
                             work.entry(&field.target)?;
                             Ok(BodyFieldDescription {
                                 name: work.required(&field.target, "name")?,
-                                required: bool_field(&field.target, "required", false)?,
+                                requirement: if bool_field(&field.target, "required", false)? {
+                                    FieldRequirement::ProtocolRequired
+                                } else {
+                                    FieldRequirement::Optional
+                                },
+                                encoding: None,
                                 schema: self.schema_description(field.target.clone(), work)?,
                                 authored: field.authored.clone(),
                             })
@@ -739,10 +882,33 @@ impl Operation {
             // Move the resolved declaration so its provenance chain is not copied.
             let declaration = parameters.swap_remove(index);
             let required = match &fields {
-                BodyFields::Declared(fields) => fields.iter().any(|f| f.required),
+                BodyFields::Declared(fields) => fields
+                    .iter()
+                    .any(|f| f.requirement == FieldRequirement::ProtocolRequired),
                 _ => bool_field(&declaration.target, "required", false)?,
             };
-            let media = self.media_descriptions(&declaration.target, Some("consumes"), work)?;
+            let mut media = self.media_descriptions(&declaration.target, Some("consumes"), work)?;
+            for representation in &mut media {
+                if parse_media(&representation.media_type, true).is_ok_and(|m| {
+                    m.essence.starts_with("multipart/")
+                        || m.essence == "application/x-www-form-urlencoded"
+                }) && let BodyFields::Declared(fields) = &fields
+                {
+                    let mut copied = Vec::new();
+                    for field in fields {
+                        work.entry(&field.authored)?;
+                        let name = work.text(&field.authored, &field.name)?;
+                        copied.push(BodyFieldDescription {
+                            name,
+                            requirement: field.requirement,
+                            schema: field.schema.clone(),
+                            encoding: field.encoding.clone(),
+                            authored: field.authored.clone(),
+                        });
+                    }
+                    representation.fields = BodyFields::Declared(copied);
+                }
+            }
             work.entry(&declaration.target)?;
             return Ok(Some(RequestBodyDescription {
                 declaration,
@@ -753,7 +919,6 @@ impl Operation {
                     .get("consumes")
                     .or_else(|| self.store.json.root().get("consumes"))
                     .is_none_or(|v| v.elements().is_some_and(|mut v| v.next().is_none())),
-                fields,
             }));
         }
         // 3.0 requires consumers to ignore requestBody where HTTP semantics are undefined.
@@ -771,23 +936,12 @@ impl Operation {
         let declaration =
             work.resolve(&self.store.json.root(), &body, ReferenceKind::RequestBody)?;
         let media = self.media_descriptions(&declaration.target, None, work)?;
-        let fields = if media.iter().any(|m| {
-            parse_media(&m.media_type, true).is_ok_and(|media| {
-                media.essence.starts_with("multipart/")
-                    || media.essence == "application/x-www-form-urlencoded"
-            })
-        }) {
-            BodyFields::Opaque
-        } else {
-            BodyFields::NotApplicable
-        };
         work.entry(&declaration.target)?;
         Ok(Some(RequestBodyDescription {
             required: bool_field(&declaration.target, "required", false)?,
             declaration,
             media,
             media_unrestricted: false,
-            fields,
         }))
     }
     fn server_descriptions(
@@ -1587,16 +1741,26 @@ impl Operation {
         input: &Input,
         cancellation: &crate::Cancellation,
     ) -> Result<PreparedRequest, Diagnostic> {
-        self.prepare_inner(input, cancellation).map_err(|mut e| {
-            if e.location.is_none() && e.context().is_none() {
-                e = e.contextual(DiagnosticContext::PreparedRequest);
-            }
-            e
-        })
+        self.prepare_with_form(input, None, cancellation)
+    }
+    pub(crate) fn prepare_with_form(
+        &self,
+        input: &Input,
+        form: Option<&[crate::form::ReadyField<'_>]>,
+        cancellation: &crate::Cancellation,
+    ) -> Result<PreparedRequest, Diagnostic> {
+        self.prepare_inner(input, form, cancellation)
+            .map_err(|mut e| {
+                if e.location.is_none() && e.context().is_none() {
+                    e = e.contextual(DiagnosticContext::PreparedRequest);
+                }
+                e
+            })
     }
     fn prepare_inner(
         &self,
         input: &Input,
+        form: Option<&[crate::form::ReadyField<'_>]>,
         cancellation: &crate::Cancellation,
     ) -> Result<PreparedRequest, Diagnostic> {
         cancellation.check()?;
@@ -1708,8 +1872,15 @@ impl Operation {
         }
         target.truncate(target.len() - usize::from(target.ends_with('/')));
         target.push_str(&path);
-        let (body, body_kind, media) = prepare_body(compiled.body.as_ref(), input, &limits)
-            .map_err(|e| e.election(SelectionKind::Media, None, None))?;
+        let (body, body_kind, media) = prepare_body(
+            compiled.body.as_ref(),
+            input,
+            form,
+            self.store.edition.clone()?,
+            &limits,
+            cancellation,
+        )
+        .map_err(|e| e.election(SelectionKind::Media, None, None))?;
         if let Some(media) = media {
             if headers
                 .iter()
@@ -2106,12 +2277,12 @@ fn serialize(
     Ok(Serialized { value, pairs })
 }
 
-struct Media {
-    essence: String,
-    parameters: BTreeMap<String, String>,
-    json: bool,
+pub(crate) struct Media {
+    pub(crate) essence: String,
+    pub(crate) parameters: BTreeMap<String, String>,
+    pub(crate) json: bool,
 }
-fn parse_media(s: &str, ranges: bool) -> Result<Media, Diagnostic> {
+pub(crate) fn parse_media(s: &str, ranges: bool) -> Result<Media, Diagnostic> {
     let bad = || Diagnostic::new(Code::InvalidMedia);
     let (head, tail) = s.split_once(';').map_or((s, ""), |(a, b)| (a, b));
     let essence = head.trim_matches([' ', '\t']);
@@ -2191,7 +2362,7 @@ pub(crate) fn media_type(s: &str) -> Result<(String, bool), Diagnostic> {
     let m = parse_media(s, false)?;
     Ok((m.essence, m.json))
 }
-fn media_matches(key: &Media, selected: &Media) -> Option<(u8, usize)> {
+pub(crate) fn media_matches(key: &Media, selected: &Media) -> Option<(u8, usize)> {
     let (ty, sub) = key.essence.split_once('/')?;
     let (st, ss) = selected.essence.split_once('/')?;
     if !(ty == "*" || ty == st)
@@ -2220,9 +2391,12 @@ type BodyEncoding = (Option<Arc<[u8]>>, &'static str, Option<String>);
 fn prepare_body(
     decl: Option<&RequestBodyDescription>,
     input: &Input,
+    form: Option<&[crate::form::ReadyField<'_>]>,
+    edition: Edition,
     limits: &Limits,
+    cancellation: &crate::Cancellation,
 ) -> Result<BodyEncoding, Diagnostic> {
-    let absent = matches!(input.body, Body::Absent);
+    let absent = form.is_none() && matches!(input.body, Body::Absent);
     let Some(decl) = decl else {
         if absent && input.selection.media.is_none() {
             return Ok((None, "absent", None));
@@ -2278,7 +2452,12 @@ fn prepare_body(
             .collect::<Vec<_>>();
         let usable = concrete
             .iter()
-            .filter(|(_, m, _)| !matches!(input.body, Body::Json(_)) || m.json)
+            .filter(|(_, m, _)| {
+                (!matches!(input.body, Body::Json(_)) || m.json)
+                    && (form.is_none()
+                        || m.essence.starts_with("multipart/")
+                        || m.essence == "application/x-www-form-urlencoded")
+            })
             .collect::<Vec<_>>();
         match usable.len() {
             0 => {
@@ -2295,6 +2474,29 @@ fn prepare_body(
             _ => return Err(content.error(Code::AmbiguousSelection)),
         }
     };
+    if let Some(form) = form {
+        let selected_parsed = parse_media(&selected, false)?;
+        let representation = decl
+            .media
+            .iter()
+            .filter_map(|m| {
+                parse_media(&m.media_type, true)
+                    .ok()
+                    .and_then(|key| media_matches(&key, &selected_parsed).map(|rank| (rank, m)))
+            })
+            .max_by_key(|(rank, _)| *rank)
+            .map(|(_, m)| m)
+            .ok_or_else(|| source.error(Code::UnsupportedMedia))?;
+        let (bytes, media) = crate::form::encode(
+            form,
+            representation,
+            &selected,
+            edition,
+            limits,
+            cancellation,
+        )?;
+        return Ok((Some(bytes), "form", Some(media)));
+    }
     let (bytes, kind) = match &input.body {
         Body::Absent => unreachable!(),
         Body::Json(v) => {
@@ -2495,7 +2697,7 @@ impl PreparedRequest {
     pub fn body(&self) -> Option<&[u8]> {
         self.body.as_deref()
     }
-    /// Payload category: absent, json or raw.
+    /// Payload category: absent, json, raw or form.
     pub fn body_kind(&self) -> &'static str {
         self.body_kind
     }

@@ -113,3 +113,25 @@ The named policy's standard `Error::source` follows its primary reason when repr
 `Value::raw()` and `location()` still identify indexed JSON. YAML's exact semantic representation has the new `SourceOrigin::Normalized` variant; update exhaustive matches on `SourceOrigin`. Use the additive `Value::source_trace()` to access the original YAML definition and alias use sites. Numeric source spelling belongs to the authored trace, while numeric token conveniences consume the exact normalized JSON token. Constructed caller values have no authored trace.
 
 Malformed non-JSON input is now diagnosed through YAML admission and can yield `InvalidYaml` or `UnsupportedYaml` with a typed `DiagnosticReason::Yaml`; callers should inspect codes/reasons rather than assuming every document parse failure is `InvalidJson`. See [the loading profile](LOADING.md) for key identity, scalar, alias and limit policies.
+
+## Finite named forms (unpublished)
+
+Use `operation.request().form([FormField::new("title", "hello")])` for named forms.
+Use `Part::bytes(slice).filename("file.bin")` for finite resource content, and
+`Part::value(exact.root())` when an ordinary/exact value needs part metadata.
+`FormValue::Parts(&parts)` carries per-item metadata. Existing JSON/raw body,
+selection, credentials, cancellation and invocation APIs are unchanged.
+
+**Changed:** authoritative form fields moved from `RequestBodyDescription.fields`
+to `MediaDescription.fields`. Each representation retains its own schemas and
+encoding objects. Replace `BodyFields::Opaque` patterns with `Opaque(issue)`;
+handle `Partial { fields, issue }` without treating it as complete. Issues expose a
+typed `FieldShapeReason` and original source handle. Replace a field's `required`
+bool with `requirement: FieldRequirement`: `ProtocolRequired` is enforced,
+`SchemaRequired` is a validation hint, and `Optional` is neither.
+
+`Limits` adds `form_fields`, `form_parts`, `form_metadata_bytes`, `form_work` and
+`boundary_attempts`; struct literals should use `..Limits::default()` when they
+intend the defaults. `LimitKind` and `DiagnosticReason::Form(FormReason)` expose
+corrective refusals. Debug remains redacted. This release implements the bounded
+profile in [FORMS.md](FORMS.md), not every form/multipart feature.

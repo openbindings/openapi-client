@@ -22,6 +22,11 @@ pub enum LimitKind {
     InputCount,
     InputBytes,
     BodyBytes,
+    FormFields,
+    FormParts,
+    FormMetadataBytes,
+    FormWork,
+    BoundaryAttempts,
     NumberCharacters,
 }
 /// Requested checked numeric representation.
@@ -91,6 +96,8 @@ pub enum VersionReason {
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum DiagnosticReason {
+    /// Why a finite named form could not be represented.
+    Form(crate::FormReason),
     /// YAML syntax-to-JSON profile refusal.
     Yaml(crate::YamlReason),
     /// Edition discrimination failed without rewriting the authored source.
@@ -137,6 +144,15 @@ pub enum DiagnosticReason {
 #[derive(Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum DiagnosticContext {
+    /// Logical form field and optional repeated item. Names are explicit-access data.
+    FormField {
+        /// Zero-based logical field index.
+        index: usize,
+        /// Logical field name; omitted by safe Debug.
+        name: String,
+        /// Zero-based repeated value index, when applicable.
+        item: Option<usize>,
+    },
     /// Caller parameter vector entry, independent of its exact value's source owner.
     Parameter {
         /// Index in the caller parameter vector.
@@ -185,6 +201,11 @@ impl fmt::Debug for DiagnosticContext {
                 .field("index", index)
                 .finish_non_exhaustive(),
             Self::Body => f.write_str("Body"),
+            Self::FormField { index, item, .. } => f
+                .debug_struct("FormField")
+                .field("index", index)
+                .field("item", item)
+                .finish_non_exhaustive(),
             Self::Credential { .. } => f.write_str("Credential { .. }"),
             Self::PreparedRequest => f.write_str("PreparedRequest"),
             Self::CallerInput => f.write_str("CallerInput"),
@@ -542,6 +563,13 @@ impl fmt::Display for LocatedDisplay<'_> {
             display_name(f, &location.pointer)?;
         }
         match self.0.context() {
+            Some(DiagnosticContext::FormField { name, index, item }) => {
+                write!(f, "; form field {index} ")?;
+                display_name(f, name)?;
+                if let Some(item) = item {
+                    write!(f, "; item {item}")?;
+                }
+            }
             Some(DiagnosticContext::Parameter { name, .. }) => {
                 f.write_str("; parameter ")?;
                 display_name(f, name)?;

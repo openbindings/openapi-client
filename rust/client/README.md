@@ -4,9 +4,9 @@ An independent Rust client for dynamic OpenAPI documents and finite requests thr
 
 `Document::parse` detects format and edition, retains source and provides immutable owned handles. Inspect `Document::operations`, effective `Operation::describe` or `Operation::parameters`, then use `Operation::request` for ordinary calls. `Operation::inspect` and raw `Value` handles expose authored declarations. Use `Operation::prepare` with explicit `Input` when you already manage exact values and selections. `PreparedRequest::invoke` accepts a host capability declaration and an async callback. Native concurrent and host-local callbacks can use the same semantic types without a required executor.
 
-Preparation interprets each supported edition's own server, parameter, body, media and security declarations. The current profile includes local JSON-Pointer protocol references, explicit server/media/security choices, Swagger primitive and collection parameters, supported 3.x simple/form parameters, scoped supplied Basic/Bearer/API-key credentials, supplied OAuth2/OpenID Connect bearer tokens and finite JSON/raw bodies. OAuth token acquisition remains caller-owned. Response metadata, delivered bytes/provenance, upload state, cancellation and decode failures remain independent.
+Preparation interprets each supported edition's own server, parameter, body, media and security declarations. The current profile includes local JSON-Pointer protocol references, explicit server/media/security choices, Swagger primitive and collection parameters, supported 3.x simple/form parameters, scoped supplied Basic/Bearer/API-key credentials, supplied OAuth2/OpenID Connect bearer tokens and finite JSON/raw bodies and named URL-encoded/multipart forms. OAuth token acquisition remains caller-owned. Response metadata, delivered bytes/provenance, upload state, cancellation and decode failures remain independent.
 
-Edition coverage is not full-feature coverage. Form and multipart serialization, richer parameter styles, external reference graphs, streaming and WebSocket connections remain unqualified or unimplemented. Effective descriptors retain unsupported declarations for discovery; an available descriptor does not guarantee preparation or execution support.
+Edition coverage is not full-feature coverage. Richer form styles, content codings, schema-reference-dependent form decoding, positional/nested multipart, richer parameter styles, external reference graphs, streaming and WebSocket connections remain unqualified or unimplemented. Effective descriptors retain unsupported declarations for discovery; an available descriptor does not guarantee preparation or execution support.
 
 The [document loading guide](LOADING.md) documents YAML scalar/key policies, exact numeric normalization, alias bounds and original source traces. `ExactJson::parse` remains JSON-only; the version-neutral entrypoint for OpenAPI documents is `Document::parse`.
 
@@ -61,6 +61,53 @@ async fn inspect_and_call(text: &[u8]) -> Result<CompletedJson, Box<dyn std::err
 ```
 
 `HostCapabilities::programmable()` is a caller promise for controlled callbacks, not proof about an arbitrary HTTP stack. `cargo run --example dynamic` executes the complete fixture flow. Real asynchronous I/O requires the caller's host/executor. `Response::json()` parses on each call: retain the returned ExactJson when reusing decoded data. For a different application policy, inspect raw `Outcome` directly and choose your own order/acceptance rule. Preserve dispatch, upload, cancellation, error and response facts; a response alone does not establish execution success. Calling the named policy is never implicit in `invoke`.
+
+## Sending logical forms and finite files
+
+Use the same `.form(...)` call for a declared URL-encoded or multipart/form-data
+request. The operation selects a unique compatible representation; use the
+existing `Selection::media` when more than one applies. Field names are unique;
+ordinary/exact arrays express repeated values. The library owns URL escaping,
+part framing and collision-checked multipart boundaries.
+
+```rust
+use dynamic_openapi_client::*;
+# fn upload(operation: &Operation, file: &[u8]) -> Result<PreparedRequest, RequestError> {
+let metadata = ExactJson::from_serializable(
+    &serde_json::json!({"title": "Résumé", "revision": 7}), Limits::default()
+).map_err(RequestError::Input)?;
+operation.request().form([
+    FormField::new("caption", "Résumé + notes"),
+    FormField::new("metadata", metadata.root()),
+    FormField::new("file", Part::bytes(file).filename("résumé.pdf")),
+]).prepare()
+# }
+```
+
+This example expects the declaration to describe text, JSON metadata and a binary
+file. `Part::media_type("image/png")` elects one declared part representation when
+needed; the library does not sniff content. A filename is metadata and causes no
+filesystem access. `FiniteBytes` borrows a slice or shares an existing `Arc<[u8]>`.
+`FormValue::Parts(&parts)` supplies an array with individual file/part metadata.
+`Part` has no embedded field name, so content can later compose with other body
+models. Prepared requests own finite wire bytes and report `body_kind() == "form"`.
+
+Nested Rust models and `serde_json::Value` use the same
+`ExactJson::from_serializable` bridge as `.json`. Existing exact owners can be
+reused directly. This explicit conversion is still required; `.form` does not
+add another arbitrary-Serialize conversion path.
+
+Each `MediaDescription::fields` describes only that representation. `Declared`,
+`Partial`, `Opaque` and `NotApplicable` remain distinct. `FieldRequirement`
+distinguishes Swagger protocol requirements from OpenAPI schema-required hints;
+schema hints do not activate validation, defaults, coercion or projection.
+An explicitly JSON-encoded field can use opaque schema content without resolving
+unrelated schema assertions. An unresolved fact needed to choose its wire codec
+refuses with a source-aware `DiagnosticReason::Form` and field context.
+
+Read [the finite form profile](FORMS.md) for edition semantics, resource bounds,
+header policy and remaining capabilities. [CHANGELOG.md](CHANGELOG.md) and
+[MIGRATION.md](MIGRATION.md) describe the unpublished descriptor revision.
 
 ## Reading an application type
 
