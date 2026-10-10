@@ -357,7 +357,7 @@ impl<'a> RequestBuilder<'a> {
                 self.latch(error);
                 return self;
             }
-            admitted.reserve_exact(1);
+            crate::form::reserve_admitted(&mut admitted, self.limits().form_fields);
             admitted.push(field);
         }
         self.body = Some((BodyDraft::Form(admitted), event));

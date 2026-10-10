@@ -855,18 +855,21 @@ fn push_piece<'a>(
     work: &mut Work<'_>,
 ) -> Result<(), Diagnostic> {
     work.visit()?;
-    // At most one stored piece per charged visit; cap geometric reservation at
-    // the explicit work limit rather than allocating from untrusted size hints.
-    if pieces.len() == pieces.capacity() {
-        let capacity = pieces
-            .capacity()
-            .saturating_mul(2)
-            .max(4)
-            .min(work.limits.form_work);
-        pieces.reserve_exact(capacity.saturating_sub(pieces.len()));
-    }
+    // At most one stored piece per charged visit.
+    reserve_admitted(pieces, work.limits.form_work);
     pieces.push(piece);
     Ok(())
+}
+
+// Call only after admitting the next element. Geometric growth keeps aggregate
+// allocations linear; the configured ceiling caps unused reserved slots. Never
+// trust a caller iterator's size hint or reserve the entire configured maximum.
+pub(crate) fn reserve_admitted<T>(values: &mut Vec<T>, maximum: usize) {
+    debug_assert!(values.len() < maximum);
+    if values.len() == values.capacity() {
+        let capacity = values.capacity().saturating_mul(2).max(4).min(maximum);
+        values.reserve_exact(capacity.saturating_sub(values.len()));
+    }
 }
 fn validate_part(
     part: &ReadyPart<'_>,
@@ -1202,7 +1205,7 @@ fn emit<'a>(
             LimitKind::HeaderCount,
         )?;
     }
-    out.reserve_exact(1);
+    reserve_admitted(out, work.limits.form_parts);
     out.push(Emission {
         name,
         filename: part.filename.as_deref().map(str::to_owned),
