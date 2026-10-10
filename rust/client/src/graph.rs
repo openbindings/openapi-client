@@ -24,7 +24,7 @@ pub struct GraphLimits {
     pub retained_bytes: usize,
     /// Aggregate indexed source values.
     pub nodes: usize,
-    /// Recognized protocol reference edges, excluding schemas and instance payloads.
+    /// Recognized protocol and schema reference edges, excluding instance payloads.
     pub reference_edges: usize,
     /// Maximum retained retrieval/alias/canonical identity entries.
     pub identities: usize,
@@ -51,13 +51,25 @@ impl Default for GraphLimits {
 /// Explicit protocol roots in a non-OpenAPI resource. Unlisted payload is inert.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ResourceLayout {
-    roots: Vec<LayoutRoot>,
+    pub(crate) roots: Vec<LayoutRoot>,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct LayoutRoot {
-    pointer: String,
-    kind: ReferenceKind,
-    edition: Edition,
+pub(crate) struct LayoutRoot {
+    pub pointer: String,
+    pub interpretation: ResourceInterpretation,
+}
+impl LayoutRoot {
+    fn profile_bytes(&self) -> usize {
+        match &self.interpretation {
+            ResourceInterpretation::Schema {
+                default_profile: crate::SchemaProfile::JsonSchema { dialect_uri },
+            } => dialect_uri.len(),
+            _ => 0,
+        }
+    }
+    fn metadata_bytes(&self) -> usize {
+        self.pointer.len().saturating_add(self.profile_bytes())
+    }
 }
 impl ResourceLayout {
     /// Start with no explicit interpretation roots.
@@ -73,8 +85,17 @@ impl ResourceLayout {
     ) -> Self {
         self.roots.push(LayoutRoot {
             pointer: pointer.into(),
-            kind,
-            edition,
+            interpretation: ResourceInterpretation::Protocol { kind, edition },
+        });
+        self
+    }
+    /// Declare a schema root in an otherwise untyped resource.
+    pub fn schema(mut self, pointer: impl Into<String>, profile: crate::SchemaProfile) -> Self {
+        self.roots.push(LayoutRoot {
+            pointer: pointer.into(),
+            interpretation: ResourceInterpretation::Schema {
+                default_profile: profile,
+            },
         });
         self
     }
@@ -141,15 +162,58 @@ pub enum ResourceNeedKind {
     /// Enrich the existing resource with an explicit protocol-root layout.
     Layout,
 }
+/// Typed interpretation required at a resource target.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ResourceInterpretation {
+    /// A protocol declaration under its applied feature family.
+    Protocol {
+        /// Expected protocol declaration kind.
+        kind: ReferenceKind,
+        /// Applied OpenAPI feature family.
+        edition: Edition,
+    },
+    /// A schema root, with a default when the target does not declare its dialect.
+    Schema {
+        /// Default profile for an otherwise unlabelled schema target.
+        default_profile: crate::SchemaProfile,
+    },
+}
+/// Decoded resource selector; authored spelling remains at ResourceNeed::source.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ResourceFragment {
+    /// Absent or empty URI fragment.
+    Root,
+    /// URI-decoded JSON Pointer, whose tilde escapes remain for pointer traversal.
+    Pointer(String),
+    /// URI-decoded plain-name anchor.
+    Anchor(String),
+}
+impl ResourceFragment {
+    pub(crate) fn pointer(value: String) -> Self {
+        if value.is_empty() {
+            Self::Root
+        } else {
+            Self::Pointer(value)
+        }
+    }
+    pub(crate) fn as_pointer(&self) -> Option<&str> {
+        match self {
+            Self::Root => Some(""),
+            Self::Pointer(p) => Some(p),
+            Self::Anchor(_) => None,
+        }
+    }
+}
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) struct NeedFact {
     pub source: ResourceId,
     pub pointer: String,
-    pub requested_uri: String,
-    pub target_pointer: String,
+    pub requested_uri: Option<String>,
+    pub fragment: ResourceFragment,
     pub target: Option<ResourceId>,
-    pub kind: ReferenceKind,
-    pub edition: Edition,
+    pub interpretation: ResourceInterpretation,
     pub need: ResourceNeedKind,
 }
 /// Corrective resource facts bound to the exact snapshot that produced them.
@@ -168,7 +232,7 @@ impl std::fmt::Debug for ResourceNeed {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ResourceNeed")
             .field("kind", &self.fact.need)
-            .field("expected", &self.fact.kind)
+            .field("expected", &self.fact.interpretation)
             .finish_non_exhaustive()
     }
 }
@@ -179,20 +243,34 @@ impl ResourceNeed {
     }
     /// Absolute fragment-free identity to supply, when a real base exists.
     /// Document-controlled URI text is untrusted and omitted by Debug.
-    pub fn requested_uri(&self) -> &str {
-        &self.fact.requested_uri
+    pub fn requested_uri(&self) -> Option<&str> {
+        self.fact.requested_uri.as_deref()
     }
     /// Expected protocol object interpretation.
-    pub fn reference_kind(&self) -> ReferenceKind {
-        self.fact.kind
+    pub fn reference_kind(&self) -> Option<ReferenceKind> {
+        match self.fact.interpretation {
+            ResourceInterpretation::Protocol { kind, .. } => Some(kind),
+            _ => None,
+        }
     }
     /// Applied feature family for the required interpretation.
-    pub fn edition(&self) -> Edition {
-        self.fact.edition
+    pub fn edition(&self) -> Option<Edition> {
+        match self.fact.interpretation {
+            ResourceInterpretation::Protocol { edition, .. } => Some(edition),
+            _ => None,
+        }
     }
     /// Pointer selected inside the needed resource.
-    pub fn target_pointer(&self) -> &str {
-        &self.fact.target_pointer
+    pub fn target_pointer(&self) -> Option<&str> {
+        self.fact.fragment.as_pointer()
+    }
+    /// Complete expected interpretation, including schema defaults.
+    pub fn interpretation(&self) -> &ResourceInterpretation {
+        &self.fact.interpretation
+    }
+    /// Decoded root, pointer or anchor selector.
+    pub fn fragment(&self) -> &ResourceFragment {
+        &self.fact.fragment
     }
     /// Existing target source for a layout need; absent for missing bytes.
     pub fn target_resource(&self) -> Option<ResourceId> {
@@ -303,7 +381,7 @@ pub(crate) struct Resource {
     aliases: Vec<String>,
     pub base: Option<String>,
     canonical: Option<String>,
-    layout: ResourceLayout,
+    pub(crate) layout: ResourceLayout,
 }
 /// An unpublished graph transaction. Published documents are never mutated.
 pub struct DocumentBuilder {
@@ -365,7 +443,11 @@ impl DocumentBuilder {
             &crate::Cancellation::default(),
         )
         .map_err(refusal)?;
-        let requested = identity_key(need.requested_uri()).map_err(refusal)?;
+        let requested = identity_key(
+            need.requested_uri()
+                .ok_or_else(|| refusal(Diagnostic::new(Code::ConflictingObjectContext)))?,
+        )
+        .map_err(refusal)?;
         if need.kind() != ResourceNeedKind::Bytes
             || !input
                 .retrieval
@@ -394,9 +476,23 @@ impl DocumentBuilder {
             return Err(Diagnostic::new(Code::ConflictingObjectContext));
         }
         if !layout.roots.iter().any(|r| {
-            r.pointer == need.fact.target_pointer
-                && r.kind == need.fact.kind
-                && r.edition == need.fact.edition
+            r.interpretation == need.fact.interpretation
+                && match &need.fact.fragment {
+                    ResourceFragment::Root => r.pointer.is_empty(),
+                    ResourceFragment::Pointer(p) => {
+                        if matches!(r.interpretation, ResourceInterpretation::Schema { .. }) {
+                            p == &r.pointer
+                                || r.pointer.is_empty()
+                                || p.strip_prefix(&r.pointer)
+                                    .is_some_and(|s| s.starts_with('/'))
+                        } else {
+                            p == &r.pointer
+                        }
+                    }
+                    ResourceFragment::Anchor(_) => {
+                        matches!(r.interpretation, ResourceInterpretation::Schema { .. })
+                    }
+                }
         }) {
             return Err(Diagnostic::new(Code::ConflictingObjectContext));
         }
@@ -676,6 +772,12 @@ impl DocumentBuilder {
         )?;
         let mut incoming_bytes = 0usize;
         for root in &layout.roots {
+            bound(
+                0,
+                root.profile_bytes(),
+                self.limits.target_bytes,
+                crate::LimitKind::TargetBytes,
+            )?;
             cancellation.check()?;
             bound(
                 0,
@@ -683,7 +785,7 @@ impl DocumentBuilder {
                 self.limits.target_bytes,
                 crate::LimitKind::TargetBytes,
             )?;
-            incoming_bytes = incoming_bytes.saturating_add(root.pointer.len());
+            incoming_bytes = incoming_bytes.saturating_add(root.metadata_bytes());
             bound(
                 0,
                 incoming_bytes,
@@ -697,22 +799,22 @@ impl DocumentBuilder {
             .get(&id)
             .copied()
             .ok_or_else(|| Diagnostic::new(Code::MissingReference))?;
-        let mut known: HashMap<&str, (ReferenceKind, Edition)> = self.resources[index]
+        let mut known: HashMap<&str, &ResourceInterpretation> = self.resources[index]
             .layout
             .roots
             .iter()
-            .map(|r| (r.pointer.as_str(), (r.kind, r.edition)))
+            .map(|r| (r.pointer.as_str(), &r.interpretation))
             .collect();
         let mut extra = MetadataUse::default();
         for root in &layout.roots {
             cancellation.check()?;
-            if let Some(previous) = known.insert(&root.pointer, (root.kind, root.edition)) {
-                if previous != (root.kind, root.edition) {
+            if let Some(previous) = known.insert(&root.pointer, &root.interpretation) {
+                if previous != &root.interpretation {
                     return Err(Diagnostic::new(Code::ConflictingObjectContext));
                 }
             } else {
                 extra.layouts += 1;
-                extra.bytes = extra.bytes.saturating_add(root.pointer.len());
+                extra.bytes = extra.bytes.saturating_add(root.metadata_bytes());
             }
         }
         self.metadata_total()
@@ -751,13 +853,15 @@ impl DocumentBuilder {
         entry: ResourceId,
         cancellation: &crate::Cancellation,
     ) -> Result<crate::Document, Diagnostic> {
-        let graph = Graph::new(
+        let mut graph = Graph::new(
             self.resources,
             self.admission,
             entry,
             self.graph_limits,
+            self.limits.target_bytes,
             cancellation,
         )?;
+        crate::schema::SchemaIndex::build(&mut graph, &self.limits, cancellation)?;
         crate::Document::from_graph(graph, entry, self.limits, cancellation)
     }
     fn totals(&self) -> (usize, usize, usize) {
@@ -834,7 +938,7 @@ impl Resource {
                 .chain(self.base.iter())
                 .chain(self.canonical.iter())
                 .map(String::len)
-                .chain(self.layout.roots.iter().map(|r| r.pointer.len()))
+                .chain(self.layout.roots.iter().map(LayoutRoot::metadata_bytes))
                 .fold(0usize, usize::saturating_add),
         }
     }
@@ -851,9 +955,23 @@ fn metadata_input(
             .len()
             .saturating_add(usize::from(input.retrieval.is_some())),
         layouts: input.layout.roots.len(),
-        bytes: 0,
+        bytes: input
+            .layout
+            .roots
+            .iter()
+            .map(LayoutRoot::profile_bytes)
+            .fold(0usize, usize::saturating_add),
     };
     usage.check(graph)?;
+    for root in &input.layout.roots {
+        cancellation.check()?;
+        bound(
+            0,
+            root.profile_bytes(),
+            limits.target_bytes,
+            crate::LimitKind::TargetBytes,
+        )?;
+    }
     for value in input
         .aliases
         .iter()
@@ -888,9 +1006,8 @@ fn validate_layout(
     for root in &resource.layout.roots {
         cancellation.check()?;
         let value = resource.json.root().pointer(&root.pointer)?;
-        if let Some((kind, edition)) =
-            roots.insert(root.pointer.as_str(), (root.kind, root.edition))
-            && (kind != root.kind || edition != root.edition)
+        if let Some(previous) = roots.insert(root.pointer.as_str(), &root.interpretation)
+            && previous != &root.interpretation
         {
             return Err(value.error(Code::ConflictingObjectContext));
         }
@@ -938,7 +1055,7 @@ pub(crate) fn resolve_uri(reference: &str, base: Option<&str>) -> Result<String,
     crate::uri::resolve(reference, without_fragment(base))
         .map_err(|_| Diagnostic::new(Code::InvalidResourceUri))
 }
-fn identity_key(uri: &str) -> Result<String, Diagnostic> {
+pub(crate) fn identity_key(uri: &str) -> Result<String, Diagnostic> {
     absolute_uri(uri, true)?;
     let parsed = fluent_uri::UriRef::parse(uri).expect("checked URI");
     let mut key = format!(
@@ -1000,7 +1117,7 @@ fn stage_aliases<'a>(
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ObjectKind {
+pub(crate) enum ObjectKind {
     Document,
     Operation,
     Reference(ReferenceKind),
@@ -1010,20 +1127,23 @@ enum ObjectKind {
     SecurityRequirement,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Context {
-    kind: ObjectKind,
-    edition: Edition,
+pub(crate) struct Context {
+    pub kind: ObjectKind,
+    pub edition: Edition,
 }
-type NodeKey = (usize, usize);
-fn key(value: &Value) -> NodeKey {
+pub(crate) type NodeKey = (usize, usize);
+pub(crate) fn key(value: &Value) -> NodeKey {
     (value.source_context().id, value.identity())
 }
 pub(crate) struct Graph {
     pub resources: Vec<Arc<Resource>>,
     pub limits: GraphLimits,
     admission: Admission,
-    contexts: HashMap<NodeKey, Context>,
-    entry: ResourceId,
+    pub(crate) contexts: HashMap<NodeKey, Context>,
+    pub(crate) entry: ResourceId,
+    pub(crate) schemas: crate::schema::SchemaIndex,
+    pub(crate) reference_count: usize,
+    pub(crate) target_bytes: usize,
 }
 impl Graph {
     fn new(
@@ -1031,6 +1151,7 @@ impl Graph {
         admission: Admission,
         entry: ResourceId,
         limits: GraphLimits,
+        target_bytes: usize,
         cancellation: &crate::Cancellation,
     ) -> Result<Self, Diagnostic> {
         let mut graph = Self {
@@ -1039,6 +1160,9 @@ impl Graph {
             limits,
             admission,
             contexts: HashMap::new(),
+            schemas: crate::schema::SchemaIndex::default(),
+            reference_count: 0,
+            target_bytes,
         };
         if graph.resource(entry).is_none() {
             return Err(Diagnostic::new(Code::MissingReference));
@@ -1057,13 +1181,15 @@ impl Graph {
             }
             for root in &resource.layout.roots {
                 cancellation.check()?;
-                enqueue(
-                    &mut queue,
-                    resource.json.root().pointer(&root.pointer)?,
-                    ObjectKind::Reference(root.kind),
-                    root.edition,
-                    graph.limits.nodes,
-                )?;
+                if let ResourceInterpretation::Protocol { kind, edition } = root.interpretation {
+                    enqueue(
+                        &mut queue,
+                        resource.json.root().pointer(&root.pointer)?,
+                        ObjectKind::Reference(kind),
+                        edition,
+                        graph.limits.nodes,
+                    )?;
+                }
             }
         }
         let mut edges = 0usize;
@@ -1109,6 +1235,7 @@ impl Graph {
             }
             graph.children(&node, context, &mut queue, &mut edges, cancellation)?;
         }
+        graph.reference_count = edges;
         Ok(graph)
     }
     pub(crate) fn resource(&self, id: ResourceId) -> Option<&Resource> {
@@ -1117,7 +1244,7 @@ impl Graph {
             .get(&id)
             .map(|index| self.resources[*index].as_ref())
     }
-    fn owner(&self, value: &Value) -> Result<&Resource, Diagnostic> {
+    pub(crate) fn owner(&self, value: &Value) -> Result<&Resource, Diagnostic> {
         self.resource(ResourceId(value.source_context().id))
             .ok_or_else(|| value.error(Code::SnapshotMismatch))
     }
@@ -1396,44 +1523,105 @@ impl Graph {
         }
         Ok(())
     }
+    pub(crate) fn value(&self, key: NodeKey) -> Value {
+        self.resource(ResourceId(key.0))
+            .expect("indexed resource")
+            .json
+            .root()
+            .at_identity(key.1)
+            .expect("indexed value")
+    }
+    pub(crate) fn physical_identity(&self, uri: &str) -> Result<Option<NodeKey>, Diagnostic> {
+        Ok(self
+            .admission
+            .aliases
+            .get(&identity_key(uri)?)
+            .map(|id| (id.0, 0)))
+    }
+    pub(crate) fn metadata_usage(&self) -> (usize, usize) {
+        (
+            self.admission.metadata.identities,
+            self.admission.metadata.bytes,
+        )
+    }
+    // Common address layer for protocol and schema references. Interpretation is
+    // checked by the selected typed path, never guessed from a pointer's shape.
+    pub(crate) fn address(
+        &self,
+        source: &Value,
+        reference: &str,
+        base: Option<&str>,
+        local_root: NodeKey,
+    ) -> Result<Address, Diagnostic> {
+        bound(
+            0,
+            reference.len(),
+            self.target_bytes,
+            crate::LimitKind::TargetBytes,
+        )
+        .map_err(|e| source.locate(e))?;
+        fluent_uri::UriRef::parse(reference).map_err(|_| source.error(Code::InvalidReference))?;
+        if base.is_none() && (reference.is_empty() || reference.starts_with('#')) {
+            return Ok(Address {
+                root: Some(local_root),
+                exact: None,
+                uri: None,
+                fragment: decode_fragment(
+                    reference.strip_prefix('#').unwrap_or(reference),
+                    source,
+                )?,
+            });
+        }
+        let uri = resolve_uri(reference, base).map_err(|e| source.locate(e))?;
+        let fragment = decode_fragment(uri.split_once('#').map_or("", |(_, f)| f), source)?;
+        let exact = self
+            .schemas
+            .identities
+            .get(&identity_key(&uri)?)
+            .copied()
+            .or(self.physical_identity(&uri)?);
+        let root = self
+            .schemas
+            .identities
+            .get(&identity_key(without_fragment(&uri))?)
+            .copied()
+            .or(self.physical_identity(without_fragment(&uri))?);
+        Ok(Address {
+            root,
+            exact,
+            fragment,
+            uri: Some(uri),
+        })
+    }
     fn target_address(
         &self,
         source: &Value,
         reference: &str,
     ) -> Result<(ResourceId, String, bool), Diagnostic> {
         let owner = self.owner(source)?;
-        if (reference.is_empty() || reference.starts_with('#')) && owner.base.is_none() {
-            fluent_uri::UriRef::parse(reference)
-                .map_err(|_| source.error(Code::InvalidReference))?;
-            return Ok((
-                owner.id,
-                crate::uri::percent_decode(reference.strip_prefix('#').unwrap_or(reference))
-                    .map_err(|e| source.locate(e))?,
-                true,
-            ));
-        }
-        let uri = resolve_uri(reference, owner.base.as_deref()).map_err(|e| source.locate(e))?;
-        if let Some(id) = self.admission.aliases.get(&identity_key(&uri)?) {
-            let target = self.resource(*id).expect("alias source");
-            let canonical = target
-                .canonical
-                .as_ref()
-                .is_none_or(|s| identity_key(s).is_ok_and(|s| s == identity_key(&uri).unwrap()));
-            return Ok((*id, String::new(), canonical));
-        }
-        let access = without_fragment(&uri);
-        let Some(id) = self.admission.aliases.get(&identity_key(access)?) else {
-            return Err(source.error(Code::ResourceUnavailable));
+        let address = self.address(source, reference, owner.base.as_deref(), (owner.id.0, 0))?;
+        let target = if let Some(exact) = address.exact {
+            self.value(exact)
+        } else {
+            let root = address
+                .root
+                .ok_or_else(|| source.error(Code::ResourceUnavailable))?;
+            let pointer = address
+                .fragment
+                .as_pointer()
+                .ok_or_else(|| source.error(Code::InvalidReference))?;
+            self.value(root)
+                .pointer(pointer)
+                .map_err(|e| source.locate(e))?
         };
-        let pointer = uri
-            .split_once('#')
-            .map_or(Ok(String::new()), |(_, p)| crate::uri::percent_decode(p))
-            .map_err(|e| source.locate(e))?;
-        let target = self.resource(*id).expect("alias source");
-        let canonical = target.canonical.as_ref().is_none_or(|s| {
-            identity_key(without_fragment(s)).is_ok_and(|s| s == identity_key(access).unwrap())
+        let resource = self.owner(&target)?;
+        let canonical = resource.canonical.as_ref().is_none_or(|canonical| {
+            address.uri.as_ref().is_some_and(|uri| {
+                identity_key(without_fragment(canonical)).ok()
+                    == identity_key(without_fragment(uri)).ok()
+            })
         });
-        Ok((*id, pointer, canonical))
+        Ok((resource.id, target.location().pointer, canonical))
     }
     pub(crate) fn target(
         &self,
@@ -1454,11 +1642,10 @@ impl Graph {
                 return Err(error.need_fact(NeedFact {
                     source: owner.id,
                     pointer: source.location().pointer,
-                    requested_uri: without_fragment(&requested).to_owned(),
-                    target_pointer: pointer,
+                    requested_uri: Some(without_fragment(&requested).to_owned()),
+                    fragment: ResourceFragment::pointer(pointer),
                     target: None,
-                    kind,
-                    edition,
+                    interpretation: ResourceInterpretation::Protocol { kind, edition },
                     need: ResourceNeedKind::Bytes,
                 }));
             }
@@ -1480,15 +1667,10 @@ impl Graph {
                 .need_fact(NeedFact {
                     source: owner.id,
                     pointer: source.location().pointer,
-                    requested_uri: target
-                        .retrieval
-                        .clone()
-                        .or(target.base.clone())
-                        .unwrap_or_default(),
-                    target_pointer: pointer,
+                    requested_uri: target.retrieval.clone().or(target.base.clone()),
+                    fragment: ResourceFragment::pointer(pointer),
                     target: Some(id),
-                    kind,
-                    edition,
+                    interpretation: ResourceInterpretation::Protocol { kind, edition },
                     need: ResourceNeedKind::Layout,
                 }));
         }
@@ -1697,6 +1879,28 @@ fn valid_kind(value: &Value, kind: ReferenceKind, edition: Edition) -> bool {
                 || crate::Method::parse(name).is_some_and(|_| name == name.to_ascii_lowercase())
         }),
     }
+}
+
+/// Owner-free result of URI resolution; no interpretation or acquisition implied.
+pub(crate) struct Address {
+    pub root: Option<NodeKey>,
+    pub exact: Option<NodeKey>,
+    pub fragment: ResourceFragment,
+    pub uri: Option<String>,
+}
+pub(crate) fn decode_fragment(
+    fragment: &str,
+    source: &Value,
+) -> Result<ResourceFragment, Diagnostic> {
+    let decoded =
+        crate::uri::percent_decode(fragment).map_err(|_| source.error(Code::InvalidReference))?;
+    Ok(if decoded.is_empty() {
+        ResourceFragment::Root
+    } else if decoded.starts_with('/') {
+        ResourceFragment::Pointer(decoded)
+    } else {
+        ResourceFragment::Anchor(decoded)
+    })
 }
 
 #[cfg(test)]

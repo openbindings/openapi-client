@@ -68,10 +68,13 @@ fn undefined_scheme_locates_inherited_and_operation_requirement_in_every_family(
                         let location = error.location().unwrap();
                         assert_eq!(&source[location.start..location.end], "[]");
                         let need = error.resource_need().unwrap();
-                        assert_eq!(need.requested_uri(), "https://example.test/missing~/scheme");
+                        assert_eq!(
+                            need.requested_uri(),
+                            Some("https://example.test/missing~/scheme")
+                        );
                         assert_eq!(
                             need.reference_kind(),
-                            dynamic_openapi_client::ReferenceKind::SecurityScheme
+                            Some(dynamic_openapi_client::ReferenceKind::SecurityScheme)
                         );
                     } else {
                         assert_location(

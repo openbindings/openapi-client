@@ -1,0 +1,39 @@
+{
+  "openapi": "3.1.2",
+  "info": {
+    "title": "Memo first-refusal diagnostic",
+    "version": "1"
+  },
+  "paths": {},
+  "components": {
+    "schemas": {
+      "T0": {
+        "$ref": "#/components/schemas/T1"
+      },
+      "T1": {
+        "$ref": "#/components/schemas/T2"
+      },
+      "T2": {
+        "$ref": "#/components/schemas/T3"
+      },
+      "T3": {
+        "$ref": "#/components/schemas/T4"
+      },
+      "T4": {
+        "$ref": "#/components/schemas/T5"
+      },
+      "T5": {
+        "type": "string"
+      },
+      "L0": {
+        "$ref": "#/components/schemas/L1"
+      },
+      "L1": {
+        "$ref": "#/components/schemas/L2"
+      },
+      "L2": {
+        "$ref": "#/components/schemas/T0"
+      }
+    }
+  }
+}
