@@ -13,13 +13,14 @@ pub enum CompleteJsonRefusal {
     UploadUncertain,
     Decode,
 }
-/// Accepted complete 2xx JSON response, retaining execution evidence and decoded owner.
+/// Accepted complete 2xx JSON response, retaining execution evidence and a parsed exact JSON owner.
 /// Upload requirements depend on the explicitly selected acceptance policy.
 #[derive(Debug)]
 pub struct CompletedJson {
     /// Complete, independent execution evidence.
     pub outcome: Outcome,
-    /// Decoded once; retain this owner for subsequent reads.
+    /// Parsed once as exact JSON; retain this owner for subsequent reads.
+    /// This does not assert that the transport decompressed content codings.
     pub json: ExactJson,
 }
 /// Refused selected policy, retaining all available execution and decode evidence.
@@ -33,7 +34,8 @@ pub struct JsonCallRefusal {
     pub reason: CompleteJsonRefusal,
     /// Complete, independent execution evidence.
     pub outcome: Outcome,
-    /// Successfully decoded response, including when execution or status also failed.
+    /// Successfully parsed exact JSON, including when execution or status also failed.
+    /// The historical field name does not assert transport decompression.
     pub decoded: Option<ExactJson>,
     /// Decode refusal, including when another condition is the primary reason.
     pub decode_error: Option<Diagnostic>,

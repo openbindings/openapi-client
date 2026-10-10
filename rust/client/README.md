@@ -320,3 +320,9 @@ preserving the finite response. JSON then refuses with `IncompleteHeaders`; no
 transport failure is invented. See [HOSTS.md](HOSTS.md), the unpublished
 [construction migration](MIGRATION.md), and `cargo run -p dynamic-openapi-client
 --example response_admission` from the Rust workspace.
+
+`Provenance::HostDelivered` explicitly interprets the host-exposed body. It permits
+exact JSON parsing independently of Content-Encoding labels, without claiming
+that the host decompressed them. Wire/Decoded/Unknown remain distinct and unchanged;
+see [HOSTS.md](HOSTS.md) for the evidence boundaries and [MIGRATION.md](MIGRATION.md)
+for the new exhaustive-match arm.

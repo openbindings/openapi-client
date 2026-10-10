@@ -199,7 +199,7 @@ pub enum UploadState {
     Incomplete,
     Unknown,
 }
-/// Provenance of bytes delivered by the supplied transport.
+/// Source and interpretation of bytes delivered by the supplied transport.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Provenance {
     /// Host confirms these are unchanged representation bytes.
@@ -208,6 +208,10 @@ pub enum Provenance {
     Decoded,
     /// Host cannot establish whether content decoding occurred.
     Unknown,
+    /// Interpret bytes exactly as supplied by the selected host's exposed body stream.
+    /// This asserts neither original wire equality nor removal of listed content
+    /// codings. JSON parses the delivered bytes directly, retaining coding metadata.
+    HostDelivered,
 }
 /// Completion of bounded response-body delivery.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -224,7 +228,7 @@ pub struct DeliveredBody {
     pub bytes: Arc<[u8]>,
     /// Whether these bytes end at representation completion.
     pub state: BodyState,
-    /// Explicit content-decoding provenance.
+    /// Explicit body-source and interpretation evidence.
     pub provenance: Provenance,
 }
 impl fmt::Debug for DeliveredBody {
@@ -427,7 +431,7 @@ impl Response {
     pub fn body_state(&self) -> BodyState {
         self.input.body.state
     }
-    /// Wire/decoded/unknown provenance; raw never silently means original wire bytes.
+    /// Declared source/interpretation; raw never silently means original wire bytes.
     pub fn provenance(&self) -> Provenance {
         self.input.body.provenance
     }
@@ -460,7 +464,7 @@ impl Response {
         if !crate::prepare::media_type(media)?.1 {
             return Err(Diagnostic::new(Code::UnsupportedMedia));
         }
-        if self.provenance() != Provenance::Decoded {
+        if matches!(self.provenance(), Provenance::Wire | Provenance::Unknown) {
             for h in self
                 .headers()
                 .iter()
@@ -666,5 +670,49 @@ impl PreparedRequest {
             detail: result.error_detail,
             replay_assurance: Some(replay_assurance),
         }
+    }
+}
+
+#[cfg(test)]
+mod host_delivered_tests {
+    use super::*;
+
+    // Frozen BDS-35 is a private response boundary: depth=1 cannot admit the
+    // operation-bearing source needed to construct a public PreparedRequest.
+    #[test]
+    fn host_delivered_preserves_literal_depth_guard() {
+        let mut input = ResponseInput::new(
+            200,
+            vec![Header::new("content-type", "application/json")],
+            DeliveredBody {
+                bytes: b"[[0]]".as_slice().into(),
+                state: BodyState::Complete,
+                provenance: Provenance::HostDelivered,
+            },
+        );
+        input.header_delivery = HeaderDelivery::Complete;
+        input.header_fidelity = HeaderFidelity::HostProcessed;
+        let response = Response {
+            input,
+            limits: Limits {
+                body_bytes: 64,
+                headers: 16,
+                document_bytes: 1024,
+                depth: 1,
+                nodes: 128,
+                ..Limits::default()
+            },
+            validation: None,
+            omitted_header_lines: 0,
+        };
+        let error = response.json().unwrap_err();
+        assert_eq!(error.code(), Code::Limit);
+        assert!(matches!(
+            error.reason(),
+            Some(crate::DiagnosticReason::Limit {
+                kind: crate::LimitKind::Depth,
+                ..
+            })
+        ));
     }
 }

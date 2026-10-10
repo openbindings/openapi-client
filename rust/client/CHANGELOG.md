@@ -1,5 +1,10 @@
 # Unreleased (0.0.0)
 
+- Add Provenance::HostDelivered for exact host-exposed body interpretation, without
+  a wire-equality or decompression assertion. The existing JSON API parses those
+  bytes while retaining Content-Encoding as metadata; all other guards remain.
+  Exhaustive matches need an added arm. Wire/Decoded/Unknown and native stay unchanged.
+
 - Add immutable response admission views and HeaderDelivery evidence. DispatchRequest
   is now produced by invocation; migrate response_limit to response_admission().
 - Truthful adapter metadata cutoffs and core omissions preserve raw responses and

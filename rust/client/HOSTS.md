@@ -106,3 +106,13 @@ support adapter preflight without arbitrary platform rejection text or fabricate
 authored ranges. Prepared operation/source inspection remains available to callers.
 The executable `response_admission` example demonstrates bounded supplied evidence
 and corrective access without network I/O.
+
+`Provenance::HostDelivered` interprets bytes exactly as exposed by the selected
+host body stream, without claiming wire equality or content decompression. An
+adapter selects it before parsing, consistently for all its delivered bodies.
+The existing JSON methods retain Content-Encoding as metadata and parse these
+bytes directly: valid JSON with stale gzip or an unknown label can succeed;
+encoded binary fails exact parsing. No sniffing or decompression retry occurs.
+All other admission and outcome guards apply. Exact JSON positions are relative
+to these delivered bytes. Wire, Decoded and Unknown keep their existing semantics;
+the native companion keeps Wire. A successful parse never upgrades provenance.

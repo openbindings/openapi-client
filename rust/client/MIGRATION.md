@@ -1,3 +1,24 @@
+# Host-delivered body revision (unpublished candidate)
+
+**Changed:** exhaustive matches on `Provenance` must handle `HostDelivered`; enum
+exhaustiveness otherwise stays unchanged. This declaration selects interpretation
+of exactly the bytes exposed by a host body stream, without claiming wire equality
+or decompression. Set it at the adapter boundary before parsing, consistently,
+rather than deriving it from labels, magic bytes or JSON success.
+
+For this variant, the existing JSON methods parse delivered bytes directly.
+`Content-Encoding` remains observable metadata and does not veto parsing. Valid
+JSON with a stale gzip or unknown coding label intentionally succeeds if all
+other guards pass; encoded binary still fails exact JSON parsing. There is no
+sniffing, decompression, retry or second JSON API. Raw bytes, exact tokens and
+positions are relative to the delivered source. Wire, Decoded and Unknown retain
+their meanings and coding behavior; the native companion remains Wire.
+
+The `CompletedJson.json` and refusal `decoded` fields hold parsed exact JSON;
+the historical names do not establish network decompression. Status, replay,
+upload, cancellation, metadata, media, body completeness and resource bounds stay
+independent. This core contract alone does not qualify a Fetch or TypeScript host.
+
 # Response admission revision (unpublished candidate)
 
 **Changed:** `DispatchRequest` is produced by `PreparedRequest::invoke` (or

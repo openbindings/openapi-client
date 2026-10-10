@@ -1,0 +1,1388 @@
+{
+  "scope": "prospective contract controls; no product execution and no replacement of originals",
+  "default_core_evidence": {
+    "status": 200,
+    "dispatch": "Dispatched",
+    "upload": "Complete",
+    "cancelled": false,
+    "transport_error": null,
+    "opaque_redirect": false,
+    "body_state": "Complete",
+    "provenance": "HostDelivered",
+    "header_delivery": "Complete",
+    "header_fidelity": "HostProcessed",
+    "headers": [
+      [
+        "content-type",
+        "application/json"
+      ]
+    ],
+    "body_hex": "7b226f6b223a747275657d",
+    "limits": {
+      "body_bytes": 64,
+      "headers": 16,
+      "document_bytes": 1024,
+      "depth": 8,
+      "nodes": 128
+    }
+  },
+  "count": 36,
+  "controls": [
+    {
+      "id": "BDS-01",
+      "kind": "sealed raw input plus prospective product literal",
+      "input": {
+        "status": 200,
+        "dispatch": "Dispatched",
+        "upload": "Complete",
+        "cancelled": false,
+        "transport_error": null,
+        "opaque_redirect": false,
+        "body_state": "Complete",
+        "provenance": "HostDelivered",
+        "header_delivery": "Complete",
+        "header_fidelity": "HostProcessed",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-encoding",
+            "gzip"
+          ]
+        ],
+        "body_hex": "7b226f6b223a747275657d",
+        "limits": {
+          "body_bytes": 64,
+          "headers": 16,
+          "document_bytes": 1024,
+          "depth": 8,
+          "nodes": 128
+        },
+        "host_context": "network gzip"
+      },
+      "expected": {
+        "json_raw_hex": "7b226f6b223a747275657d",
+        "received_policy": "accepted",
+        "provenance": "HostDelivered",
+        "no_decoding_claim": true
+      },
+      "status": "registered_not_executed"
+    },
+    {
+      "id": "BDS-02",
+      "kind": "sealed raw input plus prospective product literal",
+      "input": {
+        "status": 200,
+        "dispatch": "Dispatched",
+        "upload": "Complete",
+        "cancelled": false,
+        "transport_error": null,
+        "opaque_redirect": false,
+        "body_state": "Complete",
+        "provenance": "HostDelivered",
+        "header_delivery": "Complete",
+        "header_fidelity": "HostProcessed",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-encoding",
+            "br"
+          ]
+        ],
+        "body_hex": "7b226f6b223a747275657d",
+        "limits": {
+          "body_bytes": 64,
+          "headers": 16,
+          "document_bytes": 1024,
+          "depth": 8,
+          "nodes": 128
+        },
+        "host_context": "network br"
+      },
+      "expected": {
+        "json_raw_hex": "7b226f6b223a747275657d",
+        "received_policy": "accepted",
+        "provenance": "HostDelivered"
+      },
+      "status": "registered_not_executed"
+    },
+    {
+      "id": "BDS-03",
+      "kind": "sealed raw input plus prospective product literal",
+      "input": {
+        "status": 200,
+        "dispatch": "Dispatched",
+        "upload": "Complete",
+        "cancelled": false,
+        "transport_error": null,
+        "opaque_redirect": false,
+        "body_state": "Complete",
+        "provenance": "HostDelivered",
+        "header_delivery": "Complete",
+        "header_fidelity": "HostProcessed",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-encoding",
+            "gzip"
+          ]
+        ],
+        "body_hex": "7b226f6b223a747275657d",
+        "limits": {
+          "body_bytes": 64,
+          "headers": 16,
+          "document_bytes": 1024,
+          "depth": 8,
+          "nodes": 128
+        },
+        "host_context": "SW pass-through gzip"
+      },
+      "expected": {
+        "json_raw_hex": "7b226f6b223a747275657d",
+        "received_policy": "accepted",
+        "provenance": "HostDelivered"
+      },
+      "status": "registered_not_executed"
+    },
+    {
+      "id": "BDS-04",
+      "kind": "sealed raw input plus prospective product literal",
+      "input": {
+        "status": 200,
+        "dispatch": "Dispatched",
+        "upload": "Complete",
+        "cancelled": false,
+        "transport_error": null,
+        "opaque_redirect": false,
+        "body_state": "Complete",
+        "provenance": "HostDelivered",
+        "header_delivery": "Complete",
+        "header_fidelity": "HostProcessed",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-encoding",
+            "gzip"
+          ]
+        ],
+        "body_hex": "7b226f6b223a747275657d",
+        "limits": {
+          "body_bytes": 64,
+          "headers": 16,
+          "document_bytes": 1024,
+          "depth": 8,
+          "nodes": 128
+        },
+        "host_context": "SW synthetic plain JSON"
+      },
+      "expected": {
+        "json_raw_hex": "7b226f6b223a747275657d",
+        "received_policy": "accepted",
+        "provenance": "HostDelivered",
+        "decoded_inference": false
+      },
+      "status": "registered_not_executed"
+    },
+    {
+      "id": "BDS-05",
+      "kind": "intentional unknown-label consequence",
+      "input": {
+        "status": 200,
+        "dispatch": "Dispatched",
+        "upload": "Complete",
+        "cancelled": false,
+        "transport_error": null,
+        "opaque_redirect": false,
+        "body_state": "Complete",
+        "provenance": "HostDelivered",
+        "header_delivery": "Complete",
+        "header_fidelity": "HostProcessed",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-encoding",
+            "x-test"
+          ]
+        ],
+        "body_hex": "7b226f6b223a747275657d",
+        "limits": {
+          "body_bytes": 64,
+          "headers": 16,
+          "document_bytes": 1024,
+          "depth": 8,
+          "nodes": 128
+        },
+        "host_context": "SW synthetic plain JSON"
+      },
+      "expected": {
+        "received_policy": "accepted",
+        "coding_metadata_retained": "x-test",
+        "decoded_inference": false
+      },
+      "status": "registered_not_executed"
+    },
+    {
+      "id": "BDS-06",
+      "kind": "sealed raw input plus prospective product literal; no unknown decoder exists",
+      "input": {
+        "status": 200,
+        "dispatch": "Dispatched",
+        "upload": "Complete",
+        "cancelled": false,
+        "transport_error": null,
+        "opaque_redirect": false,
+        "body_state": "Complete",
+        "provenance": "HostDelivered",
+        "header_delivery": "Complete",
+        "header_fidelity": "HostProcessed",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-encoding",
+            "x-test"
+          ]
+        ],
+        "body_hex": "7b226f6b223a747275657d",
+        "limits": {
+          "body_bytes": 64,
+          "headers": 16,
+          "document_bytes": 1024,
+          "depth": 8,
+          "nodes": 128
+        },
+        "host_context": "network x-test plain JSON"
+      },
+      "expected": {
+        "received_policy": "accepted",
+        "decoded_inference": false
+      },
+      "status": "registered_not_executed"
+    },
+    {
+      "id": "BDS-07",
+      "kind": "prospective core consumer literal",
+      "input": {
+        "status": 200,
+        "dispatch": "Dispatched",
+        "upload": "Complete",
+        "cancelled": false,
+        "transport_error": null,
+        "opaque_redirect": false,
+        "body_state": "Complete",
+        "provenance": "HostDelivered",
+        "header_delivery": "Complete",
+        "header_fidelity": "HostProcessed",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-encoding",
+            "gzip"
+          ]
+        ],
+        "body_hex": "1f8b0800000000000013ab56cacf56b22a292a4dad0500905fd4a70b000000",
+        "limits": {
+          "body_bytes": 64,
+          "headers": 16,
+          "document_bytes": 1024,
+          "depth": 8,
+          "nodes": 128
+        },
+        "host_context": "SW raw compressed bytes"
+      },
+      "expected": {
+        "json_code": "InvalidUtf8",
+        "received_policy": "Decode",
+        "raw_hex": "1f8b0800000000000013ab56cacf56b22a292a4dad0500905fd4a70b000000",
+        "provenance": "HostDelivered",
+        "core_decompressions": 0
+      },
+      "status": "registered_not_executed"
+    },
+    {
+      "id": "BDS-08",
+      "kind": "unsupported mixed raw-host bytes plus prospective product literal",
+      "input": {
+        "status": 200,
+        "dispatch": "Dispatched",
+        "upload": "Complete",
+        "cancelled": false,
+        "transport_error": null,
+        "opaque_redirect": false,
+        "body_state": "Complete",
+        "provenance": "HostDelivered",
+        "header_delivery": "Complete",
+        "header_fidelity": "HostProcessed",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-encoding",
+            "gzip, x-test"
+          ]
+        ],
+        "body_hex": "1f8b0800000000000013ab56cacf56b22a292a4dad0500905fd4a70b000000",
+        "limits": {
+          "body_bytes": 64,
+          "headers": 16,
+          "document_bytes": 1024,
+          "depth": 8,
+          "nodes": 128
+        }
+      },
+      "expected": {
+        "json_code": "InvalidUtf8",
+        "received_policy": "Decode",
+        "raw_hex": "1f8b0800000000000013ab56cacf56b22a292a4dad0500905fd4a70b000000",
+        "no_second_json_attempt": true
+      },
+      "status": "registered_not_executed"
+    },
+    {
+      "id": "BDS-09",
+      "kind": "prospective core consumer literal",
+      "input": {
+        "status": 200,
+        "dispatch": "Dispatched",
+        "upload": "Complete",
+        "cancelled": false,
+        "transport_error": null,
+        "opaque_redirect": false,
+        "body_state": "Complete",
+        "provenance": "HostDelivered",
+        "header_delivery": "Complete",
+        "header_fidelity": "HostProcessed",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-encoding",
+            "x-test, gzip"
+          ]
+        ],
+        "body_hex": "1f8b0800000000000013ab56cacf56b22a292a4dad0500905fd4a70b000000",
+        "limits": {
+          "body_bytes": 64,
+          "headers": 16,
+          "document_bytes": 1024,
+          "depth": 8,
+          "nodes": 128
+        }
+      },
+      "expected": {
+        "json_code": "InvalidUtf8",
+        "received_policy": "Decode",
+        "raw_hex": "1f8b0800000000000013ab56cacf56b22a292a4dad0500905fd4a70b000000"
+      },
+      "status": "registered_not_executed"
+    },
+    {
+      "id": "BDS-10",
+      "kind": "sealed raw input plus prospective product literal",
+      "input": {
+        "status": 200,
+        "dispatch": "Dispatched",
+        "upload": "Complete",
+        "cancelled": false,
+        "transport_error": null,
+        "opaque_redirect": false,
+        "body_state": "Complete",
+        "provenance": "HostDelivered",
+        "header_delivery": "Complete",
+        "header_fidelity": "HostProcessed",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-encoding",
+            "gzip"
+          ]
+        ],
+        "body_hex": "010203",
+        "limits": {
+          "body_bytes": 64,
+          "headers": 16,
+          "document_bytes": 1024,
+          "depth": 8,
+          "nodes": 128
+        },
+        "host_context": "SW synthetic corrupt-gzip-labeled bytes"
+      },
+      "expected": {
+        "json_code": "InvalidJson",
+        "received_policy": "Decode",
+        "outcome_error": null,
+        "raw_hex": "010203"
+      },
+      "status": "registered_not_executed"
+    },
+    {
+      "id": "BDS-11",
+      "kind": "raw-host failure behavior; product must preserve actual error evidence",
+      "input": {
+        "status": 200,
+        "dispatch": "Dispatched",
+        "upload": "Complete",
+        "cancelled": false,
+        "transport_error": "TransportFailure",
+        "opaque_redirect": false,
+        "body_state": "Failed",
+        "provenance": "HostDelivered",
+        "header_delivery": "Complete",
+        "header_fidelity": "HostProcessed",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-encoding",
+            "gzip"
+          ]
+        ],
+        "body_hex": "",
+        "limits": {
+          "body_bytes": 64,
+          "headers": 16,
+          "document_bytes": 1024,
+          "depth": 8,
+          "nodes": 128
+        },
+        "host_context": "network corrupt gzip"
+      },
+      "expected": {
+        "json_code": "IncompleteBody",
+        "received_policy": "Transport",
+        "raw_prefix_retained": true
+      },
+      "status": "registered_not_executed"
+    },
+    {
+      "id": "BDS-12",
+      "kind": "sealed raw input plus prospective product literal",
+      "input": {
+        "status": 200,
+        "dispatch": "Dispatched",
+        "upload": "Complete",
+        "cancelled": false,
+        "transport_error": null,
+        "opaque_redirect": false,
+        "body_state": "Complete",
+        "provenance": "HostDelivered",
+        "header_delivery": "Complete",
+        "header_fidelity": "HostProcessed",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body_hex": "7b226f6b223a747275657d",
+        "limits": {
+          "body_bytes": 64,
+          "headers": 16,
+          "document_bytes": 1024,
+          "depth": 8,
+          "nodes": 128
+        },
+        "host_context": "CORS hidden gzip"
+      },
+      "expected": {
+        "received_policy": "accepted",
+        "provenance": "HostDelivered",
+        "header_fidelity": "HostProcessed",
+        "hidden_fields_inferred": false
+      },
+      "status": "registered_not_executed"
+    },
+    {
+      "id": "BDS-13",
+      "kind": "prospective core consumer literal",
+      "input": {
+        "status": 200,
+        "dispatch": "Dispatched",
+        "upload": "Complete",
+        "cancelled": false,
+        "transport_error": null,
+        "opaque_redirect": false,
+        "body_state": "Complete",
+        "provenance": "HostDelivered",
+        "header_delivery": "Complete",
+        "header_fidelity": "HostProcessed",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body_hex": "7b226f6b223a",
+        "limits": {
+          "body_bytes": 64,
+          "headers": 16,
+          "document_bytes": 1024,
+          "depth": 8,
+          "nodes": 128
+        }
+      },
+      "expected": {
+        "json_code": "InvalidJson",
+        "received_policy": "Decode",
+        "raw_hex": "7b226f6b223a",
+        "safe_default_formatting": true
+      },
+      "status": "registered_not_executed"
+    },
+    {
+      "id": "BDS-14",
+      "kind": "prospective core consumer literal",
+      "input": {
+        "status": 200,
+        "dispatch": "Dispatched",
+        "upload": "Complete",
+        "cancelled": false,
+        "transport_error": null,
+        "opaque_redirect": false,
+        "body_state": "Complete",
+        "provenance": "HostDelivered",
+        "header_delivery": "Complete",
+        "header_fidelity": "HostProcessed",
+        "headers": [
+          [
+            "content-type",
+            "text/plain"
+          ],
+          [
+            "content-encoding",
+            "gzip"
+          ]
+        ],
+        "body_hex": "7b226f6b223a747275657d",
+        "limits": {
+          "body_bytes": 64,
+          "headers": 16,
+          "document_bytes": 1024,
+          "depth": 8,
+          "nodes": 128
+        }
+      },
+      "expected": {
+        "json_code": "UnsupportedMedia",
+        "received_policy": "Decode",
+        "raw_retained": true
+      },
+      "status": "registered_not_executed"
+    },
+    {
+      "id": "BDS-15",
+      "kind": "prospective core consumer literal",
+      "input": {
+        "status": 200,
+        "dispatch": "Dispatched",
+        "upload": "Complete",
+        "cancelled": false,
+        "transport_error": null,
+        "opaque_redirect": false,
+        "body_state": "Complete",
+        "provenance": "HostDelivered",
+        "header_delivery": "Complete",
+        "header_fidelity": "HostProcessed",
+        "headers": [],
+        "body_hex": "7b226f6b223a747275657d",
+        "limits": {
+          "body_bytes": 64,
+          "headers": 16,
+          "document_bytes": 1024,
+          "depth": 8,
+          "nodes": 128
+        }
+      },
+      "expected": {
+        "json_code": "InvalidMedia",
+        "received_policy": "Decode"
+      },
+      "status": "registered_not_executed"
+    },
+    {
+      "id": "BDS-16",
+      "kind": "prospective core consumer literal",
+      "input": {
+        "status": 200,
+        "dispatch": "Dispatched",
+        "upload": "Complete",
+        "cancelled": false,
+        "transport_error": null,
+        "opaque_redirect": false,
+        "body_state": "Complete",
+        "provenance": "HostDelivered",
+        "header_delivery": "Complete",
+        "header_fidelity": "HostProcessed",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body_hex": "7b226f6b223a747275657d",
+        "limits": {
+          "body_bytes": 64,
+          "headers": 16,
+          "document_bytes": 1024,
+          "depth": 8,
+          "nodes": 128
+        }
+      },
+      "expected": {
+        "json_code": "InvalidMedia",
+        "received_policy": "Decode"
+      },
+      "status": "registered_not_executed"
+    },
+    {
+      "id": "BDS-17",
+      "kind": "H1 prospective shared guard",
+      "input": {
+        "status": 200,
+        "dispatch": "Dispatched",
+        "upload": "Complete",
+        "cancelled": false,
+        "transport_error": null,
+        "opaque_redirect": false,
+        "body_state": "Complete",
+        "provenance": "HostDelivered",
+        "header_delivery": "Incomplete",
+        "header_fidelity": "HostProcessed",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body_hex": "7b226f6b223a747275657d",
+        "limits": {
+          "body_bytes": 64,
+          "headers": 16,
+          "document_bytes": 1024,
+          "depth": 8,
+          "nodes": 128
+        }
+      },
+      "expected": {
+        "json_code": "IncompleteHeaders",
+        "received_policy": "Decode",
+        "outcome_error": null,
+        "body_state": "Complete",
+        "core_omissions": 0
+      },
+      "status": "registered_not_executed"
+    },
+    {
+      "id": "BDS-18",
+      "kind": "H1 contradictory evidence guard",
+      "input": {
+        "status": 200,
+        "dispatch": "Dispatched",
+        "upload": "Complete",
+        "cancelled": false,
+        "transport_error": null,
+        "opaque_redirect": false,
+        "body_state": "Complete",
+        "provenance": "HostDelivered",
+        "header_delivery": "Incomplete",
+        "header_fidelity": "ExactFields",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body_hex": "7b226f6b223a747275657d",
+        "limits": {
+          "body_bytes": 64,
+          "headers": 16,
+          "document_bytes": 1024,
+          "depth": 8,
+          "nodes": 128
+        }
+      },
+      "expected": {
+        "json_code": "InvalidHostEvidence",
+        "received_policy": "Transport"
+      },
+      "status": "registered_not_executed"
+    },
+    {
+      "id": "BDS-19",
+      "kind": "prospective core consumer literal",
+      "input": {
+        "status": 200,
+        "dispatch": "Dispatched",
+        "upload": "Complete",
+        "cancelled": false,
+        "transport_error": null,
+        "opaque_redirect": false,
+        "body_state": "Complete",
+        "provenance": "HostDelivered",
+        "header_delivery": "Complete",
+        "header_fidelity": "HostProcessed",
+        "headers": [
+          [
+            "bad name",
+            "v"
+          ]
+        ],
+        "body_hex": "7b226f6b223a747275657d",
+        "limits": {
+          "body_bytes": 64,
+          "headers": 16,
+          "document_bytes": 1024,
+          "depth": 8,
+          "nodes": 128
+        }
+      },
+      "expected": {
+        "json_code": "InvalidHostEvidence",
+        "received_policy": "Transport"
+      },
+      "status": "registered_not_executed"
+    },
+    {
+      "id": "BDS-20",
+      "kind": "opaque priority unchanged",
+      "input": {
+        "status": 0,
+        "dispatch": "Dispatched",
+        "upload": "Complete",
+        "cancelled": false,
+        "transport_error": null,
+        "opaque_redirect": true,
+        "body_state": "Complete",
+        "provenance": "HostDelivered",
+        "header_delivery": "Incomplete",
+        "header_fidelity": "ExactFields",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body_hex": "7b226f6b223a747275657d",
+        "limits": {
+          "body_bytes": 64,
+          "headers": 16,
+          "document_bytes": 1024,
+          "depth": 8,
+          "nodes": 128
+        }
+      },
+      "expected": {
+        "json_code": "OpaqueRedirect",
+        "received_policy": "Transport"
+      },
+      "status": "registered_not_executed"
+    },
+    {
+      "id": "BDS-21",
+      "kind": "prospective core consumer literal",
+      "input": {
+        "status": 200,
+        "dispatch": "Dispatched",
+        "upload": "Complete",
+        "cancelled": false,
+        "transport_error": null,
+        "opaque_redirect": false,
+        "body_state": "Truncated",
+        "provenance": "HostDelivered",
+        "header_delivery": "Complete",
+        "header_fidelity": "HostProcessed",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body_hex": "7b226f6b223a747275657d",
+        "limits": {
+          "body_bytes": 64,
+          "headers": 16,
+          "document_bytes": 1024,
+          "depth": 8,
+          "nodes": 128
+        }
+      },
+      "expected": {
+        "json_code": "IncompleteBody",
+        "received_policy": "Decode",
+        "outcome_error": null
+      },
+      "status": "registered_not_executed"
+    },
+    {
+      "id": "BDS-22",
+      "kind": "core over-limit evidence defense",
+      "input": {
+        "status": 200,
+        "dispatch": "Dispatched",
+        "upload": "Complete",
+        "cancelled": false,
+        "transport_error": null,
+        "opaque_redirect": false,
+        "body_state": "Complete",
+        "provenance": "HostDelivered",
+        "header_delivery": "Complete",
+        "header_fidelity": "HostProcessed",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body_hex": "7b226f6b223a747275657d",
+        "limits": {
+          "body_bytes": 10,
+          "headers": 16,
+          "document_bytes": 1024,
+          "depth": 8,
+          "nodes": 128
+        }
+      },
+      "expected": {
+        "retained_hex": "7b226f6b223a74727565",
+        "body_state": "Truncated",
+        "json_code": "IncompleteBody",
+        "received_policy": "Decode"
+      },
+      "status": "registered_not_executed"
+    },
+    {
+      "id": "BDS-23",
+      "kind": "prospective core consumer literal",
+      "input": {
+        "status": 200,
+        "dispatch": "Dispatched",
+        "upload": "Complete",
+        "cancelled": false,
+        "transport_error": null,
+        "opaque_redirect": false,
+        "body_state": "Complete",
+        "provenance": "HostDelivered",
+        "header_delivery": "Complete",
+        "header_fidelity": "HostProcessed",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body_hex": "7b226f6b223a747275657d",
+        "limits": {
+          "body_bytes": 11,
+          "headers": 16,
+          "document_bytes": 1024,
+          "depth": 8,
+          "nodes": 128
+        }
+      },
+      "expected": {
+        "json_raw_hex": "7b226f6b223a747275657d",
+        "received_policy": "accepted",
+        "EOF": "must be observed by adapter; equal length alone is not completion"
+      },
+      "status": "registered_not_executed"
+    },
+    {
+      "id": "BDS-24",
+      "kind": "prospective core consumer literal",
+      "input": {
+        "status": 200,
+        "dispatch": "Dispatched",
+        "upload": "Unknown",
+        "cancelled": false,
+        "transport_error": null,
+        "opaque_redirect": false,
+        "body_state": "Complete",
+        "provenance": "HostDelivered",
+        "header_delivery": "Complete",
+        "header_fidelity": "HostProcessed",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body_hex": "7b226f6b223a747275657d",
+        "limits": {
+          "body_bytes": 64,
+          "headers": 16,
+          "document_bytes": 1024,
+          "depth": 8,
+          "nodes": 128
+        }
+      },
+      "expected": {
+        "received_policy": "accepted",
+        "strict_policy": "UploadUncertain",
+        "strict_refusal_decoded_hex": "7b226f6b223a747275657d",
+        "provenance": "HostDelivered"
+      },
+      "status": "registered_not_executed"
+    },
+    {
+      "id": "BDS-25",
+      "kind": "prospective core consumer literal",
+      "input": {
+        "status": 422,
+        "dispatch": "Dispatched",
+        "upload": "Complete",
+        "cancelled": false,
+        "transport_error": null,
+        "opaque_redirect": false,
+        "body_state": "Complete",
+        "provenance": "HostDelivered",
+        "header_delivery": "Complete",
+        "header_fidelity": "HostProcessed",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body_hex": "7b226f6b223a747275657d",
+        "limits": {
+          "body_bytes": 64,
+          "headers": 16,
+          "document_bytes": 1024,
+          "depth": 8,
+          "nodes": 128
+        }
+      },
+      "expected": {
+        "received_policy": "HttpStatus",
+        "strict_policy": "HttpStatus",
+        "decoded_hex": "7b226f6b223a747275657d",
+        "outcome_status": 422
+      },
+      "status": "registered_not_executed"
+    },
+    {
+      "id": "BDS-26",
+      "kind": "prospective core consumer literal",
+      "input": {
+        "status": 422,
+        "dispatch": "Dispatched",
+        "upload": "Complete",
+        "cancelled": true,
+        "transport_error": "TransportFailure",
+        "opaque_redirect": false,
+        "body_state": "Truncated",
+        "provenance": "HostDelivered",
+        "header_delivery": "Complete",
+        "header_fidelity": "HostProcessed",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body_hex": "7b226f6b223a747275657d",
+        "limits": {
+          "body_bytes": 64,
+          "headers": 16,
+          "document_bytes": 1024,
+          "depth": 8,
+          "nodes": 128
+        }
+      },
+      "expected": {
+        "policy_primary": "Cancelled",
+        "decode_error": "IncompleteBody",
+        "independent_facts": "all retained"
+      },
+      "status": "registered_not_executed"
+    },
+    {
+      "id": "BDS-27",
+      "kind": "prospective core consumer literal",
+      "input": {
+        "status": 200,
+        "dispatch": "Dispatched",
+        "upload": "Complete",
+        "cancelled": false,
+        "transport_error": "TransportFailure",
+        "opaque_redirect": false,
+        "body_state": "Complete",
+        "provenance": "HostDelivered",
+        "header_delivery": "Complete",
+        "header_fidelity": "HostProcessed",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body_hex": "7b226f6b223a747275657d",
+        "limits": {
+          "body_bytes": 64,
+          "headers": 16,
+          "document_bytes": 1024,
+          "depth": 8,
+          "nodes": 128
+        }
+      },
+      "expected": {
+        "policy_primary": "Transport",
+        "decoded_hex": "7b226f6b223a747275657d",
+        "outcome_error": "TransportFailure"
+      },
+      "status": "registered_not_executed"
+    },
+    {
+      "id": "BDS-28",
+      "kind": "unchanged old contract twin",
+      "input": {
+        "status": 200,
+        "dispatch": "Dispatched",
+        "upload": "Complete",
+        "cancelled": false,
+        "transport_error": null,
+        "opaque_redirect": false,
+        "body_state": "Complete",
+        "provenance": "Wire",
+        "header_delivery": "Complete",
+        "header_fidelity": "HostProcessed",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-encoding",
+            "x-test"
+          ]
+        ],
+        "body_hex": "7b226f6b223a747275657d",
+        "limits": {
+          "body_bytes": 64,
+          "headers": 16,
+          "document_bytes": 1024,
+          "depth": 8,
+          "nodes": 128
+        }
+      },
+      "expected": {
+        "json_code": "UnsupportedCoding",
+        "received_policy": "Decode"
+      },
+      "status": "registered_not_executed"
+    },
+    {
+      "id": "BDS-29",
+      "kind": "unchanged old contract twin",
+      "input": {
+        "status": 200,
+        "dispatch": "Dispatched",
+        "upload": "Complete",
+        "cancelled": false,
+        "transport_error": null,
+        "opaque_redirect": false,
+        "body_state": "Complete",
+        "provenance": "Unknown",
+        "header_delivery": "Complete",
+        "header_fidelity": "HostProcessed",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-encoding",
+            "x-test"
+          ]
+        ],
+        "body_hex": "7b226f6b223a747275657d",
+        "limits": {
+          "body_bytes": 64,
+          "headers": 16,
+          "document_bytes": 1024,
+          "depth": 8,
+          "nodes": 128
+        }
+      },
+      "expected": {
+        "json_code": "UnsupportedCoding",
+        "received_policy": "Decode"
+      },
+      "status": "registered_not_executed"
+    },
+    {
+      "id": "BDS-30",
+      "kind": "unchanged old contract positive",
+      "input": {
+        "status": 200,
+        "dispatch": "Dispatched",
+        "upload": "Complete",
+        "cancelled": false,
+        "transport_error": null,
+        "opaque_redirect": false,
+        "body_state": "Complete",
+        "provenance": "Decoded",
+        "header_delivery": "Complete",
+        "header_fidelity": "HostProcessed",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-encoding",
+            "gzip"
+          ]
+        ],
+        "body_hex": "7b226f6b223a747275657d",
+        "limits": {
+          "body_bytes": 64,
+          "headers": 16,
+          "document_bytes": 1024,
+          "depth": 8,
+          "nodes": 128
+        }
+      },
+      "expected": {
+        "received_policy": "accepted",
+        "provenance": "Decoded",
+        "assertion": "existing complete-decoding promise unchanged"
+      },
+      "status": "registered_not_executed"
+    },
+    {
+      "id": "BDS-31",
+      "kind": "request admission independent of body variant; no response input created",
+      "input": {
+        "host_request_policy": "RequireNoReplay",
+        "host_no_retries": false,
+        "cancelled": false,
+        "response": null
+      },
+      "expected": {
+        "host_callback_count": 0,
+        "fetch_call_count": 0,
+        "host_refusal": "Replay",
+        "replay_assurance": null,
+        "body_semantics": "no response declaration observed"
+      },
+      "status": "registered_not_executed"
+    },
+    {
+      "id": "BDS-32",
+      "kind": "real host package control; no attempts inferred from provenance",
+      "input": {
+        "status": 200,
+        "dispatch": "Dispatched",
+        "upload": "Unknown",
+        "cancelled": false,
+        "transport_error": null,
+        "opaque_redirect": false,
+        "body_state": "Complete",
+        "provenance": "HostDelivered",
+        "header_delivery": "Complete",
+        "header_fidelity": "HostProcessed",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body_hex": "7b226f6b223a747275657d",
+        "limits": {
+          "body_bytes": 64,
+          "headers": 16,
+          "document_bytes": 1024,
+          "depth": 8,
+          "nodes": 128
+        },
+        "host_request_policy": "AllowHostManaged",
+        "host_no_retries": false
+      },
+      "expected": {
+        "received_policy": "accepted",
+        "replay_assurance": "HostManaged",
+        "library_fetch_calls": 1,
+        "network_attempt_bound": null
+      },
+      "status": "registered_not_executed"
+    },
+    {
+      "id": "BDS-33",
+      "kind": "prospective core consumer literal",
+      "input": {
+        "status": 200,
+        "dispatch": "Dispatched",
+        "upload": "Complete",
+        "cancelled": false,
+        "transport_error": null,
+        "opaque_redirect": false,
+        "body_state": "Complete",
+        "provenance": "HostDelivered",
+        "header_delivery": "Complete",
+        "header_fidelity": "HostProcessed",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body_hex": "7b226e223a393030373139393235343734303939337d",
+        "limits": {
+          "body_bytes": 64,
+          "headers": 16,
+          "document_bytes": 1024,
+          "depth": 8,
+          "nodes": 128
+        }
+      },
+      "expected": {
+        "json_raw_hex": "7b226e223a393030373139393235343734303939337d",
+        "number_token": "9007199254740993",
+        "typed_u64": 9007199254740993,
+        "no_js_json_roundtrip": true
+      },
+      "status": "registered_not_executed"
+    },
+    {
+      "id": "BDS-34",
+      "kind": "existing exact admission guard",
+      "input": {
+        "status": 200,
+        "dispatch": "Dispatched",
+        "upload": "Complete",
+        "cancelled": false,
+        "transport_error": null,
+        "opaque_redirect": false,
+        "body_state": "Complete",
+        "provenance": "HostDelivered",
+        "header_delivery": "Complete",
+        "header_fidelity": "HostProcessed",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body_hex": "7b2261223a312c2261223a327d",
+        "limits": {
+          "body_bytes": 64,
+          "headers": 16,
+          "document_bytes": 1024,
+          "depth": 8,
+          "nodes": 128
+        }
+      },
+      "expected": {
+        "json_code": "DuplicateMember",
+        "received_policy": "Decode",
+        "raw_hex": "7b2261223a312c2261223a327d"
+      },
+      "status": "registered_not_executed"
+    },
+    {
+      "id": "BDS-35",
+      "kind": "existing exact admission guard; code name confirmed below",
+      "input": {
+        "status": 200,
+        "dispatch": "Dispatched",
+        "upload": "Complete",
+        "cancelled": false,
+        "transport_error": null,
+        "opaque_redirect": false,
+        "body_state": "Complete",
+        "provenance": "HostDelivered",
+        "header_delivery": "Complete",
+        "header_fidelity": "HostProcessed",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body_hex": "5b5b305d5d",
+        "limits": {
+          "body_bytes": 64,
+          "headers": 16,
+          "document_bytes": 1024,
+          "depth": 1,
+          "nodes": 128
+        }
+      },
+      "expected": {
+        "json_code": "Limit",
+        "limit": "Depth",
+        "received_policy": "Decode",
+        "basis": "existing depth counting; no HostDelivered exemption"
+      },
+      "status": "registered_not_executed"
+    },
+    {
+      "id": "BDS-36",
+      "kind": "prospective core consumer literal",
+      "input": {
+        "status": 200,
+        "dispatch": "Dispatched",
+        "upload": "Complete",
+        "cancelled": false,
+        "transport_error": null,
+        "opaque_redirect": false,
+        "body_state": "Complete",
+        "provenance": "HostDelivered",
+        "header_delivery": "Complete",
+        "header_fidelity": "HostProcessed",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body_hex": "",
+        "limits": {
+          "body_bytes": 64,
+          "headers": 16,
+          "document_bytes": 1024,
+          "depth": 8,
+          "nodes": 128
+        }
+      },
+      "expected": {
+        "json_code": "EmptyBody",
+        "received_policy": "Decode"
+      },
+      "status": "registered_not_executed"
+    }
+  ]
+}
