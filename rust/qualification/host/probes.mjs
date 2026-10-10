@@ -1,3 +1,34 @@
+// Equivalent finite operations authored for host smoke testing; these are
+// fixtures, not a public TypeScript API or additional real-world providers.
+function compatibilityDocuments(base) {
+ const versions=['2.0','3.0.0','3.0.1','3.0.2','3.0.3','3.0.4','3.1.0','3.1.1','3.1.2','3.2.0','3.2.1'];
+ const result=[];
+ for(const version of versions){
+  const response={description:'ok'};
+  const operation={operationId:'echo',responses:{'200':response}};
+  const definition=version==='2.0'
+   ? {swagger:version,info:{title:'host compatibility',version:'1'},host:new URL(base).host,schemes:['http'],consumes:['application/json'],paths:{'/echo':{post:{...operation,parameters:[{in:'body',name:'payload',required:true,schema:{type:'object'}}]}}}}
+   : {openapi:version,info:{title:'host compatibility',version:'1'},servers:[{url:base}],paths:{'/echo':{post:{...operation,requestBody:{required:true,content:{'application/json':{schema:{type:'object'}}}}}}}};
+  // Insert the exact numeric token directly, without a JS Number conversion.
+  const metadata=',"x-label":"café 🦀","x-use":{"value":9007199254740993}}';
+  result.push({version,format:'json',text:JSON.stringify(definition).slice(0,-1)+metadata});
+  const header=version==='2.0'
+   ? `swagger: '2.0'
+host: '${new URL(base).host}'
+schemes: [http]
+consumes: [application/json]
+`
+   : `openapi: '${version}'
+servers: [{url: '${base}'}]
+`;
+  const body=version==='2.0'
+   ? '      parameters:\n        - {in: body, name: payload, required: true, schema: {type: object}}\n'
+   : '      requestBody:\n        required: true\n        content:\n          application/json: {schema: {type: object}}\n';
+  const text=header+'info: {title: host compatibility, version: "1"}\nx-label: "café 🦀"\nx-master: &value {value: 9007199254740993}\nx-use: *value\npaths:\n  /echo:\n    post:\n      operationId: echo\n'+body+"      responses: {'200': {description: ok}}\n";
+  result.push({version,format:'yaml',text});
+ }
+ return result;
+}
 export async function runHost(api,base,host,runId){
  const cases=[];const record=(name,facts,passed)=>cases.push({id:`${host}-${name}`,group:'P09',executed:true,passed,facts});
  const doc=(path='/echo')=>`{"openapi":"3.1.2","info":{"title":"host fixture","version":"1"},"servers":[{"url":"${base}"}],"paths":{"${path}":{"post":{"operationId":"echo","requestBody":{"content":{"application/json":{}}},"responses":{"200":{"description":"ok"}}}}},"x":9007199254740993}`;
@@ -12,6 +43,23 @@ export async function runHost(api,base,host,runId){
  record('retained-owner-dispose',{cycles:100,before,after:api.live_owners()},api.live_owners()===before);
  for(const [name,path,headers] of [['forbidden-header','/echo',[['Host','other.example']]],['encoded-dot-refusal','/%2e/echo',[]]]){const d=new api.HostDocument(doc(path));const o=d.operation('echo');const p=o.prepare(JSON.stringify({headers}));let n=0;const out=JSON.parse(await p.invoke(()=>{n++;throw Error('must not dispatch')}));record(name,{out,callback_count:n},out.error==='HostCapability'&&out.dispatch==='not_dispatched'&&n===0);p.free();o.free();d.free();}
  const rd=new api.HostDocument(doc('/redirect'));const ro=rd.operation('echo');const rp=ro.prepare('{}');const redirected=JSON.parse(await rp.invoke(dispatch));record('manual-redirect-refusal',{out:redirected},redirected.error==='OpaqueRedirect');rp.free();ro.free();rd.free();
+ // One consumer path executes both serializations of every supported edition.
+ const compatibilityBefore=api.live_owners();
+ for(const fixture of compatibilityDocuments(base)){
+  let document,operation,request;
+  try{
+   document=new api.HostDocument(fixture.text);
+   const exact=document.raw('/x-use/value');
+   const label=document.raw('/x-label');
+   operation=document.operation('echo');document.free();document=null;
+   request=operation.prepare(JSON.stringify({body:{json:payload}}));operation.free();operation=null;
+   const wire=JSON.parse(request.inspect());const prior=calls;
+   const outcome=JSON.parse(await request.invoke(dispatch));
+   record(`compatibility-${fixture.version}-${fixture.format}`,{version:fixture.version,format:fixture.format,outcome},
+    exact==='9007199254740993'&&label===JSON.stringify('café 🦀')&&wire.target===base+'/echo'&&wire.method==='POST'&&outcome.response_status===200&&outcome.json_raw===payload&&calls===prior+1);
+  }finally{request?.free();operation?.free();document?.free();}
+ }
+ record('compatibility-owner-dispose',{before:compatibilityBefore,after:api.live_owners()},api.live_owners()===compatibilityBefore);
  const ready=await(await fetch(base+'/ready')).json();record('fresh-readiness',{ready,expected_run_id:runId},ready.run_id===runId);
  return {cases,passed:cases.every(c=>c.passed),live_after:api.live_owners()};
 }

@@ -52,7 +52,10 @@ workspace's locked dependencies, then generate web glue into
 commands. `CHROMIUM_EXECUTABLE` can select an installed browser;
 `PLAYWRIGHT_BROWSERS_PATH` can select a Playwright installation. The default uses
 Playwright's installed Chromium. Wrangler runs locally, uses loopback fixtures
-and never deploys a Worker.
+and never deploys a Worker. The host smoke suite executes one finite POST
+consumer against equivalent JSON/YAML descriptions in all eleven published
+version strings, including Unicode, aliases and exact numbers. These fixtures
+cover the shared finite flow, not every capability of those editions.
 
 The qualification bridge is not a public SDK. Initial dependency/tool downloads
 need network access. Success requires actual commands and host assertions; a
