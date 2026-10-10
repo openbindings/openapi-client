@@ -1729,6 +1729,17 @@ impl Operation {
                         || location == ParameterLocation::Header
                             && name.eq_ignore_ascii_case("cookie");
                     let explode = bool_field(&p, "explode", style == "form")?;
+                    if edition == Edition::OpenApi32
+                        && location == ParameterLocation::Cookie
+                        && p.get("schema").is_some()
+                        && matches!(style.as_str(), "form" | "cookie")
+                        && let Some(authored) = p.get("explode")
+                        && authored.as_bool() == Some(false)
+                    {
+                        return Err(authored
+                            .error(Code::InvalidDeclaration)
+                            .reasoned(DiagnosticReason::UnsupportedStyleCombination));
+                    }
                     (
                         if deep && edition == Edition::OpenApi32 {
                             true

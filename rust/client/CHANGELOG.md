@@ -1,5 +1,11 @@
 # Unreleased (0.0.0)
 
+- Locate unsupported deepObject caller shapes and ambiguous member names at the
+  supplied value, preserving exact or generated input ownership. Refuse explicit
+  `explode: false` for OpenAPI 3.2 schema-based cookie parameters using `form` or
+  `cookie` style before preparation; retain older-edition behavior and valid
+  exploded form cookies.
+
 - Share private logical serialization atoms across parameters and forms. Add flat
   `deepObject`, component-safe reserved expansion, final-name credential collision
   checks, bounded parameter output planning and corrective style diagnostics.

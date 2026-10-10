@@ -69,7 +69,7 @@ pub(crate) fn walk(
 ) -> Result<(), Diagnostic> {
     emit(Event::Check)?;
     if cfg.style == Style::DeepObject {
-        if v.kind() != ValueKind::Object || !cfg.explode {
+        if !cfg.explode {
             return Err(combination(source));
         }
         for chunk in name.as_bytes().chunks(4096) {
@@ -79,6 +79,11 @@ pub(crate) fn walk(
                     .error(Code::UnsupportedParameter)
                     .reasoned(DiagnosticReason::AmbiguousStyleDelimiter));
             }
+        }
+        if v.kind() != ValueKind::Object {
+            return Err(v
+                .error(Code::UnsupportedValue)
+                .reasoned(DiagnosticReason::UnsupportedStyleValue));
         }
     }
     let expanded = cfg.style != Style::Simple && cfg.explode;
@@ -116,8 +121,8 @@ pub(crate) fn walk(
                     for chunk in key.as_bytes().chunks(4096) {
                         emit(Event::Check)?;
                         if chunk.iter().any(|b| matches!(b, b'[' | b']')) {
-                            return Err(source
-                                .error(Code::UnsupportedParameter)
+                            return Err(value
+                                .error(Code::UnsupportedValue)
                                 .reasoned(DiagnosticReason::AmbiguousStyleDelimiter));
                         }
                     }

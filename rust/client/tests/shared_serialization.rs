@@ -124,7 +124,7 @@ fn shared_query_atoms_separate_names_data_delimiters_and_percent_domains() {
 fn deep_object_refusals_retain_source_and_caller_context() {
     for version in VERSIONS {
         for (value, reason) in [
-            (r#"["x"]"#, DiagnosticReason::UnsupportedStyleCombination),
+            (r#"["x"]"#, DiagnosticReason::UnsupportedStyleValue),
             (r#"{"x":{"y":1}}"#, DiagnosticReason::UnsupportedStyleValue),
             (r#"{"x[y]":1}"#, DiagnosticReason::AmbiguousStyleDelimiter),
         ] {

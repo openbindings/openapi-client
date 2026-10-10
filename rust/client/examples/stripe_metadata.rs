@@ -61,9 +61,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .prepare()
         .unwrap_err();
+    assert_eq!(refusal.diagnostic().code(), Code::UnsupportedValue);
     assert_eq!(
         refusal.diagnostic().reason(),
-        Some(&DiagnosticReason::UnsupportedStyleCombination)
+        Some(&DiagnosticReason::UnsupportedStyleValue)
+    );
+    assert_eq!(
+        refusal.diagnostic().source_context().unwrap().origin,
+        SourceOrigin::Constructed
     );
     println!(
         "{}",
