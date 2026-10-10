@@ -1440,6 +1440,10 @@ fn finish(
         maximum_work: work.limits.form_work,
     };
     write_body(&parts, boundary.as_deref(), &mut writer)?;
+    // The immutable output needs only the emitted bytes. Release the encoding
+    // plan before converting the Vec into an Arc (which temporarily owns both
+    // byte buffers), rather than keeping every part's metadata alive at that peak.
+    drop(parts);
     let media = match boundary {
         Some(b) => format!("{selected}; boundary={b}"),
         None => selected.into(),
