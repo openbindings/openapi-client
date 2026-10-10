@@ -1,5 +1,10 @@
 # Unreleased (0.0.0)
 
+- Add an optional unpublished Rust Fetch companion with Browser/Worker profiles,
+  explicit host-managed replay, exact Request preflight, bounded incremental
+  response collection and local future cleanup. Every body uses HostDelivered;
+  host qualification and resource gates remain separate from author checks.
+
 - Add Provenance::HostDelivered for exact host-exposed body interpretation, without
   a wire-equality or decompression assertion. The existing JSON API parses those
   bytes while retaining Content-Encoding as metadata; all other guards remain.

@@ -175,6 +175,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "dynamic-openapi-client-fetch"
+version = "0.0.0"
+dependencies = [
+ "dynamic-openapi-client",
+ "js-sys",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+]
+
+[[package]]
 name = "dynamic-openapi-client-reqwest"
 version = "0.0.0"
 dependencies = [

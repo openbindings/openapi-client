@@ -9,7 +9,9 @@ compatibility candidate adds edition-aware inspection and finite JSON/raw
 request preparation; it does not implement every feature in those editions.
 The optional [`dynamic-openapi-client-reqwest`](rust/reqwest/README.md)
 companion provides a reusable native HTTP client and a runnable getting-started example. The [Rust API guide](rust/client/README.md) shows complete dynamic
-calls, diagnostics, ownership and application outcome policy.
+calls, diagnostics, ownership and application outcome policy. The optional
+[Rust Fetch companion](rust/fetch/README.md) provides Browser/Worker profiles on
+Wasm with explicit host-managed replay; host qualification remains in progress.
 
 External resource graphs and acquisition, schema evaluation, form and multipart
 serialization, richer parameter styles and streaming codecs remain open work.
