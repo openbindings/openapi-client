@@ -1,7 +1,8 @@
 //! Immutable schema identity and direct-edge inspection. This is not validation.
 use crate::document::Store;
 use crate::graph::{
-    Graph, NeedFact, NodeKey, ObjectKind, bound, identity_key, key, resolve_uri, without_fragment,
+    Context, Graph, NeedFact, NodeKey, ObjectKind, bound, identity_key, key, resolve_uri,
+    without_fragment,
 };
 use crate::{
     Cancellation, Code, Diagnostic, DiagnosticReason, Edition, LimitKind, Limits, Location,
@@ -464,38 +465,37 @@ impl SchemaIndex {
         cancellation: &Cancellation,
     ) -> Result<(), Diagnostic> {
         let mut seeds = Vec::new();
-        // Stable authored order, not HashMap iteration, governs diagnostics.
-        let mut contexts: Vec<_> = graph.contexts.iter().map(|(k, c)| (*k, *c)).collect();
+        // Only schema-bearing contexts need ordering or owned profiles. Keep the
+        // same authored order for their admission and diagnostics.
+        let mut contexts = Vec::new();
+        for (&node, &context) in &graph.contexts {
+            checkpoint(cancellation)?;
+            if has_protocol_schema(&graph.value(node), context) {
+                contexts.push((node, context));
+            }
+        }
         contexts.sort_by_key(|(k, _)| *k);
+        let mut profiles = None;
         for (node, context) in contexts {
             checkpoint(cancellation)?;
-            if !matches!(
-                context.kind,
-                ObjectKind::Document
-                    | ObjectKind::Media
-                    | ObjectKind::Reference(
-                        ReferenceKind::Parameter
-                            | ReferenceKind::Header
-                            | ReferenceKind::Response
-                            | ReferenceKind::MediaType
-                    )
-            ) {
-                continue;
-            }
             let value = graph.value(node);
-            let root = graph.resource_root(&value)?;
-            let fallback = Arc::new(SchemaProfile::for_edition(context.edition));
-            let mut profile = fallback.clone();
-            // Only a recognized actual OpenAPI root can set jsonSchemaDialect.
-            if matches!(context.edition, Edition::OpenApi31 | Edition::OpenApi32)
-                && Edition::detect(&root).is_ok()
-                && let Some(dialect) = root.get("jsonSchemaDialect")
-            {
-                profile = Arc::new(
-                    profile_from(&dialect, limits.target_bytes)
-                        .unwrap_or_else(|_| fallback.as_ref().clone()),
-                );
+            if profiles.as_ref().is_none_or(|(source, edition, _, _)| {
+                *source != node.0 || *edition != context.edition
+            }) {
+                let root = graph.resource_root(&value)?;
+                let fallback = Arc::new(SchemaProfile::for_edition(context.edition));
+                let mut profile = fallback.clone();
+                // Only a recognized actual OpenAPI root can set jsonSchemaDialect.
+                if matches!(context.edition, Edition::OpenApi31 | Edition::OpenApi32)
+                    && let Some(dialect) = root.get("jsonSchemaDialect")
+                    && Edition::detect(&root).is_ok()
+                    && let Ok(declared) = profile_from(&dialect, limits.target_bytes)
+                {
+                    profile = Arc::new(declared);
+                }
+                profiles = Some((node.0, context.edition, profile, fallback));
             }
+            let (_, _, profile, fallback) = profiles.as_ref().expect("selected context profiles");
             let mut seed = |value| {
                 checkpoint(cancellation)?;
                 push_seed(
@@ -526,11 +526,7 @@ impl SchemaIndex {
                 }
                 ObjectKind::Reference(ReferenceKind::Parameter)
                     if context.edition != Edition::Swagger20
-                        || value
-                            .get("in")
-                            .and_then(|v| v.as_str().map(str::to_owned))
-                            .as_deref()
-                            == Some("body") =>
+                        || value.get("in").is_some_and(|v| v.as_str() == Some("body")) =>
                 {
                     if value.get("$ref").is_none()
                         && let Some(schema) = value.get("schema")
@@ -589,8 +585,7 @@ impl SchemaIndex {
                     )?;
                 }
             }
-            if Edition::detect(&root).is_err()
-                && root.get("openapi").is_none()
+            if root.get("openapi").is_none()
                 && root.get("swagger").is_none()
                 && let Some(dialect) = root.get("$schema")
             {
@@ -638,8 +633,7 @@ impl SchemaIndex {
             }
             let target_value = graph.value(target);
             let target_resource = graph.owner(&target_value)?;
-            if Edition::detect(&target_value).is_ok()
-                || target_value.get("openapi").is_some()
+            if target_value.get("openapi").is_some()
                 || target_value.get("swagger").is_some()
                 || target_value.get("$schema").is_some()
                 || target_resource
@@ -716,15 +710,14 @@ impl SchemaIndex {
             .map_err(|e| value.locate(e))?;
             let mut issue = if entry && value.get("$schema").is_none() {
                 let owner = graph.owner(&value)?;
-                if matches!(
-                    Edition::detect(&owner.json.root()),
-                    Ok(Edition::OpenApi31 | Edition::OpenApi32)
-                ) {
-                    owner
-                        .json
-                        .root()
-                        .get("jsonSchemaDialect")
-                        .and_then(|d| profile_from(&d, limits.target_bytes).err())
+                let root = owner.json.root();
+                if let Some(dialect) = root.get("jsonSchemaDialect")
+                    && matches!(
+                        Edition::detect(&root),
+                        Ok(Edition::OpenApi31 | Edition::OpenApi32)
+                    )
+                {
+                    profile_from(&dialect, limits.target_bytes).err()
                 } else {
                     None
                 }
@@ -944,6 +937,38 @@ impl SchemaIndex {
         }
         let _ = seed.origin; // origin is retained by inferred claims, never by an owning handle.
         Ok(())
+    }
+}
+// This predicate performs no semantic admission: the ordered loop above still
+// owns seed bounds, profiles and error sites. Empty/malformed containers produce
+// no seeds, just as they do in that loop.
+fn has_protocol_schema(value: &Value, context: Context) -> bool {
+    match context.kind {
+        ObjectKind::Document => {
+            let map = if context.edition == Edition::Swagger20 {
+                value.get("definitions")
+            } else {
+                value.get("components").and_then(|v| v.get("schemas"))
+            };
+            map.is_some_and(|v| v.members().is_some_and(|m| m.len() != 0))
+        }
+        ObjectKind::Reference(ReferenceKind::Parameter)
+            if context.edition != Edition::Swagger20
+                || value.get("in").is_some_and(|v| v.as_str() == Some("body")) =>
+        {
+            value.get("$ref").is_none() && value.get("schema").is_some()
+        }
+        ObjectKind::Reference(ReferenceKind::Header) if context.edition != Edition::Swagger20 => {
+            value.get("$ref").is_none() && value.get("schema").is_some()
+        }
+        ObjectKind::Reference(ReferenceKind::Response) if context.edition == Edition::Swagger20 => {
+            value.get("$ref").is_none() && value.get("schema").is_some()
+        }
+        ObjectKind::Media | ObjectKind::Reference(ReferenceKind::MediaType) => {
+            value.get("schema").is_some()
+                || context.edition == Edition::OpenApi32 && value.get("itemSchema").is_some()
+        }
+        _ => false,
     }
 }
 struct Seed {
