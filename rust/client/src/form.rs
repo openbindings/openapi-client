@@ -397,6 +397,7 @@ enum Piece<'a> {
     Json(Value),
     Bytes(FiniteBytes<'a>),
     Separator(&'static [u8]),
+    Delimiter(&'static [u8]),
     Key(FiniteBytes<'a>),
 }
 impl Piece<'_> {
@@ -409,7 +410,7 @@ impl Piece<'_> {
             },
             Self::Json(v) => v.raw().as_bytes(),
             Self::Bytes(b) | Self::Key(b) => b.bytes(),
-            Self::Separator(v) => v,
+            Self::Separator(v) | Self::Delimiter(v) => v,
         })
     }
 }
@@ -674,6 +675,8 @@ fn style(
     let kind = match declared.as_ref().and_then(Value::as_str).unwrap_or("form") {
         "form" => crate::style::Style::Form,
         "deepObject" => crate::style::Style::DeepObject,
+        "spaceDelimited" => crate::style::Style::SpaceDelimited,
+        "pipeDelimited" => crate::style::Style::PipeDelimited,
         _ => {
             return Err(located(
                 e,
@@ -831,7 +834,7 @@ fn plan_style<'a>(
         reserved: config.reserved,
         path: false,
         cookie: false,
-        comma: !config.explode && matches!(value.kind(), ValueKind::Array | ValueKind::Object),
+        protected: config.protected(value),
     };
     let mut emitted_name = String::new();
     let mut pieces = Vec::new();
@@ -854,6 +857,8 @@ fn plan_style<'a>(
             Event::Atom(atom) => {
                 let piece = match atom {
                     Atom::Scalar(value) => Piece::Scalar(value.clone()),
+                    Atom::Json(value) => Piece::Json(value.clone()),
+                    Atom::Delimiter(bytes) => Piece::Delimiter(bytes),
                     Atom::Separator(bytes) => Piece::Separator(bytes),
                     Atom::Key(key) => {
                         add(
@@ -1085,7 +1090,7 @@ fn plan_one<'a>(
             ));
         }
     };
-    if styled.is_some_and(|config| config.style == crate::style::Style::DeepObject) {
+    if styled.is_some_and(|config| config.style != crate::style::Style::Form) {
         return Err(source
             .error(Code::UnsupportedValue)
             .reasoned(DiagnosticReason::UnsupportedStyleCombination));
@@ -1096,7 +1101,7 @@ fn plan_one<'a>(
             reserved: config.reserved,
             path: false,
             cookie: false,
-            comma: false,
+            protected: crate::style::Protection::None,
         });
     }
     Ok(())
@@ -1413,6 +1418,7 @@ fn write_body(
                 let mode = match (part.style, piece) {
                     (Some(_), Piece::Separator(_)) => crate::style::Escape::Literal,
                     (Some(mode), Piece::Key(_)) => mode.name(),
+                    (Some(mode), Piece::Delimiter(bytes)) => mode.delimiter(bytes),
                     (Some(mode), _) => mode,
                     (None, _) => crate::style::Escape::FormContent,
                 };

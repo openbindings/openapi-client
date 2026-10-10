@@ -1,0 +1,2824 @@
+[
+  {
+    "id": "matrix-array-joined",
+    "kind": "literal_wire",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "location": "path",
+    "declaration": {
+      "style": "matrix",
+      "name": "p",
+      "explode": false
+    },
+    "input": [
+      "a",
+      "b"
+    ],
+    "expected_utf8": ";p=a,b",
+    "slice": "S2-or-separate-policy",
+    "evidence_sources": [
+      "oas30",
+      "oas31",
+      "oas32"
+    ],
+    "origin": "serialization-design/wire-vectors.json",
+    "origin_sha256": "124f050b94ec469a22d9ac8ddc21fea493930ce0d80e94eedc24a65dbe5641f8",
+    "parameter": {
+      "style": "matrix",
+      "name": "p",
+      "explode": false,
+      "in": "path",
+      "required": true,
+      "schema": {}
+    },
+    "input_json": "[\"a\",\"b\"]",
+    "exact_only": false
+  },
+  {
+    "id": "matrix-array-exploded",
+    "kind": "literal_wire",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "location": "path",
+    "declaration": {
+      "style": "matrix",
+      "name": "p",
+      "explode": true
+    },
+    "input": [
+      "a",
+      "b"
+    ],
+    "expected_utf8": ";p=a;p=b",
+    "slice": "S2-or-separate-policy",
+    "evidence_sources": [
+      "oas30",
+      "oas31",
+      "oas32"
+    ],
+    "origin": "serialization-design/wire-vectors.json",
+    "origin_sha256": "124f050b94ec469a22d9ac8ddc21fea493930ce0d80e94eedc24a65dbe5641f8",
+    "parameter": {
+      "style": "matrix",
+      "name": "p",
+      "explode": true,
+      "in": "path",
+      "required": true,
+      "schema": {}
+    },
+    "input_json": "[\"a\",\"b\"]",
+    "exact_only": false
+  },
+  {
+    "id": "matrix-object-joined",
+    "kind": "literal_wire",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "location": "path",
+    "declaration": {
+      "style": "matrix",
+      "name": "p",
+      "explode": false
+    },
+    "input": {
+      "x": 1,
+      "y": 2
+    },
+    "expected_utf8": ";p=x,1,y,2",
+    "slice": "S2-or-separate-policy",
+    "evidence_sources": [
+      "oas30",
+      "oas31",
+      "oas32"
+    ],
+    "origin": "serialization-design/wire-vectors.json",
+    "origin_sha256": "124f050b94ec469a22d9ac8ddc21fea493930ce0d80e94eedc24a65dbe5641f8",
+    "parameter": {
+      "style": "matrix",
+      "name": "p",
+      "explode": false,
+      "in": "path",
+      "required": true,
+      "schema": {}
+    },
+    "input_json": "{\"x\":1,\"y\":2}",
+    "exact_only": false
+  },
+  {
+    "id": "matrix-object-exploded",
+    "kind": "literal_wire",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "location": "path",
+    "declaration": {
+      "style": "matrix",
+      "name": "p",
+      "explode": true
+    },
+    "input": {
+      "x": 1,
+      "y": 2
+    },
+    "expected_utf8": ";x=1;y=2",
+    "slice": "S2-or-separate-policy",
+    "evidence_sources": [
+      "oas30",
+      "oas31",
+      "oas32"
+    ],
+    "origin": "serialization-design/wire-vectors.json",
+    "origin_sha256": "124f050b94ec469a22d9ac8ddc21fea493930ce0d80e94eedc24a65dbe5641f8",
+    "parameter": {
+      "style": "matrix",
+      "name": "p",
+      "explode": true,
+      "in": "path",
+      "required": true,
+      "schema": {}
+    },
+    "input_json": "{\"x\":1,\"y\":2}",
+    "exact_only": false
+  },
+  {
+    "id": "label-array-joined",
+    "kind": "literal_wire",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "location": "path",
+    "declaration": {
+      "style": "label",
+      "explode": false
+    },
+    "input": [
+      "a",
+      "b"
+    ],
+    "expected_utf8": ".a,b",
+    "slice": "S2-or-separate-policy",
+    "evidence_sources": [
+      "oas30",
+      "oas31",
+      "oas32"
+    ],
+    "origin": "serialization-design/wire-vectors.json",
+    "origin_sha256": "124f050b94ec469a22d9ac8ddc21fea493930ce0d80e94eedc24a65dbe5641f8",
+    "parameter": {
+      "style": "label",
+      "explode": false,
+      "name": "p",
+      "in": "path",
+      "required": true,
+      "schema": {}
+    },
+    "input_json": "[\"a\",\"b\"]",
+    "exact_only": false
+  },
+  {
+    "id": "label-array-exploded",
+    "kind": "literal_wire",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "location": "path",
+    "declaration": {
+      "style": "label",
+      "explode": true
+    },
+    "input": [
+      "a",
+      "b"
+    ],
+    "expected_utf8": ".a.b",
+    "slice": "S2-or-separate-policy",
+    "evidence_sources": [
+      "oas30",
+      "oas31",
+      "oas32"
+    ],
+    "origin": "serialization-design/wire-vectors.json",
+    "origin_sha256": "124f050b94ec469a22d9ac8ddc21fea493930ce0d80e94eedc24a65dbe5641f8",
+    "parameter": {
+      "style": "label",
+      "explode": true,
+      "name": "p",
+      "in": "path",
+      "required": true,
+      "schema": {}
+    },
+    "input_json": "[\"a\",\"b\"]",
+    "exact_only": false
+  },
+  {
+    "id": "label-object-exploded",
+    "kind": "literal_wire",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "location": "path",
+    "declaration": {
+      "style": "label",
+      "explode": true
+    },
+    "input": {
+      "x": 1,
+      "y": 2
+    },
+    "expected_utf8": ".x=1.y=2",
+    "slice": "S2-or-separate-policy",
+    "evidence_sources": [
+      "oas30",
+      "oas31",
+      "oas32"
+    ],
+    "origin": "serialization-design/wire-vectors.json",
+    "origin_sha256": "124f050b94ec469a22d9ac8ddc21fea493930ce0d80e94eedc24a65dbe5641f8",
+    "parameter": {
+      "style": "label",
+      "explode": true,
+      "name": "p",
+      "in": "path",
+      "required": true,
+      "schema": {}
+    },
+    "input_json": "{\"x\":1,\"y\":2}",
+    "exact_only": false
+  },
+  {
+    "id": "space-delimiter",
+    "kind": "literal_wire",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "location": "query",
+    "declaration": {
+      "style": "spaceDelimited",
+      "name": "p",
+      "explode": false
+    },
+    "input": [
+      "a",
+      "b"
+    ],
+    "expected_utf8": "p=a%20b",
+    "slice": "S2-or-separate-policy",
+    "evidence_sources": [
+      "oas30",
+      "oas31",
+      "oas32"
+    ],
+    "origin": "serialization-design/wire-vectors.json",
+    "origin_sha256": "124f050b94ec469a22d9ac8ddc21fea493930ce0d80e94eedc24a65dbe5641f8",
+    "parameter": {
+      "style": "spaceDelimited",
+      "name": "p",
+      "explode": false,
+      "in": "query",
+      "schema": {}
+    },
+    "input_json": "[\"a\",\"b\"]",
+    "exact_only": false
+  },
+  {
+    "id": "space-object",
+    "kind": "literal_wire",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "location": "query",
+    "declaration": {
+      "style": "spaceDelimited",
+      "name": "p",
+      "explode": false
+    },
+    "input": {
+      "x": 1,
+      "y": 2
+    },
+    "expected_utf8": "p=x%201%20y%202",
+    "slice": "S2-or-separate-policy",
+    "evidence_sources": [
+      "oas30",
+      "oas31",
+      "oas32"
+    ],
+    "origin": "serialization-design/wire-vectors.json",
+    "origin_sha256": "124f050b94ec469a22d9ac8ddc21fea493930ce0d80e94eedc24a65dbe5641f8",
+    "parameter": {
+      "style": "spaceDelimited",
+      "name": "p",
+      "explode": false,
+      "in": "query",
+      "schema": {}
+    },
+    "input_json": "{\"x\":1,\"y\":2}",
+    "exact_only": false
+  },
+  {
+    "id": "pipe-delimiter",
+    "kind": "literal_wire",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "location": "query",
+    "declaration": {
+      "style": "pipeDelimited",
+      "name": "p",
+      "explode": false
+    },
+    "input": [
+      "a",
+      "b"
+    ],
+    "expected_utf8": "p=a%7Cb",
+    "slice": "S2-or-separate-policy",
+    "evidence_sources": [
+      "oas30",
+      "oas31",
+      "oas32"
+    ],
+    "origin": "serialization-design/wire-vectors.json",
+    "origin_sha256": "124f050b94ec469a22d9ac8ddc21fea493930ce0d80e94eedc24a65dbe5641f8",
+    "parameter": {
+      "style": "pipeDelimited",
+      "name": "p",
+      "explode": false,
+      "in": "query",
+      "schema": {}
+    },
+    "input_json": "[\"a\",\"b\"]",
+    "exact_only": false
+  },
+  {
+    "id": "space-data-collision",
+    "kind": "refusal",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "location": "query",
+    "declaration": {
+      "style": "spaceDelimited",
+      "explode": false
+    },
+    "input": [
+      "a b",
+      "c"
+    ],
+    "expected_reason_contract": "AmbiguousDelimiter",
+    "transport_attempts": 0,
+    "spec_classification": "interop_policy_not_schema_invalid",
+    "slice": "S2-or-separate-policy",
+    "evidence_sources": [
+      "oas30",
+      "oas31",
+      "oas32"
+    ],
+    "origin": "serialization-design/wire-vectors.json",
+    "origin_sha256": "124f050b94ec469a22d9ac8ddc21fea493930ce0d80e94eedc24a65dbe5641f8",
+    "parameter": {
+      "style": "spaceDelimited",
+      "explode": false,
+      "name": "p",
+      "in": "query",
+      "schema": {}
+    },
+    "input_json": "[\"a b\",\"c\"]",
+    "exact_only": false
+  },
+  {
+    "id": "pipe-data-collision",
+    "kind": "refusal",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "location": "query",
+    "declaration": {
+      "style": "pipeDelimited",
+      "explode": false
+    },
+    "input": [
+      "a|b",
+      "c"
+    ],
+    "expected_reason_contract": "AmbiguousDelimiter",
+    "transport_attempts": 0,
+    "spec_classification": "interop_policy_not_schema_invalid",
+    "slice": "S2-or-separate-policy",
+    "evidence_sources": [
+      "oas30",
+      "oas31",
+      "oas32"
+    ],
+    "origin": "serialization-design/wire-vectors.json",
+    "origin_sha256": "124f050b94ec469a22d9ac8ddc21fea493930ce0d80e94eedc24a65dbe5641f8",
+    "parameter": {
+      "style": "pipeDelimited",
+      "explode": false,
+      "name": "p",
+      "in": "query",
+      "schema": {}
+    },
+    "input_json": "[\"a|b\",\"c\"]",
+    "exact_only": false
+  },
+  {
+    "id": "label-data-collision",
+    "kind": "refusal",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "location": "path",
+    "declaration": {
+      "style": "label",
+      "explode": true
+    },
+    "input": [
+      "a.b",
+      "c"
+    ],
+    "expected_reason_contract": "AmbiguousDelimiter",
+    "transport_attempts": 0,
+    "spec_classification": "interop_policy_not_schema_invalid",
+    "slice": "S2-or-separate-policy",
+    "evidence_sources": [
+      "oas30",
+      "oas31",
+      "oas32"
+    ],
+    "origin": "serialization-design/wire-vectors.json",
+    "origin_sha256": "124f050b94ec469a22d9ac8ddc21fea493930ce0d80e94eedc24a65dbe5641f8",
+    "parameter": {
+      "style": "label",
+      "explode": true,
+      "name": "p",
+      "in": "path",
+      "required": true,
+      "schema": {}
+    },
+    "input_json": "[\"a.b\",\"c\"]",
+    "exact_only": false
+  },
+  {
+    "id": "pipe-explode-undefined",
+    "kind": "refusal",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "location": "query",
+    "declaration": {
+      "style": "pipeDelimited",
+      "explode": true
+    },
+    "input": [
+      "a",
+      "b"
+    ],
+    "expected_reason_contract": "UndefinedStyleCombination",
+    "transport_attempts": 0,
+    "slice": "S2-or-separate-policy",
+    "evidence_sources": [
+      "oas30",
+      "oas31",
+      "oas32"
+    ],
+    "origin": "serialization-design/wire-vectors.json",
+    "origin_sha256": "124f050b94ec469a22d9ac8ddc21fea493930ce0d80e94eedc24a65dbe5641f8",
+    "parameter": {
+      "style": "pipeDelimited",
+      "explode": true,
+      "name": "p",
+      "in": "query",
+      "schema": {}
+    },
+    "input_json": "[\"a\",\"b\"]",
+    "exact_only": false
+  },
+  {
+    "id": "matrix-wrong-location",
+    "kind": "refusal",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "location": "query",
+    "declaration": {
+      "style": "matrix"
+    },
+    "input": "x",
+    "expected_reason_contract": "InvalidStyleLocation",
+    "transport_attempts": 0,
+    "slice": "S2-or-separate-policy",
+    "evidence_sources": [
+      "oas30",
+      "oas31",
+      "oas32"
+    ],
+    "origin": "serialization-design/wire-vectors.json",
+    "origin_sha256": "124f050b94ec469a22d9ac8ddc21fea493930ce0d80e94eedc24a65dbe5641f8",
+    "parameter": {
+      "style": "matrix",
+      "name": "p",
+      "in": "query",
+      "schema": {}
+    },
+    "input_json": "\"x\"",
+    "exact_only": false
+  },
+  {
+    "id": "query-empty-string",
+    "kind": "literal_wire",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "location": "query",
+    "declaration": {
+      "style": "form",
+      "name": "p",
+      "allowEmptyValue": true
+    },
+    "input": "",
+    "expected_utf8": "p=",
+    "slice": "S2-or-separate-policy",
+    "evidence_sources": [
+      "oas30",
+      "oas31",
+      "oas32"
+    ],
+    "origin": "serialization-design/wire-vectors.json",
+    "origin_sha256": "124f050b94ec469a22d9ac8ddc21fea493930ce0d80e94eedc24a65dbe5641f8",
+    "parameter": {
+      "style": "form",
+      "name": "p",
+      "allowEmptyValue": true,
+      "in": "query",
+      "schema": {}
+    },
+    "input_json": "\"\"",
+    "exact_only": false
+  },
+  {
+    "id": "style-null-policy",
+    "kind": "refusal",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "location": "query",
+    "declaration": {
+      "style": "form"
+    },
+    "input": null,
+    "expected_reason_contract": "NullSerializationPolicyRequired",
+    "transport_attempts": 0,
+    "spec_classification": "initial_profile; P03 remains open",
+    "slice": "S2-or-separate-policy",
+    "evidence_sources": [
+      "oas30",
+      "oas31",
+      "oas32"
+    ],
+    "origin": "serialization-design/wire-vectors.json",
+    "origin_sha256": "124f050b94ec469a22d9ac8ddc21fea493930ce0d80e94eedc24a65dbe5641f8",
+    "parameter": {
+      "style": "form",
+      "name": "p",
+      "in": "query",
+      "schema": {}
+    },
+    "input_json": "null",
+    "exact_only": false
+  },
+  {
+    "id": "content-parameter-json",
+    "kind": "literal_wire",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "location": "query",
+    "declaration": {
+      "name": "p",
+      "content": {
+        "application/json": {}
+      }
+    },
+    "input_exact_json": "{\"n\":1e+00,\"s\":\"a b\"}",
+    "expected_utf8": "p=%7B%22n%22%3A1e%2B00%2C%22s%22%3A%22a+b%22%7D",
+    "note": "Named content parameter uses form-value escaping once; content-space canonical profile is +; exact JSON token spelling retained before URI layer.",
+    "slice": "S2-or-separate-policy",
+    "evidence_sources": [
+      "oas30",
+      "oas31",
+      "oas32"
+    ],
+    "origin": "serialization-design/wire-vectors.json",
+    "origin_sha256": "124f050b94ec469a22d9ac8ddc21fea493930ce0d80e94eedc24a65dbe5641f8",
+    "parameter": {
+      "name": "p",
+      "content": {
+        "application/json": {}
+      },
+      "in": "query"
+    },
+    "input_json": "{\"n\":1e+00,\"s\":\"a b\"}",
+    "exact_only": true
+  },
+  {
+    "id": "content-header-json",
+    "kind": "literal_wire",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "location": "header",
+    "declaration": {
+      "name": "X-Data",
+      "content": {
+        "application/json": {}
+      }
+    },
+    "input_exact_json": "{\"n\":1e+00}",
+    "expected_utf8": "{\"n\":1e+00}",
+    "slice": "S2-or-separate-policy",
+    "evidence_sources": [
+      "oas30",
+      "oas31",
+      "oas32"
+    ],
+    "origin": "serialization-design/wire-vectors.json",
+    "origin_sha256": "124f050b94ec469a22d9ac8ddc21fea493930ce0d80e94eedc24a65dbe5641f8",
+    "parameter": {
+      "name": "X-Data",
+      "content": {
+        "application/json": {}
+      },
+      "in": "header"
+    },
+    "input_json": "{\"n\":1e+00}",
+    "exact_only": true
+  },
+  {
+    "id": "content-two-media",
+    "kind": "refusal",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "location": "query",
+    "declaration": {
+      "content": {
+        "application/json": {},
+        "text/plain": {}
+      }
+    },
+    "input": "x",
+    "expected_reason_contract": "InvalidParameterContentCardinality",
+    "transport_attempts": 0,
+    "slice": "S2-or-separate-policy",
+    "evidence_sources": [
+      "oas30",
+      "oas31",
+      "oas32"
+    ],
+    "origin": "serialization-design/wire-vectors.json",
+    "origin_sha256": "124f050b94ec469a22d9ac8ddc21fea493930ce0d80e94eedc24a65dbe5641f8",
+    "parameter": {
+      "content": {
+        "application/json": {},
+        "text/plain": {}
+      },
+      "name": "p",
+      "in": "query"
+    },
+    "input_json": "\"x\"",
+    "exact_only": false
+  },
+  {
+    "id": "matrix-empty-string",
+    "scope": "S2a",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "complete_parameter": {
+      "name": "p",
+      "in": "path",
+      "required": true,
+      "schema": {},
+      "style": "matrix",
+      "explode": false
+    },
+    "input": "",
+    "expected_fragment_utf8": ";p",
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "parameter": {
+      "name": "p",
+      "in": "path",
+      "required": true,
+      "schema": {},
+      "style": "matrix",
+      "explode": false
+    },
+    "input_json": "\"\"",
+    "exact_only": false
+  },
+  {
+    "id": "matrix-scalar",
+    "scope": "S2a",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "complete_parameter": {
+      "name": "p",
+      "in": "path",
+      "required": true,
+      "schema": {},
+      "style": "matrix",
+      "explode": true
+    },
+    "input": "x",
+    "expected_fragment_utf8": ";p=x",
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "parameter": {
+      "name": "p",
+      "in": "path",
+      "required": true,
+      "schema": {},
+      "style": "matrix",
+      "explode": true
+    },
+    "input_json": "\"x\"",
+    "exact_only": false
+  },
+  {
+    "id": "matrix-structural-vs-data",
+    "scope": "S2a",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "complete_parameter": {
+      "name": "p",
+      "in": "path",
+      "required": true,
+      "schema": {},
+      "style": "matrix",
+      "explode": false
+    },
+    "input": [
+      "a,b",
+      "c=d;z"
+    ],
+    "expected_fragment_utf8": ";p=a%2Cb,c%3Dd%3Bz",
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "parameter": {
+      "name": "p",
+      "in": "path",
+      "required": true,
+      "schema": {},
+      "style": "matrix",
+      "explode": false
+    },
+    "input_json": "[\"a,b\",\"c=d;z\"]",
+    "exact_only": false
+  },
+  {
+    "id": "matrix-reserved-component-safety-32",
+    "scope": "S2a",
+    "families": [
+      "3.2"
+    ],
+    "complete_parameter": {
+      "name": "p",
+      "in": "path",
+      "required": true,
+      "schema": {},
+      "style": "matrix",
+      "allowReserved": true
+    },
+    "input": "a;b=c/é:!",
+    "expected_fragment_utf8": ";p=a%3Bb%3Dc%2F%C3%A9:!",
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "parameter": {
+      "name": "p",
+      "in": "path",
+      "required": true,
+      "schema": {},
+      "style": "matrix",
+      "allowReserved": true
+    },
+    "input_json": "\"a;b=c/é:!\"",
+    "exact_only": false
+  },
+  {
+    "id": "matrix-reserved-inapplicable-older",
+    "scope": "S2a",
+    "families": [
+      "3.0",
+      "3.1"
+    ],
+    "complete_parameter": {
+      "name": "p",
+      "in": "path",
+      "required": true,
+      "schema": {},
+      "style": "matrix",
+      "allowReserved": true
+    },
+    "input": "a;b=c/é:!",
+    "expected_fragment_utf8": ";p=a%3Bb%3Dc%2F%C3%A9%3A%21",
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "parameter": {
+      "name": "p",
+      "in": "path",
+      "required": true,
+      "schema": {},
+      "style": "matrix",
+      "allowReserved": true
+    },
+    "input_json": "\"a;b=c/é:!\"",
+    "exact_only": false
+  },
+  {
+    "id": "matrix-triplets-32",
+    "scope": "S2a",
+    "families": [
+      "3.2"
+    ],
+    "complete_parameter": {
+      "name": "p",
+      "in": "path",
+      "required": true,
+      "schema": {},
+      "style": "matrix",
+      "allowReserved": true
+    },
+    "input": "a%3bb%3Dc",
+    "expected_fragment_utf8": ";p=a%3bb%3Dc",
+    "note": "Preserve exact hex case; do not double-decode. Literal structural ;/= differ from data triplets.",
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "parameter": {
+      "name": "p",
+      "in": "path",
+      "required": true,
+      "schema": {},
+      "style": "matrix",
+      "allowReserved": true
+    },
+    "input_json": "\"a%3bb%3Dc\"",
+    "exact_only": false
+  },
+  {
+    "id": "matrix-name-no-triplet-privileges",
+    "scope": "S2a",
+    "families": [
+      "3.2"
+    ],
+    "complete_parameter": {
+      "name": "p",
+      "in": "path",
+      "required": true,
+      "schema": {},
+      "style": "matrix",
+      "explode": true,
+      "allowReserved": true
+    },
+    "input": {
+      "x=y": "a;b",
+      "%74oken": "z"
+    },
+    "expected_fragment_utf8": ";x%3Dy=a%3Bb;%2574oken=z",
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "parameter": {
+      "name": "p",
+      "in": "path",
+      "required": true,
+      "schema": {},
+      "style": "matrix",
+      "explode": true,
+      "allowReserved": true
+    },
+    "input_json": "{\"x=y\":\"a;b\",\"%74oken\":\"z\"}",
+    "exact_only": false
+  },
+  {
+    "id": "label-empty-string",
+    "scope": "S2a",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "complete_parameter": {
+      "name": "p",
+      "in": "path",
+      "required": true,
+      "schema": {},
+      "style": "label"
+    },
+    "input": "",
+    "expected_fragment_utf8": ".",
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "parameter": {
+      "name": "p",
+      "in": "path",
+      "required": true,
+      "schema": {},
+      "style": "label"
+    },
+    "input_json": "\"\"",
+    "exact_only": false
+  },
+  {
+    "id": "label-scalar-dot",
+    "scope": "S2a",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "complete_parameter": {
+      "name": "p",
+      "in": "path",
+      "required": true,
+      "schema": {},
+      "style": "label",
+      "explode": true
+    },
+    "input": "v1.2",
+    "expected_fragment_utf8": ".v1.2",
+    "note": "A scalar has no exploded collection member boundary; do not blanket-ban dots.",
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "parameter": {
+      "name": "p",
+      "in": "path",
+      "required": true,
+      "schema": {},
+      "style": "label",
+      "explode": true
+    },
+    "input_json": "\"v1.2\"",
+    "exact_only": false
+  },
+  {
+    "id": "label-object-joined",
+    "scope": "S2a",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "complete_parameter": {
+      "name": "p",
+      "in": "path",
+      "required": true,
+      "schema": {},
+      "style": "label",
+      "explode": false
+    },
+    "input": {
+      "x": 1,
+      "y": 2
+    },
+    "expected_fragment_utf8": ".x,1,y,2",
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "parameter": {
+      "name": "p",
+      "in": "path",
+      "required": true,
+      "schema": {},
+      "style": "label",
+      "explode": false
+    },
+    "input_json": "{\"x\":1,\"y\":2}",
+    "exact_only": false
+  },
+  {
+    "id": "label-dot-nonexploded-array",
+    "scope": "S2a",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "complete_parameter": {
+      "name": "p",
+      "in": "path",
+      "required": true,
+      "schema": {},
+      "style": "label",
+      "explode": false
+    },
+    "input": [
+      "a.b",
+      "c"
+    ],
+    "expected_fragment_utf8": ".a.b,c",
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "parameter": {
+      "name": "p",
+      "in": "path",
+      "required": true,
+      "schema": {},
+      "style": "label",
+      "explode": false
+    },
+    "input_json": "[\"a.b\",\"c\"]",
+    "exact_only": false
+  },
+  {
+    "id": "label-dot-member-key-ambiguous",
+    "scope": "S2a",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "complete_parameter": {
+      "name": "p",
+      "in": "path",
+      "required": true,
+      "schema": {},
+      "style": "label",
+      "explode": true
+    },
+    "input": {
+      "a.b": "c"
+    },
+    "expected_reason_contract": "AmbiguousStyleDelimiter",
+    "transport_attempts": 0,
+    "diagnostic_owner": "supplied Value",
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "parameter": {
+      "name": "p",
+      "in": "path",
+      "required": true,
+      "schema": {},
+      "style": "label",
+      "explode": true
+    },
+    "input_json": "{\"a.b\":\"c\"}",
+    "exact_only": false
+  },
+  {
+    "id": "label-triplet-dot-32",
+    "scope": "S2a",
+    "families": [
+      "3.2"
+    ],
+    "complete_parameter": {
+      "name": "p",
+      "in": "path",
+      "required": true,
+      "schema": {},
+      "style": "label",
+      "explode": true,
+      "allowReserved": true
+    },
+    "input": [
+      "a%2Eb",
+      "c%2ed"
+    ],
+    "expected_fragment_utf8": ".a%2Eb.c%2ed",
+    "note": "Delimiter . is literal. Encoded member dots remain distinguishable without a second convention.",
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "parameter": {
+      "name": "p",
+      "in": "path",
+      "required": true,
+      "schema": {},
+      "style": "label",
+      "explode": true,
+      "allowReserved": true
+    },
+    "input_json": "[\"a%2Eb\",\"c%2ed\"]",
+    "exact_only": false
+  },
+  {
+    "id": "label-triplet-dot-older",
+    "scope": "S2a",
+    "families": [
+      "3.0",
+      "3.1"
+    ],
+    "complete_parameter": {
+      "name": "p",
+      "in": "path",
+      "required": true,
+      "schema": {},
+      "style": "label",
+      "explode": true,
+      "allowReserved": true
+    },
+    "input": [
+      "a%2Eb",
+      "c"
+    ],
+    "expected_fragment_utf8": ".a%252Eb.c",
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "parameter": {
+      "name": "p",
+      "in": "path",
+      "required": true,
+      "schema": {},
+      "style": "label",
+      "explode": true,
+      "allowReserved": true
+    },
+    "input_json": "[\"a%2Eb\",\"c\"]",
+    "exact_only": false
+  },
+  {
+    "id": "pipe-object-joined",
+    "scope": "S2a",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "complete_parameter": {
+      "name": "p",
+      "in": "query",
+      "schema": {},
+      "style": "pipeDelimited",
+      "explode": false
+    },
+    "input": {
+      "x": 1,
+      "y": 2
+    },
+    "expected_fragment_utf8": "p=x%7C1%7Cy%7C2",
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "parameter": {
+      "name": "p",
+      "in": "query",
+      "schema": {},
+      "style": "pipeDelimited",
+      "explode": false
+    },
+    "input_json": "{\"x\":1,\"y\":2}",
+    "exact_only": false
+  },
+  {
+    "id": "uri-triplet-ambiguous-spaceDelimited-20",
+    "scope": "S2a",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "complete_parameter": {
+      "name": "p",
+      "in": "query",
+      "schema": {},
+      "style": "spaceDelimited",
+      "explode": false,
+      "allowReserved": true
+    },
+    "input": [
+      "a%20b",
+      "c"
+    ],
+    "expected_reason_contract": "AmbiguousStyleDelimiter",
+    "transport_attempts": 0,
+    "diagnostic_owner": "supplied Value",
+    "note": "After one URI decode, this data triplet equals the encoded structural delimiter; refuse under the approved interop profile.",
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "parameter": {
+      "name": "p",
+      "in": "query",
+      "schema": {},
+      "style": "spaceDelimited",
+      "explode": false,
+      "allowReserved": true
+    },
+    "input_json": "[\"a%20b\",\"c\"]",
+    "exact_only": false
+  },
+  {
+    "id": "uri-triplet-literal-spaceDelimited-20",
+    "scope": "S2a",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "complete_parameter": {
+      "name": "p",
+      "in": "query",
+      "schema": {},
+      "style": "spaceDelimited",
+      "explode": false,
+      "allowReserved": false
+    },
+    "input": [
+      "a%20b",
+      "c"
+    ],
+    "expected_fragment_utf8": "p=a%2520b%20c",
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "parameter": {
+      "name": "p",
+      "in": "query",
+      "schema": {},
+      "style": "spaceDelimited",
+      "explode": false,
+      "allowReserved": false
+    },
+    "input_json": "[\"a%20b\",\"c\"]",
+    "exact_only": false
+  },
+  {
+    "id": "uri-triplet-ambiguous-pipeDelimited-7C",
+    "scope": "S2a",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "complete_parameter": {
+      "name": "p",
+      "in": "query",
+      "schema": {},
+      "style": "pipeDelimited",
+      "explode": false,
+      "allowReserved": true
+    },
+    "input": [
+      "a%7Cb",
+      "c"
+    ],
+    "expected_reason_contract": "AmbiguousStyleDelimiter",
+    "transport_attempts": 0,
+    "diagnostic_owner": "supplied Value",
+    "note": "After one URI decode, this data triplet equals the encoded structural delimiter; refuse under the approved interop profile.",
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "parameter": {
+      "name": "p",
+      "in": "query",
+      "schema": {},
+      "style": "pipeDelimited",
+      "explode": false,
+      "allowReserved": true
+    },
+    "input_json": "[\"a%7Cb\",\"c\"]",
+    "exact_only": false
+  },
+  {
+    "id": "uri-triplet-literal-pipeDelimited-7C",
+    "scope": "S2a",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "complete_parameter": {
+      "name": "p",
+      "in": "query",
+      "schema": {},
+      "style": "pipeDelimited",
+      "explode": false,
+      "allowReserved": false
+    },
+    "input": [
+      "a%7Cb",
+      "c"
+    ],
+    "expected_fragment_utf8": "p=a%257Cb%7Cc",
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "parameter": {
+      "name": "p",
+      "in": "query",
+      "schema": {},
+      "style": "pipeDelimited",
+      "explode": false,
+      "allowReserved": false
+    },
+    "input_json": "[\"a%7Cb\",\"c\"]",
+    "exact_only": false
+  },
+  {
+    "id": "uri-triplet-ambiguous-pipeDelimited-7c",
+    "scope": "S2a",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "complete_parameter": {
+      "name": "p",
+      "in": "query",
+      "schema": {},
+      "style": "pipeDelimited",
+      "explode": false,
+      "allowReserved": true
+    },
+    "input": [
+      "a%7cb",
+      "c"
+    ],
+    "expected_reason_contract": "AmbiguousStyleDelimiter",
+    "transport_attempts": 0,
+    "diagnostic_owner": "supplied Value",
+    "note": "After one URI decode, this data triplet equals the encoded structural delimiter; refuse under the approved interop profile.",
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "parameter": {
+      "name": "p",
+      "in": "query",
+      "schema": {},
+      "style": "pipeDelimited",
+      "explode": false,
+      "allowReserved": true
+    },
+    "input_json": "[\"a%7cb\",\"c\"]",
+    "exact_only": false
+  },
+  {
+    "id": "uri-triplet-literal-pipeDelimited-7c",
+    "scope": "S2a",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "complete_parameter": {
+      "name": "p",
+      "in": "query",
+      "schema": {},
+      "style": "pipeDelimited",
+      "explode": false,
+      "allowReserved": false
+    },
+    "input": [
+      "a%7cb",
+      "c"
+    ],
+    "expected_fragment_utf8": "p=a%257cb%7Cc",
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "parameter": {
+      "name": "p",
+      "in": "query",
+      "schema": {},
+      "style": "pipeDelimited",
+      "explode": false,
+      "allowReserved": false
+    },
+    "input_json": "[\"a%7cb\",\"c\"]",
+    "exact_only": false
+  },
+  {
+    "id": "pipe-double-encoded-triplet",
+    "scope": "S2a",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "complete_parameter": {
+      "name": "p",
+      "in": "query",
+      "schema": {},
+      "style": "pipeDelimited",
+      "explode": false,
+      "allowReserved": true
+    },
+    "input": [
+      "a%257cb",
+      "c"
+    ],
+    "expected_fragment_utf8": "p=a%257cb%7Cc",
+    "note": "Only %25 is interpreted as an encoded triplet; do not recursively recognize the remaining 7c as a pipe.",
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "parameter": {
+      "name": "p",
+      "in": "query",
+      "schema": {},
+      "style": "pipeDelimited",
+      "explode": false,
+      "allowReserved": true
+    },
+    "input_json": "[\"a%257cb\",\"c\"]",
+    "exact_only": false
+  },
+  {
+    "id": "pipe-default-explode-false",
+    "scope": "S2a",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "complete_parameter": {
+      "name": "p",
+      "in": "query",
+      "schema": {},
+      "style": "pipeDelimited"
+    },
+    "input": [
+      "a",
+      "b"
+    ],
+    "expected_fragment_utf8": "p=a%7Cb",
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "parameter": {
+      "name": "p",
+      "in": "query",
+      "schema": {},
+      "style": "pipeDelimited"
+    },
+    "input_json": "[\"a\",\"b\"]",
+    "exact_only": false
+  },
+  {
+    "id": "pipe-caller-scalar-not-declaration-invalid",
+    "scope": "S2a",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "complete_parameter": {
+      "name": "p",
+      "in": "query",
+      "schema": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "style": "pipeDelimited",
+      "explode": false
+    },
+    "input": "x",
+    "expected_reason_contract": "UnsupportedStyleValue",
+    "transport_attempts": 0,
+    "diagnostic_owner": "supplied Value",
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "parameter": {
+      "name": "p",
+      "in": "query",
+      "schema": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "style": "pipeDelimited",
+      "explode": false
+    },
+    "input_json": "\"x\"",
+    "exact_only": false
+  },
+  {
+    "id": "matrix-caller-nested-member",
+    "scope": "S2a",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "complete_parameter": {
+      "name": "p",
+      "in": "path",
+      "required": true,
+      "schema": {
+        "type": "object"
+      },
+      "style": "matrix",
+      "explode": true
+    },
+    "input": {
+      "x": [
+        "y"
+      ]
+    },
+    "expected_reason_contract": "UnsupportedStyleValue",
+    "transport_attempts": 0,
+    "diagnostic_owner": "supplied Value",
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "parameter": {
+      "name": "p",
+      "in": "path",
+      "required": true,
+      "schema": {
+        "type": "object"
+      },
+      "style": "matrix",
+      "explode": true
+    },
+    "input_json": "{\"x\":[\"y\"]}",
+    "exact_only": false
+  },
+  {
+    "id": "query-empty-string-default-flag",
+    "scope": "S2a",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "complete_parameter": {
+      "name": "p",
+      "in": "query",
+      "schema": {},
+      "style": "form"
+    },
+    "input": "",
+    "expected_fragment_utf8": "p=",
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "parameter": {
+      "name": "p",
+      "in": "query",
+      "schema": {},
+      "style": "form"
+    },
+    "input_json": "\"\"",
+    "exact_only": false
+  },
+  {
+    "id": "content-json-zero-media",
+    "scope": "S2a",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "complete_parameter": {
+      "name": "p",
+      "in": "query",
+      "content": {}
+    },
+    "input": "x",
+    "expected_reason_contract": "InvalidParameterContentCardinality",
+    "transport_attempts": 0,
+    "diagnostic_owner": "authored parameter",
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "parameter": {
+      "name": "p",
+      "in": "query",
+      "content": {}
+    },
+    "input_json": "\"x\"",
+    "exact_only": false
+  },
+  {
+    "id": "content-json-schema-independent",
+    "scope": "S2a",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "complete_parameter": {
+      "name": "p",
+      "in": "query",
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "https://example.invalid/not-loaded"
+          }
+        }
+      }
+    },
+    "input": {
+      "exact_json": "{\"n\":1e9999,\"z\":-0}"
+    },
+    "expected_fragment_utf8": "p=%7B%22n%22%3A1e9999%2C%22z%22%3A-0%7D",
+    "note": "Schema is not needed to represent exact JSON; do not validate/round/coerce or fetch it.",
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "parameter": {
+      "name": "p",
+      "in": "query",
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "https://example.invalid/not-loaded"
+          }
+        }
+      }
+    },
+    "input_json": "{\"n\":1e9999,\"z\":-0}",
+    "exact_only": true
+  },
+  {
+    "id": "content-text-query-percent-set",
+    "scope": "S2a",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "complete_parameter": {
+      "name": "p",
+      "in": "query",
+      "content": {
+        "text/plain": {}
+      }
+    },
+    "input": "a +~*%2Fé",
+    "expected_fragment_utf8": "p=a+%2B%7E*%252F%C3%A9",
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "parameter": {
+      "name": "p",
+      "in": "query",
+      "content": {
+        "text/plain": {}
+      }
+    },
+    "input_json": "\"a +~*%2Fé\"",
+    "exact_only": false
+  },
+  {
+    "id": "content-text-path-percent-set",
+    "scope": "S2a",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "complete_parameter": {
+      "name": "p",
+      "in": "path",
+      "required": true,
+      "content": {
+        "text/plain": {}
+      }
+    },
+    "input": "a +~*%2Fé",
+    "expected_fragment_utf8": "a%20%2B~%2A%252F%C3%A9",
+    "note": "No name= or style prefix. Component safety protects slash; percent text is literal data.",
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "parameter": {
+      "name": "p",
+      "in": "path",
+      "required": true,
+      "content": {
+        "text/plain": {}
+      }
+    },
+    "input_json": "\"a +~*%2Fé\"",
+    "exact_only": false
+  },
+  {
+    "id": "content-text-header-literal",
+    "scope": "S2a",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "complete_parameter": {
+      "name": "X-Data",
+      "in": "header",
+      "content": {
+        "text/plain": {}
+      }
+    },
+    "input": "a +~*%2F",
+    "expected_fragment_utf8": "a +~*%2F",
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "parameter": {
+      "name": "X-Data",
+      "in": "header",
+      "content": {
+        "text/plain": {}
+      }
+    },
+    "input_json": "\"a +~*%2F\"",
+    "exact_only": false
+  },
+  {
+    "id": "content-text-header-crlf",
+    "scope": "S2a",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "complete_parameter": {
+      "name": "X-Data",
+      "in": "header",
+      "content": {
+        "text/plain": {}
+      }
+    },
+    "input": "a\r\nAuthorization: secret",
+    "expected_reason_contract": "InvalidHeaderValue",
+    "transport_attempts": 0,
+    "diagnostic_owner": "supplied Value",
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "parameter": {
+      "name": "X-Data",
+      "in": "header",
+      "content": {
+        "text/plain": {}
+      }
+    },
+    "input_json": "\"a\\r\\nAuthorization: secret\"",
+    "exact_only": false
+  },
+  {
+    "id": "content-text-object-no-coercion",
+    "scope": "S2a",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "complete_parameter": {
+      "name": "p",
+      "in": "query",
+      "content": {
+        "text/plain": {}
+      }
+    },
+    "input": {
+      "x": 1
+    },
+    "expected_reason_contract": "UnsupportedStyleValue",
+    "transport_attempts": 0,
+    "diagnostic_owner": "supplied Value",
+    "note": "Conceptual caller-shape refusal; choose existing content-value reason if separate from style reasons. No new public diagnostic family inferred.",
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "parameter": {
+      "name": "p",
+      "in": "query",
+      "content": {
+        "text/plain": {}
+      }
+    },
+    "input_json": "{\"x\":1}",
+    "exact_only": false
+  },
+  {
+    "id": "content-json-null",
+    "scope": "S2a",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "complete_parameter": {
+      "name": "p",
+      "in": "query",
+      "content": {
+        "application/json": {}
+      }
+    },
+    "input": {
+      "exact_json": "null"
+    },
+    "expected_fragment_utf8": "p=null",
+    "note": "Exact JSON content null is independent from style-null policy.",
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "parameter": {
+      "name": "p",
+      "in": "query",
+      "content": {
+        "application/json": {}
+      }
+    },
+    "input_json": "null",
+    "exact_only": true
+  },
+  {
+    "id": "content-json-percent-not-preencoded",
+    "scope": "S2a",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "complete_parameter": {
+      "name": "p",
+      "in": "query",
+      "content": {
+        "application/json": {}
+      }
+    },
+    "input": {
+      "exact_json": "\"%2F+\""
+    },
+    "expected_fragment_utf8": "p=%22%252F%2B%22",
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "parameter": {
+      "name": "p",
+      "in": "query",
+      "content": {
+        "application/json": {}
+      }
+    },
+    "input_json": "\"%2F+\"",
+    "exact_only": true
+  },
+  {
+    "id": "content-name-credential-collision",
+    "scope": "S2a",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "complete_parameter": {
+      "name": "token",
+      "in": "query",
+      "content": {
+        "text/plain": {}
+      }
+    },
+    "input": "x",
+    "expected_reason_contract": "FinalCredentialNameCollision",
+    "transport_attempts": 0,
+    "diagnostic_owner": "authored parameter",
+    "note": "Configure query API-key credential name token. Refuse before adding credential; Display/Debug reveal neither value nor credential.",
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "parameter": {
+      "name": "token",
+      "in": "query",
+      "content": {
+        "text/plain": {}
+      }
+    },
+    "input_json": "\"x\"",
+    "exact_only": false
+  },
+  {
+    "id": "content-value-cannot-create-credential",
+    "scope": "S2a",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "complete_parameter": {
+      "name": "p",
+      "in": "query",
+      "content": {
+        "text/plain": {}
+      }
+    },
+    "input": "x&token=bad%26",
+    "expected_fragment_utf8": "p=x%26token%3Dbad%2526",
+    "note": "Configure a separate query token credential; this fragment remains exactly one caller p field.",
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "parameter": {
+      "name": "p",
+      "in": "query",
+      "content": {
+        "text/plain": {}
+      }
+    },
+    "input_json": "\"x&token=bad%26\"",
+    "exact_only": false
+  },
+  {
+    "id": "content-name-no-value-privilege",
+    "scope": "S2a",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "complete_parameter": {
+      "name": "%74oken",
+      "in": "query",
+      "content": {
+        "text/plain": {}
+      }
+    },
+    "input": "x",
+    "expected_fragment_utf8": "%2574oken=x",
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "parameter": {
+      "name": "%74oken",
+      "in": "query",
+      "content": {
+        "text/plain": {}
+      }
+    },
+    "input_json": "\"x\"",
+    "exact_only": false
+  },
+  {
+    "id": "url-shared-spaceDelimited",
+    "scope": "S2a",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "complete_request_body": {
+      "content": {
+        "application/x-www-form-urlencoded": {
+          "schema": {
+            "type": "object",
+            "properties": {
+              "p": {
+                "type": "object"
+              }
+            }
+          },
+          "encoding": {
+            "p": {
+              "style": "spaceDelimited",
+              "explode": false
+            }
+          }
+        }
+      }
+    },
+    "input_field": "p",
+    "input": {
+      "x": "a",
+      "y": "b"
+    },
+    "expected_body_utf8": "p=x%20a%20y%20b",
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "input_json": "{\"x\":\"a\",\"y\":\"b\"}",
+    "exact_only": false
+  },
+  {
+    "id": "multipart-shared-spaceDelimited",
+    "scope": "S2a",
+    "families": [
+      "3.1",
+      "3.2"
+    ],
+    "complete_request_body": {
+      "content": {
+        "multipart/form-data": {
+          "schema": {
+            "type": "object",
+            "properties": {
+              "p": {
+                "type": "object"
+              }
+            }
+          },
+          "encoding": {
+            "p": {
+              "style": "spaceDelimited",
+              "explode": false,
+              "allowReserved": true
+            }
+          }
+        }
+      }
+    },
+    "input_field": "p",
+    "input": {
+      "x": "a",
+      "y": "b"
+    },
+    "expected_parts": [
+      {
+        "name": "p",
+        "body_utf8": "x a y b",
+        "content_type": "text/plain"
+      }
+    ],
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "input_json": "{\"x\":\"a\",\"y\":\"b\"}",
+    "exact_only": false
+  },
+  {
+    "id": "multipart-triplet-text-spaceDelimited",
+    "scope": "S2a",
+    "families": [
+      "3.1",
+      "3.2"
+    ],
+    "complete_request_body": {
+      "content": {
+        "multipart/form-data": {
+          "schema": {
+            "type": "object",
+            "properties": {
+              "p": {
+                "type": "object"
+              }
+            }
+          },
+          "encoding": {
+            "p": {
+              "style": "spaceDelimited",
+              "explode": false,
+              "allowReserved": true
+            }
+          }
+        }
+      }
+    },
+    "input_field": "p",
+    "input": {
+      "x": "a%20",
+      "y": "b"
+    },
+    "expected_parts": [
+      {
+        "name": "p",
+        "body_utf8": "x a%20 y b",
+        "content_type": "text/plain"
+      }
+    ],
+    "note": "Multipart data is literal; a percent triplet is not decoded and does not equal a literal style delimiter.",
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "input_json": "{\"x\":\"a%20\",\"y\":\"b\"}",
+    "exact_only": false
+  },
+  {
+    "id": "multipart-raw-delimiter-spaceDelimited",
+    "scope": "S2a",
+    "families": [
+      "3.1",
+      "3.2"
+    ],
+    "complete_request_body": {
+      "content": {
+        "multipart/form-data": {
+          "schema": {
+            "type": "object",
+            "properties": {
+              "p": {
+                "type": "object"
+              }
+            }
+          },
+          "encoding": {
+            "p": {
+              "style": "spaceDelimited",
+              "explode": false
+            }
+          }
+        }
+      }
+    },
+    "input_field": "p",
+    "input": {
+      "x": "a b"
+    },
+    "expected_reason_contract": "AmbiguousStyleDelimiter",
+    "transport_attempts": 0,
+    "diagnostic_owner": "supplied member Value",
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "input_json": "{\"x\":\"a b\"}",
+    "exact_only": false
+  },
+  {
+    "id": "multipart-30-style-ignored-spaceDelimited",
+    "scope": "S2a",
+    "families": [
+      "3.0"
+    ],
+    "complete_request_body": {
+      "content": {
+        "multipart/form-data": {
+          "schema": {
+            "type": "object",
+            "properties": {
+              "p": {
+                "type": "object"
+              }
+            }
+          },
+          "encoding": {
+            "p": {
+              "style": "spaceDelimited",
+              "explode": true,
+              "allowReserved": true
+            }
+          }
+        }
+      }
+    },
+    "input_field": "p",
+    "input": {
+      "exact_json": "{\"x\":\"a b\"}"
+    },
+    "expected_parts": [
+      {
+        "name": "p",
+        "body_utf8": "{\"x\":\"a b\"}",
+        "content_type": "application/json"
+      }
+    ],
+    "note": "Even explode=true/allowReserved fields are ignored for 3.0 multipart. No ambiguity-style refusal.",
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "input_json": "{\"x\":\"a b\"}",
+    "exact_only": true
+  },
+  {
+    "id": "url-32-item-object-spaceDelimited",
+    "scope": "S2a",
+    "families": [
+      "3.2"
+    ],
+    "complete_request_body": {
+      "content": {
+        "application/x-www-form-urlencoded": {
+          "schema": {
+            "type": "object",
+            "properties": {
+              "p": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "encoding": {
+            "p": {
+              "style": "spaceDelimited",
+              "explode": false
+            }
+          }
+        }
+      }
+    },
+    "input_field": "p",
+    "input": [
+      {
+        "x": "a"
+      },
+      {
+        "y": "b"
+      }
+    ],
+    "expected_body_utf8": "p=x%20a&p=y%20b",
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "input_json": "[{\"x\":\"a\"},{\"y\":\"b\"}]",
+    "exact_only": false
+  },
+  {
+    "id": "multipart-32-item-object-spaceDelimited",
+    "scope": "S2a",
+    "families": [
+      "3.2"
+    ],
+    "complete_request_body": {
+      "content": {
+        "multipart/form-data": {
+          "schema": {
+            "type": "object",
+            "properties": {
+              "p": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "encoding": {
+            "p": {
+              "style": "spaceDelimited",
+              "explode": false
+            }
+          }
+        }
+      }
+    },
+    "input_field": "p",
+    "input": [
+      {
+        "x": "a"
+      },
+      {
+        "y": "b"
+      }
+    ],
+    "expected_parts": [
+      {
+        "name": "p",
+        "body_utf8": "x a",
+        "content_type": "text/plain"
+      },
+      {
+        "name": "p",
+        "body_utf8": "y b",
+        "content_type": "text/plain"
+      }
+    ],
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "input_json": "[{\"x\":\"a\"},{\"y\":\"b\"}]",
+    "exact_only": false
+  },
+  {
+    "id": "url-32-scalar-item-unsupported-spaceDelimited",
+    "scope": "S2a",
+    "families": [
+      "3.2"
+    ],
+    "complete_request_body": {
+      "content": {
+        "application/x-www-form-urlencoded": {
+          "schema": {
+            "type": "object",
+            "properties": {
+              "p": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "encoding": {
+            "p": {
+              "style": "spaceDelimited",
+              "explode": false
+            }
+          }
+        }
+      }
+    },
+    "input_field": "p",
+    "input": [
+      "a",
+      "b"
+    ],
+    "expected_reason_contract": "UnsupportedStyleValue",
+    "transport_attempts": 0,
+    "note": "Do not collapse outer array with explode=false. Unsupported actual item shape is caller-located.",
+    "diagnostic_owner": "supplied array item Value",
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "input_json": "[\"a\",\"b\"]",
+    "exact_only": false
+  },
+  {
+    "id": "url-shared-pipeDelimited",
+    "scope": "S2a",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "complete_request_body": {
+      "content": {
+        "application/x-www-form-urlencoded": {
+          "schema": {
+            "type": "object",
+            "properties": {
+              "p": {
+                "type": "object"
+              }
+            }
+          },
+          "encoding": {
+            "p": {
+              "style": "pipeDelimited",
+              "explode": false
+            }
+          }
+        }
+      }
+    },
+    "input_field": "p",
+    "input": {
+      "x": "a",
+      "y": "b"
+    },
+    "expected_body_utf8": "p=x%7Ca%7Cy%7Cb",
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "input_json": "{\"x\":\"a\",\"y\":\"b\"}",
+    "exact_only": false
+  },
+  {
+    "id": "multipart-shared-pipeDelimited",
+    "scope": "S2a",
+    "families": [
+      "3.1",
+      "3.2"
+    ],
+    "complete_request_body": {
+      "content": {
+        "multipart/form-data": {
+          "schema": {
+            "type": "object",
+            "properties": {
+              "p": {
+                "type": "object"
+              }
+            }
+          },
+          "encoding": {
+            "p": {
+              "style": "pipeDelimited",
+              "explode": false,
+              "allowReserved": true
+            }
+          }
+        }
+      }
+    },
+    "input_field": "p",
+    "input": {
+      "x": "a",
+      "y": "b"
+    },
+    "expected_parts": [
+      {
+        "name": "p",
+        "body_utf8": "x|a|y|b",
+        "content_type": "text/plain"
+      }
+    ],
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "input_json": "{\"x\":\"a\",\"y\":\"b\"}",
+    "exact_only": false
+  },
+  {
+    "id": "multipart-triplet-text-pipeDelimited",
+    "scope": "S2a",
+    "families": [
+      "3.1",
+      "3.2"
+    ],
+    "complete_request_body": {
+      "content": {
+        "multipart/form-data": {
+          "schema": {
+            "type": "object",
+            "properties": {
+              "p": {
+                "type": "object"
+              }
+            }
+          },
+          "encoding": {
+            "p": {
+              "style": "pipeDelimited",
+              "explode": false,
+              "allowReserved": true
+            }
+          }
+        }
+      }
+    },
+    "input_field": "p",
+    "input": {
+      "x": "a%7c",
+      "y": "b"
+    },
+    "expected_parts": [
+      {
+        "name": "p",
+        "body_utf8": "x|a%7c|y|b",
+        "content_type": "text/plain"
+      }
+    ],
+    "note": "Multipart data is literal; a percent triplet is not decoded and does not equal a literal style delimiter.",
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "input_json": "{\"x\":\"a%7c\",\"y\":\"b\"}",
+    "exact_only": false
+  },
+  {
+    "id": "multipart-raw-delimiter-pipeDelimited",
+    "scope": "S2a",
+    "families": [
+      "3.1",
+      "3.2"
+    ],
+    "complete_request_body": {
+      "content": {
+        "multipart/form-data": {
+          "schema": {
+            "type": "object",
+            "properties": {
+              "p": {
+                "type": "object"
+              }
+            }
+          },
+          "encoding": {
+            "p": {
+              "style": "pipeDelimited",
+              "explode": false
+            }
+          }
+        }
+      }
+    },
+    "input_field": "p",
+    "input": {
+      "x": "a|b"
+    },
+    "expected_reason_contract": "AmbiguousStyleDelimiter",
+    "transport_attempts": 0,
+    "diagnostic_owner": "supplied member Value",
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "input_json": "{\"x\":\"a|b\"}",
+    "exact_only": false
+  },
+  {
+    "id": "multipart-30-style-ignored-pipeDelimited",
+    "scope": "S2a",
+    "families": [
+      "3.0"
+    ],
+    "complete_request_body": {
+      "content": {
+        "multipart/form-data": {
+          "schema": {
+            "type": "object",
+            "properties": {
+              "p": {
+                "type": "object"
+              }
+            }
+          },
+          "encoding": {
+            "p": {
+              "style": "pipeDelimited",
+              "explode": true,
+              "allowReserved": true
+            }
+          }
+        }
+      }
+    },
+    "input_field": "p",
+    "input": {
+      "exact_json": "{\"x\":\"a|b\"}"
+    },
+    "expected_parts": [
+      {
+        "name": "p",
+        "body_utf8": "{\"x\":\"a|b\"}",
+        "content_type": "application/json"
+      }
+    ],
+    "note": "Even explode=true/allowReserved fields are ignored for 3.0 multipart. No ambiguity-style refusal.",
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "input_json": "{\"x\":\"a|b\"}",
+    "exact_only": true
+  },
+  {
+    "id": "url-32-item-object-pipeDelimited",
+    "scope": "S2a",
+    "families": [
+      "3.2"
+    ],
+    "complete_request_body": {
+      "content": {
+        "application/x-www-form-urlencoded": {
+          "schema": {
+            "type": "object",
+            "properties": {
+              "p": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "encoding": {
+            "p": {
+              "style": "pipeDelimited",
+              "explode": false
+            }
+          }
+        }
+      }
+    },
+    "input_field": "p",
+    "input": [
+      {
+        "x": "a"
+      },
+      {
+        "y": "b"
+      }
+    ],
+    "expected_body_utf8": "p=x%7Ca&p=y%7Cb",
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "input_json": "[{\"x\":\"a\"},{\"y\":\"b\"}]",
+    "exact_only": false
+  },
+  {
+    "id": "multipart-32-item-object-pipeDelimited",
+    "scope": "S2a",
+    "families": [
+      "3.2"
+    ],
+    "complete_request_body": {
+      "content": {
+        "multipart/form-data": {
+          "schema": {
+            "type": "object",
+            "properties": {
+              "p": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "encoding": {
+            "p": {
+              "style": "pipeDelimited",
+              "explode": false
+            }
+          }
+        }
+      }
+    },
+    "input_field": "p",
+    "input": [
+      {
+        "x": "a"
+      },
+      {
+        "y": "b"
+      }
+    ],
+    "expected_parts": [
+      {
+        "name": "p",
+        "body_utf8": "x|a",
+        "content_type": "text/plain"
+      },
+      {
+        "name": "p",
+        "body_utf8": "y|b",
+        "content_type": "text/plain"
+      }
+    ],
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "input_json": "[{\"x\":\"a\"},{\"y\":\"b\"}]",
+    "exact_only": false
+  },
+  {
+    "id": "url-32-scalar-item-unsupported-pipeDelimited",
+    "scope": "S2a",
+    "families": [
+      "3.2"
+    ],
+    "complete_request_body": {
+      "content": {
+        "application/x-www-form-urlencoded": {
+          "schema": {
+            "type": "object",
+            "properties": {
+              "p": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "encoding": {
+            "p": {
+              "style": "pipeDelimited",
+              "explode": false
+            }
+          }
+        }
+      }
+    },
+    "input_field": "p",
+    "input": [
+      "a",
+      "b"
+    ],
+    "expected_reason_contract": "UnsupportedStyleValue",
+    "transport_attempts": 0,
+    "note": "Do not collapse outer array with explode=false. Unsupported actual item shape is caller-located.",
+    "diagnostic_owner": "supplied array item Value",
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "input_json": "[\"a\",\"b\"]",
+    "exact_only": false
+  },
+  {
+    "id": "url-31-array-pipe-joined",
+    "scope": "S2a",
+    "families": [
+      "3.0",
+      "3.1"
+    ],
+    "complete_request_body": {
+      "content": {
+        "application/x-www-form-urlencoded": {
+          "schema": {
+            "type": "object",
+            "properties": {
+              "p": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "encoding": {
+            "p": {
+              "style": "pipeDelimited",
+              "explode": false
+            }
+          }
+        }
+      }
+    },
+    "input_field": "p",
+    "input": [
+      "a",
+      "b"
+    ],
+    "expected_body_utf8": "p=a%7Cb",
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "input_json": "[\"a\",\"b\"]",
+    "exact_only": false
+  },
+  {
+    "id": "url-explicit-flag-defaults-form",
+    "scope": "S2a",
+    "families": [
+      "3.0",
+      "3.1",
+      "3.2"
+    ],
+    "complete_request_body": {
+      "content": {
+        "application/x-www-form-urlencoded": {
+          "schema": {
+            "type": "object",
+            "properties": {
+              "p": {
+                "type": "object"
+              }
+            }
+          },
+          "encoding": {
+            "p": {
+              "allowReserved": false,
+              "contentType": "application/json"
+            }
+          }
+        }
+      }
+    },
+    "input_field": "p",
+    "input": {
+      "x": "a",
+      "y": "b"
+    },
+    "expected_body_utf8": "x=a&y=b",
+    "note": "Style omitted with an explicit style-related flag selects form/default explode=true; contentType is ignored.",
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "input_json": "{\"x\":\"a\",\"y\":\"b\"}",
+    "exact_only": false
+  },
+  {
+    "id": "multipart-explicit-flag-defaults-form",
+    "scope": "S2a",
+    "families": [
+      "3.1",
+      "3.2"
+    ],
+    "complete_request_body": {
+      "content": {
+        "multipart/form-data": {
+          "schema": {
+            "type": "object",
+            "properties": {
+              "p": {
+                "type": "object"
+              }
+            }
+          },
+          "encoding": {
+            "p": {
+              "allowReserved": false,
+              "contentType": "application/json"
+            }
+          }
+        }
+      }
+    },
+    "input_field": "p",
+    "input": {
+      "x": "a",
+      "y": "b"
+    },
+    "expected_parts": [
+      {
+        "name": "x",
+        "body_utf8": "a",
+        "content_type": "text/plain"
+      },
+      {
+        "name": "y",
+        "body_utf8": "b",
+        "content_type": "text/plain"
+      }
+    ],
+    "note": "Emitted names x,y replace p; contentType is ignored.",
+    "origin": "serialization-s2-review/ADDITIVE-VECTORS.json",
+    "origin_sha256": "17d8e5be5edd9ef3f2695221041a84d4e5df341615dd2c596c3c9cef38bb7955",
+    "input_json": "{\"x\":\"a\",\"y\":\"b\"}",
+    "exact_only": false
+  }
+]

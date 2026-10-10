@@ -116,6 +116,7 @@ pub struct Parameter {
     style: crate::style::Style,
     reserved: bool,
     unsupported: bool,
+    content: Option<crate::style::ContentCodec>,
     collection: Option<String>,
     schema_context: Option<SchemaDescription>,
 }
@@ -710,20 +711,7 @@ impl Operation {
             // other entries before inspecting their value; raw declarations retain them.
             .filter(|(key, _)| parse_media(key, true).is_ok())
             .map(|(key, value)| {
-                work.entry(&value)?;
-                if value.kind() != ValueKind::Object {
-                    return Err(value.error(Code::InvalidDeclaration));
-                }
-                // Media Type Object references were added in 3.2; resolve them intentionally.
-                let resolved = if value.get("$ref").is_some() {
-                    if self.store.edition != Ok(Edition::OpenApi32) {
-                        return Err(value.error(Code::InvalidDeclaration));
-                    }
-                    work.resolve(&self.store.graph, &value, ReferenceKind::MediaType)?
-                        .target
-                } else {
-                    value.clone()
-                };
+                let resolved = self.resolve_media(&value, work)?;
                 let fields = self.form_fields(key, &resolved, work)?;
                 Ok(MediaDescription {
                     fields,
@@ -743,6 +731,28 @@ impl Operation {
                 })
             })
             .collect()
+    }
+    // The protocol target is shared by body descriptions and content parameters.
+    // Resolving this object does not inspect or interpret its payload schema.
+    fn resolve_media(
+        &self,
+        value: &Value,
+        work: &mut DescriptorWork<'_>,
+    ) -> Result<Value, Diagnostic> {
+        work.entry(value)?;
+        if value.kind() != ValueKind::Object {
+            return Err(value.error(Code::InvalidDeclaration));
+        }
+        if value.get("$ref").is_some() {
+            if self.store.edition != Ok(Edition::OpenApi32) {
+                return Err(value.error(Code::InvalidDeclaration));
+            }
+            Ok(work
+                .resolve(&self.store.graph, value, ReferenceKind::MediaType)?
+                .target)
+        } else {
+            Ok(value.clone())
+        }
     }
     fn form_fields(
         &self,
@@ -1660,113 +1670,161 @@ impl Operation {
             {
                 return Err(p.error(Code::InvalidDeclaration));
             }
-            let (explode, style_kind, reserved, unsupported, collection, schema_context) =
-                if edition == Edition::Swagger20 {
-                    if location == ParameterLocation::Cookie {
+            let (
+                explode,
+                style_kind,
+                reserved,
+                unsupported,
+                collection,
+                schema_context,
+                content_codec,
+            ) = if edition == Edition::Swagger20 {
+                if location == ParameterLocation::Cookie {
+                    return Err(p.error(Code::InvalidDeclaration));
+                }
+                let ty = work.required(&p, "type")?;
+                if !matches!(
+                    ty.as_str(),
+                    "string" | "number" | "integer" | "boolean" | "array"
+                ) {
+                    return Err(p.error(Code::InvalidDeclaration));
+                }
+                let collection = if ty == "array" {
+                    if p.get("items").is_none() {
                         return Err(p.error(Code::InvalidDeclaration));
                     }
-                    let ty = work.required(&p, "type")?;
-                    if !matches!(
-                        ty.as_str(),
-                        "string" | "number" | "integer" | "boolean" | "array"
-                    ) {
-                        return Err(p.error(Code::InvalidDeclaration));
-                    }
-                    let collection = if ty == "array" {
-                        if p.get("items").is_none() {
-                            return Err(p.error(Code::InvalidDeclaration));
-                        }
-                        let format = work
-                            .optional(&p, "collectionFormat")?
-                            .map_or_else(|| work.text(&p, "csv"), Ok)?;
-                        if !matches!(format.as_str(), "csv" | "ssv" | "tsv" | "pipes" | "multi")
-                            || format == "multi" && location != ParameterLocation::Query
-                        {
-                            return Err(p.error(Code::InvalidDeclaration));
-                        }
-                        Some(format)
-                    } else {
-                        None
-                    };
-                    (
-                        false,
-                        crate::style::Style::Form,
-                        false,
-                        false,
-                        collection,
-                        Some(self.schema_description(p.clone(), work)?),
-                    )
-                } else {
-                    let style = work.optional(&p, "style")?.map_or_else(
-                        || {
-                            work.text(&p, {
-                                if matches!(
-                                    location,
-                                    ParameterLocation::Path | ParameterLocation::Header
-                                ) {
-                                    "simple"
-                                } else {
-                                    "form"
-                                }
-                            })
-                        },
-                        Ok,
-                    )?;
-                    let expected = if matches!(
-                        location,
-                        ParameterLocation::Path | ParameterLocation::Header
-                    ) {
-                        "simple"
-                    } else {
-                        "form"
-                    };
-                    if p.get("schema").is_none() == p.get("content").is_none() {
-                        return Err(p.error(Code::InvalidDeclaration));
-                    }
-                    let deep = style == "deepObject" && location == ParameterLocation::Query;
-                    let unsupported = (style != expected && !deep)
-                        || p.get("content").is_some()
-                        || location == ParameterLocation::Header
-                            && name.eq_ignore_ascii_case("cookie");
-                    let explode = bool_field(&p, "explode", style == "form")?;
-                    if edition == Edition::OpenApi32
-                        && location == ParameterLocation::Cookie
-                        && p.get("schema").is_some()
-                        && matches!(style.as_str(), "form" | "cookie")
-                        && let Some(authored) = p.get("explode")
-                        && authored.as_bool() == Some(false)
+                    let format = work
+                        .optional(&p, "collectionFormat")?
+                        .map_or_else(|| work.text(&p, "csv"), Ok)?;
+                    if !matches!(format.as_str(), "csv" | "ssv" | "tsv" | "pipes" | "multi")
+                        || format == "multi" && location != ParameterLocation::Query
                     {
-                        return Err(authored
-                            .error(Code::InvalidDeclaration)
-                            .reasoned(DiagnosticReason::UnsupportedStyleCombination));
+                        return Err(p.error(Code::InvalidDeclaration));
                     }
-                    (
-                        if deep && edition == Edition::OpenApi32 {
-                            true
-                        } else {
-                            explode
-                        },
-                        if deep {
-                            crate::style::Style::DeepObject
-                        } else if expected == "simple" {
-                            crate::style::Style::Simple
-                        } else {
-                            crate::style::Style::Form
-                        },
-                        bool_field(&p, "allowReserved", false)?
-                            && (location == ParameterLocation::Query
-                                || edition == Edition::OpenApi32
-                                    && matches!(
-                                        location,
-                                        ParameterLocation::Path | ParameterLocation::Cookie
-                                    )),
-                        unsupported,
-                        None,
-                        p.get("schema")
-                            .map(|v| self.schema_description(v, work))
-                            .transpose()?,
-                    )
+                    Some(format)
+                } else {
+                    None
                 };
+                (
+                    false,
+                    crate::style::Style::Form,
+                    false,
+                    false,
+                    collection,
+                    Some(self.schema_description(p.clone(), work)?),
+                    None,
+                )
+            } else if p.get("schema").is_none() && p.get("content").is_some() {
+                let content = p.get("content").unwrap();
+                if content.members().is_none_or(|members| members.len() != 1) {
+                    return Err(content.error(Code::InvalidDeclaration));
+                }
+                let (media_type, authored) = content.members().unwrap().next().unwrap();
+                let media_type = work.text(&authored, media_type)?;
+                let parsed = parse_media(&media_type, false)
+                    .map_err(|_| authored.error(Code::InvalidDeclaration))?;
+                self.resolve_media(&authored, work)?;
+                let charset_supported = parsed
+                    .parameters
+                    .get("charset")
+                    .is_none_or(|s| s.eq_ignore_ascii_case("utf-8"));
+                let codec = if !charset_supported {
+                    None
+                } else if parsed.json {
+                    Some(crate::style::ContentCodec::Json)
+                } else if parsed.essence == "text/plain" {
+                    Some(crate::style::ContentCodec::Text)
+                } else {
+                    None
+                };
+                (
+                    false,
+                    crate::style::Style::Simple,
+                    false,
+                    codec.is_none()
+                        || location == ParameterLocation::Cookie
+                        || location == ParameterLocation::Header
+                            && name.eq_ignore_ascii_case("cookie"),
+                    None,
+                    None, // schema() describes the parameter schema, never content schemas.
+                    codec,
+                )
+            } else {
+                let style = work.optional(&p, "style")?.map_or_else(
+                    || {
+                        work.text(&p, {
+                            if matches!(
+                                location,
+                                ParameterLocation::Path | ParameterLocation::Header
+                            ) {
+                                "simple"
+                            } else {
+                                "form"
+                            }
+                        })
+                    },
+                    Ok,
+                )?;
+                if p.get("schema").is_none() == p.get("content").is_none() {
+                    return Err(p.error(Code::InvalidDeclaration));
+                }
+                let style_kind = match (style.as_str(), location) {
+                    ("simple", ParameterLocation::Path | ParameterLocation::Header) => {
+                        Some(crate::style::Style::Simple)
+                    }
+                    ("form", ParameterLocation::Query | ParameterLocation::Cookie) => {
+                        Some(crate::style::Style::Form)
+                    }
+                    ("deepObject", ParameterLocation::Query) => {
+                        Some(crate::style::Style::DeepObject)
+                    }
+                    ("label", ParameterLocation::Path) => Some(crate::style::Style::Label),
+                    ("matrix", ParameterLocation::Path) => Some(crate::style::Style::Matrix),
+                    ("spaceDelimited", ParameterLocation::Query) => {
+                        Some(crate::style::Style::SpaceDelimited)
+                    }
+                    ("pipeDelimited", ParameterLocation::Query) => {
+                        Some(crate::style::Style::PipeDelimited)
+                    }
+                    _ => None,
+                };
+                let deep = style_kind == Some(crate::style::Style::DeepObject);
+                let unsupported = style_kind.is_none()
+                    || location == ParameterLocation::Header && name.eq_ignore_ascii_case("cookie");
+                let explode = bool_field(&p, "explode", style == "form")?;
+                if edition == Edition::OpenApi32
+                    && location == ParameterLocation::Cookie
+                    && p.get("schema").is_some()
+                    && matches!(style.as_str(), "form" | "cookie")
+                    && let Some(authored) = p.get("explode")
+                    && authored.as_bool() == Some(false)
+                {
+                    return Err(authored
+                        .error(Code::InvalidDeclaration)
+                        .reasoned(DiagnosticReason::UnsupportedStyleCombination));
+                }
+                (
+                    if deep && edition == Edition::OpenApi32 {
+                        true
+                    } else {
+                        explode
+                    },
+                    style_kind.unwrap_or(crate::style::Style::Form),
+                    bool_field(&p, "allowReserved", false)?
+                        && (location == ParameterLocation::Query
+                            || edition == Edition::OpenApi32
+                                && matches!(
+                                    location,
+                                    ParameterLocation::Path | ParameterLocation::Cookie
+                                )),
+                    unsupported,
+                    None,
+                    p.get("schema")
+                        .map(|v| self.schema_description(v, work))
+                        .transpose()?,
+                    None,
+                )
+            };
             work.entry(&p)?;
             let param = Parameter {
                 resolved,
@@ -1778,6 +1836,7 @@ impl Operation {
                 style: style_kind,
                 reserved,
                 unsupported,
+                content: content_codec,
                 collection,
                 schema_context,
             };
@@ -1912,7 +1971,10 @@ impl Operation {
             };
             used.insert(index);
             if p.unsupported {
-                return Err(p.node.error(Code::UnsupportedParameter));
+                return Err(p
+                    .node
+                    .error(Code::UnsupportedParameter)
+                    .reasoned(DiagnosticReason::UnsupportedStyleCombination));
             }
             let scalar = if self.store.edition == Ok(Edition::Swagger20) {
                 serialize_legacy(&value.value, p.location, p.collection.as_deref(), &p.name)
@@ -2442,6 +2504,29 @@ fn serialize(
     Ok(Serialized { value, pairs })
 }
 
+fn walk_parameter(
+    value: &Value,
+    parameter: &Parameter,
+    emit: impl FnMut(crate::style::Event<'_>) -> Result<(), Diagnostic>,
+) -> Result<(), Diagnostic> {
+    if let Some(codec) = parameter.content {
+        crate::style::walk_content(value, &parameter.name, codec, emit)
+    } else {
+        crate::style::walk(
+            value,
+            &parameter.name,
+            crate::style::Config {
+                style: parameter.style,
+                explode: parameter.explode,
+                reserved: parameter.reserved,
+            },
+            false,
+            &parameter.node,
+            emit,
+        )
+    }
+}
+
 fn serialize_style(
     value: &Value,
     parameter: &Parameter,
@@ -2471,145 +2556,155 @@ fn serialize_style(
     };
     let mode = if location == ParameterLocation::Header {
         Escape::Literal
+    } else if parameter.content.is_some() && location == ParameterLocation::Query {
+        Escape::FormContent
     } else {
         Escape::Style {
             reserved: cfg.reserved,
             path: location == ParameterLocation::Path,
             cookie: location == ParameterLocation::Cookie,
-            comma: matches!(value.kind(), ValueKind::Array | ValueKind::Object)
-                && (cfg.style == crate::style::Style::Simple || !cfg.explode),
+            protected: cfg.protected(value),
         }
     };
+    if let Some(codec) = parameter.content
+        && location == ParameterLocation::Header
+    {
+        let bytes = match codec {
+            crate::style::ContentCodec::Json => value.raw().as_bytes(),
+            crate::style::ContentCodec::Text => crate::style::bytes(value)?,
+        };
+        for chunk in bytes.chunks(4096) {
+            cancel.check()?;
+            if chunk.iter().any(|b| *b == 127 || *b < 32 && *b != b'\t') {
+                return Err(value.error(Code::InvalidHeader));
+            }
+        }
+        if bytes.first().is_some_and(|b| b" \t".contains(b))
+            || bytes.last().is_some_and(|b| b" \t".contains(b))
+        {
+            return Err(value.error(Code::InvalidHeader));
+        }
+    }
     // Count each output name/value before any encoded strings are allocated.
     // The count vector has one entry per emitted pair, bounded independently by nodes.
     let mut lengths: Vec<(usize, usize)> = Vec::new();
     let mut total = *aggregate;
-    crate::style::walk(
-        value,
-        &parameter.name,
-        cfg,
-        false,
-        &parameter.node,
-        |event| {
-            cancel.check()?;
-            let mut add = |n: usize| -> Result<(), Diagnostic> {
-                total = total
-                    .checked_add(n)
-                    .ok_or_else(|| Diagnostic::limited(kind, maximum, usize::MAX))?;
-                if total > maximum {
-                    return Err(Diagnostic::limited(kind, maximum, total));
-                }
-                Ok(())
-            };
-            match event {
-                Event::Begin(name) => {
-                    if lengths.len() >= limits.nodes {
-                        return Err(Diagnostic::limited(
-                            LimitKind::Nodes,
-                            limits.nodes,
-                            lengths.len().saturating_add(1),
-                        ));
-                    }
-                    let mut size = 0;
-                    if pairs {
-                        if !lengths.is_empty() {
-                            add(if location == ParameterLocation::Cookie {
-                                2
-                            } else {
-                                1
-                            })?;
-                        }
-                        add(1)?; // '='
-                        for text in name.pieces() {
-                            crate::style::encode(text.as_bytes(), mode.name(), |chunk| {
-                                cancel.check()?;
-                                add(chunk.len())?;
-                                size += chunk.len();
-                                Ok(())
-                            })?;
-                        }
-                    }
-                    crate::form::reserve_admitted(&mut lengths, limits.nodes);
-                    lengths.push((size, 0));
-                }
-                Event::Atom(atom) => {
-                    let (bytes, escaping) = match atom {
-                        Atom::Scalar(v) => (crate::style::bytes(v)?, mode),
-                        Atom::Key(k) => (k.as_bytes(), mode.name()),
-                        Atom::Separator(s) => (s, Escape::Literal),
-                    };
-                    crate::style::encode(bytes, escaping, |chunk| {
-                        cancel.check()?;
-                        add(chunk.len())?;
-                        lengths.last_mut().unwrap().1 += chunk.len();
-                        Ok(())
-                    })?;
-                }
-                Event::End | Event::Check => {}
+    walk_parameter(value, parameter, |event| {
+        cancel.check()?;
+        let mut add = |n: usize| -> Result<(), Diagnostic> {
+            total = total
+                .checked_add(n)
+                .ok_or_else(|| Diagnostic::limited(kind, maximum, usize::MAX))?;
+            if total > maximum {
+                return Err(Diagnostic::limited(kind, maximum, total));
             }
             Ok(())
-        },
-    )?;
-    let mut output = Vec::with_capacity(lengths.len());
-    let mut ordinal = 0;
-    crate::style::walk(
-        value,
-        &parameter.name,
-        cfg,
-        false,
-        &parameter.node,
-        |event| {
-            cancel.check()?;
-            match event {
-                Event::Begin(name) => {
-                    let (n, v) = lengths[ordinal];
-                    ordinal += 1;
-                    let mut encoded = String::with_capacity(n);
-                    if pairs {
-                        for text in name.pieces() {
-                            crate::style::encode(text.as_bytes(), mode.name(), |chunk| {
-                                cancel.check()?;
-                                encoded.push_str(std::str::from_utf8(chunk).expect("encoded name"));
-                                Ok(())
-                            })?;
-                        }
-                    }
-                    output.push((encoded, String::with_capacity(v)));
+        };
+        match event {
+            Event::Begin(name) => {
+                if lengths.len() >= limits.nodes {
+                    return Err(Diagnostic::limited(
+                        LimitKind::Nodes,
+                        limits.nodes,
+                        lengths.len().saturating_add(1),
+                    ));
                 }
-                Event::Atom(atom) => {
-                    let (bytes, escaping) = match atom {
-                        Atom::Scalar(v) => (crate::style::bytes(v)?, mode),
-                        Atom::Key(k) => (k.as_bytes(), mode.name()),
-                        Atom::Separator(s) => (s, Escape::Literal),
-                    };
-                    // Literal UTF-8 chunks can cross scalar boundaries; append bytes to the
-                    // admitted UTF-8 value via one whole logical atom for headers.
-                    if matches!(escaping, Escape::Literal) {
-                        for _ in bytes.chunks(4096) {
+                let mut size = 0;
+                if pairs {
+                    if !lengths.is_empty() {
+                        add(if location == ParameterLocation::Cookie {
+                            2
+                        } else {
+                            1
+                        })?;
+                    }
+                    add(1)?; // '='
+                    for text in name.pieces() {
+                        crate::style::encode(text.as_bytes(), mode.name(), |chunk| {
                             cancel.check()?;
-                        }
-                        output
-                            .last_mut()
-                            .unwrap()
-                            .1
-                            .push_str(std::str::from_utf8(bytes).expect("logical text"));
-                    } else {
-                        crate::style::encode(bytes, escaping, |chunk| {
-                            cancel.check()?;
-                            output
-                                .last_mut()
-                                .unwrap()
-                                .1
-                                .push_str(std::str::from_utf8(chunk).expect("ASCII encoding"));
+                            add(chunk.len())?;
+                            size += chunk.len();
                             Ok(())
                         })?;
                     }
                 }
-                Event::End | Event::Check => {}
+                crate::form::reserve_admitted(&mut lengths, limits.nodes);
+                lengths.push((size, 0));
             }
-            Ok(())
-        },
-    )?;
+            Event::Atom(atom) => {
+                let (bytes, escaping) = match atom {
+                    Atom::Scalar(v) => (crate::style::bytes(v)?, mode),
+                    Atom::Json(v) => (v.raw().as_bytes(), mode),
+                    Atom::Key(k) => (k.as_bytes(), mode.name()),
+                    Atom::Separator(s) => (s, Escape::Literal),
+                    Atom::Delimiter(s) => (s, mode.delimiter(s)),
+                };
+                crate::style::encode(bytes, escaping, |chunk| {
+                    cancel.check()?;
+                    add(chunk.len())?;
+                    lengths.last_mut().unwrap().1 += chunk.len();
+                    Ok(())
+                })?;
+            }
+            Event::End | Event::Check => {}
+        }
+        Ok(())
+    })?;
+    let mut output = Vec::with_capacity(lengths.len());
+    let mut ordinal = 0;
+    walk_parameter(value, parameter, |event| {
+        cancel.check()?;
+        match event {
+            Event::Begin(name) => {
+                let (n, v) = lengths[ordinal];
+                ordinal += 1;
+                let mut encoded = String::with_capacity(n);
+                if pairs {
+                    for text in name.pieces() {
+                        crate::style::encode(text.as_bytes(), mode.name(), |chunk| {
+                            cancel.check()?;
+                            encoded.push_str(std::str::from_utf8(chunk).expect("encoded name"));
+                            Ok(())
+                        })?;
+                    }
+                }
+                output.push((encoded, String::with_capacity(v)));
+            }
+            Event::Atom(atom) => {
+                let (bytes, escaping) = match atom {
+                    Atom::Scalar(v) => (crate::style::bytes(v)?, mode),
+                    Atom::Json(v) => (v.raw().as_bytes(), mode),
+                    Atom::Key(k) => (k.as_bytes(), mode.name()),
+                    Atom::Separator(s) => (s, Escape::Literal),
+                    Atom::Delimiter(s) => (s, mode.delimiter(s)),
+                };
+                // Literal UTF-8 chunks can cross scalar boundaries; append bytes to the
+                // admitted UTF-8 value via one whole logical atom for headers.
+                if matches!(escaping, Escape::Literal) {
+                    for _ in bytes.chunks(4096) {
+                        cancel.check()?;
+                    }
+                    output
+                        .last_mut()
+                        .unwrap()
+                        .1
+                        .push_str(std::str::from_utf8(bytes).expect("logical text"));
+                } else {
+                    crate::style::encode(bytes, escaping, |chunk| {
+                        cancel.check()?;
+                        output
+                            .last_mut()
+                            .unwrap()
+                            .1
+                            .push_str(std::str::from_utf8(chunk).expect("ASCII encoding"));
+                        Ok(())
+                    })?;
+                }
+            }
+            Event::End | Event::Check => {}
+        }
+        Ok(())
+    })?;
     *aggregate = total;
     if pairs {
         Ok(Serialized {

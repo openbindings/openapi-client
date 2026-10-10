@@ -6,6 +6,14 @@
 - Unpublished breaking migration: ResourceNeed URI, protocol-kind, edition and
   target-pointer getters now return Option; new typed interpretation/fragment
   getters distinguish schema needs and anonymous layout repair. See SCHEMAS.md.
+- Extend the shared logical encoder with label/matrix path and space/pipe-delimited
+  query and eligible form values. Keep structural delimiters separate from data,
+  refuse ambiguous active delimiters at caller values, and preserve edition rules.
+- Prepare single-media JSON/text content parameters through existing parameter
+  inputs, preserving exact JSON tokens without evaluating payload schemas. Actual
+  Media Type references use the existing corrective resource path. Query content
+  uses the content form-encoding profile; path/header framing remains protected.
+  See SERIALIZATION.md and the structured_parameters example.
 
 - Reduce finite form planning memory for expanded scalar fields by reserving one
   piece initially while retaining bounded geometric growth for joined values.

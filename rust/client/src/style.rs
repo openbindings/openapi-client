@@ -7,12 +7,34 @@ pub(crate) enum Style {
     Simple,
     Form,
     DeepObject,
+    Label,
+    Matrix,
+    SpaceDelimited,
+    PipeDelimited,
 }
 #[derive(Clone, Copy)]
 pub(crate) struct Config {
     pub style: Style,
     pub explode: bool,
     pub reserved: bool,
+}
+impl Config {
+    pub fn protected(self, value: &Value) -> Protection {
+        let collection = matches!(value.kind(), ValueKind::Array | ValueKind::Object);
+        match self.style {
+            Style::Matrix if collection && !self.explode => Protection::MatrixComma,
+            Style::Matrix => Protection::Matrix,
+            Style::SpaceDelimited | Style::PipeDelimited => Protection::None,
+            Style::Label if self.explode && value.kind() == ValueKind::Object => Protection::Equals,
+            _ if collection && (self.style == Style::Simple || !self.explode) => Protection::Comma,
+            _ => Protection::None,
+        }
+    }
+}
+#[derive(Clone, Copy)]
+pub(crate) enum ContentCodec {
+    Json,
+    Text,
 }
 #[derive(Clone, Copy)]
 pub(crate) enum Name<'a> {
@@ -34,8 +56,10 @@ impl<'a> Name<'a> {
 }
 pub(crate) enum Atom<'a> {
     Scalar(&'a Value),
+    Json(&'a Value),
     Key(&'a str),
     Separator(&'static [u8]),
+    Delimiter(&'static [u8]),
 }
 pub(crate) enum Event<'a> {
     Check,
@@ -86,7 +110,22 @@ pub(crate) fn walk(
                 .reasoned(DiagnosticReason::UnsupportedStyleValue));
         }
     }
-    let expanded = cfg.style != Style::Simple && cfg.explode;
+    let delimiter = match cfg.style {
+        Style::SpaceDelimited => Some(b' '),
+        Style::PipeDelimited => Some(b'|'),
+        _ => None,
+    };
+    if delimiter.is_some() {
+        if cfg.explode {
+            return Err(combination(source));
+        }
+        if !matches!(v.kind(), ValueKind::Array | ValueKind::Object) {
+            return Err(v
+                .error(Code::UnsupportedValue)
+                .reasoned(DiagnosticReason::UnsupportedStyleValue));
+        }
+    }
+    let expanded = matches!(cfg.style, Style::Form | Style::DeepObject) && cfg.explode;
     if matches!(v.kind(), ValueKind::Array | ValueKind::Object)
         && (v.elements().is_some_and(|v| v.len() == 0) || v.members().is_some_and(|v| v.len() == 0))
     {
@@ -96,6 +135,14 @@ pub(crate) fn walk(
             Err(combination(source))
         };
     }
+    if matches!(cfg.style, Style::Label | Style::Matrix) {
+        return walk_path(v, name, cfg, emit);
+    }
+    let separator = match cfg.style {
+        Style::SpaceDelimited => b" ".as_slice(),
+        Style::PipeDelimited => b"|".as_slice(),
+        _ => b",".as_slice(),
+    };
     if !expanded || !matches!(v.kind(), ValueKind::Array | ValueKind::Object) {
         emit(Event::Begin(Name::Plain(name)))?;
     }
@@ -103,10 +150,13 @@ pub(crate) fn walk(
         ValueKind::Array => {
             for (i, value) in v.elements().unwrap().enumerate() {
                 bytes(&value)?;
+                if let Some(delimiter) = delimiter {
+                    check_delimiter(bytes(&value)?, delimiter, cfg.reserved, &value, &mut emit)?;
+                }
                 if expanded {
                     emit(Event::Begin(Name::Plain(name)))?;
                 } else if i != 0 {
-                    emit(Event::Atom(Atom::Separator(b",")))?;
+                    emit(Event::Atom(Atom::Delimiter(separator)))?;
                 }
                 emit(Event::Atom(Atom::Scalar(&value)))?;
                 if expanded {
@@ -117,6 +167,10 @@ pub(crate) fn walk(
         ValueKind::Object => {
             for (i, (key, value)) in v.members().unwrap().enumerate() {
                 bytes(&value)?;
+                if let Some(delimiter) = delimiter {
+                    check_delimiter(key.as_bytes(), delimiter, false, &value, &mut emit)?;
+                    check_delimiter(bytes(&value)?, delimiter, cfg.reserved, &value, &mut emit)?;
+                }
                 if cfg.style == Style::DeepObject {
                     for chunk in key.as_bytes().chunks(4096) {
                         emit(Event::Check)?;
@@ -135,14 +189,14 @@ pub(crate) fn walk(
                     }))?;
                 } else {
                     if i != 0 {
-                        emit(Event::Atom(Atom::Separator(b",")))?;
+                        emit(Event::Atom(Atom::Delimiter(separator)))?;
                     }
                     emit(Event::Atom(Atom::Key(key)))?;
-                    emit(Event::Atom(Atom::Separator(if cfg.explode {
-                        b"="
+                    if cfg.explode {
+                        emit(Event::Atom(Atom::Separator(b"=")))?;
                     } else {
-                        b","
-                    })))?;
+                        emit(Event::Atom(Atom::Delimiter(separator)))?;
+                    }
                 }
                 emit(Event::Atom(Atom::Scalar(&value)))?;
                 if expanded {
@@ -160,6 +214,156 @@ pub(crate) fn walk(
     }
     Ok(())
 }
+fn check_delimiter(
+    data: &[u8],
+    delimiter: u8,
+    preserved_triplets: bool,
+    value: &Value,
+    emit: &mut impl FnMut(Event<'_>) -> Result<(), Diagnostic>,
+) -> Result<(), Diagnostic> {
+    let encoded = match delimiter {
+        b' ' => b"20",
+        b'|' => b"7c",
+        _ => b"..",
+    };
+    for (i, b) in data.iter().copied().enumerate() {
+        if i % 4096 == 0 {
+            emit(Event::Check)?;
+        }
+        if b == delimiter
+            || preserved_triplets
+                && b == b'%'
+                && data.get(i + 1) == Some(&encoded[0])
+                && data
+                    .get(i + 2)
+                    .is_some_and(|b| b.to_ascii_lowercase() == encoded[1])
+        {
+            return Err(value
+                .error(Code::UnsupportedValue)
+                .reasoned(DiagnosticReason::AmbiguousStyleDelimiter));
+        }
+    }
+    Ok(())
+}
+fn walk_path(
+    v: &Value,
+    name: &str,
+    cfg: Config,
+    mut emit: impl FnMut(Event<'_>) -> Result<(), Diagnostic>,
+) -> Result<(), Diagnostic> {
+    let matrix = cfg.style == Style::Matrix;
+    emit(Event::Begin(Name::Plain(name)))?;
+    if !matrix {
+        emit(Event::Atom(Atom::Separator(b".")))?;
+    }
+    if matrix && !cfg.explode {
+        emit(Event::Atom(Atom::Separator(b";")))?;
+        emit(Event::Atom(Atom::Key(name)))?;
+        if matches!(v.kind(), ValueKind::Array | ValueKind::Object) || !bytes(v)?.is_empty() {
+            emit(Event::Atom(Atom::Separator(b"=")))?;
+        }
+    }
+    match v.kind() {
+        ValueKind::Array => {
+            for (i, value) in v.elements().unwrap().enumerate() {
+                let data = bytes(&value)?;
+                if !matrix && cfg.explode {
+                    check_delimiter(data, b'.', false, &value, &mut emit)?;
+                }
+                if matrix && cfg.explode {
+                    emit(Event::Atom(Atom::Separator(b";")))?;
+                    emit(Event::Atom(Atom::Key(name)))?;
+                    if !data.is_empty() {
+                        emit(Event::Atom(Atom::Separator(b"=")))?;
+                    }
+                } else if i != 0 {
+                    emit(Event::Atom(Atom::Separator(if cfg.explode {
+                        b"."
+                    } else {
+                        b","
+                    })))?;
+                }
+                emit(Event::Atom(Atom::Scalar(&value)))?;
+            }
+        }
+        ValueKind::Object => {
+            for (i, (key, value)) in v.members().unwrap().enumerate() {
+                let data = bytes(&value)?;
+                if !matrix && cfg.explode {
+                    check_delimiter(key.as_bytes(), b'.', false, &value, &mut emit)?;
+                    check_delimiter(data, b'.', false, &value, &mut emit)?;
+                }
+                if matrix && cfg.explode {
+                    emit(Event::Atom(Atom::Separator(b";")))?;
+                } else if i != 0 {
+                    emit(Event::Atom(Atom::Separator(if cfg.explode {
+                        b"."
+                    } else {
+                        b","
+                    })))?;
+                }
+                emit(Event::Atom(Atom::Key(key)))?;
+                if !cfg.explode || !matrix || !data.is_empty() {
+                    emit(Event::Atom(Atom::Separator(if cfg.explode {
+                        b"="
+                    } else {
+                        b","
+                    })))?;
+                }
+                emit(Event::Atom(Atom::Scalar(&value)))?;
+            }
+        }
+        _ => {
+            let data = bytes(v)?;
+            if matrix && cfg.explode {
+                emit(Event::Atom(Atom::Separator(b";")))?;
+                emit(Event::Atom(Atom::Key(name)))?;
+                if !data.is_empty() {
+                    emit(Event::Atom(Atom::Separator(b"=")))?;
+                }
+            }
+            emit(Event::Atom(Atom::Scalar(v)))?;
+        }
+    }
+    emit(Event::End)
+}
+pub(crate) fn walk_content(
+    value: &Value,
+    name: &str,
+    codec: ContentCodec,
+    mut emit: impl FnMut(Event<'_>) -> Result<(), Diagnostic>,
+) -> Result<(), Diagnostic> {
+    emit(Event::Check)?;
+    let atom = match codec {
+        ContentCodec::Json => Atom::Json(value),
+        ContentCodec::Text => {
+            bytes(value)?;
+            Atom::Scalar(value)
+        }
+    };
+    emit(Event::Begin(Name::Plain(name)))?;
+    emit(Event::Atom(atom))?;
+    emit(Event::End)
+}
+#[derive(Clone, Copy)]
+pub(crate) enum Protection {
+    None,
+    Comma,
+    Equals,
+    Matrix,
+    MatrixComma,
+}
+impl Protection {
+    fn contains(self, byte: &u8) -> bool {
+        match self {
+            Self::None => false,
+            Self::Comma => *byte == b',',
+            Self::Equals => *byte == b'=',
+            Self::Matrix => matches!(byte, b';' | b'='),
+            Self::MatrixComma => matches!(byte, b',' | b';' | b'='),
+        }
+    }
+}
 #[derive(Clone, Copy)]
 pub(crate) enum Escape {
     Literal,
@@ -168,17 +372,24 @@ pub(crate) enum Escape {
         reserved: bool,
         path: bool,
         cookie: bool,
-        comma: bool,
+        protected: Protection,
     },
 }
 impl Escape {
+    pub fn delimiter(self, bytes: &[u8]) -> Self {
+        if matches!(bytes, b" " | b"|") {
+            self.name()
+        } else {
+            Self::Literal
+        }
+    }
     pub fn name(self) -> Self {
         match self {
             Self::Style { path, cookie, .. } => Self::Style {
                 reserved: false,
                 path,
                 cookie,
-                comma: false,
+                protected: Protection::None,
             },
             other => other,
         }
@@ -217,7 +428,7 @@ pub(crate) fn encode(
                 reserved,
                 path,
                 cookie,
-                comma,
+                protected,
             } => {
                 let blocked = if path {
                     b"/?#[]".contains(&b)
@@ -232,7 +443,7 @@ pub(crate) fn encode(
                         || reserved
                             && b":/?#[]@!$&'()*+,;=".contains(&b)
                             && !blocked
-                            && !(comma && b == b','),
+                            && !protected.contains(&b),
                     false,
                     reserved,
                 )
