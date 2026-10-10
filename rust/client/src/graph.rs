@@ -1064,7 +1064,7 @@ pub(crate) fn bound(
         Ok(())
     }
 }
-fn absolute_uri(uri: &str, fragment: bool) -> Result<(), Diagnostic> {
+fn absolute_uri(uri: &str, fragment: bool) -> Result<fluent_uri::UriRef<&str>, Diagnostic> {
     let parsed =
         fluent_uri::UriRef::parse(uri).map_err(|_| Diagnostic::new(Code::InvalidResourceUri))?;
     if parsed.scheme().is_none()
@@ -1073,7 +1073,7 @@ fn absolute_uri(uri: &str, fragment: bool) -> Result<(), Diagnostic> {
     {
         return Err(Diagnostic::new(Code::InvalidResourceUri));
     }
-    Ok(())
+    Ok(parsed)
 }
 pub(crate) fn without_fragment(uri: &str) -> &str {
     uri.split_once('#').map_or(uri, |(s, _)| s)
@@ -1093,30 +1093,17 @@ pub(crate) fn resolve_uri(reference: &str, base: Option<&str>) -> Result<String,
         .map_err(|_| Diagnostic::new(Code::InvalidResourceUri))
 }
 pub(crate) fn identity_key(uri: &str) -> Result<String, Diagnostic> {
-    absolute_uri(uri, true)?;
-    let parsed = fluent_uri::UriRef::parse(uri).expect("checked URI");
-    let mut key = format!(
-        "{}:",
-        parsed
-            .scheme()
-            .expect("absolute")
-            .as_str()
-            .to_ascii_lowercase()
-    );
+    let parsed = absolute_uri(uri, true)?;
+    let scheme_end = parsed.scheme().expect("absolute").as_str().len();
+    // Identity normalization is length-preserving. Copy once, then apply the
+    // existing component-specific case rules without temporary strings.
+    let mut bytes = uri.as_bytes().to_vec();
+    bytes[..scheme_end].make_ascii_lowercase();
     if let Some(authority) = parsed.authority() {
-        key.push_str("//");
-        key.push_str(&authority.as_str().to_ascii_lowercase());
+        // An absolute URI's authority follows the scheme's colon and `//`.
+        let start = scheme_end + 3;
+        bytes[start..start + authority.as_str().len()].make_ascii_lowercase();
     }
-    key.push_str(parsed.path().as_str());
-    if let Some(q) = parsed.query() {
-        key.push('?');
-        key.push_str(q.as_str());
-    }
-    if let Some(f) = parsed.fragment() {
-        key.push('#');
-        key.push_str(f.as_str());
-    }
-    let mut bytes = key.into_bytes();
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'%' {
@@ -1624,12 +1611,13 @@ impl Graph {
         }
         let uri = resolve_uri(reference, base).map_err(|e| source.locate(e))?;
         let fragment = decode_fragment(uri.split_once('#').map_or("", |(_, f)| f), source)?;
-        let exact = self.indexed_identity(&identity_key(&uri)?);
-        let root_uri = without_fragment(&uri);
-        let root = if root_uri == uri {
-            exact
-        } else {
-            self.indexed_identity(&identity_key(root_uri)?)
+        let normalized = identity_key(&uri)?;
+        let exact = self.indexed_identity(&normalized);
+        // Normalization preserves delimiters and does not decode `%23`. Reuse
+        // its fragment-free prefix; empty query and fragment remain distinct.
+        let root = match normalized.split_once('#') {
+            None => exact,
+            Some((root_key, _)) => self.indexed_identity(root_key),
         };
         Ok(Address {
             root,
@@ -1936,6 +1924,213 @@ pub(crate) fn decode_fragment(
     } else {
         ResourceFragment::Anchor(decoded)
     })
+}
+
+#[cfg(test)]
+mod identity_controls {
+    use super::*;
+    use serde_json::json;
+
+    fn controls() -> serde_json::Value {
+        serde_json::from_str(include_str!("../tests/fixtures/uri-identity/controls.json")).unwrap()
+    }
+    fn input(uri: &str, value: serde_json::Value) -> ResourceInput {
+        ResourceInput::at(uri, value.to_string().into_bytes()).unwrap()
+    }
+
+    #[test]
+    fn literal_identity_normalization_and_rejection() {
+        let controls = controls();
+        for case in controls["identity"].as_array().unwrap() {
+            let source = case[0].as_str().unwrap();
+            assert_eq!(
+                identity_key(source).unwrap(),
+                case[1].as_str().unwrap(),
+                "{source}"
+            );
+        }
+        for source in controls["invalid_identity"].as_array().unwrap() {
+            let source = source.as_str().unwrap();
+            assert_eq!(
+                identity_key(source).unwrap_err().code(),
+                Code::InvalidResourceUri,
+                "{source}"
+            );
+        }
+        for source in [
+            "https://user@host/x",
+            "https://host/x#",
+            "https://host/x#name",
+            "//host/x",
+        ] {
+            assert_eq!(
+                ResourceInput::at(source, b"{}".as_slice())
+                    .unwrap_err()
+                    .code(),
+                Code::InvalidResourceUri
+            );
+        }
+    }
+
+    #[test]
+    fn address_order_source_and_fragment_literals() {
+        for case in controls()["address"].as_array().unwrap() {
+            let mut doc = crate::Document::parse(
+                br#"{"openapi":"3.2.1","paths":{},"x-reference":"source"}"#,
+                None,
+                Limits::default(),
+            )
+            .unwrap();
+            if let Some(limit) = case["target_bytes"].as_u64() {
+                Arc::get_mut(&mut doc.0).unwrap().graph.target_bytes = limit as usize;
+            }
+            let source = doc.entry_resource().root().pointer("/x-reference").unwrap();
+            let local = (doc.entry_resource().id().0, 0);
+            let result = doc.0.graph.address(
+                &source,
+                case["reference"].as_str().unwrap(),
+                case["base"].as_str(),
+                local,
+            );
+            if let Some(code) = case["code"].as_str() {
+                let error = result.err().unwrap();
+                assert_eq!(format!("{:?}", error.code()), code, "{case}");
+                assert_eq!(error.source_context(), Some(source.source_context()));
+                assert_eq!(error.location().unwrap().pointer, "/x-reference");
+                if code == "Limit" {
+                    assert_eq!(
+                        error.reason(),
+                        Some(&crate::DiagnosticReason::Limit {
+                            kind: crate::LimitKind::TargetBytes,
+                            maximum: 0,
+                            actual: 1
+                        })
+                    );
+                }
+            } else {
+                let address = result.unwrap();
+                assert_eq!(address.uri.as_deref(), case["uri"].as_str(), "{case}");
+                let fragment = match address.fragment {
+                    ResourceFragment::Root => String::new(),
+                    ResourceFragment::Pointer(v) | ResourceFragment::Anchor(v) => v,
+                };
+                assert_eq!(fragment, case["fragment"].as_str().unwrap());
+                assert_eq!(
+                    address.root == Some(local),
+                    case["local_root"].as_bool().unwrap()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn full_fragment_identity_wins_and_empty_query_stays_distinct() {
+        let mut builder = DocumentBuilder::new(Limits::default(), GraphLimits::default());
+        let root = builder
+            .add(input(
+                "https://docs.example/root?",
+                json!({
+                    "$schema":"https://json-schema.org/draft/2020-12/schema",
+                    "$defs":{"Child":{"$anchor":"Child","type":"string"}},
+                    "$ref":"HTTPS://DOCS.EXAMPLE/root?#Child"
+                }),
+            ))
+            .unwrap();
+        let other = builder
+            .add(input(
+                "https://docs.example/root",
+                json!({"not":"the empty-query resource"}),
+            ))
+            .unwrap();
+        let doc = builder.build(root).unwrap();
+        let resource = doc.entry_resource();
+        let source = resource.root().get("$ref").unwrap();
+        let address = doc
+            .0
+            .graph
+            .address(&source, source.as_str().unwrap(), None, (root.0, 0))
+            .unwrap();
+        let child = resource.root().pointer("/$defs/Child").unwrap();
+        assert_eq!(address.exact, Some(key(&child)));
+        assert_eq!(address.root, Some((root.0, 0)));
+        assert_ne!(address.root, Some((other.0, 0)));
+        assert_eq!(
+            address.uri.as_deref(),
+            Some("HTTPS://DOCS.EXAMPLE/root?#Child")
+        );
+        let resolved = resource
+            .schema_at("")
+            .unwrap()
+            .references()
+            .unwrap()
+            .next()
+            .unwrap()
+            .resolve_static()
+            .unwrap();
+        assert_eq!(
+            resolved.target().authored().source_context(),
+            child.source_context()
+        );
+        assert_eq!(
+            resolved.target().authored().location().pointer,
+            "/$defs/Child"
+        );
+        assert!(resolved.canonical());
+        assert_eq!(source.as_str(), Some("HTTPS://DOCS.EXAMPLE/root?#Child"));
+    }
+
+    #[test]
+    fn public_collision_and_canonical_alias_source_behavior_is_unchanged() {
+        let mut builder = DocumentBuilder::new(Limits::default(), GraphLimits::default());
+        let root = builder
+            .add(input(
+                "HTTPS://EXAMPLE.test/%7e",
+                json!({"openapi":"3.2.1","paths":{}}),
+            ))
+            .unwrap();
+        let error = builder
+            .add(input("https://example.TEST/%7E", json!({"different":true})))
+            .unwrap_err();
+        assert_eq!(error.diagnostic().code(), Code::IdentityCollision);
+        let encoded = builder
+            .add(input("https://example.test/%41", json!({})))
+            .unwrap();
+        let literal = builder
+            .add(input("https://example.test/A", json!({})))
+            .unwrap();
+        assert_ne!(encoded, literal);
+        let doc = builder.build(root).unwrap();
+        assert_eq!(
+            doc.entry_resource().root().get("openapi").unwrap().as_str(),
+            Some("3.2.1")
+        );
+        assert_eq!(doc.entry_resource().root().source_context().id, root.0);
+
+        let doc = crate::Document::parse(json!({"openapi":"3.2.1","$self":"https://CANON.example/root#named","paths":{},"components":{"parameters":{
+            "P":{"name":"p","in":"query"},
+            "C":{"$ref":"https://canon.EXAMPLE/root#/components/parameters/P"},
+            "A":{"$ref":"https://retrieval.EXAMPLE/root#/components/parameters/P"}
+        }}}).to_string(), Some("https://retrieval.example/root"), Limits::default()).unwrap();
+        let expected = doc
+            .entry_resource()
+            .root()
+            .pointer("/components/parameters/P")
+            .unwrap();
+        for (name, canonical) in [("C", true), ("A", false)] {
+            let site = doc
+                .entry_resource()
+                .protocol_at(
+                    &format!("/components/parameters/{name}"),
+                    ReferenceKind::Parameter,
+                )
+                .unwrap();
+            let resolved = doc.resolve_protocol(&site).unwrap();
+            assert_eq!(resolved.canonical, canonical);
+            assert_eq!(resolved.target.source_context(), expected.source_context());
+            assert_eq!(resolved.target.raw(), expected.raw());
+            assert_eq!(resolved.target.location(), expected.location());
+        }
+    }
 }
 
 #[cfg(test)]
