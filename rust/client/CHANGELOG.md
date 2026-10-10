@@ -1,5 +1,7 @@
 # Unreleased (0.0.0)
 
+- OAS 3.0 private type facts account for a local nullable declaration and retain
+  its contribution without treating declaration facts as instance validation.
 - Private schema facts retain only payload contributors for Known provenance;
   absence checks still run and remain evidence when the complete fact is Absent.
 - Identity-collision diagnostics retain the earlier claimant as an owning

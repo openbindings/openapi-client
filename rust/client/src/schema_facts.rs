@@ -453,6 +453,25 @@ fn local_fact(
             } else {
                 return Ok(invalid(&site));
             }
+            if matches!(profile, SchemaProfile::OpenApi30) {
+                // Nullable modifies only an explicitly local OAS 3.0 type.
+                // This is a declaration fact; other constraints may reject null.
+                work.charge(1, value)?;
+                if let Some(nullable) = value.get("nullable") {
+                    match nullable.as_bool() {
+                        Some(true) => {
+                            types.push(SchemaType::Null);
+                            types.sort();
+                            return Ok(Fact::Known {
+                                value: FactValue::Types(types),
+                                provenance: vec![source, key(&nullable)],
+                            });
+                        }
+                        Some(false) => {}
+                        None => return Ok(invalid(&nullable)),
+                    }
+                }
+            }
             types.sort();
             known(FactValue::Types(types))
         }

@@ -4,6 +4,40 @@ use crate::schema_facts::{Fact, FactQuery, FactValue, FactWork, SchemaSelection,
 use serde_json::{Value as Json, json};
 use std::{collections::HashMap, sync::Arc};
 
+#[test]
+fn frozen_nullable_declaration_controls() {
+    let controls: Json = serde_json::from_str(include_str!(
+        "../tests/fixtures/schema-nullable-controls.json"
+    ))
+    .unwrap();
+    for case in controls["cases"].as_array().unwrap() {
+        let doc = Document::parse(case["document"].to_string(), None, Limits::default()).unwrap();
+        let selection = SchemaSelection(
+            case["selection"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|p| {
+                    doc.entry_resource()
+                        .schema_at(p.as_str().unwrap())
+                        .unwrap()
+                        .key
+                })
+                .collect(),
+        );
+        let token = Cancellation::default();
+        let mut work = FactWork::new(&doc.0.limits, &token);
+        let fact = query(&doc.0.graph, &selection, FactQuery::Types, &mut work).unwrap();
+        let mut actual = fact_json(fact, &doc.0.graph);
+        if actual["kind"] == "Known" {
+            actual["types"] = actual["value"].clone();
+        }
+        for (key, expected) in case["expect"].as_object().unwrap() {
+            assert_eq!(&actual[key], expected, "{}: {key}", case["id"]);
+        }
+    }
+}
+
 fn contract() -> Json {
     serde_json::from_str(include_str!("../tests/fixtures/schema-contract.json")).unwrap()
 }
