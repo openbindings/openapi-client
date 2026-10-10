@@ -22,6 +22,16 @@ pub enum Edition {
 }
 impl Edition {
     pub(crate) fn detect(root: &Value) -> Result<Self, Diagnostic> {
+        Self::detect_optional(root)?.ok_or_else(|| {
+            root.error(Code::UnsupportedVersion)
+                .reasoned(crate::DiagnosticReason::Version(
+                    crate::VersionReason::Missing,
+                ))
+        })
+    }
+    // Optional resource classification shares the required detector's grammar,
+    // without allocating an unused Missing diagnostic for an untyped resource.
+    pub(crate) fn detect_optional(root: &Value) -> Result<Option<Self>, Diagnostic> {
         use crate::VersionReason;
         let fail = |node: &Value, reason| {
             node.error(Code::UnsupportedVersion)
@@ -29,9 +39,9 @@ impl Edition {
         };
         match (root.get("swagger"), root.get("openapi")) {
             (Some(_), Some(_)) => Err(fail(root, VersionReason::Conflicting)),
-            (None, None) => Err(fail(root, VersionReason::Missing)),
+            (None, None) => Ok(None),
             (Some(v), None) => match v.as_str() {
-                Some("2.0") => Ok(Self::Swagger20),
+                Some("2.0") => Ok(Some(Self::Swagger20)),
                 Some(_) => Err(fail(&v, VersionReason::UnsupportedFamily)),
                 None => Err(fail(&v, VersionReason::Malformed)),
             },
@@ -53,9 +63,9 @@ impl Edition {
                     return Err(fail(&v, VersionReason::Malformed));
                 }
                 match (parts[0].unwrap(), parts[1].unwrap()) {
-                    ("3", "0") => Ok(Self::OpenApi30),
-                    ("3", "1") => Ok(Self::OpenApi31),
-                    ("3", "2") => Ok(Self::OpenApi32),
+                    ("3", "0") => Ok(Some(Self::OpenApi30)),
+                    ("3", "1") => Ok(Some(Self::OpenApi31)),
+                    ("3", "2") => Ok(Some(Self::OpenApi32)),
                     _ => Err(fail(&v, VersionReason::UnsupportedFamily)),
                 }
             }

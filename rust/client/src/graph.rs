@@ -689,9 +689,7 @@ impl DocumentBuilder {
             crate::LimitKind::GraphRetainedBytes,
         )?;
         let id = ResourceId(json.root().source_context().id);
-        let canonical = if json.root().get("openapi").is_some()
-            && Edition::detect(&json.root()) == Ok(Edition::OpenApi32)
-        {
+        let canonical = if Edition::detect_optional(&json.root()) == Ok(Some(Edition::OpenApi32)) {
             json.root()
                 .get("$self")
                 .map(|v| {
@@ -1213,9 +1211,7 @@ impl Graph {
         for resource in &graph.resources {
             cancellation.check()?;
             let root = resource.json.root();
-            if (root.get("openapi").is_some() || root.get("swagger").is_some())
-                && let Ok(edition) = Edition::detect(&root)
-            {
+            if let Ok(Some(edition)) = Edition::detect_optional(&root) {
                 enqueue(
                     &mut queue,
                     resource.json.root(),

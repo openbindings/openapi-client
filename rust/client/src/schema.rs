@@ -470,7 +470,7 @@ impl SchemaIndex {
         let mut contexts = Vec::new();
         for (&node, &context) in &graph.contexts {
             checkpoint(cancellation)?;
-            if has_protocol_schema(&graph.value(node), context) {
+            if has_protocol_schema(graph, node, context) {
                 contexts.push((node, context));
             }
         }
@@ -942,9 +942,10 @@ impl SchemaIndex {
 // This predicate performs no semantic admission: the ordered loop above still
 // owns seed bounds, profiles and error sites. Empty/malformed containers produce
 // no seeds, just as they do in that loop.
-fn has_protocol_schema(value: &Value, context: Context) -> bool {
+fn has_protocol_schema(graph: &Graph, node: NodeKey, context: Context) -> bool {
     match context.kind {
         ObjectKind::Document => {
+            let value = graph.value(node);
             let map = if context.edition == Edition::Swagger20 {
                 value.get("definitions")
             } else {
@@ -952,19 +953,23 @@ fn has_protocol_schema(value: &Value, context: Context) -> bool {
             };
             map.is_some_and(|v| v.members().is_some_and(|m| m.len() != 0))
         }
-        ObjectKind::Reference(ReferenceKind::Parameter)
-            if context.edition != Edition::Swagger20
-                || value.get("in").is_some_and(|v| v.as_str() == Some("body")) =>
-        {
-            value.get("$ref").is_none() && value.get("schema").is_some()
+        ObjectKind::Reference(ReferenceKind::Parameter) => {
+            let value = graph.value(node);
+            (context.edition != Edition::Swagger20
+                || value.get("in").is_some_and(|v| v.as_str() == Some("body")))
+                && value.get("$ref").is_none()
+                && value.get("schema").is_some()
         }
         ObjectKind::Reference(ReferenceKind::Header) if context.edition != Edition::Swagger20 => {
+            let value = graph.value(node);
             value.get("$ref").is_none() && value.get("schema").is_some()
         }
         ObjectKind::Reference(ReferenceKind::Response) if context.edition == Edition::Swagger20 => {
+            let value = graph.value(node);
             value.get("$ref").is_none() && value.get("schema").is_some()
         }
         ObjectKind::Media | ObjectKind::Reference(ReferenceKind::MediaType) => {
+            let value = graph.value(node);
             value.get("schema").is_some()
                 || context.edition == Edition::OpenApi32 && value.get("itemSchema").is_some()
         }
