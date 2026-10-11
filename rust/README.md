@@ -11,9 +11,13 @@ and edition semantics. Local JSON-Pointer protocol references and finite
 JSON/raw/named-form invocation use caller-supplied transport. Refer to
 [the API guide](client/README.md) for the implemented parameter/media/security
 profile and explicit limitations. Acceptance of an edition does not imply
-complete support for its features. Schema evaluation, external resource graphs
-and acquisition, richer form styles/codings, positional/nested multipart, streaming and a
+complete support for its features. Immutable caller-supplied resource graphs and
+schema inspection are implemented. Schema evaluation, resource acquisition,
+remaining form styles/codings, positional/nested multipart, streaming and a
 supported npm API remain open work.
+
+The [development status](DEVELOPMENT-STATUS.md) records the integrated checkpoint,
+known qualification failures and preserved unfinished work.
 
 The optional [`dynamic-openapi-client-reqwest`](reqwest/README.md) companion supplies
 a configured native HTTP/1.1 client, origin-scoped credentials, finite responses
