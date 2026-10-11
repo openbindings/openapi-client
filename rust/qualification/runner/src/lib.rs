@@ -175,7 +175,7 @@ pub fn upload(r: &J) -> UploadState {
     }
 }
 pub fn outcome_facts(out: Outcome, p: &PreparedRequest) -> J {
-    let mut facts = json!({"dispatch":if out.dispatch==DispatchEvidence::Dispatched{"dispatched"}else{"not_dispatched"},"upload":format!("{:?}",out.upload).to_ascii_lowercase(),"cancelled":out.cancelled,"safe_debug":format!("{out:?}")});
+    let mut facts = json!({"dispatch":if out.dispatch==DispatchEvidence::Dispatched{"dispatched"}else{"not_dispatched"},"upload":format!("{:?}",out.upload).to_ascii_lowercase(),"cancelled":out.cancelled,"error":null,"safe_debug":format!("{out:?}")});
     if let Some(e) = out.error {
         facts["error"] = json!(format!("{:?}", e.code()));
         facts["display"] = json!(e.to_string());

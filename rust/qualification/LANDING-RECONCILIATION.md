@@ -40,3 +40,19 @@ policy are this library's contract, not enum values prescribed by OpenAPI.
 Existing performance failures and incomplete product qualification remain in
 [DEVELOPMENT-STATUS.md](../DEVELOPMENT-STATUS.md). This reconciliation grants no
 additional capability-ledger or corpus-convergence credit.
+
+## Subsequent inventory
+
+After the 217-case inventory passed, the next 45-case inventory exposed one
+additional stale comparison, `response-metadata-count-bound`. Its supplied
+response exceeds the core's one-header allowance. The current
+[response-admission contract](../client/HOSTS.md) preserves the raw body and
+records one omitted header; omission alone creates no transport/outcome error,
+while JSON interpretation refuses with `IncompleteHeaders`. Existing
+`client/tests/response_admission.rs` asserts this distinction.
+
+The fixture now asserts absence of an outcome error and the separate decode
+refusal, retaining its omission count and exact raw-body assertions. The
+qualification adapter explicitly emits `error: null` for error-free outcomes so
+absence is checked rather than left unasserted; real errors still replace that
+field. No product behavior or host policy changes.
