@@ -1,4 +1,161 @@
-# Connection reuse revision (unpublished)
+# Host-delivered body revision (unpublished candidate)
+
+**Changed:** exhaustive matches on `Provenance` must handle `HostDelivered`; enum
+exhaustiveness otherwise stays unchanged. This declaration selects interpretation
+of exactly the bytes exposed by a host body stream, without claiming wire equality
+or decompression. Set it at the adapter boundary before parsing, consistently,
+rather than deriving it from labels, magic bytes or JSON success.
+
+For this variant, the existing JSON methods parse delivered bytes directly.
+`Content-Encoding` remains observable metadata and does not veto parsing. Valid
+JSON with a stale gzip or unknown coding label intentionally succeeds if all
+other guards pass; encoded binary still fails exact JSON parsing. There is no
+sniffing, decompression, retry or second JSON API. Raw bytes, exact tokens and
+positions are relative to the delivered source. Wire, Decoded and Unknown retain
+their meanings and coding behavior; the native companion remains Wire.
+
+The `CompletedJson.json` and refusal `decoded` fields hold parsed exact JSON;
+the historical names do not establish network decompression. Status, replay,
+upload, cancellation, metadata, media, body completeness and resource bounds stay
+independent. This core contract alone does not qualify a Fetch or TypeScript host.
+
+# Response admission revision (unpublished candidate)
+
+**Changed:** `DispatchRequest` is produced by `PreparedRequest::invoke` (or
+`invoke_with_replay`) and is non-exhaustive. External struct literals no longer
+compile. Obtain genuine dispatches through those callbacks in custom adapters and
+tests. Replace `dispatch.response_limit` with
+`dispatch.response_admission().body_bytes()`. Read the same immutable view before
+invocation through `prepared.response_admission()`. There is no public admission
+constructor or mutable per-dispatch limits field.
+
+`ResponseAdmission` also exposes `header_entries()` and `header_bytes()`.
+The mappings are `Limits::body_bytes`, `Limits::headers` and
+`Limits::document_bytes`, respectively. The last is the existing shared policy,
+not a new dedicated response-header tuning option. Count UTF-8 name bytes plus
+value bytes, excluding HTTP framing, before allocating copied metadata.
+
+`ResponseInput::new` additionally sets `header_delivery` to
+`HeaderDelivery::Unspecified`. Existing constructor calls retain their acceptance
+behavior. Set `Complete` only after observing iterator EOF, or `Incomplete` after
+a known bounded cutoff/conversion failure. This describes host-exposed enumeration,
+not wire fidelity or hidden/filtered fields. The response getter preserves this
+host fact even when core limits omit entries; `omitted_header_lines()` still counts
+only actual supplied entries omitted by core, never an estimated adapter tail.
+
+**Changed:** known incomplete metadata now refuses JSON with
+`Code::IncompleteHeaders` and alone does not set `Outcome::error`. Existing code
+that expected `InvalidHostEvidence`/transport failure for core omissions must
+inspect decoding or acceptance instead. Raw finite evidence remains available.
+Opaque responses still take precedence, then invalid status/retained fields or
+contradictory `ExactFields` plus `Incomplete`; uninspected omitted fields are
+unclassified. Incomplete metadata precedes body, media and coding decode checks.
+Application policy retains cancellation/dispatch/transport/status/upload priority.
+The native companion reports `Complete` or `Incomplete` after bounded collection;
+its replay declaration and upload evidence remain unchanged.
+
+See the executable `response_admission` example and [HOSTS.md](HOSTS.md).
+
+# Supplied-host contract revision (unpublished candidate)
+
+**Changed:** `ResponseInput` is non-exhaustive. Replace external struct literals
+with `ResponseInput::new(status, headers, body)`, then assign `opaque_redirect`
+and `header_fidelity` explicitly where the host supplies that evidence. The
+constructor sets `false` and `HeaderFidelity::Unknown`; it never silently claims
+exact fields. The native HeaderMap and Fetch-derived bridge metadata explicitly
+use `HostProcessed`.
+
+`Response::headers()` exposes retained delivered entries in host delivery order.
+`header_fidelity()` describes their source; `omitted_header_lines()` retains its
+historical name but counts entries omitted by core bounds. Zero core omissions
+cannot establish absence of host filtering. `ExactFields` describes structured
+field metadata, never raw HTTP framing. Body provenance remains separate.
+
+`admit` and `invoke` retain strict defaults. Explicit `*_with_replay` methods take
+`ReplayPolicy`; replay assurance is privately recorded on callback entry and
+exposed by `Outcome::replay_assurance()`. Acceptance and mutations of public
+outcome fields do not rewrite that record. Native execution remains strict.
+External adapters can convert `HostRefusal` into a fixed HostCapability Diagnostic
+with its controlled Host reason; no generic mutable reason setter is introduced.
+
+Header and host Debug now omit arbitrary header names. Use explicit accessors
+for names/values and treat them as untrusted private data. See [HOSTS.md](HOSTS.md)
+for precedence, declaration limits and the separate Fetch/TypeScript work.
+
+# Resource graph revision (unpublished candidate)
+
+`Document::parse` and existing request calls keep their signatures. Add multiple
+caller-supplied resources with `DocumentBuilder` and `ResourceInput`; incomplete
+protocol dependencies expose `Diagnostic::resource_need()` uniformly. Recovery
+publishes a new snapshot and preserves old values/caches. See [GRAPH.md](GRAPH.md).
+
+**Changed:** direct reference inspection first obtains a typed site through
+`Document::protocol_at(pointer, kind)` or a resource handle's `protocol_at`, then
+calls `Document::resolve_protocol(&site)`. The old raw Value/kind resolver is
+replaced by this one context-checked path. Sites and needs cannot be transferred
+between snapshots. References to nonstandard declaration positions refuse.
+
+**Changed:** operation-ID lookup refuses unresolved mounted Path Item discovery
+because unknown mounts can introduce duplicate IDs. Explicit path/method lookup
+can still select unaffected operations. Visible local validation errors alone do
+not block ID lookup. Graph issues retain authored path order and source locations.
+
+**Changed:** `Limits::descriptor_work` replaces the former aggregate descriptor
+use of `reference_steps`; reference chains keep their own `reference_steps` cap.
+Callers testing/customizing descriptor width should set `descriptor_work`.
+New graph limits independently bound resources and URI/layout metadata.
+
+**Changed:** an OpenAPI 3.2 security key absent from entry-root securitySchemes is
+a URI reference, with typed recovery for missing resources. Exact names retain
+precedence, including URI-looking names. Earlier families retain undefined-name
+refusal. Encoding Header references use the same graph during finite form
+preparation; required/custom header restrictions remain unchanged.
+
+# Edition and document-format revision (unpublished candidate)
+
+`Document::parse` now accepts original JSON or YAML documents from Swagger 2.0
+and OpenAPI 3.0, 3.1 and 3.2 through the same request flow. Applications do not
+choose a parser or rewrite version fields. `version()` retains the authored
+version; `edition()` and `format()` are optional inspection metadata. These
+changes extend the finite preparation profile, not every capability in each
+specification.
+
+Use `Operation::describe()` for effective server, parameter, request-body,
+response-media and security descriptions. `inspect()` continues to expose
+authored structure. Schema descriptions retain edition/dialect context rather
+than translating schemas into another edition. Opaque body fields do not imply
+an empty form or a fully interpreted schema.
+
+**Changed:** `Method` is `Clone` rather than `Copy` so it can retain validated
+extension method tokens. Clone a borrowed method when independent ownership is
+needed. `Method::from_token` validates a wire token; `Method::parse` recognizes
+fixed operation field names. OpenAPI 3.2 QUERY and `additionalOperations` use
+the same operation/request model.
+
+**Changed:** YAML values have `SourceOrigin::Normalized` for their semantic JSON
+representation. `Document::source()` retains the original YAML. Use
+`Value::source_trace()` to pair representation ranges with original authored
+ranges and alias use sites; never apply a normalized range directly to the
+original YAML. Exact JSON input keeps its existing token/range behavior, and
+`ExactJson::parse` remains a JSON-only API. See the API guide for the bounded
+YAML profile and new format-specific diagnostics.
+
+## Corpus diagnostic revision
+
+**Changed:** preparation and effective operation inspection refuse direct
+Operation Object `$ref` fields with `InvalidDeclaration` and the typed reason
+`UnsupportedReferencePosition`. OpenAPI does not admit references at this
+position; previously the field could be ignored and an incomplete operation
+prepared. Operation inventory and authored `inspect()`/`value()` remain available.
+This targeted guard does not introduce whole-document validation. Valid Path Item
+reference behavior and inert references inside extensions or schemas are unchanged.
+
+**Added:** undefined security schemes report `UndefinedSecurityScheme` at the
+named security requirement entry, for both `describe()` and preparation. Original
+JSON/YAML source ownership and alias provenance remain available. Scheme names and
+authored reference values are not included in default diagnostic formatting.
+
+## Previous connection reuse revision
 
 Public Rust signatures are unchanged. **Changed:** `HostCapabilities::no_retries`
 now explicitly permits recovery only when a host proves the original request
@@ -61,3 +218,57 @@ Assignments are explicit: populated selection fields compose, `None`/missing ent
 Select `policies::complete_2xx_json(outcome)` to require dispatched, uncancelled, transport-error-free, 2xx, complete-upload JSON. It replaces the copied example policy. `CompletedJson`/`JsonCallRefusal` retain the full Outcome; refusals retain decoded data or a decode diagnostic. `CompleteJsonRefusal` identifies the primary failed condition in documented order. Raw `invoke -> Outcome` is unchanged and remains the boundary for custom policies, local non-Send callbacks and native Send futures. No production transport is added.
 
 The named policy's standard `Error::source` follows its primary reason when represented by a Diagnostic. Transport/preflight points to `outcome.error`, Decode to `decode_error`, and Cancelled only to an actual Cancelled diagnostic. Other conditions return no source; independent secondary errors remain available through the retained fields. In particular, a late transport error accompanied by malformed JSON chains to the transport diagnostic while keeping the decode diagnostic separately.
+
+## JSON/YAML source provenance
+
+`Document::parse` now accepts the documented YAML profile through the same bytes/base/limits entrypoint. `ExactJson::parse` remains exact JSON-only. `Document::source()` returns original input text and `Document::format()` reports the detected serialization.
+
+`Value::raw()` and `location()` still identify indexed JSON. YAML's exact semantic representation has the new `SourceOrigin::Normalized` variant; update exhaustive matches on `SourceOrigin`. Use the additive `Value::source_trace()` to access the original YAML definition and alias use sites. Numeric source spelling belongs to the authored trace, while numeric token conveniences consume the exact normalized JSON token. Constructed caller values have no authored trace.
+
+Malformed non-JSON input is now diagnosed through YAML admission and can yield `InvalidYaml` or `UnsupportedYaml` with a typed `DiagnosticReason::Yaml`; callers should inspect codes/reasons rather than assuming every document parse failure is `InvalidJson`. See [the loading profile](LOADING.md) for key identity, scalar, alias and limit policies.
+
+## Finite named forms (unpublished)
+
+Use `operation.request().form([FormField::new("title", "hello")])` for named forms.
+Use `Part::bytes(slice).filename("file.bin")` for finite resource content, and
+`Part::value(exact.root())` when an ordinary/exact value needs part metadata.
+`FormValue::Parts(&parts)` carries per-item metadata. Existing JSON/raw body,
+selection, credentials, cancellation and invocation APIs are unchanged.
+
+**Changed:** authoritative form fields moved from `RequestBodyDescription.fields`
+to `MediaDescription.fields`. Each representation retains its own schemas and
+encoding objects. Replace `BodyFields::Opaque` patterns with `Opaque(issue)`;
+handle `Partial { fields, issue }` without treating it as complete. Issues expose a
+typed `FieldShapeReason` and original source handle. Replace a field's `required`
+bool with `requirement: FieldRequirement`: `ProtocolRequired` is enforced,
+`SchemaRequired` is a validation hint, and `Optional` is neither.
+
+`Limits` adds `form_fields`, `form_parts`, `form_metadata_bytes`, `form_work` and
+`boundary_attempts`; struct literals should use `..Limits::default()` when they
+intend the defaults. `LimitKind` and `DiagnosticReason::Form(FormReason)` expose
+corrective refusals. Debug remains redacted. This release implements the bounded
+profile in [FORMS.md](FORMS.md), not every form/multipart feature.
+
+
+## Independent compatibility review repairs
+
+OAuth flow names now follow the authored OpenAPI minor family. OpenAPI 3.2
+`deviceAuthorization` uses the same supplied bearer-token preparation path and
+adds `OAuthFlowDescription::device_authorization_url`; this is a returned
+descriptor field, not token acquisition. Swagger `application`/`accessCode`
+normalize to `clientCredentials`/`authorizationCode` only in Swagger documents.
+
+The applied 3.2.1 clarification profile uses the published default schema dialect
+`https://spec.openapis.org/oas/3.2/dialect/2026-02-26` for every 3.2 patch spelling.
+Authored `$schema` and `jsonSchemaDialect` still take precedence. The original
+version spelling is retained; patch versions do not fork the caller's API.
+
+Swagger `formData` with absent or empty effective `consumes` now exposes both
+protocol-defined form representations, including each representation's fields.
+Choose one with the existing `Selection::media` field. The default is ambiguous,
+not an invented server preference. Such a body is constrained by `formData` and
+is not `media_unrestricted`; JSON cannot substitute for its form encoding.
+The contributing form parameter owns each implicit representation's provenance.
+
+Multipart collision scanning now preserves overlapping prefixes across chunks.
+No public boundary spelling or new builder path is introduced.

@@ -1,0 +1,12 @@
+{
+  "oneOf": [
+    {
+      "type": "string",
+      "contentEncoding": "base64"
+    },
+    {
+      "type": "string",
+      "contentEncoding": "base64url"
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+"openapi": "3.2.1"
+"info":
+  "title": "Independent graph oracle"
+  "version": "1"
+"paths":
+  "/things":
+    "$ref": "defs/parts#/paths/~1part"
+  "/submit":
+    "$ref": "defs/parts#/paths/~1submit"
+  "/health":
+    "get":
+      "operationId": "health"
+      "responses":
+        "200":
+          "description": "ok"
+"servers":
+  -
+    "url": "https://api.example"
+"components":
+  "securitySchemes":
+    "Shared":
+      "type": "apiKey"
+      "in": "header"
+      "name": "X-Key"
+"security":
+  -
+    "Shared": []

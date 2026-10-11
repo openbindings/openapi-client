@@ -6,6 +6,56 @@ fn response(text: impl AsRef<[u8]>) -> ExactJson {
 }
 
 #[test]
+fn retained_access_limits_survive_eager_and_deferred_owner_escape() {
+    const TEXT: &str = r#"{"n":123}"#;
+    let limits = Limits {
+        document_bytes: TEXT.len(),
+        depth: 1,
+        number_conversion_chars: 2,
+        ..Limits::default()
+    };
+    for (owner, deferred) in [
+        (ExactJson::parse(TEXT, limits.clone()).unwrap(), false),
+        (
+            ExactJson::parse_response(TEXT.as_bytes(), limits).unwrap(),
+            true,
+        ),
+    ] {
+        let value = owner.root();
+        drop(owner);
+        assert_eq!(value.pointer("/n/x").unwrap_err().code(), Code::Limit);
+        assert_eq!(value.pointer("/xxxxxxxxx").unwrap_err().code(), Code::Limit);
+        if deferred {
+            assert!(value.store.indexed_nodes().is_none());
+        }
+        let child = value.pointer("/n").unwrap();
+        drop(value);
+        assert_eq!(child.raw(), "123");
+        assert!(matches!(
+            child.number().unwrap().to_u64().unwrap_err().reason(),
+            Some(DiagnosticReason::Limit {
+                kind: LimitKind::NumberCharacters,
+                maximum: 2,
+                actual: 3,
+            })
+        ));
+        assert_eq!(child.pointer("").unwrap().raw(), "123");
+    }
+    let accepted = ExactJson::parse(TEXT, Limits::default()).unwrap();
+    assert_eq!(
+        accepted
+            .root()
+            .pointer("/n")
+            .unwrap()
+            .number()
+            .unwrap()
+            .to_u64()
+            .unwrap(),
+        123
+    );
+}
+
+#[test]
 fn response_projection_and_metadata_leave_the_index_unmaterialized() {
     #[derive(Deserialize)]
     struct Item<'a> {

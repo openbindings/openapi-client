@@ -1,0 +1,4 @@
+{
+  "$schema": "https://private.example/SECRET_DIALECT",
+  "type": "string"
+}

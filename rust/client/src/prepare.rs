@@ -1,5 +1,7 @@
-use crate::{Code, Diagnostic, Header, Limits, Method, Operation, ReferenceKind, Value, ValueKind};
-use crate::{DiagnosticContext, DiagnosticReason, LimitKind, SelectionKind, document, uri};
+use crate::{
+    Code, Diagnostic, Edition, Header, Limits, Method, Operation, ReferenceKind, Value, ValueKind,
+};
+use crate::{DiagnosticContext, DiagnosticReason, LimitKind, SelectionKind, uri};
 use base64::Engine;
 use std::{
     collections::{BTreeMap, HashSet},
@@ -39,6 +41,7 @@ pub struct ParameterInput {
 }
 /// Finite request body with absence distinct from JSON null and empty raw bytes.
 #[derive(Clone, Default)]
+#[non_exhaustive]
 pub enum Body {
     /// No request body.
     #[default]
@@ -47,6 +50,26 @@ pub enum Body {
     Json(Value),
     /// Explicit finite bytes for a concretely elected media type.
     Raw(Arc<[u8]>),
+    /// Reusable admitted logical fields, encoded by the selected operation.
+    Form(crate::Form),
+}
+// One internal body view is authoritative for owned and borrowed routes.
+#[derive(Clone, Copy)]
+pub(crate) enum AdmittedBody<'a> {
+    Absent,
+    Json(&'a Value),
+    Raw(&'a Arc<[u8]>),
+    Form(&'a [crate::form::ReadyField<'a>]),
+}
+impl<'a> From<&'a Body> for AdmittedBody<'a> {
+    fn from(body: &'a Body) -> Self {
+        match body {
+            Body::Absent => Self::Absent,
+            Body::Json(v) => Self::Json(v),
+            Body::Raw(v) => Self::Raw(v),
+            Body::Form(v) => Self::Form(v.fields()),
+        }
+    }
 }
 /// Explicit per-call elections, with the default policy documented per field.
 #[derive(Clone, Default)]
@@ -111,7 +134,12 @@ pub struct Parameter {
     location: ParameterLocation,
     required: bool,
     explode: bool,
+    style: crate::style::Style,
+    reserved: bool,
     unsupported: bool,
+    content: Option<crate::style::ContentCodec>,
+    collection: Option<String>,
+    schema_context: Option<SchemaDeclaration>,
 }
 /// Effective parameter declarations retaining their exact source owners.
 /// Structured refusal leaves Operation::inspect available for raw inspection.
@@ -156,12 +184,246 @@ impl Parameter {
     }
     /// Raw Schema Object. None does not mean a content declaration is absent.
     pub fn schema(&self) -> Option<Value> {
-        self.node.get("schema")
+        self.schema_context.as_ref().map(|s| s.value.clone())
+    }
+    /// Opaque schema with retained edition and dialect context.
+    pub fn schema_description(&self) -> Option<crate::SchemaDescription> {
+        self.schema_context
+            .as_ref()
+            .map(SchemaDeclaration::describe)
     }
 }
+/// A schema value and its interpretation context; no evaluation is performed.
+#[derive(Clone, Debug)]
+pub(crate) struct SchemaDeclaration {
+    pub value: Value,
+    pub profile: crate::SchemaProfile,
+}
+impl SchemaDeclaration {
+    pub(crate) fn into_description(self) -> crate::SchemaDescription {
+        crate::SchemaDescription {
+            value: self.value,
+            profile: self.profile,
+        }
+    }
+    pub(crate) fn describe(&self) -> crate::SchemaDescription {
+        crate::SchemaDescription {
+            value: self.value.clone(),
+            profile: self.profile.clone(),
+        }
+    }
+}
+/// An effective representation, retaining its original declaration.
+#[derive(Clone, Debug)]
+pub(crate) struct MediaDeclaration {
+    /// Effective media type or range, including protocol-defined form choices.
+    pub media_type: String,
+    /// Original Media Type Object, Swagger consumes/produces string, or form
+    /// parameter establishing an implicit Swagger form representation.
+    pub authored: Value,
+    /// Opaque payload schema.
+    pub schema: Option<SchemaDeclaration>,
+    /// Opaque encoding declarations.
+    pub encoding: Option<Value>,
+    /// Opaque sequential-item schema when declared.
+    pub item_schema: Option<SchemaDeclaration>,
+    /// Authoritative form shape for this representation only.
+    pub fields: FieldDeclarations,
+    /// Positional encoding declarations, when authored in OAS 3.2.
+    pub prefix_encoding: Option<Value>,
+    /// Repeated positional encoding declaration, when authored in OAS 3.2.
+    pub item_encoding: Option<Value>,
+}
+/// A logical request body independent of the edition's declaration syntax.
+#[derive(Clone, Debug)]
+pub(crate) struct BodyDeclaration {
+    /// Original declaration and local-reference provenance.
+    pub declaration: crate::ResolvedReference,
+    /// Whether omitting the logical body is permitted.
+    pub required: bool,
+    /// Effective request representations. Malformed media keys are excluded;
+    /// their original values remain accessible through `declaration`.
+    pub media: Vec<MediaDeclaration>,
+    /// No media constraint was declared; an explicit concrete type or the JSON codec determines it.
+    /// Swagger form parameters still constrain the body to form representations.
+    pub media_unrestricted: bool,
+}
+/// A logical form field; automatic form serialization is qualified separately.
+#[derive(Clone, Debug)]
+pub(crate) struct FieldDeclaration {
+    /// Logical field name.
+    pub name: String,
+    /// Protocol obligation or a schema-validation hint; these are not interchangeable.
+    pub requirement: FieldRequirement,
+    /// Opaque field schema and vocabulary.
+    pub schema: SchemaDeclaration,
+    /// Authored declaration, retaining format/encoding details.
+    pub authored: Value,
+    /// Original field-specific Encoding Object, if present.
+    pub encoding: Option<Value>,
+}
+/// Meaning of a field's requiredness declaration.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FieldRequirement {
+    /// No unconditional requirement is declared.
+    Optional,
+    /// A Swagger form parameter must be supplied.
+    ProtocolRequired,
+    /// A supported static schema required hint; preparation does not enforce it.
+    SchemaRequired,
+    /// Supported static inspection could not establish a complete required hint.
+    UnknownHint,
+}
+/// Why field inspection cannot provide a complete shape.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FieldShapeReason {
+    /// No schema was supplied for this representation.
+    MissingSchema,
+    /// A schema reference needs schema-aware resolution.
+    SchemaReference,
+    /// Composition or conditional schemas may contribute fields.
+    Composition,
+    /// The schema vocabulary or shape cannot be mechanically inspected.
+    SchemaShape,
+    /// A positional or nested multipart representation needs another body model.
+    PositionalEncoding,
+}
+/// A typed unresolved fact with its actual source owner.
+#[derive(Clone, Debug)]
+pub struct FieldShapeIssue {
+    /// Unresolved fact classification.
+    pub reason: FieldShapeReason,
+    /// Authored schema or media declaration requiring interpretation.
+    pub source: Value,
+}
+/// Completeness of logical form-field inspection.
+#[derive(Clone, Debug)]
+pub(crate) enum FieldDeclarations {
+    /// The body has no form representations.
+    NotApplicable,
+    /// Explicit logical fields are available.
+    Declared(Vec<FieldDeclaration>),
+}
+/// An effective response declaration and its representations.
+#[derive(Clone, Debug)]
+pub struct ResponseDescription {
+    /// Exact, range or default status selector.
+    pub status: String,
+    /// Original declaration and local-reference provenance.
+    pub declaration: crate::ResolvedReference,
+    /// Effective response representations. Malformed media keys are excluded;
+    /// their original values remain accessible through `declaration`.
+    pub media: Vec<crate::MediaDescription>,
+}
+/// One effective target choice. Swagger components become a URL template without source rewriting.
+#[derive(Clone, Debug)]
+pub struct ServerDescription {
+    /// Effective URL or URL template before variable substitution.
+    pub url: String,
+    /// Original variable declarations, when applicable.
+    pub variables: Option<Value>,
+    /// Original values contributing to this target; an empty list denotes the protocol default.
+    pub authored: Vec<Value>,
+}
+/// A normalized OAuth flow, with original source retained by the owning requirement.
+#[derive(Clone, Debug)]
+pub struct OAuthFlowDescription {
+    /// Common flow name: implicit, password, clientCredentials, authorizationCode
+    /// or deviceAuthorization.
+    pub flow: String,
+    /// Authorization endpoint when applicable.
+    pub authorization_url: Option<String>,
+    /// Device authorization endpoint for the OpenAPI 3.2 flow.
+    pub device_authorization_url: Option<String>,
+    /// Token endpoint when applicable.
+    pub token_url: Option<String>,
+    /// Refresh endpoint when declared.
+    pub refresh_url: Option<String>,
+    /// Declared scope names and descriptions.
+    pub scopes: BTreeMap<String, String>,
+}
+/// Edition-independent security mechanism classification.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub enum SecurityScheme {
+    /// HTTP Basic credentials.
+    Basic,
+    /// HTTP bearer token; format is descriptive only.
+    Bearer {
+        /// Optional format hint.
+        format: Option<String>,
+    },
+    /// API key sent under a declared name/location.
+    ApiKey {
+        /// Wire name.
+        name: String,
+        /// Wire location.
+        location: ParameterLocation,
+    },
+    /// Caller-supplied OAuth bearer token; flows describe acquisition separately.
+    OAuth2 {
+        /// Normalized acquisition flows.
+        flows: Vec<OAuthFlowDescription>,
+    },
+    /// OpenID Connect discovery description; caller supplies bearer token.
+    OpenIdConnect {
+        /// Discovery URL.
+        url: String,
+    },
+    /// Mutual TLS host identity; finite credential input does not implement it.
+    MutualTls,
+    /// Retained mechanism outside this implementation's recognized profile.
+    Unsupported {
+        /// Original mechanism identifier.
+        type_name: String,
+    },
+}
+/// One declared scheme in a conjunctive security requirement.
+#[derive(Clone, Debug)]
+pub struct SecurityRequirement {
+    /// Declared scheme identity.
+    pub name: String,
+    /// Required OAuth scopes or later-edition roles; verifying credentials remains caller-owned.
+    pub scopes: Vec<String>,
+    /// Original scheme declaration and reference provenance.
+    pub declaration: crate::ResolvedReference,
+    /// Normalized security mechanism; credentials remain separate per-call inputs.
+    pub scheme: SecurityScheme,
+}
+/// One effective security alternative; an empty requirement list permits anonymous calls.
+#[derive(Clone, Debug)]
+pub struct SecurityAlternative {
+    /// Original requirement object.
+    pub authored: Value,
+    /// All these schemes apply together.
+    pub requirements: Vec<SecurityRequirement>,
+}
+/// Common effective declarations for an explorer or dynamic caller.
+#[derive(Clone, Debug)]
+pub struct EffectiveOperationDescription {
+    /// Authored path template.
+    pub path: String,
+    /// Exact HTTP method.
+    pub method: Method,
+    /// Optional operation ID.
+    pub operation_id: Option<String>,
+    /// Effective non-body parameter declarations.
+    pub parameters: Parameters,
+    /// Effective target choices, in election order.
+    pub servers: Vec<ServerDescription>,
+    /// Effective logical body; ignored edition-specific body declarations are absent here.
+    pub request_body: Option<crate::RequestBodyDescription>,
+    /// Effective status and representation declarations.
+    pub responses: Vec<ResponseDescription>,
+    /// Effective security alternatives.
+    pub security: Vec<SecurityAlternative>,
+}
+
 pub(crate) struct Compiled {
     parameters: Vec<Parameter>,
-    body: Option<Value>,
+    body: Option<BodyDeclaration>,
     pub responses: Vec<(String, Value)>,
 }
 /// Immutable request plan. Preparing or cloning it does not authorize a retry.
@@ -204,144 +466,751 @@ pub(crate) fn same_name(a: &str, b: &str, location: ParameterLocation) -> bool {
     }
 }
 
-impl Operation {
-    /// Inspect effective parameters without compiling body/media/security requirements.
-    /// Unsupported editions and invalid parameter declarations refuse; raw inspection remains.
-    pub fn parameters(&self) -> Result<Parameters, Diagnostic> {
-        self.parameter_declarations()
-            .map(|(entries, _)| Parameters { entries })
+/// Admission for newly allocated per-operation descriptions. Original Value owners
+/// are shared and are not charged as copied source bytes. Limits are per construction,
+/// independent from both the admitted source owner and other compiled cache entries.
+pub(crate) struct DescriptorWork<'a> {
+    limits: &'a Limits,
+    bytes: usize,
+    nodes: usize,
+    references: usize,
+    cancellation: Option<&'a crate::Cancellation>,
+}
+impl<'a> DescriptorWork<'a> {
+    pub(crate) fn new(limits: &'a Limits) -> Self {
+        Self {
+            limits,
+            bytes: 0,
+            nodes: 0,
+            references: 0,
+            cancellation: None,
+        }
     }
-    fn parameter_declarations(&self) -> Result<(Vec<Parameter>, usize), Diagnostic> {
-        let root = self.store.json.root();
-        let node = self.value();
-        if !root
-            .get("openapi")
-            .is_some_and(|v| matches!(v.as_str(), Some("3.1.0" | "3.1.1" | "3.1.2")))
+    pub(crate) fn with_cancellation(
+        limits: &'a Limits,
+        cancellation: &'a crate::Cancellation,
+    ) -> Self {
+        Self {
+            cancellation: Some(cancellation),
+            ..Self::new(limits)
+        }
+    }
+    fn checkpoint(&self) -> Result<(), Diagnostic> {
+        self.cancellation.map_or(Ok(()), crate::schema::checkpoint)
+    }
+    fn admit(
+        used: &mut usize,
+        amount: usize,
+        maximum: usize,
+        kind: LimitKind,
+        source: &Value,
+    ) -> Result<(), Diagnostic> {
+        let actual = used.saturating_add(amount);
+        if actual > maximum {
+            return Err(source.error(Code::Limit).reasoned(DiagnosticReason::Limit {
+                kind,
+                maximum,
+                actual,
+            }));
+        }
+        *used = actual;
+        Ok(())
+    }
+    pub(crate) fn entry(&mut self, source: &Value) -> Result<(), Diagnostic> {
+        self.checkpoint()?;
+        Self::admit(
+            &mut self.nodes,
+            1,
+            self.limits.nodes,
+            LimitKind::DescriptorNodes,
+            source,
+        )
+    }
+    pub(crate) fn declaration(&mut self, source: &Value) -> Result<(), Diagnostic> {
+        Self::admit(
+            &mut self.references,
+            1,
+            self.limits.descriptor_work,
+            LimitKind::DescriptorWork,
+            source,
+        )?;
+        self.entry(source)
+    }
+    pub(crate) fn text(&mut self, source: &Value, text: &str) -> Result<String, Diagnostic> {
+        self.entry(source)?;
+        Self::admit(
+            &mut self.bytes,
+            text.len(),
+            self.limits.document_bytes,
+            LimitKind::DescriptorBytes,
+            source,
+        )?;
+        let mut copy = String::with_capacity(text.len());
+        // Respect UTF-8 boundaries while observing cancellation during large copies.
+        let mut start = 0;
+        while start < text.len() {
+            self.checkpoint()?;
+            let mut end = (start + 8192).min(text.len());
+            while !text.is_char_boundary(end) {
+                end -= 1;
+            }
+            copy.push_str(&text[start..end]);
+            start = end;
+        }
+        Ok(copy)
+    }
+    fn required(&mut self, source: &Value, key: &str) -> Result<String, Diagnostic> {
+        let value = source
+            .get(key)
+            .ok_or_else(|| source.error(Code::InvalidDeclaration))?;
+        self.text(
+            &value,
+            value
+                .as_str()
+                .ok_or_else(|| value.error(Code::InvalidDeclaration))?,
+        )
+    }
+    pub(crate) fn optional(
+        &mut self,
+        source: &Value,
+        key: &str,
+    ) -> Result<Option<String>, Diagnostic> {
+        source
+            .get(key)
+            .map(|value| {
+                self.text(
+                    &value,
+                    value
+                        .as_str()
+                        .ok_or_else(|| value.error(Code::InvalidDeclaration))?,
+                )
+            })
+            .transpose()
+    }
+    pub(crate) fn resolve(
+        &mut self,
+        graph: &crate::graph::Graph,
+        source: &Value,
+        kind: ReferenceKind,
+    ) -> Result<crate::ResolvedReference, Diagnostic> {
+        self.declaration(source)?;
+        let work_left = self.limits.descriptor_work - self.references;
+        let nodes_left = self.limits.nodes - self.nodes;
+        let remaining = work_left.min(nodes_left).min(self.limits.reference_steps);
+        let resolved = graph.resolve(source, kind, remaining).map_err(|error| {
+            if error.code() == Code::Limit && remaining < self.limits.reference_steps {
+                let (kind, maximum) = if work_left <= nodes_left {
+                    (LimitKind::DescriptorWork, self.limits.descriptor_work)
+                } else {
+                    (LimitKind::DescriptorNodes, self.limits.nodes)
+                };
+                error.reasoned(DiagnosticReason::Limit {
+                    kind,
+                    maximum,
+                    actual: maximum.saturating_add(1),
+                })
+            } else {
+                error
+            }
+        })?;
+        let hops = resolved.chain.len().saturating_sub(1);
+        self.references += hops;
+        self.nodes += hops;
+        Ok(resolved)
+    }
+}
+
+impl Operation {
+    pub(crate) fn schema_description(
+        &self,
+        value: Value,
+        work: &mut DescriptorWork<'_>,
+    ) -> Result<SchemaDeclaration, Diagnostic> {
+        work.entry(&value)?;
+        let profile = if let Some(scope) = self.store.graph.schemas.scope(crate::graph::key(&value))
         {
-            return Err(root
-                .get("openapi")
-                .unwrap_or(root)
-                .error(Code::UnsupportedVersion));
-        }
-        if let Some(e) = &self.record().path_error {
-            return Err(e.clone());
-        }
-        if node.kind() != ValueKind::Object {
-            return Err(node.error(Code::InvalidDeclaration));
-        }
-        let mut parameters: Vec<Parameter> = vec![];
-        let mut budget = self.store.limits.reference_steps;
-        for list in [self.path_field("parameters"), node.get("parameters")]
-            .into_iter()
-            .flatten()
+            match scope.profile.as_ref() {
+                crate::SchemaProfile::JsonSchema { dialect_uri } => {
+                    let dialect_source = self
+                        .store
+                        .graph
+                        .value(scope.root)
+                        .get("$schema")
+                        .or_else(|| {
+                            self.store
+                                .graph
+                                .resource_root(&value)
+                                .ok()?
+                                .get("jsonSchemaDialect")
+                        })
+                        .unwrap_or_else(|| value.clone());
+                    crate::SchemaProfile::JsonSchema {
+                        dialect_uri: work.text(&dialect_source, dialect_uri)?,
+                    }
+                }
+                profile => profile.clone(),
+            }
+        } else if self.store.edition == Ok(Edition::Swagger20) {
+            // Swagger's non-body parameter constraints are protocol positions.
+            crate::SchemaProfile::Swagger20
+        } else {
+            return Err(value.error(Code::UnsupportedSchema));
+        };
+        Ok(SchemaDeclaration { value, profile })
+    }
+    fn effective_parameter_references(
+        &self,
+        work: &mut DescriptorWork<'_>,
+    ) -> Result<Vec<crate::ResolvedReference>, Diagnostic> {
+        self.store.edition.clone()?;
+        let mut parameters: Vec<crate::ResolvedReference> = vec![];
+        for list in [
+            self.path_field("parameters"),
+            self.value().get("parameters"),
+        ]
+        .into_iter()
+        .flatten()
         {
-            let entries = list
-                .elements()
-                .ok_or_else(|| list.error(Code::InvalidDeclaration))?;
             let mut local = HashSet::new();
-            for authored in entries {
-                if budget == 0 {
-                    return Err(authored.error(Code::Limit));
-                }
-                budget -= 1;
+            for authored in list
+                .elements()
+                .ok_or_else(|| list.error(Code::InvalidDeclaration))?
+            {
                 let resolved =
-                    document::resolve(&root, &authored, ReferenceKind::Parameter, budget + 1)?;
-                let p = resolved.target.clone();
-                let name = required_string(&p, "name")?;
-                let location = ParameterLocation::parse(&required_string(&p, "in")?)
-                    .ok_or_else(|| p.error(Code::UnsupportedParameter))?;
-                if location == ParameterLocation::Header
-                    && ["accept", "content-type", "authorization"]
-                        .iter()
-                        .any(|n| name.eq_ignore_ascii_case(n))
-                {
-                    continue;
-                }
-                let identity = (
-                    if location == ParameterLocation::Header {
-                        name.to_ascii_lowercase()
-                    } else {
-                        name.clone()
-                    },
-                    format!("{location:?}"),
-                );
+                    work.resolve(&self.store.graph, &authored, ReferenceKind::Parameter)?;
+                let p = &resolved.target;
+                let location = work.required(p, "in")?;
+                let name = work.required(p, "name")?;
+                let identity = (work.text(p, &location)?, {
+                    let mut identity = work.text(p, &name)?;
+                    if location == "header" {
+                        identity.make_ascii_lowercase();
+                    }
+                    identity
+                });
+                work.entry(p)?;
                 if !local.insert(identity) {
                     return Err(p.error(Code::InvalidDeclaration));
                 }
-                let required = bool_field(&p, "required", false)?;
-                if location == ParameterLocation::Path
-                    && (!required || !self.path().contains(&format!("{{{name}}}")))
-                {
-                    return Err(p.error(Code::InvalidDeclaration));
-                }
-                let style = p
-                    .get("style")
-                    .map(|v| {
-                        v.as_str()
-                            .map(str::to_owned)
-                            .ok_or_else(|| v.error(Code::InvalidDeclaration))
-                    })
-                    .transpose()?
-                    .unwrap_or_else(|| {
-                        if matches!(
-                            location,
-                            ParameterLocation::Path | ParameterLocation::Header
-                        ) {
-                            "simple".into()
-                        } else {
-                            "form".into()
-                        }
-                    });
-                let expected = if matches!(
-                    location,
-                    ParameterLocation::Path | ParameterLocation::Header
-                ) {
-                    "simple"
+                if let Some(index) = parameters.iter().position(|previous| {
+                    let p = &previous.target;
+                    p.get("in").is_some_and(|v| v.as_str() == Some(&location))
+                        && p.get("name")
+                            .and_then(|v| {
+                                v.as_str().map(|old| {
+                                    if location == "header" {
+                                        old.eq_ignore_ascii_case(&name)
+                                    } else {
+                                        old == name
+                                    }
+                                })
+                            })
+                            .unwrap_or(false)
+                }) {
+                    parameters[index] = resolved;
                 } else {
-                    "form"
-                };
-                if p.get("schema").is_none() && p.get("content").is_none()
-                    || p.get("schema").is_some() && p.get("content").is_some()
-                {
-                    return Err(p.error(Code::InvalidDeclaration));
-                }
-                let unsupported = style != expected
-                    || p.get("content").is_some()
-                    || bool_field(&p, "allowReserved", false)?
-                    || location == ParameterLocation::Header && name.eq_ignore_ascii_case("cookie");
-                let param = Parameter {
-                    resolved,
-                    node: p.clone(),
-                    name: name.clone(),
-                    location,
-                    required,
-                    explode: bool_field(&p, "explode", style == "form")?,
-                    unsupported,
-                };
-                if let Some(i) = parameters
-                    .iter()
-                    .position(|p| p.location == location && same_name(&p.name, &name, location))
-                {
-                    parameters[i] = param;
-                } else {
-                    parameters.push(param);
+                    work.entry(p)?;
+                    parameters.push(resolved);
                 }
             }
         }
-        Ok((parameters, budget))
+        Ok(parameters)
     }
-    fn compile(&self) -> Result<Arc<Compiled>, Diagnostic> {
-        let (parameters, mut budget) = self.parameter_declarations()?;
-        let root = self.store.json.root();
-        let node = self.value();
-        let body = node
-            .get("requestBody")
-            .map(|b| {
-                document::resolve(&root, &b, ReferenceKind::RequestBody, budget).map(|r| r.target)
+    fn media_descriptions(
+        &self,
+        node: &Value,
+        legacy_key: Option<&str>,
+        work: &mut DescriptorWork<'_>,
+    ) -> Result<Vec<MediaDeclaration>, Diagnostic> {
+        if let Some(key) = legacy_key {
+            let declared = self
+                .value()
+                .get(key)
+                .or_else(|| self.store.json.root().get(key));
+            return declared
+                .map(|v| {
+                    v.elements()
+                        .ok_or_else(|| v.error(Code::InvalidDeclaration))?
+                        .map(|media| {
+                            work.entry(&media)?;
+                            let media_type = work.text(
+                                &media,
+                                media
+                                    .as_str()
+                                    .ok_or_else(|| media.error(Code::InvalidDeclaration))?,
+                            )?;
+                            Ok(MediaDeclaration {
+                                media_type,
+                                authored: media,
+                                schema: node
+                                    .get("schema")
+                                    .map(|v| self.schema_description(v, work))
+                                    .transpose()?,
+                                encoding: None,
+                                item_schema: None,
+                                fields: FieldDeclarations::NotApplicable,
+                                prefix_encoding: None,
+                                item_encoding: None,
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_else(|| Ok(vec![]));
+        }
+        let Some(content) = node.get("content") else {
+            return Ok(vec![]);
+        };
+        content
+            .members()
+            .ok_or_else(|| content.error(Code::InvalidDeclaration))?
+            // Only syntactically valid media keys govern a representation. Exclude
+            // other entries before inspecting their value; raw declarations retain them.
+            .filter(|(key, _)| parse_media(key, true).is_ok())
+            .map(|(key, value)| {
+                let resolved = self.resolve_media(&value, work)?;
+                let fields = FieldDeclarations::NotApplicable;
+                Ok(MediaDeclaration {
+                    fields,
+                    prefix_encoding: (self.store.edition == Ok(Edition::OpenApi32))
+                        .then(|| resolved.get("prefixEncoding"))
+                        .flatten(),
+                    item_encoding: (self.store.edition == Ok(Edition::OpenApi32))
+                        .then(|| resolved.get("itemEncoding"))
+                        .flatten(),
+                    media_type: work.text(&value, key)?,
+                    authored: value,
+                    schema: resolved
+                        .get("schema")
+                        .map(|v| self.schema_description(v, work))
+                        .transpose()?,
+                    encoding: resolved.get("encoding"),
+                    item_schema: (self.store.edition == Ok(Edition::OpenApi32))
+                        .then(|| resolved.get("itemSchema"))
+                        .flatten()
+                        .map(|v| self.schema_description(v, work))
+                        .transpose()?,
+                })
             })
+            .collect()
+    }
+    // The protocol target is shared by body descriptions and content parameters.
+    // Resolving this object does not inspect or interpret its payload schema.
+    fn resolve_media(
+        &self,
+        value: &Value,
+        work: &mut DescriptorWork<'_>,
+    ) -> Result<Value, Diagnostic> {
+        work.entry(value)?;
+        if value.kind() != ValueKind::Object {
+            return Err(value.error(Code::InvalidDeclaration));
+        }
+        if value.get("$ref").is_some() {
+            if self.store.edition != Ok(Edition::OpenApi32) {
+                return Err(value.error(Code::InvalidDeclaration));
+            }
+            Ok(work
+                .resolve(&self.store.graph, value, ReferenceKind::MediaType)?
+                .target)
+        } else {
+            Ok(value.clone())
+        }
+    }
+    pub(crate) fn body_description(
+        &self,
+        work: &mut DescriptorWork<'_>,
+    ) -> Result<Option<BodyDeclaration>, Diagnostic> {
+        let edition = self.store.edition.clone()?;
+        if edition == Edition::Swagger20 {
+            let mut parameters = self.effective_parameter_references(work)?;
+            let is_body = |p: &crate::ResolvedReference| {
+                p.target
+                    .get("in")
+                    .is_some_and(|v| v.as_str() == Some("body"))
+            };
+            let is_form = |p: &crate::ResolvedReference| {
+                p.target
+                    .get("in")
+                    .is_some_and(|v| v.as_str() == Some("formData"))
+            };
+            let body_count = parameters.iter().filter(|p| is_body(p)).count();
+            let has_forms = parameters.iter().any(is_form);
+            if body_count > 1 || body_count != 0 && has_forms {
+                return Err(self.value().error(Code::InvalidDeclaration));
+            }
+            let Some(index) = parameters.iter().position(|p| is_body(p) || is_form(p)) else {
+                return Ok(None);
+            };
+            if body_count != 0 && parameters[index].target.get("schema").is_none() {
+                return Err(parameters[index].target.error(Code::InvalidDeclaration));
+            }
+            let fields = if !has_forms {
+                FieldDeclarations::NotApplicable
+            } else {
+                FieldDeclarations::Declared(
+                    parameters
+                        .iter()
+                        .filter(|p| is_form(p))
+                        .map(|field| {
+                            work.entry(&field.target)?;
+                            Ok(FieldDeclaration {
+                                name: work.required(&field.target, "name")?,
+                                requirement: if bool_field(&field.target, "required", false)? {
+                                    FieldRequirement::ProtocolRequired
+                                } else {
+                                    FieldRequirement::Optional
+                                },
+                                encoding: None,
+                                schema: self.schema_description(field.target.clone(), work)?,
+                                authored: field.authored.clone(),
+                            })
+                        })
+                        .collect::<Result<Vec<_>, Diagnostic>>()?,
+                )
+            };
+            // Move the resolved declaration so its provenance chain is not copied.
+            let declaration = parameters.swap_remove(index);
+            let required = match &fields {
+                FieldDeclarations::Declared(fields) => fields
+                    .iter()
+                    .any(|f| f.requirement == FieldRequirement::ProtocolRequired),
+                _ => bool_field(&declaration.target, "required", false)?,
+            };
+            let mut media = self.media_descriptions(&declaration.target, Some("consumes"), work)?;
+            let media_unrestricted = self
+                .value()
+                .get("consumes")
+                .or_else(|| self.store.json.root().get("consumes"))
+                .is_none_or(|v| v.elements().is_some_and(|mut v| v.next().is_none()));
+            if has_forms && media_unrestricted {
+                // formData itself supplies a protocol constraint even without
+                // consumes. Keep both legal choices visible; do not guess an
+                // application preference or send a JSON body for form fields.
+                for media_type in ["application/x-www-form-urlencoded", "multipart/form-data"] {
+                    work.entry(&declaration.target)?;
+                    media.push(MediaDeclaration {
+                        media_type: work.text(&declaration.target, media_type)?,
+                        authored: declaration.target.clone(),
+                        schema: None,
+                        encoding: None,
+                        item_schema: None,
+                        fields: FieldDeclarations::NotApplicable,
+                        prefix_encoding: None,
+                        item_encoding: None,
+                    });
+                }
+            }
+            for representation in &mut media {
+                if parse_media(&representation.media_type, true).is_ok_and(|m| {
+                    m.essence.starts_with("multipart/")
+                        || m.essence == "application/x-www-form-urlencoded"
+                }) && let FieldDeclarations::Declared(fields) = &fields
+                {
+                    let mut copied = Vec::new();
+                    for field in fields {
+                        work.entry(&field.authored)?;
+                        let name = work.text(&field.authored, &field.name)?;
+                        copied.push(FieldDeclaration {
+                            name,
+                            requirement: field.requirement,
+                            schema: field.schema.clone(),
+                            encoding: field.encoding.clone(),
+                            authored: field.authored.clone(),
+                        });
+                    }
+                    representation.fields = FieldDeclarations::Declared(copied);
+                }
+            }
+            work.entry(&declaration.target)?;
+            return Ok(Some(BodyDeclaration {
+                declaration,
+                required,
+                media,
+                media_unrestricted: media_unrestricted && !has_forms,
+            }));
+        }
+        // 3.0 requires consumers to ignore requestBody where HTTP semantics are undefined.
+        if edition == Edition::OpenApi30
+            && !matches!(
+                self.method(),
+                Method::Post | Method::Put | Method::Patch | Method::Options
+            )
+        {
+            return Ok(None);
+        }
+        let Some(body) = self.value().get("requestBody") else {
+            return Ok(None);
+        };
+        let declaration = work.resolve(&self.store.graph, &body, ReferenceKind::RequestBody)?;
+        let media = self.media_descriptions(&declaration.target, None, work)?;
+        work.entry(&declaration.target)?;
+        Ok(Some(BodyDeclaration {
+            required: bool_field(&declaration.target, "required", false)?,
+            declaration,
+            media,
+            media_unrestricted: false,
+        }))
+    }
+    fn server_descriptions(
+        &self,
+        work: &mut DescriptorWork<'_>,
+    ) -> Result<Vec<ServerDescription>, Diagnostic> {
+        if self.store.edition.clone()? != Edition::Swagger20 {
+            return match self
+                .value()
+                .get("servers")
+                .or_else(|| self.path_field("servers"))
+                .or_else(|| self.store.json.root().get("servers"))
+            {
+                None => {
+                    work.entry(&self.value())?;
+                    Ok(vec![ServerDescription {
+                        url: work.text(&self.value(), "/")?,
+                        variables: None,
+                        authored: vec![],
+                    }])
+                }
+                Some(list) => {
+                    let result = list
+                        .elements()
+                        .ok_or_else(|| list.error(Code::InvalidDeclaration))?
+                        .map(|v| {
+                            work.entry(&v)?;
+                            work.entry(&v)?; // Retained authored contributor.
+                            Ok(ServerDescription {
+                                url: work.required(&v, "url")?,
+                                variables: v.get("variables"),
+                                authored: vec![v],
+                            })
+                        })
+                        .collect::<Result<Vec<_>, Diagnostic>>()?;
+                    Ok(if result.is_empty() {
+                        work.entry(&self.value())?;
+                        vec![ServerDescription {
+                            url: work.text(&self.value(), "/")?,
+                            variables: None,
+                            authored: vec![],
+                        }]
+                    } else {
+                        result
+                    })
+                }
+            };
+        }
+        let root = self.store.json.root();
+        let host_node = root.get("host");
+        let path_node = root.get("basePath");
+        let base = self
+            .store
+            .base
+            .as_deref()
+            .map(fluent_uri::UriRef::parse)
+            .transpose()
+            .map_err(|_| root.error(Code::InvalidDestination))?;
+        let host = match work.optional(&root, "host")? {
+            Some(host) => host,
+            None => work.text(
+                &root,
+                base.as_ref()
+                    .and_then(|b| b.authority())
+                    .ok_or_else(|| root.error(Code::MissingBase))?
+                    .as_str(),
+            )?,
+        };
+        DescriptorWork::admit(
+            &mut work.bytes,
+            host.len().saturating_add(2),
+            work.limits.document_bytes,
+            LimitKind::DescriptorBytes,
+            host_node.as_ref().unwrap_or(&root),
+        )?;
+        let authority = fluent_uri::UriRef::parse(format!("//{host}"))
+            .map_err(|_| root.error(Code::InvalidDestination))?;
+        if authority.authority().is_none()
+            || !authority.path().is_empty()
+            || authority.query().is_some()
+            || authority.fragment().is_some()
+        {
+            return Err(host_node
+                .as_ref()
+                .unwrap_or(&root)
+                .error(Code::InvalidDeclaration));
+        }
+        let path = work.optional(&root, "basePath")?.unwrap_or_default();
+        if !path.is_empty() && !path.starts_with('/') || path.contains(['?', '#']) {
+            return Err(path_node
+                .as_ref()
+                .unwrap_or(&root)
+                .error(Code::InvalidDeclaration));
+        }
+        let schemes = self.value().get("schemes").or_else(|| root.get("schemes"));
+        let mut scheme_values = match schemes.as_ref() {
+            Some(v) => v
+                .elements()
+                .ok_or_else(|| v.error(Code::InvalidDeclaration))?
+                .map(|v| {
+                    work.entry(&v)?;
+                    work.text(
+                        &v,
+                        v.as_str()
+                            .ok_or_else(|| v.error(Code::InvalidDeclaration))?,
+                    )
+                    .map(|s| (s, Some(v.clone())))
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+            None => vec![],
+        };
+        if scheme_values.is_empty() {
+            work.entry(&root)?;
+            scheme_values.push((
+                work.text(
+                    &root,
+                    base.as_ref()
+                        .and_then(|b| b.scheme())
+                        .ok_or_else(|| root.error(Code::MissingBase))?
+                        .as_str(),
+                )?,
+                None,
+            ));
+        }
+        scheme_values
+            .into_iter()
+            .map(|(scheme, source)| {
+                if !matches!(scheme.as_str(), "http" | "https" | "ws" | "wss") {
+                    return Err(source
+                        .as_ref()
+                        .unwrap_or(&root)
+                        .error(Code::InvalidDeclaration));
+                }
+                work.entry(&root)?;
+                DescriptorWork::admit(
+                    &mut work.bytes,
+                    scheme
+                        .len()
+                        .saturating_add(3)
+                        .saturating_add(host.len())
+                        .saturating_add(path.len()),
+                    work.limits.document_bytes,
+                    LimitKind::DescriptorBytes,
+                    source.as_ref().unwrap_or(&root),
+                )?;
+                let mut authored = vec![];
+                for contributor in [host_node.clone(), path_node.clone(), source]
+                    .into_iter()
+                    .flatten()
+                {
+                    work.entry(&contributor)?;
+                    authored.push(contributor);
+                }
+                Ok(ServerDescription {
+                    url: format!("{scheme}://{host}{path}"),
+                    variables: None,
+                    authored,
+                })
+            })
+            .collect()
+    }
+    fn choose_target(&self, selection: &Selection) -> Result<String, Diagnostic> {
+        let root = self.store.json.root();
+        if self.store.edition.clone()? != Edition::Swagger20 {
+            let servers = self.inspect().servers;
+            let base = match &servers {
+                Some(value) => self.store.graph.retrieval_base(value),
+                None => self.store.base.as_deref(),
+            };
+            return choose_server(servers.as_ref(), base, selection, &root, &self.store.limits);
+        }
+        if !selection.variables.is_empty() {
+            return Err(root.error(Code::InvalidSelection));
+        }
+        let servers = self.server_descriptions(&mut DescriptorWork::new(&self.store.limits))?;
+        let expand = |s: &ServerDescription| uri::server_target(&s.url, self.store.base.as_deref());
+        if let Some(i) = selection.server {
+            return expand(
+                servers
+                    .get(i)
+                    .ok_or_else(|| root.error(Code::InvalidSelection))?,
+            );
+        }
+        let usable: Vec<_> = servers.iter().map(expand).collect();
+        let good: Vec<_> = usable.iter().filter_map(|r| r.as_ref().ok()).collect();
+        match good.as_slice() {
+            [one] => Ok((*one).clone()),
+            [] => Err(usable
+                .into_iter()
+                .find_map(Result::err)
+                .unwrap_or_else(|| root.error(Code::InvalidSelection))),
+            _ => Err(root.error(Code::AmbiguousSelection)),
+        }
+    }
+    /// Inspect effective edition-independent inputs, target choices, representations and security.
+    /// This performs no request preparation, credential acquisition or schema evaluation.
+    /// Newly copied strings, entries and declaration/reference work have per-construction
+    /// budgets controlled by document_bytes, nodes and descriptor_work respectively.
+    /// Each reference chain is independently bounded by reference_steps.
+    /// Retained source owners and other compiled cache entries are separate resource domains.
+    pub fn describe(&self) -> Result<EffectiveOperationDescription, Diagnostic> {
+        self.describe_with_cancellation(&crate::Cancellation::default())
+    }
+    /// Inspect effective declarations with bounded selected schema work and cancellation.
+    pub fn describe_with_cancellation(
+        &self,
+        cancellation: &crate::Cancellation,
+    ) -> Result<EffectiveOperationDescription, Diagnostic> {
+        self.describe_inner(cancellation)
+            .map_err(|e| e.bind_graph(&self.store))
+    }
+    fn describe_inner(
+        &self,
+        cancellation: &crate::Cancellation,
+    ) -> Result<EffectiveOperationDescription, Diagnostic> {
+        let mut work = DescriptorWork::with_cancellation(&self.store.limits, cancellation);
+        let mut facts = crate::schema_facts::FactWork::new(&self.store.limits, cancellation);
+        let parameters = self.parameter_declarations(&mut work)?;
+        let request_body = self
+            .body_description(&mut work)?
+            .map(|body| self.describe_body(body, &mut work, &mut facts))
             .transpose()?;
-        let mut matched = vec![];
-        if let Some(responses) = node.get("responses") {
+        let mut responses = vec![];
+        for (status, declaration) in self.response_declarations(&mut work)? {
+            let media = self.media_descriptions(
+                &declaration.target,
+                (self.store.edition == Ok(Edition::Swagger20)).then_some("produces"),
+                &mut work,
+            )?;
+            work.entry(&declaration.target)?;
+            responses.push(ResponseDescription {
+                status,
+                declaration,
+                media: media
+                    .into_iter()
+                    .map(|media| self.describe_media(media, &mut work, &mut facts))
+                    .collect::<Result<_, _>>()?,
+            });
+        }
+        let node = self.value();
+        Ok(EffectiveOperationDescription {
+            path: work.text(&node, self.path())?,
+            method: self.method(),
+            operation_id: node
+                .get("operationId")
+                .filter(|v| v.as_str().is_some())
+                .map(|v| work.text(&v, v.as_str().expect("string operation ID")))
+                .transpose()?,
+            parameters: Parameters {
+                entries: parameters,
+            },
+            servers: self.server_descriptions(&mut work)?,
+            request_body,
+            responses,
+            security: self.security_descriptions(&mut work)?,
+        })
+    }
+    fn response_declarations(
+        &self,
+        work: &mut DescriptorWork<'_>,
+    ) -> Result<Vec<(String, crate::ResolvedReference)>, Diagnostic> {
+        let mut result = vec![];
+        if let Some(responses) = self.value().get("responses") {
             for (key, value) in responses
                 .members()
                 .ok_or_else(|| responses.error(Code::InvalidDeclaration))?
@@ -351,28 +1220,644 @@ impl Operation {
                 }
                 let valid = key == "default"
                     || key.len() == 3
-                        && ((key.as_bytes()[0] >= b'1' && key.as_bytes()[0] <= b'5')
-                            && (key[1..] == *"XX" || key.bytes().all(|b| b.is_ascii_digit())));
+                        && key.as_bytes()[0] >= b'1'
+                        && key.as_bytes()[0] <= b'5'
+                        && (self.store.edition.clone()? != Edition::Swagger20 && &key[1..] == "XX"
+                            || key.bytes().all(|b| b.is_ascii_digit()));
                 if !valid {
                     return Err(value.error(Code::InvalidDeclaration));
                 }
-                if budget == 0 {
-                    return Err(value.error(Code::Limit));
-                }
-                budget -= 1;
-                matched.push((
-                    key.to_owned(),
-                    document::resolve(&root, &value, ReferenceKind::Response, budget + 1)?.target,
-                ));
+                let declaration =
+                    work.resolve(&self.store.graph, &value, ReferenceKind::Response)?;
+                let key = work.text(&value, key)?;
+                work.entry(&value)?;
+                result.push((key, declaration));
             }
-            if matched.is_empty() {
+            if result.is_empty() {
                 return Err(responses.error(Code::InvalidDeclaration));
             }
+        }
+        Ok(result)
+    }
+    fn security_descriptions(
+        &self,
+        work: &mut DescriptorWork<'_>,
+    ) -> Result<Vec<SecurityAlternative>, Diagnostic> {
+        let Some(security) = self
+            .value()
+            .get("security")
+            .or_else(|| self.store.json.root().get("security"))
+        else {
+            return Ok(vec![]);
+        };
+        let root = self.store.json.root();
+        let edition = self.store.edition.clone()?;
+        let mut alternatives = vec![];
+        for authored in security
+            .elements()
+            .ok_or_else(|| security.error(Code::InvalidDeclaration))?
+        {
+            work.entry(&authored)?;
+            let mut requirements = vec![];
+            for (name, scopes_source) in authored
+                .members()
+                .ok_or_else(|| authored.error(Code::InvalidDeclaration))?
+            {
+                let declared = security_source(&self.store.graph, &root, name, &scopes_source)?;
+                let declaration =
+                    work.resolve(&self.store.graph, &declared, ReferenceKind::SecurityScheme)?;
+                let scheme = describe_security(&declaration.target, edition, work)?;
+                let mut scopes = vec![];
+                for scope in scopes_source
+                    .elements()
+                    .ok_or_else(|| scopes_source.error(Code::InvalidDeclaration))?
+                {
+                    scopes.push(
+                        work.text(
+                            &scope,
+                            scope
+                                .as_str()
+                                .ok_or_else(|| scope.error(Code::InvalidDeclaration))?,
+                        )?,
+                    );
+                }
+                if matches!(edition, Edition::Swagger20 | Edition::OpenApi30)
+                    && !matches!(
+                        scheme,
+                        SecurityScheme::OAuth2 { .. } | SecurityScheme::OpenIdConnect { .. }
+                    )
+                    && !scopes.is_empty()
+                {
+                    return Err(scopes_source.error(Code::InvalidDeclaration));
+                }
+                work.entry(&scopes_source)?;
+                requirements.push(SecurityRequirement {
+                    name: work.text(&authored, name)?,
+                    scopes,
+                    declaration,
+                    scheme,
+                });
+            }
+            alternatives.push(SecurityAlternative {
+                authored,
+                requirements,
+            });
+        }
+        Ok(alternatives)
+    }
+}
+
+fn security_source(
+    graph: &crate::graph::Graph,
+    root: &Value,
+    name: &str,
+    requirement: &Value,
+) -> Result<Value, Diagnostic> {
+    let schemes = if Edition::detect(root)? == Edition::Swagger20 {
+        root.get("securityDefinitions")
+    } else {
+        root.get("components")
+            .and_then(|v| v.get("securitySchemes"))
+    };
+    if let Some(scheme) = schemes.and_then(|v| v.get(name)) {
+        return Ok(scheme);
+    }
+    if Edition::detect(root)? == Edition::OpenApi32 {
+        return graph
+            .target(
+                requirement,
+                name,
+                ReferenceKind::SecurityScheme,
+                Edition::OpenApi32,
+            )
+            .map(|(value, _)| value);
+    }
+    Err(requirement
+        .error(Code::InvalidDeclaration)
+        .reasoned(DiagnosticReason::UndefinedSecurityScheme))
+}
+fn string_value(source: &Value, key: &str) -> Result<Value, Diagnostic> {
+    source
+        .get(key)
+        .filter(|value| value.as_str().is_some())
+        .ok_or_else(|| source.error(Code::InvalidDeclaration))
+}
+fn optional_string_value(source: &Value, key: &str) -> Result<Option<Value>, Diagnostic> {
+    source
+        .get(key)
+        .map(|value| {
+            if value.as_str().is_some() {
+                Ok(value)
+            } else {
+                Err(value.error(Code::InvalidDeclaration))
+            }
+        })
+        .transpose()
+}
+#[derive(Clone, Copy)]
+enum SecurityMechanism {
+    Basic,
+    Bearer,
+    ApiKey,
+    OAuth2,
+    OpenIdConnect,
+    MutualTls,
+    Unsupported,
+}
+fn visit_oauth_flows(
+    mut visit: impl FnMut(&'static str, &Value) -> Result<(), Diagnostic>,
+    scheme: &Value,
+    edition: Edition,
+) -> Result<(), Diagnostic> {
+    let mut flow = |name: &str, value: &Value| {
+        let name = match (edition, name) {
+            (_, "implicit") => "implicit",
+            (_, "password") => "password",
+            (Edition::Swagger20, "application") => "clientCredentials",
+            (Edition::Swagger20, "accessCode") => "authorizationCode",
+            (Edition::OpenApi30 | Edition::OpenApi31 | Edition::OpenApi32, "clientCredentials") => {
+                "clientCredentials"
+            }
+            (Edition::OpenApi30 | Edition::OpenApi31 | Edition::OpenApi32, "authorizationCode") => {
+                "authorizationCode"
+            }
+            (Edition::OpenApi32, "deviceAuthorization") => "deviceAuthorization",
+            _ => return Err(value.error(Code::InvalidDeclaration)),
+        };
+        if matches!(name, "implicit" | "authorizationCode") {
+            string_value(value, "authorizationUrl")?;
+        }
+        if name == "deviceAuthorization" {
+            string_value(value, "deviceAuthorizationUrl")?;
+        }
+        if matches!(
+            name,
+            "password" | "clientCredentials" | "authorizationCode" | "deviceAuthorization"
+        ) {
+            string_value(value, "tokenUrl")?;
+        }
+        // Even endpoints unused by this flow must retain their declared string shape.
+        optional_string_value(value, "authorizationUrl")?;
+        optional_string_value(value, "tokenUrl")?;
+        optional_string_value(value, "refreshUrl")?;
+        if edition == Edition::OpenApi32 {
+            optional_string_value(value, "deviceAuthorizationUrl")?;
+        }
+        let scopes = value
+            .get("scopes")
+            .ok_or_else(|| value.error(Code::InvalidDeclaration))?;
+        for (_, description) in scopes
+            .members()
+            .ok_or_else(|| scopes.error(Code::InvalidDeclaration))?
+        {
+            if description.as_str().is_none() {
+                return Err(description.error(Code::InvalidDeclaration));
+            }
+        }
+        visit(name, value)
+    };
+    if edition == Edition::Swagger20 {
+        flow(string_value(scheme, "flow")?.as_str().unwrap(), scheme)
+    } else {
+        let flows = scheme
+            .get("flows")
+            .ok_or_else(|| scheme.error(Code::InvalidDeclaration))?;
+        for (name, value) in flows
+            .members()
+            .ok_or_else(|| flows.error(Code::InvalidDeclaration))?
+        {
+            if !name.starts_with("x-") {
+                flow(name, &value)?;
+            }
+        }
+        Ok(())
+    }
+}
+/// Validate without allocating descriptions, scope maps or endpoint strings.
+fn security_mechanism(scheme: &Value, edition: Edition) -> Result<SecurityMechanism, Diagnostic> {
+    Ok(match string_value(scheme, "type")?.as_str().unwrap() {
+        "basic" if edition == Edition::Swagger20 => SecurityMechanism::Basic,
+        "http" if edition != Edition::Swagger20 => {
+            let mechanism = string_value(scheme, "scheme")?;
+            if mechanism.as_str().unwrap().eq_ignore_ascii_case("basic") {
+                SecurityMechanism::Basic
+            } else if mechanism.as_str().unwrap().eq_ignore_ascii_case("bearer") {
+                optional_string_value(scheme, "bearerFormat")?;
+                SecurityMechanism::Bearer
+            } else {
+                SecurityMechanism::Unsupported
+            }
+        }
+        "apiKey" => {
+            string_value(scheme, "name")?;
+            let location = string_value(scheme, "in")?;
+            ParameterLocation::parse(location.as_str().unwrap())
+                .filter(|l| {
+                    *l != ParameterLocation::Path
+                        && (edition != Edition::Swagger20 || *l != ParameterLocation::Cookie)
+                })
+                .ok_or_else(|| scheme.error(Code::InvalidDeclaration))?;
+            SecurityMechanism::ApiKey
+        }
+        "oauth2" => {
+            visit_oauth_flows(|_, _| Ok(()), scheme, edition)?;
+            SecurityMechanism::OAuth2
+        }
+        "openIdConnect" if edition != Edition::Swagger20 => {
+            string_value(scheme, "openIdConnectUrl")?;
+            SecurityMechanism::OpenIdConnect
+        }
+        "mutualTLS" if matches!(edition, Edition::OpenApi31 | Edition::OpenApi32) => {
+            SecurityMechanism::MutualTls
+        }
+        _ => SecurityMechanism::Unsupported,
+    })
+}
+fn describe_security(
+    scheme: &Value,
+    edition: Edition,
+    work: &mut DescriptorWork<'_>,
+) -> Result<SecurityScheme, Diagnostic> {
+    work.entry(scheme)?;
+    Ok(match security_mechanism(scheme, edition)? {
+        SecurityMechanism::Basic => SecurityScheme::Basic,
+        SecurityMechanism::Bearer => SecurityScheme::Bearer {
+            format: work.optional(scheme, "bearerFormat")?,
+        },
+        SecurityMechanism::ApiKey => SecurityScheme::ApiKey {
+            name: work.required(scheme, "name")?,
+            location: ParameterLocation::parse(string_value(scheme, "in")?.as_str().unwrap())
+                .expect("validated mechanism"),
+        },
+        SecurityMechanism::OAuth2 => {
+            let mut flows = vec![];
+            visit_oauth_flows(
+                |name, value| {
+                    work.entry(value)?;
+                    let mut scopes = BTreeMap::new();
+                    let source = value.get("scopes").expect("validated scopes");
+                    for (name, description) in source.members().expect("validated scope map") {
+                        work.entry(&description)?;
+                        let name = work.text(&source, name)?;
+                        let description = work.text(
+                            &description,
+                            description.as_str().expect("validated scope description"),
+                        )?;
+                        scopes.insert(name, description);
+                    }
+                    flows.push(OAuthFlowDescription {
+                        flow: work.text(value, name)?,
+                        authorization_url: work.optional(value, "authorizationUrl")?,
+                        device_authorization_url: if edition == Edition::OpenApi32 {
+                            work.optional(value, "deviceAuthorizationUrl")?
+                        } else {
+                            None
+                        },
+                        token_url: work.optional(value, "tokenUrl")?,
+                        refresh_url: work.optional(value, "refreshUrl")?,
+                        scopes,
+                    });
+                    Ok(())
+                },
+                scheme,
+                edition,
+            )?;
+            SecurityScheme::OAuth2 { flows }
+        }
+        SecurityMechanism::OpenIdConnect => SecurityScheme::OpenIdConnect {
+            url: work.required(scheme, "openIdConnectUrl")?,
+        },
+        SecurityMechanism::MutualTls => SecurityScheme::MutualTls,
+        SecurityMechanism::Unsupported => {
+            let ty = string_value(scheme, "type")?;
+            let type_name = if ty.as_str() == Some("http") && edition != Edition::Swagger20 {
+                let mut mechanism = work.required(scheme, "scheme")?;
+                mechanism.make_ascii_lowercase();
+                let extra = 5;
+                DescriptorWork::admit(
+                    &mut work.bytes,
+                    extra,
+                    work.limits.document_bytes,
+                    LimitKind::DescriptorBytes,
+                    scheme,
+                )?;
+                mechanism.insert_str(0, "http:");
+                mechanism
+            } else {
+                work.text(&ty, ty.as_str().unwrap())?
+            };
+            SecurityScheme::Unsupported { type_name }
+        }
+    })
+}
+fn serialize_legacy(
+    v: &Value,
+    loc: ParameterLocation,
+    collection: Option<&str>,
+    name: &str,
+) -> Result<Serialized, Diagnostic> {
+    if v.kind() == ValueKind::Object {
+        return Err(v.error(Code::UnsupportedValue));
+    }
+    if v.kind() != ValueKind::Array {
+        return serialize(v, loc, false, name);
+    }
+    let collection = collection.ok_or_else(|| v.error(Code::UnsupportedValue))?;
+    let mut serialized = serialize(v, loc, collection == "multi", name)?;
+    if collection != "csv" && collection != "multi" {
+        let separator = match (collection, loc == ParameterLocation::Header) {
+            ("ssv", true) => " ",
+            ("ssv", false) => "%20",
+            ("tsv", true) => "\t",
+            ("tsv", false) => "%09",
+            ("pipes", true) => "|",
+            ("pipes", false) => "%7C",
+            _ => unreachable!(),
+        };
+        let values = v
+            .elements()
+            .unwrap()
+            .map(|v| {
+                scalar(&v).map(|s| {
+                    if loc == ParameterLocation::Header {
+                        s
+                    } else {
+                        uri::encode(&s)
+                    }
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        serialized.value = values.join(separator);
+        serialized.pairs = vec![(
+            if loc == ParameterLocation::Header {
+                name.into()
+            } else {
+                uri::encode(name)
+            },
+            serialized.value.clone(),
+        )];
+    }
+    Ok(serialized)
+}
+impl Operation {
+    /// Inspect effective parameters without compiling body/media/security requirements.
+    /// Unsupported editions and invalid parameter declarations refuse; raw inspection remains.
+    pub fn parameters(&self) -> Result<Parameters, Diagnostic> {
+        self.parameter_declarations(&mut DescriptorWork::new(&self.store.limits))
+            .map(|entries| Parameters { entries })
+            .map_err(|e| e.bind_graph(&self.store))
+    }
+    fn parameter_declarations(
+        &self,
+        work: &mut DescriptorWork<'_>,
+    ) -> Result<Vec<Parameter>, Diagnostic> {
+        let node = self.value();
+        let edition = self.store.edition.clone()?;
+        if matches!(self.method(), Method::Query | Method::Extension(_))
+            && edition != Edition::OpenApi32
+            || self.method() == Method::Trace && edition == Edition::Swagger20
+        {
+            return Err(node.error(Code::InvalidDeclaration));
+        }
+        if let Some(e) = &self.record().path_error {
+            return Err(e.clone());
+        }
+        if node.kind() != ValueKind::Object {
+            return Err(node.error(Code::InvalidDeclaration));
+        }
+        // Operation Objects are not Reference Object positions. Treating a
+        // source-composed operation as empty would silently omit its contract.
+        // Unknown inspection fields elsewhere remain inert.
+        if let Some(reference) = node.get("$ref") {
+            return Err(reference
+                .error(Code::InvalidDeclaration)
+                .reasoned(DiagnosticReason::UnsupportedReferencePosition));
+        }
+        let mut parameters: Vec<Parameter> = vec![];
+        for resolved in self.effective_parameter_references(work)? {
+            let p = resolved.target.clone();
+            if edition == Edition::Swagger20
+                && p.get("in")
+                    .is_some_and(|v| matches!(v.as_str(), Some("body" | "formData")))
+            {
+                continue;
+            }
+            let name = work.required(&p, "name")?;
+            let location = ParameterLocation::parse(&work.required(&p, "in")?)
+                .ok_or_else(|| p.error(Code::UnsupportedParameter))?;
+            if edition != Edition::Swagger20
+                && location == ParameterLocation::Header
+                && ["accept", "content-type", "authorization"]
+                    .iter()
+                    .any(|n| name.eq_ignore_ascii_case(n))
+            {
+                continue;
+            }
+            let required = bool_field(&p, "required", false)?;
+            if location == ParameterLocation::Path
+                && (!required
+                    || !self.path().match_indices('{').any(|(index, _)| {
+                        self.path()[index + 1..]
+                            .strip_prefix(&name)
+                            .is_some_and(|tail| tail.starts_with('}'))
+                    }))
+            {
+                return Err(p.error(Code::InvalidDeclaration));
+            }
+            let (
+                explode,
+                style_kind,
+                reserved,
+                unsupported,
+                collection,
+                schema_context,
+                content_codec,
+            ) = if edition == Edition::Swagger20 {
+                if location == ParameterLocation::Cookie {
+                    return Err(p.error(Code::InvalidDeclaration));
+                }
+                let ty = work.required(&p, "type")?;
+                if !matches!(
+                    ty.as_str(),
+                    "string" | "number" | "integer" | "boolean" | "array"
+                ) {
+                    return Err(p.error(Code::InvalidDeclaration));
+                }
+                let collection = if ty == "array" {
+                    if p.get("items").is_none() {
+                        return Err(p.error(Code::InvalidDeclaration));
+                    }
+                    let format = work
+                        .optional(&p, "collectionFormat")?
+                        .map_or_else(|| work.text(&p, "csv"), Ok)?;
+                    if !matches!(format.as_str(), "csv" | "ssv" | "tsv" | "pipes" | "multi")
+                        || format == "multi" && location != ParameterLocation::Query
+                    {
+                        return Err(p.error(Code::InvalidDeclaration));
+                    }
+                    Some(format)
+                } else {
+                    None
+                };
+                (
+                    false,
+                    crate::style::Style::Form,
+                    false,
+                    false,
+                    collection,
+                    Some(self.schema_description(p.clone(), work)?),
+                    None,
+                )
+            } else if p.get("schema").is_none() && p.get("content").is_some() {
+                let content = p.get("content").unwrap();
+                if content.members().is_none_or(|members| members.len() != 1) {
+                    return Err(content.error(Code::InvalidDeclaration));
+                }
+                let (media_type, authored) = content.members().unwrap().next().unwrap();
+                let media_type = work.text(&authored, media_type)?;
+                let parsed = parse_media(&media_type, false)
+                    .map_err(|_| authored.error(Code::InvalidDeclaration))?;
+                self.resolve_media(&authored, work)?;
+                let charset_supported = parsed
+                    .parameters
+                    .get("charset")
+                    .is_none_or(|s| s.eq_ignore_ascii_case("utf-8"));
+                let codec = if !charset_supported {
+                    None
+                } else if parsed.json {
+                    Some(crate::style::ContentCodec::Json)
+                } else if parsed.essence == "text/plain" {
+                    Some(crate::style::ContentCodec::Text)
+                } else {
+                    None
+                };
+                (
+                    false,
+                    crate::style::Style::Simple,
+                    false,
+                    codec.is_none()
+                        || location == ParameterLocation::Cookie
+                        || location == ParameterLocation::Header
+                            && name.eq_ignore_ascii_case("cookie"),
+                    None,
+                    None, // schema() describes the parameter schema, never content schemas.
+                    codec,
+                )
+            } else {
+                let style = work.optional(&p, "style")?.map_or_else(
+                    || {
+                        work.text(&p, {
+                            if matches!(
+                                location,
+                                ParameterLocation::Path | ParameterLocation::Header
+                            ) {
+                                "simple"
+                            } else {
+                                "form"
+                            }
+                        })
+                    },
+                    Ok,
+                )?;
+                if p.get("schema").is_none() == p.get("content").is_none() {
+                    return Err(p.error(Code::InvalidDeclaration));
+                }
+                let style_kind = match (style.as_str(), location) {
+                    ("simple", ParameterLocation::Path | ParameterLocation::Header) => {
+                        Some(crate::style::Style::Simple)
+                    }
+                    ("form", ParameterLocation::Query | ParameterLocation::Cookie) => {
+                        Some(crate::style::Style::Form)
+                    }
+                    ("deepObject", ParameterLocation::Query) => {
+                        Some(crate::style::Style::DeepObject)
+                    }
+                    ("label", ParameterLocation::Path) => Some(crate::style::Style::Label),
+                    ("matrix", ParameterLocation::Path) => Some(crate::style::Style::Matrix),
+                    ("spaceDelimited", ParameterLocation::Query) => {
+                        Some(crate::style::Style::SpaceDelimited)
+                    }
+                    ("pipeDelimited", ParameterLocation::Query) => {
+                        Some(crate::style::Style::PipeDelimited)
+                    }
+                    _ => None,
+                };
+                let deep = style_kind == Some(crate::style::Style::DeepObject);
+                let unsupported = style_kind.is_none()
+                    || location == ParameterLocation::Header && name.eq_ignore_ascii_case("cookie");
+                let explode = bool_field(&p, "explode", style == "form")?;
+                if edition == Edition::OpenApi32
+                    && location == ParameterLocation::Cookie
+                    && p.get("schema").is_some()
+                    && matches!(style.as_str(), "form" | "cookie")
+                    && let Some(authored) = p.get("explode")
+                    && authored.as_bool() == Some(false)
+                {
+                    return Err(authored
+                        .error(Code::InvalidDeclaration)
+                        .reasoned(DiagnosticReason::UnsupportedStyleCombination));
+                }
+                (
+                    if deep && edition == Edition::OpenApi32 {
+                        true
+                    } else {
+                        explode
+                    },
+                    style_kind.unwrap_or(crate::style::Style::Form),
+                    bool_field(&p, "allowReserved", false)?
+                        && (location == ParameterLocation::Query
+                            || edition == Edition::OpenApi32
+                                && matches!(
+                                    location,
+                                    ParameterLocation::Path | ParameterLocation::Cookie
+                                )),
+                    unsupported,
+                    None,
+                    p.get("schema")
+                        .map(|v| self.schema_description(v, work))
+                        .transpose()?,
+                    None,
+                )
+            };
+            work.entry(&p)?;
+            let param = Parameter {
+                resolved,
+                node: p.clone(),
+                name: work.text(&p, &name)?,
+                location,
+                required,
+                explode,
+                style: style_kind,
+                reserved,
+                unsupported,
+                content: content_codec,
+                collection,
+                schema_context,
+            };
+            if let Some(i) = parameters
+                .iter()
+                .position(|p| p.location == location && same_name(&p.name, &name, location))
+            {
+                parameters[i] = param;
+            } else {
+                parameters.push(param);
+            }
+        }
+        Ok(parameters)
+    }
+    fn compile(&self) -> Result<Arc<Compiled>, Diagnostic> {
+        let mut work = DescriptorWork::new(&self.store.limits);
+        let parameters = self.parameter_declarations(&mut work)?;
+        let body = self.body_description(&mut work)?;
+        let mut responses = vec![];
+        for (key, value) in self.response_declarations(&mut work)? {
+            work.entry(&value.target)?;
+            responses.push((key, value.target));
         }
         Ok(Arc::new(Compiled {
             parameters,
             body,
-            responses: matched,
+            responses,
         }))
     }
     fn compiled(&self) -> Result<Arc<Compiled>, Diagnostic> {
@@ -405,32 +1890,40 @@ impl Operation {
         input: &Input,
         cancellation: &crate::Cancellation,
     ) -> Result<PreparedRequest, Diagnostic> {
-        self.prepare_inner(input, cancellation).map_err(|mut e| {
-            if e.location.is_none() && e.context().is_none() {
-                e = e.contextual(DiagnosticContext::PreparedRequest);
-            }
-            e
-        })
+        self.prepare_admitted(input, AdmittedBody::from(&input.body), cancellation)
+    }
+    pub(crate) fn prepare_admitted(
+        &self,
+        input: &Input,
+        body: AdmittedBody<'_>,
+        cancellation: &crate::Cancellation,
+    ) -> Result<PreparedRequest, Diagnostic> {
+        self.prepare_inner(input, body, cancellation)
+            .map_err(|mut e| {
+                if e.location.is_none() && e.context().is_none() {
+                    e = e.contextual(DiagnosticContext::PreparedRequest);
+                }
+                e.bind_graph(&self.store)
+            })
     }
     fn prepare_inner(
         &self,
         input: &Input,
+        body: AdmittedBody<'_>,
         cancellation: &crate::Cancellation,
     ) -> Result<PreparedRequest, Diagnostic> {
         cancellation.check()?;
         let compiled = self.compiled()?;
         admit_input(input, &self.store.limits)?;
+        if let AdmittedBody::Form(fields) = body {
+            crate::form::admit_ready(fields, &self.store.limits, cancellation)?;
+        }
         let root = self.store.json.root();
         let desc = self.inspect();
         let limits = self.store.limits.clone();
-        let mut target = choose_server(
-            desc.servers.as_ref(),
-            self.store.base.as_deref(),
-            &input.selection,
-            &root,
-            &limits,
-        )
-        .map_err(|e| e.election(SelectionKind::Server, input.selection.server, None))?;
+        let mut target = self
+            .choose_target(&input.selection)
+            .map_err(|e| e.election(SelectionKind::Server, input.selection.server, None))?;
         let mut path = self.path().to_owned();
         if path.contains('?') || path.contains('#') || !path.starts_with('/') {
             return Err(self.value().error(Code::InvalidDeclaration));
@@ -447,6 +1940,8 @@ impl Operation {
         let mut query: Vec<(String, String)> = vec![];
         let mut cookies: Vec<(String, String)> = vec![];
         let mut used = HashSet::new();
+        let mut parameter_target_bytes = 0usize;
+        let mut parameter_header_bytes = 0usize;
         for p in &compiled.parameters {
             cancellation.check()?;
             let values: Vec<_> = input
@@ -473,10 +1968,31 @@ impl Operation {
             };
             used.insert(index);
             if p.unsupported {
-                return Err(p.node.error(Code::UnsupportedParameter));
+                return Err(p
+                    .node
+                    .error(Code::UnsupportedParameter)
+                    .reasoned(DiagnosticReason::UnsupportedStyleCombination));
             }
-            let scalar = serialize(&value.value, p.location, p.explode, &p.name)
-                .map_err(|e| e.contextual(parameter_context(index, value)))?;
+            let scalar = if self.store.edition == Ok(Edition::Swagger20) {
+                serialize_legacy(&value.value, p.location, p.collection.as_deref(), &p.name)
+            } else {
+                let header = matches!(
+                    p.location,
+                    ParameterLocation::Header | ParameterLocation::Cookie
+                );
+                serialize_style(
+                    &value.value,
+                    p,
+                    &limits,
+                    cancellation,
+                    if header {
+                        &mut parameter_header_bytes
+                    } else {
+                        &mut parameter_target_bytes
+                    },
+                )
+            }
+            .map_err(|e| e.contextual(parameter_context(index, value)))?;
             match p.location {
                 ParameterLocation::Path => {
                     let marker = format!("{{{}}}", p.name);
@@ -494,7 +2010,15 @@ impl Operation {
                         )
                         .contextual(parameter_context(index, value)));
                     }
-                    path = path.replace(&marker, &scalar.value)
+                    // String::replace can grow geometrically when a large
+                    // replacement is followed by a small suffix. Admit the whole
+                    // result above, then allocate its exact completed length.
+                    if count != 0 {
+                        let size = path.len() - count * marker.len() + count * scalar.value.len();
+                        path =
+                            replace_path_marker(&path, &marker, &scalar.value, size, cancellation)
+                                .map_err(|e| e.contextual(parameter_context(index, value)))?;
+                    }
                 }
                 ParameterLocation::Header => {
                     headers.push(Header::new(&p.name, scalar.value.as_bytes()))
@@ -526,9 +2050,28 @@ impl Operation {
                 .contextual(DiagnosticContext::PreparedRequest));
         }
         target.truncate(target.len() - usize::from(target.ends_with('/')));
-        target.push_str(&path);
-        let (body, body_kind, media) = prepare_body(compiled.body.as_ref(), input, &limits)
-            .map_err(|e| e.election(SelectionKind::Media, None, None))?;
+        let target_size = target.len().saturating_add(path.len());
+        if target_size > limits.target_bytes {
+            return Err(Diagnostic::limited(
+                LimitKind::TargetBytes,
+                limits.target_bytes,
+                target_size,
+            )
+            .contextual(DiagnosticContext::PreparedRequest));
+        }
+        target.reserve_exact(path.len());
+        append_path_piece(&mut target, &path, cancellation)?;
+        drop(path);
+        let (body, body_kind, media) = prepare_body(
+            &self.store.graph,
+            compiled.body.as_ref(),
+            input,
+            body,
+            self.store.edition.clone()?,
+            &limits,
+            cancellation,
+        )
+        .map_err(|e| e.election(SelectionKind::Media, None, None))?;
         if let Some(media) = media {
             if headers
                 .iter()
@@ -539,6 +2082,7 @@ impl Operation {
             headers.push(Header::new("Content-Type", media.as_bytes()));
         }
         apply_security(
+            &self.store.graph,
             &root,
             desc.security.as_ref(),
             &target,
@@ -548,7 +2092,7 @@ impl Operation {
                 query: &mut query,
                 cookies: &mut cookies,
             },
-            limits.reference_steps,
+            &limits,
         )
         .map_err(|e| e.election(SelectionKind::Security, input.selection.security, None))?;
         if !cookies.is_empty() {
@@ -558,25 +2102,33 @@ impl Operation {
             {
                 return Err(Diagnostic::new(Code::CredentialCollision));
             }
-            headers.push(Header::sensitive(
-                "Cookie",
-                cookies
-                    .iter()
-                    .map(|(k, v)| format!("{k}={v}"))
-                    .collect::<Vec<_>>()
-                    .join("; ")
-                    .as_bytes(),
-            ));
+            let size = pair_bytes(&cookies, 2, cancellation)?;
+            if size > limits.document_bytes {
+                return Err(Diagnostic::limited(
+                    LimitKind::InputBytes,
+                    limits.document_bytes,
+                    size,
+                )
+                .contextual(DiagnosticContext::PreparedRequest));
+            }
+            let mut value = String::with_capacity(size);
+            append_pairs(&mut value, &cookies, "; ", cancellation)?;
+            headers.push(Header::sensitive("Cookie", value.as_bytes()));
         }
         if !query.is_empty() {
+            let size = pair_bytes(&query, 1, cancellation)?;
+            let target_size = target.len().saturating_add(1).saturating_add(size);
+            if target_size > limits.target_bytes {
+                return Err(Diagnostic::limited(
+                    LimitKind::TargetBytes,
+                    limits.target_bytes,
+                    target_size,
+                )
+                .contextual(DiagnosticContext::PreparedRequest));
+            }
+            target.reserve_exact(size.saturating_add(1));
             target.push('?');
-            target.push_str(
-                &query
-                    .iter()
-                    .map(|(k, v)| format!("{k}={v}"))
-                    .collect::<Vec<_>>()
-                    .join("&"),
-            );
+            append_pairs(&mut target, &query, "&", cancellation)?;
         }
         if target.len() > limits.target_bytes {
             return Err(Diagnostic::limited(
@@ -608,6 +2160,40 @@ impl Operation {
             limits,
         })
     }
+}
+
+fn pair_bytes(
+    pairs: &[(String, String)],
+    separator: usize,
+    cancellation: &crate::Cancellation,
+) -> Result<usize, Diagnostic> {
+    let mut size = 0usize;
+    for (key, value) in pairs {
+        cancellation.check()?;
+        size = size
+            .saturating_add(key.len())
+            .saturating_add(value.len())
+            .saturating_add(1)
+            .saturating_add(separator);
+    }
+    Ok(size.saturating_sub(separator))
+}
+fn append_pairs(
+    output: &mut String,
+    pairs: &[(String, String)],
+    separator: &str,
+    cancellation: &crate::Cancellation,
+) -> Result<(), Diagnostic> {
+    for (index, (name, value)) in pairs.iter().enumerate() {
+        cancellation.check()?;
+        if index != 0 {
+            output.push_str(separator);
+        }
+        output.push_str(name);
+        output.push('=');
+        output.push_str(value);
+    }
+    Ok(())
 }
 
 fn parameter_context(index: usize, value: &ParameterInput) -> DiagnosticContext {
@@ -778,8 +2364,7 @@ fn choose_server(
             return Err(server.error(Code::InvalidSelection));
         }
         uri::server_target(&s, base).map_err(|mut e| {
-            e.location = Some(server.location());
-            e = e.sourced(server.source_context());
+            e = server.locate(e);
             if touched.len() == 1 {
                 let name = touched.iter().next().unwrap();
                 let variable = vars.as_ref().and_then(|v| v.get(name));
@@ -846,6 +2431,45 @@ fn choose_server(
     }
 }
 
+// A marker is matched only in the existing path. Replacement bytes are never
+// reinterpreted during this substitution. The caller admits the complete size
+// before allocation; byte offsets from match_indices are valid UTF-8 boundaries.
+fn replace_path_marker(
+    path: &str,
+    marker: &str,
+    replacement: &str,
+    size: usize,
+    cancellation: &crate::Cancellation,
+) -> Result<String, Diagnostic> {
+    cancellation.check()?;
+    let mut result = String::with_capacity(size);
+    let mut cursor = 0;
+    for (offset, _) in path.match_indices(marker) {
+        append_path_piece(&mut result, &path[cursor..offset], cancellation)?;
+        append_path_piece(&mut result, replacement, cancellation)?;
+        cursor = offset + marker.len();
+    }
+    append_path_piece(&mut result, &path[cursor..], cancellation)?;
+    debug_assert_eq!(result.len(), size);
+    Ok(result)
+}
+fn append_path_piece(
+    out: &mut String,
+    text: &str,
+    cancellation: &crate::Cancellation,
+) -> Result<(), Diagnostic> {
+    let mut cursor = 0;
+    while cursor < text.len() {
+        cancellation.check()?;
+        let mut end = cursor.saturating_add(4096).min(text.len());
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        out.push_str(&text[cursor..end]);
+        cursor = end;
+    }
+    cancellation.check()
+}
 struct Serialized {
     value: String,
     pairs: Vec<(String, String)>,
@@ -926,12 +2550,227 @@ fn serialize(
     Ok(Serialized { value, pairs })
 }
 
-struct Media {
-    essence: String,
-    parameters: BTreeMap<String, String>,
-    json: bool,
+fn walk_parameter(
+    value: &Value,
+    parameter: &Parameter,
+    emit: impl FnMut(crate::style::Event<'_>) -> Result<(), Diagnostic>,
+) -> Result<(), Diagnostic> {
+    if let Some(codec) = parameter.content {
+        crate::style::walk_content(value, &parameter.name, codec, emit)
+    } else {
+        crate::style::walk(
+            value,
+            &parameter.name,
+            crate::style::Config {
+                style: parameter.style,
+                explode: parameter.explode,
+                reserved: parameter.reserved,
+            },
+            false,
+            &parameter.node,
+            emit,
+        )
+    }
 }
-fn parse_media(s: &str, ranges: bool) -> Result<Media, Diagnostic> {
+
+fn serialize_style(
+    value: &Value,
+    parameter: &Parameter,
+    limits: &Limits,
+    cancel: &crate::Cancellation,
+    aggregate: &mut usize,
+) -> Result<Serialized, Diagnostic> {
+    use crate::style::{Atom, Config, Escape, Event};
+    let location = parameter.location;
+    let pairs = matches!(
+        location,
+        ParameterLocation::Query | ParameterLocation::Cookie
+    );
+    let header = matches!(
+        location,
+        ParameterLocation::Header | ParameterLocation::Cookie
+    );
+    let (maximum, kind) = if header {
+        (limits.document_bytes, LimitKind::InputBytes)
+    } else {
+        (limits.target_bytes, LimitKind::TargetBytes)
+    };
+    let cfg = Config {
+        style: parameter.style,
+        explode: parameter.explode,
+        reserved: parameter.reserved,
+    };
+    let mode = if location == ParameterLocation::Header {
+        Escape::Literal
+    } else if parameter.content.is_some() && location == ParameterLocation::Query {
+        Escape::FormContent
+    } else {
+        Escape::Style {
+            reserved: cfg.reserved,
+            path: location == ParameterLocation::Path,
+            cookie: location == ParameterLocation::Cookie,
+            protected: cfg.protected(value),
+        }
+    };
+    if let Some(codec) = parameter.content
+        && location == ParameterLocation::Header
+    {
+        let bytes = match codec {
+            crate::style::ContentCodec::Json => value.raw().as_bytes(),
+            crate::style::ContentCodec::Text => crate::style::bytes(value)?,
+        };
+        for chunk in bytes.chunks(4096) {
+            cancel.check()?;
+            if chunk.iter().any(|b| *b == 127 || *b < 32 && *b != b'\t') {
+                return Err(value.error(Code::InvalidHeader));
+            }
+        }
+        if bytes.first().is_some_and(|b| b" \t".contains(b))
+            || bytes.last().is_some_and(|b| b" \t".contains(b))
+        {
+            return Err(value.error(Code::InvalidHeader));
+        }
+    }
+    // Count each output name/value before any encoded strings are allocated.
+    // The count vector has one entry per emitted pair, bounded independently by nodes.
+    let mut lengths: Vec<(usize, usize)> = Vec::new();
+    let mut total = *aggregate;
+    walk_parameter(value, parameter, |event| {
+        cancel.check()?;
+        let mut add = |n: usize| -> Result<(), Diagnostic> {
+            total = total
+                .checked_add(n)
+                .ok_or_else(|| Diagnostic::limited(kind, maximum, usize::MAX))?;
+            if total > maximum {
+                return Err(Diagnostic::limited(kind, maximum, total));
+            }
+            Ok(())
+        };
+        match event {
+            Event::Begin(name) => {
+                if lengths.len() >= limits.nodes {
+                    return Err(Diagnostic::limited(
+                        LimitKind::Nodes,
+                        limits.nodes,
+                        lengths.len().saturating_add(1),
+                    ));
+                }
+                let mut size = 0;
+                if pairs {
+                    if !lengths.is_empty() {
+                        add(if location == ParameterLocation::Cookie {
+                            2
+                        } else {
+                            1
+                        })?;
+                    }
+                    add(1)?; // '='
+                    for text in name.pieces() {
+                        crate::style::encode(text.as_bytes(), mode.name(), |chunk| {
+                            cancel.check()?;
+                            add(chunk.len())?;
+                            size += chunk.len();
+                            Ok(())
+                        })?;
+                    }
+                }
+                crate::form::reserve_admitted(&mut lengths, limits.nodes);
+                lengths.push((size, 0));
+            }
+            Event::Atom(atom) => {
+                let (bytes, escaping) = match atom {
+                    Atom::Scalar(v) => (crate::style::bytes(v)?, mode),
+                    Atom::Json(v) => (v.raw().as_bytes(), mode),
+                    Atom::Key(k) => (k.as_bytes(), mode.name()),
+                    Atom::Separator(s) => (s, Escape::Literal),
+                    Atom::Delimiter(s) => (s, mode.delimiter(s)),
+                };
+                crate::style::encode(bytes, escaping, |chunk| {
+                    cancel.check()?;
+                    add(chunk.len())?;
+                    lengths.last_mut().unwrap().1 += chunk.len();
+                    Ok(())
+                })?;
+            }
+            Event::End | Event::Check => {}
+        }
+        Ok(())
+    })?;
+    let mut output = Vec::with_capacity(lengths.len());
+    let mut ordinal = 0;
+    walk_parameter(value, parameter, |event| {
+        cancel.check()?;
+        match event {
+            Event::Begin(name) => {
+                let (n, v) = lengths[ordinal];
+                ordinal += 1;
+                let mut encoded = String::with_capacity(n);
+                if pairs {
+                    for text in name.pieces() {
+                        crate::style::encode(text.as_bytes(), mode.name(), |chunk| {
+                            cancel.check()?;
+                            encoded.push_str(std::str::from_utf8(chunk).expect("encoded name"));
+                            Ok(())
+                        })?;
+                    }
+                }
+                output.push((encoded, String::with_capacity(v)));
+            }
+            Event::Atom(atom) => {
+                let (bytes, escaping) = match atom {
+                    Atom::Scalar(v) => (crate::style::bytes(v)?, mode),
+                    Atom::Json(v) => (v.raw().as_bytes(), mode),
+                    Atom::Key(k) => (k.as_bytes(), mode.name()),
+                    Atom::Separator(s) => (s, Escape::Literal),
+                    Atom::Delimiter(s) => (s, mode.delimiter(s)),
+                };
+                // Literal UTF-8 chunks can cross scalar boundaries; append bytes to the
+                // admitted UTF-8 value via one whole logical atom for headers.
+                if matches!(escaping, Escape::Literal) {
+                    for _ in bytes.chunks(4096) {
+                        cancel.check()?;
+                    }
+                    output
+                        .last_mut()
+                        .unwrap()
+                        .1
+                        .push_str(std::str::from_utf8(bytes).expect("logical text"));
+                } else {
+                    crate::style::encode(bytes, escaping, |chunk| {
+                        cancel.check()?;
+                        output
+                            .last_mut()
+                            .unwrap()
+                            .1
+                            .push_str(std::str::from_utf8(chunk).expect("ASCII encoding"));
+                        Ok(())
+                    })?;
+                }
+            }
+            Event::End | Event::Check => {}
+        }
+        Ok(())
+    })?;
+    *aggregate = total;
+    if pairs {
+        Ok(Serialized {
+            value: String::new(),
+            pairs: output,
+        })
+    } else {
+        Ok(Serialized {
+            value: output.pop().map(|(_, v)| v).unwrap_or_default(),
+            pairs: Vec::new(),
+        })
+    }
+}
+
+pub(crate) struct Media {
+    pub(crate) essence: String,
+    pub(crate) parameters: BTreeMap<String, String>,
+    pub(crate) json: bool,
+}
+pub(crate) fn parse_media(s: &str, ranges: bool) -> Result<Media, Diagnostic> {
     let bad = || Diagnostic::new(Code::InvalidMedia);
     let (head, tail) = s.split_once(';').map_or((s, ""), |(a, b)| (a, b));
     let essence = head.trim_matches([' ', '\t']);
@@ -1011,7 +2850,7 @@ pub(crate) fn media_type(s: &str) -> Result<(String, bool), Diagnostic> {
     let m = parse_media(s, false)?;
     Ok((m.essence, m.json))
 }
-fn media_matches(key: &Media, selected: &Media) -> Option<(u8, usize)> {
+pub(crate) fn media_matches(key: &Media, selected: &Media) -> Option<(u8, usize)> {
     let (ty, sub) = key.essence.split_once('/')?;
     let (st, ss) = selected.essence.split_once('/')?;
     if !(ty == "*" || ty == st)
@@ -1038,36 +2877,49 @@ pub(crate) fn token(b: u8) -> bool {
 }
 type BodyEncoding = (Option<Arc<[u8]>>, &'static str, Option<String>);
 fn prepare_body(
-    decl: Option<&Value>,
+    graph: &crate::graph::Graph,
+    decl: Option<&BodyDeclaration>,
     input: &Input,
+    body: AdmittedBody<'_>,
+    edition: Edition,
     limits: &Limits,
+    cancellation: &crate::Cancellation,
 ) -> Result<BodyEncoding, Diagnostic> {
-    let absent = matches!(input.body, Body::Absent);
+    let absent = matches!(body, AdmittedBody::Absent);
     let Some(decl) = decl else {
         if absent && input.selection.media.is_none() {
             return Ok((None, "absent", None));
         }
         return Err(Diagnostic::new(Code::InvalidSelection));
     };
+    let source = &decl.declaration.target;
     if absent {
-        if bool_field(decl, "required", false)? {
-            return Err(decl.error(Code::MissingBody));
+        if decl.required {
+            return Err(source.error(Code::MissingBody));
         }
         return Ok((None, "absent", None));
     }
-    let content = decl
-        .get("content")
-        .ok_or_else(|| decl.error(Code::InvalidDeclaration))?;
     let mut media = vec![];
-    for (k, v) in content
-        .members()
-        .ok_or_else(|| content.error(Code::InvalidDeclaration))?
-    {
-        if let Ok(parsed) = parse_media(k, true) {
-            media.push((k.to_owned(), parsed, v));
+    for representation in &decl.media {
+        if let Ok(parsed) = parse_media(&representation.media_type, true) {
+            media.push((
+                representation.media_type.clone(),
+                parsed,
+                representation.authored.clone(),
+            ));
         }
     }
-    let selected = if let Some(s) = &input.selection.media {
+    let content = source;
+    let selected = if decl.media_unrestricted {
+        if let Some(s) = &input.selection.media {
+            parse_media(s, false).map_err(|e| source.error(e.code))?;
+            s.trim_matches([' ', '\t']).to_owned()
+        } else if matches!(body, AdmittedBody::Json(_)) {
+            "application/json".into()
+        } else {
+            return Err(source.error(Code::InvalidSelection));
+        }
+    } else if let Some(s) = &input.selection.media {
         let selected = parse_media(s, false).map_err(|e| content.error(e.code))?;
         let mut matching = media
             .iter()
@@ -1080,23 +2932,26 @@ fn prepare_body(
         if matching.last().is_some_and(|(r, _)| *r == rank) {
             return Err(content.error(Code::AmbiguousSelection));
         }
-        if value.kind() != ValueKind::Object {
-            return Err(value.error(Code::InvalidDeclaration));
-        }
+        let _ = value;
         s.trim_matches([' ', '\t']).to_owned()
     } else {
         let concrete = media
             .iter()
-            .filter(|(_, m, v)| !m.essence.contains('*') && v.kind() == ValueKind::Object)
+            .filter(|(_, m, _)| !m.essence.contains('*'))
             .collect::<Vec<_>>();
         let usable = concrete
             .iter()
-            .filter(|(_, m, _)| !matches!(input.body, Body::Json(_)) || m.json)
+            .filter(|(_, m, _)| {
+                (!matches!(body, AdmittedBody::Json(_)) || m.json)
+                    && (!matches!(body, AdmittedBody::Form(_))
+                        || m.essence.starts_with("multipart/")
+                        || m.essence == "application/x-www-form-urlencoded")
+            })
             .collect::<Vec<_>>();
         match usable.len() {
             0 => {
                 if !concrete.is_empty() {
-                    return Err(decl.error(Code::UnsupportedMedia));
+                    return Err(source.error(Code::UnsupportedMedia));
                 }
                 return Err(content.error(if media.is_empty() {
                     Code::InvalidMedia
@@ -1108,24 +2963,57 @@ fn prepare_body(
             _ => return Err(content.error(Code::AmbiguousSelection)),
         }
     };
-    let (bytes, kind) = match &input.body {
-        Body::Absent => unreachable!(),
-        Body::Json(v) => {
+    if edition == Edition::Swagger20
+        && source
+            .get("in")
+            .is_some_and(|v| v.as_str() == Some("formData"))
+        && !matches!(
+            parse_media(&selected, false)?.essence.as_str(),
+            "application/x-www-form-urlencoded" | "multipart/form-data"
+        )
+    {
+        return Err(source.error(Code::UnsupportedMedia));
+    }
+    if let AdmittedBody::Form(form) = body {
+        let selected_parsed = parse_media(&selected, false)?;
+        let representation = decl
+            .media
+            .iter()
+            .filter_map(|m| {
+                parse_media(&m.media_type, true)
+                    .ok()
+                    .and_then(|key| media_matches(&key, &selected_parsed).map(|rank| (rank, m)))
+            })
+            .max_by_key(|(rank, _)| *rank)
+            .map(|(_, m)| m)
+            .ok_or_else(|| source.error(Code::UnsupportedMedia))?;
+        let (bytes, media) = crate::form::encode(
+            graph,
+            form,
+            representation,
+            &selected,
+            edition,
+            limits,
+            cancellation,
+        )?;
+        return Ok((Some(bytes), "form", Some(media)));
+    }
+    let (bytes, kind) = match body {
+        AdmittedBody::Absent | AdmittedBody::Form(_) => unreachable!(),
+        AdmittedBody::Json(v) => {
             if v.raw().len() > limits.body_bytes {
-                return Err(Diagnostic::limited(
+                return Err(v.locate(Diagnostic::limited(
                     LimitKind::BodyBytes,
                     limits.body_bytes,
                     v.raw().len(),
-                )
-                .at(v.location())
-                .sourced(v.source_context()));
+                )));
             }
             if !media_type(&selected)?.1 {
-                return Err(decl.error(Code::UnsupportedMedia));
+                return Err(source.error(Code::UnsupportedMedia));
             }
             (Arc::<[u8]>::from(v.raw().as_bytes()), "json")
         }
-        Body::Raw(b) => (b.clone(), "raw"),
+        AdmittedBody::Raw(b) => (b.clone(), "raw"),
     };
     if bytes.len() > limits.body_bytes {
         return Err(
@@ -1141,12 +3029,13 @@ struct SecurityFields<'a> {
     cookies: &'a mut Vec<(String, String)>,
 }
 fn apply_security(
+    graph: &crate::graph::Graph,
     root: &Value,
     requirements: Option<&Value>,
     target: &str,
     input: &Input,
     fields: SecurityFields<'_>,
-    budget: usize,
+    limits: &Limits,
 ) -> Result<(), Diagnostic> {
     let SecurityFields {
         headers,
@@ -1177,27 +3066,48 @@ fn apply_security(
     let entries = choice
         .members()
         .ok_or_else(|| choice.error(Code::InvalidDeclaration))?;
-    if entries.len() > budget {
-        return Err(choice.error(Code::Limit));
+    if entries.len() > limits.reference_steps {
+        return Err(choice.locate(Diagnostic::limited(
+            LimitKind::InputCount,
+            limits.reference_steps,
+            entries.len(),
+        )));
     }
+    if entries.len() > limits.descriptor_work {
+        return Err(choice.locate(Diagnostic::limited(
+            LimitKind::DescriptorWork,
+            limits.descriptor_work,
+            entries.len(),
+        )));
+    }
+    let mut work = DescriptorWork::new(limits);
     let origin = uri::origin(target)?;
     for (name, scopes) in entries {
         if scopes.kind() != ValueKind::Array {
             return Err(scopes.error(Code::InvalidDeclaration));
         }
-        let schemes = root
-            .get("components")
-            .and_then(|c| c.get("securitySchemes"));
-        let declared = schemes
-            .and_then(|s| s.get(name))
-            .ok_or_else(|| choice.error(Code::InvalidDeclaration))?;
-        let scheme =
-            document::resolve(root, &declared, ReferenceKind::SecurityScheme, budget)?.target;
-        let ty = required_string(&scheme, "type")?;
-        if !matches!(ty.as_str(), "http" | "apiKey") {
+        let source = security_source(graph, root, name, &scopes)?;
+        let scheme = work
+            .resolve(graph, &source, ReferenceKind::SecurityScheme)?
+            .target;
+        let kind = security_mechanism(&scheme, Edition::detect(root)?)?;
+        if matches!(
+            kind,
+            SecurityMechanism::Unsupported | SecurityMechanism::MutualTls
+        ) {
             return Err(scheme.error(Code::UnsupportedSecurity));
         }
         if scopes.elements().unwrap().any(|v| v.as_str().is_none()) {
+            return Err(scopes.error(Code::InvalidDeclaration));
+        }
+        if matches!(
+            Edition::detect(root)?,
+            Edition::Swagger20 | Edition::OpenApi30
+        ) && !matches!(
+            kind,
+            SecurityMechanism::OAuth2 | SecurityMechanism::OpenIdConnect
+        ) && scopes.elements().unwrap().next().is_some()
+        {
             return Err(scopes.error(Code::InvalidDeclaration));
         }
         let credential = input
@@ -1211,9 +3121,13 @@ fn apply_security(
         {
             return Err(scheme.error(Code::CredentialOrigin));
         }
-        let (location, name, value) = if ty == "http" {
-            let mechanism = required_string(&scheme, "scheme")?;
-            let value = match (mechanism.to_ascii_lowercase().as_str(), &credential.value) {
+        let (location, name, value) = if !matches!(kind, SecurityMechanism::ApiKey) {
+            let mechanism = if matches!(kind, SecurityMechanism::Basic) {
+                "basic"
+            } else {
+                "bearer"
+            };
+            let value = match (mechanism, &credential.value) {
                 ("basic", CredentialValue::Basic { username, password }) => {
                     if username.contains(':')
                         || username
@@ -1284,7 +3198,7 @@ fn apply_security(
 impl PreparedRequest {
     /// Selected HTTP method.
     pub fn method(&self) -> Method {
-        self.method
+        self.method.clone()
     }
     /// Exact resolved transport target. May contain query credentials; do not log indiscriminately.
     pub fn target(&self) -> &str {
@@ -1298,7 +3212,7 @@ impl PreparedRequest {
     pub fn body(&self) -> Option<&[u8]> {
         self.body.as_deref()
     }
-    /// Payload category: absent, json or raw.
+    /// Payload category: absent, json, raw or form.
     pub fn body_kind(&self) -> &'static str {
         self.body_kind
     }
@@ -1345,6 +3259,7 @@ impl std::fmt::Debug for Body {
             Self::Absent => f.write_str("Body::Absent"),
             Self::Json(v) => f.debug_tuple("Body::Json").field(&v.raw().len()).finish(),
             Self::Raw(b) => f.debug_tuple("Body::Raw").field(&b.len()).finish(),
+            Self::Form(form) => form.fmt(f),
         }
     }
 }

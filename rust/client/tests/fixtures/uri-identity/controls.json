@@ -1,0 +1,48 @@
+{
+  "base":"bcd5266b15027c4d2fa1bd6f6693a5a78c8a11b8",
+  "status":"prospective literals before author execution; original identity policy is preserved, not expanded",
+  "identity": [
+    ["HTTPS://EXAMPLE.COM/A?Q=A#F", "https://example.com/A?Q=A#F"],
+    ["https://%45XAMPLE.com/%7e/%2f?q=%aa#%ef", "https://%45xample.com/%7E/%2F?q=%AA#%EF"],
+    ["file:///A/B", "file:///A/B"],
+    ["URN:EXAMPLE:a%2fB", "urn:EXAMPLE:a%2FB"],
+    ["custom://[2001:DB8::A]:00443/Case?Q=#", "custom://[2001:db8::a]:00443/Case?Q=#"],
+    ["http://EXAMPLE.com:80", "http://example.com:80"],
+    ["http://EXAMPLE.com", "http://example.com"],
+    ["https://EXAMPLE.com/#", "https://example.com/#"],
+    ["https://EXAMPLE.com/", "https://example.com/"],
+    ["https://EXAMPLE.com/?", "https://example.com/?"],
+    ["mailto:Person@Example.COM", "mailto:Person@Example.COM"],
+    ["https://EXAMPLE.com/a/../b", "https://example.com/a/../b"],
+    ["https://EXAMPLE.com/%41", "https://example.com/%41"],
+    ["https://EXAMPLE.com/A", "https://example.com/A"],
+    ["https://EXAMPLE.com/%23?x=%23#A%23B", "https://example.com/%23?x=%23#A%23B"],
+    ["foo:/Abs", "foo:/Abs"],
+    ["foo:Relative", "foo:Relative"]
+  ],
+  "invalid_identity":["", "path", "//EXAMPLE.com/x", "/x#f", "https://user@host/", "https://host/%G0", "https://host/%", "https://host/white space", "1http://host", "https://[bad]/"],
+  "invalid_identity_code":"InvalidResourceUri",
+  "address": [
+    {"reference":"", "base":null, "uri":null, "fragment":"", "local_root":true},
+    {"reference":"#", "base":null, "uri":null, "fragment":"", "local_root":true},
+    {"reference":"#%2Fx", "base":null, "uri":null, "fragment":"/x", "local_root":true},
+    {"reference":"#a%23b", "base":null, "uri":null, "fragment":"a#b", "local_root":true},
+    {"reference":"#%FF", "base":null, "code":"InvalidReference"},
+    {"reference":"%", "base":null, "code":"InvalidReference"},
+    {"reference":"//OTHER.example/x", "base":null, "code":"MissingResourceBase"},
+    {"reference":"thing", "base":null, "code":"MissingResourceBase"},
+    {"reference":"https://user@host/x", "base":null, "code":"InvalidResourceUri"},
+    {"reference":"https://host/ bad", "base":null, "code":"InvalidReference"},
+    {"reference":"?", "base":"https://EXAMPLE.com/root?Q#ignored", "uri":"https://EXAMPLE.com/root?", "fragment":"", "local_root":false},
+    {"reference":"#", "base":"https://EXAMPLE.com/root?Q#ignored", "uri":"https://EXAMPLE.com/root?Q#", "fragment":"", "local_root":false},
+    {"reference":"%", "base":null, "target_bytes":0, "code":"Limit", "limit":"TargetBytes", "maximum":0, "actual":1},
+    {"reference":"#", "base":null, "target_bytes":0, "code":"Limit", "limit":"TargetBytes", "maximum":0, "actual":1}
+  ],
+  "public_controls": [
+    {"id":"P01", "expected":"A schema anchor full identity https://docs.example/root?#Child maps to /$defs/Child while physical fragment-free identity https://docs.example/root? maps to the root. Exact full identity retains priority; query-empty identity stays distinct from no-query sibling resource; authored source/URI spelling remains unchanged."},
+    {"id":"P02", "expected":"Case/percent-hex-equivalent retrieval identities with conflicting bytes produce IdentityCollision; original source survives rejected insertion. Percent-encoded unreserved /%41 and literal /A remain distinct identities."},
+    {"id":"P03", "expected":"Canonical $self and physical retrieval alias resolution remain distinct canonical booleans with identical exact target/source. Target canonical URI contains a nonempty fragment; its full identity and fragment-free alias both retain original behavior."}
+  ],
+  "other_invariants":"All address errors remain located at /x-reference with original source context. Userinfo and fragment rejection on ResourceInput::at stay intact. Existing cancellation/limits/collision/source regression oracles unchanged.",
+  "excluded":"No timing, benchmark changes, gate changes, per-resource normalized cache or new identity semantics."
+}

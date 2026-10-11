@@ -1,16 +1,22 @@
 # Dynamic OpenAPI client
 
-An independent Rust client for exact JSON/OpenAPI 3.1 documents and finite requests through caller-supplied transport. This unpublished foundation has bounded qualification and independently verified API repairs; its supported scope is explicit below.
+An independent Rust client for dynamic OpenAPI documents and finite requests through caller-supplied transport. This unpublished compatibility candidate accepts Swagger 2.0 and OpenAPI 3.0, 3.1 and 3.2 in JSON or YAML; its implemented feature profile is explicit below.
 
-`Document::parse` retains exact source and immutable owned handles. Inspect `Document::operations`, effective `Operation::parameters`, `Operation::inspect` and raw `Value` handles, then use `Operation::request` for ordinary calls. Use `Operation::prepare` with explicit `Input` when you already manage exact values and selections. `PreparedRequest::invoke` accepts a host capability declaration and an async callback. Native concurrent and host-local callbacks can use the same semantic types without a required executor.
+`Document::parse` detects format and edition, retains source and provides immutable owned handles. Inspect `Document::operations`, effective `Operation::describe` or `Operation::parameters`, then use `Operation::request` for ordinary calls. `Operation::inspect` and raw `Value` handles expose authored declarations. Use `Operation::prepare` with explicit `Input` when you already manage exact values and selections. `PreparedRequest::invoke` accepts a host capability declaration and an async callback. Native concurrent and host-local callbacks can use the same semantic types without a required executor.
 
-Supported preparation covers OpenAPI 3.1.0–3.1.2, local JSON-Pointer protocol references, server/media/security elections, path/header simple and query/cookie form parameters, supplied scoped Basic/Bearer/API-key credentials, and finite exact JSON/raw bodies. Response metadata, delivered bytes/provenance, upload state, cancellation and decode failures remain independent.
+Preparation interprets each supported edition's own server, parameter, body, media and security declarations. The current profile includes source-preserving local and supplied-resource JSON-Pointer protocol references, explicit server/media/security choices, Swagger primitive and collection parameters, supported 3.x logical parameter styles and JSON/text content parameters, scoped supplied Basic/Bearer/API-key credentials, supplied OAuth2/OpenID Connect bearer tokens and finite JSON/raw bodies and named URL-encoded/multipart forms. OAuth token acquisition remains caller-owned. Response metadata, delivered bytes/provenance, upload state, cancellation and decode failures remain independent.
 
-Schemas and unknown fields are inspection data. The core performs no schema evaluation/default insertion, acquisition, automatic redirect/retry, streaming codec or OpenBindings adaptation. For native HTTP calls, use the optional [`dynamic-openapi-client-reqwest` companion](../reqwest/README.md); it owns the HTTP stack and configuration while this crate remains runtime-independent. Browser/workerd qualification glue is separate and is not a supported npm client.
+Edition coverage is not full-feature coverage. Custom serialization conventions, content codings, schema-reference-dependent form decoding, positional/nested multipart, 3.2 cookie/querystring styles, richer content codecs, schema-fact-dependent encoding, resource acquisition, streaming and WebSocket connections remain unqualified or unimplemented. Effective descriptors retain unsupported declarations for discovery; an available descriptor does not guarantee preparation or execution support.
 
-Source and decoded strings are exact for Unicode scalar values. Unpaired surrogate escapes return a located limitation with source preserved. Numeric tokens remain exact; integer conveniences are checked, and binary64 conversion currently accepts exactly representable integer lexemes only. Mathematical conversion of decimal/exponent tokens remains explicit unsupported conversion. Null, empty-container and nested parameter values receive located refusals; empty strings are supported.
+For multiple supplied resources, use `DocumentBuilder` and the same Document/Operation request APIs. Missing bytes or explicit fragment layouts yield typed corrective needs; publish a new snapshot after supplying them. See [immutable resource graphs](GRAPH.md) for recovery, identity, discovery and current limits.
 
-Supplied hosts must enforce no ambient authentication, automatic replay or redirects, disclose target/header restrictions and content decoding, and bound delivered response bytes. The `no_retries` capability permits recovery only when the host proves the original request was never serialized, such as after encountering a stale pooled connection. Once serialization has begun or may have begun, status responses, partial writes and ambiguous failures must not trigger another attempt. The core itself never retries. The core can validate its own data and returned evidence; it cannot limit an arbitrary callback's hidden allocation or undo remote effects. Use explicit accessors carefully: raw targets, header bytes, source values and host error details can contain secrets. SDK Debug/Display views omit credential values.
+The [document loading guide](LOADING.md) documents YAML scalar/key policies, exact numeric normalization, alias bounds and original source traces. `ExactJson::parse` remains JSON-only; the version-neutral entrypoint for OpenAPI documents is `Document::parse`.
+
+Schemas have owning typed [inspection handles and direct reference resolution](SCHEMAS.md); preparation does not yet consume their graph facts. Unknown fields remain inspection data. A direct `$ref` on an Operation Object is an explicit exception: OpenAPI does not define that reference position, and preparation refuses with `UnsupportedReferencePosition` instead of silently sending an incomplete request. Raw inspection remains available. The core performs no schema evaluation/default insertion, acquisition, automatic redirect/retry, streaming codec or OpenBindings adaptation. For native HTTP calls, use the optional [`dynamic-openapi-client-reqwest` companion](../reqwest/README.md); it owns the HTTP stack and configuration while this crate remains runtime-independent. The optional [Rust Fetch companion](../fetch/README.md) supplies explicit Browser/Worker profiles on Wasm and is under qualification; it is not a TypeScript/npm client.
+
+Source and decoded strings are exact for Unicode scalar values. Unpaired surrogate escapes return a located limitation with source preserved. Numeric tokens remain exact; integer conveniences are checked, and binary64 conversion currently accepts exactly representable integer lexemes only. Mathematical conversion of decimal/exponent tokens remains explicit unsupported conversion. Null, empty-container and nested style-based parameter values receive located refusals; empty strings are supported. JSON content parameters accept these JSON shapes without schema evaluation.
+
+Supplied hosts must enforce no ambient authentication or implicit redirects, disclose target/header restrictions and content decoding, and bound delivered response bytes. Default admission and invocation require a no-replay declaration. An explicit `ReplayPolicy::AllowHostManaged` permits a host without that declaration, while retaining every other admission rule. The `no_retries` capability permits recovery only when the host proves the original request was never serialized, such as after encountering a stale pooled connection. Under that declaration, once serialization has begun or may have begun, status responses, partial writes and ambiguous failures must not trigger another attempt. The core itself never retries. The core can validate its own data and returned evidence; it cannot limit an arbitrary callback's hidden allocation or undo remote effects. Use explicit accessors carefully: raw targets, header bytes, source values and host error details can contain secrets. SDK Debug/Display views omit arbitrary header names as well as values and opaque host details.
 
 ## Calling a real service
 
@@ -40,14 +46,10 @@ async fn inspect_and_call(text: &[u8]) -> Result<CompletedJson, Box<dyn std::err
             assert!(!cancellation.is_cancelled());
             assert_eq!(request.method, Method::Get);
             TransportResult {
-                response: Some(ResponseInput {
-                    status: 200,
-                    headers: vec![Header::new("Content-Type", "application/json")],
-                    body: DeliveredBody {
+                response: Some(ResponseInput::new(200, vec![Header::new("Content-Type", "application/json")], DeliveredBody {
                         bytes: br#"{"count":9007199254740993}"#.as_slice().into(),
                         state: BodyState::Complete, provenance: Provenance::Wire,
-                    }, opaque_redirect: false,
-                }), upload: UploadState::Complete, error_detail: None,
+                    })), upload: UploadState::Complete, error_detail: None,
             }
         },
     ).await;
@@ -57,6 +59,80 @@ async fn inspect_and_call(text: &[u8]) -> Result<CompletedJson, Box<dyn std::err
 ```
 
 `HostCapabilities::programmable()` is a caller promise for controlled callbacks, not proof about an arbitrary HTTP stack. `cargo run --example dynamic` executes the complete fixture flow. Real asynchronous I/O requires the caller's host/executor. `Response::json()` parses on each call: retain the returned ExactJson when reusing decoded data. For a different application policy, inspect raw `Outcome` directly and choose your own order/acceptance rule. Preserve dispatch, upload, cancellation, error and response facts; a response alone does not establish execution success. Calling the named policy is never implicit in `invoke`.
+
+## Shared parameter and form styles
+
+Defined label/matrix path, space/pipe query/form and flat `deepObject` styles use
+the existing logical parameter/form inputs. Single-media JSON/text content
+parameters use the same `.parameter(...)` method. Style-based spaces use `%20`;
+content query parameters and URL forms use `+`.
+See [SERIALIZATION.md](SERIALIZATION.md) for applicability, exact-value ownership,
+corrective refusals and the real provider preparation example.
+
+## Supplied-host evidence
+
+`invoke` and `HostCapabilities::admit` remain strict defaults. The corresponding
+`invoke_with_replay` and `admit_with_replay` methods accept the explicit caller
+policy. `Outcome::replay_assurance()` records the admitted declaration at callback
+entry: `NoReplayDeclared` or `HostManaged`. It is absent on pre-dispatch outcomes
+and survives later caller mutation of public outcome fields. It proves neither
+network attempts nor server receipt. Native reqwest retains its strict path and
+exposes no replay opt-in. See [HOSTS.md](HOSTS.md).
+
+Construct delivered responses with `ResponseInput::new(status, headers, body)`.
+Header fidelity starts `Unknown`; adapters set `HostProcessed` or `ExactFields`
+only when their supplied evidence supports that declaration. `ExactFields` means
+received structured fields, including names, bytes, duplicates and order, without
+host omission; it does not mean raw framing or whitespace capture. Core omission
+counts and body provenance remain independent. Valid processed JSON metadata can
+be decoded without claiming exact headers or upload completion.
+
+## Sending logical forms and finite files
+
+Use the same `.form(...)` call for a declared URL-encoded or multipart/form-data
+request. The operation selects a unique compatible representation; use the
+existing `Selection::media` when more than one applies. Field names are unique;
+ordinary/exact arrays express repeated values. The library owns URL escaping,
+part framing and collision-checked multipart boundaries.
+
+```rust
+use dynamic_openapi_client::*;
+# fn upload(operation: &Operation, file: &[u8]) -> Result<PreparedRequest, RequestError> {
+let metadata = ExactJson::from_serializable(
+    &serde_json::json!({"title": "Résumé", "revision": 7}), Limits::default()
+).map_err(RequestError::Input)?;
+operation.request().form([
+    FormField::new("caption", "Résumé + notes"),
+    FormField::new("metadata", metadata.root()),
+    FormField::new("file", Part::bytes(file).filename("résumé.pdf")),
+]).prepare()
+# }
+```
+
+This example expects the declaration to describe text, JSON metadata and a binary
+file. `Part::media_type("image/png")` elects one declared part representation when
+needed; the library does not sniff content. A filename is metadata and causes no
+filesystem access. `FiniteBytes` borrows a slice or shares an existing `Arc<[u8]>`.
+`FormValue::Parts(&parts)` supplies an array with individual file/part metadata.
+`Part` has no embedded field name, so content can later compose with other body
+models. Prepared requests own finite wire bytes and report `body_kind() == "form"`.
+
+Nested Rust models and `serde_json::Value` use the same
+`ExactJson::from_serializable` bridge as `.json`. Existing exact owners can be
+reused directly. This explicit conversion is still required; `.form` does not
+add another arbitrary-Serialize conversion path.
+
+Each `MediaDescription::fields` describes only that representation. `Declared`,
+`Partial`, `Opaque` and `NotApplicable` remain distinct. `FieldRequirement`
+distinguishes Swagger protocol requirements from OpenAPI schema-required hints;
+schema hints do not activate validation, defaults, coercion or projection.
+An explicitly JSON-encoded field can use opaque schema content without resolving
+unrelated schema assertions. An unresolved fact needed to choose its wire codec
+refuses with a source-aware `DiagnosticReason::Form` and field context.
+
+Read [the finite form profile](FORMS.md) for edition semantics, resource bounds,
+header policy and remaining capabilities. [CHANGELOG.md](CHANGELOG.md) and
+[MIGRATION.md](MIGRATION.md) describe the unpublished descriptor revision.
 
 ## Reading an application type
 
@@ -125,7 +201,7 @@ The depth cap counts emitted JSON containers. Transparent `Some` and newtype wra
 
 Every explicit field assignment counts, including `Body::Absent`; `Selection::default()` assigns nothing and clears nothing. Distinct fields commute; repeats refuse even when equal. Header parameter identities are case-insensitive, while additional `header` calls append ordered lines. Bulk selections assign server, media, security and lexical variables in that order. Duplicate diagnostics include typed context and zero-based assignment ordinals. A first refusal drops prior drafts and ignores later setter conversions. It precedes cancellation; otherwise consuming prepare checks cancellation before serialization. Correction starts a fresh builder on the same healthy operation.
 
-`RequestError::Input` retains a generated-source `ParseFailure`; `RequestError::Preparation` retains a builder or protocol `Diagnostic`. Both compose with ordinary Rust error chains. Construction/preparation performs no transport. Controlled callers continue to construct `Input` and call `Operation::prepare`; the builder lowers into that same primitive.
+`RequestError::Input` retains a generated-source `ParseFailure`; `RequestError::Preparation` retains a builder or protocol `Diagnostic`. Both compose with ordinary Rust error chains. Construction/preparation performs no transport. Controlled callers can construct `Input` and call `Operation::prepare` for parameters and JSON/raw bodies. Named forms currently require the builder's `.form(...)` method and use an internal extension of the same preparation pipeline; public `Input` cannot yet represent a form.
 
 Use `ExactJson::from_ordinary` for the deliberately narrow borrowed `OrdinaryValue` representation. It checks limits, serializes generated JSON bytes, then parses/indexes once. It is fallible and not zero-copy. This narrow API accepts no floats or arbitrary Serialize implementations; use `from_serializable` for the checked Serde profile above. Use exact authored JSON tokens through `parse` when those are the input; conversion conveniences never change stored tokens.
 
@@ -151,11 +227,11 @@ drop(owner); // The parameter's handle retains its constructed owner.
 # Ok::<(), ParseFailure>(())
 ```
 
-Generated ranges identify this constructed JSON, never the OpenAPI document. `SourceContext.id` distinguishes owners within one process/Wasm instance and is not a persistent or cross-instance identifier. Parse accepts externally supplied bytes and marks them Authored; this name is not a claim about their historical origin. Pre-serialization failures carry Construction context and no complete source; parse failures after serialization retain the generated source. Null is distinct from omitted members and Body::Absent. Parameter policy can still refuse null or nested/empty containers even though the JSON owner represents them faithfully.
+Generated ranges identify this constructed JSON, never the OpenAPI document. `SourceContext.id` distinguishes owners within one process/Wasm instance and is not a persistent or cross-instance identifier. Exact JSON parsing marks externally supplied bytes Authored; this name is not a claim about their historical origin. YAML document values use Normalized representation ranges paired with authored source positions through `source_trace()`. Pre-serialization failures carry Construction context and no complete source; parse failures after serialization retain the generated source. Null is distinct from omitted members and Body::Absent. Parameter policy can still refuse null or nested/empty containers even though the JSON owner represents them faithfully.
 
 ## Effective parameter inspection
 
-`operation.parameters()?` resolves effective path/operation declarations with the same local-reference, override and required-default rules as preparation, without compiling unrelated body/media/security requirements. Iterate the returned `Parameters` and use `name()`, `location()`, `required()`, `authored()`, `resolved()` and `schema()`. Each retained parameter keeps its original source owners independently of the operation. Reference inspection distinguishes authored use site, sibling overrides, chain and target. `schema() == None` does not imply no `content` declaration; resolved raw values remain available. Unsupported editions or invalid typed declarations refuse; raw `Operation::inspect`/`value` remain available. These views do not assert full document validity or schema conformance.
+`operation.parameters()?` resolves effective path/operation declarations with the same graph-reference, override and required-default rules as preparation, without compiling unrelated body/media/security requirements. Iterate the returned `Parameters` and use `name()`, `location()`, `required()`, `authored()`, `resolved()` and `schema()`. Each retained parameter keeps its original source owners independently of the operation. Reference inspection distinguishes authored use site, sibling overrides, chain and target. `schema() == None` does not imply no `content` declaration; resolved raw values remain available. Unsupported editions or invalid typed declarations refuse; raw `Operation::inspect`/`value` remain available. These views do not assert full document validity or schema conformance.
 
 ## Correcting a refusal
 
@@ -165,15 +241,26 @@ A caller parameter refusal identifies its vector index, namespace and explicit-a
 
 Diagnostic metadata is immutable: use `code()`, `location()`, `related()` and `setting()` accessors, and `Diagnostic::new(code)` for a category-only diagnostic. `ParseFailure::diagnostic()` and `source_bytes()` expose its immutable source pair; standard `Error::source` remains available. Wrap errors to add application context. Bounded duplicate context names may be omitted; `context_omitted_for_limit()` makes that explicit. See [migration notes](MIGRATION.md) for this unpublished API revision.
 
+For a value-located diagnostic, `source_position()` returns an owning `SourcePosition`
+that remains usable after the error, input and document are dropped. Its `raw()`
+accessor selects the exact range from its `source()`, using authored YAML positions
+when available. It shares the complete source text without retaining its value
+index or document graph; keeping a diagnostic can therefore keep that text alive.
+`source_context()` identifies a source but does not by itself promise retained
+bytes. Parser and unlocated diagnostics can return no position; use the enclosing
+`ParseFailure::source_bytes()` for admitted parser input, including invalid UTF-8.
+
 ## Bounds and deliberate policies
 
-Defaults admit 8 MiB documents/caller metadata, nesting 128, 500,000 JSON nodes, 20,000 operations, 128 reference steps, 4 MiB bodies, 64 KiB targets, 256 header lines and 1,024 cached operations. Caller input counts and security requirements are bounded by the reference-work budget. Limits are per owner/call and may be configured; depth above 128 still refuses pending qualification. A byte-limit refusal does not copy an oversized input: `ParseFailure::source_bytes()` is empty in that case. Other admitted parse failures retain exact bytes. JSON indexing checks node admission before growing its owned work queue. Intermediate encoding allocation is bounded by admitted input bytes, even when the resulting target subsequently exceeds its smaller limit.
+Each effective description or compiled operation has a shared allocation-admission ledger. Copied strings are bounded by `document_bytes`, descriptor entries and strings by `nodes`, and aggregate declarations/reference work by `descriptor_work`; each reference chain is independently bounded by `reference_steps`. These are separate budgets per construction: repeated shared OAuth or dialect metadata is charged for every copy before allocation; retaining a raw `Value` shares its existing owner. Located limit reasons distinguish `DescriptorBytes`, `DescriptorNodes`, and `DescriptorWork`. Caller-requested DTO clones and allocator overhead are outside these construction budgets. Supplied-token preparation validates security metadata through borrowed views without materializing OAuth acquisition descriptions.
 
-Cancellation is cooperative. Cancellable parse/prepare methods check owned work; invocation checks before dispatch and records cancellation after the callback returns. A callback can select `cancellation.cancelled().await` against its I/O to interrupt a pending local wait. Each wait has its own registration; cancellation wakes all waiters and dropping a wait unregisters it. The native companion does this automatically. Cancellation is irreversible and repeated requests are harmless. Future drop establishes no remote outcome. Response metadata over the count/byte limits produces `InvalidHostEvidence` and an explicit omitted-line count; available status and bounded body remain inspectable, and JSON convenience decoding refuses incomplete metadata.
+Defaults admit 8 MiB documents/caller metadata, nesting 128, 500,000 JSON nodes, 20,000 operations, 128 reference steps, 500,000 descriptor work units, 4 MiB bodies, 64 KiB targets, 256 header lines and 1,024 cached operations. Caller input counts and security requirements are bounded by the reference-work budget. Limits are per owner/call and may be configured; depth above 128 still refuses pending qualification. A byte-limit refusal does not copy an oversized input: `ParseFailure::source_bytes()` is empty in that case. Other admitted parse failures retain exact bytes. JSON indexing checks node admission before growing its owned work queue. Intermediate encoding allocation is bounded by admitted input bytes, even when the resulting target subsequently exceeds its smaller limit.
+
+Cancellation is cooperative. Cancellable parse/prepare methods check owned work; invocation checks before dispatch and records cancellation after the callback returns. A callback can select `cancellation.cancelled().await` against its I/O to interrupt a pending local wait. Each wait has its own registration; cancellation wakes all waiters and dropping a wait unregisters it. The native companion does this automatically. Cancellation is irreversible and repeated requests are harmless. Future drop establishes no remote outcome. Response metadata over the count/byte limits preserves an explicit omitted-line count; available status and bounded body remain inspectable, and JSON convenience decoding refuses with `IncompleteHeaders`. Malformed retained evidence remains `InvalidHostEvidence`.
 
 Media election supports concrete types and matching declaration ranges, with explicit concrete selection required for range-only declarations. Malformed keys do not govern. More-specific matching declarations take precedence; equivalent best matches are ambiguous. Quoted media parameters are parsed as HTTP field parameters. Duplicate parameter names are refused. No codec or encoding metadata is applied to opaque schemas or raw caller bytes. UTF-8 is the explicit Basic credential policy. Header controls and surrounding whitespace are refused; header parameter values are not URI encoded. Cookies use `; ` between pairs.
 
-`retained_bytes()` is a storage estimate for the immutable JSON owner, excluding document descriptors, compiled caches, allocator metadata and reserved pages. Qualification reports measure allocator traffic, live allocation sizes and process RSS separately. Exact value handles use the source owner's identity and do not imply equality across distinct documents.
+`retained_bytes()` is a storage estimate for the immutable JSON owner, including retained YAML source mappings when present, and excluding document descriptors, compiled caches, allocator metadata and reserved pages. Qualification reports measure allocator traffic, live allocation sizes and process RSS separately. Exact value handles use the source owner's identity and do not imply equality across distinct documents.
 
 ## Corrective diagnostics and request choices
 
@@ -182,3 +269,60 @@ Default diagnostic text explains the failure in plain language and retains its s
 Automatic request media selection considers the supplied body: `.json(...)` can uniquely select a JSON media type alongside incompatible XML/form choices. Multiple compatible JSON media types still require `Selection::media`. Raw bodies can use any supported concrete media and therefore retain their election requirements. Security is a separate policy: more than one authored alternative requires explicit `Selection::security`, even when only one credential is supplied or an anonymous alternative exists.
 
 Completed operation-path segments equal to `.` or `..` refuse before dispatch, including segments assembled from template literals and parameter values. This is a preparation safety policy because normalizing HTTP stacks can route such paths elsewhere. Empty values/segments and embedded dots remain supported. Server-reference resolution is unchanged; transports still disclose and check percent-encoded-dot support and other URL normalization restrictions.
+
+Target composition uses an explicit boundary policy: resolve and expand the effective server first, then append the complete operation path. When the server ends with `/` and the path begins with `/`, remove exactly one final server slash. Implicit and explicit root servers behave identically. Other repeated slashes and the operation's trailing slash remain intact; the path is never resolved as a relative URL or new authority. For example, `https://api.example/v1/` plus `/items/` yields `https://api.example/v1/items/`, while `/v1//` plus `/items/` preserves `/v1//items/`. OpenAPI specifies appending but leaves the exact boundary-byte rule ambiguous; this is the client's documented interpretation, not a claim that every service treats repeated slashes equivalently.
+
+### Reusable finite forms and selected field inspection
+
+`Form::new(fields, limits)` admits one immutable owned logical form for
+`Input { body: Body::Form(form), ..Input::default() }`. Cloning a form shares its
+storage. Exact values retain their original source and numeric tokens. Ordinary
+values share one generated source. Constructing an owned form from borrowed bytes
+copies those bytes once; supplying `Arc<[u8]>` retains that owner. The fluent
+`.form(fields)` route keeps borrowed binary data through preparation and uses the
+same private admitted view and encoder. Reuse checks the receiving operation's
+logical limits without reparsing an existing exact owner. Cancellation is checked
+before caller iterator conversion, before each pull, and throughout owned work;
+it cannot preempt caller iterator or serialization code.
+
+`operation.describe_form_field(media, name)` reports the selected field's
+applicable default representation and original schema contributors. Both it and
+`describe()` have cancellation counterparts. Missing schema resources return the
+same `Diagnostic::resource_need()` as direct and fluent preparation. Supply bytes
+or add layout through `DocumentBuilder`, build a new immutable snapshot, and
+reacquire the operation. Old snapshots and their needs keep their original meaning.
+
+The unpublished descriptor API now uses `SchemaDescription.profile` instead of
+`edition`/`dialect`, and `BodyFieldDescription.schemas` instead of `schema`.
+`BodyFields::Declared { fields, openness }` exposes an explicit openness hint.
+`Partial` retains incomplete directly authored applicable sources; it does not
+claim complete property selection. `FieldRequirement::UnknownHint` distinguishes
+uncertainty from supported static nonmembership (`Optional`). Schema required
+hints never enforce missing form fields. Successful descriptors retain source
+owners, not the document graph; outward recovery needs intentionally own the
+originating snapshot.
+
+`representation: None` means representation facts were not requested.
+`content_encoding: None` inside a representation means no applicable effective
+coding: supported content paths prove absence, while an applicable style makes
+coding irrelevant. Media election cannot erase unresolved relevant coding facts.
+Supported schema references and compatible type unions supply finite declaration
+facts; this is not instance validation or branch evaluation. Encoding algorithms,
+MIME transfer headers, streams and general composition remain separate work.
+Finite `f64` uses the existing explicit `ExactJson::from_serializable` boundary;
+no direct floating-point `FormField` conversion was added.
+### Response admission
+
+Supplied transports receive immutable response bounds through
+`dispatch.response_admission()`; the same view is available on prepared requests.
+Adapters can report known metadata cutoff with `HeaderDelivery::Incomplete` while
+preserving the finite response. JSON then refuses with `IncompleteHeaders`; no
+transport failure is invented. See [HOSTS.md](HOSTS.md), the unpublished
+[construction migration](MIGRATION.md), and `cargo run -p dynamic-openapi-client
+--example response_admission` from the Rust workspace.
+
+`Provenance::HostDelivered` explicitly interprets the host-exposed body. It permits
+exact JSON parsing independently of Content-Encoding labels, without claiming
+that the host decompressed them. Wire/Decoded/Unknown remain distinct and unchanged;
+see [HOSTS.md](HOSTS.md) for the evidence boundaries and [MIGRATION.md](MIGRATION.md)
+for the new exhaustive-match arm.

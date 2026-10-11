@@ -18,16 +18,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             request.invoke(Cancellation::default(), &host, |request, _| async move {
                 assert!(request.target.starts_with("https://"));
                 TransportResult {
-                    response: Some(ResponseInput {
-                        status: 200,
-                        headers: vec![Header::new("Content-Type", "application/json")],
-                        body: DeliveredBody {
+                    response: Some(ResponseInput::new(
+                        200,
+                        vec![Header::new("Content-Type", "application/json")],
+                        DeliveredBody {
                             bytes: br#"{"n":9007199254740993}"#.as_slice().into(),
                             state: BodyState::Complete,
                             provenance: Provenance::Wire,
                         },
-                        opaque_redirect: false,
-                    }),
+                    )),
                     upload: UploadState::Complete,
                     error_detail: None,
                 }

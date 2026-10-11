@@ -6,7 +6,26 @@ use std::fmt;
 #[non_exhaustive]
 #[allow(missing_docs)]
 pub enum LimitKind {
+    GraphResources,
+    GraphOriginalBytes,
+    GraphRetainedBytes,
+    GraphNodes,
+    GraphReferenceEdges,
+    GraphIdentities,
+    GraphLayouts,
+    SchemaFactWork,
+    SchemaFactDepth,
+    GraphMetadataBytes,
+    ReferenceDepth,
     DocumentBytes,
+    NormalizedBytes,
+    AliasSteps,
+    /// Copied descriptor string bytes, bounded separately by Limits::document_bytes.
+    DescriptorBytes,
+    /// Descriptor entries and copied strings, bounded separately by Limits::nodes.
+    DescriptorNodes,
+    /// Aggregate descriptor declarations/reference steps, bounded by Limits::reference_steps.
+    DescriptorWork,
     Depth,
     Nodes,
     TargetBytes,
@@ -14,6 +33,11 @@ pub enum LimitKind {
     InputCount,
     InputBytes,
     BodyBytes,
+    FormFields,
+    FormParts,
+    FormMetadataBytes,
+    FormWork,
+    BoundaryAttempts,
     NumberCharacters,
 }
 /// Requested checked numeric representation.
@@ -66,10 +90,74 @@ pub enum SelectionKind {
     /// Index in the effective security alternatives.
     Security,
 }
-/// Safe corrective information; no input values are stored in reasons.
+/// Why the document's edition cannot be interpreted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum VersionReason {
+    /// Neither discriminator is present.
+    Missing,
+    /// Both Swagger and OpenAPI discriminators are present.
+    Conflicting,
+    /// The discriminator is not a valid supported version spelling.
+    Malformed,
+    /// The declared major or minor family is not supported.
+    UnsupportedFamily,
+}
+/// Controlled reason a supplied host cannot admit the request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum HostRefusal {
+    /// The host may follow redirects implicitly.
+    Redirects,
+    /// The host may supply ambient authentication or cookies.
+    AmbientAuth,
+    /// The host cannot declare exact target preservation.
+    ExactTargets,
+    /// The URL stack cannot preserve this encoded dot segment.
+    EncodedDotSegment,
+    /// The host cannot faithfully supply a request header.
+    ForbiddenHeader,
+    /// Strict admission requires a no-replay declaration.
+    Replay,
+    /// The selected host's required execution APIs are unavailable.
+    Unavailable,
+    /// The host cannot represent or execute this request method.
+    Method,
+    /// The host prohibits the supplied body for this request method.
+    RequestBody,
+}
+impl From<HostRefusal> for Diagnostic {
+    fn from(refusal: HostRefusal) -> Self {
+        Self::new(Code::HostCapability).reasoned(DiagnosticReason::Host(refusal))
+    }
+}
+/// Corrective information with privacy-safe default formatting.
+/// Retained source evidence is available only through explicit accessors.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum DiagnosticReason {
+    /// Different declarations claim one identity. The diagnostic's primary site
+    /// remains the later declaration; this position owns the earlier source.
+    IdentityCollision {
+        /// Earlier claimant, in authored source when available.
+        previous: crate::SourcePosition,
+    },
+    /// A controlled host capability or replay policy refusal.
+    Host(HostRefusal),
+    /// Selected schema interpretation or bounded fact refusal.
+    Schema(crate::SchemaReason),
+    /// Why a finite named form could not be represented.
+    Form(crate::FormReason),
+    /// The declared style/type/explode combination has no supported defined serialization.
+    UnsupportedStyleCombination,
+    /// A nested or null value requires a separately selected serialization convention.
+    UnsupportedStyleValue,
+    /// A data delimiter needs an explicit interoperability convention.
+    AmbiguousStyleDelimiter,
+    /// YAML syntax-to-JSON profile refusal.
+    Yaml(crate::YamlReason),
+    /// Edition discrimination failed without rewriting the authored source.
+    Version(VersionReason),
     /// Checked Serde construction refused the emitted representation.
     Serialization(SerializationReason),
     /// A resource exceeds its configured maximum. Actual can be a lower bound when admission stopped early.
@@ -90,6 +178,12 @@ pub enum DiagnosticReason {
     },
     /// No declared parameter matches this caller entry.
     UnknownParameter,
+    /// A security requirement names a scheme absent from the edition's definitions.
+    /// The source location identifies the requirement entry, including its name.
+    UndefinedSecurityScheme,
+    /// A direct `$ref` appears where the OpenAPI object does not admit a reference.
+    /// The original value remains inspectable; preparation cannot ignore it.
+    UnsupportedReferencePosition,
     /// Multiple caller entries target the same declared parameter.
     DuplicateParameter,
     /// Two explicit builder events assigned the same field or key.
@@ -106,6 +200,15 @@ pub enum DiagnosticReason {
 #[derive(Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum DiagnosticContext {
+    /// Logical form field and optional repeated item. Names are explicit-access data.
+    FormField {
+        /// Zero-based logical field index.
+        index: usize,
+        /// Logical field name; omitted by safe Debug.
+        name: String,
+        /// Zero-based repeated value index, when applicable.
+        item: Option<usize>,
+    },
     /// Caller parameter vector entry, independent of its exact value's source owner.
     Parameter {
         /// Index in the caller parameter vector.
@@ -154,6 +257,11 @@ impl fmt::Debug for DiagnosticContext {
                 .field("index", index)
                 .finish_non_exhaustive(),
             Self::Body => f.write_str("Body"),
+            Self::FormField { index, item, .. } => f
+                .debug_struct("FormField")
+                .field("index", index)
+                .field("item", item)
+                .finish_non_exhaustive(),
             Self::Credential { .. } => f.write_str("Credential { .. }"),
             Self::PreparedRequest => f.write_str("PreparedRequest"),
             Self::CallerInput => f.write_str("CallerInput"),
@@ -166,19 +274,46 @@ struct Details {
     reason: Option<DiagnosticReason>,
     context: Option<DiagnosticContext>,
     source: Option<SourceContext>,
+    primary_source: Option<std::sync::Arc<str>>,
     context_omitted_for_limit: bool,
+    need_fact: Option<crate::graph::NeedFact>,
+    resource_need: Option<crate::ResourceNeed>,
 }
 
 /// Stable failure categories. Diagnostic text never includes input values.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Code {
+    /// Selected schema semantics require a dialect capability outside this profile.
+    UnsupportedSchema,
+    /// Referenced resource bytes have not been supplied to this immutable snapshot.
+    ResourceUnavailable,
+    /// A non-root reference into an untyped resource needs an explicit layout.
+    ResourceLayoutRequired,
+    /// Two different sources claim the same resource identity.
+    IdentityCollision,
+    /// A source node is requested under incompatible object interpretations.
+    ConflictingObjectContext,
+    /// A protocol reference crosses an unsupported feature-family boundary.
+    ReferencedEditionMismatch,
+    /// Unknown mounted paths prevent a complete or unique operation-ID lookup.
+    IncompleteDiscovery,
+    /// A handle/need belongs to a different immutable snapshot.
+    SnapshotMismatch,
+    /// An authored or supplied resource URI violates the strict admission policy.
+    InvalidResourceUri,
+    /// A relative resource reference has no actual supplied or authored base.
+    MissingResourceBase,
     /// Checked Serde construction refused; inspect its Serialization reason.
     Serialization,
     /// Input bytes are not valid UTF-8; the range marks the decoding failure.
     InvalidUtf8,
     /// Input is not valid JSON under the supported grammar.
     InvalidJson,
+    /// Input is not syntactically valid YAML.
+    InvalidYaml,
+    /// YAML uses a representation outside the admitted JSON-compatible profile.
+    UnsupportedYaml,
     /// A JSON string cannot be represented under the Unicode-scalar policy.
     UnsupportedString,
     /// Two object names decode to the same key; related contains the previous position.
@@ -255,6 +390,8 @@ pub enum Code {
     EmptyBody,
     /// JSON decoding was requested for incomplete/truncated body evidence.
     IncompleteBody,
+    /// JSON decoding was requested after known response-header delivery omission.
+    IncompleteHeaders,
     /// Delivered bytes require content decoding outside this convenience profile.
     UnsupportedCoding,
 }
@@ -262,8 +399,22 @@ pub enum Code {
 impl Code {
     fn message(self) -> &'static str {
         match self {
+            Self::UnsupportedSchema => "the selected schema semantics are unsupported",
+            Self::ResourceUnavailable => "referenced resource bytes are not available",
+            Self::ResourceLayoutRequired => "the referenced resource needs an explicit layout",
+            Self::IdentityCollision => "different sources claim the same resource identity",
+            Self::ConflictingObjectContext => "the source has conflicting object interpretations",
+            Self::ReferencedEditionMismatch => {
+                "the protocol target uses a different feature family"
+            }
+            Self::IncompleteDiscovery => "operation discovery is incomplete",
+            Self::SnapshotMismatch => "the handle belongs to another document snapshot",
+            Self::InvalidResourceUri => "the resource URI is not admitted",
+            Self::MissingResourceBase => "a relative resource reference requires a real base",
             Self::Serialization => "application data could not be serialized as supported JSON",
             Self::InvalidUtf8 => "input is not valid UTF-8",
+            Self::InvalidYaml => "input is not valid YAML",
+            Self::UnsupportedYaml => "YAML cannot be admitted under the documented profile",
             Self::InvalidJson => "input is not valid JSON",
             Self::UnsupportedString => "the string is outside the supported Unicode profile",
             Self::DuplicateMember => "an object contains duplicate decoded member names",
@@ -278,8 +429,10 @@ impl Code {
             Self::ReferenceCycle => "the reference chain contains a cycle",
             Self::ExternalReference => "this profile requires a local reference",
             Self::AmbiguousReference => "the reference and authored fields conflict",
-            Self::UnsupportedVersion => "request preparation requires OpenAPI 3.1",
-            Self::InvalidDeclaration => "a required protocol declaration is invalid",
+            Self::UnsupportedVersion => {
+                "the document edition is missing, conflicting, malformed or unsupported"
+            }
+            Self::InvalidDeclaration => "a required declaration is invalid",
             Self::AmbiguousOperation => "the operation ID identifies more than one operation",
             Self::MissingOperation => "the requested operation does not exist",
             Self::MissingBase => "a relative server URL requires a document base URL",
@@ -313,24 +466,25 @@ impl Code {
                 "the HTTP transport failed; inspect any retained response evidence"
             }
             Self::InvalidHostEvidence => {
-                "the HTTP host returned invalid or over-limit response metadata"
+                "the HTTP host returned invalid or contradictory response metadata"
             }
             Self::EmptyBody => "JSON decoding requires a nonempty response body",
             Self::IncompleteBody => "JSON decoding requires a complete response body",
+            Self::IncompleteHeaders => "JSON decoding requires complete response-header delivery",
             Self::UnsupportedCoding => "the response needs unsupported content decoding",
         }
     }
 }
 
 /// Half-open source byte range and JSON Pointer. A diagnostic's source_context()
-/// identifies the exact authored or constructed source owning this range.
+/// identifies the exact authored, constructed or normalized source owning this range.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Location {
     /// Inclusive UTF-8 byte offset.
     pub start: usize,
     /// Exclusive UTF-8 byte offset.
     pub end: usize,
-    /// Authored JSON Pointer. Treat document-controlled names as untrusted data.
+    /// Semantic JSON Pointer. Treat document-controlled names as untrusted data.
     pub pointer: String,
 }
 
@@ -368,7 +522,8 @@ impl Diagnostic {
     pub fn code(&self) -> Code {
         self.code
     }
-    /// Exact source range when available; its owner is source_context().
+    /// Exact source range when available; source_context() identifies its source.
+    /// source_position() separately reports whether those bytes are retained.
     pub fn location(&self) -> Option<&Location> {
         self.location.as_ref()
     }
@@ -389,6 +544,9 @@ impl Diagnostic {
         self.setting.as_deref()
     }
     pub(crate) fn at(mut self, location: Location) -> Self {
+        if let Some(details) = &mut self.details {
+            details.primary_source = None;
+        }
         self.location = Some(location);
         self
     }
@@ -406,8 +564,47 @@ impl Diagnostic {
     }
     /// Process-local source identity and origin owning location and related ranges.
     /// None means no exact source owner was associated; do not assume the OpenAPI document.
+    /// This identity alone does not retain bytes; source_position() reports that separately.
     pub fn source_context(&self) -> Option<SourceContext> {
         self.details.as_ref()?.source
+    }
+    /// Retain an independently owning position for a value-located diagnostic.
+    /// The returned position shares the complete original source text and copies
+    /// its pointer; it does not retain the value index or document graph.
+    /// It remains usable after this diagnostic and its document/input are dropped.
+    /// Parser or unlocated diagnostics may return None; ParseFailure::source_bytes
+    /// remains the accessor for admitted parse-failure bytes, including invalid UTF-8.
+    pub fn source_position(&self) -> Option<crate::SourcePosition> {
+        let details = self.details.as_ref()?;
+        let source = details.primary_source.as_ref()?;
+        Some(crate::SourcePosition {
+            context: details.source?,
+            location: self.location.as_ref()?.clone(),
+            source: source.clone(),
+        })
+    }
+    /// Typed corrective resource need, consistently exposed by direct/fluent preparation
+    /// and effective inspection. The need owns its originating immutable snapshot.
+    pub fn resource_need(&self) -> Option<&crate::ResourceNeed> {
+        self.details.as_ref()?.resource_need.as_ref()
+    }
+    pub(crate) fn need_data(&self) -> Option<&crate::graph::NeedFact> {
+        self.details.as_ref()?.need_fact.as_ref()
+    }
+    pub(crate) fn need_fact(mut self, fact: crate::graph::NeedFact) -> Self {
+        self.details.get_or_insert_with(Default::default).need_fact = Some(fact);
+        self
+    }
+    pub(crate) fn bind_graph(mut self, store: &std::sync::Arc<crate::document::Store>) -> Self {
+        if let Some(details) = &mut self.details
+            && let Some(fact) = &details.need_fact
+        {
+            details.resource_need = Some(crate::ResourceNeed {
+                store: store.clone(),
+                fact: fact.clone(),
+            });
+        }
+        self
     }
     /// Whether corrective context was omitted because its complete name exceeded the bound.
     pub fn context_omitted_for_limit(&self) -> bool {
@@ -425,13 +622,35 @@ impl Diagnostic {
         self.details.get_or_insert_with(Default::default).reason = Some(reason);
         self
     }
+    pub(crate) fn identity_collision(previous: &crate::Value) -> Self {
+        Self::new(Code::IdentityCollision).reasoned(DiagnosticReason::IdentityCollision {
+            previous: previous.diagnostic_position(),
+        })
+    }
     pub(crate) fn contextual(mut self, context: DiagnosticContext) -> Self {
         self.details.get_or_insert_with(Default::default).context = Some(context);
         self
     }
     pub(crate) fn sourced(mut self, source: SourceContext) -> Self {
-        self.details.get_or_insert_with(Default::default).source = Some(source);
+        let details = self.details.get_or_insert_with(Default::default);
+        details.primary_source = None;
+        details.source = Some(source);
         self
+    }
+    pub(crate) fn positioned(self, position: crate::SourcePosition) -> Self {
+        debug_assert!(
+            position
+                .source
+                .get(position.location.start..position.location.end)
+                .is_some()
+        );
+        let mut diagnostic = self.at(position.location).sourced(position.context);
+        diagnostic
+            .details
+            .as_mut()
+            .expect("source details")
+            .primary_source = Some(position.source);
+        diagnostic
     }
     pub(crate) fn limited(kind: LimitKind, maximum: usize, actual: usize) -> Self {
         Self::new(Code::Limit).reasoned(DiagnosticReason::Limit {
@@ -503,6 +722,13 @@ impl fmt::Display for LocatedDisplay<'_> {
             display_name(f, &location.pointer)?;
         }
         match self.0.context() {
+            Some(DiagnosticContext::FormField { name, index, item }) => {
+                write!(f, "; form field {index} ")?;
+                display_name(f, name)?;
+                if let Some(item) = item {
+                    write!(f, "; item {item}")?;
+                }
+            }
             Some(DiagnosticContext::Parameter { name, .. }) => {
                 f.write_str("; parameter ")?;
                 display_name(f, name)?;

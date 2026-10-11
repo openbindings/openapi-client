@@ -50,6 +50,8 @@ impl HostRequest {
         oac_qualification::request_facts(&self.0).to_string()
     }
     pub async fn invoke(&self, callback: js_sys::Function) -> Result<String, JsValue> {
+        // Historical qualification declaration, not a qualified Fetch replay promise.
+        // H0 migrates delivered metadata only; the truthful Fetch companion is separate.
         let mut host = HostCapabilities::programmable();
         host.encoded_dot_segments = false;
         host.forbidden_headers = [
@@ -65,9 +67,9 @@ impl HostRequest {
         .map(str::to_owned)
         .collect();
         let outcome=self.0.invoke(Cancellation::default(),&host,|request,_|async move{
-            let input=json!({"method":request.method.as_str(),"target":request.target,"headers":request.headers.iter().map(|h|json!([h.name(),String::from_utf8_lossy(h.value())])).collect::<Vec<_>>(),"body_hex":request.body.as_ref().map(|b|oac_qualification::hex(b)),"response_limit":request.response_limit}).to_string();
+            let input=json!({"method":request.method.as_str(),"target":request.target,"headers":request.headers.iter().map(|h|json!([h.name(),String::from_utf8_lossy(h.value())])).collect::<Vec<_>>(),"body_hex":request.body.as_ref().map(|b|oac_qualification::hex(b)),"response_limit":request.response_admission().body_bytes()}).to_string();
             let result=async{let v=callback.call1(&JsValue::NULL,&JsValue::from_str(&input))?;let text=JsFuture::from(js_sys::Promise::resolve(&v)).await?;let s=text.as_string().ok_or_else(||js_error("expected JSON envelope"))?;serde_json::from_str::<J>(&s).map_err(js_error)}.await;
-            match result{Ok(v)=>TransportResult{response:Some(oac_qualification::response_input(&v)),upload:oac_qualification::upload(&v),error_detail:None},Err(_)=>TransportResult{response:None,upload:UploadState::Unknown,error_detail:Some("qualification callback failure".into())}}
+            match result{Ok(v)=>TransportResult{response:Some({let mut input = oac_qualification::response_input(&v); input.header_fidelity = HeaderFidelity::HostProcessed; input}),upload:oac_qualification::upload(&v),error_detail:None},Err(_)=>TransportResult{response:None,upload:UploadState::Unknown,error_detail:Some("qualification callback failure".into())}}
         }).await;
         Ok(oac_qualification::outcome_facts(outcome, &self.0).to_string())
     }

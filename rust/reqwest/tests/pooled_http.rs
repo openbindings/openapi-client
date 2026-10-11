@@ -3,7 +3,8 @@
 mod support;
 use dynamic_openapi_client::{
     BodyState, Cancellation, Credential, CredentialValue, DispatchEvidence, Document, ExactJson,
-    Limits, Outcome, ParameterLocation, PreparedRequest, Provenance, UploadState, policies,
+    HeaderFidelity, Limits, Outcome, ParameterLocation, PreparedRequest, Provenance,
+    ReplayAssurance, UploadState, policies,
 };
 use dynamic_openapi_client_reqwest::{Certificate, Client};
 use std::time::Duration;
@@ -65,10 +66,15 @@ fn complete(outcome: Outcome, body: &[u8]) {
     assert!(outcome.error.is_none(), "{outcome:?}");
     assert_eq!(outcome.dispatch, DispatchEvidence::Dispatched);
     assert_eq!(outcome.upload, UploadState::Unknown);
+    assert_eq!(
+        outcome.replay_assurance(),
+        Some(ReplayAssurance::NoReplayDeclared)
+    );
     let received = outcome.response.unwrap();
     assert_eq!(received.body_state(), BodyState::Complete);
     assert_eq!(received.raw(), body);
     assert_eq!(received.provenance(), Provenance::Wire);
+    assert_eq!(received.header_fidelity(), HeaderFidelity::HostProcessed);
 }
 async fn good_followup(server: &Server, client: &Client, index: usize, id: &str) -> usize {
     let task = call(client, &server.origin, id);
@@ -317,7 +323,7 @@ async fn complete_framing_and_application_refusals_do_not_require_eviction() {
         }
         events.wait(IDLE, index + 1).await;
     }
-    // Backend header parsing succeeds, but core retention refuses extra metadata.
+    // Backend parsing succeeds; adapter metadata admission retains a bounded prefix.
     let limits = Limits {
         headers: 4,
         ..Limits::default()
@@ -335,12 +341,20 @@ async fn complete_framing_and_application_refusals_do_not_require_eviction() {
         )
         .await;
     let outcome = done(task).await;
-    assert!(outcome.error.is_some());
+    assert!(outcome.error.is_none());
     let received = outcome.response.unwrap();
     assert_eq!(received.raw(), b"{}");
     assert_eq!(received.body_state(), BodyState::Complete);
     assert_eq!(received.headers().len(), 4);
-    assert_eq!(received.omitted_header_lines(), 1);
+    assert_eq!(received.omitted_header_lines(), 0);
+    assert_eq!(
+        received.header_delivery(),
+        dynamic_openapi_client::HeaderDelivery::Incomplete
+    );
+    assert_eq!(
+        received.json().unwrap_err().code(),
+        dynamic_openapi_client::Code::IncompleteHeaders
+    );
     events.wait(IDLE, 8).await;
     assert_eq!(
         good_followup(&server, &client, 8, "after-refusals").await,

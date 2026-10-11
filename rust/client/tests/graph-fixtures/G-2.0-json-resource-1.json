@@ -1,0 +1,48 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "Independent graph oracle",
+    "version": "1"
+  },
+  "paths": {
+    "/part": {
+      "get": {
+        "operationId": "getThing",
+        "parameters": [
+          {
+            "$ref": "params#/parameters/id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "params#/responses/ok"
+          }
+        }
+      }
+    },
+    "/submit": {
+      "post": {
+        "operationId": "submitThing",
+        "responses": {
+          "200": {
+            "$ref": "params#/responses/ok"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "params#/parameters/body"
+          }
+        ]
+      }
+    }
+  },
+  "host": "api.example",
+  "schemes": [
+    "https"
+  ],
+  "securityDefinitions": {
+    "Shared": {
+      "type": "basic"
+    }
+  }
+}

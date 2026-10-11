@@ -1,0 +1,1 @@
+{"openapi":"3.2.1","info":{"title":"Independent quota probe","version":"1"},"servers":[{"url":"https://api.example"}],"paths":{},"components":{"securitySchemes":{"T":{"type":"apiKey","in":"header","name":"X-T"}}}}

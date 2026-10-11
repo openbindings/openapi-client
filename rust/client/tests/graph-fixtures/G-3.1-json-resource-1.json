@@ -1,0 +1,50 @@
+{
+  "openapi": "3.1.2",
+  "info": {
+    "title": "Independent graph oracle",
+    "version": "1"
+  },
+  "paths": {
+    "/part": {
+      "get": {
+        "operationId": "getThing",
+        "parameters": [
+          {
+            "$ref": "params#/components/parameters/id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "params#/components/responses/ok"
+          }
+        }
+      }
+    },
+    "/submit": {
+      "post": {
+        "operationId": "submitThing",
+        "responses": {
+          "200": {
+            "$ref": "params#/components/responses/ok"
+          }
+        },
+        "requestBody": {
+          "$ref": "params#/components/requestBodies/body"
+        }
+      }
+    }
+  },
+  "servers": [
+    {
+      "url": "https://api.example"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "Shared": {
+        "type": "http",
+        "scheme": "basic"
+      }
+    }
+  }
+}

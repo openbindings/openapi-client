@@ -3,17 +3,22 @@
 An independent dynamic OpenAPI engine. Current development uses Rust in
 [`rust/client`](rust/client); it has no OpenBindings SDK dependency.
 
-The unpublished `dynamic-openapi-client` foundation supports JSON/OpenAPI
-3.1.0–3.1.2, exact-document inspection, local protocol references, request
-preparation and finite JSON/raw invocation through caller-supplied async
-transport. The optional [`dynamic-openapi-client-reqwest`](rust/reqwest/README.md)
+The unpublished `dynamic-openapi-client` foundation accepts JSON and YAML
+Swagger 2.0 and OpenAPI 3.0, 3.1 and 3.2 documents through one API. The current
+development checkpoint includes edition-aware inspection, caller-supplied resource
+graphs, schema inspection and finite JSON/raw/named-form request preparation;
+it does not implement every feature in those editions.
+The optional [`dynamic-openapi-client-reqwest`](rust/reqwest/README.md)
 companion provides a reusable native HTTP client and a runnable getting-started example. The [Rust API guide](rust/client/README.md) shows complete dynamic
-calls, diagnostics, ownership and application outcome policy.
+calls, diagnostics, ownership and application outcome policy. The optional
+[Rust Fetch companion](rust/fetch/README.md) provides Browser/Worker profiles on
+Wasm with explicit host-managed replay; host qualification remains in progress.
 
-The current Rust profile does not provide YAML or other OpenAPI editions,
-external acquisition, schema evaluation or streaming
-codecs. Browser/workerd test glue is qualification machinery, not a supported
-TypeScript package. See [supported scope and verification](rust/README.md).
+Resource acquisition, schema evaluation, remaining serialization/coding profiles
+and streaming codecs remain open work.
+Browser/workerd test glue is qualification machinery, not a supported
+TypeScript package. See [supported scope and verification](rust/README.md) and
+the [development checkpoint and remaining qualification](rust/DEVELOPMENT-STATUS.md).
 
 ## Develop and verify
 
@@ -30,8 +35,8 @@ deployment steps in Rust qualification.
 ## Legacy implementations
 
 Existing [Go](go/README.md) and [TypeScript documentation](LEGACY.md) remain
-available for transitional consumers and historical reference. They cover more
-editions and capabilities than the Rust foundation. Migrating a caller requires
+available for transitional consumers and historical reference. Capability
+coverage differs from the Rust implementation. Migrating a caller requires
 checking its actual needs; source landing does not establish full parity or
 replace an installed package. Legacy source, tags and preserved history remain
 intact while consumers migrate.

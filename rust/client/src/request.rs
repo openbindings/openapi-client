@@ -92,6 +92,7 @@ struct ParameterDraft<'a> {
 enum BodyDraft<'a> {
     Explicit(Body),
     Json(Argument<'a>),
+    Form(Vec<crate::FormField<'a>>),
 }
 struct Variable<'a> {
     key: Cow<'a, str>,
@@ -311,6 +312,57 @@ impl<'a> RequestBuilder<'a> {
         }
         self
     }
+    /// Assign one logical named form. The document chooses URL encoding or multipart.
+    /// Arrays represent repeated values; duplicate logical names refuse. No iterator
+    /// entries after the first refusal are consumed. Field count and name admission
+    /// precede duplicate-name checks, followed by value/part admission.
+    /// Caller iterator/Into work is external.
+    pub fn form(mut self, fields: impl IntoIterator<Item = crate::FormField<'a>>) -> Self {
+        if self.failure.is_some() {
+            return self;
+        }
+        let event = self.event();
+        if let Some((_, first)) = &self.body {
+            self.latch(
+                self.duplicate(*first, event)
+                    .contextual(DiagnosticContext::Body),
+            );
+            return self;
+        }
+        let mut admitted: Vec<crate::FormField<'a>> = Vec::new();
+        let mut budget = crate::form::Admission::default();
+        for field in fields {
+            let result = if admitted.len() >= self.limits().form_fields {
+                Err(Diagnostic::limited(
+                    LimitKind::FormFields,
+                    self.limits().form_fields,
+                    admitted.len().saturating_add(1),
+                ))
+            } else if let Err(error) = budget.name(&field, self.limits()) {
+                Err(error)
+            } else if let Err(error) = budget.comparisons(admitted.len(), self.limits()) {
+                Err(error)
+            } else if admitted.iter().any(|old| old.name == field.name) {
+                Err(Diagnostic::new(Code::InvalidSelection)
+                    .reasoned(DiagnosticReason::Form(crate::FormReason::DuplicateField)))
+            } else {
+                budget.field(&field, self.limits())
+            };
+            if let Err(error) = result {
+                let error = self.context(error, &field.name, |name| DiagnosticContext::FormField {
+                    index: admitted.len(),
+                    name,
+                    item: None,
+                });
+                self.latch(error);
+                return self;
+            }
+            crate::form::reserve_admitted(&mut admitted, self.limits().form_fields);
+            admitted.push(field);
+        }
+        self.body = Some((BodyDraft::Form(admitted), event));
+        self
+    }
     /// Assign absent, exact JSON or finite raw body without implicit content-type policy.
     pub fn body(mut self, body: Body) -> Self {
         if self.failure.is_some() {
@@ -328,6 +380,7 @@ impl<'a> RequestBuilder<'a> {
             Body::Absent => 0,
             Body::Json(v) => v.raw().len(),
             Body::Raw(v) => v.len(),
+            Body::Form(_) => 0,
         };
         if self.body_bytes(bytes) {
             self.body = Some((BodyDraft::Explicit(body), event));
@@ -516,6 +569,17 @@ impl<'a> RequestBuilder<'a> {
         } else {
             None
         };
+        if let Some((BodyDraft::Form(fields), _)) = &self.body {
+            for field in fields {
+                field
+                    .arguments(cancellation, &mut |argument| {
+                        if let Argument::Ordinary(value) = argument {
+                            ordinary.push(*value);
+                        }
+                    })
+                    .map_err(RequestError::Preparation)?;
+            }
+        }
         let owner = if ordinary.is_empty() {
             None
         } else {
@@ -551,10 +615,21 @@ impl<'a> RequestBuilder<'a> {
                 value: exact(parameter.value),
             });
         }
+        let mut form = None;
         input.body = match self.body {
             None => Body::Absent,
             Some((BodyDraft::Explicit(body), _)) => body,
             Some((BodyDraft::Json(argument), _)) => Body::Json(exact(argument)),
+            Some((BodyDraft::Form(fields), _)) => {
+                form = Some(
+                    fields
+                        .into_iter()
+                        .map(|field| field.lower(&mut exact, cancellation))
+                        .collect::<Result<Vec<_>, _>>()
+                        .map_err(RequestError::Preparation)?,
+                );
+                Body::Absent
+            }
         };
         input.selection.server = self.server.map(|v| v.0);
         input.selection.security = self.security.map(|v| v.0);
@@ -571,8 +646,12 @@ impl<'a> RequestBuilder<'a> {
                 .insert(credential.scheme.into_owned(), credential.value);
         }
         input.headers = self.headers;
+        let body = match form.as_deref() {
+            Some(fields) => crate::prepare::AdmittedBody::Form(fields),
+            None => crate::prepare::AdmittedBody::from(&input.body),
+        };
         self.operation
-            .prepare_with_cancellation(&input, cancellation)
+            .prepare_admitted(&input, body, cancellation)
             .map_err(RequestError::Preparation)
     }
 }

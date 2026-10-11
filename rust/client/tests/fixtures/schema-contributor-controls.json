@@ -1,0 +1,765 @@
+{
+  "status": "independent additive expectations frozen after root contract ruling, before repair; original S23 unchanged",
+  "candidate_with_finding": "db471b4d800de7c4815f93ee381885b8dc84dd6e",
+  "authority": "Root 2026-10-10 accepts contributor interpretation in S23-PROVENANCE-ASSESSMENT.md",
+  "cases": [
+    {
+      "id": "PC01-direct-known",
+      "resources": [
+        {
+          "name": "entry",
+          "retrieval": "https://schemas.example/entry",
+          "document": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "contentEncoding": "base64"
+          }
+        }
+      ],
+      "selection": [
+        {
+          "resource": "entry",
+          "pointer": ""
+        }
+      ],
+      "query": "ContentEncoding",
+      "expect": {
+        "kind": "Known",
+        "value": "base64",
+        "source_sites": [
+          {
+            "resource": "entry",
+            "pointer": "/contentEncoding"
+          }
+        ]
+      }
+    },
+    {
+      "id": "PC02-direct-absent",
+      "resources": [
+        {
+          "name": "entry",
+          "retrieval": "https://schemas.example/entry",
+          "document": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema"
+          }
+        }
+      ],
+      "selection": [
+        {
+          "resource": "entry",
+          "pointer": ""
+        }
+      ],
+      "query": "ContentEncoding",
+      "expect": {
+        "kind": "Absent",
+        "source_sites": [
+          {
+            "resource": "entry",
+            "pointer": ""
+          }
+        ]
+      }
+    },
+    {
+      "id": "PC03-known-ref-absent",
+      "resources": [
+        {
+          "name": "entry",
+          "retrieval": "https://schemas.example/entry",
+          "document": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$ref": "#/$defs/T",
+            "contentEncoding": "base64",
+            "$defs": {
+              "T": {}
+            }
+          }
+        }
+      ],
+      "selection": [
+        {
+          "resource": "entry",
+          "pointer": ""
+        }
+      ],
+      "query": "ContentEncoding",
+      "expect": {
+        "kind": "Known",
+        "value": "base64",
+        "source_sites": [
+          {
+            "resource": "entry",
+            "pointer": "/contentEncoding"
+          }
+        ]
+      }
+    },
+    {
+      "id": "PC04-absent-ref-known",
+      "resources": [
+        {
+          "name": "entry",
+          "retrieval": "https://schemas.example/entry",
+          "document": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$ref": "#/$defs/T",
+            "$defs": {
+              "T": {
+                "contentEncoding": "base64"
+              }
+            }
+          }
+        }
+      ],
+      "selection": [
+        {
+          "resource": "entry",
+          "pointer": ""
+        }
+      ],
+      "query": "ContentEncoding",
+      "expect": {
+        "kind": "Known",
+        "value": "base64",
+        "source_sites": [
+          {
+            "resource": "entry",
+            "pointer": "/$defs/T/contentEncoding"
+          }
+        ]
+      }
+    },
+    {
+      "id": "PC05-empty-then-known",
+      "resources": [
+        {
+          "name": "entry",
+          "retrieval": "https://schemas.example/entry",
+          "document": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$defs": {
+              "E": {},
+              "K": {
+                "contentEncoding": "base64"
+              }
+            }
+          }
+        }
+      ],
+      "selection": [
+        {
+          "resource": "entry",
+          "pointer": "/$defs/E"
+        },
+        {
+          "resource": "entry",
+          "pointer": "/$defs/K"
+        }
+      ],
+      "query": "ContentEncoding",
+      "expect": {
+        "kind": "Known",
+        "value": "base64",
+        "source_sites": [
+          {
+            "resource": "entry",
+            "pointer": "/$defs/K/contentEncoding"
+          }
+        ]
+      }
+    },
+    {
+      "id": "PC06-known-then-empty",
+      "resources": [
+        {
+          "name": "entry",
+          "retrieval": "https://schemas.example/entry",
+          "document": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$defs": {
+              "E": {},
+              "K": {
+                "contentEncoding": "base64"
+              }
+            }
+          }
+        }
+      ],
+      "selection": [
+        {
+          "resource": "entry",
+          "pointer": "/$defs/K"
+        },
+        {
+          "resource": "entry",
+          "pointer": "/$defs/E"
+        }
+      ],
+      "query": "ContentEncoding",
+      "expect": {
+        "kind": "Known",
+        "value": "base64",
+        "source_sites": [
+          {
+            "resource": "entry",
+            "pointer": "/$defs/K/contentEncoding"
+          }
+        ]
+      }
+    },
+    {
+      "id": "PC07-reference-all-absent",
+      "resources": [
+        {
+          "name": "entry",
+          "retrieval": "https://schemas.example/entry",
+          "document": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$ref": "#/$defs/T",
+            "$defs": {
+              "T": {}
+            }
+          }
+        }
+      ],
+      "selection": [
+        {
+          "resource": "entry",
+          "pointer": ""
+        }
+      ],
+      "query": "ContentEncoding",
+      "expect": {
+        "kind": "Absent",
+        "source_sites": [
+          {
+            "resource": "entry",
+            "pointer": ""
+          },
+          {
+            "resource": "entry",
+            "pointer": "/$defs/T"
+          }
+        ]
+      }
+    },
+    {
+      "id": "PC08-selection-all-absent-unique",
+      "resources": [
+        {
+          "name": "entry",
+          "retrieval": "https://schemas.example/entry",
+          "document": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$defs": {
+              "E0": {},
+              "E1": {}
+            }
+          }
+        }
+      ],
+      "selection": [
+        {
+          "resource": "entry",
+          "pointer": "/$defs/E0"
+        },
+        {
+          "resource": "entry",
+          "pointer": "/$defs/E1"
+        },
+        {
+          "resource": "entry",
+          "pointer": "/$defs/E0"
+        }
+      ],
+      "query": "ContentEncoding",
+      "expect": {
+        "kind": "Absent",
+        "source_sites": [
+          {
+            "resource": "entry",
+            "pointer": "/$defs/E0"
+          },
+          {
+            "resource": "entry",
+            "pointer": "/$defs/E1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "PC09-equal-known-contributions",
+      "resources": [
+        {
+          "name": "entry",
+          "retrieval": "https://schemas.example/entry",
+          "document": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$ref": "#/$defs/T",
+            "contentEncoding": "base64",
+            "$defs": {
+              "T": {
+                "contentEncoding": "base64"
+              }
+            }
+          }
+        }
+      ],
+      "selection": [
+        {
+          "resource": "entry",
+          "pointer": ""
+        }
+      ],
+      "query": "ContentEncoding",
+      "expect": {
+        "kind": "Known",
+        "value": "base64",
+        "source_sites": [
+          {
+            "resource": "entry",
+            "pointer": "/contentEncoding"
+          },
+          {
+            "resource": "entry",
+            "pointer": "/$defs/T/contentEncoding"
+          }
+        ]
+      }
+    },
+    {
+      "id": "PC10-duplicate-path-known-once",
+      "resources": [
+        {
+          "name": "entry",
+          "retrieval": "https://schemas.example/entry",
+          "document": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$ref": "#/$defs/T",
+            "$dynamicRef": "#/$defs/T",
+            "$defs": {
+              "T": {
+                "contentEncoding": "base64"
+              }
+            }
+          }
+        }
+      ],
+      "selection": [
+        {
+          "resource": "entry",
+          "pointer": ""
+        }
+      ],
+      "query": "ContentEncoding",
+      "expect": {
+        "kind": "Known",
+        "value": "base64",
+        "source_sites": [
+          {
+            "resource": "entry",
+            "pointer": "/$defs/T/contentEncoding"
+          }
+        ]
+      }
+    },
+    {
+      "id": "PC11-conflicting-known",
+      "resources": [
+        {
+          "name": "entry",
+          "retrieval": "https://schemas.example/entry",
+          "document": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$ref": "#/$defs/T",
+            "contentEncoding": "local-codec",
+            "$defs": {
+              "T": {
+                "contentEncoding": "target-codec"
+              }
+            }
+          }
+        }
+      ],
+      "selection": [
+        {
+          "resource": "entry",
+          "pointer": ""
+        }
+      ],
+      "query": "ContentEncoding",
+      "expect": {
+        "kind": "Indeterminate",
+        "reason": "ConflictingFacts",
+        "source_sites": [
+          {
+            "resource": "entry",
+            "pointer": "/contentEncoding"
+          },
+          {
+            "resource": "entry",
+            "pointer": "/$defs/T/contentEncoding"
+          }
+        ]
+      }
+    },
+    {
+      "id": "PC12-direct-allof-without-known",
+      "resources": [
+        {
+          "name": "entry",
+          "retrieval": "https://schemas.example/entry",
+          "document": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "allOf": [
+              {}
+            ]
+          }
+        }
+      ],
+      "selection": [
+        {
+          "resource": "entry",
+          "pointer": ""
+        }
+      ],
+      "query": "ContentEncoding",
+      "expect": {
+        "kind": "Indeterminate",
+        "reason": "Composition",
+        "source_sites": [
+          {
+            "resource": "entry",
+            "pointer": "/allOf"
+          }
+        ]
+      }
+    },
+    {
+      "id": "PC12-direct-allof-with-known",
+      "resources": [
+        {
+          "name": "entry",
+          "retrieval": "https://schemas.example/entry",
+          "document": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "allOf": [
+              {}
+            ],
+            "contentEncoding": "base64"
+          }
+        }
+      ],
+      "selection": [
+        {
+          "resource": "entry",
+          "pointer": ""
+        }
+      ],
+      "query": "ContentEncoding",
+      "expect": {
+        "kind": "Indeterminate",
+        "reason": "Composition",
+        "source_sites": [
+          {
+            "resource": "entry",
+            "pointer": "/allOf"
+          }
+        ]
+      }
+    },
+    {
+      "id": "PC13-referenced-allof",
+      "resources": [
+        {
+          "name": "entry",
+          "retrieval": "https://schemas.example/entry",
+          "document": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$ref": "#/$defs/T",
+            "contentEncoding": "base64",
+            "$defs": {
+              "T": {
+                "allOf": [
+                  {}
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "selection": [
+        {
+          "resource": "entry",
+          "pointer": ""
+        }
+      ],
+      "query": "ContentEncoding",
+      "expect": {
+        "kind": "Indeterminate",
+        "reason": "Composition",
+        "source_sites": [
+          {
+            "resource": "entry",
+            "pointer": "/$defs/T/allOf"
+          }
+        ]
+      }
+    },
+    {
+      "id": "PC14-same-2020",
+      "resources": [
+        {
+          "name": "entry",
+          "retrieval": "https://schemas.example/entry",
+          "document": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$ref": "https://schemas.example/target",
+            "contentEncoding": "base64"
+          }
+        },
+        {
+          "name": "target",
+          "retrieval": "https://schemas.example/target",
+          "document": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema"
+          }
+        }
+      ],
+      "selection": [
+        {
+          "resource": "entry",
+          "pointer": ""
+        }
+      ],
+      "query": "ContentEncoding",
+      "expect": {
+        "kind": "Known",
+        "value": "base64",
+        "source_sites": [
+          {
+            "resource": "entry",
+            "pointer": "/contentEncoding"
+          }
+        ]
+      }
+    },
+    {
+      "id": "PC14-oas31-to-2020",
+      "resources": [
+        {
+          "name": "entry",
+          "retrieval": "https://schemas.example/entry",
+          "document": {
+            "$schema": "https://spec.openapis.org/oas/3.1/dialect/base",
+            "$ref": "https://schemas.example/target",
+            "contentEncoding": "base64"
+          }
+        },
+        {
+          "name": "target",
+          "retrieval": "https://schemas.example/target",
+          "document": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema"
+          }
+        }
+      ],
+      "selection": [
+        {
+          "resource": "entry",
+          "pointer": ""
+        }
+      ],
+      "query": "ContentEncoding",
+      "expect": {
+        "kind": "Known",
+        "value": "base64",
+        "source_sites": [
+          {
+            "resource": "entry",
+            "pointer": "/contentEncoding"
+          }
+        ]
+      }
+    },
+    {
+      "id": "PC14-2020-to-oas32",
+      "resources": [
+        {
+          "name": "entry",
+          "retrieval": "https://schemas.example/entry",
+          "document": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$ref": "https://schemas.example/target",
+            "contentEncoding": "base64"
+          }
+        },
+        {
+          "name": "target",
+          "retrieval": "https://schemas.example/target",
+          "document": {
+            "$schema": "https://spec.openapis.org/oas/3.2/dialect/2026-02-26"
+          }
+        }
+      ],
+      "selection": [
+        {
+          "resource": "entry",
+          "pointer": ""
+        }
+      ],
+      "query": "ContentEncoding",
+      "expect": {
+        "kind": "Known",
+        "value": "base64",
+        "source_sites": [
+          {
+            "resource": "entry",
+            "pointer": "/contentEncoding"
+          }
+        ]
+      }
+    },
+    {
+      "id": "PC15-legacy-siblings-ignored-cross-profile",
+      "resources": [
+        {
+          "name": "entry",
+          "retrieval": "https://schemas.example/entry",
+          "document": {
+            "openapi": "3.0.3",
+            "info": {
+              "title": "Legacy",
+              "version": "1"
+            },
+            "paths": {},
+            "components": {
+              "schemas": {
+                "Selected": {
+                  "$ref": "https://schemas.example/target",
+                  "contentEncoding": "local-codec",
+                  "allOf": [
+                    {}
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "target",
+          "retrieval": "https://schemas.example/target",
+          "document": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "contentEncoding": "base64"
+          }
+        }
+      ],
+      "selection": [
+        {
+          "resource": "entry",
+          "pointer": "/components/schemas/Selected"
+        }
+      ],
+      "query": "ContentEncoding",
+      "expect": {
+        "kind": "Known",
+        "value": "base64",
+        "source_sites": [
+          {
+            "resource": "target",
+            "pointer": "/contentEncoding"
+          }
+        ]
+      }
+    },
+    {
+      "id": "PC16-legacy-format-siblings-ignored",
+      "resources": [
+        {
+          "name": "entry",
+          "retrieval": "https://schemas.example/entry",
+          "document": {
+            "openapi": "3.0.3",
+            "info": {
+              "title": "Legacy",
+              "version": "1"
+            },
+            "paths": {},
+            "components": {
+              "schemas": {
+                "Selected": {
+                  "$ref": "#/components/schemas/Target",
+                  "format": "local-codec",
+                  "allOf": [
+                    {}
+                  ]
+                },
+                "Target": {
+                  "format": "uuid"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "selection": [
+        {
+          "resource": "entry",
+          "pointer": "/components/schemas/Selected"
+        }
+      ],
+      "query": "LegacyFormat",
+      "expect": {
+        "kind": "Known",
+        "value": "uuid",
+        "source_sites": [
+          {
+            "resource": "entry",
+            "pointer": "/components/schemas/Target/format"
+          }
+        ]
+      }
+    },
+    {
+      "id": "PC17-opaque-not-absence",
+      "resources": [
+        {
+          "name": "entry",
+          "retrieval": "https://schemas.example/entry",
+          "document": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$ref": "https://schemas.example/target",
+            "contentEncoding": "base64"
+          }
+        },
+        {
+          "name": "target",
+          "retrieval": "https://schemas.example/target",
+          "document": {
+            "$schema": "https://custom.example/dialect"
+          }
+        }
+      ],
+      "selection": [
+        {
+          "resource": "entry",
+          "pointer": ""
+        }
+      ],
+      "query": "ContentEncoding",
+      "expect": {
+        "kind": "Indeterminate",
+        "reason": "OpaqueDialect"
+      }
+    }
+  ],
+  "features": [
+    "default",
+    "arbitrary_precision",
+    "preserve_order",
+    "combined"
+  ],
+  "consumer_proof": "private internal fact variants and exact ordered source/node sites; no public API"
+}

@@ -1,0 +1,666 @@
+{
+  "utc": "2026-10-10T20:39:44.648376+00:00",
+  "status": "literal independent controls frozen before nullable repair",
+  "original_failure": "checks/additional-private-default/stderr and all4 checks/additional-private-*-2",
+  "governing_authority": "root nullable ruling 2026-10-10; A06 original amendment preserved",
+  "standard": "https://spec.openapis.org/oas/v3.0.4.html#schema-object",
+  "interpretation": "Effective Types declaration, not instance validity; enum/composition not evaluated; selected conjunction uses established fact semantics. Malformed nullable without local type is inert because nullable has no effect there. AllOf remains existing Indeterminate Composition, not conjunction flattening.",
+  "cases": [
+    {
+      "id": "N01-true",
+      "document": {
+        "info": {
+          "title": "Nullable controls",
+          "version": "1"
+        },
+        "paths": {},
+        "openapi": "3.0.4",
+        "components": {
+          "schemas": {
+            "S": {
+              "type": "string",
+              "nullable": true
+            }
+          }
+        }
+      },
+      "selection": [
+        "/components/schemas/S"
+      ],
+      "query": "Types",
+      "expect": {
+        "kind": "Known",
+        "types": [
+          "null",
+          "string"
+        ],
+        "source_pointers": [
+          "/components/schemas/S/type",
+          "/components/schemas/S/nullable"
+        ]
+      }
+    },
+    {
+      "id": "N01-false",
+      "document": {
+        "info": {
+          "title": "Nullable controls",
+          "version": "1"
+        },
+        "paths": {},
+        "openapi": "3.0.4",
+        "components": {
+          "schemas": {
+            "S": {
+              "type": "string",
+              "nullable": false
+            }
+          }
+        }
+      },
+      "selection": [
+        "/components/schemas/S"
+      ],
+      "query": "Types",
+      "expect": {
+        "kind": "Known",
+        "types": [
+          "string"
+        ],
+        "source_pointers": [
+          "/components/schemas/S/type"
+        ]
+      }
+    },
+    {
+      "id": "N01-absent",
+      "document": {
+        "info": {
+          "title": "Nullable controls",
+          "version": "1"
+        },
+        "paths": {},
+        "openapi": "3.0.4",
+        "components": {
+          "schemas": {
+            "S": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "selection": [
+        "/components/schemas/S"
+      ],
+      "query": "Types",
+      "expect": {
+        "kind": "Known",
+        "types": [
+          "string"
+        ],
+        "source_pointers": [
+          "/components/schemas/S/type"
+        ]
+      }
+    },
+    {
+      "id": "N02-patch-3.0.0",
+      "document": {
+        "info": {
+          "title": "Nullable controls",
+          "version": "1"
+        },
+        "paths": {},
+        "openapi": "3.0.0",
+        "components": {
+          "schemas": {
+            "S": {
+              "type": "string",
+              "nullable": true
+            }
+          }
+        }
+      },
+      "selection": [
+        "/components/schemas/S"
+      ],
+      "query": "Types",
+      "expect": {
+        "kind": "Known",
+        "types": [
+          "null",
+          "string"
+        ],
+        "source_pointers": [
+          "/components/schemas/S/type",
+          "/components/schemas/S/nullable"
+        ]
+      }
+    },
+    {
+      "id": "N02-patch-3.0.3",
+      "document": {
+        "info": {
+          "title": "Nullable controls",
+          "version": "1"
+        },
+        "paths": {},
+        "openapi": "3.0.3",
+        "components": {
+          "schemas": {
+            "S": {
+              "type": "string",
+              "nullable": true
+            }
+          }
+        }
+      },
+      "selection": [
+        "/components/schemas/S"
+      ],
+      "query": "Types",
+      "expect": {
+        "kind": "Known",
+        "types": [
+          "null",
+          "string"
+        ],
+        "source_pointers": [
+          "/components/schemas/S/type",
+          "/components/schemas/S/nullable"
+        ]
+      }
+    },
+    {
+      "id": "N03-no-local-type-true",
+      "document": {
+        "info": {
+          "title": "Nullable controls",
+          "version": "1"
+        },
+        "paths": {},
+        "openapi": "3.0.4",
+        "components": {
+          "schemas": {
+            "S": {
+              "nullable": true
+            }
+          }
+        }
+      },
+      "selection": [
+        "/components/schemas/S"
+      ],
+      "query": "Types",
+      "expect": {
+        "kind": "Absent",
+        "source_pointers": [
+          "/components/schemas/S"
+        ]
+      }
+    },
+    {
+      "id": "N03-no-local-type-malformed-no-effect",
+      "document": {
+        "info": {
+          "title": "Nullable controls",
+          "version": "1"
+        },
+        "paths": {},
+        "openapi": "3.0.4",
+        "components": {
+          "schemas": {
+            "S": {
+              "nullable": 42
+            }
+          }
+        }
+      },
+      "selection": [
+        "/components/schemas/S"
+      ],
+      "query": "Types",
+      "expect": {
+        "kind": "Absent",
+        "source_pointers": [
+          "/components/schemas/S"
+        ]
+      }
+    },
+    {
+      "id": "N04-inert-2.0",
+      "document": {
+        "info": {
+          "title": "Nullable controls",
+          "version": "1"
+        },
+        "paths": {},
+        "swagger": "2.0",
+        "definitions": {
+          "S": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "selection": [
+        "/definitions/S"
+      ],
+      "query": "Types",
+      "expect": {
+        "kind": "Known",
+        "types": [
+          "string"
+        ],
+        "source_pointers": [
+          "/definitions/S/type"
+        ]
+      }
+    },
+    {
+      "id": "N04-inert-3.1.0",
+      "document": {
+        "info": {
+          "title": "Nullable controls",
+          "version": "1"
+        },
+        "paths": {},
+        "openapi": "3.1.0",
+        "components": {
+          "schemas": {
+            "S": {
+              "type": "string",
+              "nullable": true
+            }
+          }
+        }
+      },
+      "selection": [
+        "/components/schemas/S"
+      ],
+      "query": "Types",
+      "expect": {
+        "kind": "Known",
+        "types": [
+          "string"
+        ],
+        "source_pointers": [
+          "/components/schemas/S/type"
+        ]
+      }
+    },
+    {
+      "id": "N04-inert-3.2.0",
+      "document": {
+        "info": {
+          "title": "Nullable controls",
+          "version": "1"
+        },
+        "paths": {},
+        "openapi": "3.2.0",
+        "components": {
+          "schemas": {
+            "S": {
+              "type": "string",
+              "nullable": true
+            }
+          }
+        }
+      },
+      "selection": [
+        "/components/schemas/S"
+      ],
+      "query": "Types",
+      "expect": {
+        "kind": "Known",
+        "types": [
+          "string"
+        ],
+        "source_pointers": [
+          "/components/schemas/S/type"
+        ]
+      }
+    },
+    {
+      "id": "N05-invalid-string",
+      "document": {
+        "info": {
+          "title": "Nullable controls",
+          "version": "1"
+        },
+        "paths": {},
+        "openapi": "3.0.4",
+        "components": {
+          "schemas": {
+            "S": {
+              "type": "string",
+              "nullable": "true"
+            }
+          }
+        }
+      },
+      "selection": [
+        "/components/schemas/S"
+      ],
+      "query": "Types",
+      "expect": {
+        "kind": "Invalid",
+        "code": "InvalidDeclaration",
+        "reason": "InvalidKeyword",
+        "source_pointer": "/components/schemas/S/nullable"
+      }
+    },
+    {
+      "id": "N05-invalid-null",
+      "document": {
+        "info": {
+          "title": "Nullable controls",
+          "version": "1"
+        },
+        "paths": {},
+        "openapi": "3.0.4",
+        "components": {
+          "schemas": {
+            "S": {
+              "type": "string",
+              "nullable": null
+            }
+          }
+        }
+      },
+      "selection": [
+        "/components/schemas/S"
+      ],
+      "query": "Types",
+      "expect": {
+        "kind": "Invalid",
+        "code": "InvalidDeclaration",
+        "reason": "InvalidKeyword",
+        "source_pointer": "/components/schemas/S/nullable"
+      }
+    },
+    {
+      "id": "N05-invalid-number",
+      "document": {
+        "info": {
+          "title": "Nullable controls",
+          "version": "1"
+        },
+        "paths": {},
+        "openapi": "3.0.4",
+        "components": {
+          "schemas": {
+            "S": {
+              "type": "string",
+              "nullable": 1
+            }
+          }
+        }
+      },
+      "selection": [
+        "/components/schemas/S"
+      ],
+      "query": "Types",
+      "expect": {
+        "kind": "Invalid",
+        "code": "InvalidDeclaration",
+        "reason": "InvalidKeyword",
+        "source_pointer": "/components/schemas/S/nullable"
+      }
+    },
+    {
+      "id": "N05-invalid-object",
+      "document": {
+        "info": {
+          "title": "Nullable controls",
+          "version": "1"
+        },
+        "paths": {},
+        "openapi": "3.0.4",
+        "components": {
+          "schemas": {
+            "S": {
+              "type": "string",
+              "nullable": {}
+            }
+          }
+        }
+      },
+      "selection": [
+        "/components/schemas/S"
+      ],
+      "query": "Types",
+      "expect": {
+        "kind": "Invalid",
+        "code": "InvalidDeclaration",
+        "reason": "InvalidKeyword",
+        "source_pointer": "/components/schemas/S/nullable"
+      }
+    },
+    {
+      "id": "N06-reference-siblings-ignored",
+      "document": {
+        "info": {
+          "title": "Nullable controls",
+          "version": "1"
+        },
+        "paths": {},
+        "openapi": "3.0.4",
+        "components": {
+          "schemas": {
+            "S": {
+              "$ref": "#/components/schemas/T",
+              "type": "number",
+              "nullable": true
+            },
+            "T": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "selection": [
+        "/components/schemas/S"
+      ],
+      "query": "Types",
+      "expect": {
+        "kind": "Known",
+        "types": [
+          "string"
+        ],
+        "source_pointers": [
+          "/components/schemas/T/type"
+        ]
+      }
+    },
+    {
+      "id": "N07-target-nullable",
+      "document": {
+        "info": {
+          "title": "Nullable controls",
+          "version": "1"
+        },
+        "paths": {},
+        "openapi": "3.0.4",
+        "components": {
+          "schemas": {
+            "S": {
+              "$ref": "#/components/schemas/T",
+              "nullable": false
+            },
+            "T": {
+              "type": "string",
+              "nullable": true
+            }
+          }
+        }
+      },
+      "selection": [
+        "/components/schemas/S"
+      ],
+      "query": "Types",
+      "expect": {
+        "kind": "Known",
+        "types": [
+          "null",
+          "string"
+        ],
+        "source_pointers": [
+          "/components/schemas/T/type",
+          "/components/schemas/T/nullable"
+        ]
+      }
+    },
+    {
+      "id": "N08-null-intersection",
+      "document": {
+        "info": {
+          "title": "Nullable controls",
+          "version": "1"
+        },
+        "paths": {},
+        "openapi": "3.0.4",
+        "components": {
+          "schemas": {
+            "S": {
+              "type": "string",
+              "nullable": true
+            },
+            "T": {
+              "type": "number",
+              "nullable": true
+            }
+          }
+        }
+      },
+      "selection": [
+        "/components/schemas/S",
+        "/components/schemas/T"
+      ],
+      "query": "Types",
+      "expect": {
+        "kind": "Known",
+        "types": [
+          "null"
+        ],
+        "source_pointers": [
+          "/components/schemas/S/type",
+          "/components/schemas/S/nullable",
+          "/components/schemas/T/type",
+          "/components/schemas/T/nullable"
+        ]
+      }
+    },
+    {
+      "id": "N09-nonnull-intersection",
+      "document": {
+        "info": {
+          "title": "Nullable controls",
+          "version": "1"
+        },
+        "paths": {},
+        "openapi": "3.0.4",
+        "components": {
+          "schemas": {
+            "S": {
+              "type": "string",
+              "nullable": true
+            },
+            "T": {
+              "type": "string",
+              "nullable": false
+            }
+          }
+        }
+      },
+      "selection": [
+        "/components/schemas/S",
+        "/components/schemas/T"
+      ],
+      "query": "Types",
+      "expect": {
+        "kind": "Known",
+        "types": [
+          "string"
+        ],
+        "source_pointers": [
+          "/components/schemas/S/type",
+          "/components/schemas/S/nullable",
+          "/components/schemas/T/type"
+        ]
+      }
+    },
+    {
+      "id": "N10-allof-not-evaluated",
+      "document": {
+        "info": {
+          "title": "Nullable controls",
+          "version": "1"
+        },
+        "paths": {},
+        "openapi": "3.0.4",
+        "components": {
+          "schemas": {
+            "S": {
+              "type": "string",
+              "nullable": true,
+              "allOf": [
+                {
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "selection": [
+        "/components/schemas/S"
+      ],
+      "query": "Types",
+      "expect": {
+        "kind": "Indeterminate",
+        "reason": "Composition",
+        "source_pointers": [
+          "/components/schemas/S/allOf"
+        ]
+      }
+    },
+    {
+      "id": "N11-enum-not-validation",
+      "document": {
+        "info": {
+          "title": "Nullable controls",
+          "version": "1"
+        },
+        "paths": {},
+        "openapi": "3.0.4",
+        "components": {
+          "schemas": {
+            "S": {
+              "type": "string",
+              "nullable": true,
+              "enum": [
+                "only"
+              ]
+            }
+          }
+        }
+      },
+      "selection": [
+        "/components/schemas/S"
+      ],
+      "query": "Types",
+      "expect": {
+        "kind": "Known",
+        "types": [
+          "null",
+          "string"
+        ],
+        "source_pointers": [
+          "/components/schemas/S/type",
+          "/components/schemas/S/nullable"
+        ]
+      }
+    }
+  ]
+}

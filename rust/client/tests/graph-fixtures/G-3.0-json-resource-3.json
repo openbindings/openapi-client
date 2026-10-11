@@ -1,0 +1,29 @@
+{
+  "openapi": "3.0.4",
+  "info": {
+    "title": "Independent graph oracle",
+    "version": "1"
+  },
+  "paths": {},
+  "servers": [
+    {
+      "url": "https://api.example"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "Real": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Other"
+      }
+    },
+    "headers": {
+      "Count": {
+        "schema": {
+          "type": "integer"
+        }
+      }
+    }
+  }
+}

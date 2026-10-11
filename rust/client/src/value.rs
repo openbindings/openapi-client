@@ -9,6 +9,65 @@ use serde_json::value::RawValue;
 mod response_admission;
 #[cfg(test)]
 mod response_tests;
+#[cfg(test)]
+mod diagnostic_source_tests {
+    use super::*;
+
+    #[test]
+    fn source_binding_retains_only_text_and_rewrites_invalidate_it() {
+        let input =
+            ExactJson::parse(r#"{"secret":{"caf\u00e9":"🦀"}}"#, Limits::default()).unwrap();
+        let value = input.root().get("secret").unwrap();
+        let weak_store = Arc::downgrade(&value.store);
+        let weak_source = Arc::downgrade(&value.store.source);
+        let error = value.error(Code::UnsupportedValue);
+        let context = error.source_context().unwrap();
+        let location = error.location().unwrap().clone();
+        assert!(error.clone().at(location).source_position().is_none());
+        assert!(error.clone().sourced(context).source_position().is_none());
+        let cloned = error.clone();
+        let position = cloned.source_position().unwrap();
+        let second = cloned.source_position().unwrap();
+        assert!(Arc::ptr_eq(&position.source, &second.source));
+        drop(second);
+        drop(cloned);
+        drop(value);
+        drop(input);
+        assert!(weak_store.upgrade().is_none());
+        assert!(weak_source.upgrade().is_some());
+        drop(error);
+        assert_eq!(position.raw(), r#"{"caf\u00e9":"🦀"}"#);
+        assert!(weak_source.upgrade().is_some());
+        drop(position);
+        assert!(weak_source.upgrade().is_none());
+    }
+}
+#[cfg(test)]
+mod member_name_tests {
+    use super::*;
+
+    #[test]
+    fn shared_decoded_name_is_independent_of_the_source_owner() {
+        let input = ExactJson::parse(r#"{"caf\u00e9":"payload"}"#, Limits::default()).unwrap();
+        let root = input.root();
+        let store = Arc::downgrade(&root.store);
+        let name = root.member_name_owner("café").unwrap();
+        let again = root.member_name_owner("café").unwrap();
+        assert!(Arc::ptr_eq(&name, &again));
+        assert!(root.member_name_owner("missing").is_none());
+        assert!(
+            root.get("café")
+                .unwrap()
+                .member_name_owner("café")
+                .is_none()
+        );
+        drop(root);
+        drop(input);
+        assert!(store.upgrade().is_none());
+        assert_eq!(&*name, "café");
+        assert_eq!(&*again, "café");
+    }
+}
 use std::{
     collections::HashMap,
     fmt,
@@ -22,21 +81,47 @@ use std::{
 /// Resource admission limits. Defaults are part of the qualified profile.
 #[derive(Clone, Debug)]
 pub struct Limits {
-    /// Maximum admitted source bytes, also bounding retained response-header metadata.
+    /// Maximum admitted source bytes and, independently, normalized YAML output bytes.
+    /// Also independently bounds retained response-header metadata and copied
+    /// descriptor strings per effective-description/compiled-operation construction.
     pub document_bytes: usize,
-    /// Maximum JSON container depth (default 128); caller callbacks are outside this bound.
+    /// Maximum JSON/YAML container depth (default 128); caller callbacks are outside this bound.
     pub depth: usize,
-    /// Maximum indexed JSON values in one owner.
+    /// Maximum indexed JSON values; also independently caps YAML nodes and expanded values,
+    /// and descriptor entries, strings and reference chains per construction.
     pub nodes: usize,
     /// Maximum discovered operations in one document.
     pub operations: usize,
-    /// Maximum steps in one local protocol reference walk; also bounds caller input and security-requirement counts.
+    /// Maximum steps in one protocol reference or YAML alias chain; also bounds caller input
+    /// and security-requirement counts, while descriptor_work independently bounds aggregate descriptor work.
     pub reference_steps: usize,
+    /// Aggregate effective-descriptor declarations and reference hops, independent of chain depth.
+    pub descriptor_work: usize,
+    /// Aggregate schema fact traversal, query, join and result work per session.
+    pub schema_fact_work: usize,
+    /// Active schema fact depth, independent of reference-chain hops and width.
+    pub schema_fact_depth: usize,
     /// Maximum finite request body and retained delivered response body bytes.
     pub body_bytes: usize,
+    /// Maximum logical named form fields, independent of reference traversal.
+    pub form_fields: usize,
+    /// Maximum emitted form values or multipart parts.
+    pub form_parts: usize,
+    /// Independent caller-admission and emitted-plan ceilings for copied form metadata.
+    /// Admission counts field names once and filename/media/header names per Part;
+    /// planning counts emitted names, filenames and effective media per emission.
+    /// Header argument data uses ordinary/exact admission. Fixed framing uses body_bytes.
+    pub form_metadata_bytes: usize,
+    /// Independent admission/planning work ceilings. Charges structural visits,
+    /// name comparisons, boundary attempts and each at-most-4096-byte wire chunk
+    /// in count/scan/write passes. This does not bound caller iterator/Serialize work.
+    pub form_work: usize,
+    /// Maximum collision-checked multipart boundary candidates.
+    pub boundary_attempts: usize,
     /// Maximum prepared request-target bytes.
     pub target_bytes: usize,
-    /// Maximum request/retained response header lines.
+    /// Maximum request/retained response header lines; independently bounds the
+    /// aggregate generated and supplied multipart part header lines.
     pub headers: usize,
     /// Maximum token length inspected by checked numeric conveniences.
     pub number_conversion_chars: usize,
@@ -51,7 +136,15 @@ impl Default for Limits {
             nodes: 500_000,
             operations: 20_000,
             reference_steps: 128,
+            descriptor_work: 500_000,
+            schema_fact_work: 500_000,
+            schema_fact_depth: 128,
             body_bytes: 4 * 1024 * 1024,
+            form_fields: 128,
+            form_parts: 1024,
+            form_metadata_bytes: 65_536,
+            form_work: 500_000,
+            boundary_attempts: 16,
             target_bytes: 65_536,
             headers: 256,
             number_conversion_chars: 256,
@@ -104,13 +197,15 @@ impl std::error::Error for ParseFailure {
     }
 }
 
-/// Origin of the immutable JSON bytes indexed by an owner.
+/// Origin of an immutable source buffer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SourceOrigin {
     /// Bytes supplied to parse by the caller (including received response bytes).
     Authored,
     /// JSON bytes generated by a supported ordinary-value or checked Serde constructor.
     Constructed,
+    /// JSON semantic representation generated from retained authored YAML.
+    Normalized,
 }
 /// Identity of a source within this process or Wasm instance, not a persistent/global ID.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -121,11 +216,20 @@ pub struct SourceContext {
     pub origin: SourceOrigin,
 }
 static NEXT_SOURCE: AtomicUsize = AtomicUsize::new(1);
+pub(crate) fn authored_source_context() -> Result<SourceContext, Diagnostic> {
+    let id = NEXT_SOURCE
+        .try_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
+        .map_err(|_| Diagnostic::new(Code::Limit).with_setting("source_identities"))?;
+    Ok(SourceContext {
+        id,
+        origin: SourceOrigin::Authored,
+    })
+}
 
 /// An immutable, exact JSON owner. Clones share bytes and any materialized index.
 #[derive(Clone, Debug)]
 pub struct ExactJson(pub(crate) Value);
-/// An independently owned handle to an authored JSON value.
+/// An independently owned handle to an exact JSON-compatible semantic value.
 #[derive(Clone)]
 pub struct Value {
     store: Arc<Store>,
@@ -173,7 +277,25 @@ struct Store {
     source: Arc<str>,
     context: SourceContext,
     index: Index,
-    limits: Limits,
+    limits: AccessLimits,
+    authored: Option<crate::source::AuthoredMap>,
+}
+// Parsing consumes the complete admission policy before publication. A retained
+// value needs only these access bounds; unrelated request/schema policy must not
+// enlarge every independent JSON owner as the client gains capabilities.
+struct AccessLimits {
+    document_bytes: usize,
+    depth: usize,
+    number_conversion_chars: usize,
+}
+impl From<&Limits> for AccessLimits {
+    fn from(limits: &Limits) -> Self {
+        Self {
+            document_bytes: limits.document_bytes,
+            depth: limits.depth,
+            number_conversion_chars: limits.number_conversion_chars,
+        }
+    }
 }
 enum Index {
     Eager(Vec<Node>),
@@ -571,6 +693,9 @@ fn root_kind(root: &str) -> ValueKind {
     }
 }
 impl ExactJson {
+    pub(crate) fn node_count(&self) -> usize {
+        self.0.store.nodes().len()
+    }
     /// Validate and index exact UTF-8 JSON. Duplicate decoded keys are rejected.
     /// String values containing unpaired UTF-16 surrogate escapes return UnsupportedString.
     pub fn parse(bytes: impl AsRef<[u8]>, limits: Limits) -> Result<Self, ParseFailure> {
@@ -691,7 +816,8 @@ impl ExactJson {
                     source: Arc::from(text),
                     context,
                     index,
-                    limits,
+                    limits: AccessLimits::from(&limits),
+                    authored: None,
                 }),
                 id: 0,
             }))
@@ -704,6 +830,43 @@ impl ExactJson {
                 Arc::from([])
             },
         })
+    }
+    pub(crate) fn attach_authored(
+        mut self,
+        source: Arc<str>,
+        context: SourceContext,
+        mut mappings: crate::source::PendingMap,
+    ) -> Self {
+        let store = Arc::get_mut(&mut self.0.store).expect("new normalized owner is unique");
+        let entries = store
+            .nodes()
+            .iter()
+            .map(|node| {
+                mappings
+                    .remove(&node.span.start)
+                    .expect("every emitted value has provenance")
+            })
+            .collect();
+        store.authored = Some(crate::source::AuthoredMap {
+            source,
+            context,
+            entries,
+        });
+        self
+    }
+    pub(crate) fn original_source(&self) -> &str {
+        self.0
+            .store
+            .authored
+            .as_ref()
+            .map_or(&self.0.store.source, |a| &a.source)
+    }
+    pub(crate) fn source_format(&self) -> crate::SourceFormat {
+        if self.0.store.authored.is_some() {
+            crate::SourceFormat::Yaml
+        } else {
+            crate::SourceFormat::Json
+        }
     }
     /// The independently owned root value.
     pub fn root(&self) -> Value {
@@ -732,10 +895,24 @@ impl Value {
         }
         self.node().span.clone()
     }
+    pub(crate) fn at_identity(&self, id: usize) -> Option<Self> {
+        (id < self.store.nodes().len()).then(|| Self {
+            store: self.store.clone(),
+            id,
+        })
+    }
+    pub(crate) fn parent_value(&self) -> Option<Self> {
+        self.node().parent.map(|id| Self {
+            store: self.store.clone(),
+            id,
+        })
+    }
     pub(crate) fn identity(&self) -> usize {
         self.id
     }
-    /// Exact original JSON token or subtree, without conversion.
+    /// Exact token/subtree in the indexed JSON representation.
+    /// For JSON input this is original text. For YAML documents it is a generated,
+    /// mathematically exact JSON representation; source_trace() retains authored YAML.
     pub fn raw(&self) -> &str {
         &self.store.source[self.span()]
     }
@@ -790,6 +967,16 @@ impl Value {
             None
         }
     }
+    // Share an already decoded, immutable indexed member name independently of
+    // this Value/source owner. Used only after a form style event identifies a
+    // key in this exact object; never reparse or manufacture a different name.
+    pub(crate) fn member_name_owner(&self, name: &str) -> Option<Arc<str>> {
+        if let Kind::Object(members, index) = &self.node().kind {
+            index.get(name).map(|&i| members[i].name.clone())
+        } else {
+            None
+        }
+    }
     /// Array lookup.
     pub fn at(&self, index: usize) -> Option<Self> {
         if let Kind::Array(a) = &self.node().kind {
@@ -828,7 +1015,7 @@ impl Value {
             None
         }
     }
-    /// Source range and authored JSON Pointer.
+    /// Range in the indexed JSON representation and semantic JSON Pointer.
     pub fn location(&self) -> Location {
         let span = self.span();
         if self.id == 0 {
@@ -856,9 +1043,46 @@ impl Value {
             },
         }
     }
-    /// Exact source owner and authored/constructed origin of this value's ranges.
+    /// Indexed JSON owner and authored/constructed/normalized origin of this value's ranges.
     pub fn source_context(&self) -> SourceContext {
         self.store.context
+    }
+    /// Inspect both indexed JSON and original authored source, with alias use evidence.
+    /// Returned positions retain their source owners independently of this value.
+    pub fn source_trace(&self) -> crate::SourceTrace {
+        let location = self.location();
+        let representation = crate::SourcePosition {
+            context: self.store.context,
+            location: location.clone(),
+            source: self.store.source.clone(),
+        };
+        let (authored, alias_uses) = if let Some(map) = &self.store.authored {
+            let entry = &map.entries[self.id];
+            let position = |span: &Range<usize>| crate::SourcePosition {
+                context: map.context,
+                location: Location {
+                    start: span.start,
+                    end: span.end,
+                    pointer: location.pointer.clone(),
+                },
+                source: map.source.clone(),
+            };
+            (
+                Some(position(&entry.span)),
+                entry.aliases.iter().map(position).collect(),
+            )
+        } else {
+            (
+                (self.store.context.origin == SourceOrigin::Authored)
+                    .then(|| representation.clone()),
+                vec![],
+            )
+        };
+        crate::SourceTrace {
+            representation,
+            authored,
+            alias_uses,
+        }
     }
     /// Resolve an RFC6901 string-form pointer within this value; no URI decoding here.
     pub fn pointer(&self, pointer: &str) -> Result<Self, Diagnostic> {
@@ -875,21 +1099,28 @@ impl Value {
         }
         let mut current = self.clone();
         for token in pointer[1..].split('/') {
-            let mut decoded = String::new();
-            let mut chars = token.chars();
-            while let Some(c) = chars.next() {
-                if c == '~' {
-                    decoded.push(match chars.next() {
-                        Some('0') => '~',
-                        Some('1') => '/',
-                        _ => return Err(self.error(Code::InvalidPointer)),
-                    });
-                } else {
-                    decoded.push(c);
+            let owned;
+            let decoded = if token.contains('~') {
+                let mut decoded = String::new();
+                let mut chars = token.chars();
+                while let Some(c) = chars.next() {
+                    if c == '~' {
+                        decoded.push(match chars.next() {
+                            Some('0') => '~',
+                            Some('1') => '/',
+                            _ => return Err(self.error(Code::InvalidPointer)),
+                        });
+                    } else {
+                        decoded.push(c);
+                    }
                 }
-            }
+                owned = decoded;
+                owned.as_str()
+            } else {
+                token
+            };
             current = match current.kind() {
-                ValueKind::Object => current.get(&decoded),
+                ValueKind::Object => current.get(decoded),
                 ValueKind::Array => {
                     if decoded.is_empty()
                         || (decoded.starts_with('0') && decoded.len() > 1)
@@ -908,9 +1139,38 @@ impl Value {
         Ok(current)
     }
     pub(crate) fn error(&self, code: Code) -> Diagnostic {
-        Diagnostic::new(code)
-            .at(self.location())
-            .sourced(self.source_context())
+        self.locate(Diagnostic::new(code))
+    }
+    /// Retain one authored position without materializing unused alias-use evidence.
+    pub(crate) fn diagnostic_position(&self) -> crate::SourcePosition {
+        let mut location = self.location();
+        let (context, source) = if let Some(map) = &self.store.authored {
+            let entry = &map.entries[self.id];
+            location.start = entry.span.start;
+            location.end = entry.span.end;
+            (map.context, map.source.clone())
+        } else {
+            (self.store.context, self.store.source.clone())
+        };
+        crate::SourcePosition {
+            context,
+            location,
+            source,
+        }
+    }
+    pub(crate) fn locate(&self, mut diagnostic: Diagnostic) -> Diagnostic {
+        let position = self.diagnostic_position();
+        if let Some(map) = &self.store.authored {
+            let entry = &map.entries[self.id];
+            diagnostic
+                .related
+                .extend(entry.aliases.iter().map(|span| Location {
+                    start: span.start,
+                    end: span.end,
+                    pointer: position.location.pointer.clone(),
+                }));
+        }
+        diagnostic.positioned(position)
     }
     /// Retained storage attributable to the shared owner, counted once per owner.
     /// May increase after dynamic access to a response owner. This accessor does
@@ -919,6 +1179,16 @@ impl Value {
     /// construction overlap is excluded, as are allocator metadata and RSS.
     pub fn retained_bytes(&self) -> usize {
         let mut bytes = self.store.source.len();
+        if let Some(map) = &self.store.authored {
+            bytes += map.source.len()
+                + map.entries.capacity() * std::mem::size_of::<crate::source::AuthoredEntry>();
+            let mut aliases = std::collections::HashSet::new();
+            for entry in &map.entries {
+                if aliases.insert(entry.aliases.as_ptr()) {
+                    bytes += std::mem::size_of_val(entry.aliases.as_ref());
+                }
+            }
+        }
         if let Index::Deferred(deferred) = &self.store.index {
             bytes += std::mem::size_of::<DeferredIndex>();
             if deferred.nodes.get().is_none() {
@@ -956,7 +1226,7 @@ impl fmt::Debug for Number<'_> {
     }
 }
 impl<'a> Number<'a> {
-    /// Authored JSON number lexeme.
+    /// Indexed JSON number lexeme. For authored YAML spelling, inspect the value source trace.
     pub fn token(self) -> &'a str {
         self.token
     }
@@ -996,13 +1266,11 @@ impl<'a> Number<'a> {
     }
     fn admit(self, target: NumericTarget) -> Result<(), Diagnostic> {
         if self.token.len() > self.limit {
-            return Err(Diagnostic::limited(
+            return Err(self.value.locate(Diagnostic::limited(
                 LimitKind::NumberCharacters,
                 self.limit,
                 self.token.len(),
-            )
-            .at(self.value.location())
-            .sourced(self.value.source_context()));
+            )));
         }
         if self.token.contains(['.', 'e', 'E']) {
             return Err(self.refusal(target, NumericReason::UnsupportedLexicalForm));

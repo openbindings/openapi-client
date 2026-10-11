@@ -4,9 +4,9 @@
 #![warn(missing_docs)]
 
 use dynamic_openapi_client::{
-    BodyState, Cancellation, Code, Credential, DeliveredBody, Diagnostic, Header, HostCapabilities,
-    Operation, Outcome, PreparedRequest, Provenance, RequestBuilder, ResponseInput,
-    TransportResult, UploadState,
+    BodyState, Cancellation, Code, Credential, DeliveredBody, Diagnostic, Header, HeaderDelivery,
+    HeaderFidelity, HostCapabilities, Operation, Outcome, PreparedRequest, Provenance,
+    RequestBuilder, ResponseAdmission, ResponseInput, TransportResult, UploadState,
 };
 use std::{fmt, sync::Arc, time::Duration};
 
@@ -170,11 +170,12 @@ impl Client {
         };
         prepared
             .invoke(cancellation, capabilities, |dispatch, cancellation| {
+                let admission = dispatch.response_admission();
                 let mut request = request;
                 if let Some(body) = dispatch.body {
                     *request.body_mut() = Some(bytes::Bytes::from_owner(body).into());
                 }
-                self.exchange(request, dispatch.response_limit, cancellation)
+                self.exchange(request, admission, cancellation)
             })
             .await
     }
@@ -182,7 +183,7 @@ impl Client {
     async fn exchange(
         &self,
         request: reqwest::Request,
-        limit: usize,
+        admission: ResponseAdmission,
         cancellation: Cancellation,
     ) -> TransportResult {
         if cancellation.is_cancelled() {
@@ -203,11 +204,15 @@ impl Client {
             },
         };
         let status = response.status().as_u16();
-        let headers = response
-            .headers()
-            .iter()
-            .map(|(name, value)| Header::new(name.as_str(), value.as_bytes()))
-            .collect();
+        let (headers, header_delivery) = collect_headers(
+            response
+                .headers()
+                .iter()
+                .map(|(name, value)| (name.as_str(), value.as_bytes())),
+            admission.header_entries(),
+            admission.header_bytes(),
+        );
+        let limit = admission.body_bytes();
         let mut bytes = Vec::new();
         let (state, detail) = loop {
             let chunk = tokio::select! {
@@ -238,20 +243,52 @@ impl Client {
             }
         };
         TransportResult {
-            response: Some(ResponseInput {
-                status,
-                headers,
-                opaque_redirect: false,
-                body: DeliveredBody {
-                    bytes: bytes.into(),
-                    state,
-                    provenance: Provenance::Wire,
-                },
+            response: Some({
+                let mut response = ResponseInput::new(
+                    status,
+                    headers,
+                    DeliveredBody {
+                        bytes: bytes.into(),
+                        state,
+                        provenance: Provenance::Wire,
+                    },
+                );
+                response.header_fidelity = HeaderFidelity::HostProcessed;
+                response.header_delivery = header_delivery;
+                response
             }),
             upload: UploadState::Unknown,
             error_detail: detail.map(Arc::from),
         }
     }
+}
+
+// Inspect borrowed lengths before Header::new allocates either name or value.
+// One next() beyond the entry limit distinguishes EOF from a known omission.
+// Stop at the first inadmissible field: its syntax and the remaining tail are
+// unclassified, and no total omitted count can be inferred from them.
+fn collect_headers<'a>(
+    entries: impl IntoIterator<Item = (&'a str, &'a [u8])>,
+    entry_limit: usize,
+    byte_limit: usize,
+) -> (Vec<Header>, HeaderDelivery) {
+    let mut headers = Vec::new();
+    let mut bytes = 0usize;
+    for (name, value) in entries {
+        let total = bytes
+            .checked_add(name.len())
+            .and_then(|n| n.checked_add(value.len()));
+        let Some(total) = total.filter(|n| *n <= byte_limit && headers.len() < entry_limit) else {
+            return (headers, HeaderDelivery::Incomplete);
+        };
+        if headers.len() == headers.capacity() {
+            let capacity = headers.capacity().saturating_mul(2).max(1).min(entry_limit);
+            headers.reserve_exact(capacity - headers.len());
+        }
+        headers.push(Header::new(name, value));
+        bytes = total;
+    }
+    (headers, HeaderDelivery::Complete)
 }
 
 fn capabilities() -> HostCapabilities {
@@ -309,5 +346,83 @@ fn request_error(error: &reqwest::Error) -> &'static str {
         "connection or TLS establishment failed"
     } else {
         "request dispatch failed"
+    }
+}
+
+#[cfg(test)]
+mod metadata_tests {
+    use super::*;
+    use std::cell::Cell;
+
+    #[test]
+    fn empty_and_exact_count_observe_eof_without_inventing_omissions() {
+        for limit in [0, 1] {
+            let (headers, delivery) = collect_headers([], limit, 0);
+            assert!(headers.is_empty());
+            assert_eq!(delivery, HeaderDelivery::Complete);
+        }
+        let (headers, delivery) = collect_headers([("x", b"v".as_slice())], 1, 2);
+        assert_eq!(headers.len(), 1);
+        assert_eq!(delivery, HeaderDelivery::Complete);
+        let visits = Cell::new(0);
+        let entries = [
+            ("x", b"v".as_slice()),
+            ("next", b"v"),
+            ("uninspected", b"v"),
+        ];
+        let (headers, delivery) = collect_headers(
+            entries
+                .into_iter()
+                .inspect(|_| visits.set(visits.get() + 1)),
+            1,
+            100,
+        );
+        assert_eq!(headers.len(), 1);
+        assert_eq!(delivery, HeaderDelivery::Incomplete);
+        assert_eq!(visits.get(), 2);
+    }
+
+    #[test]
+    fn byte_boundary_counts_both_name_and_value_and_stops_at_first_overflow() {
+        let entries = [("x", b"ab".as_slice()), ("y", b"c"), ("z", b"d")];
+        for (bound, retained, delivery) in [
+            (0, 0, HeaderDelivery::Incomplete),
+            (2, 0, HeaderDelivery::Incomplete),
+            (3, 1, HeaderDelivery::Incomplete),
+            (4, 1, HeaderDelivery::Incomplete),
+            (5, 2, HeaderDelivery::Incomplete),
+            (7, 3, HeaderDelivery::Complete),
+        ] {
+            let visits = Cell::new(0);
+            let (headers, actual) = collect_headers(
+                entries
+                    .into_iter()
+                    .inspect(|_| visits.set(visits.get() + 1)),
+                3,
+                bound,
+            );
+            assert_eq!(headers.len(), retained);
+            assert_eq!(actual, delivery);
+            assert_eq!(visits.get(), (retained + 1).min(3));
+        }
+        let (headers, delivery) = collect_headers([("x", b"ab".as_slice())], 1, 3);
+        assert_eq!(headers[0].value(), b"ab");
+        assert_eq!(delivery, HeaderDelivery::Complete);
+    }
+
+    #[test]
+    fn oversized_borrowed_metadata_is_not_copied_and_growth_is_capped() {
+        let large = vec![b'a'; 1024 * 1024]; // Already owned by the host fixture.
+        for (count, bytes) in [(0, usize::MAX), (1, 4)] {
+            let (headers, delivery) = collect_headers([("x", large.as_slice())], count, bytes);
+            assert!(headers.is_empty());
+            assert_eq!(headers.capacity(), 0);
+            assert_eq!(delivery, HeaderDelivery::Incomplete);
+        }
+        let (headers, delivery) = collect_headers([("x", b"\xff\x80".as_slice()); 5], 5, 15);
+        assert_eq!(headers.len(), 5);
+        assert!(headers.capacity() <= 5);
+        assert_eq!(headers[0].value(), b"\xff\x80");
+        assert_eq!(delivery, HeaderDelivery::Complete);
     }
 }

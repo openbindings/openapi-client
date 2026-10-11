@@ -371,10 +371,10 @@
       "document": "{\"openapi\": \"3.1.2\", \"info\": {\"title\": \"runtime fixture\", \"version\": \"1\"}, \"servers\": [{\"url\": \"https://api.example/v1\"}], \"paths\": {\"/items\": {\"get\": {\"operationId\": \"items\", \"responses\": {\"200\": {\"description\": \"ok\"}}}}}}",
       "authority": "OAC-D07 host bound; RFC9110 5.4",
       "expected": {
-        "error": "InvalidHostEvidence",
+        "error": null,
         "omitted_header_lines": 1,
         "raw_hex": "6e756c6c",
-        "decode_error": "InvalidHostEvidence"
+        "decode_error": "IncompleteHeaders"
       },
       "limits": {
         "headers": 1

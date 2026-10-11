@@ -1,0 +1,94 @@
+{
+  "openapi": "3.0.4",
+  "info": {
+    "title": "Independent graph oracle",
+    "version": "1"
+  },
+  "paths": {},
+  "servers": [
+    {
+      "url": "https://api.example"
+    }
+  ],
+  "components": {
+    "parameters": {
+      "id": {
+        "name": "id",
+        "in": "query",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      }
+    },
+    "responses": {
+      "ok": {
+        "description": "ok",
+        "headers": {
+          "X-Count": {
+            "$ref": "security#/components/headers/Count"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Payload"
+            }
+          }
+        }
+      }
+    },
+    "headers": {
+      "Count": {
+        "schema": {
+          "type": "integer"
+        }
+      }
+    },
+    "requestBodies": {
+      "body": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Payload"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "Payload": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "example": {
+          "$id": "https://evil.example/ignored",
+          "$ref": "https://evil.example/ignored"
+        }
+      }
+    },
+    "securitySchemes": {
+      "Forward": {
+        "$ref": "security#/components/securitySchemes/Real"
+      }
+    },
+    "examples": {
+      "Named": {
+        "$ref": "meta#/components/examples/Real"
+      }
+    },
+    "links": {
+      "Next": {
+        "$ref": "meta#/components/links/Real"
+      }
+    },
+    "callbacks": {
+      "Event": {
+        "$ref": "meta#/components/callbacks/Real"
+      }
+    }
+  }
+}

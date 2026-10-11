@@ -110,16 +110,15 @@ fn main() {
     let host = HostCapabilities::programmable();
     let response = oac_qualification::block_on(p.invoke(Cancellation::default(), &host, |_, _| {
         std::future::ready(TransportResult {
-            response: Some(ResponseInput {
-                status: 200,
-                headers: vec![Header::new("Content-Type", "application/json")],
-                body: DeliveredBody {
+            response: Some(ResponseInput::new(
+                200,
+                vec![Header::new("Content-Type", "application/json")],
+                DeliveredBody {
                     bytes: payload.as_bytes().into(),
                     state: BodyState::Complete,
                     provenance: Provenance::Wire,
                 },
-                opaque_redirect: false,
-            }),
+            )),
             upload: UploadState::Unknown,
             error_detail: None,
         })
