@@ -387,6 +387,79 @@ fn conflicting_identity_and_unrelated_malformed_input_do_not_replace_existing_so
 }
 
 #[test]
+fn canonical_self_admission_remains_specific_to_openapi_32() {
+    for discriminator in [
+        serde_json::json!({"swagger": "2.0"}),
+        serde_json::json!({"openapi": "3.0.4"}),
+        serde_json::json!({"openapi": "3.1.2"}),
+    ] {
+        let mut source = discriminator;
+        source["paths"] = serde_json::json!({});
+        source["$self"] = serde_json::json!(false);
+        let document = Document::parse(
+            source.to_string(),
+            Some("https://docs.example/root"),
+            Limits::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            document.entry_resource().description_base(),
+            Some("https://docs.example/root")
+        );
+    }
+    let mut builder = DocumentBuilder::new(Limits::default(), GraphLimits::default());
+    let error = builder
+        .add(input(
+            "https://docs.example/root",
+            br#"{"openapi":"3.2.1","$self":false,"paths":{}}"#,
+        ))
+        .unwrap_err();
+    assert_eq!(error.diagnostic().code(), Code::InvalidResourceUri);
+    assert_eq!(error.diagnostic().location().unwrap().pointer, "/$self");
+}
+
+#[test]
+fn optional_self_does_not_change_required_version_diagnostics() {
+    for (discriminator, reason, pointer) in [
+        (serde_json::json!({}), VersionReason::Missing, ""),
+        (
+            serde_json::json!({"swagger":"2.0","openapi":"3.2.1"}),
+            VersionReason::Conflicting,
+            "",
+        ),
+        (
+            serde_json::json!({"openapi":"3.02.0"}),
+            VersionReason::Malformed,
+            "/openapi",
+        ),
+        (
+            serde_json::json!({"openapi":"3.3.0"}),
+            VersionReason::UnsupportedFamily,
+            "/openapi",
+        ),
+    ] {
+        for has_self in [false, true] {
+            let mut source = discriminator.clone();
+            source["paths"] = serde_json::json!({});
+            if has_self {
+                source["$self"] = serde_json::json!(false);
+            }
+            let mut builder = DocumentBuilder::new(Limits::default(), GraphLimits::default());
+            let entry = builder
+                .add(input(
+                    "https://docs.example/root",
+                    source.to_string().as_bytes(),
+                ))
+                .unwrap();
+            let error = builder.build(entry).unwrap_err();
+            assert_eq!(error.code(), Code::UnsupportedVersion);
+            assert_eq!(error.reason(), Some(&DiagnosticReason::Version(reason)));
+            assert_eq!(error.location().unwrap().pointer, pointer);
+        }
+    }
+}
+
+#[test]
 fn empty_self_uses_real_retrieval_base_or_reports_located_missing_base() {
     let source = br#"{"openapi":"3.2.1","$self":"","paths":{}}"#;
     let doc =

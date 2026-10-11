@@ -688,36 +688,34 @@ impl DocumentBuilder {
             self.graph_limits.retained_bytes,
             crate::LimitKind::GraphRetainedBytes,
         )?;
-        let id = ResourceId(json.root().source_context().id);
-        let canonical = if Edition::detect_optional(&json.root()) == Ok(Some(Edition::OpenApi32)) {
-            json.root()
-                .get("$self")
-                .map(|v| {
-                    let reference = v
-                        .as_str()
-                        .ok_or_else(|| v.error(Code::InvalidResourceUri))?;
-                    bound(
-                        0,
-                        reference.len(),
-                        self.limits.target_bytes,
-                        crate::LimitKind::TargetBytes,
-                    )
-                    .map_err(|e| v.locate(e))?;
-                    let resolved = resolve_uri(reference, input.retrieval.as_deref())
-                        .map_err(|e| v.locate(e))?;
-                    bound(
-                        0,
-                        resolved.len(),
-                        self.limits.target_bytes,
-                        crate::LimitKind::TargetBytes,
-                    )
-                    .map_err(|e| v.locate(e))?;
-                    Ok::<_, Diagnostic>(resolved)
-                })
-                .transpose()?
-        } else {
-            None
-        };
+        let root = &json.0;
+        let id = ResourceId(root.source_context().id);
+        let canonical = root
+            .get("$self")
+            .filter(|_| Edition::detect_optional(root) == Ok(Some(Edition::OpenApi32)))
+            .map(|v| {
+                let reference = v
+                    .as_str()
+                    .ok_or_else(|| v.error(Code::InvalidResourceUri))?;
+                bound(
+                    0,
+                    reference.len(),
+                    self.limits.target_bytes,
+                    crate::LimitKind::TargetBytes,
+                )
+                .map_err(|e| v.locate(e))?;
+                let resolved =
+                    resolve_uri(reference, input.retrieval.as_deref()).map_err(|e| v.locate(e))?;
+                bound(
+                    0,
+                    resolved.len(),
+                    self.limits.target_bytes,
+                    crate::LimitKind::TargetBytes,
+                )
+                .map_err(|e| v.locate(e))?;
+                Ok::<_, Diagnostic>(resolved)
+            })
+            .transpose()?;
         let base = canonical
             .as_ref()
             .or(input.retrieval.as_ref())
@@ -1559,7 +1557,7 @@ impl Graph {
         self.resource(ResourceId(key.0))
             .expect("indexed resource")
             .json
-            .root()
+            .0
             .at_identity(key.1)
             .expect("indexed value")
     }

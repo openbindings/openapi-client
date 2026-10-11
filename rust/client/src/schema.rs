@@ -603,7 +603,7 @@ impl SchemaIndex {
         }
         for resource in &graph.resources {
             checkpoint(cancellation)?;
-            let root = resource.json.root();
+            let root = &resource.json.0;
             for layout in &resource.layout.roots {
                 checkpoint(cancellation)?;
                 if let Some(default_profile) = layout.schema_profile() {
@@ -633,7 +633,7 @@ impl SchemaIndex {
                 push_seed(
                     &mut seeds,
                     Seed {
-                        value: root,
+                        value: root.clone(),
                         profile: profile.clone(),
                         fallback: profile,
                         origin: None,
