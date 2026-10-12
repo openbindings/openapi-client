@@ -1715,6 +1715,7 @@ impl Graph {
         let (mut summary, mut description) = (None, None);
         let mut chain = vec![];
         let mut path_fields = HashSet::new();
+        let mut path_item_conflicts = Vec::<crate::PathItemConflict>::new();
         let mut canonical = true;
         loop {
             if current.kind() != ValueKind::Object {
@@ -1724,12 +1725,22 @@ impl Graph {
                 return Err(current.error(Code::ReferenceCycle));
             }
             if kind == ReferenceKind::PathItem {
-                for (name, _) in current.members().expect("object") {
-                    if name != "$ref"
-                        && !name.starts_with("x-")
+                for (name, value) in current.members().expect("object") {
+                    if let Some(method) = path_item_method(name, edition) {
+                        if !path_fields.insert(name.to_owned())
+                            && !path_item_conflicts
+                                .iter()
+                                .any(|conflict| conflict.method == method)
+                        {
+                            path_item_conflicts.push(crate::PathItemConflict {
+                                method,
+                                diagnostic: value.error(Code::AmbiguousReference),
+                            });
+                        }
+                    } else if path_item_shared_field(name, edition)
                         && !path_fields.insert(name.to_owned())
                     {
-                        return Err(current.error(Code::AmbiguousReference));
+                        return Err(value.error(Code::AmbiguousReference));
                     }
                 }
             }
@@ -1792,8 +1803,24 @@ impl Graph {
             description,
             chain,
             canonical,
+            path_item_conflicts,
         })
     }
+}
+// Only fields defined by the originating edition participate in reference
+// conflicts. Later-edition fields and arbitrary metadata remain inert.
+fn path_item_method(name: &str, edition: Edition) -> Option<crate::Method> {
+    let method = crate::Method::parse(name).filter(|_| name == name.to_ascii_lowercase())?;
+    match method {
+        crate::Method::Trace if edition == Edition::Swagger20 => None,
+        crate::Method::Query if edition != Edition::OpenApi32 => None,
+        _ => Some(method),
+    }
+}
+fn path_item_shared_field(name: &str, edition: Edition) -> bool {
+    name == "parameters"
+        || edition != Edition::Swagger20 && matches!(name, "summary" | "description" | "servers")
+        || edition == Edition::OpenApi32 && name == "additionalOperations"
 }
 fn enqueue(
     queue: &mut VecDeque<(Value, Context)>,
@@ -1893,14 +1920,9 @@ fn valid_kind(value: &Value, kind: ReferenceKind, edition: Edition) -> bool {
             edition != Edition::Swagger20
         }
         ReferenceKind::MediaType => edition == Edition::OpenApi32,
-        ReferenceKind::PathItem => value.members().expect("object checked").all(|(name, _)| {
-            name.starts_with("x-")
-                || matches!(
-                    name,
-                    "summary" | "description" | "servers" | "parameters" | "additionalOperations"
-                )
-                || crate::Method::parse(name).is_some_and(|_| name == name.to_ascii_lowercase())
-        }),
+        // The typed graph establishes the expected role. Unknown members are
+        // retained as authored data; they do not disable recognized operations.
+        ReferenceKind::PathItem => true,
     }
 }
 
