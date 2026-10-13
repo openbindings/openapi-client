@@ -4,8 +4,8 @@ use crate::{
 use crate::{DiagnosticContext, DiagnosticReason, LimitKind, SelectionKind, uri};
 use base64::Engine;
 use std::{
-    collections::{BTreeMap, HashSet},
-    sync::{Arc, atomic::Ordering},
+    collections::{BTreeMap, HashMap, HashSet, hash_map::Entry},
+    sync::{Arc, OnceLock, atomic::Ordering},
 };
 
 /// Parameter namespace, independent from its name.
@@ -145,7 +145,7 @@ pub struct Parameter {
 /// Structured refusal leaves Operation::inspect available for raw inspection.
 #[derive(Clone, Debug)]
 pub struct Parameters {
-    entries: Vec<Parameter>,
+    entries: Arc<[Parameter]>,
 }
 impl Parameters {
     /// Effective order, with operation declarations overriding path declarations.
@@ -422,9 +422,13 @@ pub struct EffectiveOperationDescription {
 }
 
 pub(crate) struct Compiled {
-    parameters: Vec<Parameter>,
+    parameters: Arc<[Parameter]>,
+    usage: DescriptorUsage,
+    request: OnceLock<Result<RequestDeclarations, Diagnostic>>,
+}
+struct RequestDeclarations {
     body: Option<BodyDeclaration>,
-    pub responses: Vec<(String, Value)>,
+    responses: Vec<(String, Value)>,
 }
 /// Immutable request plan. Preparing or cloning it does not authorize a retry.
 #[derive(Clone)]
@@ -471,18 +475,20 @@ pub(crate) fn same_name(a: &str, b: &str, location: ParameterLocation) -> bool {
 /// independent from both the admitted source owner and other compiled cache entries.
 pub(crate) struct DescriptorWork<'a> {
     limits: &'a Limits,
+    usage: DescriptorUsage,
+    cancellation: Option<&'a crate::Cancellation>,
+}
+#[derive(Clone, Copy, Default)]
+struct DescriptorUsage {
     bytes: usize,
     nodes: usize,
     references: usize,
-    cancellation: Option<&'a crate::Cancellation>,
 }
 impl<'a> DescriptorWork<'a> {
     pub(crate) fn new(limits: &'a Limits) -> Self {
         Self {
             limits,
-            bytes: 0,
-            nodes: 0,
-            references: 0,
+            usage: DescriptorUsage::default(),
             cancellation: None,
         }
     }
@@ -496,6 +502,8 @@ impl<'a> DescriptorWork<'a> {
         }
     }
     fn checkpoint(&self) -> Result<(), Diagnostic> {
+        #[cfg(test)]
+        parameter_work_tests::CHECKPOINTS.with(|count| count.set(count.get() + 1));
         self.cancellation.map_or(Ok(()), crate::schema::checkpoint)
     }
     fn admit(
@@ -519,7 +527,7 @@ impl<'a> DescriptorWork<'a> {
     pub(crate) fn entry(&mut self, source: &Value) -> Result<(), Diagnostic> {
         self.checkpoint()?;
         Self::admit(
-            &mut self.nodes,
+            &mut self.usage.nodes,
             1,
             self.limits.nodes,
             LimitKind::DescriptorNodes,
@@ -527,19 +535,23 @@ impl<'a> DescriptorWork<'a> {
         )
     }
     pub(crate) fn declaration(&mut self, source: &Value) -> Result<(), Diagnostic> {
+        self.step(source)?;
+        self.entry(source)
+    }
+    fn step(&mut self, source: &Value) -> Result<(), Diagnostic> {
+        self.checkpoint()?;
         Self::admit(
-            &mut self.references,
+            &mut self.usage.references,
             1,
             self.limits.descriptor_work,
             LimitKind::DescriptorWork,
             source,
-        )?;
-        self.entry(source)
+        )
     }
     pub(crate) fn text(&mut self, source: &Value, text: &str) -> Result<String, Diagnostic> {
         self.entry(source)?;
         Self::admit(
-            &mut self.bytes,
+            &mut self.usage.bytes,
             text.len(),
             self.limits.document_bytes,
             LimitKind::DescriptorBytes,
@@ -594,8 +606,8 @@ impl<'a> DescriptorWork<'a> {
         kind: ReferenceKind,
     ) -> Result<crate::ResolvedReference, Diagnostic> {
         self.declaration(source)?;
-        let work_left = self.limits.descriptor_work - self.references;
-        let nodes_left = self.limits.nodes - self.nodes;
+        let work_left = self.limits.descriptor_work - self.usage.references;
+        let nodes_left = self.limits.nodes - self.usage.nodes;
         let remaining = work_left.min(nodes_left).min(self.limits.reference_steps);
         let resolved = graph.resolve(source, kind, remaining).map_err(|error| {
             if error.code() == Code::Limit && remaining < self.limits.reference_steps {
@@ -614,8 +626,8 @@ impl<'a> DescriptorWork<'a> {
             }
         })?;
         let hops = resolved.chain.len().saturating_sub(1);
-        self.references += hops;
-        self.nodes += hops;
+        self.usage.references += hops;
+        self.usage.nodes += hops;
         Ok(resolved)
     }
 }
@@ -664,14 +676,17 @@ impl Operation {
     ) -> Result<Vec<crate::ResolvedReference>, Diagnostic> {
         self.store.edition.clone()?;
         let mut parameters: Vec<crate::ResolvedReference> = vec![];
-        for list in [
+        // One entry per identity records its stable output position and the list
+        // that last declared it. This also refuses duplicates within either list.
+        let mut identities = HashMap::new();
+        for (level, list) in [
             self.path_field("parameters"),
             self.value().get("parameters"),
         ]
         .into_iter()
-        .flatten()
+        .enumerate()
         {
-            let mut local = HashSet::new();
+            let Some(list) = list else { continue };
             for authored in list
                 .elements()
                 .ok_or_else(|| list.error(Code::InvalidDeclaration))?
@@ -680,37 +695,28 @@ impl Operation {
                     work.resolve(&self.store.graph, &authored, ReferenceKind::Parameter)?;
                 let p = &resolved.target;
                 let location = work.required(p, "in")?;
-                let name = work.required(p, "name")?;
-                let identity = (work.text(p, &location)?, {
-                    let mut identity = work.text(p, &name)?;
-                    if location == "header" {
-                        identity.make_ascii_lowercase();
-                    }
-                    identity
-                });
-                work.entry(p)?;
-                if !local.insert(identity) {
-                    return Err(p.error(Code::InvalidDeclaration));
+                let mut name = work.required(p, "name")?;
+                if location == "header" {
+                    name.make_ascii_lowercase();
                 }
-                if let Some(index) = parameters.iter().position(|previous| {
-                    let p = &previous.target;
-                    p.get("in").is_some_and(|v| v.as_str() == Some(&location))
-                        && p.get("name")
-                            .and_then(|v| {
-                                v.as_str().map(|old| {
-                                    if location == "header" {
-                                        old.eq_ignore_ascii_case(&name)
-                                    } else {
-                                        old == name
-                                    }
-                                })
-                            })
-                            .unwrap_or(false)
-                }) {
-                    parameters[index] = resolved;
-                } else {
-                    work.entry(p)?;
-                    parameters.push(resolved);
+                // Charge the identity lookup before hashing or allocating its entry.
+                // Copied key bytes and map/vector entries have separate admissions.
+                work.step(p)?;
+                match identities.entry((location, name)) {
+                    Entry::Occupied(mut entry) => {
+                        let (index, previous_level) = *entry.get();
+                        if previous_level == level {
+                            return Err(p.error(Code::InvalidDeclaration));
+                        }
+                        entry.insert((index, level));
+                        parameters[index] = resolved;
+                    }
+                    Entry::Vacant(entry) => {
+                        work.entry(p)?;
+                        entry.insert((parameters.len(), level));
+                        work.entry(p)?;
+                        parameters.push(resolved);
+                    }
                 }
             }
         }
@@ -822,22 +828,23 @@ impl Operation {
         let edition = self.store.edition.clone()?;
         if edition == Edition::Swagger20 {
             let mut parameters = self.effective_parameter_references(work)?;
-            let is_body = |p: &crate::ResolvedReference| {
-                p.target
-                    .get("in")
-                    .is_some_and(|v| v.as_str() == Some("body"))
-            };
-            let is_form = |p: &crate::ResolvedReference| {
-                p.target
-                    .get("in")
-                    .is_some_and(|v| v.as_str() == Some("formData"))
-            };
-            let body_count = parameters.iter().filter(|p| is_body(p)).count();
-            let has_forms = parameters.iter().any(is_form);
+            let mut body_count = 0;
+            let mut has_forms = false;
+            let mut index = None;
+            for (i, parameter) in parameters.iter().enumerate() {
+                work.step(&parameter.target)?;
+                let location = parameter.target.get("in");
+                let location = location.as_ref().and_then(Value::as_str);
+                body_count += usize::from(location == Some("body"));
+                has_forms |= location == Some("formData");
+                if index.is_none() && matches!(location, Some("body" | "formData")) {
+                    index = Some(i);
+                }
+            }
             if body_count > 1 || body_count != 0 && has_forms {
                 return Err(self.value().error(Code::InvalidDeclaration));
             }
-            let Some(index) = parameters.iter().position(|p| is_body(p) || is_form(p)) else {
+            let Some(index) = index else {
                 return Ok(None);
             };
             if body_count != 0 && parameters[index].target.get("schema").is_none() {
@@ -846,33 +853,42 @@ impl Operation {
             let fields = if !has_forms {
                 FieldDeclarations::NotApplicable
             } else {
-                FieldDeclarations::Declared(
-                    parameters
-                        .iter()
-                        .filter(|p| is_form(p))
-                        .map(|field| {
-                            work.entry(&field.target)?;
-                            Ok(FieldDeclaration {
-                                name: work.required(&field.target, "name")?,
-                                requirement: if bool_field(&field.target, "required", false)? {
-                                    FieldRequirement::ProtocolRequired
-                                } else {
-                                    FieldRequirement::Optional
-                                },
-                                encoding: None,
-                                schema: self.schema_description(field.target.clone(), work)?,
-                                authored: field.authored.clone(),
-                            })
-                        })
-                        .collect::<Result<Vec<_>, Diagnostic>>()?,
-                )
+                let mut fields = vec![];
+                for field in &parameters {
+                    work.step(&field.target)?;
+                    if !field
+                        .target
+                        .get("in")
+                        .is_some_and(|v| v.as_str() == Some("formData"))
+                    {
+                        continue;
+                    }
+                    work.entry(&field.target)?;
+                    fields.push(FieldDeclaration {
+                        name: work.required(&field.target, "name")?,
+                        requirement: if bool_field(&field.target, "required", false)? {
+                            FieldRequirement::ProtocolRequired
+                        } else {
+                            FieldRequirement::Optional
+                        },
+                        encoding: None,
+                        schema: self.schema_description(field.target.clone(), work)?,
+                        authored: field.authored.clone(),
+                    });
+                }
+                FieldDeclarations::Declared(fields)
             };
             // Move the resolved declaration so its provenance chain is not copied.
             let declaration = parameters.swap_remove(index);
             let required = match &fields {
-                FieldDeclarations::Declared(fields) => fields
-                    .iter()
-                    .any(|f| f.requirement == FieldRequirement::ProtocolRequired),
+                FieldDeclarations::Declared(fields) => {
+                    let mut required = false;
+                    for field in fields {
+                        work.step(&field.authored)?;
+                        required |= field.requirement == FieldRequirement::ProtocolRequired;
+                    }
+                    required
+                }
                 _ => bool_field(&declaration.target, "required", false)?,
             };
             let mut media = self.media_descriptions(&declaration.target, Some("consumes"), work)?;
@@ -900,6 +916,7 @@ impl Operation {
                 }
             }
             for representation in &mut media {
+                work.step(&representation.authored)?;
                 if parse_media(&representation.media_type, true).is_ok_and(|m| {
                     m.essence.starts_with("multipart/")
                         || m.essence == "application/x-www-form-urlencoded"
@@ -907,7 +924,7 @@ impl Operation {
                 {
                     let mut copied = Vec::new();
                     for field in fields {
-                        work.entry(&field.authored)?;
+                        work.declaration(&field.authored)?;
                         let name = work.text(&field.authored, &field.name)?;
                         copied.push(FieldDeclaration {
                             name,
@@ -1017,7 +1034,7 @@ impl Operation {
             )?,
         };
         DescriptorWork::admit(
-            &mut work.bytes,
+            &mut work.usage.bytes,
             host.len().saturating_add(2),
             work.limits.document_bytes,
             LimitKind::DescriptorBytes,
@@ -1083,7 +1100,7 @@ impl Operation {
                 }
                 work.entry(&root)?;
                 DescriptorWork::admit(
-                    &mut work.bytes,
+                    &mut work.usage.bytes,
                     scheme
                         .len()
                         .saturating_add(3)
@@ -1197,7 +1214,7 @@ impl Operation {
                 .map(|v| work.text(&v, v.as_str().expect("string operation ID")))
                 .transpose()?,
             parameters: Parameters {
-                entries: parameters,
+                entries: parameters.into(),
             },
             servers: self.server_descriptions(&mut work)?,
             request_body,
@@ -1215,6 +1232,7 @@ impl Operation {
                 .members()
                 .ok_or_else(|| responses.error(Code::InvalidDeclaration))?
             {
+                work.step(&value)?;
                 if key.starts_with("x-") {
                     continue;
                 }
@@ -1535,7 +1553,7 @@ fn describe_security(
                 mechanism.make_ascii_lowercase();
                 let extra = 5;
                 DescriptorWork::admit(
-                    &mut work.bytes,
+                    &mut work.usage.bytes,
                     extra,
                     work.limits.document_bytes,
                     LimitKind::DescriptorBytes,
@@ -1603,8 +1621,10 @@ impl Operation {
     /// Inspect effective parameters without compiling body/media/security requirements.
     /// Unsupported editions and invalid parameter declarations refuse; raw inspection remains.
     pub fn parameters(&self) -> Result<Parameters, Diagnostic> {
-        self.parameter_declarations(&mut DescriptorWork::new(&self.store.limits))
-            .map(|entries| Parameters { entries })
+        self.compiled(&crate::Cancellation::default())
+            .map(|compiled| Parameters {
+                entries: compiled.parameters.clone(),
+            })
             .map_err(|e| e.bind_graph(&self.store))
     }
     fn parameter_declarations(
@@ -1636,6 +1656,7 @@ impl Operation {
         let mut parameters: Vec<Parameter> = vec![];
         for resolved in self.effective_parameter_references(work)? {
             let p = resolved.target.clone();
+            work.declaration(&p)?;
             if edition == Edition::Swagger20
                 && p.get("in")
                     .is_some_and(|v| matches!(v.as_str(), Some("body" | "formData")))
@@ -1654,15 +1675,24 @@ impl Operation {
                 continue;
             }
             let required = bool_field(&p, "required", false)?;
-            if location == ParameterLocation::Path
-                && (!required
-                    || !self.path().match_indices('{').any(|(index, _)| {
-                        self.path()[index + 1..]
-                            .strip_prefix(&name)
-                            .is_some_and(|tail| tail.starts_with('}'))
-                    }))
-            {
-                return Err(p.error(Code::InvalidDeclaration));
+            if location == ParameterLocation::Path {
+                if !required {
+                    return Err(p.error(Code::InvalidDeclaration));
+                }
+                let mut found = false;
+                for (index, _) in self.path().match_indices('{') {
+                    work.step(&p)?;
+                    if self.path()[index + 1..]
+                        .strip_prefix(&name)
+                        .is_some_and(|tail| tail.starts_with('}'))
+                    {
+                        found = true;
+                        break;
+                    }
+                }
+                if !found {
+                    return Err(p.error(Code::InvalidDeclaration));
+                }
             }
             let (
                 explode,
@@ -1834,33 +1864,23 @@ impl Operation {
                 collection,
                 schema_context,
             };
-            if let Some(i) = parameters
-                .iter()
-                .position(|p| p.location == location && same_name(&p.name, &name, location))
-            {
-                parameters[i] = param;
-            } else {
-                parameters.push(param);
-            }
+            // The effective reference list has already merged all identities.
+            parameters.push(param);
         }
         Ok(parameters)
     }
-    fn compile(&self) -> Result<Arc<Compiled>, Diagnostic> {
-        let mut work = DescriptorWork::new(&self.store.limits);
+    fn compile(&self, cancellation: &crate::Cancellation) -> Result<Arc<Compiled>, Diagnostic> {
+        let mut work = DescriptorWork::with_cancellation(&self.store.limits, cancellation);
         let parameters = self.parameter_declarations(&mut work)?;
-        let body = self.body_description(&mut work)?;
-        let mut responses = vec![];
-        for (key, value) in self.response_declarations(&mut work)? {
-            work.entry(&value.target)?;
-            responses.push((key, value.target));
-        }
+        work.checkpoint()?;
         Ok(Arc::new(Compiled {
-            parameters,
-            body,
-            responses,
+            parameters: parameters.into(),
+            usage: work.usage,
+            request: OnceLock::new(),
         }))
     }
-    fn compiled(&self) -> Result<Arc<Compiled>, Diagnostic> {
+    fn compiled(&self, cancellation: &crate::Cancellation) -> Result<Arc<Compiled>, Diagnostic> {
+        cancellation.check()?;
         let record = self.record();
         if let Some(c) = record.compiled.get() {
             return c.clone();
@@ -1873,11 +1893,52 @@ impl Operation {
                 })
                 .is_ok()
         });
-        if can_cache {
-            record.compiled.get_or_init(|| self.compile()).clone()
+        // Compile outside OnceLock initialization: another caller's work must
+        // neither delay this caller's cancellation nor cache its Cancelled error.
+        let result = self.compile(cancellation);
+        cancellation.check()?;
+        if can_cache && !matches!(&result, Err(e) if e.code() == Code::Cancelled) {
+            let _ = record.compiled.set(result);
+            record.compiled.get().expect("published parameters").clone()
         } else {
-            self.compile()
+            result
         }
+    }
+    fn request_declarations<'a>(
+        &self,
+        compiled: &'a Compiled,
+        cancellation: &crate::Cancellation,
+    ) -> Result<&'a RequestDeclarations, Diagnostic> {
+        cancellation.check()?;
+        if compiled.request.get().is_none() {
+            // Continue the same aggregate admission even when parameters were
+            // previously compiled by inspection alone.
+            let mut work = DescriptorWork::with_cancellation(&self.store.limits, cancellation);
+            work.usage = compiled.usage;
+            let result: Result<_, Diagnostic> = (|| {
+                let body = self.body_description(&mut work)?;
+                let mut responses = vec![];
+                for (key, value) in self.response_declarations(&mut work)? {
+                    work.entry(&value.target)?;
+                    responses.push((key, value.target));
+                }
+                work.checkpoint()?;
+                Ok(RequestDeclarations { body, responses })
+            })();
+            cancellation.check()?;
+            if let Err(e) = &result
+                && e.code() == Code::Cancelled
+            {
+                return Err(e.clone());
+            }
+            let _ = compiled.request.set(result);
+        }
+        compiled
+            .request
+            .get()
+            .expect("published request declarations")
+            .as_ref()
+            .map_err(Clone::clone)
     }
     /// Prepare supported parameters, body and scoped credentials into a finite immutable request.
     /// Inspection remains usable when preparation returns a located refusal.
@@ -1913,7 +1974,8 @@ impl Operation {
         cancellation: &crate::Cancellation,
     ) -> Result<PreparedRequest, Diagnostic> {
         cancellation.check()?;
-        let compiled = self.compiled()?;
+        let compiled = self.compiled(cancellation)?;
+        let declarations = self.request_declarations(&compiled, cancellation)?;
         admit_input(input, &self.store.limits)?;
         if let AdmittedBody::Form(fields) = body {
             crate::form::admit_ready(fields, &self.store.limits, cancellation)?;
@@ -1942,7 +2004,7 @@ impl Operation {
         let mut used = HashSet::new();
         let mut parameter_target_bytes = 0usize;
         let mut parameter_header_bytes = 0usize;
-        for p in &compiled.parameters {
+        for p in compiled.parameters.iter() {
             cancellation.check()?;
             let values: Vec<_> = input
                 .parameters
@@ -2064,7 +2126,7 @@ impl Operation {
         drop(path);
         let (body, body_kind, media) = prepare_body(
             &self.store.graph,
-            compiled.body.as_ref(),
+            declarations.body.as_ref(),
             input,
             body,
             self.store.edition.clone()?,
@@ -3222,10 +3284,17 @@ impl PreparedRequest {
     }
     /// Match the exact status, then range, then default response declaration.
     pub fn response_declaration(&self, status: u16) -> Option<(&str, Value)> {
+        let declarations = self
+            .compiled
+            .request
+            .get()
+            .expect("prepared request declarations")
+            .as_ref()
+            .expect("successful request declarations");
         let exact = status.to_string();
         let range = format!("{}XX", status / 100);
         for key in [exact.as_str(), range.as_str(), "default"] {
-            if let Some((k, v)) = self.compiled.responses.iter().find(|(k, _)| k == key) {
+            if let Some((k, v)) = declarations.responses.iter().find(|(k, _)| k == key) {
                 return Some((k, v.clone()));
             }
         }
@@ -3261,5 +3330,141 @@ impl std::fmt::Debug for Body {
             Self::Raw(b) => f.debug_tuple("Body::Raw").field(&b.len()).finish(),
             Self::Form(form) => form.fmt(f),
         }
+    }
+}
+
+#[cfg(test)]
+mod parameter_work_tests {
+    use super::*;
+    use crate::{Cancellation, Document};
+    use serde_json::json;
+
+    thread_local! {
+        pub(super) static CHECKPOINTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    fn document(n: usize, swagger: bool, limits: Limits) -> Document {
+        let parameters: Vec<_> = (0..n)
+            .map(|i| {
+                if swagger {
+                    json!({"in":"query","name":format!("p{i}"),"type":"string"})
+                } else {
+                    json!({"in":"query","name":format!("p{i}"),"schema":{"type":"string"}})
+                }
+            })
+            .collect();
+        let mut source =
+            json!({"paths":{"/":{"get":{"operationId":"read","parameters":parameters}}}});
+        if swagger {
+            source["swagger"] = json!("2.0");
+            source["schemes"] = json!(["https"]);
+            source["host"] = json!("api.example");
+        } else {
+            source["openapi"] = json!("3.1.2");
+            source["servers"] = json!([{"url":"https://api.example"}]);
+        }
+        Document::parse(source.to_string(), None, limits).unwrap()
+    }
+
+    #[test]
+    fn parameter_identity_and_declaration_work_is_linear() {
+        for n in [1_000, 2_000, 4_000, 8_000] {
+            let doc = document(n, false, Limits::default());
+            let op = doc.operation_id("read").unwrap();
+            let mut work = DescriptorWork::new(&doc.0.limits);
+            let parameters = op.parameter_declarations(&mut work).unwrap();
+            // One reference visit, one map operation and one declaration visit
+            // per authored parameter. There is no pairwise parameter search.
+            assert_eq!(parameters.len(), n);
+            assert_eq!(work.usage.references, 3 * n);
+            assert!(work.usage.nodes <= 16 * n);
+            println!(
+                "N={n}: descriptor_work={}, nodes={}",
+                work.usage.references, work.usage.nodes
+            );
+        }
+    }
+
+    #[test]
+    fn cold_cancellation_stops_at_a_work_boundary_and_does_not_poison_cache() {
+        let n = 8_000;
+        let doc = document(n, false, Limits::default());
+        let op = doc.operation_id("read").unwrap();
+        let cancel = Cancellation::default();
+        CHECKPOINTS.with(|count| count.set(0));
+        let guard = crate::schema::cancel_after_for_test(1_000);
+        let error = op
+            .prepare_with_cancellation(&Input::default(), &cancel)
+            .unwrap_err();
+        assert_eq!(error.code(), Code::Cancelled);
+        assert_eq!(CHECKPOINTS.with(|count| count.get()), 1_000);
+        assert!(op.record().compiled.get().is_none());
+        drop(guard);
+
+        CHECKPOINTS.with(|count| count.set(0));
+        op.prepare(&Input::default()).unwrap();
+        assert!(CHECKPOINTS.with(|count| count.get()) > n);
+        let first = op.parameters().unwrap();
+        let second = op.clone().parameters().unwrap();
+        assert_eq!(first.iter().len(), n);
+        assert!(Arc::ptr_eq(&first.entries, &second.entries));
+        let compiled = op.record().compiled.get().unwrap().as_ref().unwrap();
+        assert!(Arc::ptr_eq(&first.entries, &compiled.parameters));
+    }
+
+    #[test]
+    fn request_compilation_cancellation_keeps_only_completed_parameters() {
+        let doc = document(8_000, true, Limits::default());
+        let op = doc.operation_id("read").unwrap();
+        let parameters = op.parameters().unwrap();
+        let compiled = op.record().compiled.get().unwrap().as_ref().unwrap();
+        assert!(compiled.request.get().is_none());
+        let cancel = Cancellation::default();
+        let guard = crate::schema::cancel_after_for_test(1_000);
+        CHECKPOINTS.with(|count| count.set(0));
+        assert_eq!(
+            op.prepare_with_cancellation(&Input::default(), &cancel)
+                .unwrap_err()
+                .code(),
+            Code::Cancelled
+        );
+        assert_eq!(CHECKPOINTS.with(|count| count.get()), 1_000);
+        assert!(compiled.request.get().is_none());
+        drop(guard);
+        op.prepare(&Input::default()).unwrap();
+        assert!(compiled.request.get().unwrap().is_ok());
+        assert!(Arc::ptr_eq(
+            &parameters.entries,
+            &op.parameters().unwrap().entries
+        ));
+    }
+
+    #[test]
+    fn cached_parameters_resume_the_aggregate_request_budget() {
+        let doc = document(
+            1,
+            false,
+            Limits {
+                descriptor_work: 4,
+                ..Limits::default()
+            },
+        );
+        let source = doc.root().raw().to_owned();
+        let mut source: serde_json::Value = serde_json::from_str(&source).unwrap();
+        source["paths"]["/"]["get"]["responses"] = json!({"200":{"description":"ok"}});
+        let doc = Document::parse(source.to_string(), None, doc.0.limits.clone()).unwrap();
+        let op = doc.operation_id("read").unwrap();
+        assert_eq!(op.parameters().unwrap().iter().len(), 1);
+        let error = op.prepare(&Input::default()).unwrap_err();
+        assert_eq!(error.code(), Code::Limit);
+        assert_eq!(
+            error.reason(),
+            Some(&DiagnosticReason::Limit {
+                kind: LimitKind::DescriptorWork,
+                maximum: 4,
+                actual: 5,
+            })
+        );
+        assert_eq!(op.parameters().unwrap().iter().len(), 1);
     }
 }
