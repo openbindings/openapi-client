@@ -1,7 +1,13 @@
 # Dynamic OpenAPI Client
 
-An independent dynamic OpenAPI engine. Current development uses Rust in
-[`rust/client`](rust/client); it has no OpenBindings SDK dependency.
+A standalone Rust client for Swagger 2.0 and OpenAPI 3.0.x, 3.1.x and 3.2.x
+documents. The OpenAPI specifications and the RFCs they rely on are its only
+behavioral authorities. Where those standards leave a choice open, the client
+documents its own policy and available caller configuration.
+
+Current development uses [`rust/client`](rust/client). See the
+[architecture](docs/architecture.md), [public API contract](docs/public-api-v1.md)
+and [policy register](docs/policies.md).
 
 The unpublished `dynamic-openapi-client` foundation accepts JSON and YAML
 Swagger 2.0 and OpenAPI 3.0, 3.1 and 3.2 documents through one API. The current
@@ -34,8 +40,9 @@ deployment steps in Rust qualification.
 
 ## Legacy implementations
 
-Existing [Go](go/README.md) and [TypeScript documentation](LEGACY.md) remain
-available for transitional consumers and historical reference. Capability
+The [Go](go/README.md) and [TypeScript](typescript/README.md) implementations
+are legacy and are not the maintained client. Their [legacy gates](LEGACY.md)
+remain available for transitional consumers and historical reference. Capability
 coverage differs from the Rust implementation. Migrating a caller requires
 checking its actual needs; source landing does not establish full parity or
 replace an installed package. Legacy source, tags and preserved history remain

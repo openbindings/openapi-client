@@ -1,3 +1,6 @@
+> Legacy Go line. This document describes the preserved Go implementation,
+> not the maintained Rust client. See [the legacy index](../../LEGACY.md).
+
 # Caller scenarios
 
 Each scenario below is written as a compilable Go `Example` against the

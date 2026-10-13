@@ -1,3 +1,6 @@
+> Legacy Go line. This document describes the preserved Go implementation,
+> not the maintained Rust client. See [the legacy index](../LEGACY.md).
+
 # Developing the Go client
 
 The public API in `openapi/` and `openapi/schema2020/` is designed first

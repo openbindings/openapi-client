@@ -1,17 +1,15 @@
-# @openbindings/openapi-client
+# Legacy TypeScript OpenAPI client
 
-A deterministic, document-driven client for Swagger 2.0 and OpenAPI 3.0,
-3.1, and 3.2. Load an API description, select an authored operation, and call
-it directly—no generated code and no OpenBindings document required.
+This TypeScript implementation is legacy and is not the maintained client.
+Current development uses [the Rust client](../rust/README.md). The package
+name remains `@openbindings/openapi-client` for historical consumers.
 
-The package implements the OpenBindings Project's four OpenAPI binding
-specifications as an OpenAPI-native client contract. OpenBindings Core, the
-OpenBindings SDK, and OB CLI are not runtime dependencies and do not appear in
-the public API.
-
-> Status: candidate under qualification. Invocation is checked against the 964
-> hash-locked processor scenarios at the pinned OpenBindings 0.2 authority
-> revision. The public API is candidate-frozen; this is not a published release.
+This guide describes the preserved document-driven Swagger 2.0 and OpenAPI
+3.0, 3.1 and 3.2 implementation. Its historical OpenBindings source pin and
+964 processor scenarios belong only to the [legacy qualification line](../LEGACY.md).
+They are not behavioral authority or release obligations for the Rust client.
+Core, SDK and CLI packages are not runtime dependencies of this legacy package.
+The legacy API is candidate-frozen, not a claim of publication.
 
 ## Install
 

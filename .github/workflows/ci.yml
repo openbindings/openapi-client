@@ -12,6 +12,8 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# All jobs and pinned prerequisites below belong to the legacy Go/TypeScript
+# line, not to maintained Rust client authority or release qualification.
 jobs:
   typescript:
     runs-on: ubuntu-latest
@@ -23,8 +25,8 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           path: openapi-client
-      # Only the protocol-neutral JSON leaves are consumed. This exact source
-      # pin qualifies unreleased artifacts without publishing SDK packages.
+      # Legacy TypeScript prerequisites: only the neutral JSON leaves are consumed.
+      # This exact source pin qualifies unreleased artifacts without publishing SDK packages.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: openbindings/openbindings-ts

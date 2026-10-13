@@ -1,3 +1,6 @@
+> Legacy Go line. This document describes the preserved Go implementation,
+> not the maintained Rust client. See [the legacy index](../LEGACY.md).
+
 # Go OpenAPI client: design
 
 This directory holds the Go invocation client, its public contract and tests.

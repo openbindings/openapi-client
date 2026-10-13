@@ -1,123 +1,69 @@
-# OpenAPI client release qualification
+# Maintained client qualification
 
-## Candidate boundary
+## Candidate and authority
 
-The standalone candidate is the TypeScript package and Go module for direct
-Swagger 2.0 and OpenAPI 3.0, 3.1, and 3.2 invocation. It includes the native
-client-engine facades, edition mechanics, transport integration, codecs,
-streaming, and native HTTP outcome model.
+The maintained candidate is the unpublished Rust `dynamic-openapi-client`
+core and its optional native HTTP and Wasm Fetch companions. It interprets
+Swagger 2.0 and OpenAPI 3.0.x, 3.1.x and 3.2.x under the OpenAPI specifications
+and the RFCs they rely on. These are the only behavioral authority. Open client
+choices are recorded in [policies.md](policies.md), with their existing
+configuration and code-backed evidence.
 
-It includes the supported advanced provider surface used by generators and
-protocol adapters. OpenBindings adapters and OBI projection are qualified in
-their own repositories; the OpenBindings SDK and OB CLI are qualified as
-downstream cohort consumers, while generated schema types remain a separate
-product. Compatibility
-with this repository's earlier pre-release APIs is not a goal.
+Edition acceptance, source landing and local qualification are distinct from
+complete support, stabilization and publication. The
+[development checkpoint](../rust/DEVELOPMENT-STATUS.md) records scope, known
+failures and unfinished qualification. External integration, synthesis and
+consumer migration are not release gates for this client.
 
-The behavioral authority is the four `openbindings.openapi-*.@1` binding
-specifications on the OpenBindings 0.2 release line. Their source and portable
-corpus are pinned under `authority/` and `conformance/upstream/`.
+## Retained Rust checks
 
-## Local release gate
+From the repository root, with the documented toolchain:
 
-`pnpm qualify:release` is the repository-local gate. At one exact clean
-revision it requires:
+```sh
+python3 rust/qualification/verify.py
+```
 
-1. authority source, file hashes, rule inventory, and corpus counts verify;
-2. all pinned processor scenarios pass through the public TypeScript client
-   behavior (the Go client, which restarted from its public API, is not a
-   binding processor);
-3. TypeScript type checking, native tests, and production ESM/CommonJS builds
-   pass;
-4. the complete Go suite passes under the race detector;
-5. boundary inspection finds exactly the application root and advanced provider
-   TypeScript exports and no OpenBindings runtime dependency or public
-   compatibility type, and no OpenBindings package or vocabulary anywhere in
-   the Go module;
-6. reviewed root and provider TypeScript declarations and the Go `openapi`
-   and `openapi/schema2020` documentation match the intentional public API
-   snapshot;
-7. a packed npm artifact works from clean ESM and CommonJS projects and its
-   installed declarations compile for both module forms;
-8. the package bundles for a browser target without a Node-only static
-   dependency;
-9. a clean external Go module builds and vets against the Go API; and
-10. formatting and repository integrity checks pass.
+The existing runner checks formatting, lint, `cargo test --locked --workspace`,
+two native fixture inventories, the dynamic example, a packaged core consumer
+across Serde feature graphs and a native companion package consumer. See
+[Rust verification](../rust/README.md) for prerequisites and commands. Native
+CI exercises Linux, macOS and Windows. Host CI builds the qualification bridge
+and runs real Chromium and local workerd probes. Those probes are qualification
+machinery, not a supported TypeScript package.
 
-The corpus gate uses the public client facade. Internal helper tests are
-necessary but cannot substitute for it.
+Socket-dependent tests require loopback listeners. An environment refusal is
+reported by test name and is neither a product failure nor a passing socket
+qualification. Unexecuted host/resource controls remain unqualified. Existing
+workflows and runners perform no package publication or deployment.
 
-## Current authority gate
+## Review and claim discipline
 
-The exact committed spec revision is recorded in
-[`authority/openbindings-0.2.source.json`](../authority/openbindings-0.2.source.json),
-with prose and corpus hashes in its lock. It includes the generation/reporting
-cleanup, security-choice corrections, scalar-text inverse, and secondary-root
-confinement decisions. No candidate errata are layered over this revision.
-The current processor corpus has 964 scenarios; removed generation mandates
-are not restored as universal synthesis requirements.
+Evidence identifies source, commands, environment and observed boundaries.
+Review checks OpenAPI/RFC interpretation and documented policy, request-target
+and credential safety, bounds, cancellation, ownership, response/provenance
+facts, public ergonomics, packaged consumers and documentation accuracy.
+A regression fixture cannot overrule a standard.
 
-Candidate qualification runs `node scripts/verify-openbindings-authority.mjs
-/absolute/path/to/selected/spec` to compare the selected repository's actual
-commit, prose, and corpus bytes with the recorded authority. The ordinary
-self-contained verifier checks the package's internal lock. Neither check
-is a requirement imposed on other binding implementations.
+Fixes belong at the lowest owning layer and receive relevant verification.
+Partial HTTP evidence survives errors and application-policy refusal. Neither
+an available response nor local cancellation proves remote completion. Full
+standards coverage, corpus convergence, performance and complete host
+qualification require separate evidence. Documentation changes cannot turn
+existing failures into passes.
 
-## Candidate consumers versus remote distribution
+## Legacy checks
 
-The npm consumer checks install packed artifacts into empty projects. The Go
-consumer check disables workspaces but uses a local module replacement: it
-proves the external API and source graph, not remote installation. Qualifying
-remote Go distribution additionally requires exact remotely available revisions
-without filesystem replacements; published-tag consumption is checked only
-after the relevant tags exist. Passing the local gate does not publish artifacts
-or waive either distribution check.
+Go and TypeScript are legacy and are not the maintained client.
+`.github/workflows/ci.yml` and root pnpm scripts preserve their historical
+qualification, including `pnpm qualify:release`. That script name refers only
+to the legacy line. Source locks, corpora, API snapshots, boundary checks and
+clean-consumer tests are legacy inputs, not Rust authority or release gates.
+See [LEGACY.md](../LEGACY.md). No legacy gate is removed or disabled.
 
-## Adversarial review gate
+## Host and acquisition policy
 
-After the mechanical gate is green, a fresh review must find no unresolved P0,
-P1, or P2 issue in:
-
-- binding-spec alignment and cross-edition confinement;
-- TypeScript/Go behavioral parity;
-- request-target, credential, header, cookie, redirect, and resource-loading
-  safety;
-- cancellation, partial delivery, terminal outcomes, and size bounds;
-- source, operation, input, configuration, transport, protocol, response,
-  cancellation, and internal error classification, including confinement of
-  otherwise-unclassified private failures behind the public error type;
-- immutability and concurrent-client use;
-- public naming, discoverability, defaults, and generated-facade viability;
-- package contents, browser/Node/CommonJS behavior, and external Go use; and
-- documentation accuracy.
-
-A finding is fixed at its lowest owning layer and receives a discriminating
-test. The review reruns against the changed snapshot. Qualification stops only
-when the mechanical gates remain green and a final review accepts the exact
-same bytes.
-
-## Adapter gate
-
-Full OpenBindings synthesis is deliberately not a standalone-client release
-gate. The separate TypeScript and Go adapter qualification must derive every
-portable OAS-family synthesis scenario from native provider facts and prove
-that the adapters contain neither a second OpenAPI executor nor a second
-declaration planner. The current adapters pass all 154 OAS-family synthesis
-scenarios and have removed both kinds of duplicate implementation. Adapter
-differentials also exercise the same native execution path and compare HTTP
-exchange and application values. SDK and OB CLI cutover is complete and remains
-a separate cross-repository integration gate rather than a standalone-client
-release gate.
-
-## Host security policy
-
-Artifact retrieval policy is host-owned. Applications loading untrusted
-descriptions should provide a restricted `documentFetch` or
-`DocumentHTTPClient` for network allowlists, source-size limits, proxy policy,
-TLS policy, and environment-specific file access. Invocation transport is a
-separate capability.
-
-The clients themselves enforce binding-defined target, header, cookie,
-credential, content, redirect, and response boundaries. A custom transport,
-middleware, or security handler is an explicit native extension point; its
-additional behavior is the caller's responsibility.
+Acquisition remains caller-owned; loading supplied bytes authorizes no
+retrieval. Invocation hosts are a separate capability. The core enforces its
+preparation/admission boundaries and companions declare stricter platform
+profiles. Caller extensions remain subject to those profiles and establish
+no additional behavioral authority.

@@ -1,3 +1,6 @@
+> Legacy Go line. This document describes the preserved Go implementation,
+> not the maintained Rust client. See [the legacy index](../../LEGACY.md).
+
 # OpenAPI client requirements from OAS and its RFCs
 
 Derived only from the authorities themselves: OAS 2.0, 3.0.0 to 3.0.4, 3.1.0 to 3.1.2, 3.2.0, and the RFCs, YAML, WHATWG and JSON Schema texts they rely on. The subsequently published [OAS 3.2.1](https://spec.openapis.org/oas/v3.2.1.html) remains to be audited against this inventory.

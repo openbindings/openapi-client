@@ -178,7 +178,7 @@ wait without promising remote rollback.
 
 ## Previous real HTTP consumer revision
 
-The optional `dynamic-openapi-client-reqwest` companion now supplies native HTTP execution without application-written callbacks. Core `PreparedRequest::invoke` remains available and runtime-independent. This adds no OpenAPI editions, schema evaluation, acquisition or OpenBindings adaptation.
+The optional `dynamic-openapi-client-reqwest` companion now supplies native HTTP execution without application-written callbacks. Core `PreparedRequest::invoke` remains available and runtime-independent. This adds no OpenAPI editions, schema evaluation or acquisition.
 
 `Cancellation::cancelled().await` wakes pending local waits and supports multiple waiters. Existing polling/checkpoint APIs remain. `ExactJson::deserialize` explicitly selects standard Serde projection of the original bytes; typed floating-point results can round, while exact source remains unchanged. Projection errors hide arbitrary Serde text by default and expose it only through `detail()`.
 
@@ -191,7 +191,7 @@ Select `policies::received_2xx_json` to accept a complete 2xx JSON response with
 ## Previous API quality revision
 
 
-This pre-stabilization revision preserves the JSON/OpenAPI 3.1 finite supplied-transport profile. It does not add HTTP acquisition, a production transport, schema evaluation or an OpenBindings dependency.
+This pre-stabilization revision preserves the JSON/OpenAPI 3.1 finite supplied-transport profile. It does not add HTTP acquisition, a production transport or schema evaluation.
 
 Diagnostic fields are now read-only. Replace `.code`, `.location`, `.related` and `.setting` reads with `code()`, `location()`, `related()` and `setting()`. Location access borrows: clone it explicitly when an independent value is needed. Keep `reason()`, `context()` and `source_context()`. Add application context with a wrapper implementing `std::error::Error` rather than rewriting a diagnostic's source range.
 
