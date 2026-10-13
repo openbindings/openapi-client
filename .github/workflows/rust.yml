@@ -71,6 +71,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
         with:
           toolchain: ${{ steps.rust-version.outputs.version }}
+          components: rustfmt, clippy
           targets: wasm32-unknown-unknown
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
