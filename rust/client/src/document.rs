@@ -159,6 +159,16 @@ pub enum ReferenceKind {
     Link,
     Callback,
 }
+/// A standard method declared at more than one layer of a Path Item reference.
+/// No declaration of this method is preferred; other methods remain usable.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub struct PathItemConflict {
+    /// Conflicting standard method.
+    pub method: Method,
+    /// Located ambiguity diagnostic at the first repeated declaration.
+    pub diagnostic: Diagnostic,
+}
 /// Reference result retaining original wrappers, source arenas and targets.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
@@ -175,6 +185,10 @@ pub struct ResolvedReference {
     pub chain: Vec<Value>,
     /// False when an authored identity exists but resolution used a retrieval alias.
     pub canonical: bool,
+    /// Conflicting standard methods in a resolved Path Item chain, in encounter order.
+    /// Empty for other reference kinds. Successful resolution preserves the complete
+    /// chain but does not make these methods usable. Shared-field conflicts still fail.
+    pub path_item_conflicts: Vec<PathItemConflict>,
 }
 pub(crate) struct Record {
     pub path: String,
@@ -196,6 +210,7 @@ pub(crate) struct Store {
     pub ids: HashMap<String, Vec<usize>>,
     pub paths: HashMap<(String, Method), usize>,
     pub path_errors: HashMap<String, Diagnostic>,
+    path_conflicts: HashMap<String, Vec<PathItemConflict>>,
     incomplete_paths: HashSet<String>,
     pub path_order: Vec<String>,
     pub cached: AtomicUsize,
@@ -345,6 +360,7 @@ impl Document {
             ids: HashMap::new(),
             paths: HashMap::new(),
             path_errors: HashMap::new(),
+            path_conflicts: HashMap::new(),
             incomplete_paths: HashSet::new(),
             path_order: vec![],
             cached: AtomicUsize::new(0),
@@ -368,6 +384,7 @@ impl Document {
                         description: None,
                         chain: vec![item.clone()],
                         canonical: true,
+                        path_item_conflicts: vec![],
                     })
                 } else {
                     store.graph.resolve(
@@ -377,7 +394,14 @@ impl Document {
                     )
                 };
                 let (path_chain, path_error) = match resolved {
-                    Ok(r) => (r.chain, None),
+                    Ok(r) => {
+                        if !r.path_item_conflicts.is_empty() {
+                            store
+                                .path_conflicts
+                                .insert(path.to_owned(), r.path_item_conflicts);
+                        }
+                        (r.chain, None)
+                    }
                     Err(e) => {
                         if item.get("$ref").is_some() {
                             store.incomplete_paths.insert(path.to_owned());
@@ -386,20 +410,32 @@ impl Document {
                         (vec![item.clone()], Some(e))
                     }
                 };
-                let mut methods = HashSet::new();
+                let mut methods = HashMap::new();
+                let mut method_ids = HashSet::new();
                 for container in &path_chain {
                     if let Some(members) = container.members() {
                         let mut operations = vec![];
-                        for (name, node) in members {
-                            if let Some(method) =
-                                Method::parse(name).filter(|_| name == name.to_ascii_lowercase())
-                            {
-                                if store.records.len().saturating_add(operations.len())
+                        let mut new_records = 0usize;
+                        let mut admit = |method: Method, node: Value, error: Option<Diagnostic>| {
+                            // Duplicate declarations add ID evidence, not a new
+                            // mounted operation. A batch contains at most the
+                            // existing methods plus the admitted new records.
+                            if !methods.contains_key(&method) || error.is_some() {
+                                if store.records.len().saturating_add(new_records)
                                     >= store.limits.operations
                                 {
                                     return Err(node.error(Code::Limit));
                                 }
-                                operations.push((method, node, None));
+                                new_records += 1;
+                            }
+                            operations.push((method, node, error));
+                            Ok(())
+                        };
+                        for (name, node) in members {
+                            if let Some(method) =
+                                Method::parse(name).filter(|_| name == name.to_ascii_lowercase())
+                            {
+                                admit(method, node, None)?;
                             } else if name == "additionalOperations" {
                                 if let Some(additional) = node.members() {
                                     for (token, operation) in additional {
@@ -410,15 +446,7 @@ impl Document {
                                                     Method::Extension(_)
                                                 ))
                                                 .then(|| operation.error(Code::InvalidDeclaration));
-                                                if store
-                                                    .records
-                                                    .len()
-                                                    .saturating_add(operations.len())
-                                                    >= store.limits.operations
-                                                {
-                                                    return Err(operation.error(Code::Limit));
-                                                }
-                                                operations.push((method, operation, error));
+                                                admit(method, operation, error)?;
                                             }
                                             Err(_) => {
                                                 store
@@ -439,17 +467,41 @@ impl Document {
                             }
                         }
                         for (method, node, operation_error) in operations {
-                            if !methods.insert(method.clone()) && operation_error.is_none() {
+                            if let Some(&index) = methods.get(&method)
+                                && operation_error.is_none()
+                            {
+                                // Every declaration's ID participates in uniqueness,
+                                // even when the method itself cannot be prepared.
+                                if store.path_conflicts.get(path).is_some_and(|conflicts| {
+                                    conflicts.iter().any(|conflict| conflict.method == method)
+                                }) && let Some(id) = node
+                                    .get("operationId")
+                                    .and_then(|v| v.as_str().map(str::to_owned))
+                                    && method_ids.insert((method.clone(), id.clone()))
+                                {
+                                    store.ids.entry(id).or_default().push(index);
+                                }
                                 continue;
                             }
                             if store.records.len() >= store.limits.operations {
                                 return Err(node.error(Code::Limit));
                             }
                             let index = store.records.len();
+                            methods.insert(method.clone(), index);
+                            let method_error = store
+                                .path_conflicts
+                                .get(path)
+                                .and_then(|conflicts| {
+                                    conflicts.iter().find(|conflict| conflict.method == method)
+                                })
+                                .map(|conflict| conflict.diagnostic.clone());
                             if let Some(id) = node
                                 .get("operationId")
                                 .and_then(|v| v.as_str().map(str::to_owned))
                             {
+                                if store.path_conflicts.contains_key(path) {
+                                    method_ids.insert((method.clone(), id.clone()));
+                                }
                                 store.ids.entry(id).or_default().push(index);
                             }
                             store.paths.insert((path.to_owned(), method.clone()), index);
@@ -458,7 +510,9 @@ impl Document {
                                 method,
                                 node,
                                 path_chain: path_chain.clone(),
-                                path_error: operation_error.or_else(|| path_error.clone()),
+                                path_error: operation_error
+                                    .or(method_error)
+                                    .or_else(|| path_error.clone()),
                                 cache_slot: OnceLock::new(),
                                 compiled: OnceLock::new(),
                             });
@@ -526,10 +580,25 @@ impl Document {
             return Err(error.bind_graph(&self.0));
         }
         match self.0.ids.get(id) {
-            Some(v) if v.len() == 1 => Ok(Operation {
-                store: self.0.clone(),
-                index: v[0],
-            }),
+            Some(v) if v.len() == 1 => {
+                let record = &self.0.records[v[0]];
+                if let Some(conflict) =
+                    self.0
+                        .path_conflicts
+                        .get(&record.path)
+                        .and_then(|conflicts| {
+                            conflicts
+                                .iter()
+                                .find(|conflict| conflict.method == record.method)
+                        })
+                {
+                    return Err(conflict.diagnostic.clone());
+                }
+                Ok(Operation {
+                    store: self.0.clone(),
+                    index: v[0],
+                })
+            }
             Some(_) => Err(self.root().error(Code::AmbiguousOperation)),
             None => Err(self.root().error(Code::MissingOperation)),
         }
@@ -543,6 +612,7 @@ impl Document {
         self.entry_resource().protocol_at(pointer, kind)
     }
     /// Resolve a validated site from this exact snapshot. This never acquires resources.
+    /// A resolved Path Item may retain method-local `path_item_conflicts`.
     pub fn resolve_protocol(
         &self,
         site: &crate::ProtocolSite,
@@ -580,7 +650,9 @@ impl Document {
                 id: r.id,
             })
     }
-    /// Whether all mounted entry paths were discovered without local path errors.
+    /// Whether all mounted entry paths were fully discovered.
+    /// Method conflicts and other visible declaration defects do not hide declarations;
+    /// inspect `graph_issues()` and prepare a selected operation to check usability.
     pub fn discovery_complete(&self) -> bool {
         self.0.incomplete_paths.is_empty()
     }
@@ -589,7 +661,16 @@ impl Document {
         self.0
             .path_order
             .iter()
-            .filter_map(|path| self.0.path_errors.get(path))
+            .flat_map(|path| {
+                self.0.path_errors.get(path).into_iter().chain(
+                    self.0
+                        .path_conflicts
+                        .get(path)
+                        .into_iter()
+                        .flatten()
+                        .map(|conflict| &conflict.diagnostic),
+                )
+            })
             .cloned()
             .map(|e| e.bind_graph(&self.0))
     }

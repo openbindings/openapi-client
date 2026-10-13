@@ -69,6 +69,29 @@ errors appear in `graph_issues()` in authored path order and do not alone imply
 hidden operation IDs. Unsupported editions remain available for raw inspection;
 semantic preparation still refuses their edition.
 
+Path Item resolution ignores unknown and extension members when interpreting
+operations; it preserves their authored values. Only fields defined by the
+originating edition participate in reference conflicts. This tolerance is not a
+claim that the entire input validates against an OpenAPI schema.
+
+The client applies an explicit policy to Path Item `$ref` conflicts, whose behavior
+OpenAPI leaves undefined. Repeated standard method declarations make that method
+ambiguous, without disabling unrelated methods. A successful `resolve_protocol`
+retains the complete chain and reports these conflicts in
+`ResolvedReference::path_item_conflicts` (method plus located diagnostic).
+`graph_issues()` also exposes them. Raw path/method selection retains the first
+visible declaration for inspection, but its preparation and effective description
+refuse with `AmbiguousReference`. ID lookup never selects a conflicting declaration
+as a winner; IDs from every layer still participate in global uniqueness checks.
+Unaffected operations remain discoverable, selectable and preparable.
+
+Repeated recognized shared fields (parameters, or the edition's metadata/server
+fields) still refuse the whole mount. The conservative whole-mount policy for two
+3.2 `additionalOperations` maps is unchanged. Missing resources, wrong-kind targets,
+cycles, incompatible editions and reference-depth limits still fail resolution.
+`discovery_complete()` describes declaration visibility, not operation validity;
+method-local conflicts can coexist with complete discovery.
+
 Implicit security names resolve from the entry OpenAPI document. In 3.2, an exact
 component name takes precedence over URI interpretation, including URI-looking
 names. Otherwise a security requirement key is resolved as a URI reference from

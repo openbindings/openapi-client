@@ -26,8 +26,8 @@ pub use source::{SourceFormat, SourcePosition, SourceTrace, YamlReason};
 pub use cancellation::Cancellation;
 pub use deserialize::DeserializationError;
 pub use document::{
-    Document, Edition, ExtensionMethod, Method, Operation, OperationDescription, ReferenceKind,
-    ResolvedReference,
+    Document, Edition, ExtensionMethod, Method, Operation, OperationDescription, PathItemConflict,
+    ReferenceKind, ResolvedReference,
 };
 pub use error::{
     Code, Diagnostic, DiagnosticContext, DiagnosticReason, HostRefusal, LimitKind, Location,
