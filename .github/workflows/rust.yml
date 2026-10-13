@@ -71,11 +71,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
         with:
           toolchain: ${{ steps.rust-version.outputs.version }}
+          components: rustfmt, clippy
           targets: wasm32-unknown-unknown
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22.19.0'
       - run: cargo install wasm-bindgen-cli --version 0.2.129 --locked
+      - name: Build the product Fetch transport for Wasm
+        run: cargo build --locked --manifest-path rust/Cargo.toml --release --target wasm32-unknown-unknown -p dynamic-openapi-client-fetch
+      - name: Build the packaged Fetch consumer and run JS lifecycle controls
+        run: python rust/qualification/host/build-fetch.py
       - run: cargo build --locked --manifest-path rust/Cargo.toml --release --target wasm32-unknown-unknown -p oac-host-qualification
       - run: wasm-bindgen rust/target/wasm32-unknown-unknown/release/oac_host_qualification.wasm --target web --out-dir rust/qualification/bridge/generated
       - run: npm ci --ignore-scripts
@@ -90,6 +95,9 @@ jobs:
           path: |
             rust/target/qualification/observations/hosts-*/results.json
             rust/target/qualification/observations/hosts-*/*.log
+            rust/target/qualification/fetch-consumer/*.log
+            rust/target/qualification/fetch-consumer/*.json
+            rust/target/qualification/fetch-consumer/consumer-Cargo.*
 
   ci:
     if: always()

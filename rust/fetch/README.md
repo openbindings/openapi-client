@@ -76,12 +76,57 @@ forgotten Rust closure or detached Rust cleanup future is used.
 All failures use controlled labels; arbitrary JS rejection messages are never copied
 or formatted. Source preparation diagnostics stay with core; host refusals do not
 invent authored ranges. Worker execution belongs inside an active request handler.
-Actual packaged Browser/Worker jobs, feature graphs and resource gates remain
-qualification obligations. No TypeScript facade, stream API or publication is implied.
+No TypeScript facade, stream API or publication is implied.
+
+## Qualification
+
+The mandatory `rust-hosts` CI job builds the actual companion, including
+`platform.rs`, with:
+
+```sh
+cargo build --locked --manifest-path rust/Cargo.toml --release --target wasm32-unknown-unknown -p dynamic-openapi-client-fetch
+python3 rust/qualification/host/build-fetch.py
+```
+
+The second command packages core and Fetch, extracts their Cargo archives, checks
+the consumer's dependency graph against the workspace lock, and builds
+`qualification/fetch-consumer` exclusively against those archives. It generates
+matching wasm-bindgen glue and runs all eight `fetch/tests/lifecycle.mjs` controls
+against the archived `host.js`. Those direct JS controls are supplementary; they
+do not exercise Rust ownership or establish Browser/Worker qualification.
+
+`node rust/qualification/host/run.mjs rust/target/qualification` runs that consumer
+in Chromium and workerd alongside the existing core checks. Every Fetch probe
+records concrete assertions in `observations/hosts-*/results.json`: exact and
+excess response limits (including zero and delayed EOF/extra-byte evidence), preserved URL/method/header values,
+default replay refusal and explicit HostManaged admission, preflight header/URL
+refusals, cancellation before dispatch and during pending headers/body reads,
+future drop during both waits, a body with no completion timer, and independent
+cancellation tokens on one reusable client whose sibling completes. Each probe checks Rust JSON owners
+and owned Wasm JS references return to baseline, with no pending observed native
+Fetch/read/closed/cancel promises, reader locks, product timers or active fixture
+responses after disposal. Promise observation forwards the real host APIs; this
+is a finite lifecycle smoke gate, not a GC or total memory measurement. Local
+cancellation still does not establish remote rollback or a network attempt bound.
+
+The ignored core test `pinned_original_provider_jobs_are_preparation_only` stays
+ignored. It requires separately pinned original provider documents supplied via
+`G2B_PROVIDER_ROOT`; those inputs and their distribution/licensing disposition are
+not a portable repository fixture. It can be run explicitly when those inputs are
+available, but it tests preparation only and supplies no Fetch execution evidence.
+
+The broader resource/performance campaign remains unqualified: sustained and
+aggregate concurrent traffic, adversarial or indefinitely pending host-only
+residue, GC/heap/RSS and backend buffering, cold/retained memory, timing budgets,
+feature-graph combinations, additional browser/Worker configurations, corpus
+convergence and independent real-provider use. This smoke gate does not complete
+that campaign. A passing CI run qualifies only the listed assertions in its
+recorded runtime/configuration; the full host run still needs execution outside
+environments that forbid loopback sockets.
 
 The build pins wasm-bindgen 0.2.129, js-sys 0.3.106 and
 wasm-bindgen-futures 0.4.79. Generated glue must use the matching wasm-bindgen CLI.
-The Worker profile is being checked with workerd 1.20261006.1, compatibility date
+The CI Worker smoke profile uses workerd 1.20261006.1, compatibility date
 2026-10-08 and flags `url_standard`, `fetch_standard_url`, `enable_request_signal`,
 `brotli_content_encoding`, `http_headers_getsetcookie`, `no_nodejs_compat`. These
 explicit assumptions do not establish behavior for other Worker configurations.
