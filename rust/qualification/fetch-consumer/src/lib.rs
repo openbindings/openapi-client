@@ -3,7 +3,7 @@
 
 use dynamic_openapi_client::{
     Cancellation, Document, ExactJson, Header, Input, Limits, Outcome, ParameterInput,
-    ParameterLocation, ReplayPolicy, live_json_owners,
+    ParameterLocation, ReplayPolicy, qualification,
 };
 use dynamic_openapi_client_fetch::{Client, Profile};
 use serde_json::{Value, json};
@@ -161,7 +161,7 @@ impl FetchCall {
 
 #[wasm_bindgen]
 pub fn live_owners() -> usize {
-    live_json_owners()
+    qualification::live_owners()
 }
 
 #[wasm_bindgen]
