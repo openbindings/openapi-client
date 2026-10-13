@@ -50,8 +50,19 @@ pub use transport::{
 };
 pub use value::{
     ExactJson, Limits, Number, ParseFailure, SourceContext, SourceOrigin, Value, ValueKind,
-    live_json_owners,
 };
+
+/// Unsupported observations for qualification only, absent from ordinary builds.
+#[cfg(feature = "qualification")]
+#[doc(hidden)]
+pub mod qualification {
+    pub use crate::value::live_owners;
+
+    /// Number of retained operation compilation entries.
+    pub fn cached_operations(document: &crate::Document) -> usize {
+        document.0.cached.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
 mod ordinary;
 mod serializable;
 pub use ordinary::OrdinaryValue;

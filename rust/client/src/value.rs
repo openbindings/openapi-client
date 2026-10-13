@@ -335,15 +335,18 @@ impl Store {
         }
     }
 }
-static LIVE: AtomicUsize = AtomicUsize::new(0);
+#[cfg(feature = "qualification")]
+static LIVE_JSON_OWNERS: AtomicUsize = AtomicUsize::new(0);
+#[cfg(feature = "qualification")]
 impl Drop for Store {
     fn drop(&mut self) {
-        LIVE.fetch_sub(1, Ordering::Relaxed);
+        LIVE_JSON_OWNERS.fetch_sub(1, Ordering::Relaxed);
     }
 }
 /// Number of live JSON backing owners in this process; reserved allocator pages are excluded.
-pub fn live_json_owners() -> usize {
-    LIVE.load(Ordering::Relaxed)
+#[cfg(feature = "qualification")]
+pub fn live_owners() -> usize {
+    LIVE_JSON_OWNERS.load(Ordering::Relaxed)
 }
 
 // This visitor borrows child tokens from serde_json; JSON grammar belongs to the dependency.
@@ -810,7 +813,8 @@ impl ExactJson {
                     EagerIndex(Vec::with_capacity(node_count)),
                 )?)
             };
-            LIVE.fetch_add(1, Ordering::Relaxed);
+            #[cfg(feature = "qualification")]
+            LIVE_JSON_OWNERS.fetch_add(1, Ordering::Relaxed);
             Ok(Self(Value {
                 store: Arc::new(Store {
                     source: Arc::from(text),

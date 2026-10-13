@@ -5,7 +5,7 @@ edition.workspace = true
 publish = false
 
 [dependencies]
-dynamic-openapi-client = { path = "../../client" }
+dynamic-openapi-client = { path = "../../client", features = ["qualification"] }
 serde.workspace = true
 serde_json.workspace = true
 
