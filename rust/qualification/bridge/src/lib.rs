@@ -76,7 +76,7 @@ impl HostRequest {
 }
 #[wasm_bindgen]
 pub fn live_owners() -> usize {
-    live_json_owners()
+    qualification::live_owners()
 }
 #[wasm_bindgen]
 pub fn parse_digest(text: &str) -> Result<String, JsValue> {

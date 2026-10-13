@@ -1,10 +1,7 @@
 use crate::{Code, Diagnostic, ExactJson, Limits, ParseFailure, Value};
 use std::{
     collections::{HashMap, HashSet},
-    sync::{
-        Arc, OnceLock,
-        atomic::{AtomicUsize, Ordering},
-    },
+    sync::{Arc, OnceLock, atomic::AtomicUsize},
 };
 
 /// Semantic OpenAPI family. Calling an operation never requires selecting this value.
@@ -679,7 +676,7 @@ impl Document {
             .cloned()
             .map(|e| e.bind_graph(&self.0))
     }
-    /// Accounted immutable JSON storage; caches are reported separately.
+    /// Accounted immutable JSON storage, excluding compiled operation caches.
     pub fn retained_bytes(&self) -> usize {
         self.0
             .graph
@@ -687,10 +684,6 @@ impl Document {
             .iter()
             .map(|r| r.json.retained_bytes())
             .sum()
-    }
-    /// Number of retained operation compilation entries, bounded by configuration.
-    pub fn cached_operations(&self) -> usize {
-        self.0.cached.load(Ordering::Relaxed)
     }
 }
 impl Operation {

@@ -1,5 +1,8 @@
 //! Qualification-only public-API adapter and assertion harness.
-use dynamic_openapi_client::*;
+use dynamic_openapi_client::{
+    qualification::{cached_operations, live_owners},
+    *,
+};
 use serde_json::{Value as J, json};
 use std::{
     collections::BTreeMap,
@@ -228,13 +231,13 @@ pub fn run(c: &J) -> J {
         return limit_case(c);
     }
     if action == "depth_drop" {
-        let before = live_json_owners();
+        let before = live_owners();
         let depth = c["depth"].as_u64().unwrap() as usize;
         let s = format!("{}0{}", "[".repeat(depth), "]".repeat(depth));
         for _ in 0..c["cycles"].as_u64().unwrap() {
             drop(ExactJson::parse(s.as_bytes(), Limits::default()).unwrap());
         }
-        return json!({"passed":live_json_owners()==before,"live_delta":live_json_owners() as i64-before as i64});
+        return json!({"passed":live_owners()==before,"live_delta":live_owners() as i64-before as i64});
     }
     let bytes = c
         .get("document_hex")
@@ -242,7 +245,7 @@ pub fn run(c: &J) -> J {
         .map(unhex)
         .unwrap_or_else(|| c["document"].as_str().unwrap().as_bytes().to_vec());
     if action == "ownership" {
-        let before = live_json_owners();
+        let before = live_owners();
         let mut survived = true;
         let mut source_preserved = true;
         for _ in 0..c["cycles"].as_u64().unwrap() {
@@ -255,7 +258,7 @@ pub fn run(c: &J) -> J {
             drop(d);
             survived &= op.id().as_deref() == Some("items") && root.get("paths").is_some();
         }
-        return json!({"source_preserved":source_preserved,"survived":survived,"live_delta":live_json_owners() as i64-before as i64});
+        return json!({"source_preserved":source_preserved,"survived":survived,"live_delta":live_owners() as i64-before as i64});
     }
     let d = match Document::parse(&bytes, c.get("base").and_then(J::as_str), limits(c)) {
         Ok(d) => d,
@@ -295,7 +298,7 @@ pub fn run(c: &J) -> J {
         for t in threads {
             t.join().unwrap();
         }
-        return json!({"passed":d.cached_operations()==1,"cached_operations":d.cached_operations()});
+        return json!({"passed":cached_operations(&d)==1,"cached_operations":cached_operations(&d)});
     }
     let op = match operation(&d, c) {
         Ok(o) => o,
@@ -459,7 +462,7 @@ fn limit_case(c: &J) -> J {
             for op in d.operations() {
                 op.prepare(&Input::default()).unwrap();
             }
-            count = Some(d.cached_operations());
+            count = Some(cached_operations(&d));
             assert_eq!(count, Some(n.min(limit)));
         }
         _ => panic!(),
@@ -473,7 +476,7 @@ pub fn campaign(family: &str, seconds: u64, seed: u64) -> J {
     let mut rng = seed;
     let mut iterations = 0u64;
     let mut accepted = 0u64;
-    let before = live_json_owners();
+    let before = live_owners();
     let normal = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../fixtures/normal.json"
@@ -592,5 +595,5 @@ pub fn campaign(family: &str, seconds: u64, seed: u64) -> J {
         iterations += 1;
     }
     drop(doc);
-    json!({"passed":iterations>0&&live_json_owners()==before,"family":family,"seconds":started.elapsed().as_secs_f64(),"seed":seed,"iterations":iterations,"accepted":accepted,"max_generated_bytes":4096,"live_delta":live_json_owners()as i64-before as i64})
+    json!({"passed":iterations>0&&live_owners()==before,"family":family,"seconds":started.elapsed().as_secs_f64(),"seed":seed,"iterations":iterations,"accepted":accepted,"max_generated_bytes":4096,"live_delta":live_owners()as i64-before as i64})
 }

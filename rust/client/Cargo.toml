@@ -9,6 +9,10 @@ publish = false
 readme = "README.md"
 repository = "https://github.com/openbindings/openapi-client"
 
+[features]
+# Unsupported hooks used only by qualification crates and instrumented tests.
+qualification = []
+
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true

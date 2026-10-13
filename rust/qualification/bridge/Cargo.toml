@@ -8,7 +8,7 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-dynamic-openapi-client = { path = "../../client" }
+dynamic-openapi-client = { path = "../../client", features = ["qualification"] }
 serde_json.workspace = true
 wasm-bindgen = "=0.2.129"
 js-sys = "=0.3.106"

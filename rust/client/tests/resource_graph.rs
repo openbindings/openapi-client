@@ -140,7 +140,8 @@ fn missing_bytes_recover_uniformly_without_mutating_old_snapshots() {
         op.prepare(&Input::default()).unwrap_err().code(),
         Code::ResourceUnavailable
     );
-    assert!(doc.cached_operations() > 0);
+    #[cfg(feature = "qualification")]
+    assert!(qualification::cached_operations(&doc) > 0);
 }
 
 #[test]

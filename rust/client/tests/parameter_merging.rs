@@ -211,6 +211,7 @@ fn cache_disabled_still_merges_and_prepares() {
             "x-TRACE"
         );
         op.prepare(&Input::default()).unwrap();
-        assert_eq!(doc.cached_operations(), 0);
+        #[cfg(feature = "qualification")]
+        assert_eq!(qualification::cached_operations(&doc), 0);
     }
 }

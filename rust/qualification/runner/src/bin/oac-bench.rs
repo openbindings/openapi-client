@@ -1,4 +1,7 @@
-use dynamic_openapi_client::*;
+use dynamic_openapi_client::{
+    qualification::{cached_operations, live_owners},
+    *,
+};
 use serde_json::json;
 use std::{
     alloc::{GlobalAlloc, Layout, System},
@@ -176,9 +179,9 @@ fn main() {
         ));
         rows.push(json!({"sample":sample,"stages":stages}));
     }
-    let owners = live_json_owners();
+    let owners = live_owners();
     for _ in 0..100 {
         drop(Document::parse(&text, None, Limits::default()).unwrap());
     }
-    println!("{}",serde_json::to_string_pretty(&json!({"workload":name,"bytes":text.len(),"operations":count,"digest":digest,"samples":rows,"retained_allocator_bytes":retained,"retained_index_estimate":d.retained_bytes(),"cache_entries":d.cached_operations(),"lifecycle_cycles":100,"lifecycle_live_delta":live_json_owners()as i64-owners as i64,"memory_definitions":{"traffic":"requested alloc/realloc bytes; frees do not subtract","live":"requested live allocation sizes, excludes allocator overhead/reservation","peak":"maximum additional live bytes during one measured call; fresh RSS recorded separately","setup":"setup and destruction excluded from stage time; parse result still live at allocation snapshot"}})).unwrap());
+    println!("{}",serde_json::to_string_pretty(&json!({"workload":name,"bytes":text.len(),"operations":count,"digest":digest,"samples":rows,"retained_allocator_bytes":retained,"retained_index_estimate":d.retained_bytes(),"cache_entries":cached_operations(&d),"lifecycle_cycles":100,"lifecycle_live_delta":live_owners()as i64-owners as i64,"memory_definitions":{"traffic":"requested alloc/realloc bytes; frees do not subtract","live":"requested live allocation sizes, excludes allocator overhead/reservation","peak":"maximum additional live bytes during one measured call; fresh RSS recorded separately","setup":"setup and destruction excluded from stage time; parse result still live at allocation snapshot"}})).unwrap());
 }

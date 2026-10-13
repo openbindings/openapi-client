@@ -42,6 +42,16 @@ native tests/doctests, both native fixture inventories, the dynamic example and 
 fresh external consumer of a locally packaged crate. Outputs go to
 `rust/target/qualification` by default; an explicit output path is accepted.
 
+The runner and host bridge enable the core's non-default `qualification` feature.
+It provides hidden, unsupported owner-lifecycle and operation-cache observations
+for qualification and benchmarks. Workspace tests also enable it through those
+dependencies, preserving the cache assertions in `parameter_merging` and
+`resource_graph`. For an isolated core test run with those assertions, use
+`cargo test --locked -p dynamic-openapi-client --features qualification`.
+Ordinary consumers omit this feature, so the global owner counter and its updates
+are compiled out. The verifier records and checks the packaged consumer's resolved
+feature graph in `external-feature-graph.log` and `external-instrumentation.json`.
+
 The API quality revision resolves the six previously retained Clippy warnings.
 Workspace lint now passes without warnings. `lint.py` still rejects warnings
 outside its historical exact-code/source-location baseline, and compiler errors

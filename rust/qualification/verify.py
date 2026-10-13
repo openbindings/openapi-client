@@ -64,6 +64,19 @@ with tempfile.TemporaryDirectory(prefix='openapi-consumer-', dir=output) as temp
         + ', features = ["raw_value"] }\n')
     shutil.copy2(crate / 'examples/dynamic.rs', consumer / 'src/main.rs')
     run('external-consumer', ['cargo', 'run', '--manifest-path', consumer / 'Cargo.toml'], consumer)
+    run('external-feature-graph', ['cargo', 'metadata', '--locked', '--format-version', '1',
+                                   '--manifest-path', consumer / 'Cargo.toml'], consumer)
+    metadata = json.loads((output / 'external-feature-graph.log').read_text())
+    client_id = next(package['id'] for package in metadata['packages']
+                     if package['name'] == 'dynamic-openapi-client')
+    client_features = next(node['features'] for node in metadata['resolve']['nodes']
+                          if node['id'] == client_id)
+    assert 'qualification' not in client_features, client_features
+    # The owner static, Store::drop accounting and creation update are all
+    # cfg(feature = "qualification"); this graph compiles them out of the archive consumer.
+    (output / 'external-instrumentation.json').write_text(json.dumps({
+        'client_features': client_features, 'owner_accounting_compiled': False,
+    }, indent=2) + '\n')
     (consumer / 'tests').mkdir()
     shutil.copy2(root / 'qualification/serializable_consumer.rs',
                  consumer / 'tests/serializable.rs')

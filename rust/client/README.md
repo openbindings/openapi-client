@@ -262,6 +262,11 @@ Media election supports concrete types and matching declaration ranges, with exp
 
 `retained_bytes()` is a storage estimate for the immutable JSON owner, including retained YAML source mappings when present, and excluding document descriptors, compiled caches, allocator metadata and reserved pages. Qualification reports measure allocator traffic, live allocation sizes and process RSS separately. Exact value handles use the source owner's identity and do not imply equality across distinct documents.
 
+The non-default `qualification` Cargo feature is reserved for qualification
+runners, benchmarks and instrumented tests. Its hidden hooks are unsupported and
+are not part of the client API. Ordinary builds contain no global JSON-owner
+accounting. `Limits::cached_operations` remains the cache-size admission limit.
+
 ## Corrective diagnostics and request choices
 
 Default diagnostic text explains the failure in plain language and retains its structured code/reason; it omits document-controlled names and values. For an interactive UI that deliberately displays source locations, use `error.display_with_location()`. This opt-in formatter includes escaped JSON pointers and caller parameter/variable/scheme names, limited to 256 characters per displayed field. Names can contain sensitive data; the full source and typed facts remain available through explicit accessors. Default logging behavior remains value-safe.
