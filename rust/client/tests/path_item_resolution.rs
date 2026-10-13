@@ -243,14 +243,13 @@ fn conflict_recognition_respects_edition_boundaries() {
                 .is_empty()
         );
         prepared(&doc, Method::Post);
-        // Raw later-edition inventory is not permission to prepare a query.
+        // Later-edition fields remain visible as authored values, but are not
+        // operations of this edition and cannot enter its semantic inventory.
+        assert!(doc.root().pointer("/paths/~1x/query").is_ok());
+        assert!(doc.root().pointer("/paths/~1definition/query").is_ok());
         assert_eq!(
-            doc.operation("/x", Method::Query)
-                .unwrap()
-                .prepare(&Input::default())
-                .unwrap_err()
-                .code(),
-            Code::InvalidDeclaration
+            doc.operation("/x", Method::Query).unwrap_err().code(),
+            Code::MissingOperation
         );
     }
     let doc = document(

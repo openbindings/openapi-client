@@ -1807,9 +1807,9 @@ impl Graph {
         })
     }
 }
-// Only fields defined by the originating edition participate in reference
-// conflicts. Later-edition fields and arbitrary metadata remain inert.
-fn path_item_method(name: &str, edition: Edition) -> Option<crate::Method> {
+// Only methods defined by the originating edition participate in the operation
+// inventory and reference conflicts. Later-edition fields remain inert.
+pub(crate) fn path_item_method(name: &str, edition: Edition) -> Option<crate::Method> {
     let method = crate::Method::parse(name).filter(|_| name == name.to_ascii_lowercase())?;
     match method {
         crate::Method::Trace if edition == Edition::Swagger20 => None,

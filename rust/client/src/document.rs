@@ -349,6 +349,9 @@ impl Document {
         let base = resource.retrieval.clone();
         let root = json.root();
         let edition = Edition::detect(&root);
+        // Preserve authored operation inspection when no supported edition is known.
+        // Semantic consumers still report the edition diagnostic before compilation.
+        let inventory_edition = edition.as_ref().copied().unwrap_or(Edition::OpenApi32);
         let mut store = Store {
             graph,
             entry,
@@ -433,10 +436,12 @@ impl Document {
                         };
                         for (name, node) in members {
                             if let Some(method) =
-                                Method::parse(name).filter(|_| name == name.to_ascii_lowercase())
+                                crate::graph::path_item_method(name, inventory_edition)
                             {
                                 admit(method, node, None)?;
-                            } else if name == "additionalOperations" {
+                            } else if name == "additionalOperations"
+                                && inventory_edition == Edition::OpenApi32
+                            {
                                 if let Some(additional) = node.members() {
                                     for (token, operation) in additional {
                                         match Method::from_token(token) {
