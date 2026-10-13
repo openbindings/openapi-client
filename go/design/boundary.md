@@ -1,3 +1,6 @@
+> Legacy Go line. This document describes the preserved Go implementation,
+> not the maintained Rust client. See [the legacy index](../../LEGACY.md).
+
 # Product boundary and escape hatches
 
 What the client does and does not take on, and how a caller reaches every

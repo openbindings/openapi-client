@@ -1,4 +1,5 @@
 {
+  "legacyScope": "Legacy Go/TypeScript qualification input; not authority or a release gate for the maintained Rust client. See LEGACY.md.",
   "repository": "https://github.com/openbindings/spec.git",
   "releaseBranch": "release/0.2",
   "commit": "5ae3a9a997c8d5b8e5dc55a6246d38e0410281c7",

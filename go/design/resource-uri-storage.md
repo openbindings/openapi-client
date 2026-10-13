@@ -1,3 +1,6 @@
+> Legacy Go line. This document describes the preserved Go implementation,
+> not the maintained Rust client. See [the legacy index](../../LEGACY.md).
+
 # Sharing retained resource URI storage
 
 The loader keeps canonical resource identifiers in `document.ids`, and parsed

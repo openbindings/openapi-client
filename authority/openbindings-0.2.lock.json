@@ -1,4 +1,5 @@
 {
+  "legacyScope": "Legacy Go/TypeScript qualification input; not authority or a release gate for the maintained Rust client. See LEGACY.md.",
   "format": "openbindings.openapi-client-authority-lock@1",
   "source": {
     "repository": "https://github.com/openbindings/spec.git",

@@ -1,190 +1,69 @@
-# Native client and engine contract
+# Maintained client API contract
 
-Status: implementation contract for the next public major version. Compatibility
-with the repository's pre-release APIs is intentionally not a constraint.
+Status: the unpublished Rust development line. This is not an API stabilization
+or full-edition conformance claim. Go and TypeScript are legacy and are not the
+maintained client; their preserved API snapshots describe that separate line.
 
 ## Product promise
 
-The TypeScript package and Go module implement one document-driven OpenAPI
-client in two idiomatic languages. A caller can load an exact Swagger 2.0,
-OpenAPI 3.0, OpenAPI 3.1, or OpenAPI 3.2 artifact and invoke its operations
-without an OpenBindings document, SDK, adapter, or CLI.
+The client interprets Swagger 2.0 and OpenAPI 3.0.x, 3.1.x and 3.2.x documents
+under their own edition semantics. The OpenAPI specifications and the RFCs
+they rely on are the only behavioral authority. Unspecified choices are the
+client's [documented policies](policies.md), configurable where the existing
+API supports it. Downstream specifications cannot introduce client vocabulary,
+errors, invocation shapes or release gates.
 
-The four OpenBindings OpenAPI binding specifications are the behavioral
-authority. They close OpenAPI's client-side choices; they do not become runtime
-dependencies or public client vocabulary. The pinned authority and portable
-corpus are development and release evidence only.
+## Current public flow
 
-## Layer boundary
+The [Rust API guide](../rust/client/README.md) documents the actual surface:
 
-```text
-direct application ───────────────────────► native client: load / inspect / preflight / call / stream
-generated typed facade (optional) ────────► native client + provider analysis
-OpenBindings SDK ─► OpenAPI adapter ──────► native client + provider analysis
-                                                                |
-                                                          private engine
-                                                                |
-                                             editions / transport / codecs
-```
+- `Document::parse` accepts supplied JSON/YAML bytes, an optional retrieval
+  identity and limits. It performs no I/O.
+- `DocumentBuilder` creates immutable snapshots from supplied resources.
+  Missing resources produce corrective needs; callers supply bytes and build
+  a new snapshot.
+- Document and operation handles expose inventory, authored inspection and
+  effective descriptions. Operation selection uses IDs or explicit path/method
+  selection; ambiguous IDs are refused.
+- `Operation::request` builds ordinary calls. `Operation::prepare` accepts
+  explicit `Input` when callers manage exact values and selections themselves.
+- Preparation resolves supported servers, parameters, finite JSON/raw/named
+  form bodies and scheme-named, origin-scoped supplied credentials. Ambiguous
+  server, body-compatible media and security alternatives require selection.
+- `PreparedRequest::invoke` admits a supplied host and enters its asynchronous
+  callback at most once. Optional native HTTP and Fetch companions supply hosts.
+- `Outcome` keeps dispatch, upload, cancellation, errors and available response
+  evidence independent. `Response` retains status, admitted headers, delivered
+  bytes and fidelity/provenance facts, including unsuccessful HTTP responses.
 
-Neither the client nor the engine may import OpenBindings Core, use an OBI as
-execution authority, or expose binding identifiers in its API. The adapter
-consumes only supported native package surface; it may not import private
-engine files or reimplement OpenAPI request or response behavior. OB CLI
-reaches the same client through the OpenBindings SDK and adapter.
+The [graph](../rust/client/GRAPH.md),
+[schema inspection](../rust/client/SCHEMAS.md),
+[serialization](../rust/client/SERIALIZATION.md),
+[forms](../rust/client/FORMS.md) and [host](../rust/client/HOSTS.md) contracts
+define the implemented profiles. Owning values preserve source and diagnostic
+locations after originating handles are dropped. Inspection is not a promise
+that every declaration can be prepared or executed.
 
-## Shared semantic model
+## Application policy
 
-Both languages expose the same concepts and outcomes:
+Invocation returns native evidence rather than imposing a universal application
+success/failure mapping. `policies::complete_2xx_json` requires known complete
+upload and a complete, uncancelled, transport-error-free 2xx JSON response.
+`policies::received_2xx_json` permits unknown or incomplete upload while retaining
+that fact. A caller may instead inspect `Outcome` directly. These optional
+policies do not retry, validate schemas or establish remote completion.
 
-- one loader for all four editions;
-- an immutable loaded artifact with an exact `edition`;
-- stable operation inventory and selection by unique operation ID, canonical
-  reference, or path plus method;
-- exact support for OAS 3.2 `query` and case-sensitive
-  `additionalOperations` method tokens;
-- grouped path, query, header, cookie, and query-string parameters;
-- one application body plus an explicit presence bit where the host language
-  needs it, a concrete request media choice, and property media choices;
-- scheme-named credentials and an explicit security-alternative choice;
-- discriminated server selection: authored index plus variables, or a complete
-  replacement URL;
-- request and response content-coding capabilities;
-- unary `call` and streaming `stream` convenience over the same prepared
-  execution;
-- a success/failure result split for HTTP application outcomes, while source,
-  configuration, input, transport, protocol, cancellation, and internal
-  failures are typed client errors;
-- protocol-native response evidence and declaration-match evidence;
-- typed pre-dispatch failures and protocol-native response evidence;
-- native `CONFIGURATION_REQUIRED` alternatives for missing server, media, and
-  credential choices, without exposing OpenBindings context vocabulary;
-- cancellation, backpressure, and exactly one terminal outcome.
+Exact JSON tokens are preserved. Ordinary Serde projection has the numeric
+semantics of the selected target type; callers retain exact values when
+precision matters. No schema-driven default insertion or implicit retrieval is
+part of preparation.
 
-Unary and unsuccessful outcomes expose a replayable, delivery-bounded native
-response body. A successful stream has exactly one body consumer: the engine.
-Its public response retains native status, header, URL, and redirect metadata
-but cannot be read as a second body stream. This is the same ownership rule in
-both languages and prevents response observation from defeating backpressure.
+## Qualification boundary
 
-Wire behavior and outcome classification must be identical across TypeScript
-and Go. Host-language spelling, option construction, iteration, and error
-inspection should be idiomatic rather than textually identical.
-
-Go's `Result` and `StreamResult` expose `ErrorPresent` alongside `Error`.
-For an unsuccessful HTTP outcome, a present JSON `null` is represented by
-`ErrorPresent: true` and `Error: nil`; an absent failure body has
-`ErrorPresent: false`. The flag is false on success. Consumers must inspect
-the flag rather than infer presence from `Error != nil`. This additive field
-preserves the existing failure-value semantics; TypeScript already distinguishes
-`null` from absent (`undefined`) failure data.
-
-## TypeScript surface
-
-The package root is deliberately small:
-
-```ts
-import {
-  OpenAPIClient,
-  OpenAPIClientError,
-  type OpenAPICallInput,
-  type OpenAPICallOptions,
-  type OpenAPIClientOptions,
-  type OpenAPIEdition,
-  type OpenAPIOperationInfo,
-  type OpenAPIOperationSelector,
-  type OpenAPIResult,
-  type OpenAPIStreamResult,
-} from "@openbindings/openapi-client";
-
-const client = await OpenAPIClient.load(source, options);
-client.edition;
-client.operations();
-client.operation(selector);
-await client.call(selector, input, callOptions);
-await client.stream(selector, input, callOptions);
-```
-
-`OpenAPIOperationInfo.method` is a string because OAS 3.2 can author extension
-method tokens. It also reports `wireMethod` and whether the operation is a
-fixed field or an additional operation. Selectors preserve an authored
-additional method byte-for-byte; only known fixed fields use their defined
-lowercase spelling.
-
-`OpenAPICallInput.parameters.querystring` represents OAS 3.2's whole query
-component. `body` is present when the property exists, including for `null`,
-`false`, `0`, and the empty string. Swagger 2.0 `formData` is presented as the
-native application body object rather than leaking a second public input
-shape.
-
-The package has two supported entry points. The root is the small application
-client above. `@openbindings/openapi-client/provider` is the advanced,
-OpenAPI-native provider surface used by generators and protocol adapters. It
-exposes declaration analysis and planning facts, but no OBI operation, Core
-context, binding identifier, SDK class, or OpenBindings dependency. Consumers
-that only invoke APIs do not need the provider entry point.
-
-## Go surface
-
-The Go module uses the same native concepts:
-
-```go
-client, err := openapi.Load(ctx, source, options)
-edition := client.Edition()
-operations := client.Operations()
-result, err := client.Call(ctx, openapi.OperationID("getPet"), input, call)
-stream, err := client.Stream(ctx, openapi.OperationRef("#/paths/~1events/get"), input, call)
-```
-
-Go uses explicit `Present` fields where a zero value cannot distinguish
-omission. `Server`, `ServerVariables`, and `ServerURL` construct the three
-server-selection forms without an ambiguous options object. Options use typed
-discriminated structs rather than `any`. Loaded document internals are not
-returned as mutable pointers. The root package exposes detached `Analysis`
-values and preflight. Advanced declaration and preparation APIs live in
-`github.com/openbindings/openapi-client/go/provider`; they do not pollute the
-application-facing package or introduce OpenBindings vocabulary.
-
-## Deliberate public decisions
-
-1. `maxDeliveryUnitBytes` is the name of the per-value bound. It is not called
-   `maxResponseBytes`, because a streamed response can contain many bounded
-   delivery units.
-2. Redirect following defaults to manual. Following is explicit, and
-   cross-origin credential behavior follows the binding specifications.
-3. Custom security handlers are scheme-scoped and receive the planned native
-   request. They cannot claim that another alternative is satisfied.
-4. Middleware observes native planned requests and responses. Its model must
-   carry every valid HTTP method token; WHATWG `Request` limitations cannot
-   make an otherwise supported operation inaccessible.
-5. Generic TypeScript result parameters are assertions by the caller, not
-   runtime validation and not generated typing. Generated schema-derived
-   clients are a separate facade over this runtime.
-6. Loading snapshots caller-owned parsed input. Mutating the original object
-   after `load` cannot change later inventory or wire behavior.
-7. Native configuration requirements name the public remedy, not the binding
-   specifications' internal configuration point: `mediaType` and
-   `propertyMediaTypes` are call inputs; `server`, `securityAlternative`, codec
-   maps, and conversion are options; security scheme names are credentials.
-   Multiple complete security alternatives require `securityAlternative`
-   before credential discovery, so credentials never elect an authored OR
-   branch by accident.
-8. No compatibility aliases or deprecated shims are required for the current
-   pre-release client, engine, OpenBindings adapters, SDKs, or OB CLI.
-
-## Release gates for the surface
-
-The public surface freezes only when:
-
-- clean ESM, CommonJS, browser-compatible TypeScript, and external Go consumers
-  exercise all four editions;
-- both intentional public tiers are captured by an API snapshot: the
-  application root and the advanced provider surface;
-- examples cover load, inspect, configure, call, stream, cancel, custom
-  transport, custom security, and configuration-required recovery;
-- no OpenBindings package, type, identifier, or routed-input marker leaks;
-- error categories and result variants have exhaustive contract tests, while
-  exported code contracts are tested and the code space remains extensible;
-- a generated facade can be implemented without bypassing the native client;
-- the OpenBindings adapters and OB CLI can be rewritten as consumers of this
-  surface without adding OpenAPI wire logic.
+Evidence must exercise supported Rust APIs, packaged consumers, relevant feature
+graphs and actual hosts. Examples and tests must agree with implemented
+profiles, refusals, ownership and native evidence. Full standards coverage,
+streaming, acquisition, schema evaluation, complete host qualification and a
+supported TypeScript facade remain open. The
+[release contract](release-qualification.md) separates these claims from legacy
+qualification and downstream integration schedules.

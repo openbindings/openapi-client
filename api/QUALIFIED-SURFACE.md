@@ -1,3 +1,6 @@
+> Legacy Go/TypeScript qualification record. These snapshots do not describe
+> the maintained Rust client. See [LEGACY.md](../LEGACY.md).
+
 # Candidate value-fidelity surface alignment
 
 The September 2026 value-fidelity candidate adds the already-qualified Go provider

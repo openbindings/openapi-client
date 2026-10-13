@@ -1,4 +1,5 @@
 {
+  "description": "Legacy Go/TypeScript qualification workspace; not the maintained Rust client.",
   "name": "openbindings-openapi-client-workspace",
   "private": true,
   "packageManager": "pnpm@10.15.0",

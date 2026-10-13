@@ -1,79 +1,69 @@
 # Architecture
 
-## Product boundary
+## Product and authority
 
-The product is the **OpenBindings OpenAPI Client**. Technically, it is a **document-driven OpenAPI client runtime**: a long-lived component loads an artifact and executes authored operations from it. “Client” is the user-facing noun; “execution engine” names the implementation below the public API.
+The maintained product is `dynamic-openapi-client`, a standalone Rust client
+for Swagger 2.0 and OpenAPI 3.0.x, 3.1.x and 3.2.x documents. Only the OpenAPI
+specifications and the RFCs they rely on govern its behavior. An OpenAPI
+document supplies the declarations interpreted under its edition. Where those
+standards permit alternatives or leave client behavior unspecified, the
+library makes the choices recorded in [policies.md](policies.md).
 
-The repository and its consumers have four intentional layers:
+Neither a downstream consumer's interface nor a regression corpus establishes
+an additional behavioral authority. A fixture that disagrees with a standard
+or a documented client policy is evidence to investigate, not a new rule.
 
-1. **Native client API** — OpenAPI-native sources, operation selectors, grouped parameters, bodies, scheme-named credentials, HTTP outcomes, middleware, and streams.
-2. **Native provider API** — advanced OpenAPI declaration analysis and planning facts used by generators and protocol adapters.
-3. **Execution engine** — document loading/resolution, request planning, serialization, security placement, HTTP, declaration matching, decoding, and lifecycle mechanics.
-4. **OpenBindings adapter (separate package)** — OBI source resolution, binding selection integration, OpenBindings context negotiation, abstract input translation, and protocol-independent output/error/lifecycle translation.
+## Layers and dependency direction
 
-The first three belong to the standalone product. The adapter consumes the
-supported native client package; neither the client nor its private engine may
-import the adapter or require an OBI.
-
-## Dependency direction
+1. **Application API:** loading, operation inspection and selection, request
+   construction, preparation, invocation and native response evidence.
+2. **Core:** edition interpretation, immutable supplied-resource graphs,
+   schema inspection, serialization, server resolution, security placement,
+   bounds and diagnostics.
+3. **Optional HTTP companions:** native reqwest and Wasm Fetch hosts implementing
+   the core's explicit host contract.
 
 ```text
-direct OpenAPI application ───────────────► native OpenAPI client API
-generated typed facade ──────────────────► native client + provider API
-OpenBindings Core ─► OpenAPI adapter ─────► native client + provider API
-                                                          │
-                                                          ▼
-                                         private execution engine ─► HTTP service
+application or generated facade -> Rust application API -> core
+                                                        |
+                                           supplied host callback
+                                                        |
+                                  native HTTP or Browser/Worker Fetch
 ```
 
-The adapter consumes the same supported native package as an unrelated
-application; it does not import private engine files. Adding OpenBindings adds
-selection and abstraction around the native client, not a second OpenAPI
-implementation. Removing OpenBindings leaves an ordinary OpenAPI client with
-the same wire behavior.
+The core does not depend on an executor or HTTP stack. HTTP companions depend
+on the core. An external integration is an ordinary consumer of supported
+public APIs; its vocabulary, lifecycle and migration schedule do not govern
+this repository.
 
-## Ownership rule
-
-If a behavior can be decided from the OpenAPI document, native call options, and HTTP exchange, it belongs to the client/engine. If it requires an OBI operation, binding selection, Core transforms, context-store orchestration, or protocol-independent outcome mapping, it belongs to the adapter or Core SDK.
+## Ownership
 
 | Concern | Owner |
 | --- | --- |
-| Resolve an OpenAPI `$ref` | execution engine |
-| Serialize `style: deepObject` | execution engine |
-| Choose an OpenAPI server and variables | native client / execution engine |
-| Place a named API-key scheme | execution engine |
-| Preserve HTTP status and headers | native client result |
-| Select an OBI binding | OpenBindings Core SDK |
-| Apply an OBI `inputTransform` | OpenBindings Core SDK |
-| Map HTTP-native failure into abstract invocation failure | OpenBindings adapter |
-| Expose raw protocol evidence to protocol-aware callers | native client / execution engine |
-| Keep raw protocol evidence outside abstract invocation frames | OpenBindings adapter |
-| Synthesize OBI operations and binding references | OpenBindings adapter/synthesizer |
+| Edition, references and effective declarations | Core |
+| Server, media and security alternative selection | Caller through core APIs |
+| Parameter/body serialization and credential placement | Core |
+| Credential material and permitted origins | Caller |
+| Network stack, host restrictions and delivery facts | Supplied host or companion |
+| HTTP status, retained headers/body and execution evidence | Core outcome/response |
+| Application acceptance of a response | Caller or an explicitly selected policy |
+| Description and OAuth token acquisition | Caller; no core acquisition driver exists |
 
-## No synthesis dependency
+Inspection preserves authored source and declaration identity. Preparation
+uses the supported OpenAPI profile, refuses unsupported or ambiguous choices
+before dispatch when possible, and does not evaluate schemas or insert
+defaults. Cancellation ends local work without asserting remote rollback.
 
-The engine executes references already present in an OpenAPI document. It does
-not need to synthesize or understand an OBI. If OBI synthesis needs additional
-document facts, they first become a clean OpenAPI-native capability of the
-standalone package, with the same semantics in TypeScript and Go. The adapter
-must not import private files or make synthesis authoritative over invocation.
+## Scope and legacy separation
 
-## Implementation authority
+The maintained line is unpublished and supports finite requests, supplied
+resource graphs and schema inspection. Streaming, schema evaluation,
+acquisition and remaining serialization profiles remain open. Edition
+acceptance does not mean complete feature support. See the
+[Rust scope](../rust/README.md) and
+[development checkpoint](../rust/DEVELOPMENT-STATUS.md).
 
-The four release/0.2 family specifications are the implementation authority:
-
-- `openbindings.openapi-2.0@1`;
-- `openbindings.openapi-3.0@1`;
-- `openbindings.openapi-3.1@1`;
-- `openbindings.openapi-3.2@1`.
-
-Their exact source revision and portable conformance corpus are vendored and
-hash-locked under `authority/` and `conformance/upstream/`. They are test and
-release inputs, never runtime dependencies. `docs/public-api-v1.md` defines the
-new native product contract built over that authority.
-
-The old pre-release APIs, development profiles, withdrawn unified binding ID,
-and current adapter/CLI integration are not compatibility constraints. The
-implementation converges from the specifications outward: edition engines,
-one native surface in TypeScript and Go, thin OpenBindings adapters, then the
-SDK and OB CLI.
+Go and TypeScript and their qualification jobs are legacy, not the maintained
+client. Their package contracts, snapshots and pinned corpora preserve that
+historical line only. See [LEGACY.md](../LEGACY.md). They impose no Rust parity,
+release or migration obligation.

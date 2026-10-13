@@ -1,4 +1,5 @@
 {
+  "legacyScope": "Legacy Go/TypeScript qualification input; not authority or a release gate for the maintained Rust client. See LEGACY.md.",
   "format": "openbindings.openapi-client-public-api@1",
   "typescriptDeclarationSha256": "5358b23e3af1e395b1f2478c0bbb89df2173d09d35b85f513e29ffd89e21cc4d",
   "typescriptProviderDeclarationSha256": "f44e0def6f344499619b7ce089aa235bf5768c8f051d000d4f07040afa185582",

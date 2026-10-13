@@ -1,3 +1,6 @@
+> Legacy Go line. This document describes the preserved Go implementation,
+> not the maintained Rust client. See [the legacy index](../../LEGACY.md).
+
 # Prior art for a dynamic Go OpenAPI client
 
 Research date: 2026-09-24. Scope: public API shape of a Go client that loads any

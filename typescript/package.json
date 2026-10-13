@@ -1,7 +1,7 @@
 {
   "name": "@openbindings/openapi-client",
   "version": "0.1.0",
-  "description": "Deterministic document-driven client for Swagger 2.0 and OpenAPI 3.0, 3.1, and 3.2",
+  "description": "Legacy Swagger 2.0 and OpenAPI 3.0, 3.1 and 3.2 client; not the maintained Rust client",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",

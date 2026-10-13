@@ -1,3 +1,6 @@
+> Legacy Go line. This document describes the preserved Go implementation,
+> not the maintained Rust client. See [the legacy index](../LEGACY.md).
+
 # Go OpenAPI client
 
 A client library for every version of OpenAPI: Swagger 2.0 and OpenAPI 3.0,
