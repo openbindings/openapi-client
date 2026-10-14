@@ -68,7 +68,11 @@ fn original_literal_routes_and_unrelated_fact_locality() {
         let d = fixture(name, Limits::default());
         let op = d.operation_id("send").unwrap();
         for result in three(&op, vec![FormField::new(field, value)]) {
-            assert_eq!(result.unwrap().body(), Some(expected.as_bytes()), "{name}");
+            assert_eq!(
+                result.unwrap().body().map(AsRef::as_ref),
+                Some(expected.as_bytes()),
+                "{name}"
+            );
         }
     }
     let d = fixture("json", Limits::default());
@@ -78,7 +82,7 @@ fn original_literal_routes_and_unrelated_fact_locality() {
         .root();
     for result in three(&op, vec![FormField::new("p", value)]) {
         assert_eq!(
-            result.unwrap().body(),
+            result.unwrap().body().map(AsRef::as_ref),
             Some(b"p=%7B%22file%22%3A%22AP8%3D%22%2C%22n%22%3A1e%2B00%7D".as_slice())
         );
     }
@@ -97,7 +101,8 @@ fn original_literal_routes_and_unrelated_fact_locality() {
             .json(value)
             .prepare()
             .unwrap()
-            .body(),
+            .body()
+            .map(AsRef::as_ref),
         Some(br#"{"file":"AP8=","n":1e+00}"#.as_slice())
     );
     let d = fixture("raw", limits);
@@ -108,7 +113,8 @@ fn original_literal_routes_and_unrelated_fact_locality() {
             .body(Body::Raw(Arc::from([0, 255])))
             .prepare()
             .unwrap()
-            .body(),
+            .body()
+            .map(AsRef::as_ref),
         Some([0, 255].as_slice())
     );
 }
@@ -152,7 +158,10 @@ fn uniform_need_recovery_preserves_the_old_snapshot() {
         &next.operation_id("send").unwrap(),
         vec![FormField::new("p", "value")],
     ) {
-        assert_eq!(result.unwrap().body(), Some(b"p=value".as_slice()));
+        assert_eq!(
+            result.unwrap().body().map(AsRef::as_ref),
+            Some(b"p=value".as_slice())
+        );
     }
     assert!(
         op.describe_form_field(URL, "p")
@@ -279,7 +288,10 @@ fn explicit_style_makes_child_coding_inapplicable_and_hints_stay_inspection_only
         );
         let op = d.operation_id("send").unwrap();
         for result in three(&op, vec![FormField::new("p", "x")]) {
-            assert_eq!(result.unwrap().body(), Some(b"p=x".as_slice()));
+            assert_eq!(
+                result.unwrap().body().map(AsRef::as_ref),
+                Some(b"p=x".as_slice())
+            );
         }
         assert_eq!(
             op.describe_form_field(URL, "p").unwrap_err().reason(),
@@ -434,7 +446,10 @@ fn finite_f64_uses_existing_explicit_serializable_boundary() {
         &d.operation_id("send").unwrap(),
         vec![FormField::new("p", value.clone())],
     ) {
-        assert_eq!(result.unwrap().body(), Some(b"p=12.5".as_slice()));
+        assert_eq!(
+            result.unwrap().body().map(AsRef::as_ref),
+            Some(b"p=12.5".as_slice())
+        );
     }
     assert_eq!(
         ExactJson::from_serializable(&f64::NAN, Limits::default())
@@ -558,7 +573,7 @@ fn pinned_original_provider_jobs_are_preparation_only() {
         let expected =
             format!("To=%2B15005550006&From=%2B15005550006&Body=Preparation+only{suffix}");
         for request in results {
-            assert_eq!(request.body(), Some(expected.as_bytes()));
+            assert_eq!(request.body().map(AsRef::as_ref), Some(expected.as_bytes()));
             assert_eq!(
                 request.target(),
                 format!("https://api.twilio.com/2010-04-01/Accounts/{account}/Messages.json")
@@ -613,7 +628,7 @@ fn pinned_original_provider_jobs_are_preparation_only() {
                 .prepare()
                 .unwrap(),
         ] {
-            assert_eq!(request.body(), Some(expected.as_bytes()));
+            assert_eq!(request.body().map(AsRef::as_ref), Some(expected.as_bytes()));
             assert_eq!(request.target(), "https://www.flyn.to/api/conversion");
             assert!(
                 !request
@@ -798,7 +813,10 @@ fn work_depth_layout_and_lower_descriptor_limits_remain_corrective() {
         &next.operation_id("send").unwrap(),
         vec![FormField::new("p", "x")],
     ) {
-        assert_eq!(result.unwrap().body(), Some(b"p=x".as_slice()));
+        assert_eq!(
+            result.unwrap().body().map(AsRef::as_ref),
+            Some(b"p=x".as_slice())
+        );
     }
     assert_eq!(
         op.describe_form_field(URL, "p").unwrap_err().code(),

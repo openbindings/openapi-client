@@ -97,3 +97,8 @@ Request/form preparation does not consume these schema facts yet. Selected codin
 media, richer representation behavior, acquisition and evaluation remain later work.
 A correct Twilio enum reference, Flyn declared type union or Transmute content metadata
 fact is not evidence that its full request workflow is supported.
+
+`SchemaHandle::keywords_supported()` reports whether direct keyword semantics are
+supported. Unknown dialects remain inspectable without a schema-validation claim.
+`references()` returns an exact-size iterator owning its ordered edges; it may be
+consumed after dropping the originating handle and Document.

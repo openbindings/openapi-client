@@ -1,6 +1,6 @@
 //! Supplied finite host evidence; this example performs no network I/O.
 use dynamic_openapi_client::{
-    BodyState, Cancellation, Code, DeliveredBody, Document, Header, HeaderDelivery, HeaderFidelity,
+    BodyState, Cancellation, Code, Document, Header, HeaderDelivery, HeaderFidelity,
     HostCapabilities, Limits, ResponseInput, TransportResult, UploadState, policies,
 };
 use std::{
@@ -53,15 +53,13 @@ async fn run() -> Result<(), Box<dyn Error>> {
                 let mut response = ResponseInput::new(
                     200,
                     headers,
-                    DeliveredBody {
-                        bytes: body[..kept].into(),
-                        state: if kept == body.len() {
-                            BodyState::Complete
-                        } else {
-                            BodyState::Truncated
-                        },
-                        provenance: dynamic_openapi_client::Provenance::Wire,
+                    body[..kept].into(),
+                    if kept == body.len() {
+                        BodyState::Complete
+                    } else {
+                        BodyState::Truncated
                     },
+                    dynamic_openapi_client::Provenance::Wire,
                 );
                 response.header_fidelity = HeaderFidelity::HostProcessed;
                 response.header_delivery = delivery;

@@ -1,3 +1,35 @@
+# Carrier reduction (unpublished candidate)
+
+Custom callbacks passed to `PreparedRequest::invoke` or `invoke_with_replay` now
+receive an owned `PreparedRequest`. Read `method()`, `target()`, `headers()` and
+`response_admission()` through its immutable getters. `body()` returns
+`Option<&Arc<[u8]>>`; clone the Arc for a shared payload or use
+`body().map(AsRef::as_ref)` for an optional byte slice. The separate
+`DispatchRequest` type is removed.
+
+Saving the callback request retains its operation, compiled declarations and
+entire source graph after invocation. Release it after extracting the transport
+facts needed by the host. A cloned body Arc alone does not retain that graph.
+Neither cloning nor retaining a request authorizes another execution.
+
+`DeliveredBody` is removed. Pass its three facts directly to
+`ResponseInput::new(status, headers, bytes, body_state, provenance)` and access
+`bytes`, `body_state` and `provenance` directly on the input. Safe Debug shows the
+byte length, never the payload. Unknown header fidelity and Unspecified delivery
+remain the defaults, with the same JSON acceptance behavior.
+
+`SchemaHandle::references()` now returns an anonymous exact-size iterator that
+owns its edges and can outlive both the handle and Document. No `SchemaReferences`
+import is needed. Replace `DialectCapability` comparisons with
+`schema.keywords_supported()`, which reports keyword support, not validation.
+Replace `parameter.schema()` with `parameter.schema_description().map(|s| s.value)`.
+
+`Part::headers` and its input plumbing are removed. Required unsupported headers
+in authored multipart encoding declarations still refuse. Optional declarations
+remain inspectable. Filename and media metadata keep their duplicate and framing
+checks. The public Form owner and current builder/outcome routes remain in this
+stage of the migration.
+
 # Host-delivered body revision (unpublished candidate)
 
 **Changed:** exhaustive matches on `Provenance` must handle `HostDelivered`; enum
@@ -21,10 +53,10 @@ independent. This core contract alone does not qualify a Fetch or TypeScript hos
 
 # Response admission revision (unpublished candidate)
 
-**Changed:** `DispatchRequest` is produced by `PreparedRequest::invoke` (or
-`invoke_with_replay`) and is non-exhaustive. External struct literals no longer
-compile. Obtain genuine dispatches through those callbacks in custom adapters and
-tests. Replace `dispatch.response_limit` with
+**Changed:** callbacks now receive the immutable `PreparedRequest` described
+above. External struct literals cannot construct it. Obtain genuine prepared
+requests through preparation and dispatch through those callbacks. Replace
+`dispatch.response_limit` with
 `dispatch.response_admission().body_bytes()`. Read the same immutable view before
 invocation through `prepared.response_admission()`. There is no public admission
 constructor or mutable per-dispatch limits field.
@@ -197,7 +229,7 @@ Diagnostic fields are now read-only. Replace `.code`, `.location`, `.related` an
 
 ParseFailure's source and diagnostic are also an immutable pair. Use `diagnostic()` and `source_bytes()`. `std::error::Error::source` still exposes the Diagnostic. Over-byte-limit admission still retains no oversized source. Construction of a category-only Diagnostic remains available through `Diagnostic::new(code)`.
 
-An operation's `parameters()` supplies effective parameter declarations independently of request-body, media and security compilation. Returned values retain authored/reference/target sources after the original Document or Operation is dropped. Use raw `inspect()` or `value()` when structured interpretation refuses. `schema() == None` does not mean a parameter has no content declaration; inspect its resolved raw declaration.
+An operation's `parameters()` supplies effective parameter declarations independently of request-body, media and security compilation. Returned values retain authored/reference/target sources after the original Document or Operation is dropped. Use raw `inspect()` or `value()` when structured interpretation refuses. `schema_description() == None` does not mean a parameter has no content declaration; inspect its resolved raw declaration.
 
 For ordinary calls, use `operation.request().parameter(ParameterLocation::Query, "limit", 25).prepare()`. String names and server variables accept standard borrowed strings through `Cow`; primitive signed/unsigned integers through 64 bits, including default `i32` and platform `usize`, widen exactly. JSON arrays/objects can use borrowed `OrdinaryValue`; exact `Value` arguments retain their tokens and source owners. Builder assignments do not implicitly serialize arbitrary Rust data or narrow numbers. `Input` plus `Operation::prepare` remains the controlled exact-owner path.
 

@@ -63,10 +63,10 @@ OAS schema `required` remains a hint; Swagger
 
 Multipart/form-data follows [RFC7578 §4.8](https://www.rfc-editor.org/rfc/rfc7578#section-4.8).
 The library generates Content-Disposition and Content-Type. Omitted optional
-custom declarations remain inspectable and do not block a request. Required or
-supplied unsupported headers refuse precisely. Every nonempty `Part::headers`
-assignment currently refuses for the supported named-form profile. Supplied framing headers refuse;
-there is no silent discard. References whose unresolved target controls required
+custom declarations remain inspectable and do not block a request. Required
+unsupported authored headers refuse precisely. Part inputs accept filename and
+media metadata; there is no caller-supplied part-header route. References whose
+unresolved target controls required
 header behavior remain an explicit reference dependency. Content-transfer coding
 support and an explicit interoperability policy remain open capabilities.
 
@@ -81,19 +81,19 @@ headers, CRLF and percent expansion, not merely payload bytes.
 
 Defaults are 128 logical fields, 1024 emitted values/parts, 65536 metadata bytes,
 500000 work units and 16 boundary attempts. Existing `headers` independently caps
-aggregate part-header lines; `body_bytes` caps the complete encoded output.
+aggregate emitted part-header lines; `body_bytes` caps the complete encoded output.
 Configure these through document `Limits`; there is no order-dependent per-call
 limits setter in this tranche.
 
 Metadata has two independent phase ceilings. Admission charges field names once,
-then filename/elected media/supplied header names for every supplied Part. Header
-Argument data uses ordinary/exact data admission rather than eager stringification.
+then filename/elected media for every supplied Part. Logical values use
+ordinary/exact data admission rather than eager stringification.
 Planning charges each emitted name, filename and effective media, including
 repetition; generated fixed header syntax and delimiters use final body bytes.
 These ceilings do not claim to be a total-process memory cap.
 
 Work is independently capped during admission and preparation. Admission charges
-fields, supplied Parts/headers and a conservative upper bound of prior-name
+fields, supplied Parts and a conservative upper bound of prior-name
 comparisons. Planning charges declaration comparisons, property/item/header/media
 visits, stored joined pieces, boundary attempts and at-most-4096-byte chunks of
 count/scan/write passes. Temporary media-list parsing is metadata-size bounded

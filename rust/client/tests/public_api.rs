@@ -19,11 +19,9 @@ fn result() -> TransportResult {
         response: Some(ResponseInput::new(
             503,
             vec![Header::new("Content-Type", "application/json")],
-            DeliveredBody {
-                bytes: Arc::from(br#"{"n":9007199254740993}"#.as_slice()),
-                state: BodyState::Complete,
-                provenance: Provenance::Wire,
-            },
+            Arc::from(br#"{"n":9007199254740993}"#.as_slice()),
+            BodyState::Complete,
+            Provenance::Wire,
         )),
         upload: UploadState::Incomplete,
         error_detail: Some("private dummy host detail".into()),

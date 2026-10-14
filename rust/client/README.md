@@ -2,17 +2,17 @@
 
 An independent Rust client for dynamic OpenAPI documents and finite requests through caller-supplied transport. This unpublished compatibility candidate accepts Swagger 2.0 and OpenAPI 3.0, 3.1 and 3.2 in JSON or YAML; its implemented feature profile is explicit below.
 
-`Document::parse` detects format and edition, retains source and provides immutable owned handles. Inspect `Document::operations`, effective `Operation::describe` or `Operation::parameters`, then use `Operation::request` for ordinary calls. `Operation::inspect` and raw `Value` handles expose authored declarations. Use `Operation::prepare` with explicit `Input` when you already manage exact values and selections. `PreparedRequest::invoke` accepts a host capability declaration and an async callback. Native concurrent and host-local callbacks can use the same semantic types without a required executor.
+`Document::parse` detects format and edition, retains source and provides immutable owned handles. Inspect `Document::operations`, effective `Operation::describe` or `Operation::parameters`, then use `Operation::request` for ordinary calls. `Operation::inspect` and raw `Value` handles expose authored declarations. Use `Operation::prepare` with explicit `Input` when you already manage exact values and selections. `PreparedRequest::invoke` accepts a host capability declaration and an async callback receiving an owned PreparedRequest. Saving that request retains its source graph; clone only its body Arc when the payload alone is needed. Native concurrent and host-local callbacks can use the same semantic types without a required executor.
 
 Preparation interprets each supported edition's own server, parameter, body, media and security declarations. The current profile includes source-preserving local and supplied-resource JSON-Pointer protocol references, explicit server/media/security choices, Swagger primitive and collection parameters, supported 3.x logical parameter styles and JSON/text content parameters, scoped supplied Basic/Bearer/API-key credentials, supplied OAuth2/OpenID Connect bearer tokens and finite JSON/raw bodies and named URL-encoded/multipart forms. OAuth token acquisition remains caller-owned. Response metadata, delivered bytes/provenance, upload state, cancellation and decode failures remain independent.
 
-Edition coverage is not full-feature coverage. Custom serialization conventions, content codings, schema-reference-dependent form decoding, positional/nested multipart, 3.2 cookie/querystring styles, richer content codecs, schema-fact-dependent encoding, resource acquisition, streaming and WebSocket connections remain unqualified or unimplemented. Effective descriptors retain unsupported declarations for discovery; an available descriptor does not guarantee preparation or execution support.
+Edition coverage is not full-feature coverage. Custom serialization conventions, content codings, positional/nested multipart, 3.2 cookie/querystring styles, richer content codecs, resource acquisition, streaming and WebSocket connections remain unqualified or unimplemented. Effective descriptors retain unsupported declarations for discovery; an available descriptor does not guarantee preparation or execution support.
 
 For multiple supplied resources, use `DocumentBuilder` and the same Document/Operation request APIs. Missing bytes or explicit fragment layouts yield typed corrective needs; publish a new snapshot after supplying them. See [immutable resource graphs](GRAPH.md) for recovery, identity, discovery and current limits.
 
 The [document loading guide](LOADING.md) documents YAML scalar/key policies, exact numeric normalization, alias bounds and original source traces. `ExactJson::parse` remains JSON-only; the version-neutral entrypoint for OpenAPI documents is `Document::parse`.
 
-Schemas have owning typed [inspection handles and direct reference resolution](SCHEMAS.md); preparation does not yet consume their graph facts. Unknown fields remain inspection data. A direct `$ref` on an Operation Object is an explicit exception: OpenAPI does not define that reference position, and preparation refuses with `UnsupportedReferencePosition` instead of silently sending an incomplete request. Raw inspection remains available. The core performs no schema evaluation/default insertion, acquisition, automatic redirect/retry or streaming codec. For native HTTP calls, use the optional [`dynamic-openapi-client-reqwest` companion](../reqwest/README.md); it owns the HTTP stack and configuration while this crate remains runtime-independent. The optional [Rust Fetch companion](../fetch/README.md) supplies explicit Browser/Worker profiles on Wasm and is under qualification; it is not a TypeScript/npm client.
+Schemas have owning typed [inspection handles and direct reference resolution](SCHEMAS.md); form preparation consumes supported static declaration facts without evaluating instances. Unknown fields remain inspection data. A direct `$ref` on an Operation Object is an explicit exception: OpenAPI does not define that reference position, and preparation refuses with `UnsupportedReferencePosition` instead of silently sending an incomplete request. Raw inspection remains available. The core performs no schema evaluation/default insertion, acquisition, automatic redirect/retry or streaming codec. For native HTTP calls, use the optional [`dynamic-openapi-client-reqwest` companion](../reqwest/README.md); it owns the HTTP stack and configuration while this crate remains runtime-independent. The optional [Rust Fetch companion](../fetch/README.md) supplies explicit Browser/Worker profiles on Wasm and is under qualification; it is not a TypeScript/npm client.
 
 Source and decoded strings are exact for Unicode scalar values. Unpaired surrogate escapes return a located limitation with source preserved. Numeric tokens remain exact; integer conveniences are checked, and binary64 conversion currently accepts exactly representable integer lexemes only. Mathematical conversion of decimal/exponent tokens remains explicit unsupported conversion. Null, empty-container and nested style-based parameter values receive located refusals; empty strings are supported. JSON content parameters accept these JSON shapes without schema evaluation.
 
@@ -44,12 +44,13 @@ async fn inspect_and_call(text: &[u8]) -> Result<CompletedJson, Box<dyn std::err
         |request, cancellation| async move {
             // Finite fixture transport; supply a qualified host for real I/O.
             assert!(!cancellation.is_cancelled());
-            assert_eq!(request.method, Method::Get);
+            assert_eq!(request.method(), Method::Get);
             TransportResult {
-                response: Some(ResponseInput::new(200, vec![Header::new("Content-Type", "application/json")], DeliveredBody {
-                        bytes: br#"{"count":9007199254740993}"#.as_slice().into(),
-                        state: BodyState::Complete, provenance: Provenance::Wire,
-                    })), upload: UploadState::Complete, error_detail: None,
+                response: Some(ResponseInput::new(
+                    200, vec![Header::new("Content-Type", "application/json")],
+                    br#"{"count":9007199254740993}"#.as_slice().into(),
+                    BodyState::Complete, Provenance::Wire,
+                )), upload: UploadState::Complete, error_detail: None,
             }
         },
     ).await;
@@ -231,7 +232,7 @@ Generated ranges identify this constructed JSON, never the OpenAPI document. `So
 
 ## Effective parameter inspection
 
-`operation.parameters()?` resolves effective path/operation declarations with the same graph-reference, override and required-default rules as preparation, without compiling unrelated body/media/security requirements. Iterate the returned `Parameters` and use `name()`, `location()`, `required()`, `authored()`, `resolved()` and `schema()`. Each retained parameter keeps its original source owners independently of the operation. Reference inspection distinguishes authored use site, sibling overrides, chain and target. `schema() == None` does not imply no `content` declaration; resolved raw values remain available. Unsupported editions or invalid typed declarations refuse; raw `Operation::inspect`/`value` remain available. These views do not assert full document validity or schema conformance.
+`operation.parameters()?` resolves effective path/operation declarations with the same graph-reference, override and required-default rules as preparation, without compiling unrelated body/media/security requirements. Iterate the returned `Parameters` and use `name()`, `location()`, `required()`, `authored()`, `resolved()` and `schema_description()`. Each retained parameter keeps its original source owners independently of the operation. Reference inspection distinguishes authored use site, sibling overrides, chain and target. `schema_description() == None` does not imply no `content` declaration; resolved raw values remain available. Unsupported editions or invalid typed declarations refuse; raw `Operation::inspect`/`value` remain available. These views do not assert full document validity or schema conformance.
 
 ## Correcting a refusal
 

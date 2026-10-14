@@ -30,11 +30,9 @@ fn input() -> ResponseInput {
     ResponseInput::new(
         200,
         vec![Header::new("Content-Type", "application/json")],
-        DeliveredBody {
-            bytes: Arc::from(br#"{"id":9007199254740993}"#.as_slice()),
-            state: BodyState::Complete,
-            provenance: Provenance::Decoded,
-        },
+        Arc::from(br#"{"id":9007199254740993}"#.as_slice()),
+        BodyState::Complete,
+        Provenance::Decoded,
     )
 }
 fn result(
@@ -161,10 +159,10 @@ fn strict_host_keeps_declared_assurance_and_identical_dispatch_bytes_under_both_
         let out = ready(
             p.invoke_with_replay(Cancellation::default(), &h, policy, |r, _| {
                 calls.set(calls.get() + 1);
-                assert_eq!(r.method, p.method());
-                assert_eq!(r.target, p.target());
-                assert_eq!(r.headers, p.headers());
-                assert_eq!(r.body.as_deref(), p.body());
+                assert_eq!(r.method(), p.method());
+                assert_eq!(r.target(), p.target());
+                assert_eq!(r.headers(), p.headers());
+                assert_eq!(r.body().map(AsRef::as_ref), p.body().map(AsRef::as_ref));
                 assert_eq!(
                     r.response_admission().body_bytes(),
                     Limits::default().body_bytes
@@ -267,8 +265,8 @@ fn cancellation_precedes_admission_and_callback_cancellation_preserves_evidence(
         assert!(out.cancelled);
     }
     let mut evidence = input();
-    evidence.body.state = BodyState::Failed;
-    evidence.body.bytes = Arc::from(b"{\"id\":".as_slice());
+    evidence.body_state = BodyState::Failed;
+    evidence.bytes = Arc::from(b"{\"id\":".as_slice());
     let calls = Cell::new(0);
     let out = ready(p.invoke_with_replay(
         Cancellation::default(),
@@ -448,7 +446,7 @@ fn processed_metadata_never_decides_body_decoding_or_repairs_invalid_content_typ
         response
             .headers
             .push(Header::new("content-encoding", "gzip"));
-        response.body.provenance = provenance;
+        response.provenance = provenance;
         let (out, _) = invoke(
             &p,
             &host_managed(),
@@ -620,14 +618,14 @@ fn source_request_and_response_owners_survive_only_as_explicitly_retained() {
     let response_bytes: Arc<[u8]> = Arc::from(br#"{"id":9007199254740993}"#.as_slice());
     let response_weak = Arc::downgrade(&response_bytes);
     let mut response = input();
-    response.body.bytes = response_bytes;
+    response.bytes = response_bytes;
     let out = ready(p.invoke_with_replay(
         Cancellation::default(),
         &host_managed(),
         ReplayPolicy::AllowHostManaged,
         |r, _| async move {
-            assert_eq!(r.target, "https://api.example/send");
-            assert_eq!(r.body.unwrap().as_ref(), br#"{"secret":"entity"}"#);
+            assert_eq!(r.target(), "https://api.example/send");
+            assert_eq!(r.body().unwrap().as_ref(), br#"{"secret":"entity"}"#);
             result(Some(response), UploadState::Complete, None)
         },
     ));

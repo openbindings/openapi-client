@@ -70,7 +70,7 @@ fn one_consumer_preserves_authored_editions_and_form_utf8_exact_values() {
         assert_eq!(doc.version().as_deref(), Some(version));
         assert_eq!(request.body_kind(), "form");
         assert_eq!(
-            request.body().unwrap(),
+            request.body().map(AsRef::as_ref).unwrap(),
             b"message=caf%C3%A9+%2B%26%3D%2F%25&count=9007199254740993"
         );
         assert_eq!(content_type(&request), "application/x-www-form-urlencoded");
@@ -109,7 +109,7 @@ fn borrowed_shared_files_and_exact_metadata_use_owned_prepared_bytes() {
             .unwrap();
         drop(owner);
         drop(doc);
-        let body = request.body().unwrap();
+        let body = request.body().map(AsRef::as_ref).unwrap();
         assert!(body.windows(4).any(|v| v == b"a\0b\xff"));
         let text = String::from_utf8_lossy(body);
         assert!(text.contains("name=\"label\"\r\nContent-Type: text/plain\r\n\r\nna\u{ef}ve"));
@@ -137,7 +137,7 @@ fn arrays_and_media_style_precedence_follow_minor_profiles() {
             .form([FormField::new("values", OrdinaryValue::Array(&values))])
             .prepare()
             .unwrap();
-        let body = std::str::from_utf8(req.body().unwrap()).unwrap();
+        let body = std::str::from_utf8(req.body().map(AsRef::as_ref).unwrap()).unwrap();
         if version == "3.0.4" {
             assert_eq!(body.matches("name=\"values\"").count(), 2);
             assert!(body.contains("Content-Type: application/json\r\n\r\n\"a\""));
@@ -166,40 +166,9 @@ fn strict_header_rules_do_not_drop_supplied_values_or_optional_declarations() {
             .prepare()
             .is_ok()
     );
-    let headers = [("X-Optional", Argument::from("secret"))];
-    let err = op
-        .request()
-        .form([FormField::new("x", Part::value("ok").headers(&headers))])
-        .prepare()
-        .unwrap_err();
-    assert_eq!(
-        err.diagnostic().reason(),
-        Some(&DiagnosticReason::Form(FormReason::UnsupportedHeader))
-    );
-    assert!(!format!("{err:?}").contains("secret"));
-    // Array joining must use the same header policy as scalar encoding.
-    let array = ExactJson::parse(br#"["a","b"]"#, Limits::default()).unwrap();
-    let doc = document(
-        "3.1.2",
-        "multipart/form-data",
-        json!({"x":{"type":"array","items":{"type":"string"}}}),
-        json!({"x":{"explode":false}}),
-        Limits::default(),
-    );
-    assert_eq!(
-        doc.operation_id("send")
-            .unwrap()
-            .request()
-            .form([FormField::new(
-                "x",
-                Part::value(array.root()).headers(&headers)
-            )])
-            .prepare()
-            .unwrap_err()
-            .diagnostic()
-            .reason(),
-        Some(&DiagnosticReason::Form(FormReason::UnsupportedHeader))
-    );
+    // Rejected caller-header routes are compile-fail examples on Part.
+    // Required authored header behavior is covered by the original YAML refusal
+    // case below and by the scalar/array cases in o6_carriers.rs.
 }
 #[test]
 fn explicit_json_cannot_erase_unknown_coding_but_keeps_partial_inventory() {
@@ -384,7 +353,7 @@ fn media_fields_remain_representation_specific_and_schema_required_is_a_hint() {
         .form([])
         .prepare()
         .unwrap();
-    assert_eq!(req.body(), Some(b"".as_slice()));
+    assert_eq!(req.body().map(AsRef::as_ref), Some(b"".as_slice()));
 }
 #[test]
 fn multipart_required_header_refusal_keeps_original_yaml_source_and_safe_context() {
@@ -572,12 +541,16 @@ fn swagger_implicit_form_media_preserves_fields_and_requires_a_choice() {
                     .prepare()
                     .unwrap();
                 if media.starts_with("application/") {
-                    assert_eq!(request.body(), Some(b"message=a+b".as_slice()));
+                    assert_eq!(
+                        request.body().map(AsRef::as_ref),
+                        Some(b"message=a+b".as_slice())
+                    );
                 } else {
                     assert!(
-                        String::from_utf8_lossy(request.body().unwrap()).contains(
-                            "name=\"message\"\r\nContent-Type: text/plain\r\n\r\na b\r\n"
-                        )
+                        String::from_utf8_lossy(request.body().map(AsRef::as_ref).unwrap())
+                            .contains(
+                                "name=\"message\"\r\nContent-Type: text/plain\r\n\r\na b\r\n"
+                            )
                     );
                 }
                 let error = op

@@ -24,10 +24,10 @@ request.invoke_with_replay(
     |_, _| async {
         // Synthetic evidence; a real adapter declares its own fidelity.
         TransportResult {
-            response: Some(ResponseInput::new(200, vec![], DeliveredBody {
-                bytes: b"".as_slice().into(), state: BodyState::Complete,
-                provenance: Provenance::Unknown,
-            })),
+            response: Some(ResponseInput::new(
+                200, vec![], b"".as_slice().into(),
+                BodyState::Complete, Provenance::Unknown,
+            )),
             upload: UploadState::Unknown, error_detail: None,
         }
     },
@@ -59,8 +59,13 @@ is an explicit assertion that received structured field names, value bytes,
 duplicates and order are preserved without host omission. It does not promise
 raw HTTP framing, whitespace, transport-protocol bytes or response trailers.
 
-`PreparedRequest::response_admission()` and `DispatchRequest::response_admission()`
-return one immutable view for adapters: retained body bytes, header entries and
+Callbacks receive an owned clone of `PreparedRequest`. Its body getter exposes
+`Option<&Arc<[u8]>>`, so native hosts can share the payload without copying bytes.
+Saving this request extends the lifetime of its operation, compiled declarations
+and source graph. Extract needed transport facts and release the request when
+those owners are unnecessary; retaining only a body Arc does not retain the graph.
+
+`PreparedRequest::response_admission()` returns one immutable view for adapters: retained body bytes, header entries and
 header bytes. These map to `Limits::body_bytes`, `Limits::headers` and the existing
 `Limits::document_bytes` policy. Header bytes sum UTF-8 name bytes plus value bytes,
 excluding HTTP framing. Inspect host-owned sizes before making core copies. An

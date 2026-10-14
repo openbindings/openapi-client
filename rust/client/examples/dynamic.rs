@@ -16,16 +16,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut future =
         Box::pin(
             request.invoke(Cancellation::default(), &host, |request, _| async move {
-                assert!(request.target.starts_with("https://"));
+                assert!(request.target().starts_with("https://"));
                 TransportResult {
                     response: Some(ResponseInput::new(
                         200,
                         vec![Header::new("Content-Type", "application/json")],
-                        DeliveredBody {
-                            bytes: br#"{"n":9007199254740993}"#.as_slice().into(),
-                            state: BodyState::Complete,
-                            provenance: Provenance::Wire,
-                        },
+                        br#"{"n":9007199254740993}"#.as_slice().into(),
+                        BodyState::Complete,
+                        Provenance::Wire,
                     )),
                     upload: UploadState::Complete,
                     error_detail: None,

@@ -80,13 +80,25 @@ enum Content<'a> {
     Bytes(FiniteBytes<'a>),
 }
 /// Name-free finite content with optional representation metadata.
-/// Header slices borrow caller storage; this object grows no hidden collections.
+/// Metadata may borrow caller storage; this object grows no hidden collections.
+/// Caller-supplied part headers are not an input route.
+///
+/// ```compile_fail,E0599
+/// use dynamic_openapi_client::{Argument, Part};
+/// let headers = [("X-Optional", Argument::from("secret"))];
+/// let part = Part::value("ok").headers(&headers);
+/// ```
+/// ```compile_fail,E0599
+/// use dynamic_openapi_client::{Argument, ExactJson, Limits, Part};
+/// let headers = [("X-Optional", Argument::from("secret"))];
+/// let array = ExactJson::parse(br#"["a","b"]"#, Limits::default()).unwrap();
+/// let part = Part::value(array.root()).headers(&headers);
+/// ```
 #[derive(Clone)]
 pub struct Part<'a> {
     content: Content<'a>,
     filename: Option<Cow<'a, str>>,
     media: Option<Cow<'a, str>>,
-    headers: Option<&'a [(&'a str, Argument<'a>)]>,
     duplicate: bool,
 }
 impl<'a> Part<'a> {
@@ -103,7 +115,6 @@ impl<'a> Part<'a> {
             content,
             filename: None,
             media: None,
-            headers: None,
             duplicate: false,
         }
     }
@@ -117,13 +128,6 @@ impl<'a> Part<'a> {
     pub fn media_type(mut self, v: impl Into<Cow<'a, str>>) -> Self {
         self.duplicate |= self.media.is_some();
         self.media = Some(v.into());
-        self
-    }
-    /// Supply declared part-header values. Every nonempty assignment currently
-    /// refuses in the supported named-form profile; framing headers always refuse.
-    pub fn headers(mut self, v: &'a [(&'a str, Argument<'a>)]) -> Self {
-        self.duplicate |= self.headers.is_some();
-        self.headers = Some(v);
         self
     }
 }
@@ -338,7 +342,6 @@ fn add(total: &mut usize, n: usize, max: usize, kind: LimitKind) -> Result<(), D
 #[derive(Default)]
 pub(crate) struct Admission {
     metadata: usize,
-    headers: usize,
     parts: usize,
     work: usize,
     bytes: usize,
@@ -423,27 +426,6 @@ impl Admission {
                 LimitKind::FormMetadataBytes,
             )?;
         }
-        if let Some(headers) = p.headers {
-            add(
-                &mut self.headers,
-                headers.len(),
-                l.headers,
-                LimitKind::HeaderCount,
-            )?;
-            for (name, value) in headers {
-                if let Some(cancel) = cancel {
-                    cancel.check()?;
-                }
-                add(&mut self.work, 1, l.form_work, LimitKind::FormWork)?;
-                add(
-                    &mut self.metadata,
-                    name.len(),
-                    l.form_metadata_bytes,
-                    LimitKind::FormMetadataBytes,
-                )?;
-                self.arg(value, l)?;
-            }
-        }
         match &p.content {
             Content::Value(v) => self.arg(v, l),
             Content::Bytes(v) => add(
@@ -465,12 +447,6 @@ impl<'a> FormField<'a> {
             cancel.check()?;
             if let Content::Value(v) = &p.content {
                 visit(v);
-            }
-            if let Some(headers) = p.headers {
-                for (_, v) in headers {
-                    cancel.check()?;
-                    visit(v);
-                }
             }
             Ok(())
         };
@@ -500,7 +476,6 @@ impl<'a> FormField<'a> {
                 payload: Payload::Value(exact(v)),
                 filename: None,
                 media: None,
-                headers: Vec::new(),
             }),
             FormValue::Part(p) => ReadyValue::One(p.lower(exact, cancel)?),
             FormValue::Parts(ps) => {
@@ -531,19 +506,11 @@ impl<'a> Part<'a> {
             Content::Bytes(b) => Payload::Bytes(b.into()),
         };
         cancel.check()?;
-        let authored_headers = self.headers.unwrap_or(&[]);
-        let mut headers = Vec::with_capacity(authored_headers.len());
-        for (name, value) in authored_headers {
-            cancel.check()?;
-            headers.push((Cow::Borrowed(*name), exact(value.clone())));
-        }
-        cancel.check()?;
         Ok(ReadyPart {
             explicit: true,
             payload,
             filename: self.filename,
             media: self.media,
-            headers,
         })
     }
 }
@@ -589,7 +556,6 @@ struct ReadyPart<'a> {
     payload: Payload<'a>,
     filename: Option<Cow<'a, str>>,
     media: Option<Cow<'a, str>>,
-    headers: Vec<(Cow<'a, str>, Value)>,
 }
 // Convert only at the explicitly elected ownership boundary. Fluent lowering
 // never calls these helpers. Metadata has already been admitted before copying.
@@ -645,16 +611,11 @@ impl ReadyPart<'_> {
                 Payload::Bytes(AdmittedBytes::Owned(Arc::new(bytes)))
             }
         };
-        let mut headers = Vec::with_capacity(self.headers.len());
-        for (name, value) in self.headers {
-            headers.push((owned_text(name, cancel)?, value));
-        }
         Ok(ReadyPart {
             explicit: self.explicit,
             payload,
             filename: self.filename.map(|v| owned_text(v, cancel)).transpose()?,
             media: self.media.map(|v| owned_text(v, cancel)).transpose()?,
-            headers,
         })
     }
 }
@@ -724,23 +685,6 @@ impl Admission {
                 limits.form_metadata_bytes,
                 LimitKind::FormMetadataBytes,
             )?;
-        }
-        add(
-            &mut self.headers,
-            part.headers.len(),
-            limits.headers,
-            LimitKind::HeaderCount,
-        )?;
-        for (name, value) in &part.headers {
-            cancel.check()?;
-            add(&mut self.work, 1, limits.form_work, LimitKind::FormWork)?;
-            add(
-                &mut self.metadata,
-                name.len(),
-                limits.form_metadata_bytes,
-                LimitKind::FormMetadataBytes,
-            )?;
-            self.arg(&Argument::Exact(value.clone()), limits)?;
         }
         match &part.payload {
             Payload::Value(v) => self.arg(&Argument::Exact(v.clone()), limits),
@@ -1099,7 +1043,7 @@ fn plan<'a>(
     } = rules;
     work.visit()?;
     let styled = style(encoding, edition, multipart)?;
-    validate_part(part, schema, encoding, source, edition, multipart, work)?;
+    validate_part(part, schema, encoding, edition, multipart, work)?;
     if styled.is_some() && part.media.is_some() {
         return Err(located(
             source,
@@ -1324,7 +1268,6 @@ fn validate_part(
     part: &ReadyPart<'_>,
     schema: Option<&Value>,
     encoding: Option<&Value>,
-    source: &Value,
     edition: Edition,
     multipart: bool,
     work: &mut Work<'_>,
@@ -1353,20 +1296,6 @@ fn validate_part(
                 ));
             }
         }
-    }
-    if !part.headers.is_empty() {
-        return Err(located(
-            source,
-            Code::InvalidHeader,
-            if part.headers.iter().any(|(n, _)| {
-                n.eq_ignore_ascii_case("content-type")
-                    || n.eq_ignore_ascii_case("content-disposition")
-            }) {
-                FormReason::FramingConflict
-            } else {
-                FormReason::UnsupportedHeader
-            },
-        ));
     }
     if let Some(s) = schema {
         if edition == Edition::Swagger20
@@ -1402,7 +1331,7 @@ fn plan_one<'a>(
     } = rules;
     work.visit()?;
     let styled = style(encoding, edition, multipart)?;
-    validate_part(part, schema, encoding, source, edition, multipart, work)?;
+    validate_part(part, schema, encoding, edition, multipart, work)?;
     if let (Some(config), Payload::Value(value)) = (styled, payload) {
         if part.media.is_some() {
             return Err(located(
@@ -2097,14 +2026,17 @@ mod tests {
         assert_eq!(calls, 1);
         assert_eq!(Arc::strong_count(&bytes), owners);
 
-        let headers = [
-            ("x-one", Argument::Exact(value.clone())),
-            ("x-two", Argument::Exact(value.clone())),
-            ("x-three", Argument::Exact(value.clone())),
+        // Four logical part values preserve the original traversal witness:
+        // cancellation after the second conversion must stop before the third.
+        let parts = [
+            Part::value(value.clone()),
+            Part::value(value.clone()),
+            Part::value(value.clone()),
+            Part::value(value),
         ];
         let cancel = Cancellation::default();
         calls = 0;
-        let result = FormField::new("p", Part::value(value).headers(&headers)).lower(
+        let result = FormField::new("p", FormValue::Parts(&parts)).lower(
             &mut |argument| {
                 calls += 1;
                 if calls == 2 {

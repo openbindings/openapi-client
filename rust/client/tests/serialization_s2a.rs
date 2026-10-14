@@ -101,14 +101,14 @@ fn check(
         }
         expected.push_str(&format!("--{boundary}--\r\n"));
         assert_eq!(
-            prepared.body().unwrap(),
+            prepared.body().map(AsRef::as_ref).unwrap(),
             expected.as_bytes(),
             "{}",
             case["id"]
         );
     } else if let Some(expected) = case["expected_body_utf8"].as_str() {
         assert_eq!(
-            prepared.body().unwrap(),
+            prepared.body().map(AsRef::as_ref).unwrap(),
             expected.as_bytes(),
             "{}",
             case["id"]

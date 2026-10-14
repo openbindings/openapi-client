@@ -117,7 +117,10 @@ fn automatic_media_election_counts_body_compatible_choices() {
                 ..Input::default()
             })
             .unwrap();
-        assert_eq!(request.body(), Some(b"{\"n\":9007199254740993}".as_slice()));
+        assert_eq!(
+            request.body().map(AsRef::as_ref),
+            Some(b"{\"n\":9007199254740993}".as_slice())
+        );
         assert_eq!(
             request
                 .headers()
@@ -227,7 +230,7 @@ fn explicit_media_selection_keeps_range_and_body_compatibility_rules() {
             ..Input::default()
         })
         .unwrap();
-    assert_eq!(request.body(), Some(b"plain".as_slice()));
+    assert_eq!(request.body().map(AsRef::as_ref), Some(b"plain".as_slice()));
 }
 
 #[test]

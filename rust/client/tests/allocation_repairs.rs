@@ -160,7 +160,11 @@ fn joined_form_keys_keep_decoded_text_exact_numbers_and_owned_result() {
             } else {
                 "p=caf%C3%A9%20x%7C1e%2B3%7Cq%22%7C-0".into()
             };
-            assert_eq!(request.body(), Some(expected.as_bytes()), "{version}");
+            assert_eq!(
+                request.body().map(AsRef::as_ref),
+                Some(expected.as_bytes()),
+                "{version}"
+            );
         }
     }
 }

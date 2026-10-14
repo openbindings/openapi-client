@@ -45,8 +45,8 @@ impl SchemaProfile {
     pub(crate) fn modern(&self) -> bool {
         matches!(self, Self::JsonSchema { .. })
     }
-    fn capability(&self) -> DialectCapability {
-        match self {
+    fn keywords_supported(&self) -> bool {
+        !matches!(self,
             Self::JsonSchema { dialect_uri }
                 if !matches!(
                     dialect_uri.as_str(),
@@ -54,12 +54,8 @@ impl SchemaProfile {
                         | OAS31
                         | OAS32
                         | "https://spec.openapis.org/oas/3.1/dialect/2024-11-10"
-                ) =>
-            {
-                DialectCapability::Opaque
-            }
-            _ => DialectCapability::Supported,
-        }
+                )
+        )
     }
     fn for_edition(edition: Edition) -> Self {
         match edition {
@@ -73,15 +69,6 @@ impl SchemaProfile {
             },
         }
     }
-}
-/// Whether the library can interpret this schema dialect's keywords.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum DialectCapability {
-    /// Supported built-in profile.
-    Supported,
-    /// Original data remains inspectable; keyword semantics are unknown.
-    Opaque,
 }
 /// Precise selected-schema refusal, never an instance validation result.
 #[derive(Clone, PartialEq, Eq)]
@@ -143,7 +130,7 @@ pub struct SchemaHandle {
 impl std::fmt::Debug for SchemaHandle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SchemaHandle")
-            .field("capability", &self.dialect_capability())
+            .field("keywords_supported", &self.keywords_supported())
             .finish_non_exhaustive()
     }
 }
@@ -204,8 +191,8 @@ impl SchemaHandle {
         &self.scope().profile
     }
     /// Whether direct keyword semantics are supported.
-    pub fn dialect_capability(&self) -> DialectCapability {
-        self.profile().capability()
+    pub fn keywords_supported(&self) -> bool {
+        self.profile().keywords_supported()
     }
     /// Lexical schema resource root; the physical source root when no `$id` intervenes.
     pub fn schema_resource_root(&self) -> Value {
@@ -224,7 +211,10 @@ impl SchemaHandle {
         &self.relative
     }
     /// Direct reference keywords in authored order. Opaque semantics are an error.
-    pub fn references(&self) -> Result<SchemaReferences, Diagnostic> {
+    /// The iterator owns its edges and can outlive this handle and the Document.
+    pub fn references(
+        &self,
+    ) -> Result<impl ExactSizeIterator<Item = SchemaReference> + use<>, Diagnostic> {
         self.store
             .graph
             .schemas
@@ -248,21 +238,9 @@ impl SchemaHandle {
                 });
             }
         }
-        Ok(SchemaReferences(edges.into_iter()))
+        Ok(edges.into_iter())
     }
 }
-/// Iterator over direct authored schema edges.
-pub struct SchemaReferences(std::vec::IntoIter<SchemaReference>);
-impl Iterator for SchemaReferences {
-    type Item = SchemaReference;
-    fn next(&mut self) -> Option<Self::Item> {
-        self.0.next()
-    }
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        self.0.size_hint()
-    }
-}
-impl ExactSizeIterator for SchemaReferences {}
 /// Authored schema reference keyword.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
@@ -430,7 +408,7 @@ impl SchemaIndex {
         if let Some(issue) = &item.issue {
             return Err(issue.clone());
         }
-        if self.state().scopes[item.scope].profile.capability() == DialectCapability::Opaque {
+        if !self.state().scopes[item.scope].profile.keywords_supported() {
             return Err(schema_error(
                 &graph.value(node),
                 Code::UnsupportedSchema,
@@ -772,8 +750,7 @@ impl SchemaIndex {
                     Err(error) => issue = Some(error),
                 }
             }
-            if scope.profile.modern() && scope.profile.capability() == DialectCapability::Supported
-            {
+            if scope.profile.modern() && scope.profile.keywords_supported() {
                 if let Some(id) = value.get("$id") {
                     let result = (|| {
                         let text = id.as_str().ok_or_else(|| {
@@ -866,7 +843,7 @@ impl SchemaIndex {
                     issue,
                 },
             );
-            if scope.profile.capability() == DialectCapability::Opaque
+            if !scope.profile.keywords_supported()
                 || graph
                     .schemas
                     .node(key(&value))
@@ -1386,7 +1363,7 @@ mod lazy_index_tests {
                 assert_eq!(error.location().unwrap().pointer, "/components/schemas/S");
             } else {
                 let schema = result.unwrap();
-                if schema.dialect_capability() == DialectCapability::Opaque {
+                if !schema.keywords_supported() {
                     assert_eq!(
                         schema.references().err().unwrap().code(),
                         Code::UnsupportedSchema

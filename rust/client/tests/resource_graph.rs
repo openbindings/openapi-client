@@ -669,7 +669,7 @@ fn selected_form_header_references_use_uniform_graph_recovery() {
             } else {
                 let request = result.unwrap();
                 assert!(
-                    std::str::from_utf8(request.body().unwrap())
+                    std::str::from_utf8(request.body().map(AsRef::as_ref).unwrap())
                         .unwrap()
                         .contains("\r\n\r\nvalue\r\n")
                 );

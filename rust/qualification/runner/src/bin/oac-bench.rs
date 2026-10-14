@@ -116,11 +116,9 @@ fn main() {
             response: Some(ResponseInput::new(
                 200,
                 vec![Header::new("Content-Type", "application/json")],
-                DeliveredBody {
-                    bytes: payload.as_bytes().into(),
-                    state: BodyState::Complete,
-                    provenance: Provenance::Wire,
-                },
+                payload.as_bytes().into(),
+                BodyState::Complete,
+                Provenance::Wire,
             )),
             upload: UploadState::Unknown,
             error_detail: None,

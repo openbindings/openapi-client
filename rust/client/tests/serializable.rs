@@ -69,7 +69,7 @@ fn borrowed_struct_dynamic_value_and_retained_handles_prepare_identical_bytes() 
         .prepare()
         .unwrap();
     drop(op);
-    assert_eq!(request.body().unwrap(), expected);
+    assert_eq!(request.body().map(AsRef::as_ref).unwrap(), expected);
     assert_eq!(child.source_context(), source);
     assert_eq!(child.location().pointer, "/nested/a~1b~0");
     assert_eq!(child.at(0).unwrap().as_bool(), Some(true));
