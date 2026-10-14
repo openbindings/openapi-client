@@ -1,4 +1,5 @@
 use dynamic_openapi_client::*;
+use dynamic_openapi_client::{diagnostics::*, exact::*, form::*, schema::*, transport::*};
 
 #[test]
 fn authored_required_headers_still_refuse_for_scalar_and_joined_array_parts() {
@@ -22,23 +23,22 @@ fn authored_required_headers_still_refuse_for_scalar_and_joined_array_parts() {
                 }}}}
             });
             let document = Document::parse(source.to_string(), None, Limits::default()).unwrap();
-            let value = ExactJson::parse(payload, Limits::default()).unwrap();
+            let value = Value::parse(payload, Limits::default()).unwrap();
             let result = document
                 .operation_id("send")
                 .unwrap()
                 .request()
-                .form([FormField::new("x", Part::value(value.root()))])
+                .form_fields([FormField::part("x", Part::value(value.clone()))])
                 .prepare();
             if required {
                 let error = result.unwrap_err();
-                assert_eq!(error.diagnostic().code(), Code::UnsupportedMedia);
+                assert_eq!(error.code(), Code::UnsupportedMedia);
                 assert_eq!(
-                    error.diagnostic().reason(),
+                    error.reason(),
                     Some(&DiagnosticReason::Form(FormReason::UnsupportedHeader))
                 );
                 assert!(
                     error
-                        .diagnostic()
                         .location()
                         .unwrap()
                         .pointer

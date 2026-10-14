@@ -1,6 +1,8 @@
 //! Private logical atoms shared by parameters and named form encodings.
 //! Framing stays distinct from data; no public template/wire escape API.
-use crate::{Code, Diagnostic, DiagnosticReason, Value, ValueKind};
+use crate::Diagnostic;
+use crate::diagnostics::{Code, DiagnosticReason};
+use crate::exact::{Value, ValueKind};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Style {

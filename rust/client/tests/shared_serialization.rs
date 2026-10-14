@@ -1,9 +1,10 @@
 use dynamic_openapi_client::*;
+use dynamic_openapi_client::{diagnostics::*, exact::*, form::*, source::*};
 use serde_json::{Value as Json, json};
 
 const VERSIONS: &[&str] = &["3.0.0", "3.0.4", "3.1.0", "3.1.2", "3.2.0", "3.2.1"];
 fn exact(s: &str) -> Value {
-    ExactJson::parse(s, Limits::default()).unwrap().root()
+    Value::parse(s, Limits::default()).unwrap()
 }
 fn parameter_doc(
     version: &str,
@@ -40,7 +41,7 @@ fn query(version: &str, config: Json, value: &str) -> String {
         .operation_id("send")
         .unwrap()
         .request()
-        .parameter(ParameterLocation::Query, "p", exact(value))
+        .parameter_exact(ParameterLocation::Query, "p", &exact(value))
         .prepare()
         .unwrap()
         .target()
@@ -140,13 +141,13 @@ fn deep_object_refusals_retain_source_and_caller_context() {
                 .operation_id("send")
                 .unwrap()
                 .request()
-                .parameter(ParameterLocation::Query, "p", exact(value))
+                .parameter_exact(ParameterLocation::Query, "p", &exact(value))
                 .prepare()
                 .unwrap_err();
-            assert_eq!(error.diagnostic().reason(), Some(&reason));
-            assert!(error.diagnostic().location().is_some());
+            assert_eq!(error.reason(), Some(&reason));
+            assert!(error.location().is_some());
             assert!(
-                matches!(error.diagnostic().context(),Some(DiagnosticContext::Parameter { name,.. }) if name=="p")
+                matches!(error.context(),Some(DiagnosticContext::Parameter { name,.. }) if name=="p")
             );
         }
         let doc = parameter_doc(
@@ -161,13 +162,13 @@ fn deep_object_refusals_retain_source_and_caller_context() {
             .operation_id("send")
             .unwrap()
             .request()
-            .parameter(ParameterLocation::Query, "p", exact(r#"{"x":1}"#))
+            .parameter_exact(ParameterLocation::Query, "p", &exact(r#"{"x":1}"#))
             .prepare();
         if version.starts_with("3.2") {
             assert!(result.unwrap().target().ends_with("p%5Bx%5D=1"));
         } else {
             assert_eq!(
-                result.unwrap_err().diagnostic().reason(),
+                result.unwrap_err().reason(),
                 Some(&DiagnosticReason::UnsupportedStyleCombination)
             );
         }
@@ -188,7 +189,7 @@ fn path_reserved_applicability_and_literal_header_atoms() {
             .operation_id("send")
             .unwrap()
             .request()
-            .parameter(ParameterLocation::Path, "p", "a/b?c#d:~")
+            .parameter(ParameterLocation::Path, "p", &"a/b?c#d:~")
             .prepare()
             .unwrap();
         assert_eq!(
@@ -215,7 +216,7 @@ fn path_reserved_applicability_and_literal_header_atoms() {
                 .operation_id("send")
                 .unwrap()
                 .request()
-                .parameter(ParameterLocation::Header, "p", exact(value))
+                .parameter_exact(ParameterLocation::Header, "p", &exact(value))
                 .prepare()
                 .unwrap();
             assert_eq!(r.headers()[0].value(), expected.as_bytes());
@@ -225,7 +226,11 @@ fn path_reserved_applicability_and_literal_header_atoms() {
             d.operation_id("send")
                 .unwrap()
                 .request()
-                .parameter(ParameterLocation::Header, "p", "x\r\nAuthorization: stolen")
+                .parameter(
+                    ParameterLocation::Header,
+                    "p",
+                    &"x\r\nAuthorization: stolen"
+                )
                 .prepare()
                 .is_err()
         );
@@ -276,7 +281,7 @@ fn form_style_and_content_profiles_keep_32_outer_array_expansion() {
                 .operation_id("send")
                 .unwrap()
                 .request()
-                .form([FormField::new("p", exact(input))])
+                .form_fields([FormField::exact("p", exact(input))])
                 .prepare()
                 .unwrap();
             assert_eq!(
@@ -301,7 +306,7 @@ fn multipart_style_is_literal_and_30_ignores_style_fields() {
             .operation_id("send")
             .unwrap()
             .request()
-            .form([FormField::new("p", exact(r#"{"x":"a%2F&=+é"}"#))])
+            .form_fields([FormField::exact("p", exact(r#"{"x":"a%2F&=+é"}"#))])
             .prepare()
             .unwrap();
         let body = std::str::from_utf8(r.body().map(AsRef::as_ref).unwrap()).unwrap();
@@ -315,10 +320,7 @@ fn multipart_style_is_literal_and_30_ignores_style_fields() {
     }
 }
 fn key() -> Credential {
-    Credential {
-        value: CredentialValue::ApiKey("dummy-token".into()),
-        origins: vec!["https://api.example".into()],
-    }
+    Credential::api_key("dummy-token", vec!["https://api.example".into()])
 }
 #[test]
 fn security_compares_final_names_and_preserves_namespace_separation() {
@@ -339,11 +341,11 @@ fn security_compares_final_names_and_preserves_namespace_separation() {
                 .operation_id("send")
                 .unwrap()
                 .request()
-                .parameter(ParameterLocation::Query, "p", exact(value))
+                .parameter_exact(ParameterLocation::Query, "p", &exact(value))
                 .credential("Key", key())
                 .prepare()
                 .unwrap_err();
-            assert_eq!(e.diagnostic().code(), Code::CredentialCollision);
+            assert_eq!(e.code(), Code::CredentialCollision);
         }
         let d = parameter_doc(
             version,
@@ -357,10 +359,10 @@ fn security_compares_final_names_and_preserves_namespace_separation() {
             .operation_id("send")
             .unwrap()
             .request()
-            .parameter(
+            .parameter_exact(
                 ParameterLocation::Query,
                 "p",
-                exact(r#"{"x&token":"attacker","%74oken":"attacker"}"#),
+                &exact(r#"{"x&token":"attacker","%74oken":"attacker"}"#),
             )
             .credential("Key", key())
             .prepare()
@@ -375,7 +377,7 @@ fn security_compares_final_names_and_preserves_namespace_separation() {
             .operation_id("send")
             .unwrap()
             .request()
-            .form([FormField::new("token", "body-value")])
+            .form_fields([FormField::value("token", &"body-value", Limits::default()).unwrap()])
             .credential("Key", key())
             .prepare()
             .unwrap();
@@ -402,19 +404,19 @@ fn transformed_growth_is_admitted_before_output_and_form_limits_do_not_cap_param
     let op = d.operation_id("send").unwrap();
     assert!(
         op.request()
-            .parameter(ParameterLocation::Query, "p", exact(r#"{"x":"ok"}"#))
+            .parameter_exact(ParameterLocation::Query, "p", &exact(r#"{"x":"ok"}"#))
             .prepare()
             .is_ok()
     );
     let big = "é".repeat(5000);
-    let v = ExactJson::from_serializable(&json!({"x":big}), Limits::default()).unwrap();
+    let v = Value::from_serializable(&json!({"x":big}), Limits::default()).unwrap();
     let e = op
         .request()
-        .parameter(ParameterLocation::Query, "p", v.root())
+        .parameter_exact(ParameterLocation::Query, "p", &v.clone())
         .prepare()
         .unwrap_err();
     assert!(matches!(
-        e.diagnostic().reason(),
+        e.reason(),
         Some(DiagnosticReason::Limit {
             kind: LimitKind::TargetBytes,
             ..
@@ -424,10 +426,10 @@ fn transformed_growth_is_admitted_before_output_and_form_limits_do_not_cap_param
     cancel.cancel();
     assert_eq!(
         op.request()
-            .parameter(ParameterLocation::Query, "p", "x")
-            .prepare_with_cancellation(&cancel)
+            .parameter(ParameterLocation::Query, "p", &"x")
+            .cancellation(cancel.clone())
+            .prepare()
             .unwrap_err()
-            .diagnostic()
             .code(),
         Code::Cancelled
     );
@@ -445,11 +447,11 @@ fn transformed_growth_is_admitted_before_output_and_form_limits_do_not_cap_param
         .operation_id("send")
         .unwrap()
         .request()
-        .form([FormField::new("p", exact(r#"{"long":1}"#))])
+        .form_fields([FormField::exact("p", exact(r#"{"long":1}"#))])
         .prepare()
         .unwrap_err();
     assert!(matches!(
-        e.diagnostic().reason(),
+        e.reason(),
         Some(DiagnosticReason::Limit {
             kind: LimitKind::FormMetadataBytes,
             ..
@@ -472,7 +474,7 @@ fn chunk_boundaries_keep_unicode_and_percent_triplets_and_exact_numbers() {
         .operation_id("send")
         .unwrap()
         .request()
-        .parameter(ParameterLocation::Query, "p", input.as_str())
+        .parameter(ParameterLocation::Query, "p", &input.as_str())
         .prepare()
         .unwrap();
     assert_eq!(
@@ -485,7 +487,7 @@ fn chunk_boundaries_keep_unicode_and_percent_triplets_and_exact_numbers() {
         .operation_id("send")
         .unwrap()
         .request()
-        .parameter(ParameterLocation::Header, "p", input.as_str())
+        .parameter(ParameterLocation::Header, "p", &input.as_str())
         .prepare()
         .unwrap();
     assert_eq!(r.headers()[0].value(), input.as_bytes());
@@ -512,19 +514,16 @@ fn yaml_declaration_refusal_retains_authored_location_and_ignored_boolean_is_typ
         .operation_id("send")
         .unwrap()
         .request()
-        .parameter(ParameterLocation::Query, "p", exact(r#"{"x":1}"#))
+        .parameter_exact(ParameterLocation::Query, "p", &exact(r#"{"x":1}"#))
         .prepare()
         .unwrap_err();
     assert_eq!(
-        e.diagnostic().reason(),
+        e.reason(),
         Some(&DiagnosticReason::UnsupportedStyleCombination)
     );
-    let location = e.diagnostic().location().unwrap();
+    let location = e.location().unwrap();
     assert!(source[location.start..location.end].contains("style: deepObject"));
-    assert_eq!(
-        e.diagnostic().source_context().unwrap().origin,
-        SourceOrigin::Authored
-    );
+    assert_eq!(e.source_context().unwrap().origin, SourceOrigin::Authored);
     let d = parameter_doc(
         "3.2.1",
         "query",
@@ -537,10 +536,10 @@ fn yaml_declaration_refusal_retains_authored_location_and_ignored_boolean_is_typ
         .operation_id("send")
         .unwrap()
         .request()
-        .parameter(ParameterLocation::Query, "p", exact(r#"{"x":1}"#))
+        .parameter_exact(ParameterLocation::Query, "p", &exact(r#"{"x":1}"#))
         .prepare()
         .unwrap_err();
-    assert_eq!(e.diagnostic().code(), Code::InvalidDeclaration);
+    assert_eq!(e.code(), Code::InvalidDeclaration);
     let d = parameter_doc(
         "3.2.1",
         "query",
@@ -553,11 +552,8 @@ fn yaml_declaration_refusal_retains_authored_location_and_ignored_boolean_is_typ
         .operation_id("send")
         .unwrap()
         .request()
-        .parameter(ParameterLocation::Query, "p[x]", exact(r#"{"x":1}"#))
+        .parameter_exact(ParameterLocation::Query, "p[x]", &exact(r#"{"x":1}"#))
         .prepare()
         .unwrap_err();
-    assert_eq!(
-        e.diagnostic().reason(),
-        Some(&DiagnosticReason::AmbiguousStyleDelimiter)
-    );
+    assert_eq!(e.reason(), Some(&DiagnosticReason::AmbiguousStyleDelimiter));
 }

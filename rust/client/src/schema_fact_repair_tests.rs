@@ -1,6 +1,7 @@
 //! Additive root-authored R15–R17 fixture checks; the original contract is unchanged.
 use super::*;
 use crate::schema_facts::{Fact, FactQuery, FactValue, FactWork, SchemaSelection, query};
+use crate::{diagnostics::*, source::*};
 use serde_json::{Value as Json, json};
 use std::{collections::HashSet, sync::Arc};
 

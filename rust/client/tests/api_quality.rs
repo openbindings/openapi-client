@@ -1,4 +1,8 @@
+#[path = "support/request_case.rs"]
+mod request_case;
 use dynamic_openapi_client::*;
+use dynamic_openapi_client::{diagnostics::*, exact::*, inspect::*, source::*};
+use request_case::*;
 use std::error::Error;
 
 fn parse(text: &str) -> Document {
@@ -91,13 +95,15 @@ fn immutable_parse_pair_still_composes_as_standard_error() {
     let error = Document::parse(b"{", None, Limits::default()).unwrap_err();
     owned_error(&error);
     assert_eq!(error.source_bytes(), b"{");
-    assert_eq!(error.diagnostic().code(), Code::InvalidJson);
-    let source = error
-        .source()
-        .unwrap()
-        .downcast_ref::<Diagnostic>()
-        .unwrap();
-    assert_eq!(source, error.diagnostic());
+    assert_eq!(error.code(), Code::InvalidJson);
+    assert_eq!(
+        error
+            .source()
+            .unwrap()
+            .downcast_ref::<Diagnostic>()
+            .unwrap(),
+        &error
+    );
     let too_large = Document::parse(
         b"{}",
         None,
@@ -108,7 +114,7 @@ fn immutable_parse_pair_still_composes_as_standard_error() {
     )
     .unwrap_err();
     assert!(too_large.source_bytes().is_empty());
-    assert_eq!(too_large.diagnostic().code(), Code::Limit);
+    assert_eq!(too_large.code(), Code::Limit);
 }
 
 const REQUEST_DOC: &str = r#"{"openapi":"3.1.2","servers":[{"url":"https://{host}/{base}","variables":{"host":{"default":"api.example"},"base":{"default":"v1"}}}],"paths":{"/items/{id}":{"post":{"operationId":"post","parameters":[{"name":"id","in":"path","required":true,"schema":{}},{"name":"q","in":"query","schema":{}},{"name":"X-Key","in":"header","schema":{}}],"requestBody":{"content":{"application/json":{}}},"responses":{"200":{"description":"ok"}},"security":[{}, {"auth":[]}]}}},"components":{"securitySchemes":{"auth":{"type":"http","scheme":"bearer"}}}}"#;
@@ -118,10 +124,9 @@ fn request_operation(limits: Limits) -> Operation {
         .operation_id("post")
         .unwrap()
 }
-fn duplicate(builder: RequestBuilder<'_>, first: usize, repeated: usize) -> Diagnostic {
+fn duplicate(builder: RequestBuilder, first: usize, repeated: usize) -> Diagnostic {
     let error = builder.prepare().unwrap_err();
-    assert!(matches!(error, RequestError::Preparation(_)));
-    let d = error.diagnostic();
+    let d = &error;
     assert_eq!(d.code(), Code::InvalidSelection);
     assert_eq!(
         d.reason(),
@@ -135,18 +140,15 @@ fn duplicate(builder: RequestBuilder<'_>, first: usize, repeated: usize) -> Diag
     d.clone()
 }
 fn credential() -> Credential {
-    Credential {
-        value: CredentialValue::Bearer("test-only-token".into()),
-        origins: vec!["https://api.example".into()],
-    }
+    Credential::bearer("test-only-token", vec!["https://api.example".into()])
 }
 #[test]
 fn builder_assignment_algebra_has_typed_context_and_stable_events() {
     let op = request_operation(Limits::default());
     let d = duplicate(
         op.request()
-            .parameter(ParameterLocation::Header, "X-Key", 1)
-            .parameter(ParameterLocation::Header, "x-key", 1),
+            .parameter(ParameterLocation::Header, "X-Key", &1)
+            .parameter(ParameterLocation::Header, "x-key", &1),
         0,
         1,
     );
@@ -159,24 +161,24 @@ fn builder_assignment_algebra_has_typed_context_and_stable_events() {
         SelectionKind::Security,
     ] {
         let selection = match kind {
-            SelectionKind::Server => Selection {
+            SelectionKind::Server => CaseSelection {
                 server: Some(0),
                 ..Default::default()
             },
-            SelectionKind::Media => Selection {
+            SelectionKind::Media => CaseSelection {
                 media: Some("application/json".into()),
                 ..Default::default()
             },
-            _ => Selection {
+            _ => CaseSelection {
                 security: Some(0),
                 ..Default::default()
             },
         };
         let d = duplicate(
             op.request()
-                .selection(selection.clone())
-                .selection(Selection::default())
-                .selection(selection),
+                .case_selection(selection.clone())
+                .case_selection(CaseSelection::default())
+                .case_selection(selection),
             0,
             1,
         );
@@ -184,7 +186,7 @@ fn builder_assignment_algebra_has_typed_context_and_stable_events() {
             matches!(d.context(), Some(DiagnosticContext::Selection { kind: actual, .. }) if *actual == kind)
         );
     }
-    let mut selection = Selection {
+    let mut selection = CaseSelection {
         server: Some(0),
         media: Some("application/json".into()),
         security: Some(0),
@@ -196,7 +198,7 @@ fn builder_assignment_algebra_has_typed_context_and_stable_events() {
     selection.variables.insert("base".into(), "v1".into());
     let d = duplicate(
         op.request()
-            .selection(selection)
+            .case_selection(selection)
             .server_variable("host", "api.example"),
         4,
         5,
@@ -204,7 +206,7 @@ fn builder_assignment_algebra_has_typed_context_and_stable_events() {
     assert!(
         matches!(d.context(), Some(DiagnosticContext::Selection {kind: SelectionKind::ServerVariable, key: Some(key), ..}) if key == "host")
     );
-    let d = duplicate(op.request().body(Body::Absent).json(1_i32), 0, 1);
+    let d = duplicate(op.request().no_body().json(&1_i32), 0, 1);
     assert_eq!(d.context(), Some(&DiagnosticContext::Body));
     let d = duplicate(
         op.request()
@@ -231,67 +233,64 @@ fn builder_assignment_algebra_has_typed_context_and_stable_events() {
 #[test]
 fn builder_matches_equivalent_input_and_distinct_assignments_commute() {
     let op = request_operation(Limits::default());
-    let body = OrdinaryValue::Object(&[
-        ("count", OrdinaryValue::U64(u64::MAX)),
-        ("null", OrdinaryValue::Null),
+    let body = TestValue::Object(&[
+        ("count", TestValue::U64(u64::MAX)),
+        ("null", TestValue::Null),
     ]);
-    let mut selection = Selection {
+    let mut selection = CaseSelection {
         security: Some(0),
         ..Default::default()
     };
     selection.variables.insert("base".into(), "v2".into());
     let a = op
         .request()
-        .parameter(ParameterLocation::Path, "id", 9_007_199_254_740_993_u64)
-        .parameter(ParameterLocation::Query, "q", "A/\"B\n雪")
-        .json(body)
-        .selection(selection.clone())
+        .parameter(ParameterLocation::Path, "id", &9_007_199_254_740_993_u64)
+        .parameter(ParameterLocation::Query, "q", &"A/\"B\n雪")
+        .json(&body)
+        .case_selection(selection.clone())
         .header(Header::new("X-Extra", "a"))
         .header(Header::new("X-Extra", "b"))
         .prepare()
         .unwrap();
     let b = op
         .request()
-        .selection(Selection {
-            security: Some(0),
-            ..Default::default()
-        })
+        .security(0)
         .server_variable("base", "v2")
-        .json(body)
-        .parameter(ParameterLocation::Query, "q", "A/\"B\n雪")
-        .parameter(ParameterLocation::Path, "id", 9_007_199_254_740_993_u64)
+        .json(&body)
+        .parameter(ParameterLocation::Query, "q", &"A/\"B\n雪")
+        .parameter(ParameterLocation::Path, "id", &9_007_199_254_740_993_u64)
         .header(Header::new("X-Extra", "a"))
         .header(Header::new("X-Extra", "b"))
         .prepare()
         .unwrap();
-    let owner = ExactJson::from_ordinary(
-        OrdinaryValue::Array(&[
-            OrdinaryValue::U64(9_007_199_254_740_993),
-            OrdinaryValue::String("A/\"B\n雪"),
+    let owner = Value::from_serializable(
+        &TestValue::Array(&[
+            TestValue::U64(9_007_199_254_740_993),
+            TestValue::String("A/\"B\n雪"),
             body,
         ]),
         Limits::default(),
     )
     .unwrap();
-    let input = Input {
+    let input = CaseInput {
         selection,
         parameters: vec![
-            ParameterInput {
+            CaseParameter {
                 location: ParameterLocation::Path,
                 name: "id".into(),
-                value: owner.root().at(0).unwrap(),
+                value: owner.clone().at(0).unwrap(),
             },
-            ParameterInput {
+            CaseParameter {
                 location: ParameterLocation::Query,
                 name: "q".into(),
-                value: owner.root().at(1).unwrap(),
+                value: owner.clone().at(1).unwrap(),
             },
         ],
-        body: Body::Json(owner.root().at(2).unwrap()),
+        body: CaseBody::Json(owner.clone().at(2).unwrap()),
         headers: vec![Header::new("X-Extra", "a"), Header::new("X-Extra", "b")],
         ..Default::default()
     };
-    let raw = op.prepare(&input).unwrap();
+    let raw = op.prepare_case(&input).unwrap();
     for actual in [&a, &b] {
         assert_eq!(actual.method(), raw.method());
         assert_eq!(actual.target(), raw.target());
@@ -311,14 +310,14 @@ fn builder_matches_equivalent_input_and_distinct_assignments_commute() {
 #[test]
 fn first_refusal_stops_later_conversions_and_precedes_cancellation() {
     struct Never;
-    impl<'a> From<Never> for Argument<'a> {
-        fn from(_: Never) -> Self {
-            panic!("unadmitted argument converted")
+    impl serde::Serialize for Never {
+        fn serialize<S: serde::Serializer>(&self, _: S) -> Result<S::Ok, S::Error> {
+            panic!("unadmitted serializer called")
         }
     }
-    impl<'a> From<Never> for std::borrow::Cow<'a, str> {
-        fn from(_: Never) -> Self {
-            panic!("post-refusal name converted")
+    impl AsRef<str> for Never {
+        fn as_ref(&self) -> &str {
+            panic!("post-refusal name accessed")
         }
     }
     let op = request_operation(Limits {
@@ -327,15 +326,15 @@ fn first_refusal_stops_later_conversions_and_precedes_cancellation() {
     });
     let builder = op
         .request()
-        .parameter(ParameterLocation::Path, "id", Never)
-        .parameter(ParameterLocation::Query, Never, Never)
-        .json(Never)
+        .parameter(ParameterLocation::Path, "id", &Never)
+        .parameter(ParameterLocation::Query, Never, &Never)
+        .json(&Never)
         .server_variable(Never, Never);
     let cancel = Cancellation::default();
     cancel.cancel();
-    let e = builder.prepare_with_cancellation(&cancel).unwrap_err();
+    let e = builder.cancellation(cancel.clone()).prepare().unwrap_err();
     assert!(matches!(
-        e.diagnostic().reason(),
+        e.reason(),
         Some(DiagnosticReason::Limit {
             kind: LimitKind::InputCount,
             maximum: 0,
@@ -343,24 +342,21 @@ fn first_refusal_stops_later_conversions_and_precedes_cancellation() {
         })
     ));
     let op = request_operation(Limits::default());
-    let invalid = OrdinaryValue::Object(&[
-        ("duplicate", OrdinaryValue::Null),
-        ("duplicate", OrdinaryValue::Null),
+    let invalid = TestValue::Object(&[
+        ("duplicate", TestValue::Null),
+        ("duplicate", TestValue::Null),
     ]);
     let e = op
         .request()
-        .json(invalid)
-        .prepare_with_cancellation(&cancel)
+        .cancellation(cancel.clone())
+        .json(&invalid)
+        .prepare()
         .unwrap_err();
-    assert!(matches!(e, RequestError::Preparation(_)));
-    assert_eq!(e.diagnostic().code(), Code::Cancelled);
+    assert_eq!(e.code(), Code::Cancelled);
     assert!(
         op.request()
-            .parameter(ParameterLocation::Path, "id", 1_usize)
-            .selection(Selection {
-                security: Some(0),
-                ..Default::default()
-            })
+            .parameter(ParameterLocation::Path, "id", &1_usize)
+            .security(0)
             .prepare()
             .is_ok()
     );
@@ -368,63 +364,56 @@ fn first_refusal_stops_later_conversions_and_precedes_cancellation() {
 #[test]
 fn builder_preserves_source_domains_and_bounded_construction_failures() {
     let op = request_operation(Limits::default());
-    let exact = ExactJson::parse("null", Limits::default()).unwrap().root();
+    let exact = Value::parse("null", Limits::default()).unwrap();
     let e = op
         .request()
-        .parameter(ParameterLocation::Path, "id", exact.clone())
+        .parameter_exact(ParameterLocation::Path, "id", &exact.clone())
         .prepare()
         .unwrap_err();
-    assert_eq!(e.diagnostic().code(), Code::UnsupportedValue);
-    assert_eq!(
-        e.diagnostic().source_context(),
-        Some(exact.source_context())
-    );
-    assert_eq!(e.diagnostic().location(), Some(&exact.location()));
+    assert_eq!(e.code(), Code::UnsupportedValue);
+    assert_eq!(e.source_context(), Some(exact.source_context()));
+    assert_eq!(e.location(), Some(&exact.location()));
     let e = op
         .request()
-        .parameter(ParameterLocation::Path, "id", OrdinaryValue::Null)
+        .parameter(ParameterLocation::Path, "id", &TestValue::Null)
         .prepare()
         .unwrap_err();
-    assert_eq!(e.diagnostic().code(), Code::UnsupportedValue);
+    assert_eq!(e.code(), Code::UnsupportedValue);
     assert_eq!(
-        e.diagnostic().source_context().unwrap().origin,
+        e.source_context().unwrap().origin,
         SourceOrigin::Constructed
     );
-    let invalid = OrdinaryValue::Object(&[
-        ("duplicate", OrdinaryValue::Null),
-        ("duplicate", OrdinaryValue::Null),
+    let invalid = TestValue::Object(&[
+        ("duplicate", TestValue::Null),
+        ("duplicate", TestValue::Null),
     ]);
-    let e = op.request().json(invalid).prepare().unwrap_err();
-    let RequestError::Input(e) = e else {
-        panic!("input construction failure")
-    };
-    assert_eq!(e.diagnostic().code(), Code::DuplicateMember);
+    let e = op.request().json(&invalid).prepare().unwrap_err();
+    assert!(e.context().is_some());
+    assert_eq!(e.code(), Code::DuplicateMember);
     assert!(!e.source_bytes().is_empty());
     assert_eq!(
-        e.diagnostic().source_context().unwrap().origin,
+        e.source_context().unwrap().origin,
         SourceOrigin::Constructed
     );
     let op = request_operation(Limits {
         body_bytes: 4,
         ..Default::default()
     });
-    let e = op.request().json("\n\n").prepare().unwrap_err();
-    let RequestError::Input(e) = e else {
-        panic!("serialized body limit")
-    };
+    let e = op.request().json(&"\n\n").prepare().unwrap_err();
+    assert!(e.context().is_some());
     assert!(e.source_bytes().is_empty());
     assert!(matches!(
-        e.diagnostic().reason(),
+        e.reason(),
         Some(DiagnosticReason::Limit {
             kind: LimitKind::BodyBytes,
             maximum: 4,
             ..
         })
     ));
-    let e = op.request().json("long").prepare().unwrap_err();
-    assert!(matches!(e, RequestError::Preparation(_)));
+    let e = op.request().json(&"long").prepare().unwrap_err();
+    assert!(e.context().is_some());
     assert!(matches!(
-        e.diagnostic().reason(),
+        e.reason(),
         Some(DiagnosticReason::Limit {
             kind: LimitKind::BodyBytes,
             maximum: 4,
@@ -438,11 +427,11 @@ fn builder_preserves_source_domains_and_bounded_construction_failures() {
     });
     let e = op
         .request()
-        .parameter(ParameterLocation::Path, &huge, 1)
+        .parameter(ParameterLocation::Path, &huge, &1)
         .prepare()
         .unwrap_err();
     assert!(matches!(
-        e.diagnostic().reason(),
+        e.reason(),
         Some(DiagnosticReason::Limit {
             kind: LimitKind::InputBytes,
             ..

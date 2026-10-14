@@ -1,4 +1,10 @@
-use dynamic_openapi_client::{Code, Document, Limits, Method, SourceFormat, SourceOrigin};
+#[path = "support/request_case.rs"]
+mod request_case;
+use dynamic_openapi_client::diagnostics::Code;
+use dynamic_openapi_client::inspect::Method;
+use dynamic_openapi_client::source::{SourceFormat, SourceOrigin};
+use dynamic_openapi_client::{Document, Limits};
+use request_case::*;
 
 #[test]
 fn one_document_api_prepares_equivalent_json_and_yaml() {
@@ -22,10 +28,7 @@ fn diagnostic_and_retained_value_trace_use_original_yaml_definition() {
     assert_eq!(document.format(), SourceFormat::Yaml);
     let operation = document.operation_id("get").unwrap();
     let error = operation.request().prepare().unwrap_err();
-    let diagnostic = match &error {
-        dynamic_openapi_client::RequestError::Preparation(diagnostic) => diagnostic,
-        _ => panic!("expected preparation error"),
-    };
+    let diagnostic = &error;
     assert_eq!(diagnostic.code(), Code::MissingInput);
     let location = diagnostic.location().unwrap();
     assert!(yaml[location.start..location.end].contains("name: id"));
@@ -55,7 +58,7 @@ fn server_and_body_refusals_keep_yaml_definition_and_alias_locations() {
         .request()
         .prepare()
         .unwrap_err();
-    let diagnostic = error.diagnostic();
+    let diagnostic = error;
     let location = diagnostic.location().unwrap();
     assert!(yaml[location.start..location.end].contains("https://bad host"));
     assert_eq!(
@@ -75,13 +78,13 @@ fn server_and_body_refusals_keep_yaml_definition_and_alias_locations() {
         ..Limits::default()
     };
     let document = Document::parse(yaml, None, limits).unwrap();
-    // Explicit Input reaches the body preparation diagnostic. The ordinary
-    // builder applies its earlier body-size admission with caller Body context.
+    // Explicit CaseInput reaches the body preparation diagnostic. The ordinary
+    // builder applies its earlier body-size admission with caller CaseBody context.
     let diagnostic = document
         .operation_id("create")
         .unwrap()
-        .prepare(&dynamic_openapi_client::Input {
-            body: dynamic_openapi_client::Body::Json(document.root().get("x-use").unwrap()),
+        .prepare_case(&CaseInput {
+            body: CaseBody::Json(document.root().get("x-use").unwrap()),
             ..Default::default()
         })
         .unwrap_err();

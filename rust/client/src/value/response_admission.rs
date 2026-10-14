@@ -141,16 +141,16 @@ impl Admission {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::value::{ExactJson, Index, Limits};
+    use crate::value::{Index, Limits, Value};
 
     #[test]
     fn hydration_moves_decoded_strings_and_object_allocations() {
-        let owner = ExactJson::parse_response(
+        let owner = Value::parse_response(
             br#"{"left":["decoded\ntext",{"nested":"more"}],"right":{}}"#,
             Limits::default(),
         )
         .unwrap();
-        let Index::Deferred(deferred) = &owner.0.store.index else {
+        let Index::Deferred(deferred) = &owner.store.index else {
             panic!("deferred response")
         };
         let (strings, members, lookups) = {
@@ -177,7 +177,7 @@ mod tests {
                 .collect::<Vec<_>>();
             (strings, members, lookups)
         };
-        let nodes = owner.0.store.nodes();
+        let nodes = owner.store.nodes();
         assert_eq!(
             nodes
                 .iter()

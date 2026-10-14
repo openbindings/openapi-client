@@ -1,5 +1,8 @@
 //! Explicit optional application acceptance policies. Invocation always returns Outcome.
-use crate::{Code, Diagnostic, DispatchEvidence, ExactJson, Outcome, Response, UploadState};
+use crate::diagnostics::Code;
+use crate::exact::Value;
+use crate::transport::{DispatchEvidence, UploadState};
+use crate::{Diagnostic, Outcome, Response};
 
 /// Primary refusal under the named JSON response policies; independent facts remain in Outcome.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -21,7 +24,7 @@ pub struct CompletedJson {
     pub outcome: Outcome,
     /// Parsed once as exact JSON; retain this owner for subsequent reads.
     /// This does not assert that the transport decompressed content codings.
-    pub json: ExactJson,
+    pub json: Value,
 }
 /// Refused selected policy, retaining all available execution and decode evidence.
 /// Error::source follows the primary reason when represented by a Diagnostic:
@@ -36,7 +39,7 @@ pub struct JsonCallRefusal {
     pub outcome: Outcome,
     /// Successfully parsed exact JSON, including when execution or status also failed.
     /// The historical field name does not assert transport decompression.
-    pub decoded: Option<ExactJson>,
+    pub decoded: Option<Value>,
     /// Decode refusal, including when another condition is the primary reason.
     pub decode_error: Option<Diagnostic>,
 }

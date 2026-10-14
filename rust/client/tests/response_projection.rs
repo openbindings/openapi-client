@@ -1,4 +1,5 @@
 use dynamic_openapi_client::*;
+use dynamic_openapi_client::{diagnostics::*, exact::*, source::*, transport::*};
 use serde::Deserialize;
 use std::{
     error::Error,
@@ -9,12 +10,12 @@ use std::{
 
 #[test]
 fn typed_projection_keeps_exact_source_and_uses_explicit_serde_numeric_semantics() {
-    let exact = ExactJson::parse("9007199254740993", Limits::default()).unwrap();
+    let exact = Value::parse("9007199254740993", Limits::default()).unwrap();
     assert_eq!(exact.deserialize::<u64>().unwrap(), 9_007_199_254_740_993);
     assert_eq!(exact.deserialize::<f64>().unwrap(), 9_007_199_254_740_992.0);
     assert_eq!(
         exact
-            .root()
+            .clone()
             .number()
             .unwrap()
             .to_f64_exact()
@@ -23,7 +24,7 @@ fn typed_projection_keeps_exact_source_and_uses_explicit_serde_numeric_semantics
         Code::NumericConversion
     );
     assert_eq!(exact.source(), "9007199254740993");
-    let negative_zero = ExactJson::parse("-0", Limits::default()).unwrap();
+    let negative_zero = Value::parse("-0", Limits::default()).unwrap();
     assert!(negative_zero.deserialize::<i64>().is_err());
     assert!(
         negative_zero
@@ -31,15 +32,15 @@ fn typed_projection_keeps_exact_source_and_uses_explicit_serde_numeric_semantics
             .unwrap()
             .is_sign_negative()
     );
-    assert_eq!(negative_zero.root().number().unwrap().to_i64().unwrap(), 0);
+    assert_eq!(negative_zero.clone().number().unwrap().to_i64().unwrap(), 0);
     assert_eq!(negative_zero.source(), "-0");
     assert!(exact.deserialize::<u8>().is_err());
-    let max = ExactJson::parse(u128::MAX.to_string(), Limits::default()).unwrap();
+    let max = Value::parse(u128::MAX.to_string(), Limits::default()).unwrap();
     assert_eq!(max.deserialize::<u128>().unwrap(), u128::MAX);
-    let min = ExactJson::parse(i128::MIN.to_string(), Limits::default()).unwrap();
+    let min = Value::parse(i128::MIN.to_string(), Limits::default()).unwrap();
     assert_eq!(min.deserialize::<i128>().unwrap(), i128::MIN);
     assert!(
-        ExactJson::parse("1e9999", Limits::default())
+        Value::parse("1e9999", Limits::default())
             .unwrap()
             .deserialize::<f64>()
             .is_err()
@@ -52,13 +53,19 @@ fn borrowed_projection_and_sensitive_error_detail() {
     struct Item<'a> {
         name: &'a str,
     }
-    let exact = ExactJson::parse(r#"{"name":"item"}"#, Limits::default()).unwrap();
+    let exact = Value::parse(r#"{"name":"item"}"#, Limits::default()).unwrap();
     assert_eq!(exact.deserialize::<Item<'_>>().unwrap().name, "item");
-    let secret = ExactJson::parse(r#""response-secret""#, Limits::default()).unwrap();
+    let secret = Value::parse(r#""response-secret""#, Limits::default()).unwrap();
     let error = secret.deserialize::<u64>().unwrap_err();
     assert!(!format!("{error} {error:?}").contains("response-secret"));
     assert!(error.source().is_none());
-    assert!(error.detail().to_string().contains("response-secret"));
+    assert!(
+        error
+            .detail()
+            .unwrap()
+            .to_string()
+            .contains("response-secret")
+    );
     assert!(error.column() > 0);
 }
 
@@ -135,12 +142,12 @@ fn explicit_response_policy_preserves_uncertain_upload_and_http_error_evidence()
 #[test]
 fn default_errors_are_readable_and_explicit_location_formatting_is_escaped() {
     let failure =
-        ExactJson::parse("{\"secret\\nkey\":0,\"secret\\nkey\":1}", Limits::default()).unwrap_err();
-    let error = failure.diagnostic();
+        Value::parse("{\"secret\\nkey\":0,\"secret\\nkey\":1}", Limits::default()).unwrap_err();
+    let error = failure;
     assert!(error.to_string().contains("duplicate decoded member names"));
     assert!(!format!("{error} {error:?}").contains("secret"));
-    let exact = ExactJson::parse("{\"secret\\nkey\":1.1}", Limits::default()).unwrap();
-    let value = exact.root().get("secret\nkey").unwrap();
+    let exact = Value::parse("{\"secret\\nkey\":1.1}", Limits::default()).unwrap();
+    let value = exact.clone().get("secret\nkey").unwrap();
     let numeric = value.number().unwrap().to_i64().unwrap_err();
     let located = numeric.display_with_location().to_string();
     assert!(located.contains("JSON pointer"));
@@ -156,11 +163,14 @@ fn repeated_response_json_calls_keep_independent_exact_owners() {
     let second = response.json().unwrap();
     assert_eq!(first.source(), second.source());
     assert_ne!(
-        first.root().source_context().id,
-        second.root().source_context().id
+        first.clone().source_context().id,
+        second.clone().source_context().id
     );
-    assert_eq!(first.root().source_context().origin, SourceOrigin::Authored);
-    let child = first.root().get("id").unwrap();
+    assert_eq!(
+        first.clone().source_context().origin,
+        SourceOrigin::Authored
+    );
+    let child = first.clone().get("id").unwrap();
     let context = child.source_context();
     drop(first);
     drop(second);

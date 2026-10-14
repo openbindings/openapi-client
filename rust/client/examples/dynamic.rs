@@ -1,4 +1,5 @@
 //! Dynamic public consumer using a supplied in-memory transport.
+use dynamic_openapi_client::transport::*;
 use dynamic_openapi_client::*;
 use std::{
     future::Future,
@@ -45,7 +46,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     })?;
     assert_eq!(completed.outcome.upload, UploadState::Complete);
     assert_eq!(
-        completed.json.root().get("n").unwrap().raw(),
+        completed.json.clone().get("n").unwrap().raw(),
         "9007199254740993"
     );
     println!(

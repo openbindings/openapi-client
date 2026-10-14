@@ -1,7 +1,10 @@
-use dynamic_openapi_client::{
-    Code, Credential, CredentialValue, Diagnostic, DiagnosticReason, Document, Input, Limits,
-    Method, SourceOrigin,
-};
+#[path = "support/request_case.rs"]
+mod request_case;
+use dynamic_openapi_client::diagnostics::{Code, DiagnosticReason};
+use dynamic_openapi_client::inspect::Method;
+use dynamic_openapi_client::source::SourceOrigin;
+use dynamic_openapi_client::{Credential, Diagnostic, Document, Limits};
+use request_case::*;
 use serde_json::json;
 
 fn assert_location(
@@ -59,8 +62,8 @@ fn undefined_scheme_locates_inherited_and_operation_requirement_in_every_family(
                 };
                 for error in [
                     op.describe().unwrap_err(),
-                    op.prepare(&Input::default()).unwrap_err(),
-                    op.request().prepare().unwrap_err().diagnostic().clone(),
+                    op.prepare_case(&CaseInput::default()).unwrap_err(),
+                    op.request().prepare().unwrap_err().clone(),
                 ] {
                     if version == "3.2.1" {
                         assert_eq!(error.code(), Code::ResourceUnavailable);
@@ -74,7 +77,7 @@ fn undefined_scheme_locates_inherited_and_operation_requirement_in_every_family(
                         );
                         assert_eq!(
                             need.reference_kind(),
-                            Some(dynamic_openapi_client::ReferenceKind::SecurityScheme)
+                            Some(dynamic_openapi_client::graph::ReferenceKind::SecurityScheme)
                         );
                     } else {
                         assert_location(
@@ -103,7 +106,7 @@ fn missing_scheme_alias_retains_definition_and_use_without_leaking_name() {
         .request()
         .prepare()
         .unwrap_err();
-    let diagnostic = error.diagnostic();
+    let diagnostic = error;
     assert_eq!(
         diagnostic.reason(),
         Some(&DiagnosticReason::UndefinedSecurityScheme)
@@ -125,13 +128,10 @@ fn correcting_definition_preserves_credential_checks_and_scoped_success() {
     let op = doc.operation("/items", Method::Get).unwrap();
     assert!(op.describe().is_ok());
     assert_eq!(
-        op.request().prepare().unwrap_err().diagnostic().code(),
+        op.request().prepare().unwrap_err().code(),
         Code::MissingCredential
     );
-    let credential = Credential {
-        value: CredentialValue::Bearer("test-token".into()),
-        origins: vec!["https://example.test".into()],
-    };
+    let credential = Credential::bearer("test-token", vec!["https://example.test".into()]);
     let request = op
         .request()
         .credential("token", credential)
@@ -182,7 +182,7 @@ fn operation_references_are_visible_but_never_silently_prepared() {
                 for error in [
                     op.parameters().unwrap_err(),
                     op.describe().unwrap_err(),
-                    op.request().prepare().unwrap_err().diagnostic().clone(),
+                    op.request().prepare().unwrap_err().clone(),
                 ] {
                     assert_eq!(
                         error.reason(),
@@ -230,7 +230,7 @@ fn additional_operation_reference_uses_the_same_guard() {
         .unwrap();
     let error = op.request().prepare().unwrap_err();
     assert_location(
-        error.diagnostic(),
+        &error,
         DiagnosticReason::UnsupportedReferencePosition,
         "/paths/~1items/additionalOperations/COPY/$ref",
         source,

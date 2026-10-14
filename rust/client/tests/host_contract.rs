@@ -1,6 +1,7 @@
 //! Public H0 controls. Literal expectations are mapped to the frozen review IDs
 //! in the author evidence; this is not independent host qualification.
 use dynamic_openapi_client::*;
+use dynamic_openapi_client::{diagnostics::*, exact::*, transport::*};
 use std::{
     cell::Cell,
     future::Future,
@@ -128,11 +129,7 @@ fn strict_host_keeps_declared_assurance_and_identical_dispatch_bytes_under_both_
         .unwrap()
         .request()
         .header(Header::sensitive("X-Secret", "header-secret"))
-        .json(
-            ExactJson::parse(r#"{"body":"body-secret"}"#, Limits::default())
-                .unwrap()
-                .root(),
-        )
+        .json_exact(&Value::parse(r#"{"body":"body-secret"}"#, Limits::default()).unwrap())
         .prepare()
         .unwrap();
     for (no_retries, policy, expected) in [
@@ -370,7 +367,7 @@ fn acceptance_keeps_fidelity_replay_and_upload_independent() {
                 fidelity
             );
             assert_eq!(
-                received.json.root().get("id").unwrap().raw(),
+                received.json.clone().get("id").unwrap().raw(),
                 "9007199254740993"
             );
             let complete = policies::complete_2xx_json(out);
@@ -607,11 +604,7 @@ fn source_request_and_response_owners_survive_only_as_explicitly_retained() {
     let weak = Arc::downgrade(&entity);
     let d = Document::parse(DOC, None, Limits::default()).unwrap();
     let op = d.operation_id("send").unwrap();
-    let p = op
-        .request()
-        .body(Body::Raw(entity.clone()))
-        .prepare()
-        .unwrap();
+    let p = op.request().raw_body(entity.clone()).prepare().unwrap();
     drop(entity);
     drop(op);
     drop(d);
@@ -637,7 +630,7 @@ fn source_request_and_response_owners_survive_only_as_explicitly_retained() {
             .unwrap()
             .json()
             .unwrap()
-            .root()
+            .clone()
             .get("id")
             .unwrap()
             .raw(),
@@ -657,7 +650,7 @@ fn invalid_public_inputs_refuse_in_preparation_and_delivered_bounds_remain_indep
         .header(Header::new("bad name", "v"))
         .prepare()
         .unwrap_err();
-    assert_eq!(error.diagnostic().code(), Code::InvalidHeader);
+    assert_eq!(error.code(), Code::InvalidHeader);
     let invalid = Document::parse(
         DOC.replace("https://api.example", "https://api.example/#fragment"),
         None,

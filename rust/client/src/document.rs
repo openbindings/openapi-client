@@ -1,4 +1,6 @@
-use crate::{Code, Diagnostic, ExactJson, Limits, ParseFailure, Value};
+use crate::diagnostics::Code;
+use crate::exact::Value;
+use crate::{Diagnostic, Limits};
 use std::{
     collections::{HashMap, HashSet},
     sync::{Arc, OnceLock, atomic::AtomicUsize},
@@ -20,19 +22,20 @@ pub enum Edition {
 impl Edition {
     pub(crate) fn detect(root: &Value) -> Result<Self, Diagnostic> {
         Self::detect_optional(root)?.ok_or_else(|| {
-            root.error(Code::UnsupportedVersion)
-                .reasoned(crate::DiagnosticReason::Version(
-                    crate::VersionReason::Missing,
-                ))
+            root.error(Code::UnsupportedVersion).reasoned(
+                crate::diagnostics::DiagnosticReason::Version(
+                    crate::diagnostics::VersionReason::Missing,
+                ),
+            )
         })
     }
     // Optional resource classification shares the required detector's grammar,
     // without allocating an unused Missing diagnostic for an untyped resource.
     pub(crate) fn detect_optional(root: &Value) -> Result<Option<Self>, Diagnostic> {
-        use crate::VersionReason;
+        use crate::diagnostics::VersionReason;
         let fail = |node: &Value, reason| {
             node.error(Code::UnsupportedVersion)
-                .reasoned(crate::DiagnosticReason::Version(reason))
+                .reasoned(crate::diagnostics::DiagnosticReason::Version(reason))
         };
         match (root.get("swagger"), root.get("openapi")) {
             (Some(_), Some(_)) => Err(fail(root, VersionReason::Conflicting)),
@@ -198,8 +201,8 @@ pub(crate) struct Record {
 }
 pub(crate) struct Store {
     pub graph: crate::graph::Graph,
-    pub entry: crate::ResourceId,
-    pub json: ExactJson,
+    pub entry: crate::graph::ResourceId,
+    pub json: Value,
     pub edition: Result<Edition, Diagnostic>,
     pub base: Option<String>,
     pub limits: Limits,
@@ -270,7 +273,7 @@ impl Document {
         bytes: impl AsRef<[u8]>,
         base: Option<&str>,
         limits: Limits,
-    ) -> Result<Self, ParseFailure> {
+    ) -> Result<Self, Diagnostic> {
         Self::parse_with_cancellation(bytes, base, limits, &crate::Cancellation::default())
     }
     /// Parse/index with cooperative cancellation checkpoints in owned work.
@@ -279,63 +282,49 @@ impl Document {
         base: Option<&str>,
         limits: Limits,
         cancellation: &crate::Cancellation,
-    ) -> Result<Self, ParseFailure> {
-        cancellation.check().map_err(|diagnostic| ParseFailure {
-            diagnostic,
-            source: Arc::from([]),
-        })?;
+    ) -> Result<Self, Diagnostic> {
+        cancellation
+            .check()
+            .map_err(|diagnostic| (diagnostic).parse_failure(Arc::from([])))?;
         if bytes.as_ref().len() > limits.document_bytes {
-            return Err(ParseFailure {
-                diagnostic: Diagnostic::limited(
-                    crate::LimitKind::DocumentBytes,
-                    limits.document_bytes,
-                    bytes.as_ref().len(),
-                ),
-                source: Arc::from([]),
-            });
+            return Err((Diagnostic::limited(
+                crate::diagnostics::LimitKind::DocumentBytes,
+                limits.document_bytes,
+                bytes.as_ref().len(),
+            ))
+            .parse_failure(Arc::from([])));
         }
         if let Some(base) = base {
             crate::graph::bound(
                 0,
                 base.len(),
                 limits.target_bytes,
-                crate::LimitKind::TargetBytes,
+                crate::diagnostics::LimitKind::TargetBytes,
             )
-            .map_err(|diagnostic| ParseFailure {
-                diagnostic: diagnostic.contextual(crate::DiagnosticContext::CallerInput),
-                source: Arc::from([]),
+            .map_err(|diagnostic| {
+                (diagnostic.contextual(crate::diagnostics::DiagnosticContext::CallerInput))
+                    .parse_failure(Arc::from([]))
             })?;
         }
         let json = crate::loading::parse(bytes.as_ref(), limits.clone(), cancellation)?;
         let metadata = match base {
-            Some(base) => {
-                crate::ResourceInput::at(base, Arc::<[u8]>::from([])).map_err(|diagnostic| {
-                    ParseFailure {
-                        diagnostic,
-                        source: Arc::from(bytes.as_ref()),
-                    }
-                })?
-            }
-            None => crate::ResourceInput::anonymous(Arc::<[u8]>::from([])),
+            Some(base) => crate::graph::ResourceInput::at(base, Arc::<[u8]>::from([]))
+                .map_err(|diagnostic| (diagnostic).parse_failure(Arc::from(bytes.as_ref())))?,
+            None => crate::graph::ResourceInput::anonymous(Arc::<[u8]>::from([])),
         };
-        let mut builder = crate::DocumentBuilder::new(limits, crate::GraphLimits::default());
+        let mut builder =
+            crate::graph::DocumentBuilder::new(limits, crate::graph::GraphLimits::default());
         let entry = builder
             .admit_parsed(json, metadata, cancellation)
-            .map_err(|diagnostic| ParseFailure {
-                diagnostic,
-                source: Arc::from(bytes.as_ref()),
-            })?;
+            .map_err(|diagnostic| (diagnostic).parse_failure(Arc::from(bytes.as_ref())))?;
         builder
             .build_with_cancellation(entry, cancellation)
-            .map_err(|diagnostic| ParseFailure {
-                diagnostic,
-                source: Arc::from(bytes.as_ref()),
-            })
+            .map_err(|diagnostic| (diagnostic).parse_failure(Arc::from(bytes.as_ref())))
     }
 
     pub(crate) fn from_graph(
         graph: crate::graph::Graph,
-        entry: crate::ResourceId,
+        entry: crate::graph::ResourceId,
         limits: Limits,
         cancellation: &crate::Cancellation,
     ) -> Result<Self, Diagnostic> {
@@ -534,7 +523,7 @@ impl Document {
         self.0.json.root()
     }
     /// Serialization detected from the original document bytes.
-    pub fn format(&self) -> crate::SourceFormat {
+    pub fn format(&self) -> crate::source::SourceFormat {
         self.0.json.source_format()
     }
     /// Version spelling, with missing/non-string represented as absent.
@@ -610,14 +599,14 @@ impl Document {
         &self,
         pointer: &str,
         kind: ReferenceKind,
-    ) -> Result<crate::ProtocolSite, Diagnostic> {
+    ) -> Result<crate::graph::ProtocolSite, Diagnostic> {
         self.entry_resource().protocol_at(pointer, kind)
     }
     /// Resolve a validated site from this exact snapshot. This never acquires resources.
     /// A resolved Path Item may retain method-local `path_item_conflicts`.
     pub fn resolve_protocol(
         &self,
-        site: &crate::ProtocolSite,
+        site: &crate::graph::ProtocolSite,
     ) -> Result<ResolvedReference, Diagnostic> {
         if !Arc::ptr_eq(&self.0, &site.store) {
             return Err(Diagnostic::new(Code::SnapshotMismatch));
@@ -628,26 +617,29 @@ impl Document {
             .map_err(|e| e.bind_graph(&self.0))
     }
     /// Entry source handle, retaining its original identity and bytes.
-    pub fn entry_resource(&self) -> crate::ResourceHandle {
-        crate::ResourceHandle {
+    pub fn entry_resource(&self) -> crate::graph::ResourceHandle {
+        crate::graph::ResourceHandle {
             store: self.0.clone(),
             id: self.0.entry,
         }
     }
     /// Select an admitted source by its stable identity.
-    pub fn resource(&self, id: crate::ResourceId) -> Option<crate::ResourceHandle> {
-        self.0.graph.resource(id).map(|_| crate::ResourceHandle {
-            store: self.0.clone(),
-            id,
-        })
+    pub fn resource(&self, id: crate::graph::ResourceId) -> Option<crate::graph::ResourceHandle> {
+        self.0
+            .graph
+            .resource(id)
+            .map(|_| crate::graph::ResourceHandle {
+                store: self.0.clone(),
+                id,
+            })
     }
     /// All admitted original sources in admission order.
-    pub fn resources(&self) -> impl ExactSizeIterator<Item = crate::ResourceHandle> + '_ {
+    pub fn resources(&self) -> impl ExactSizeIterator<Item = crate::graph::ResourceHandle> + '_ {
         self.0
             .graph
             .resources
             .iter()
-            .map(|r| crate::ResourceHandle {
+            .map(|r| crate::graph::ResourceHandle {
                 store: self.0.clone(),
                 id: r.id,
             })

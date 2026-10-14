@@ -1,6 +1,7 @@
+use dynamic_openapi_client::exact::Value;
+use dynamic_openapi_client::transport::{BodyState, DispatchEvidence, Provenance, UploadState};
 use dynamic_openapi_client::{
-    BodyState, Cancellation, Credential, CredentialValue, DispatchEvidence, Document, ExactJson,
-    Header, Limits, ParameterLocation, Provenance, UploadState, policies,
+    Cancellation, Credential, Document, Header, Limits, ParameterLocation, policies,
 };
 use dynamic_openapi_client_reqwest::{Certificate, Client};
 use std::{sync::Arc, time::Duration};
@@ -81,17 +82,17 @@ fn document(origin: &str, limit: usize, secure: bool) -> Document {
     )
     .unwrap()
 }
-fn prepared(doc: &Document) -> dynamic_openapi_client::PreparedRequest {
+fn prepared(doc: &Document) -> dynamic_openapi_client::transport::PreparedRequest {
     doc.operation_id("run")
         .unwrap()
         .request()
-        .parameter(ParameterLocation::Path, "id", "alpha")
+        .parameter(ParameterLocation::Path, "id", &"alpha")
         .prepare()
         .unwrap()
 }
 async fn execute(
     client: &Client,
-    request: &dynamic_openapi_client::PreparedRequest,
+    request: &dynamic_openapi_client::transport::PreparedRequest,
     cancel: Cancellation,
 ) -> dynamic_openapi_client::Outcome {
     tokio::time::timeout(Duration::from_secs(3), client.execute(request, cancel))
@@ -123,15 +124,12 @@ async fn configured_auth_exact_body_and_explicit_server_close() {
     let client = Client::builder()
         .credential(
             "bearer",
-            Credential {
-                value: CredentialValue::Bearer("local-test-token".into()),
-                origins: vec![origin.clone()],
-            },
+            Credential::bearer("local-test-token", vec![origin.clone()]),
         )
         .build()
         .unwrap();
     let doc = document(&origin, 4096, true);
-    let exact = ExactJson::parse(
+    let exact = Value::parse(
         br#"{"n":9007199254740993123456789,"nested":[false,"x"]}"#,
         Limits::default(),
     )
@@ -139,9 +137,9 @@ async fn configured_auth_exact_body_and_explicit_server_close() {
     let op = doc.operation_id("run").unwrap();
     let request = client
         .request(&op)
-        .parameter(ParameterLocation::Path, "id", "a/b")
-        .parameter(ParameterLocation::Query, "q", "x y&z")
-        .json(exact.root())
+        .parameter(ParameterLocation::Path, "id", &"a/b")
+        .parameter(ParameterLocation::Query, "q", &"x y&z")
+        .json_exact(&exact.clone())
         .prepare()
         .unwrap();
     for _ in 0..2 {
@@ -149,7 +147,7 @@ async fn configured_auth_exact_body_and_explicit_server_close() {
         assert_eq!(outcome.dispatch, DispatchEvidence::Dispatched);
         assert_eq!(outcome.upload, UploadState::Unknown);
         let accepted = policies::received_2xx_json(outcome).unwrap();
-        assert_eq!(accepted.json.root().raw(), r#"{"ok":true}"#);
+        assert_eq!(accepted.json.clone().raw(), r#"{"ok":true}"#);
     }
     for received in server.await.unwrap() {
         assert!(
@@ -165,14 +163,14 @@ async fn configured_auth_exact_body_and_explicit_server_close() {
                 .contains("authorization: Bearer local-test-token\r\n")
         );
         assert!(!received.head.to_ascii_lowercase().contains("\r\ncookie:"));
-        assert_eq!(received.body, exact.root().raw().as_bytes());
+        assert_eq!(received.body, exact.clone().raw().as_bytes());
     }
     assert!(!format!("{client:?}").contains("local-test-token"));
     let wrong_origin = document("http://127.0.0.1:1", 4096, true);
     assert!(
         client
             .request(&wrong_origin.operation_id("run").unwrap())
-            .parameter(ParameterLocation::Path, "id", "x")
+            .parameter(ParameterLocation::Path, "id", &"x")
             .prepare()
             .is_err()
     );
@@ -195,10 +193,7 @@ async fn non_success_json_and_duplicate_response_headers_survive() {
     assert!(outcome.error.is_none());
     let refusal = policies::received_2xx_json(outcome).unwrap_err();
     assert_eq!(refusal.reason, policies::CompleteJsonRefusal::HttpStatus);
-    assert_eq!(
-        refusal.decoded.unwrap().root().raw(),
-        r#"{"error":"bad input"}"#
-    );
+    assert_eq!(refusal.decoded.unwrap().raw(), r#"{"error":"bad input"}"#);
     let response = refusal.outcome.response.unwrap();
     assert_eq!(
         response
@@ -399,7 +394,7 @@ async fn target_normalization_and_framing_headers_refuse_before_dispatch() {
         .operation_id("run")
         .unwrap()
         .request()
-        .parameter(ParameterLocation::Path, "id", "x")
+        .parameter(ParameterLocation::Path, "id", &"x")
         .header(Header::new("Content-Length", b"0"))
         .prepare()
         .unwrap();
@@ -499,10 +494,7 @@ async fn https_checks_trust_and_additional_roots_are_additive() {
         });
         let mut builder = Client::builder().credential(
             "bearer",
-            Credential {
-                value: CredentialValue::Bearer("tls-test-token".into()),
-                origins: vec![origin.clone()],
-            },
+            Credential::bearer("tls-test-token", vec![origin.clone()]),
         );
         if trusted {
             builder = builder
@@ -518,7 +510,7 @@ async fn https_checks_trust_and_additional_roots_are_additive() {
         let operation = doc.operation_id("run").unwrap();
         let request = client
             .request(&operation)
-            .parameter(ParameterLocation::Path, "id", "alpha")
+            .parameter(ParameterLocation::Path, "id", &"alpha")
             .prepare()
             .unwrap();
         let outcome = execute(&client, &request, Cancellation::default()).await;
@@ -527,7 +519,7 @@ async fn https_checks_trust_and_additional_roots_are_additive() {
                 policies::received_2xx_json(outcome)
                     .unwrap()
                     .json
-                    .root()
+                    .clone()
                     .raw(),
                 r#"{"tls":true}"#
             );
@@ -565,14 +557,15 @@ async fn h0_native_preflight_preserves_absent_assurance() {
     assert_eq!(outcome.upload, UploadState::NotStarted);
     assert_eq!(
         outcome.error.as_ref().unwrap().code(),
-        dynamic_openapi_client::Code::HostCapability
+        dynamic_openapi_client::diagnostics::Code::HostCapability
     );
 }
 
 // H1 public counterpart to tiny private collector bounds: the source fits M=4096.
 #[tokio::test]
 async fn native_metadata_cutoff_is_partial_evidence_and_body_still_completes() {
-    use dynamic_openapi_client::{Code, HeaderDelivery, HeaderFidelity, ReplayAssurance};
+    use dynamic_openapi_client::diagnostics::Code;
+    use dynamic_openapi_client::transport::{HeaderDelivery, HeaderFidelity, ReplayAssurance};
     let (origin, server) = one_reply(response(
         "200 OK",
         &format!("X-Large: {}\r\n", "a".repeat(4097)),

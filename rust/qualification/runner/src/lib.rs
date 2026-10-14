@@ -1,4 +1,5 @@
 //! Qualification-only public-API adapter and assertion harness.
+use dynamic_openapi_client::{diagnostics::*, exact::*, graph::*, inspect::*, transport::*};
 use dynamic_openapi_client::{
     qualification::{cached_operations, live_owners},
     *,
@@ -53,67 +54,66 @@ pub fn limits(c: &J) -> Limits {
     }
     l
 }
-pub fn input(c: &J) -> Input {
-    let mut input = Input::default();
-    input.selection.server = c.get("server").and_then(J::as_u64).map(|n| n as usize);
-    input.selection.security = c.get("security").and_then(J::as_u64).map(|n| n as usize);
-    input.selection.media = c.get("media").and_then(J::as_str).map(str::to_owned);
-    if let Some(v) = c.get("variables").and_then(J::as_object) {
-        input.selection.variables = v
-            .iter()
-            .map(|(k, v)| (k.clone(), v.as_str().unwrap().to_owned()))
-            .collect();
+pub fn input(op: &Operation, c: &J) -> RequestBuilder {
+    let mut request = op.request();
+    if let Some(v) = c.get("server").and_then(J::as_u64) {
+        request = request.server(v as usize);
     }
-    if let Some(a) = c.get("parameters").and_then(J::as_array) {
-        for p in a {
-            input.parameters.push(ParameterInput {
-                location: ParameterLocation::parse(p["location"].as_str().unwrap()).unwrap(),
-                name: p["name"].as_str().unwrap().to_owned(),
-                value: ExactJson::parse(p["value"].as_str().unwrap(), Limits::default())
-                    .unwrap()
-                    .root(),
-            });
+    if let Some(v) = c.get("security").and_then(J::as_u64) {
+        request = request.security(v as usize);
+    }
+    if let Some(v) = c.get("media").and_then(J::as_str) {
+        request = request.media(v);
+    }
+    if let Some(v) = c.get("variables").and_then(J::as_object) {
+        for (k, v) in v {
+            request = request.server_variable(k, v.as_str().unwrap());
+        }
+    }
+    if let Some(values) = c.get("parameters").and_then(J::as_array) {
+        for p in values {
+            request = request.parameter_exact(
+                ParameterLocation::parse(p["location"].as_str().unwrap()).unwrap(),
+                p["name"].as_str().unwrap(),
+                &Value::parse(p["value"].as_str().unwrap(), Limits::default()).unwrap(),
+            );
         }
     }
     if let Some(b) = c.get("body") {
         if let Some(s) = b.get("json").and_then(J::as_str) {
-            input.body = Body::Json(ExactJson::parse(s, Limits::default()).unwrap().root());
+            request = request.json_exact(&Value::parse(s, Limits::default()).unwrap());
         } else if let Some(s) = b.get("raw_hex").and_then(J::as_str) {
-            input.body = Body::Raw(unhex(s).into());
+            request = request.raw_body(unhex(s));
         }
     }
     if let Some(a) = c.get("headers").and_then(J::as_array) {
-        input.headers = a
-            .iter()
-            .map(|h| Header::new(h[0].as_str().unwrap(), h[1].as_str().unwrap()))
-            .collect();
+        for h in a {
+            request = request.header(Header::new(h[0].as_str().unwrap(), h[1].as_str().unwrap()));
+        }
     }
     if let Some(credentials) = c.get("credentials").and_then(J::as_object) {
         for (name, cr) in credentials {
-            let value = match cr["kind"].as_str().unwrap() {
-                "basic" => CredentialValue::Basic {
-                    username: cr["username"].as_str().unwrap().to_owned(),
-                    password: cr["password"].as_str().unwrap().to_owned(),
-                },
-                "bearer" => CredentialValue::Bearer(cr["value"].as_str().unwrap().to_owned()),
-                _ => CredentialValue::ApiKey(cr["value"].as_str().unwrap().to_owned()),
+            let origins = cr["origins"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|s| s.as_str().unwrap().to_owned())
+                .collect();
+            let credential = match cr["kind"].as_str().unwrap() {
+                "basic" => Credential::basic(
+                    cr["username"].as_str().unwrap(),
+                    cr["password"].as_str().unwrap(),
+                    origins,
+                ),
+                "bearer" => Credential::bearer(cr["value"].as_str().unwrap(), origins),
+                _ => Credential::api_key(cr["value"].as_str().unwrap(), origins),
             };
-            input.credentials.insert(
-                name.clone(),
-                Credential {
-                    value,
-                    origins: cr["origins"]
-                        .as_array()
-                        .unwrap()
-                        .iter()
-                        .map(|s| s.as_str().unwrap().to_owned())
-                        .collect(),
-                },
-            );
+            request = request.credential(name, credential);
         }
     }
-    input
+    request
 }
+
 fn err(e: Diagnostic) -> J {
     let display = e.to_string();
     json!({"error":format!("{:?}",e.code()),"location":e.location().map(|l|json!({"start":l.start,"end":l.end,"pointer":l.pointer})),"related":e.related().len(),"setting":e.setting(),"display":display})
@@ -193,7 +193,7 @@ pub fn outcome_facts(out: Outcome, p: &PreparedRequest) -> J {
                 .map(|(k, _)| k.to_owned())
         );
         match r.json() {
-            Ok(v) => facts["json_raw"] = json!(v.root().raw()),
+            Ok(v) => facts["json_raw"] = json!(v.clone().raw()),
             Err(e) => facts["decode_error"] = json!(format!("{:?}", e.code())),
         }
     }
@@ -211,8 +211,8 @@ pub fn run(c: &J) -> J {
         };
     }
     if action == "number" {
-        let j = ExactJson::parse(c["number"].as_str().unwrap(), limits(c)).unwrap();
-        let n = j.root();
+        let j = Value::parse(c["number"].as_str().unwrap(), limits(c)).unwrap();
+        let n = j.clone();
         let n = n.number().unwrap();
         let mut f = json!({});
         match n.to_i64() {
@@ -233,7 +233,7 @@ pub fn run(c: &J) -> J {
         let depth = c["depth"].as_u64().unwrap() as usize;
         let s = format!("{}0{}", "[".repeat(depth), "]".repeat(depth));
         for _ in 0..c["cycles"].as_u64().unwrap() {
-            drop(ExactJson::parse(s.as_bytes(), Limits::default()).unwrap());
+            drop(Value::parse(s.as_bytes(), Limits::default()).unwrap());
         }
         return json!({"passed":live_owners()==before,"live_delta":live_owners() as i64-before as i64});
     }
@@ -261,7 +261,7 @@ pub fn run(c: &J) -> J {
     let d = match Document::parse(&bytes, c.get("base").and_then(J::as_str), limits(c)) {
         Ok(d) => d,
         Err(e) => {
-            let mut f = err(e.diagnostic().clone());
+            let mut f = err(e.clone());
             f["source_preserved"] = json!(e.source_bytes() == bytes);
             return f;
         }
@@ -287,7 +287,8 @@ pub fn run(c: &J) -> J {
                     let p = d
                         .operation_id("items")
                         .unwrap()
-                        .prepare(&Input::default())
+                        .request()
+                        .prepare()
                         .unwrap();
                     assert_eq!(p.target(), "https://api.example/v1/items");
                 }
@@ -306,7 +307,10 @@ pub fn run(c: &J) -> J {
     if c.get("cancel").and_then(J::as_str) == Some("prepare") {
         preparation_cancel.cancel();
     }
-    let p = match op.prepare_with_cancellation(&input(c), &preparation_cancel) {
+    let p = match input(&op, c)
+        .cancellation(preparation_cancel.clone())
+        .prepare()
+    {
         Ok(p) => p,
         Err(e) => return err(e),
     };
@@ -380,29 +384,23 @@ fn limit_case(c: &J) -> J {
         "document_bytes" => {
             l.document_bytes = limit;
             let s = format!("{}{{}}", " ".repeat(n - 2));
-            result = ExactJson::parse(s, l)
-                .map(|_| ())
-                .map_err(|e| e.diagnostic().code());
+            result = Value::parse(s, l).map(|_| ()).map_err(|e| e.code());
         }
         "depth" => {
             l.depth = limit;
             let s = format!("{}0{}", "[".repeat(n), "]".repeat(n));
-            result = ExactJson::parse(s, l)
-                .map(|_| ())
-                .map_err(|e| e.diagnostic().code());
+            result = Value::parse(s, l).map(|_| ()).map_err(|e| e.code());
         }
         "nodes" => {
             l.nodes = limit;
             let s = format!("[{}]", vec!["0"; n - 1].join(","));
-            result = ExactJson::parse(s, l)
-                .map(|_| ())
-                .map_err(|e| e.diagnostic().code());
+            result = Value::parse(s, l).map(|_| ()).map_err(|e| e.code());
         }
         "operations" => {
             l.operations = limit;
             result = Document::parse(minimal(n).to_string(), None, l)
                 .map(|_| ())
-                .map_err(|e| e.diagnostic().code());
+                .map_err(|e| e.code());
         }
         "reference_steps" => {
             l.reference_steps = limit;
@@ -432,22 +430,19 @@ fn limit_case(c: &J) -> J {
             d["paths"]["/0"]["get"]["requestBody"] =
                 json!({"content":{"application/octet-stream":{}}});
             let d = Document::parse(d.to_string(), None, l).unwrap();
-            let i = Input {
-                body: Body::Raw(vec![0; n].into()),
-                ..Input::default()
-            };
             result = d
                 .operation_id("op0")
                 .unwrap()
-                .prepare(&i)
+                .request()
+                .raw_body(vec![0; n])
+                .prepare()
                 .map(|_| ())
                 .map_err(|e| e.code());
         }
         "number_conversion_chars" => {
             l.number_conversion_chars = limit;
-            let j = ExactJson::parse("1".repeat(n), l).unwrap();
+            let j = Value::parse("1".repeat(n), l).unwrap();
             result = j
-                .root()
                 .number()
                 .unwrap()
                 .to_i64()
@@ -458,7 +453,7 @@ fn limit_case(c: &J) -> J {
             l.cached_operations = limit;
             let d = Document::parse(minimal(n).to_string(), None, l).unwrap();
             for op in d.operations() {
-                op.prepare(&Input::default()).unwrap();
+                op.request().prepare().unwrap();
             }
             count = Some(cached_operations(&d));
             assert_eq!(count, Some(n.min(limit)));
@@ -505,7 +500,7 @@ pub fn campaign(family: &str, seconds: u64, seed: u64) -> J {
                 } else {
                     s.to_string()
                 };
-                accepted += u64::from(ExactJson::parse(x, l).is_ok());
+                accepted += u64::from(Value::parse(x, l).is_ok());
             }
             "pointer" => {
                 let p = format!("/paths/~{}{}", rng % 4, s);
@@ -532,12 +527,7 @@ pub fn campaign(family: &str, seconds: u64, seed: u64) -> J {
                     _ => json!([{"url":"https://api.example"}]),
                 };
                 let d = Document::parse(d.to_string(), None, Limits::default()).unwrap();
-                accepted += u64::from(
-                    d.operation_id("op0")
-                        .unwrap()
-                        .prepare(&Input::default())
-                        .is_ok(),
-                );
+                accepted += u64::from(d.operation_id("op0").unwrap().request().prepare().is_ok());
             }
             "parameters" => {
                 let data = match rng % 5 {
@@ -547,22 +537,22 @@ pub fn campaign(family: &str, seconds: u64, seed: u64) -> J {
                     3 => json!({"nested":[s.as_ref()]}),
                     _ => J::Null,
                 };
-                let value = ExactJson::parse(data.to_string(), Limits::default()).unwrap();
-                let input = Input {
-                    parameters: vec![ParameterInput {
-                        location: ParameterLocation::Query,
-                        name: "q".into(),
-                        value: value.root(),
-                    }],
-                    ..Input::default()
-                };
-                accepted += u64::from(doc.operation_id("item0").unwrap().prepare(&input).is_ok());
+                let value = Value::parse(data.to_string(), Limits::default()).unwrap();
+                accepted += u64::from(
+                    doc.operation_id("item0")
+                        .unwrap()
+                        .request()
+                        .parameter_exact(ParameterLocation::Query, "q", &value)
+                        .prepare()
+                        .is_ok(),
+                );
             }
             "response" => {
                 let p = doc
                     .operation_id("item0")
                     .unwrap()
-                    .prepare(&Input::default())
+                    .request()
+                    .prepare()
                     .unwrap();
                 let host = HostCapabilities::programmable();
                 let result = TransportResult {

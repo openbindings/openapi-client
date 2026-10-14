@@ -1,6 +1,7 @@
 //! Author contract checks. Frozen literals are copied without changing expectations.
 use super::*;
 use crate::schema_facts::{Fact, FactQuery, FactValue, FactWork, SchemaSelection, query};
+use crate::{diagnostics::*, graph::*, schema::*};
 use serde_json::{Value as Json, json};
 use std::{collections::HashMap, sync::Arc};
 
@@ -447,12 +448,10 @@ fn anonymous_layout_and_bytes_recovery_keep_old_snapshots() -> Result<(), Diagno
     let mut builder = DocumentBuilder::new(Limits::default(), GraphLimits::default());
     let bytes: Arc<[u8]> =
         Arc::from(br##"{"left":{"$ref":"#/right"},"right":{"type":"string"}}"##.as_slice());
-    let id = builder
-        .add(
-            ResourceInput::anonymous(bytes)
-                .layout(ResourceLayout::new().schema("/left", profile(DRAFT))),
-        )
-        .map_err(|e| e.diagnostic)?;
+    let id = builder.add(
+        ResourceInput::anonymous(bytes)
+            .layout(ResourceLayout::new().schema("/left", profile(DRAFT))),
+    )?;
     let old = builder.build(id)?;
     let edge = selected(&old, "/left").references()?.next().unwrap();
     let failure = edge.resolve_static().unwrap_err();
@@ -495,12 +494,10 @@ fn anonymous_layout_and_bytes_recovery_keep_old_snapshots() -> Result<(), Diagno
     let uri = need
         .requested_uri()
         .ok_or_else(|| Diagnostic::new(Code::MissingResourceBase))?;
-    repair
-        .supply(
-            need,
-            ResourceInput::at(uri, Arc::<[u8]>::from(br#"{"type":"string"}"#.as_slice()))?,
-        )
-        .map_err(|e| e.diagnostic)?;
+    repair.supply(
+        need,
+        ResourceInput::at(uri, Arc::<[u8]>::from(br#"{"type":"string"}"#.as_slice()))?,
+    )?;
     let next = repair.build(old.entry_resource().id())?;
     assert_eq!(
         run_fact(&next, &selected(&next, ""), "Types")["value"],

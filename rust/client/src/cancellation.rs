@@ -1,4 +1,5 @@
-use crate::{Code, Diagnostic};
+use crate::Diagnostic;
+use crate::diagnostics::Code;
 use std::{
     fmt,
     future::poll_fn,

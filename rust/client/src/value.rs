@@ -1,5 +1,6 @@
-use crate::{
-    Code, Diagnostic, DiagnosticReason, LimitKind, Location, NumericReason, NumericTarget,
+use crate::Diagnostic;
+use crate::diagnostics::{
+    Code, DiagnosticReason, LimitKind, Location, NumericReason, NumericTarget,
 };
 use serde::{
     Deserializer,
@@ -15,8 +16,7 @@ mod diagnostic_source_tests {
 
     #[test]
     fn source_binding_retains_only_text_and_rewrites_invalidate_it() {
-        let input =
-            ExactJson::parse(r#"{"secret":{"caf\u00e9":"🦀"}}"#, Limits::default()).unwrap();
+        let input = Value::parse(r#"{"secret":{"caf\u00e9":"🦀"}}"#, Limits::default()).unwrap();
         let value = input.root().get("secret").unwrap();
         let weak_store = Arc::downgrade(&value.store);
         let weak_source = Arc::downgrade(&value.store.source);
@@ -48,7 +48,7 @@ mod member_name_tests {
 
     #[test]
     fn shared_decoded_name_is_independent_of_the_source_owner() {
-        let input = ExactJson::parse(r#"{"caf\u00e9":"payload"}"#, Limits::default()).unwrap();
+        let input = Value::parse(r#"{"caf\u00e9":"payload"}"#, Limits::default()).unwrap();
         let root = input.root();
         let store = Arc::downgrade(&root.store);
         let name = root.member_name_owner("café").unwrap();
@@ -153,50 +153,6 @@ impl Default for Limits {
     }
 }
 
-/// Parse failure retaining admitted original bytes, including invalid UTF-8.
-/// Over-byte-limit inputs are not copied; source_bytes() is empty for that admission failure.
-/// ```compile_fail
-/// use dynamic_openapi_client::{ExactJson, Limits};
-/// let mut error = ExactJson::parse("{", Limits::default()).unwrap_err();
-/// error.source = std::sync::Arc::from(b"unrelated".as_slice());
-/// ```
-#[derive(Clone)]
-pub struct ParseFailure {
-    /// Failure category and source locations.
-    pub(crate) diagnostic: Diagnostic,
-    /// Exact admitted bytes; empty when the input exceeds the byte admission limit.
-    pub(crate) source: Arc<[u8]>,
-}
-impl ParseFailure {
-    /// Structured refusal paired with these retained bytes.
-    pub fn diagnostic(&self) -> &Diagnostic {
-        &self.diagnostic
-    }
-    /// Exact admitted bytes. Empty when the byte admission limit refused the input.
-    /// This accessor does not shadow std::error::Error::source.
-    pub fn source_bytes(&self) -> &[u8] {
-        &self.source
-    }
-}
-impl fmt::Debug for ParseFailure {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ParseFailure")
-            .field("diagnostic", &self.diagnostic)
-            .field("bytes", &self.source.len())
-            .finish()
-    }
-}
-impl fmt::Display for ParseFailure {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.diagnostic.fmt(f)
-    }
-}
-impl std::error::Error for ParseFailure {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(&self.diagnostic)
-    }
-}
-
 /// Origin of an immutable source buffer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SourceOrigin {
@@ -226,9 +182,6 @@ pub(crate) fn authored_source_context() -> Result<SourceContext, Diagnostic> {
     })
 }
 
-/// An immutable, exact JSON owner. Clones share bytes and any materialized index.
-#[derive(Clone, Debug)]
-pub struct ExactJson(pub(crate) Value);
 /// An independently owned handle to an exact JSON-compatible semantic value.
 #[derive(Clone)]
 pub struct Value {
@@ -695,13 +648,13 @@ fn root_kind(root: &str) -> ValueKind {
         _ => ValueKind::Number,
     }
 }
-impl ExactJson {
+impl Value {
     pub(crate) fn node_count(&self) -> usize {
-        self.0.store.nodes().len()
+        self.store.nodes().len()
     }
     /// Validate and index exact UTF-8 JSON. Duplicate decoded keys are rejected.
     /// String values containing unpaired UTF-16 surrogate escapes return UnsupportedString.
-    pub fn parse(bytes: impl AsRef<[u8]>, limits: Limits) -> Result<Self, ParseFailure> {
+    pub fn parse(bytes: impl AsRef<[u8]>, limits: Limits) -> Result<Self, Diagnostic> {
         Self::parse_with_cancellation(bytes, limits, &crate::Cancellation::default())
     }
     /// Parse with cancellation checkpoints during owned indexing and admission.
@@ -709,7 +662,7 @@ impl ExactJson {
         bytes: impl AsRef<[u8]>,
         limits: Limits,
         cancellation: &crate::Cancellation,
-    ) -> Result<Self, ParseFailure> {
+    ) -> Result<Self, Diagnostic> {
         Self::parse_in_origin(bytes.as_ref(), limits, cancellation, SourceOrigin::Authored)
     }
     pub(crate) fn parse_in_origin(
@@ -717,12 +670,12 @@ impl ExactJson {
         limits: Limits,
         cancellation: &crate::Cancellation,
         origin: SourceOrigin,
-    ) -> Result<Self, ParseFailure> {
-        Self::parse_mode(bytes, limits, cancellation, origin, false)
+    ) -> Result<Self, Diagnostic> {
+        Self::parse_mode(bytes, limits, cancellation, origin, false).map_err(Diagnostic::caused)
     }
     // Response::json has no caller cancellation token. Public parsing and
     // construction retain their eager indexing checkpoints and behavior.
-    pub(crate) fn parse_response(bytes: &[u8], limits: Limits) -> Result<Self, ParseFailure> {
+    pub(crate) fn parse_response(bytes: &[u8], limits: Limits) -> Result<Self, Diagnostic> {
         Self::parse_mode(
             bytes,
             limits,
@@ -737,12 +690,12 @@ impl ExactJson {
         cancellation: &crate::Cancellation,
         origin: SourceOrigin,
         deferred: bool,
-    ) -> Result<Self, ParseFailure> {
+    ) -> Result<Self, Diagnostic> {
         let id = NEXT_SOURCE
             .try_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
-            .map_err(|_| ParseFailure {
-                diagnostic: Diagnostic::new(Code::Limit).with_setting("source_identities"),
-                source: Arc::from([]),
+            .map_err(|_| {
+                (Diagnostic::new(Code::Limit).with_setting("source_identities"))
+                    .with_source_bytes(Arc::from([]))
             })?;
         let context = SourceContext { id, origin };
         let admitted = bytes.len() <= limits.document_bytes;
@@ -815,7 +768,7 @@ impl ExactJson {
             };
             #[cfg(feature = "qualification")]
             LIVE_JSON_OWNERS.fetch_add(1, Ordering::Relaxed);
-            Ok(Self(Value {
+            Ok(Self {
                 store: Arc::new(Store {
                     source: Arc::from(text),
                     context,
@@ -824,15 +777,14 @@ impl ExactJson {
                     authored: None,
                 }),
                 id: 0,
-            }))
+            })
         })();
-        parsed.map_err(|diagnostic| ParseFailure {
-            diagnostic: diagnostic.sourced(context),
-            source: if admitted {
+        parsed.map_err(|diagnostic| {
+            (diagnostic.sourced(context)).with_source_bytes(if admitted {
                 Arc::from(bytes)
             } else {
                 Arc::from([])
-            },
+            })
         })
     }
     pub(crate) fn attach_authored(
@@ -841,7 +793,7 @@ impl ExactJson {
         context: SourceContext,
         mut mappings: crate::source::PendingMap,
     ) -> Self {
-        let store = Arc::get_mut(&mut self.0.store).expect("new normalized owner is unique");
+        let store = Arc::get_mut(&mut self.store).expect("new normalized owner is unique");
         let entries = store
             .nodes()
             .iter()
@@ -859,32 +811,41 @@ impl ExactJson {
         self
     }
     pub(crate) fn original_source(&self) -> &str {
-        self.0
-            .store
+        self.store
             .authored
             .as_ref()
-            .map_or(&self.0.store.source, |a| &a.source)
+            .map_or(&self.store.source, |a| &a.source)
     }
-    pub(crate) fn source_format(&self) -> crate::SourceFormat {
-        if self.0.store.authored.is_some() {
-            crate::SourceFormat::Yaml
+    pub(crate) fn source_format(&self) -> crate::source::SourceFormat {
+        if self.store.authored.is_some() {
+            crate::source::SourceFormat::Yaml
         } else {
-            crate::SourceFormat::Json
+            crate::source::SourceFormat::Json
         }
     }
-    /// The independently owned root value.
-    pub fn root(&self) -> Value {
-        self.0.clone()
-    }
-    /// Exact source including leading/trailing whitespace.
+    /// Original owner text, including whitespace outside the selected subtree.
     pub fn source(&self) -> &str {
-        &self.0.store.source
+        &self.store.source
     }
-    /// Accounted retained source/index storage (not allocator RSS).
-    /// Response owners can materialize their index on dynamic access; this count
-    /// then increases. Reading this count does not materialize the index.
-    pub fn retained_bytes(&self) -> usize {
-        self.0.retained_bytes()
+    // Allocation identities, rather than selected ranges: normalized JSON and
+    // its authored YAML can both remain alive through a single child handle.
+    pub(crate) fn retained_sources(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
+        std::iter::once((self.store.source.as_ptr() as usize, self.store.source.len())).chain(
+            self.store
+                .authored
+                .as_ref()
+                .map(|map| (map.source.as_ptr() as usize, map.source.len())),
+        )
+    }
+    pub(crate) fn projection_source(&self) -> &str {
+        if self.id == 0 {
+            self.source()
+        } else {
+            self.raw()
+        }
+    }
+    pub(crate) fn root(&self) -> Value {
+        self.clone()
     }
 }
 impl Value {
@@ -1053,16 +1014,16 @@ impl Value {
     }
     /// Inspect both indexed JSON and original authored source, with alias use evidence.
     /// Returned positions retain their source owners independently of this value.
-    pub fn source_trace(&self) -> crate::SourceTrace {
+    pub fn source_trace(&self) -> crate::source::SourceTrace {
         let location = self.location();
-        let representation = crate::SourcePosition {
+        let representation = crate::source::SourcePosition {
             context: self.store.context,
             location: location.clone(),
             source: self.store.source.clone(),
         };
         let (authored, alias_uses) = if let Some(map) = &self.store.authored {
             let entry = &map.entries[self.id];
-            let position = |span: &Range<usize>| crate::SourcePosition {
+            let position = |span: &Range<usize>| crate::source::SourcePosition {
                 context: map.context,
                 location: Location {
                     start: span.start,
@@ -1082,7 +1043,7 @@ impl Value {
                 vec![],
             )
         };
-        crate::SourceTrace {
+        crate::source::SourceTrace {
             representation,
             authored,
             alias_uses,
@@ -1146,7 +1107,7 @@ impl Value {
         self.locate(Diagnostic::new(code))
     }
     /// Retain one authored position without materializing unused alias-use evidence.
-    pub(crate) fn diagnostic_position(&self) -> crate::SourcePosition {
+    pub(crate) fn diagnostic_position(&self) -> crate::source::SourcePosition {
         let mut location = self.location();
         let (context, source) = if let Some(map) = &self.store.authored {
             let entry = &map.entries[self.id];
@@ -1156,7 +1117,7 @@ impl Value {
         } else {
             (self.store.context, self.store.source.clone())
         };
-        crate::SourcePosition {
+        crate::source::SourcePosition {
             context,
             location,
             source,
@@ -1181,7 +1142,7 @@ impl Value {
     /// not materialize a deferred index. Concurrent initialization reports the
     /// admitted-storage snapshot until the index is published; temporary
     /// construction overlap is excluded, as are allocator metadata and RSS.
-    pub fn retained_bytes(&self) -> usize {
+    pub(crate) fn retained_bytes(&self) -> usize {
         let mut bytes = self.store.source.len();
         if let Some(map) = &self.store.authored {
             bytes += map.source.len()

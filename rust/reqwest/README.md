@@ -15,10 +15,7 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 The short caller flow uses a runtime-loaded OpenAPI document and ordinary typed data. The full executable includes a controlled local server:
 
 ```no_run
-use dynamic_openapi_client::{
-    Cancellation, Credential, CredentialValue, Document, ExactJson, Limits,
-    ParameterLocation, policies,
-};
+use dynamic_openapi_client::{Cancellation, Credential, Document, Limits, ParameterLocation, policies};
 use dynamic_openapi_client_reqwest::Client;
 use serde::{Deserialize, Serialize};
 
@@ -30,16 +27,11 @@ struct Created { id: u64, name: String }
 # async fn run(source: &[u8], origin: String) -> Result<(), Box<dyn std::error::Error>> {
 let document = Document::parse(source, None, Limits::default())?;
 let operation = document.operation_id("create")?;
-let client = Client::builder().credential("bearer", Credential {
-    value: CredentialValue::Bearer("explicit-caller-token".into()),
-    origins: vec![origin],
-}).build()?;
-let body = ExactJson::from_serializable(
-    &Create { name: "example", labels: ["local", "typed"] }, Limits::default(),
-)?;
+let client = Client::builder().credential("bearer", Credential::bearer("explicit-caller-token", vec![origin])).build()?;
+let body = Create { name: "example", labels: ["local", "typed"] };
 let request = client.request(&operation)
-    .parameter(ParameterLocation::Query, "mode", "normal")
-    .json(body.root()).prepare()?;
+    .parameter(ParameterLocation::Query, "mode", &"normal")
+    .json(&body).prepare()?;
 let outcome = client.execute(&request, Cancellation::default()).await;
 match policies::received_2xx_json(outcome) {
     Ok(accepted) => {

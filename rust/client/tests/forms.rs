@@ -1,4 +1,10 @@
+#[path = "support/request_case.rs"]
+mod request_case;
 use dynamic_openapi_client::*;
+use dynamic_openapi_client::{
+    diagnostics::*, exact::*, form::*, inspect::*, schema::*, source::*, transport::*,
+};
+use request_case::*;
 use serde_json::json;
 use std::{cell::Cell, sync::Arc};
 
@@ -56,14 +62,14 @@ fn one_consumer_preserves_authored_editions_and_form_utf8_exact_values() {
             json!({}),
             Limits::default(),
         );
-        let number = ExactJson::parse(b"9007199254740993", Limits::default()).unwrap();
+        let number = Value::parse(b"9007199254740993", Limits::default()).unwrap();
         let request = doc
             .operation_id("send")
             .unwrap()
             .request()
-            .form([
-                FormField::new("message", "caf\u{e9} +&=/%"),
-                FormField::new("count", number.root()),
+            .form_fields([
+                FormField::value("message", &"caf\u{e9} +&=/%", Limits::default()).unwrap(),
+                FormField::exact("count", number.clone()),
             ])
             .prepare()
             .unwrap();
@@ -98,9 +104,9 @@ fn borrowed_shared_files_and_exact_metadata_use_owned_prepared_bytes() {
             .operation_id("send")
             .unwrap()
             .request()
-            .form([
-                FormField::new("label", "na\u{ef}ve"),
-                FormField::new(
+            .form_fields([
+                FormField::value("label", &"na\u{ef}ve", Limits::default()).unwrap(),
+                FormField::part(
                     "file",
                     Part::bytes(owner.clone()).filename("r\u{e9}sum\u{e9}\".bin"),
                 ),
@@ -121,7 +127,7 @@ fn borrowed_shared_files_and_exact_metadata_use_owned_prepared_bytes() {
 }
 #[test]
 fn arrays_and_media_style_precedence_follow_minor_profiles() {
-    let values = [OrdinaryValue::String("a"), OrdinaryValue::String("b")];
+    let values = [TestValue::String("a"), TestValue::String("b")];
     for version in ["3.0.4", "3.1.2", "3.2.1"] {
         let doc = document(
             version,
@@ -134,7 +140,12 @@ fn arrays_and_media_style_precedence_follow_minor_profiles() {
             .operation_id("send")
             .unwrap()
             .request()
-            .form([FormField::new("values", OrdinaryValue::Array(&values))])
+            .form_fields([FormField::value(
+                "values",
+                &TestValue::Array(&values),
+                Limits::default(),
+            )
+            .unwrap()])
             .prepare()
             .unwrap();
         let body = std::str::from_utf8(req.body().map(AsRef::as_ref).unwrap()).unwrap();
@@ -162,7 +173,7 @@ fn strict_header_rules_do_not_drop_supplied_values_or_optional_declarations() {
     let op = doc.operation_id("send").unwrap();
     assert!(
         op.request()
-            .form([FormField::new("x", "ok")])
+            .form_fields([FormField::value("x", &"ok", Limits::default()).unwrap()])
             .prepare()
             .is_ok()
     );
@@ -185,7 +196,7 @@ fn explicit_json_cannot_erase_unknown_coding_but_keeps_partial_inventory() {
             .fields,
         BodyFields::Partial { .. }
     ));
-    let exact = ExactJson::parse(
+    let exact = Value::parse(
         br#"{"large":9007199254740993,"exp":1e+09}"#,
         Limits::default(),
     )
@@ -194,19 +205,19 @@ fn explicit_json_cannot_erase_unknown_coding_but_keeps_partial_inventory() {
         .operation_id("send")
         .unwrap()
         .request()
-        .form([FormField::new("metadata", exact.root())])
+        .form_fields([FormField::exact("metadata", exact.clone())])
         .prepare()
         .unwrap_err();
-    assert_eq!(error.diagnostic().code(), Code::UnsupportedSchema);
+    assert_eq!(error.code(), Code::UnsupportedSchema);
     assert_eq!(
-        error.diagnostic().reason(),
+        error.reason(),
         Some(&DiagnosticReason::Schema(SchemaReason::Composition))
     );
     assert_eq!(
-        error.diagnostic().location().unwrap().pointer,
+        error.location().unwrap().pointer,
         "/paths/~1/post/requestBody/content/multipart~1form-data/schema/allOf"
     );
-    assert!(matches!(error, RequestError::Preparation(_)));
+    assert!(error.context().is_some());
 }
 #[test]
 fn field_iterator_stops_at_first_refusal_and_does_not_convert_later_data() {
@@ -223,17 +234,17 @@ fn field_iterator_stops_at_first_refusal_and_does_not_convert_later_data() {
     let visits = Cell::new(0);
     let fields = (0..100).map(|i| {
         visits.set(visits.get() + 1);
-        FormField::new(format!("x{i}"), "v")
+        FormField::value(format!("x{i}"), &"v", Limits::default()).unwrap()
     });
     let err = doc
         .operation_id("send")
         .unwrap()
         .request()
-        .form(fields)
+        .form_fields(fields)
         .prepare()
         .unwrap_err();
     assert_eq!(visits.get(), 2);
-    assert_eq!(limit_kind(err.diagnostic()), LimitKind::FormFields);
+    assert_eq!(limit_kind(&err), LimitKind::FormFields);
 }
 #[test]
 fn emitted_metadata_and_complete_wire_are_independently_bounded() {
@@ -254,10 +265,10 @@ fn emitted_metadata_and_complete_wire_are_independently_bounded() {
         .operation_id("send")
         .unwrap()
         .request()
-        .form([FormField::new("x", "+")])
+        .form_fields([FormField::value("x", &"+", Limits::default()).unwrap()])
         .prepare()
         .unwrap_err();
-    assert_eq!(limit_kind(err.diagnostic()), LimitKind::BodyBytes);
+    assert_eq!(limit_kind(&err), LimitKind::BodyBytes);
     let doc = base(Limits {
         form_metadata_bytes: 10,
         ..Limits::default()
@@ -266,10 +277,10 @@ fn emitted_metadata_and_complete_wire_are_independently_bounded() {
         .operation_id("send")
         .unwrap()
         .request()
-        .form([FormField::new("x", "v")])
+        .form_fields([FormField::value("x", &"v", Limits::default()).unwrap()])
         .prepare()
         .unwrap_err();
-    assert_eq!(limit_kind(err.diagnostic()), LimitKind::FormMetadataBytes);
+    assert_eq!(limit_kind(&err), LimitKind::FormMetadataBytes);
     let doc = base(Limits {
         form_work: 0,
         ..Limits::default()
@@ -278,10 +289,10 @@ fn emitted_metadata_and_complete_wire_are_independently_bounded() {
         .operation_id("send")
         .unwrap()
         .request()
-        .form([FormField::new("x", "v")])
+        .form_fields([FormField::value("x", &"v", Limits::default()).unwrap()])
         .prepare()
         .unwrap_err();
-    assert_eq!(limit_kind(err.diagnostic()), LimitKind::FormWork);
+    assert_eq!(limit_kind(&err), LimitKind::FormWork);
     let doc = base(Limits::default());
     let cancel = Cancellation::default();
     cancel.cancel();
@@ -289,10 +300,10 @@ fn emitted_metadata_and_complete_wire_are_independently_bounded() {
         doc.operation_id("send")
             .unwrap()
             .request()
-            .form([FormField::new("x", "v")])
-            .prepare_with_cancellation(&cancel)
+            .form_fields([FormField::value("x", &"v", Limits::default()).unwrap()])
+            .cancellation(cancel.clone())
+            .prepare()
             .unwrap_err()
-            .diagnostic()
             .code(),
         Code::Cancelled
     );
@@ -336,21 +347,13 @@ fn media_fields_remain_representation_specific_and_schema_required_is_a_hint() {
         }
     }
     assert_eq!(
-        op.request()
-            .form([])
-            .prepare()
-            .unwrap_err()
-            .diagnostic()
-            .code(),
+        op.request().form_fields([]).prepare().unwrap_err().code(),
         Code::AmbiguousSelection
     );
     let req = op
         .request()
-        .selection(Selection {
-            media: Some("application/x-www-form-urlencoded".into()),
-            ..Selection::default()
-        })
-        .form([])
+        .media("application/x-www-form-urlencoded")
+        .form_fields([])
         .prepare()
         .unwrap();
     assert_eq!(req.body().map(AsRef::as_ref), Some(b"".as_slice()));
@@ -363,10 +366,10 @@ fn multipart_required_header_refusal_keeps_original_yaml_source_and_safe_context
         .operation_id("send")
         .unwrap()
         .request()
-        .form([FormField::new("message", "secret-message")])
+        .form_fields([FormField::value("message", &"secret-message", Limits::default()).unwrap()])
         .prepare()
         .unwrap_err();
-    let d = error.diagnostic();
+    let d = &error;
     assert_eq!(
         d.reason(),
         Some(&DiagnosticReason::Form(FormReason::UnsupportedHeader))
@@ -398,18 +401,15 @@ fn form_preparation_still_requires_scoped_credentials_and_refuses_fixed_boundari
     let op = doc.operation_id("send").unwrap();
     assert!(
         op.request()
-            .form([FormField::new("x", "v")])
+            .form_fields([FormField::value("x", &"v", Limits::default()).unwrap()])
             .prepare()
             .is_err()
     );
-    let credential = Credential {
-        value: CredentialValue::Bearer("not-logged".into()),
-        origins: vec!["https://api.example".into()],
-    };
+    let credential = Credential::bearer("not-logged", vec!["https://api.example".into()]);
     assert!(
         op.request()
             .credential("auth", credential)
-            .form([FormField::new("x", "v")])
+            .form_fields([FormField::value("x", &"v", Limits::default()).unwrap()])
             .prepare()
             .is_ok()
     );
@@ -419,15 +419,12 @@ fn form_preparation_still_requires_scoped_credentials_and_refuses_fixed_boundari
         .operation_id("send")
         .unwrap()
         .request()
-        .form([FormField::new("x", "v")])
-        .selection(Selection {
-            media: Some("multipart/form-data; boundary=caller".into()),
-            ..Selection::default()
-        })
+        .form_fields([FormField::value("x", &"v", Limits::default()).unwrap()])
+        .media("multipart/form-data; boundary=caller")
         .prepare()
         .unwrap_err();
     assert_eq!(
-        error.diagnostic().reason(),
+        error.reason(),
         Some(&DiagnosticReason::Form(FormReason::FramingConflict))
     );
 }
@@ -448,11 +445,14 @@ fn admission_precedes_expensive_name_comparisons_and_counts_supplied_parts() {
         .operation_id("send")
         .unwrap()
         .request()
-        .form([FormField::new("x", "v"), FormField::new(long.as_str(), "v")])
+        .form_fields([
+            FormField::value("x", &"v", Limits::default()).unwrap(),
+            FormField::value(long.as_str(), &"v", Limits::default()).unwrap(),
+        ])
         .prepare()
         .unwrap_err();
-    assert_eq!(limit_kind(error.diagnostic()), LimitKind::FormMetadataBytes);
-    assert!(error.diagnostic().context_omitted_for_limit());
+    assert_eq!(limit_kind(&error), LimitKind::FormMetadataBytes);
+    assert!(error.context_omitted_for_limit());
     let doc = document(
         "3.1.2",
         "multipart/form-data",
@@ -463,15 +463,18 @@ fn admission_precedes_expensive_name_comparisons_and_counts_supplied_parts() {
             ..Limits::default()
         },
     );
-    let parts = [Part::value("a"), Part::value("b")];
+    let parts = [
+        Part::value(Value::from_serializable(&"a", Limits::default()).unwrap()),
+        Part::value(Value::from_serializable(&"b", Limits::default()).unwrap()),
+    ];
     let error = doc
         .operation_id("send")
         .unwrap()
         .request()
-        .form([FormField::new("x", FormValue::Parts(&parts))])
+        .form_fields([FormField::parts("x", &parts)])
         .prepare()
         .unwrap_err();
-    assert_eq!(limit_kind(error.diagnostic()), LimitKind::FormWork);
+    assert_eq!(limit_kind(&error), LimitKind::FormWork);
 }
 
 #[test]
@@ -513,31 +516,26 @@ fn swagger_implicit_form_media_preserves_fields_and_requires_a_choice() {
             }
             assert_eq!(
                 op.request()
-                    .form([FormField::new("message", "a b")])
+                    .form_fields([FormField::value("message", &"a b", Limits::default()).unwrap()])
                     .prepare()
                     .unwrap_err()
-                    .diagnostic()
                     .code(),
                 Code::AmbiguousSelection
             );
-            let json_body = ExactJson::parse(br#"{"message":"a b"}"#, Limits::default()).unwrap();
+            let json_body = Value::parse(br#"{"message":"a b"}"#, Limits::default()).unwrap();
             assert_eq!(
                 op.request()
-                    .json(json_body.root())
+                    .json_exact(&json_body.clone())
                     .prepare()
                     .unwrap_err()
-                    .diagnostic()
                     .code(),
                 Code::UnsupportedMedia
             );
             for media in ["application/x-www-form-urlencoded", "multipart/form-data"] {
                 let request = op
                     .request()
-                    .selection(Selection {
-                        media: Some(media.into()),
-                        ..Selection::default()
-                    })
-                    .form([FormField::new("message", "a b")])
+                    .media(media)
+                    .form_fields([FormField::value("message", &"a b", Limits::default()).unwrap()])
                     .prepare()
                     .unwrap();
                 if media.starts_with("application/") {
@@ -555,14 +553,11 @@ fn swagger_implicit_form_media_preserves_fields_and_requires_a_choice() {
                 }
                 let error = op
                     .request()
-                    .selection(Selection {
-                        media: Some(media.into()),
-                        ..Selection::default()
-                    })
-                    .form(std::iter::empty::<FormField<'static>>())
+                    .media(media)
+                    .form_fields(std::iter::empty::<FormField<'static>>())
                     .prepare()
                     .unwrap_err();
-                assert_eq!(error.diagnostic().code(), Code::MissingInput);
+                assert_eq!(error.code(), Code::MissingInput);
             }
         }
     }
@@ -578,26 +573,21 @@ fn swagger_form_parameters_cannot_be_sent_as_json_even_when_consumes_is_invalid(
         Limits::default(),
     );
     let op = doc.operation_id("send").unwrap();
-    let payload = ExactJson::parse(br#"{"message":"hi"}"#, Limits::default()).unwrap();
+    let payload = Value::parse(br#"{"message":"hi"}"#, Limits::default()).unwrap();
     assert_eq!(
         op.request()
-            .json(payload.root())
+            .json_exact(&payload.clone())
             .prepare()
             .unwrap_err()
-            .diagnostic()
             .code(),
         Code::UnsupportedMedia
     );
     assert_eq!(
         op.request()
-            .selection(Selection {
-                media: Some("application/json".into()),
-                ..Selection::default()
-            })
-            .body(Body::Raw(b"{}".as_slice().into()))
+            .media("application/json")
+            .raw_body(b"{}".as_slice())
             .prepare()
             .unwrap_err()
-            .diagnostic()
             .code(),
         Code::UnsupportedMedia
     );

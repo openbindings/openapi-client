@@ -1,27 +1,25 @@
 use dynamic_openapi_client::*;
+use dynamic_openapi_client::{diagnostics::*, exact::*, source::*};
 use serde::{
     Serialize, Serializer,
     ser::{SerializeMap, SerializeSeq, SerializeStruct},
 };
 use std::{cell::Cell, collections::BTreeMap, fmt, rc::Rc};
 
-fn construct<T: Serialize + ?Sized>(value: &T) -> ExactJson {
-    ExactJson::from_serializable(value, Limits::default()).unwrap()
+fn construct<T: Serialize + ?Sized>(value: &T) -> Value {
+    Value::from_serializable(value, Limits::default()).unwrap()
 }
-fn failure<T: Serialize + ?Sized>(value: &T, reason: SerializationReason) -> ParseFailure {
-    let error = ExactJson::from_serializable(value, Limits::default()).unwrap_err();
-    assert_eq!(error.diagnostic().code(), Code::Serialization);
+fn failure<T: Serialize + ?Sized>(value: &T, reason: SerializationReason) -> Diagnostic {
+    let error = Value::from_serializable(value, Limits::default()).unwrap_err();
+    assert_eq!(error.code(), Code::Serialization);
     assert_eq!(
-        error.diagnostic().reason(),
+        error.reason(),
         Some(&DiagnosticReason::Serialization(reason))
     );
-    assert_eq!(
-        error.diagnostic().context(),
-        Some(&DiagnosticContext::Construction)
-    );
+    assert_eq!(error.context(), Some(&DiagnosticContext::Construction));
     assert!(error.source_bytes().is_empty());
-    assert!(error.diagnostic().location().is_none());
-    assert!(error.diagnostic().source_context().is_none());
+    assert!(error.location().is_none());
+    assert!(error.source_context().is_none());
     error
 }
 fn operation(limits: Limits) -> Operation {
@@ -50,8 +48,8 @@ fn borrowed_struct_dynamic_value_and_retained_handles_prepare_identical_bytes() 
     };
     let expected = serde_json::to_vec(&payload).unwrap();
     let owner = construct(&payload);
-    assert_eq!(owner.root().raw().as_bytes(), expected);
-    let root = owner.root();
+    assert_eq!(owner.clone().raw().as_bytes(), expected);
+    let root = owner.clone();
     assert!(root.get("absent").is_none());
     assert_eq!(root.get("explicit_null").unwrap().kind(), ValueKind::Null);
     assert_eq!(root.get("number").unwrap().raw(), "9007199254740993");
@@ -64,8 +62,8 @@ fn borrowed_struct_dynamic_value_and_retained_handles_prepare_identical_bytes() 
     let op = operation(Limits::default());
     let request = op
         .request()
-        .parameter(ParameterLocation::Path, "id", 3)
-        .json(root)
+        .parameter(ParameterLocation::Path, "id", &3)
+        .json_exact(&root)
         .prepare()
         .unwrap();
     drop(op);
@@ -74,7 +72,7 @@ fn borrowed_struct_dynamic_value_and_retained_handles_prepare_identical_bytes() 
     assert_eq!(child.location().pointer, "/nested/a~1b~0");
     assert_eq!(child.at(0).unwrap().as_bool(), Some(true));
     let independent = construct(&expected);
-    assert_ne!(independent.root().source_context(), source);
+    assert_ne!(independent.clone().source_context(), source);
 }
 
 #[test]
@@ -89,12 +87,12 @@ fn host_local_input_does_not_weaken_owned_auto_traits() {
     let local = Rc::new(Cell::new(7));
     let owner = construct(&Local(&local));
     shared(&owner);
-    shared(&owner.root());
+    shared(&owner.clone());
     shared(&operation(Limits::default()).request());
     let error = failure(&f64::NAN, SerializationReason::NonFiniteNumber);
     shared(&error);
-    assert_eq!(owner.root().raw(), "7");
-    assert_eq!(construct("unsized").root().raw(), "\"unsized\"");
+    assert_eq!(owner.clone().raw(), "7");
+    assert_eq!(construct("unsized").clone().raw(), "\"unsized\"");
 }
 
 #[test]
@@ -127,15 +125,15 @@ fn serializer_errors_can_be_formatted_into_successful_output_without_custom_text
         "Error(\n    Serialization: Serialization(Custom),\n)",
     ];
     for (index, expected) in expected.into_iter().enumerate() {
-        assert_eq!(owner.root().at(index).unwrap().as_str(), Some(expected));
+        assert_eq!(owner.clone().at(index).unwrap().as_str(), Some(expected));
     }
 }
 
 #[test]
 fn numbers_keep_exact_integer_and_finite_float_representation() {
-    assert_eq!(construct(&i128::MIN).root().raw(), i128::MIN.to_string());
-    assert_eq!(construct(&u128::MAX).root().raw(), u128::MAX.to_string());
-    assert_eq!(construct(&u64::MAX).root().raw(), u64::MAX.to_string());
+    assert_eq!(construct(&i128::MIN).clone().raw(), i128::MIN.to_string());
+    assert_eq!(construct(&u128::MAX).clone().raw(), u128::MAX.to_string());
+    assert_eq!(construct(&u64::MAX).clone().raw(), u64::MAX.to_string());
     for value in [
         0.0_f64,
         -0.0,
@@ -146,13 +144,13 @@ fn numbers_keep_exact_integer_and_finite_float_representation() {
         1e100,
     ] {
         assert_eq!(
-            construct(&value).root().raw(),
+            construct(&value).clone().raw(),
             serde_json::to_string(&value).unwrap()
         );
     }
     for value in [0.1_f32, -0.0, f32::MAX] {
         assert_eq!(
-            construct(&value).root().raw(),
+            construct(&value).clone().raw(),
             serde_json::to_string(&value).unwrap()
         );
     }
@@ -186,18 +184,18 @@ fn standard_serde_shapes_and_string_keys_match_the_documented_profile() {
         Enum::Struct { value: 7 },
     ] {
         assert_eq!(
-            construct(&variant).root().raw(),
+            construct(&variant).clone().raw(),
             serde_json::to_string(&variant).unwrap()
         );
     }
-    assert_eq!(construct(&Bytes).root().raw(), "[0,127,255]");
-    assert_eq!(construct(&Newtype(7)).root().raw(), "7");
-    assert_eq!(construct(&Some(Some(7))).root().raw(), "7");
-    assert_eq!(construct(&None::<u8>).root().raw(), "null");
-    assert_eq!(construct(&()).root().raw(), "null");
-    assert_eq!(construct(&('雪', 4)).root().raw(), "[\"雪\",4]");
+    assert_eq!(construct(&Bytes).clone().raw(), "[0,127,255]");
+    assert_eq!(construct(&Newtype(7)).clone().raw(), "7");
+    assert_eq!(construct(&Some(Some(7))).clone().raw(), "7");
+    assert_eq!(construct(&None::<u8>).clone().raw(), "null");
+    assert_eq!(construct(&()).clone().raw(), "null");
+    assert_eq!(construct(&('雪', 4)).clone().raw(), "[\"雪\",4]");
     assert_eq!(
-        construct(&BTreeMap::from([('a', 1)])).root().raw(),
+        construct(&BTreeMap::from([('a', 1)])).clone().raw(),
         "{\"a\":1}"
     );
     failure(
@@ -225,8 +223,8 @@ impl Serialize for Duplicate {
 }
 #[test]
 fn duplicates_use_existing_exact_parser_with_complete_constructed_source() {
-    let error = ExactJson::from_serializable(&Duplicate, Limits::default()).unwrap_err();
-    let diagnostic = error.diagnostic();
+    let error = Value::from_serializable(&Duplicate, Limits::default()).unwrap_err();
+    let diagnostic = &error;
     assert_eq!(diagnostic.code(), Code::DuplicateMember);
     assert_eq!(error.source_bytes(), br#"{"same":1,"same":2}"#);
     assert_eq!(
@@ -304,7 +302,7 @@ fn first_error_is_fused_before_later_serializer_callbacks() {
         assert_eq!(later.get(), 0);
     }
     let later = Cell::new(0);
-    let error = ExactJson::from_serializable(
+    let error = Value::from_serializable(
         &[Counted(&later)],
         Limits {
             nodes: 1,
@@ -314,13 +312,13 @@ fn first_error_is_fused_before_later_serializer_callbacks() {
     .unwrap_err();
     assert_eq!(later.get(), 0);
     assert!(matches!(
-        error.diagnostic().reason(),
+        error.reason(),
         Some(DiagnosticReason::Limit {
             kind: LimitKind::Nodes,
             ..
         })
     ));
-    let error = ExactJson::from_serializable(
+    let error = Value::from_serializable(
         &Counted(&later),
         Limits {
             nodes: 0,
@@ -328,7 +326,7 @@ fn first_error_is_fused_before_later_serializer_callbacks() {
         },
     )
     .unwrap_err();
-    assert_eq!(error.diagnostic().code(), Code::Limit);
+    assert_eq!(error.code(), Code::Limit);
     assert_eq!(later.get(), 0);
 }
 
@@ -356,7 +354,7 @@ impl fmt::Display for BadDisplay {
 }
 #[test]
 fn bounded_display_capture_and_error_text_do_not_escape() {
-    let error = ExactJson::from_serializable(
+    let error = Value::from_serializable(
         &Formatting(Overflow),
         Limits {
             document_bytes: 4,
@@ -365,7 +363,7 @@ fn bounded_display_capture_and_error_text_do_not_escape() {
     )
     .unwrap_err();
     assert!(matches!(
-        error.diagnostic().reason(),
+        error.reason(),
         Some(DiagnosticReason::Limit {
             kind: LimitKind::DocumentBytes,
             maximum: 4,
@@ -373,7 +371,7 @@ fn bounded_display_capture_and_error_text_do_not_escape() {
         })
     ));
     failure(&Formatting(BadDisplay), SerializationReason::Custom);
-    assert_eq!(construct(&Formatting(42)).root().raw(), "\"42\"");
+    assert_eq!(construct(&Formatting(42)).clone().raw(), "\"42\"");
     struct KeyMap;
     impl Serialize for KeyMap {
         fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
@@ -382,7 +380,7 @@ fn bounded_display_capture_and_error_text_do_not_escape() {
             map.end()
         }
     }
-    assert_eq!(construct(&KeyMap).root().raw(), "{\"42\":true}");
+    assert_eq!(construct(&KeyMap).clone().raw(), "{\"42\":true}");
     struct Secret;
     impl fmt::Display for Secret {
         fn fmt(&self, _: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -413,7 +411,7 @@ impl Serialize for Nest {
 fn exact_byte_node_depth_limits_and_untrusted_hints() {
     for (value, bytes) in [("a", 3), ("\n", 4), ("雪", 5)] {
         assert!(
-            ExactJson::from_serializable(
+            Value::from_serializable(
                 value,
                 Limits {
                     document_bytes: bytes,
@@ -422,7 +420,7 @@ fn exact_byte_node_depth_limits_and_untrusted_hints() {
             )
             .is_ok()
         );
-        let error = ExactJson::from_serializable(
+        let error = Value::from_serializable(
             value,
             Limits {
                 document_bytes: bytes - 1,
@@ -430,12 +428,12 @@ fn exact_byte_node_depth_limits_and_untrusted_hints() {
             },
         )
         .unwrap_err();
-        assert_eq!(error.diagnostic().code(), Code::Limit);
+        assert_eq!(error.code(), Code::Limit);
         assert!(error.source_bytes().is_empty());
     }
     let object = BTreeMap::from([("key", 1)]);
     assert!(
-        ExactJson::from_serializable(
+        Value::from_serializable(
             &object,
             Limits {
                 nodes: 2,
@@ -451,11 +449,11 @@ fn exact_byte_node_depth_limits_and_untrusted_hints() {
             serializer.serialize_seq(Some(usize::MAX))?.end()
         }
     }
-    assert_eq!(construct(&Hint).root().raw(), "[]");
+    assert_eq!(construct(&Hint).clone().raw(), "[]");
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {
-            assert!(ExactJson::from_serializable(&Nest(128), Limits::default()).is_ok());
+            assert!(Value::from_serializable(&Nest(128), Limits::default()).is_ok());
             for limits in [
                 Limits::default(),
                 Limits {
@@ -463,9 +461,9 @@ fn exact_byte_node_depth_limits_and_untrusted_hints() {
                     ..Limits::default()
                 },
             ] {
-                let error = ExactJson::from_serializable(&Nest(129), limits).unwrap_err();
+                let error = Value::from_serializable(&Nest(129), limits).unwrap_err();
                 assert!(matches!(
-                    error.diagnostic().reason(),
+                    error.reason(),
                     Some(DiagnosticReason::Limit {
                         kind: LimitKind::Depth,
                         maximum: 128,
@@ -474,7 +472,7 @@ fn exact_byte_node_depth_limits_and_untrusted_hints() {
                 ));
             }
             assert!(
-                ExactJson::from_serializable(
+                Value::from_serializable(
                     &Nest(3),
                     Limits {
                         depth: 3,
@@ -484,7 +482,7 @@ fn exact_byte_node_depth_limits_and_untrusted_hints() {
                 .is_ok()
             );
             assert!(
-                ExactJson::from_serializable(
+                Value::from_serializable(
                     &Nest(4),
                     Limits {
                         depth: 3,
@@ -504,13 +502,10 @@ fn cancellation_precedes_callback_and_is_checked_mid_construction_without_poison
     let cancel = Cancellation::default();
     cancel.cancel();
     let calls = Cell::new(0);
-    let error = ExactJson::from_serializable_with_cancellation(
-        &Counted(&calls),
-        Limits::default(),
-        &cancel,
-    )
-    .unwrap_err();
-    assert_eq!(error.diagnostic().code(), Code::Cancelled);
+    let error =
+        Value::from_serializable_with_cancellation(&Counted(&calls), Limits::default(), &cancel)
+            .unwrap_err();
+    assert_eq!(error.code(), Code::Cancelled);
     assert_eq!(calls.get(), 0);
     struct Cancel<'a>(&'a Cancellation);
     impl Serialize for Cancel<'_> {
@@ -529,16 +524,16 @@ fn cancellation_precedes_callback_and_is_checked_mid_construction_without_poison
         }
     }
     let cancel = Cancellation::default();
-    let error = ExactJson::from_serializable_with_cancellation(
+    let error = Value::from_serializable_with_cancellation(
         &During(&cancel, &calls),
         Limits::default(),
         &cancel,
     )
     .unwrap_err();
-    assert_eq!(error.diagnostic().code(), Code::Cancelled);
+    assert_eq!(error.code(), Code::Cancelled);
     assert!(error.source_bytes().is_empty());
     assert_eq!(calls.get(), 0);
-    assert_eq!(construct(&1).root().raw(), "1");
+    assert_eq!(construct(&1).clone().raw(), "1");
 }
 
 const NUMBER: &str = "$serde_json::private::Number";
@@ -576,7 +571,7 @@ fn private_number_protocol_is_validated_without_rounding_or_injection() {
         "340282366920938463463374607431768211455",
         "1e999999999",
     ] {
-        assert_eq!(construct(&token(text)).root().raw(), text);
+        assert_eq!(construct(&token(text)).clone().raw(), text);
     }
     for text in [
         "1,2", "1 ", " 1", "[1]", "null", "\"1\"", "NaN", "01", "-", "1\n2",
@@ -613,7 +608,7 @@ fn private_number_protocol_is_validated_without_rounding_or_injection() {
     );
     let raw = serde_json::value::RawValue::from_string("{\"x\":1}".into()).unwrap();
     failure(&raw, SerializationReason::UnsupportedRepresentation);
-    let error = ExactJson::from_serializable(
+    let error = Value::from_serializable(
         &token("12345"),
         Limits {
             document_bytes: 4,
@@ -621,7 +616,7 @@ fn private_number_protocol_is_validated_without_rounding_or_injection() {
         },
     )
     .unwrap_err();
-    assert_eq!(error.diagnostic().code(), Code::Limit);
+    assert_eq!(error.code(), Code::Limit);
 }
 
 #[test]
@@ -642,12 +637,12 @@ fn malformed_compound_order_is_serialization_failure_and_body_budget_is_separate
     });
     let error = op
         .request()
-        .parameter(ParameterLocation::Path, "id", 1)
-        .json(owner.root())
+        .parameter(ParameterLocation::Path, "id", &1)
+        .json_exact(&owner.clone())
         .prepare()
         .unwrap_err();
     assert!(matches!(
-        error.diagnostic().reason(),
+        error.reason(),
         Some(DiagnosticReason::Limit {
             kind: LimitKind::BodyBytes,
             maximum: 4,

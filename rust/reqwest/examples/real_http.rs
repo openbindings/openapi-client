@@ -1,8 +1,8 @@
 //! Run with `cargo run -p dynamic-openapi-client-reqwest --example real_http`.
 //! All traffic is to the controlled loopback server below; no external service.
+use dynamic_openapi_client::transport::{DispatchEvidence, UploadState};
 use dynamic_openapi_client::{
-    Cancellation, Credential, CredentialValue, DispatchEvidence, Document, ExactJson, Limits,
-    ParameterLocation, UploadState, policies,
+    Cancellation, Credential, Document, Limits, ParameterLocation, policies,
 };
 use dynamic_openapi_client_reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -31,25 +31,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = Client::builder()
         .credential(
             "bearer",
-            Credential {
-                value: CredentialValue::Bearer("local-example-token".into()),
-                origins: vec![origin],
-            },
+            Credential::bearer("local-example-token", vec![origin]),
         )
         .build()?;
 
     // Caller code: runtime selection, ordinary typed input, explicit received-response policy.
-    let body = ExactJson::from_serializable(
-        &Create {
-            name: "example",
-            labels: ["local", "typed"],
-        },
-        Limits::default(),
-    )?;
+    let body = Create {
+        name: "example",
+        labels: ["local", "typed"],
+    };
     let prepared = client
         .request(&operation)
-        .parameter(ParameterLocation::Query, "mode", "normal")
-        .json(body.root())
+        .parameter(ParameterLocation::Query, "mode", &"normal")
+        .json(&body)
         .prepare()?;
     let accepted =
         policies::received_2xx_json(client.execute(&prepared, Cancellation::default()).await)?;
@@ -64,8 +58,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Cancellation is triggered only after the server has received the second request.
     let prepared = client
         .request(&operation)
-        .parameter(ParameterLocation::Query, "mode", "stall")
-        .json(body.root())
+        .parameter(ParameterLocation::Query, "mode", &"stall")
+        .json(&body)
         .prepare()?;
     let cancellation = Cancellation::default();
     let trigger = cancellation.clone();

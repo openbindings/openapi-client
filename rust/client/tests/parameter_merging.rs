@@ -1,4 +1,8 @@
+#[path = "support/request_case.rs"]
+mod request_case;
 use dynamic_openapi_client::*;
+use dynamic_openapi_client::{diagnostics::*, inspect::*};
+use request_case::*;
 use serde_json::json;
 
 fn parameter(version: &str, location: &str, name: &str) -> serde_json::Value {
@@ -71,7 +75,7 @@ fn overrides_keep_source_order_provenance_and_location_identity() {
             );
             assert_eq!(parameters[6].location(), ParameterLocation::Header);
         }
-        let prepared = op.prepare(&Input::default()).unwrap();
+        let prepared = op.prepare_case(&CaseInput::default()).unwrap();
         assert_eq!(prepared.target(), "https://api.example/");
         assert_eq!(op.parameters().unwrap().iter().len(), 7);
     }
@@ -110,7 +114,7 @@ fn duplicate_identity_in_either_list_is_still_refused() {
                 for error in [
                     op.parameters().unwrap_err(),
                     op.describe().unwrap_err(),
-                    op.prepare(&Input::default()).unwrap_err(),
+                    op.prepare_case(&CaseInput::default()).unwrap_err(),
                 ] {
                     assert_eq!(error.code(), Code::InvalidDeclaration);
                     assert_eq!(error.location().unwrap().pointer, expected);
@@ -192,7 +196,7 @@ fn parameter_inspection_remains_available_after_request_declaration_failure() {
     let op = doc.operation_id("read").unwrap();
     assert_eq!(op.parameters().unwrap().iter().len(), 1);
     assert_eq!(
-        op.prepare(&Input::default()).unwrap_err().code(),
+        op.prepare_case(&CaseInput::default()).unwrap_err().code(),
         Code::InvalidReference
     );
     assert_eq!(op.parameters().unwrap().iter().len(), 1);
@@ -215,7 +219,7 @@ fn cache_disabled_still_merges_and_prepares() {
             op.parameters().unwrap().iter().next().unwrap().name(),
             "x-TRACE"
         );
-        op.prepare(&Input::default()).unwrap();
+        op.prepare_case(&CaseInput::default()).unwrap();
         #[cfg(feature = "qualification")]
         assert_eq!(qualification::cached_operations(&doc), 0);
     }

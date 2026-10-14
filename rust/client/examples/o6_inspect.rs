@@ -1,6 +1,7 @@
 #[path = "o6_support/mod.rs"]
 mod support;
 use dynamic_openapi_client::{Document, Limits};
+
 fn main() -> Result<(), support::Error> {
     let document = Document::parse(
         support::document("https://api.example"),

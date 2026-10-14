@@ -1,21 +1,22 @@
 //! Format admission only. Acquisition and reference-resource graphs are separate capabilities.
-use crate::{Cancellation, Code, Diagnostic, ExactJson, LimitKind, Limits, Location, ParseFailure};
+use crate::diagnostics::{Code, LimitKind, Location};
+use crate::exact::Value;
+use crate::{Cancellation, Diagnostic, Limits};
 use std::sync::Arc;
 
 pub(crate) fn parse(
     bytes: &[u8],
     limits: Limits,
     cancellation: &Cancellation,
-) -> Result<ExactJson, ParseFailure> {
+) -> Result<Value, Diagnostic> {
     // Admission precedes both format detection and any copy of original source.
     let admitted = bytes.len() <= limits.document_bytes;
-    let fail = |diagnostic| ParseFailure {
-        diagnostic,
-        source: if admitted {
+    let fail = |diagnostic: Diagnostic| {
+        (diagnostic).parse_failure(if admitted {
             Arc::from(bytes)
         } else {
             Arc::from([])
-        },
+        })
     };
     cancellation.check().map_err(fail)?;
     if bytes.len() > limits.document_bytes {
@@ -25,27 +26,26 @@ pub(crate) fn parse(
             bytes.len(),
         )));
     }
-    // Keep the normal JSON path identical to ExactJson: no extra grammar scan.
+    // Keep the normal JSON path identical to Value: no extra grammar scan.
     // Only syntax failure may select YAML. Valid JSON's duplicate, Unicode and
     // node-limit refusals must never be bypassed by another interpretation.
-    let json_failure = match ExactJson::parse_with_cancellation(bytes, limits.clone(), cancellation)
-    {
+    let json_failure = match Value::parse_with_cancellation(bytes, limits.clone(), cancellation) {
         Ok(json) => return Ok(json),
         Err(error) => {
             let ambiguous_depth = matches!(
-                error.diagnostic().reason(),
-                Some(crate::DiagnosticReason::Limit {
+                error.reason(),
+                Some(crate::diagnostics::DiagnosticReason::Limit {
                     kind: LimitKind::Depth,
                     ..
                 })
             );
-            let may_be_yaml = error.diagnostic().code() == Code::InvalidJson
+            let may_be_yaml = error.code() == Code::InvalidJson
                 || (ambiguous_depth
                     && serde_json::from_slice::<&serde_json::value::RawValue>(bytes).is_err());
             if !may_be_yaml {
                 return Err(error);
             }
-            error.diagnostic
+            error
         }
     };
     let context = crate::value::authored_source_context().map_err(fail)?;
@@ -79,9 +79,11 @@ pub(crate) fn parse(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DiagnosticReason, SourceFormat, SourceOrigin, ValueKind, YamlReason};
+    use crate::diagnostics::{DiagnosticReason, YamlReason};
+    use crate::exact::ValueKind;
+    use crate::source::{SourceFormat, SourceOrigin};
 
-    fn load(source: &str) -> ExactJson {
+    fn load(source: &str) -> Value {
         parse(
             source.as_bytes(),
             Limits::default(),
@@ -89,7 +91,7 @@ mod tests {
         )
         .unwrap()
     }
-    fn failure(source: &str) -> ParseFailure {
+    fn failure(source: &str) -> Diagnostic {
         parse(
             source.as_bytes(),
             Limits::default(),
@@ -100,15 +102,12 @@ mod tests {
     fn reason(source: &str, expected: YamlReason) {
         let error = failure(source);
         assert_eq!(error.source_bytes(), source.as_bytes());
-        assert!(error.diagnostic().source_position().is_none());
-        assert_eq!(
-            error.diagnostic().reason(),
-            Some(&DiagnosticReason::Yaml(expected))
-        );
-        let location = error.diagnostic().location().unwrap();
+        assert!(error.source_position().is_none());
+        assert_eq!(error.reason(), Some(&DiagnosticReason::Yaml(expected)));
+        let location = error.location().unwrap();
         assert!(source.get(location.start..location.end).is_some());
         assert_eq!(
-            error.diagnostic().source_context().unwrap().origin,
+            error.source_context().unwrap().origin,
             SourceOrigin::Authored
         );
     }
@@ -132,10 +131,7 @@ mod tests {
             trace.authored.as_ref().unwrap().raw()
         );
         assert!(trace.alias_uses.is_empty());
-        assert_eq!(
-            failure("{\"x\":1,\"x\":2}").diagnostic().code(),
-            Code::DuplicateMember
-        );
+        assert_eq!(failure("{\"x\":1,\"x\":2}").code(), Code::DuplicateMember);
     }
     #[test]
     fn yaml_numbers_preserve_values_and_lexemes() {
@@ -215,9 +211,9 @@ mod tests {
     fn duplicate_decoded_keys_and_key_types_are_explicit() {
         let source = "foo: 1\n\"f\\u006fo\": 2\n";
         let error = failure(source);
-        assert_eq!(error.diagnostic().code(), Code::DuplicateMember);
-        let p = error.diagnostic().location().unwrap();
-        let earlier = &error.diagnostic().related()[0];
+        assert_eq!(error.code(), Code::DuplicateMember);
+        let p = error.location().unwrap();
+        let earlier = &error.related()[0];
         assert_eq!(&source[p.start..p.end], "\"f\\u006fo\"");
         assert_eq!(&source[earlier.start..earlier.end], "foo");
         for source in ["200: ok\n", "true: ok\n", "null: ok\n", "? [a,b]\n: ok\n"] {
@@ -277,10 +273,7 @@ mod tests {
                 .as_str(),
             Some("two")
         );
-        assert_eq!(
-            failure("x: [one, two\n").diagnostic().code(),
-            Code::InvalidYaml
-        );
+        assert_eq!(failure("x: [one, two\n").code(), Code::InvalidYaml);
     }
     #[test]
     fn input_and_normalized_output_have_independent_byte_admission() {
@@ -295,7 +288,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(
-            error.diagnostic().reason(),
+            error.reason(),
             Some(DiagnosticReason::Limit {
                 kind: LimitKind::NormalizedBytes,
                 ..
@@ -312,7 +305,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(
-            error.diagnostic().reason(),
+            error.reason(),
             Some(DiagnosticReason::Limit {
                 kind: LimitKind::DocumentBytes,
                 ..
@@ -358,7 +351,7 @@ mod tests {
         ] {
             let error = parse(source.as_bytes(), limits, &Cancellation::default()).unwrap_err();
             assert!(
-                matches!(error.diagnostic().reason(), Some(DiagnosticReason::Limit { kind: actual, .. }) if *actual == kind),
+                matches!(error.reason(), Some(DiagnosticReason::Limit { kind: actual, .. }) if *actual == kind),
                 "{error:?}"
             );
         }
@@ -368,15 +361,15 @@ mod tests {
         let cancellation = Cancellation::default();
         cancellation.cancel();
         let error = parse(b"a: x\n", Limits::default(), &cancellation).unwrap_err();
-        assert_eq!(error.diagnostic().code(), Code::Cancelled);
+        assert_eq!(error.code(), Code::Cancelled);
         assert_eq!(error.source_bytes(), b"a: x\n");
         let error = parse(b"a: \xff", Limits::default(), &Cancellation::default()).unwrap_err();
-        assert_eq!(error.diagnostic().code(), Code::InvalidUtf8);
+        assert_eq!(error.code(), Code::InvalidUtf8);
         assert_eq!(error.source_bytes(), b"a: \xff");
     }
     #[test]
     fn constructed_values_have_no_authored_source() {
-        let owner = ExactJson::parse_in_origin(
+        let owner = Value::parse_in_origin(
             b"42",
             Limits::default(),
             &Cancellation::default(),
@@ -388,11 +381,8 @@ mod tests {
     #[test]
     fn format_fallback_never_bypasses_json_policies() {
         for source in [r#"{"x":1,"x":2}"#, r#"{"x":"\uD800"}"#] {
-            let expected = ExactJson::parse(source, Limits::default()).unwrap_err();
-            assert_eq!(
-                failure(source).diagnostic().code(),
-                expected.diagnostic().code()
-            );
+            let expected = Value::parse(source, Limits::default()).unwrap_err();
+            assert_eq!(failure(source).code(), expected.code());
         }
         let limits = Limits {
             depth: 1,
@@ -400,7 +390,7 @@ mod tests {
         };
         let error = parse(br#"{"x":[]}"#, limits.clone(), &Cancellation::default()).unwrap_err();
         assert!(matches!(
-            error.diagnostic().reason(),
+            error.reason(),
             Some(DiagnosticReason::Limit {
                 kind: LimitKind::Depth,
                 ..
@@ -408,6 +398,6 @@ mod tests {
         ));
         let owner = parse(b"x: '[[[[[[[[[[['\n", limits, &Cancellation::default()).unwrap();
         assert_eq!(owner.root().get("x").unwrap().as_str(), Some("[[[[[[[[[[["));
-        assert_eq!(failure("{").diagnostic().code(), Code::InvalidJson);
+        assert_eq!(failure("{").code(), Code::InvalidJson);
     }
 }

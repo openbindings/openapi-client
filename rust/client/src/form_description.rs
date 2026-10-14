@@ -1,14 +1,16 @@
 //! Source-only selected form descriptions. All semantic queries use the one
 //! indexed graph and the caller's shared, call-scoped fact budget.
+use crate::diagnostics::Code;
+use crate::exact::Value;
 use crate::graph::{Graph, NodeKey, key};
+use crate::inspect::{Edition, FieldRequirement, FieldShapeIssue, FieldShapeReason};
 use crate::prepare::{BodyDeclaration, DescriptorWork, FieldDeclarations, MediaDeclaration};
+use crate::schema::SchemaProfile;
 use crate::schema_facts::{
     self, Fact, FactQuery, FactValue, FactWork, SchemaSelection, SchemaType,
 };
-use crate::{
-    Code, Diagnostic, Edition, FieldRequirement, FieldShapeIssue, FieldShapeReason, Operation,
-    SchemaProfile, SourcePosition, Value,
-};
+use crate::source::SourcePosition;
+use crate::{Diagnostic, Operation};
 
 /// Original schema location and actual lexical interpretation; no flattened schema.
 #[derive(Clone, Debug)]
@@ -112,7 +114,7 @@ pub struct MediaDescription {
 #[non_exhaustive]
 pub struct RequestBodyDescription {
     /// Original wrapper, target and reference chain.
-    pub declaration: crate::ResolvedReference,
+    pub declaration: crate::graph::ResolvedReference,
     /// Whether omission is permitted.
     pub required: bool,
     /// Effective representations.
@@ -164,8 +166,8 @@ fn fact_result(
                 .pointer(&need.pointer)
                 .expect("need site");
             let code = match need.need {
-                crate::ResourceNeedKind::Bytes => Code::ResourceUnavailable,
-                crate::ResourceNeedKind::Layout => Code::ResourceLayoutRequired,
+                crate::graph::ResourceNeedKind::Bytes => Code::ResourceUnavailable,
+                crate::graph::ResourceNeedKind::Layout => Code::ResourceLayoutRequired,
             };
             Err(site.error(code).need_fact(need))
         }
@@ -205,13 +207,11 @@ pub(crate) fn selected_items(
     match fact(graph, roots, FactQuery::Items, facts, source)?.0 {
         Some(FactValue::Items(schema_facts::Items::Homogeneous(s))) => Ok(s),
         None => Ok(SchemaSelection(vec![])),
-        Some(_) => {
-            Err(source
-                .error(Code::UnsupportedMedia)
-                .reasoned(crate::DiagnosticReason::Form(
-                    crate::FormReason::StructuredMultipart,
-                )))
-        }
+        Some(_) => Err(source.error(Code::UnsupportedMedia).reasoned(
+            crate::diagnostics::DiagnosticReason::Form(
+                crate::form::FormReason::StructuredMultipart,
+            ),
+        )),
     }
 }
 pub(crate) fn effective_coding(
@@ -252,7 +252,7 @@ pub(crate) fn default_media(
                 return Err(crate::schema::schema_error(
                     source,
                     Code::UnsupportedSchema,
-                    crate::SchemaReason::ConflictingFacts,
+                    crate::schema::SchemaReason::ConflictingFacts,
                 ));
             }
         };
@@ -260,7 +260,7 @@ pub(crate) fn default_media(
             return Err(crate::schema::schema_error(
                 source,
                 Code::UnsupportedSchema,
-                crate::SchemaReason::ConflictingFacts,
+                crate::schema::SchemaReason::ConflictingFacts,
             ));
         }
         result = Some(media);
@@ -355,7 +355,7 @@ impl Operation {
                     .pointer(&need.pointer)
                     .expect("need source");
                 Err(site
-                    .error(if need.need == crate::ResourceNeedKind::Bytes {
+                    .error(if need.need == crate::graph::ResourceNeedKind::Bytes {
                         Code::ResourceUnavailable
                     } else {
                         Code::ResourceLayoutRequired
@@ -427,7 +427,7 @@ impl Operation {
             Fact::Indeterminate { reason, .. } => {
                 return self.partial_inventory(
                     media,
-                    if reason == crate::SchemaReason::Composition {
+                    if reason == crate::schema::SchemaReason::Composition {
                         FieldShapeReason::Composition
                     } else {
                         FieldShapeReason::SchemaShape
@@ -585,7 +585,7 @@ impl Operation {
         };
         if edition == Edition::Swagger20 && legacy.is_none() {
             return Err(media.authored.error(Code::InvalidSelection).reasoned(
-                crate::DiagnosticReason::Form(crate::FormReason::UnknownField),
+                crate::diagnostics::DiagnosticReason::Form(crate::form::FormReason::UnknownField),
             ));
         }
         let selection = if styled {
@@ -648,6 +648,7 @@ impl Operation {
 mod tests {
     use super::*;
     use crate::*;
+    use crate::{diagnostics::*, form::*, schema::*};
     use serde_json::json;
     #[test]
     fn frozen_required_profile_syntax_twins() {
@@ -727,17 +728,8 @@ mod tests {
             .describe_form_field("application/x-www-form-urlencoded", "SECRET-NAME")
             .unwrap();
         let all = op.describe().unwrap();
-        let form = Form::new(
-            [FormField::new("SECRET-NAME", "SECRET-VALUE")],
-            Limits::default(),
-        )
-        .unwrap();
-        let request = op
-            .prepare(&Input {
-                body: Body::Form(form.clone()),
-                ..Input::default()
-            })
-            .unwrap();
+        let form = [FormField::value("SECRET-NAME", "SECRET-VALUE", Limits::default()).unwrap()];
+        let request = op.request().form_fields(form.clone()).prepare().unwrap();
         drop(request);
         drop(op);
         drop(doc);
@@ -763,13 +755,19 @@ mod tests {
         let _guard = crate::schema::cancel_after_for_test(5);
         let bytes = vec![7_u8; 131072];
         assert_eq!(
-            Form::new_with_cancellation(
-                [FormField::new("file", Part::bytes(bytes.as_slice()))],
-                Limits::default(),
-                &cancel
+            Document::parse(
+                br#"{"openapi":"3.1.2","paths":{"/send":{"post":{"operationId":"send"}}}}"#,
+                None,
+                Limits::default()
             )
+            .unwrap()
+            .operation_id("send")
+            .unwrap()
+            .request()
+            .cancellation(cancel)
+            .form_fields([FormField::part("file", Part::bytes(bytes.as_slice()))])
+            .prepare()
             .unwrap_err()
-            .diagnostic()
             .code(),
             Code::Cancelled
         );

@@ -1,8 +1,12 @@
+#[path = "support/request_case.rs"]
+mod request_case;
 use dynamic_openapi_client::*;
+use dynamic_openapi_client::{diagnostics::*, exact::*, form::*};
+use request_case::*;
 use serde_json::json;
 
 fn exact(text: &str) -> Value {
-    ExactJson::parse(text, Limits::default()).unwrap().root()
+    Value::parse(text, Limits::default()).unwrap()
 }
 fn path_document(version: &str, limits: Limits) -> Document {
     let mut p = json!({"name":"p","in":"path","required":true,"schema":{"type":"string"}});
@@ -32,28 +36,28 @@ fn repeated_path_markers_preserve_framing_and_treat_supplied_markers_as_data() {
             let expected = format!("https://api.example/pre{encoded}mid{encoded}/tailQsuffix");
             let ordinary = operation
                 .request()
-                .parameter(ParameterLocation::Path, "p", p)
-                .parameter(ParameterLocation::Path, "q", "Q")
+                .parameter(ParameterLocation::Path, "p", &p)
+                .parameter(ParameterLocation::Path, "q", &"Q")
                 .prepare()
                 .unwrap();
             assert_eq!(ordinary.target(), expected, "{version}");
-            let input = Input {
+            let input = CaseInput {
                 parameters: vec![
-                    ParameterInput {
+                    CaseParameter {
                         name: "p".into(),
                         location: ParameterLocation::Path,
                         value: exact(&json!(p).to_string()),
                     },
-                    ParameterInput {
+                    CaseParameter {
                         name: "q".into(),
                         location: ParameterLocation::Path,
                         value: exact("\"Q\""),
                     },
                 ],
-                ..Input::default()
+                ..CaseInput::default()
             };
             assert_eq!(
-                operation.prepare(&input).unwrap().target(),
+                operation.prepare_case(&input).unwrap().target(),
                 expected,
                 "{version}"
             );
@@ -74,42 +78,39 @@ fn completed_repeated_target_admission_and_cancellation_keep_context() {
         let operation = document.operation_id("send").unwrap();
         let result = operation
             .request()
-            .parameter(ParameterLocation::Path, "p", "long")
-            .parameter(ParameterLocation::Path, "q", "Q")
+            .parameter(ParameterLocation::Path, "p", &"long")
+            .parameter(ParameterLocation::Path, "q", &"Q")
             .prepare();
         if cap == expected.len() {
             assert_eq!(result.unwrap().target(), expected);
         } else {
             let error = result.unwrap_err();
             assert_eq!(
-                error.diagnostic().reason(),
+                error.reason(),
                 Some(&DiagnosticReason::Limit {
                     kind: LimitKind::TargetBytes,
                     maximum: cap,
                     actual: expected.len(),
                 })
             );
-            assert_eq!(
-                error.diagnostic().context(),
-                Some(&DiagnosticContext::PreparedRequest)
-            );
+            assert_eq!(error.context(), Some(&DiagnosticContext::PreparedRequest));
         }
         let cancel = Cancellation::default();
         cancel.cancel();
         assert_eq!(
             operation
                 .request()
-                .parameter(ParameterLocation::Path, "p", "long")
-                .parameter(ParameterLocation::Path, "q", "Q")
-                .prepare_with_cancellation(&cancel)
+                .parameter(ParameterLocation::Path, "p", &"long")
+                .parameter(ParameterLocation::Path, "q", &"Q")
+                .cancellation(cancel.clone())
+                .prepare()
                 .unwrap_err()
-                .diagnostic()
                 .code(),
             Code::Cancelled
         );
         assert_eq!(
             operation
-                .prepare_with_cancellation(&Input::default(), &cancel)
+                .prepare_case_with_cancellation(&CaseInput::default(), &cancel)
                 .unwrap_err()
                 .code(),
             Code::Cancelled
@@ -130,7 +131,7 @@ fn joined_form_keys_keep_decoded_text_exact_numbers_and_owned_result() {
             let operation = document.operation_id("send").unwrap();
             let request = operation
                 .request()
-                .form([FormField::new("p", input.clone())])
+                .form_fields([FormField::exact("p", input.clone())])
                 .prepare()
                 .unwrap();
             drop(input);

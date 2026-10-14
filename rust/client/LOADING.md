@@ -1,6 +1,6 @@
 # JSON and YAML document loading
 
-`Document::parse(bytes, original_url, limits)` detects the serialization internally. The same document, operation and request types apply to every supported OpenAPI edition. The optional URL is the original retrieval identity/base, not a request-target override. Loading supplied bytes performs no I/O. The exact JSON parser runs first; JSON syntax failures may select YAML, including YAML flow collections beginning with `{` or `[`. Duplicate names, Unicode restrictions and JSON resource refusals are never bypassed by YAML fallback. A preliminary depth refusal is disambiguated because JSON-shaped punctuation can occur in YAML strings. When both grammars fail on brace/bracket-leading input, the JSON diagnostic is retained. `ExactJson::parse` and response JSON decoding remain JSON-only.
+`Document::parse(bytes, original_url, limits)` detects the serialization internally. The same document, operation and request types apply to every supported OpenAPI edition. The optional URL is the original retrieval identity/base, not a request-target override. Loading supplied bytes performs no I/O. The exact JSON parser runs first; JSON syntax failures may select YAML, including YAML flow collections beginning with `{` or `[`. Duplicate names, Unicode restrictions and JSON resource refusals are never bypassed by YAML fallback. A preliminary depth refusal is disambiguated because JSON-shaped punctuation can occur in YAML strings. When both grammars fail on brace/bracket-leading input, the JSON diagnostic is retained. `exact::Value::parse` and response JSON decoding remain JSON-only.
 
 `Document::source()` retains the complete original text, including comments, scalar notation and whitespace. `Document::format()` reports the detected format for inspection, without being required to invoke operations.
 
@@ -11,7 +11,8 @@ JSON values retain the existing exact token and source-range contract. YAML valu
 `Value::raw()`, `Value::location()` and `Value::source_context()` always refer to the indexed JSON representation. For an authored YAML number such as `+001.2500`, `raw()` is `1.2500`; its mathematical value remains exact. Use `Value::source_trace()` to inspect the original notation and coordinates:
 
 ```rust
-use dynamic_openapi_client::{Document, Limits, SourceOrigin};
+use dynamic_openapi_client::{Document, Limits};
+use dynamic_openapi_client::source::{SourceOrigin};
 let document = Document::parse(
     b"openapi: 3.1.0\ninfo: {title: example, version: v1}\nx-number: +001.2500\npaths: {}\n",
     Some("https://api.example/openapi.yaml"),

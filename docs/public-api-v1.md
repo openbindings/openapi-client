@@ -19,14 +19,21 @@ The [Rust API guide](../rust/client/README.md) documents the actual surface:
 
 - `Document::parse` accepts supplied JSON/YAML bytes, an optional retrieval
   identity and limits. It performs no I/O.
-- `DocumentBuilder` creates immutable snapshots from supplied resources.
+- `graph::DocumentBuilder` creates immutable snapshots from supplied resources.
   Missing resources produce corrective needs; callers supply bytes and build
   a new snapshot.
 - Document and operation handles expose inventory, authored inspection and
   effective descriptions. Operation selection uses IDs or explicit path/method
   selection; ambiguous IDs are refused.
-- `Operation::request` builds ordinary calls. `Operation::prepare` accepts
-  explicit `Input` when callers manage exact values and selections themselves.
+- `Operation::request` builds calls through owning checked setters:
+  `parameter(location, name, &value)`, `json(&value)` and `form(&value)`.
+  `parameter_exact` and `json_exact` retain `exact::Value` handles for exact data;
+  `form_fields` accepts explicit `form::FormField` value/exact/part/parts inputs.
+  `prepare()` returns a `transport::PreparedRequest` or a `Diagnostic`.
+- Use `server`, `media`, `security` and `server_variable` for explicit elections.
+  Supply credentials with `Credential::bearer(token, origins)`,
+  `basic(username, password, origins)` or `api_key(value, origins)`, then
+  `credential(scheme, credential)`. Constructors require an explicit origin list.
 - Preparation resolves supported servers, parameters, finite JSON/raw/named
   form bodies and scheme-named, origin-scoped supplied credentials. Ambiguous
   server, body-compatible media and security alternatives require selection.
@@ -43,6 +50,25 @@ The [graph](../rust/client/GRAPH.md),
 define the implemented profiles. Owning values preserve source and diagnostic
 locations after originating handles are dropped. Inspection is not a promise
 that every declaration can be prepared or executed.
+
+The caller supplies the indices and concrete media that match its operation:
+
+```rust
+use dynamic_openapi_client::{Credential, Diagnostic, Operation, ParameterLocation,
+    exact::Value, transport::PreparedRequest};
+# fn prepare(operation: &Operation, exact: &Value, token: &str, origin: String)
+#     -> Result<PreparedRequest, Diagnostic> {
+operation.request()
+    .server(0)
+    .server_variable("region", "us")
+    .media("application/json")
+    .security(0)
+    .credential("token", Credential::bearer(token, vec![origin]))
+    .parameter(ParameterLocation::Query, "limit", &25)
+    .json_exact(exact)
+    .prepare()
+# }
+```
 
 ## Application policy
 

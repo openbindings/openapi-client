@@ -1,4 +1,11 @@
-use dynamic_openapi_client::{Document, ExactJson, FormField, FormValue, Limits, Part};
+#[derive(serde::Serialize)]
+struct Text<'a> {
+    message: &'a str,
+    count: u64,
+}
+use dynamic_openapi_client::exact::Value;
+use dynamic_openapi_client::form::{FormField, Part};
+use dynamic_openapi_client::{Document, Limits};
 fn operation(media: &str) -> dynamic_openapi_client::Operation {
     let schema = serde_json::json!({"type":"object","properties":{
         "message":{"type":"string"},"count":{"type":"integer"},"file":{"type":"string","format":"binary"}}});
@@ -13,10 +20,10 @@ fn operation(media: &str) -> dynamic_openapi_client::Operation {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let text = operation("application/x-www-form-urlencoded")
         .request()
-        .form([
-            FormField::new("message", "café +&"),
-            FormField::new("count", 9_007_199_254_740_993_u64),
-        ])
+        .form(&Text {
+            message: "café +&",
+            count: 9_007_199_254_740_993,
+        })
         .prepare()?;
     assert_eq!(
         text.body().map(AsRef::as_ref).unwrap(),
@@ -26,13 +33,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let file = Part::bytes(b"a\0b".as_slice()).filename("note.bin");
     let prepared = upload
         .request()
-        .form([
-            FormField::new("message", "plain caption"),
-            FormField::new(
+        .form_fields([
+            FormField::value("message", &"plain caption", Limits::default()).unwrap(),
+            FormField::exact(
                 "count",
-                ExactJson::parse("9007199254740993", Limits::default())?.root(),
+                Value::parse("9007199254740993", Limits::default())?.clone(),
             ),
-            FormField::new("file", file.clone()),
+            FormField::part("file", file.clone()),
         ])
         .prepare()?;
     assert!(
@@ -47,7 +54,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let files = [file];
     let _ = upload
         .request()
-        .form([FormField::new("file", FormValue::Parts(&files))])
+        .form_fields([FormField::parts("file", &files)])
         .prepare()?;
     println!("PASS: current scalar text form, mixed file/exact upload and explicit part array");
     Ok(())

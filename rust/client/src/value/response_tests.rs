@@ -1,8 +1,8 @@
 use super::*;
 use serde::Deserialize;
 
-fn response(text: impl AsRef<[u8]>) -> ExactJson {
-    ExactJson::parse_response(text.as_ref(), Limits::default()).unwrap()
+fn response(text: impl AsRef<[u8]>) -> Value {
+    Value::parse_response(text.as_ref(), Limits::default()).unwrap()
 }
 
 #[test]
@@ -15,9 +15,9 @@ fn retained_access_limits_survive_eager_and_deferred_owner_escape() {
         ..Limits::default()
     };
     for (owner, deferred) in [
-        (ExactJson::parse(TEXT, limits.clone()).unwrap(), false),
+        (Value::parse(TEXT, limits.clone()).unwrap(), false),
         (
-            ExactJson::parse_response(TEXT.as_bytes(), limits).unwrap(),
+            Value::parse_response(TEXT.as_bytes(), limits).unwrap(),
             true,
         ),
     ] {
@@ -41,7 +41,7 @@ fn retained_access_limits_survive_eager_and_deferred_owner_escape() {
         ));
         assert_eq!(child.pointer("").unwrap().raw(), "123");
     }
-    let accepted = ExactJson::parse(TEXT, Limits::default()).unwrap();
+    let accepted = Value::parse(TEXT, Limits::default()).unwrap();
     assert_eq!(
         accepted
             .root()
@@ -67,7 +67,7 @@ fn response_projection_and_metadata_leave_the_index_unmaterialized() {
     let admitted_storage = owner.retained_bytes();
     assert!(admitted_storage > text.len());
     let root = owner.root();
-    assert!(owner.0.store.indexed_nodes().is_none());
+    assert!(owner.store.indexed_nodes().is_none());
     let projected: Item<'_> = owner.deserialize().unwrap();
     assert_eq!(projected.name, "borrowed");
     assert_eq!(projected.id, 9_007_199_254_740_993);
@@ -94,10 +94,10 @@ fn response_projection_and_metadata_leave_the_index_unmaterialized() {
     assert_eq!(root.retained_bytes(), admitted_storage);
     assert!(!format!("{owner:?}").contains("borrowed"));
     assert!(root.pointer("").is_ok());
-    assert!(owner.0.store.indexed_nodes().is_none());
+    assert!(owner.store.indexed_nodes().is_none());
     assert_eq!(root.get("name").unwrap().as_str(), Some("borrowed"));
     assert!(owner.retained_bytes() > text.len());
-    assert!(owner.0.store.indexed_nodes().is_some());
+    assert!(owner.store.indexed_nodes().is_some());
 }
 
 #[test]
@@ -112,9 +112,9 @@ fn single_node_responses_keep_the_eager_owner_and_storage_accounting() {
         "{}",
     ] {
         let response = response(text);
-        let eager = ExactJson::parse(text, Limits::default()).unwrap();
-        assert!(matches!(response.0.store.index, Index::Eager(_)));
-        assert_eq!(response.0.store.nodes().len(), 1);
+        let eager = Value::parse(text, Limits::default()).unwrap();
+        assert!(matches!(response.store.index, Index::Eager(_)));
+        assert_eq!(response.store.nodes().len(), 1);
         assert_eq!(response.retained_bytes(), eager.retained_bytes(), "{text}");
         assert_eq!(response.root().kind(), eager.root().kind());
         assert_eq!(response.root().raw(), eager.root().raw());
@@ -178,26 +178,22 @@ fn response_refusals_preserve_every_canonical_diagnostic_field() {
         ),
     ];
     for (text, limits) in cases {
-        let eager = ExactJson::parse(text, limits.clone()).unwrap_err();
-        let deferred = ExactJson::parse_response(text, limits.clone()).unwrap_err();
+        let eager = Value::parse(text, limits.clone()).unwrap_err();
+        let deferred = Value::parse_response(text, limits.clone()).unwrap_err();
         assert_eq!(deferred.source_bytes(), eager.source_bytes());
-        let context = eager.diagnostic.source_context().unwrap();
-        assert_ne!(context.id, deferred.diagnostic.source_context().unwrap().id);
-        assert_eq!(
-            deferred.diagnostic.sourced(context),
-            eager.diagnostic,
-            "{text:?}"
-        );
+        let context = eager.source_context().unwrap();
+        assert_ne!(context.id, deferred.source_context().unwrap().id);
+        assert_eq!(deferred.sourced(context), eager, "{text:?}");
     }
     let later_bad_key =
-        ExactJson::parse_response(br#"{"a":1,"a":2,"\ud800":3}"#, Limits::default()).unwrap_err();
-    assert_eq!(later_bad_key.diagnostic.code(), Code::UnsupportedString);
-    let shallow = ExactJson::parse_response(
+        Value::parse_response(br#"{"a":1,"a":2,"\ud800":3}"#, Limits::default()).unwrap_err();
+    assert_eq!(later_bad_key.code(), Code::UnsupportedString);
+    let shallow = Value::parse_response(
         br#"{"deep":["\ud800"],"shallow":{"a":1,"a":2}}"#,
         Limits::default(),
     )
     .unwrap_err();
-    assert_eq!(shallow.diagnostic.code(), Code::DuplicateMember);
+    assert_eq!(shallow.code(), Code::DuplicateMember);
 }
 
 #[test]
@@ -232,7 +228,7 @@ fn response_admission_preserves_exact_numbers_and_literal_private_names() {
 #[test]
 fn concurrent_response_inspection_initializes_one_shared_index_and_retains_children() {
     fn assert_send_sync<T: Send + Sync>() {}
-    assert_send_sync::<ExactJson>();
+    assert_send_sync::<Value>();
     assert_send_sync::<Value>();
     let text = r#" {"01":{"~/":[null,{"":"kept"}]},"same":[7,7]} "#;
     let owner = response(text);
@@ -246,7 +242,7 @@ fn concurrent_response_inspection_initializes_one_shared_index_and_retains_child
             jobs.push(scope.spawn(move || {
                 barrier.wait();
                 let child = owner.root().pointer("/01/~0~1/1/").unwrap();
-                (owner.0.store.nodes().as_ptr() as usize, child)
+                (owner.store.nodes().as_ptr() as usize, child)
             }));
         }
         jobs.into_iter()
@@ -270,29 +266,25 @@ fn concurrent_response_inspection_initializes_one_shared_index_and_retains_child
 
 #[test]
 fn ordinary_parse_keeps_eager_indexing_and_cancellation() {
-    let owner = ExactJson::parse("[0]", Limits::default()).unwrap();
-    assert!(matches!(owner.0.store.index, Index::Eager(_)));
+    let owner = Value::parse("[0]", Limits::default()).unwrap();
+    assert!(matches!(owner.store.index, Index::Eager(_)));
     let token = crate::Cancellation::default();
     token.cancel();
     assert_eq!(
-        ExactJson::parse_with_cancellation("[0]", Limits::default(), &token)
+        Value::parse_with_cancellation("[0]", Limits::default(), &token)
             .unwrap_err()
-            .diagnostic
             .code(),
         Code::Cancelled
     );
     for depth in [127, 128, 129] {
         let text = format!("{}0{}", "[".repeat(depth), "]".repeat(depth));
-        let eager = ExactJson::parse(&text, Limits::default());
-        let deferred = ExactJson::parse_response(text.as_bytes(), Limits::default());
+        let eager = Value::parse(&text, Limits::default());
+        let deferred = Value::parse_response(text.as_bytes(), Limits::default());
         match (eager, deferred) {
             (Ok(eager), Ok(deferred)) => assert_eq!(eager.source(), deferred.source()),
-            (Err(eager), Err(deferred)) => assert_eq!(
-                deferred
-                    .diagnostic
-                    .sourced(eager.diagnostic.source_context().unwrap()),
-                eager.diagnostic
-            ),
+            (Err(eager), Err(deferred)) => {
+                assert_eq!(deferred.sourced(eager.source_context().unwrap()), eager)
+            }
             _ => panic!("different depth admission at {depth}"),
         }
     }
@@ -307,7 +299,7 @@ fn tiny_response_node_budgets_count_tokens_not_private_number_callbacks() {
         (r#"{"$serde_json::private::Number":1e9999}"#, 2),
     ] {
         for limit in 0..=2 {
-            let parsed = ExactJson::parse_response(
+            let parsed = Value::parse_response(
                 text.as_bytes(),
                 Limits {
                     nodes: limit,
@@ -318,7 +310,7 @@ fn tiny_response_node_budgets_count_tokens_not_private_number_callbacks() {
                 let error = parsed.unwrap_err();
                 assert_eq!(error.source_bytes(), text.as_bytes());
                 assert_eq!(
-                    error.diagnostic.reason(),
+                    error.reason(),
                     Some(&DiagnosticReason::Limit {
                         kind: LimitKind::Nodes,
                         maximum: limit,
@@ -329,7 +321,7 @@ fn tiny_response_node_budgets_count_tokens_not_private_number_callbacks() {
                 let owner = parsed.unwrap();
                 assert_eq!(owner.source(), text);
                 assert_eq!(owner.root().raw(), text);
-                assert_eq!(owner.0.store.nodes().len(), actual);
+                assert_eq!(owner.store.nodes().len(), actual);
                 if text.starts_with('{') {
                     assert_eq!(owner.root().kind(), ValueKind::Object);
                     assert_eq!(owner.root().members().unwrap().count(), 1);
@@ -349,7 +341,7 @@ fn tiny_response_node_budgets_count_tokens_not_private_number_callbacks() {
 #[test]
 fn retained_storage_snapshot_survives_the_initialization_handoff() {
     let owner = response(r#"{"a":["decoded\ntext",1],"b":true}"#);
-    let Index::Deferred(deferred) = &owner.0.store.index else {
+    let Index::Deferred(deferred) = &owner.store.index else {
         panic!("response index must be deferred")
     };
     let before = owner.retained_bytes();
@@ -395,9 +387,9 @@ fn materialized_response_index_matches_eager_nodes_and_every_payload() {
         r#"{"$serde_json::private::Number":[1e9999,-0,340282366920938463463374607431768211455],"$serde_json::private::RawValue":{"token":"1e400"}}"#,
     ] {
         let response = response(text);
-        let eager = ExactJson::parse(text, Limits::default()).unwrap();
-        let actual = response.0.store.nodes();
-        let expected = eager.0.store.nodes();
+        let eager = Value::parse(text, Limits::default()).unwrap();
+        let actual = response.store.nodes();
+        let expected = eager.store.nodes();
         assert_eq!(actual.len(), expected.len(), "{text}");
         for (id, (actual, expected)) in actual.iter().zip(expected).enumerate() {
             assert_eq!(actual.span, expected.span, "node {id}: {text}");

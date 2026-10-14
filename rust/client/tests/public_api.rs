@@ -1,4 +1,8 @@
+#[path = "support/request_case.rs"]
+mod request_case;
 use dynamic_openapi_client::*;
+use dynamic_openapi_client::{diagnostics::*, exact::*, transport::*};
+use request_case::*;
 use std::{
     future::Future,
     rc::Rc,
@@ -37,7 +41,7 @@ fn send_and_local_callbacks_preserve_response() {
     let d = Document::parse(DOC, None, Limits::default()).unwrap();
     let op = d.operation_id("items").unwrap();
     drop(d);
-    let p = op.prepare(&Input::default()).unwrap();
+    let p = op.prepare_case(&CaseInput::default()).unwrap();
     drop(op);
     let host = HostCapabilities::programmable();
     let send = p.invoke(Cancellation::default(), &host, |_, _| async { result() });
@@ -50,7 +54,7 @@ fn send_and_local_callbacks_preserve_response() {
             .unwrap()
             .json()
             .unwrap()
-            .root()
+            .clone()
             .get("n")
             .unwrap()
             .raw(),
@@ -70,9 +74,8 @@ fn cancellation_and_small_limits_are_explicit() {
     let c = Cancellation::default();
     c.cancel();
     assert_eq!(
-        ExactJson::parse_with_cancellation(DOC, Limits::default(), &c)
+        Value::parse_with_cancellation(DOC, Limits::default(), &c)
             .unwrap_err()
-            .diagnostic()
             .code(),
         Code::Cancelled
     );
@@ -80,7 +83,7 @@ fn cancellation_and_small_limits_are_explicit() {
     assert_eq!(
         d.operation_id("items")
             .unwrap()
-            .prepare_with_cancellation(&Input::default(), &c)
+            .prepare_case_with_cancellation(&CaseInput::default(), &c)
             .unwrap_err()
             .code(),
         Code::Cancelled
@@ -89,37 +92,36 @@ fn cancellation_and_small_limits_are_explicit() {
         document_bytes: 8,
         ..Limits::default()
     };
-    let e = ExactJson::parse(" ".repeat(1_000_000), l).unwrap_err();
-    assert_eq!(e.diagnostic().code(), Code::Limit);
+    let e = Value::parse(" ".repeat(1_000_000), l).unwrap_err();
+    assert_eq!(e.code(), Code::Limit);
     assert!(e.source_bytes().is_empty());
     let l = Limits {
         nodes: 2,
         ..Limits::default()
     };
     assert_eq!(
-        ExactJson::parse(format!("[{}]", vec!["0"; 10_000].join(",")), l)
+        Value::parse(format!("[{}]", vec!["0"; 10_000].join(",")), l)
             .unwrap_err()
-            .diagnostic()
             .code(),
         Code::Limit
     );
 }
 #[test]
 fn credentials_and_document_names_are_not_formatted() {
-    let e=Document::parse(r#"{"openapi":"3.1.2","servers":[{"url":"https://api.example"}],"paths":{"/secret-key":{"get":{"responses":{"secret-key":{}}}}}}"#,None,Limits::default()).unwrap().operations().next().unwrap().prepare(&Input::default()).unwrap_err();
+    let e=Document::parse(r#"{"openapi":"3.1.2","servers":[{"url":"https://api.example"}],"paths":{"/secret-key":{"get":{"responses":{"secret-key":{}}}}}}"#,None,Limits::default()).unwrap().operations().next().unwrap().prepare_case(&CaseInput::default()).unwrap_err();
     assert!(!format!("{e:?}").contains("secret-key"));
     assert!(!e.to_string().contains("secret-key"));
     assert!(e.location().unwrap().pointer.contains("secret-key"));
 }
 #[test]
 fn raw_body_debug_and_pending_invocation_are_honest() {
-    let b = Body::Raw(b"dummy-secret".as_slice().into());
+    let b = CaseBody::Raw(b"dummy-secret".as_slice().into());
     assert!(!format!("{b:?}").contains("dummy-secret"));
     let d = Document::parse(DOC, None, Limits::default()).unwrap();
     let p = d
         .operation_id("items")
         .unwrap()
-        .prepare(&Input::default())
+        .prepare_case(&CaseInput::default())
         .unwrap();
     let host = HostCapabilities::programmable();
     let cancel = Cancellation::default();

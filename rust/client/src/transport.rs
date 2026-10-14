@@ -1,4 +1,7 @@
-use crate::{Cancellation, Code, Diagnostic, ExactJson, HostRefusal, Limits, PreparedRequest};
+use crate::diagnostics::{Code, HostRefusal};
+use crate::exact::Value;
+pub use crate::prepare::PreparedRequest;
+use crate::{Cancellation, Diagnostic, Limits};
 use std::{fmt, future::Future, sync::Arc};
 
 /// Ordered HTTP header field with explicit credential sensitivity.
@@ -400,7 +403,7 @@ impl Response {
     /// Validate delivered JSON into a new, independent exact owner on each call.
     /// All admission checks finish here; dynamic access may materialize its index later.
     /// Failure leaves this response and raw bytes available.
-    pub fn json(&self) -> Result<ExactJson, Diagnostic> {
+    pub fn json(&self) -> Result<Value, Diagnostic> {
         if let Some(e) = &self.validation {
             return Err(e.clone());
         }
@@ -445,7 +448,7 @@ impl Response {
         }
         let mut limits = self.limits.clone();
         limits.document_bytes = limits.body_bytes;
-        ExactJson::parse_response(self.raw(), limits).map_err(|e| e.diagnostic)
+        Value::parse_response(self.raw(), limits)
     }
 }
 /// Honest combined outcome. Inspect the response independently from any failure.
@@ -662,7 +665,7 @@ mod host_delivered_tests {
             .operation_id("send")
             .unwrap()
             .request()
-            .body(crate::Body::Raw(payload.clone()))
+            .raw_body(payload.clone())
             .header(Header::new("SECRET-NAME", "SECRET-VALUE"))
             .prepare()
             .unwrap();
@@ -735,8 +738,8 @@ mod host_delivered_tests {
         assert_eq!(error.code(), Code::Limit);
         assert!(matches!(
             error.reason(),
-            Some(crate::DiagnosticReason::Limit {
-                kind: crate::LimitKind::Depth,
+            Some(crate::diagnostics::DiagnosticReason::Limit {
+                kind: crate::diagnostics::LimitKind::Depth,
                 ..
             })
         ));

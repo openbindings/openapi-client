@@ -1,8 +1,11 @@
 //! Ordinary inspection and both forms of explicit schema dependency recovery.
-use dynamic_openapi_client::{
-    Code, Diagnostic, Document, DocumentBuilder, GraphLimits, Limits, ResourceInput,
-    ResourceInterpretation, ResourceLayout, ResourceNeedKind, SchemaProfile,
+use dynamic_openapi_client::diagnostics::Code;
+use dynamic_openapi_client::graph::{
+    DocumentBuilder, GraphLimits, ResourceInput, ResourceInterpretation, ResourceLayout,
+    ResourceNeedKind,
 };
+use dynamic_openapi_client::schema::SchemaProfile;
+use dynamic_openapi_client::{Diagnostic, Document, Limits};
 use std::sync::Arc;
 
 fn complete_bytes(
@@ -20,7 +23,7 @@ fn complete_bytes(
     let mut builder = DocumentBuilder::from_document(document);
     builder
         .supply(need, ResourceInput::at(uri, bytes)?)
-        .map_err(|failure| failure.diagnostic().clone())?;
+        .map_err(|failure| failure.clone())?;
     builder.build(document.entry_resource().id())
 }
 fn complete_layout(
@@ -51,7 +54,7 @@ fn main() -> Result<(), Diagnostic> {
         None,
         Limits::default(),
     )
-    .map_err(|failure| failure.diagnostic().clone())?;
+    .map_err(|failure| failure.clone())?;
     let original = document
         .entry_resource()
         .schema_at("/components/schemas/Request")?;
@@ -99,7 +102,7 @@ fn main() -> Result<(), Diagnostic> {
                 },
             )),
         )
-        .map_err(|failure| failure.diagnostic().clone())?;
+        .map_err(|failure| failure.clone())?;
     let document = builder.build(entry)?;
     let edge = document
         .entry_resource()

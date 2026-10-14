@@ -1,10 +1,10 @@
 //! Finite logical named forms. Encoding is internal to shared request preparation.
+use crate::diagnostics::{Code, DiagnosticContext, DiagnosticReason, LimitKind};
+use crate::exact::{Value, ValueKind};
+use crate::inspect::{Edition, FieldRequirement};
 use crate::prepare::{FieldDeclarations, MediaDeclaration};
 use crate::schema_facts::{FactWork, SchemaSelection};
-use crate::{
-    Argument, Cancellation, Code, Diagnostic, DiagnosticContext, DiagnosticReason, Edition,
-    FieldRequirement, LimitKind, Limits, OrdinaryValue, RequestError, Value, ValueKind,
-};
+use crate::{Cancellation, Diagnostic, Limits};
 use std::{borrow::Cow, fmt, sync::Arc};
 
 /// Corrective reason for a named-form refusal. It contains no supplied values.
@@ -41,9 +41,9 @@ pub enum FormReason {
 /// Borrowed finite bytes or an existing immutable shared owner. No I/O is performed.
 #[derive(Clone)]
 pub enum FiniteBytes<'a> {
-    /// Borrow bytes until request preparation finishes.
+    /// Borrow bytes until the form_fields setter admits and copies them.
     Borrowed(&'a [u8]),
-    /// Retain an already allocated immutable owner until preparation finishes.
+    /// Share an already allocated immutable owner.
     Shared(Arc<[u8]>),
 }
 impl<'a> From<&'a [u8]> for FiniteBytes<'a> {
@@ -76,7 +76,7 @@ impl fmt::Debug for FiniteBytes<'_> {
 }
 #[derive(Clone)]
 enum Content<'a> {
-    Value(Argument<'a>),
+    Value(Value),
     Bytes(FiniteBytes<'a>),
 }
 /// Name-free finite content with optional representation metadata.
@@ -84,15 +84,15 @@ enum Content<'a> {
 /// Caller-supplied part headers are not an input route.
 ///
 /// ```compile_fail,E0599
-/// use dynamic_openapi_client::{Argument, Part};
-/// let headers = [("X-Optional", Argument::from("secret"))];
-/// let part = Part::value("ok").headers(&headers);
+/// use dynamic_openapi_client::{form::Part, Header};
+/// let headers = [Header::new("X-Optional", "secret")];
+/// let part = Part::bytes(b"ok").headers(&headers);
 /// ```
 /// ```compile_fail,E0599
-/// use dynamic_openapi_client::{Argument, ExactJson, Limits, Part};
-/// let headers = [("X-Optional", Argument::from("secret"))];
-/// let array = ExactJson::parse(br#"["a","b"]"#, Limits::default()).unwrap();
-/// let part = Part::value(array.root()).headers(&headers);
+/// use dynamic_openapi_client::{exact::Value, form::Part, Header, Limits};
+/// let headers = [Header::new("X-Optional", "secret")];
+/// let array = Value::parse(br#"["a","b"]"#, Limits::default()).unwrap();
+/// let part = Part::value(array).headers(&headers);
 /// ```
 #[derive(Clone)]
 pub struct Part<'a> {
@@ -102,9 +102,9 @@ pub struct Part<'a> {
     duplicate: bool,
 }
 impl<'a> Part<'a> {
-    /// Supply an ordinary or exact logical value with part metadata.
-    pub fn value(v: impl Into<Argument<'a>>) -> Self {
-        Self::new(Content::Value(v.into()))
+    /// Supply an exact logical value with part metadata.
+    pub fn value(v: Value) -> Self {
+        Self::new(Content::Value(v))
     }
     /// Supply finite resource bytes; filenames do not cause filesystem access.
     pub fn bytes(v: impl Into<FiniteBytes<'a>>) -> Self {
@@ -138,9 +138,9 @@ impl fmt::Debug for Part<'_> {
 }
 /// A logical field value. Arrays express repetition rather than repeated field assignments.
 #[derive(Clone)]
-pub enum FormValue<'a> {
+enum FormValue<'a> {
     /// Ordinary or already admitted exact data, including scalar arrays.
-    Value(Argument<'a>),
+    Value(Value),
     /// One resource/value carrying part metadata.
     Part(Part<'a>),
     /// One logical array whose items carry individual metadata or binary data.
@@ -151,38 +151,6 @@ impl fmt::Debug for FormValue<'_> {
         f.write_str("FormValue([redacted])")
     }
 }
-impl<'a> From<Argument<'a>> for FormValue<'a> {
-    fn from(v: Argument<'a>) -> Self {
-        Self::Value(v)
-    }
-}
-impl<'a> From<OrdinaryValue<'a>> for FormValue<'a> {
-    fn from(v: OrdinaryValue<'a>) -> Self {
-        Self::Value(v.into())
-    }
-}
-impl From<Value> for FormValue<'_> {
-    fn from(v: Value) -> Self {
-        Self::Value(v.into())
-    }
-}
-impl<'a> From<Part<'a>> for FormValue<'a> {
-    fn from(v: Part<'a>) -> Self {
-        Self::Part(v)
-    }
-}
-impl<'a> From<&'a str> for FormValue<'a> {
-    fn from(v: &'a str) -> Self {
-        Self::Value(v.into())
-    }
-}
-impl<'a> From<&'a String> for FormValue<'a> {
-    fn from(v: &'a String) -> Self {
-        Self::Value(v.into())
-    }
-}
-macro_rules! scalars { ($($t:ty),*) => {$(impl From<$t> for FormValue<'_> { fn from(v:$t)->Self { Self::Value(v.into()) } })*}; }
-scalars!(bool, i8, i16, i32, i64, isize, u8, u16, u32, u64, usize);
 /// One unique logical field in a form, preserving caller order.
 #[derive(Clone)]
 pub struct FormField<'a> {
@@ -190,137 +158,39 @@ pub struct FormField<'a> {
     value: FormValue<'a>,
 }
 impl<'a> FormField<'a> {
-    /// Construct a field; request admission checks counts, metadata and duplicates.
-    pub fn new(name: impl Into<Cow<'a, str>>, value: impl Into<FormValue<'a>>) -> Self {
+    /// Construct a reusable checked logical value. Builder aggregate limits still apply.
+    pub fn value<T: serde::Serialize + ?Sized>(
+        name: impl Into<Cow<'a, str>>,
+        value: &T,
+        limits: Limits,
+    ) -> Result<Self, Diagnostic> {
+        Ok(Self::exact(name, Value::from_serializable(value, limits)?))
+    }
+    /// Retain an exact logical value without changing numeric spelling.
+    pub fn exact(name: impl Into<Cow<'a, str>>, value: Value) -> Self {
         Self {
             name: name.into(),
-            value: value.into(),
+            value: FormValue::Value(value),
+        }
+    }
+    /// Supply one finite part with optional metadata.
+    pub fn part(name: impl Into<Cow<'a, str>>, part: Part<'a>) -> Self {
+        Self {
+            name: name.into(),
+            value: FormValue::Part(part),
+        }
+    }
+    /// Supply an explicit array of finite parts.
+    pub fn parts(name: impl Into<Cow<'a, str>>, parts: &'a [Part<'a>]) -> Self {
+        Self {
+            name: name.into(),
+            value: FormValue::Parts(parts),
         }
     }
 }
 impl fmt::Debug for FormField<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("FormField([redacted])")
-    }
-}
-/// Immutable reusable logical form data. Construction owns borrowed data once;
-/// the fluent request form route keeps its borrows until preparation finishes.
-/// Cloning shares admitted immutable storage and never copies payloads.
-#[derive(Clone)]
-pub struct Form {
-    fields: Arc<Vec<ReadyField<'static>>>,
-}
-impl fmt::Debug for Form {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Form")
-            .field("fields", &self.len())
-            .finish_non_exhaustive()
-    }
-}
-impl Form {
-    /// Admit and own finite logical fields with one generated ordinary value owner.
-    pub fn new<'a>(
-        fields: impl IntoIterator<Item = FormField<'a>>,
-        limits: Limits,
-    ) -> Result<Self, RequestError> {
-        Self::new_with_cancellation(fields, limits, &Cancellation::default())
-    }
-    /// Check cancellation before converting the caller iterator and pulling each entry and throughout
-    /// library-owned admission/copy work. Caller iterator code is not preempted.
-    pub fn new_with_cancellation<'a>(
-        fields: impl IntoIterator<Item = FormField<'a>>,
-        limits: Limits,
-        cancellation: &Cancellation,
-    ) -> Result<Self, RequestError> {
-        crate::schema::checkpoint(cancellation).map_err(RequestError::Preparation)?;
-        let mut fields = fields.into_iter();
-        let mut admitted: Vec<FormField<'a>> = Vec::new();
-        let mut budget = Admission::default();
-        loop {
-            crate::schema::checkpoint(cancellation).map_err(RequestError::Preparation)?;
-            let Some(field) = fields.next() else { break };
-            let result = (|| {
-                if admitted.len() >= limits.form_fields {
-                    return Err(Diagnostic::limited(
-                        LimitKind::FormFields,
-                        limits.form_fields,
-                        admitted.len().saturating_add(1),
-                    ));
-                }
-                budget.name(&field, &limits)?;
-                budget.comparisons(admitted.len(), &limits)?;
-                for previous in &admitted {
-                    cancellation.check()?;
-                    if previous.name == field.name {
-                        return Err(refusal(Code::InvalidSelection, FormReason::DuplicateField));
-                    }
-                }
-                budget.field_cancel(&field, &limits, Some(cancellation))
-            })();
-            result.map_err(|e| {
-                RequestError::Preparation(field_context(e, admitted.len(), &field.name, None))
-            })?;
-            reserve_admitted(&mut admitted, limits.form_fields);
-            admitted.push(field);
-        }
-        let mut ordinary = Vec::new();
-        for field in &admitted {
-            crate::schema::checkpoint(cancellation).map_err(RequestError::Preparation)?;
-            field
-                .arguments(cancellation, &mut |a| {
-                    if let Argument::Ordinary(v) = a {
-                        ordinary.push(*v)
-                    }
-                })
-                .map_err(RequestError::Preparation)?;
-        }
-        let owner = if ordinary.is_empty() {
-            None
-        } else {
-            Some(
-                crate::ordinary::request_values(&ordinary, None, limits, cancellation)
-                    .map_err(RequestError::Input)?,
-            )
-        };
-        let mut ordinal = 0;
-        let mut exact = |argument| match argument {
-            Argument::Exact(v) => v,
-            Argument::Ordinary(_) => {
-                let value = owner
-                    .as_ref()
-                    .expect("ordinary owner")
-                    .root()
-                    .at(ordinal)
-                    .expect("admitted ordinal");
-                ordinal += 1;
-                value
-            }
-        };
-        let mut owned = Vec::with_capacity(admitted.len());
-        for field in admitted {
-            crate::schema::checkpoint(cancellation).map_err(RequestError::Preparation)?;
-            owned.push(
-                field
-                    .lower(&mut exact, cancellation)
-                    .map_err(RequestError::Preparation)?
-                    .into_owned(cancellation)
-                    .map_err(RequestError::Preparation)?,
-            );
-        }
-        Ok(Self {
-            fields: Arc::new(owned),
-        })
-    }
-    /// Number of unique logical fields.
-    pub fn len(&self) -> usize {
-        self.fields.len()
-    }
-    /// Whether the form has no logical fields. This remains a present body.
-    pub fn is_empty(&self) -> bool {
-        self.fields.is_empty()
-    }
-    pub(crate) fn fields(&self) -> &[ReadyField<'static>] {
-        &self.fields
     }
 }
 fn refusal(code: Code, reason: FormReason) -> Diagnostic {
@@ -359,10 +229,7 @@ impl Admission {
             LimitKind::FormMetadataBytes,
         )
     }
-    pub(crate) fn field(&mut self, f: &FormField<'_>, limits: &Limits) -> Result<(), Diagnostic> {
-        self.field_cancel(f, limits, None)
-    }
-    fn field_cancel(
+    pub(crate) fn field_cancel(
         &mut self,
         f: &FormField<'_>,
         limits: &Limits,
@@ -389,14 +256,10 @@ impl Admission {
             }
         }
     }
-    fn arg(&mut self, a: &Argument<'_>, l: &Limits) -> Result<(), Diagnostic> {
-        let minimum = match a {
-            Argument::Ordinary(OrdinaryValue::String(v)) => v.len(),
-            Argument::Exact(v) => match v.kind() {
-                ValueKind::String => v.as_str().unwrap().len(),
-                ValueKind::Number | ValueKind::Boolean => v.raw().len(),
-                _ => 0,
-            },
+    fn arg(&mut self, a: &Value, l: &Limits) -> Result<(), Diagnostic> {
+        let minimum = match a.kind() {
+            ValueKind::String => a.as_str().unwrap().len(),
+            ValueKind::Number | ValueKind::Boolean => a.raw().len(),
             _ => 0,
         };
         add(&mut self.bytes, minimum, l.body_bytes, LimitKind::BodyBytes)
@@ -441,7 +304,7 @@ impl<'a> FormField<'a> {
     pub(crate) fn arguments(
         &self,
         cancel: &Cancellation,
-        visit: &mut impl FnMut(&Argument<'a>),
+        visit: &mut impl FnMut(&Value),
     ) -> Result<(), Diagnostic> {
         let mut part = |p: &Part<'a>| -> Result<(), Diagnostic> {
             cancel.check()?;
@@ -466,7 +329,7 @@ impl<'a> FormField<'a> {
     }
     pub(crate) fn lower(
         self,
-        exact: &mut impl FnMut(Argument<'a>) -> Value,
+        exact: &mut impl FnMut(Value) -> Value,
         cancel: &Cancellation,
     ) -> Result<ReadyField<'a>, Diagnostic> {
         cancel.check()?;
@@ -497,7 +360,7 @@ impl<'a> FormField<'a> {
 impl<'a> Part<'a> {
     fn lower(
         self,
-        exact: &mut impl FnMut(Argument<'a>) -> Value,
+        exact: &mut impl FnMut(Value) -> Value,
         cancel: &Cancellation,
     ) -> Result<ReadyPart<'a>, Diagnostic> {
         cancel.check()?;
@@ -542,10 +405,12 @@ enum Payload<'a> {
     Value(Value),
     Bytes(AdmittedBytes<'a>),
 }
+#[derive(Clone)]
 pub(crate) struct ReadyField<'a> {
-    name: Cow<'a, str>,
+    pub(crate) name: Cow<'a, str>,
     content: ReadyValue<'a>,
 }
+#[derive(Clone)]
 enum ReadyValue<'a> {
     One(ReadyPart<'a>),
     Many(Vec<ReadyPart<'a>>),
@@ -576,7 +441,10 @@ fn owned_text(text: Cow<'_, str>, cancel: &Cancellation) -> Result<Cow<'static, 
     }
 }
 impl ReadyField<'_> {
-    fn into_owned(self, cancel: &Cancellation) -> Result<ReadyField<'static>, Diagnostic> {
+    pub(crate) fn into_owned(
+        self,
+        cancel: &Cancellation,
+    ) -> Result<ReadyField<'static>, Diagnostic> {
         Ok(ReadyField {
             name: owned_text(self.name, cancel)?,
             content: match self.content {
@@ -687,7 +555,7 @@ impl Admission {
             )?;
         }
         match &part.payload {
-            Payload::Value(v) => self.arg(&Argument::Exact(v.clone()), limits),
+            Payload::Value(v) => self.arg(v, limits),
             Payload::Bytes(b) => add(
                 &mut self.bytes,
                 b.bytes().len(),
@@ -1284,9 +1152,11 @@ fn validate_part(
             if name.eq_ignore_ascii_case("content-type") {
                 continue;
             }
-            let resolved =
-                work.declarations
-                    .resolve(work.graph, &header, crate::ReferenceKind::Header)?;
+            let resolved = work.declarations.resolve(
+                work.graph,
+                &header,
+                crate::graph::ReferenceKind::Header,
+            )?;
             let header = resolved.target;
             if bool_field(&header, "required", false)? {
                 return Err(located(
@@ -1883,9 +1753,9 @@ pub(crate) fn describe_representation(
     multipart: bool,
     work: &mut crate::prepare::DescriptorWork<'_>,
     facts: &mut FactWork<'_>,
-) -> Result<crate::FormRepresentationDescription, Diagnostic> {
+) -> Result<crate::inspect::FormRepresentationDescription, Diagnostic> {
     if style(encoding, edition, multipart)?.is_some() {
-        return Ok(crate::FormRepresentationDescription {
+        return Ok(crate::inspect::FormRepresentationDescription {
             media_types: vec![work.text(source, "text/plain")?],
             content_encoding: None,
             sources: Vec::new(),
@@ -1972,7 +1842,7 @@ pub(crate) fn describe_representation(
     let entry = &text[start..];
     crate::prepare::parse_media(entry, true)?;
     entries.push(work.text(source, entry.trim())?);
-    Ok(crate::FormRepresentationDescription {
+    Ok(crate::inspect::FormRepresentationDescription {
         media_types: entries,
         content_encoding: coding,
         sources,
@@ -1984,19 +1854,16 @@ mod tests {
     use super::*;
     #[test]
     fn shared_lowering_cancels_before_entries_and_releases_partial_owners() {
-        let value = crate::ExactJson::parse(br#""x""#, Limits::default())
+        let value = crate::exact::Value::parse(br#""x""#, Limits::default())
             .unwrap()
             .root();
         let cancel = Cancellation::default();
         cancel.cancel();
         let mut calls = 0;
-        let result = FormField::new("p", value.clone()).lower(
+        let result = FormField::exact("p", value.clone()).lower(
             &mut |argument| {
                 calls += 1;
-                match argument {
-                    Argument::Exact(value) => value,
-                    _ => unreachable!(),
-                }
+                argument
             },
             &cancel,
         );
@@ -2011,14 +1878,11 @@ mod tests {
         ];
         let owners = Arc::strong_count(&bytes);
         let cancel = Cancellation::default();
-        let result = FormField::new("p", FormValue::Parts(&parts)).lower(
+        let result = FormField::parts("p", &parts).lower(
             &mut |argument| {
                 calls += 1;
                 cancel.cancel();
-                match argument {
-                    Argument::Exact(value) => value,
-                    _ => unreachable!(),
-                }
+                argument
             },
             &cancel,
         );
@@ -2036,16 +1900,13 @@ mod tests {
         ];
         let cancel = Cancellation::default();
         calls = 0;
-        let result = FormField::new("p", FormValue::Parts(&parts)).lower(
+        let result = FormField::parts("p", &parts).lower(
             &mut |argument| {
                 calls += 1;
                 if calls == 2 {
                     cancel.cancel();
                 }
-                match argument {
-                    Argument::Exact(value) => value,
-                    _ => unreachable!(),
-                }
+                argument
             },
             &cancel,
         );
@@ -2190,7 +2051,7 @@ mod tests {
     #[test]
     fn boundaries_retry_collisions_in_decoded_material_and_bound_attempts() {
         // Authored JSON has an escape; the decoded part contains the candidate.
-        let exact = crate::ExactJson::parse(
+        let exact = crate::exact::Value::parse(
             br#""\u006fpenapi-boundary-0000000000000000""#,
             Limits::default(),
         )
@@ -2210,7 +2071,7 @@ mod tests {
                 ..
             })
         ));
-        let both = crate::ExactJson::parse(
+        let both = crate::exact::Value::parse(
             br#""openapi-boundary-0000000000000000 openapi-boundary-0000000000000001""#,
             Limits::default(),
         )
@@ -2267,7 +2128,7 @@ mod tests {
 
     #[test]
     fn boundary_overlap_is_rejected_before_emission() {
-        let value = crate::ExactJson::parse(
+        let value = crate::exact::Value::parse(
             br#""openapi-bopenapi-boundary-0000000000000000""#,
             Limits::default(),
         )

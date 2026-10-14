@@ -1,3 +1,4 @@
+use dynamic_openapi_client::{exact::*, transport::*};
 use dynamic_openapi_client::{
     qualification::{cached_operations, live_owners},
     *,
@@ -92,24 +93,17 @@ fn main() {
         count,
         d.operation_id("item0")
             .unwrap()
-            .prepare(&Input::default())
+            .request()
+            .prepare()
             .unwrap()
             .target()
     );
     let retained = LIVE.load(O::Relaxed) - before;
     let op = d.operation_id("item0").unwrap();
-    let value =
-        ExactJson::parse(r#"["x y","a&b","é",9007199254740993]"#, Limits::default()).unwrap();
-    let input = Input {
-        parameters: vec![ParameterInput {
-            location: ParameterLocation::Query,
-            name: "q".into(),
-            value: value.root(),
-        }],
-        ..Input::default()
-    };
+    let value = Value::parse(r#"["x y","a&b","é",9007199254740993]"#, Limits::default()).unwrap();
+    let input = value.clone();
     let payload = r#"{"n":9007199254740993,"fraction":0.12345678901234567890123456789,"a":[true,false,null]}"#;
-    let p = op.prepare(&Input::default()).unwrap();
+    let p = op.request().prepare().unwrap();
     let host = HostCapabilities::programmable();
     let response = oac_qualification::block_on(p.invoke(Cancellation::default(), &host, |_, _| {
         std::future::ready(TransportResult {
@@ -153,7 +147,8 @@ fn main() {
             |d| {
                 d.operation_id("item0")
                     .unwrap()
-                    .prepare(&Input::default())
+                    .request()
+                    .prepare()
                     .unwrap()
             },
         ));
@@ -161,13 +156,18 @@ fn main() {
             "prepare-warm",
             10000,
             || (),
-            |_| op.prepare(&Input::default()).unwrap(),
+            |_| op.request().prepare().unwrap(),
         ));
         stages.push(measure(
             "encode-parameter-preparation",
             5000,
             || (),
-            |_| op.prepare(&input).unwrap(),
+            |_| {
+                op.request()
+                    .parameter_exact(ParameterLocation::Query, "q", &input)
+                    .prepare()
+                    .unwrap()
+            },
         ));
         stages.push(measure(
             "decode-json-response",
