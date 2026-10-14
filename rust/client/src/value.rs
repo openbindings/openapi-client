@@ -827,6 +827,23 @@ impl Value {
     pub fn source(&self) -> &str {
         &self.store.source
     }
+    // Allocation identities, rather than selected ranges: normalized JSON and
+    // its authored YAML can both remain alive through a single child handle.
+    pub(crate) fn retained_sources(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
+        std::iter::once((self.store.source.as_ptr() as usize, self.store.source.len())).chain(
+            self.store
+                .authored
+                .as_ref()
+                .map(|map| (map.source.as_ptr() as usize, map.source.len())),
+        )
+    }
+    pub(crate) fn projection_source(&self) -> &str {
+        if self.id == 0 {
+            self.source()
+        } else {
+            self.raw()
+        }
+    }
     pub(crate) fn root(&self) -> Value {
         self.clone()
     }

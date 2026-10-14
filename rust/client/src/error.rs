@@ -295,7 +295,8 @@ impl fmt::Debug for DiagnosticContext {
 #[derive(Clone, Default, PartialEq, Eq)]
 struct Details {
     bytes: std::sync::Arc<[u8]>,
-    projection: Option<(usize, usize, std::sync::Arc<str>)>,
+    projection: Option<Projection>,
+    cause: Option<std::sync::Arc<Diagnostic>>,
 
     reason: Option<DiagnosticReason>,
     context: Option<DiagnosticContext>,
@@ -305,6 +306,17 @@ struct Details {
     need_fact: Option<crate::graph::NeedFact>,
     resource_need: Option<crate::graph::ResourceNeed>,
 }
+#[derive(Clone)]
+struct Projection(std::sync::Arc<serde_json::Error>);
+impl PartialEq for Projection {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.classify() == other.0.classify()
+            && self.0.line() == other.0.line()
+            && self.0.column() == other.0.column()
+            && self.0.to_string() == other.0.to_string()
+    }
+}
+impl Eq for Projection {}
 
 /// Stable failure categories. Diagnostic text never includes input values.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -563,35 +575,57 @@ impl Diagnostic {
         self.details
             .as_ref()
             .and_then(|d| d.projection.as_ref())
-            .map_or(0, |p| p.0)
+            .map_or(0, |p| p.0.line())
     }
     /// One-based projection error column; zero when unavailable.
     pub fn column(&self) -> usize {
         self.details
             .as_ref()
             .and_then(|d| d.projection.as_ref())
-            .map_or(0, |p| p.1)
+            .map_or(0, |p| p.0.column())
     }
     /// Explicit untrusted projection detail. Never included in safe formatting.
-    pub fn detail(&self) -> Option<&str> {
+    pub fn detail(&self) -> Option<&serde_json::Error> {
         self.details
             .as_ref()?
             .projection
             .as_ref()
-            .map(|p| p.2.as_ref())
+            .map(|p| p.0.as_ref())
     }
     pub(crate) fn with_source_bytes(mut self, bytes: std::sync::Arc<[u8]>) -> Self {
         if !bytes.is_empty() {
             self.details.get_or_insert_with(Default::default).bytes = bytes;
         }
+        self.caused()
+    }
+    // Preserve the safe structured cause formerly supplied by the parse/request
+    // wrappers. The cause is another Diagnostic, never the untrusted Serde error.
+    // Refresh a single terminal snapshot rather than building wrapper chains.
+    pub(crate) fn caused(mut self) -> Self {
+        let mut cause = self.clone();
+        if let Some(details) = &mut cause.details {
+            details.cause = None;
+        }
+        self.details.get_or_insert_with(Default::default).cause = Some(std::sync::Arc::new(cause));
         self
+    }
+    fn refresh_cause(self) -> Self {
+        if self
+            .details
+            .as_ref()
+            .is_some_and(|details| details.cause.is_some())
+        {
+            self.caused()
+        } else {
+            self
+        }
     }
     pub(crate) fn projection(error: serde_json::Error) -> Self {
         let mut diagnostic = Self::new(Code::Deserialization);
         diagnostic
             .details
             .get_or_insert_with(Default::default)
-            .projection = Some((error.line(), error.column(), error.to_string().into()));
+            .projection = Some(Projection(std::sync::Arc::new(error)));
         diagnostic
     }
     /// Stable failure category.
@@ -624,11 +658,11 @@ impl Diagnostic {
             details.primary_source = None;
         }
         self.location = Some(location);
-        self
+        self.refresh_cause()
     }
     pub(crate) fn with_setting(mut self, key: impl Into<String>) -> Self {
         self.setting = Some(key.into());
-        self
+        self.refresh_cause()
     }
     /// Typed corrective reason, without parsing Display text.
     pub fn reason(&self) -> Option<&DiagnosticReason> {
@@ -669,7 +703,7 @@ impl Diagnostic {
     }
     pub(crate) fn need_fact(mut self, fact: crate::graph::NeedFact) -> Self {
         self.details.get_or_insert_with(Default::default).need_fact = Some(fact);
-        self
+        self.refresh_cause()
     }
     pub(crate) fn bind_graph(mut self, store: &std::sync::Arc<crate::document::Store>) -> Self {
         if let Some(details) = &mut self.details
@@ -680,7 +714,7 @@ impl Diagnostic {
                 fact: fact.clone(),
             });
         }
-        self
+        self.refresh_cause()
     }
     /// Whether corrective context was omitted because its complete name exceeded the bound.
     pub fn context_omitted_for_limit(&self) -> bool {
@@ -692,11 +726,11 @@ impl Diagnostic {
         self.details
             .get_or_insert_with(Default::default)
             .context_omitted_for_limit = true;
-        self
+        self.refresh_cause()
     }
     pub(crate) fn reasoned(mut self, reason: DiagnosticReason) -> Self {
         self.details.get_or_insert_with(Default::default).reason = Some(reason);
-        self
+        self.refresh_cause()
     }
     pub(crate) fn identity_collision(previous: &crate::exact::Value) -> Self {
         Self::new(Code::IdentityCollision).reasoned(DiagnosticReason::IdentityCollision {
@@ -705,13 +739,13 @@ impl Diagnostic {
     }
     pub(crate) fn contextual(mut self, context: DiagnosticContext) -> Self {
         self.details.get_or_insert_with(Default::default).context = Some(context);
-        self
+        self.refresh_cause()
     }
     pub(crate) fn sourced(mut self, source: SourceContext) -> Self {
         let details = self.details.get_or_insert_with(Default::default);
         details.primary_source = None;
         details.source = Some(source);
-        self
+        self.refresh_cause()
     }
     pub(crate) fn positioned(self, position: crate::source::SourcePosition) -> Self {
         debug_assert!(
@@ -726,7 +760,7 @@ impl Diagnostic {
             .as_mut()
             .expect("source details")
             .primary_source = Some(position.source);
-        diagnostic
+        diagnostic.refresh_cause()
     }
     pub(crate) fn limited(kind: LimitKind, maximum: usize, actual: usize) -> Self {
         Self::new(Code::Limit).reasoned(DiagnosticReason::Limit {
@@ -781,7 +815,15 @@ impl Diagnostic {
         Ok(())
     }
 }
-impl std::error::Error for Diagnostic {}
+impl std::error::Error for Diagnostic {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.details
+            .as_ref()?
+            .cause
+            .as_deref()
+            .map(|cause| cause as _)
+    }
+}
 
 impl fmt::Debug for Diagnostic {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

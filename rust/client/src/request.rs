@@ -53,7 +53,7 @@ pub struct RequestBuilder {
     input_bytes: usize,
     input_nodes: usize,
     owners: HashSet<usize>,
-    owner_bytes: usize,
+    sources: HashSet<usize>,
     owner_nodes: usize,
     failure: Option<Diagnostic>,
     cancellation: Cancellation,
@@ -83,7 +83,7 @@ impl Operation {
             input_bytes: 0,
             input_nodes: 0,
             owners: HashSet::new(),
-            owner_bytes: 0,
+            sources: HashSet::new(),
             owner_nodes: 0,
             failure: None,
             cancellation: Cancellation::default(),
@@ -109,6 +109,7 @@ impl RequestBuilder {
             self.body = None;
             self.media = None;
             self.owners.clear();
+            self.sources.clear();
         }
     }
     fn count(&mut self, actual: usize, header: bool) -> bool {
@@ -264,7 +265,11 @@ impl RequestBuilder {
         match crate::serializable::admit(value, limits, &self.cancellation, form) {
             Ok(value) => {
                 self.input_nodes += value.node_count();
-                self.input_bytes += value.raw().len();
+                for (id, bytes) in value.retained_sources() {
+                    if self.sources.insert(id) {
+                        self.input_bytes += bytes;
+                    }
+                }
                 Some(value)
             }
             Err(mut error) => {
@@ -329,32 +334,28 @@ impl RequestBuilder {
             );
             return false;
         }
-        if !self.bytes(value.raw().len()) {
-            return false;
+        for (id, bytes) in value.retained_sources() {
+            if !self.sources.contains(&id) {
+                if !self.bytes(bytes) {
+                    return false;
+                }
+                self.sources.insert(id);
+            }
         }
         let id = value.source_context().id;
         if !self.owners.contains(&id) {
-            let bytes = self.owner_bytes.saturating_add(value.source().len());
             let nodes = self.owner_nodes.saturating_add(value.node_count());
-            if bytes > self.limits().document_bytes
-                || nodes.saturating_add(self.input_nodes) > self.limits().nodes
-            {
-                let (kind, max, actual) = if bytes > self.limits().document_bytes {
-                    (LimitKind::InputBytes, self.limits().document_bytes, bytes)
-                } else {
-                    (
+            if nodes.saturating_add(self.input_nodes) > self.limits().nodes {
+                self.latch(
+                    Diagnostic::limited(
                         LimitKind::Nodes,
                         self.limits().nodes,
                         nodes.saturating_add(self.input_nodes),
                     )
-                };
-                self.latch(
-                    Diagnostic::limited(kind, max, actual)
-                        .contextual(DiagnosticContext::CallerInput),
+                    .contextual(DiagnosticContext::CallerInput),
                 );
                 return false;
             }
-            self.owner_bytes = bytes;
             self.owner_nodes = nodes;
             self.owners.insert(id);
         }
@@ -716,9 +717,9 @@ impl RequestBuilder {
     /// Consume the admitted values into a finite prepared request, without serializing again.
     pub fn prepare(self) -> Result<PreparedRequest, Diagnostic> {
         if let Some(error) = self.failure {
-            return Err(error);
+            return Err(error.caused());
         }
-        self.cancellation.check()?;
+        self.cancellation.check().map_err(Diagnostic::caused)?;
         let mut input = Input::default();
         for p in self.parameters {
             input.parameters.push(ParameterInput {
@@ -740,5 +741,6 @@ impl RequestBuilder {
         input.headers = self.headers;
         self.operation
             .prepare_with_cancellation(&input, &self.cancellation)
+            .map_err(Diagnostic::caused)
     }
 }

@@ -18,6 +18,7 @@ impl Value {
     /// recursion limit applies. Custom Deserialize code can allocate or execute
     /// arbitrary caller work and is outside the exact parser's resource bounds.
     pub fn deserialize<'de, T: Deserialize<'de>>(&'de self) -> Result<T, Diagnostic> {
-        serde_json::from_str(self.raw()).map_err(|error| self.locate(Diagnostic::projection(error)))
+        serde_json::from_str(self.projection_source())
+            .map_err(|error| self.locate(Diagnostic::projection(error)))
     }
 }

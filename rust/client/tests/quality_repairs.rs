@@ -437,7 +437,7 @@ fn r11_construction_limits_and_duplicate_names() {
         Some(DiagnosticReason::Limit {
             kind: LimitKind::DocumentBytes,
             maximum: 8,
-            actual: 1_000_002
+            actual: 1_000_000
         })
     ));
 
@@ -519,8 +519,11 @@ fn r12_error_chaining_and_source_domains() {
     assert_eq!(failure.context(), Some(&DiagnosticContext::CallerInput));
 
     let failure = Value::parse("[", Limits::default()).unwrap_err();
-    assert!(std::error::Error::source(&failure).is_none());
-    let cause = &failure;
+    let cause = std::error::Error::source(&failure)
+        .unwrap()
+        .downcast_ref::<Diagnostic>()
+        .unwrap();
+    assert_eq!(cause.code(), failure.code());
     assert_eq!(
         cause.source_context().unwrap().origin,
         SourceOrigin::Authored

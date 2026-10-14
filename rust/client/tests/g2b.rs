@@ -506,6 +506,37 @@ fn precancel_suppresses_into_iterator_callback() {
     assert_eq!(calls.get(), 0);
 }
 
+const TWILIO_MESSAGE_FIELDS: [(&str, &str); 3] = [
+    ("To", "+15005550006"),
+    ("From", "+15005550006"),
+    ("Body", "Preparation only"),
+];
+
+#[test]
+fn twilio_message_body_field_keeps_the_original_wire_golden() {
+    let document = doc(
+        json!({"type":"object","properties":{"To":{"type":"string"},"From":{"type":"string"},"Body":{"type":"string"}}}),
+        json!({}),
+        "3.0.4",
+        Limits::default(),
+    );
+    let request = document
+        .operation_id("send")
+        .unwrap()
+        .request()
+        .form_fields(
+            TWILIO_MESSAGE_FIELDS
+                .into_iter()
+                .map(|(name, value)| FormField::value(name, value, Limits::default()).unwrap()),
+        )
+        .prepare()
+        .unwrap();
+    assert_eq!(
+        request.body().unwrap().as_ref(),
+        b"To=%2B15005550006&From=%2B15005550006&Body=Preparation+only"
+    );
+}
+
 #[test]
 #[ignore = "uses separately pinned original provider sources; run explicitly with G2B_PROVIDER_ROOT"]
 fn pinned_original_provider_jobs_are_preparation_only() {
@@ -532,11 +563,7 @@ fn pinned_original_provider_jobs_are_preparation_only() {
         "wave01-FAKE-DO-NOT-SEND",
         vec!["https://api.twilio.com".into()],
     );
-    let original = [
-        ("To", "+15005550006"),
-        ("From", "+15005550006"),
-        ("CaseBody", "Preparation only"),
-    ];
+    let original = TWILIO_MESSAGE_FIELDS;
     let additives = [
         ("ContentRetention", "retain"),
         ("AddressRetention", "retain"),
@@ -598,7 +625,7 @@ fn pinned_original_provider_jobs_are_preparation_only() {
             ""
         };
         let expected =
-            format!("To=%2B15005550006&From=%2B15005550006&CaseBody=Preparation+only{suffix}");
+            format!("To=%2B15005550006&From=%2B15005550006&Body=Preparation+only{suffix}");
         for request in results {
             assert_eq!(request.body().map(AsRef::as_ref), Some(expected.as_bytes()));
             assert_eq!(

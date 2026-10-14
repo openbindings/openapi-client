@@ -157,7 +157,7 @@ assert_eq!(json.clone().get("id").unwrap().raw(), "9007199254740993");
 
 `deserialize` uses standard Serde JSON conversion directly on the original bytes, without an intermediate `serde_json::Value`. Integer destinations reject overflow and support i128/u128. Choosing f32/f64 explicitly selects ordinary floating-point rounding; it does **not** make the promise of `Number::to_f64_exact`. Serde token rules also apply: `-0` refuses for an `i64` destination, while the exact `Number::to_i64()` convenience returns zero and an `f64` projection preserves the negative sign. Keep the exact owner when original spelling or mathematical precision matters. Borrowed output can borrow unescaped strings from the owner. Custom Deserialize implementations are caller work; projection applies Serde's own recursion policy and performs no schema evaluation.
 
-`Diagnostic` safely reports the conversion failure and line/column. Its `detail()` is explicit access to the untrusted Serde error text, which can include response values or custom error text; default Display, Debug and error chaining omit that text. A projection failure leaves the exact JSON and original Outcome available to the caller.
+`Diagnostic` safely reports the conversion failure and line/column. Its `detail()` returns the original `serde_json::Error` when a projection failed, including structured `classify()`/`is_data()`/`is_syntax()` access. Its text can include response values or custom error text; default Display, Debug and error chaining omit that text. Root projection preserves coordinates in the complete source, including leading whitespace; child projection reads the selected subtree. A projection failure leaves the exact JSON and original Outcome available to the caller.
 
 Response decoding may defer construction of the full dynamic value index. Validation still finishes before `Response::json()` or a JSON policy accepts the response, including duplicate names, Unicode and resource limits. Typed projection reads the original bytes without forcing index construction. The response retains compact admission data; later dynamic access reuses the checked strings and object metadata without parsing them again. Cloned owners share the resulting index. Public `exact::Value::parse`, document parsing and input construction remain eager.
 
@@ -182,6 +182,13 @@ let request = operation.request()
 ```
 
 `parameter`, `json` and `form` run checked Serde admission immediately. Builders own the admitted values, so caller data can be dropped before preparation. Each value is serialized and indexed once; preparation performs protocol checks without rerunning serializers. Emitted bytes and nodes count across setters. Exact setters retain selected subtrees, admit their backing owners and preserve numeric spelling. No implicit Serialize implementation exists for `exact::Value`.
+
+Retained JSON source bytes and any authored YAML backing share one aggregate
+allowance with generated Serde sources and caller metadata. Each source allocation
+is charged once per builder even when several exact children refer to it. Equal
+text in distinct allocations is charged separately. Final encoded bodies remain
+subject to their separate wire-byte limit. Direct forms reject duplicate decoded
+field names before invoking the repeated field's value serializer.
 
 Use `exact::Value::from_serializable(&value, limits)` when a reusable exact value is useful. Its explicit limits do not replace aggregate builder admission. Use `Value::parse` for precision-sensitive numeric tokens. Constructors accept borrowed, non-Clone and host-local Serialize implementations without Send, Sync or static bounds. Custom Serialize/Display code is caller work and cannot be forcibly bounded.
 
@@ -224,6 +231,10 @@ Every explicit field assignment counts, including `no_body()`. Distinct assignme
 The first refusal drops retained drafts and suppresses all later serializers and iterator work. Duplicate assignment precedes cancellation; count/name/remaining-budget admission precedes Serialize. Select `.cancellation(token)` before input setters to prevent callbacks on a cancelled request. Selecting it later cannot undo completed callbacks. `prepare()` checks the same token again.
 
 All construction, parsing, projection and preparation errors are `Diagnostic`. Admitted parse-failure bytes (including invalid UTF-8), source identity, locations, resource needs and omission indicators survive. Safe Debug/Display/error chaining omit arbitrary source and projection detail. `source_bytes`, `source_position` and `detail` provide explicit access.
+
+Parse, construction and request failures retain a safe `Diagnostic` cause through
+standard `Error::source`, preserving structured error traversal without public
+wrapper types. Projection detail remains explicit and is never a raw Serde cause.
 
 Ordinary forms use `.form(&model)` with an object/map. Mixed finite uploads use `.form_fields([FormField::value(name, &value, limits)?, FormField::exact(name, exact_value), FormField::part(name, part)])`. `FormField::parts(name, &parts)` explicitly distinguishes part arrays from logical JSON arrays. Borrowed file bytes and metadata are admitted and copied during the setter; shared `FiniteBytes` owners remain shared. There is no public Form or FormValue. See the executable `o6_forms` example.
 

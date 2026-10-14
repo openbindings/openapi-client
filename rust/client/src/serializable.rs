@@ -63,6 +63,7 @@ struct Encoder<'a> {
     form: bool,
     form_metadata: usize,
     form_work: usize,
+    form_names: Vec<String>,
 }
 impl<'limits> Encoder<'limits> {
     fn latch(&mut self, error: Error) -> Error {
@@ -137,6 +138,7 @@ impl<'limits> Encoder<'limits> {
     }
     fn string(&mut self, value: &str) -> Result<(), Error> {
         // Escaping cannot shorten the input. Reject before scanning it.
+        self.room(value.len())?;
         self.room(value.len().saturating_add(2))?;
         self.primitive(value)
     }
@@ -293,6 +295,7 @@ pub(crate) fn admit<T: Serialize + ?Sized>(
         form,
         form_metadata: 0,
         form_work: 0,
+        form_names: vec![],
     };
     encoder.child(value).map_err(|error| {
         // Release the encoder's alias before recovering the owned diagnostic.
@@ -389,6 +392,30 @@ impl Compound<'_, '_> {
                 ));
             }
             self.encoder.form_metadata = actual;
+            for index in 0..self.encoder.form_names.len() {
+                self.encoder.guard()?;
+                if self.encoder.form_names[index] == name {
+                    let error = Diagnostic::new(Code::InvalidSelection).reasoned(
+                        DiagnosticReason::Form(crate::form::FormReason::DuplicateField),
+                    );
+                    let error = if name.len() > self.encoder.limits.document_bytes.min(4096) {
+                        error.omit_context()
+                    } else {
+                        error.contextual(crate::diagnostics::DiagnosticContext::FormField {
+                            index: self.count,
+                            name,
+                            item: None,
+                        })
+                    };
+                    return Err(self.encoder.latch(Error::new(error)));
+                }
+            }
+            self.encoder.guard()?;
+            crate::form::reserve_admitted(
+                &mut self.encoder.form_names,
+                self.encoder.limits.form_fields,
+            );
+            self.encoder.form_names.push(name);
         }
         self.encoder.write(b":")?;
         self.pending = true;
@@ -818,5 +845,10 @@ impl Serializer for Key<'_, '_> {
 }
 
 fn construction(diagnostic: Diagnostic) -> Diagnostic {
-    diagnostic.contextual(crate::diagnostics::DiagnosticContext::Construction)
+    let diagnostic = if diagnostic.context().is_none() && !diagnostic.context_omitted_for_limit() {
+        diagnostic.contextual(crate::diagnostics::DiagnosticContext::Construction)
+    } else {
+        diagnostic
+    };
+    diagnostic.caused()
 }

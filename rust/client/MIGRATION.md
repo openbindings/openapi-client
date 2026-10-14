@@ -18,6 +18,13 @@ explicit assignments. All failures return Diagnostic, with retained source and
 explicit untrusted projection detail. Generated input positions refer to each
 setter's owner, without the former shared array's `/0` prefix.
 
+Parse/construction/request errors keep a safe structured Diagnostic source chain.
+Projection `detail()` returns `Option<&serde_json::Error>`, preserving categories
+and coordinates; root coordinates include original leading whitespace. Exact
+JSON and authored YAML source allocations share the generated-input byte budget,
+with shared allocations charged once. Direct forms detect duplicate fields before
+their value callbacks, using the same DuplicateField reason as explicit fields.
+
 Use `form(&model)` for ordinary objects, and `form_fields` with FormField's explicit
 `value`, `exact`, `part` and `parts` constructors for finite mixed uploads. Borrowed
 bytes are copied during the setter; shared binary owners remain shared. Clone

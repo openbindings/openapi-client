@@ -96,7 +96,15 @@ fn immutable_parse_pair_still_composes_as_standard_error() {
     owned_error(&error);
     assert_eq!(error.source_bytes(), b"{");
     assert_eq!(error.code(), Code::InvalidJson);
-    assert!(error.source().is_none());
+    assert_eq!(
+        error
+            .source()
+            .unwrap()
+            .downcast_ref::<Diagnostic>()
+            .unwrap()
+            .code(),
+        error.code()
+    );
     let too_large = Document::parse(
         b"{}",
         None,

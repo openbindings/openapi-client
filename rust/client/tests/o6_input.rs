@@ -328,3 +328,303 @@ fn form_fields_copy_borrows_share_binary_and_stop_after_duplicate() {
     );
     assert_eq!(calls.get(), 2);
 }
+
+#[test]
+fn yaml_exact_children_charge_both_sources_once_per_allocation() {
+    let limits = Limits {
+        document_bytes: 1024,
+        ..Limits::default()
+    };
+    let op = operation(limits, "application/json");
+    let owner = Document::parse(
+        format!(
+            "# {}\nopenapi: 3.1.2\nx-value: 1\nx-other: 2\n",
+            "x".repeat(20_000)
+        ),
+        None,
+        Limits::default(),
+    )
+    .unwrap()
+    .root();
+    let value = owner.get("x-value").unwrap();
+    let total = value.source().len() + value.source_trace().authored.unwrap().source().len();
+    let error = op.request().json_exact(&value).prepare().unwrap_err();
+    assert_eq!(
+        error.reason(),
+        Some(&DiagnosticReason::Limit {
+            kind: LimitKind::InputBytes,
+            maximum: 1024,
+            actual: total,
+        })
+    );
+
+    // Both sources fit once, but their sum exceeds the allowance if charged twice.
+    let owner = Document::parse(
+        format!(
+            "# {}\nopenapi: 3.1.2\nx-value: 1\nx-other: 2\n",
+            "x".repeat(600)
+        ),
+        None,
+        Limits::default(),
+    )
+    .unwrap()
+    .root();
+    let value = owner.get("x-value").unwrap();
+    let other = owner.get("x-other").unwrap();
+    drop(owner);
+    assert!(
+        op.request()
+            .parameter_exact(ParameterLocation::Query, "p", &value)
+            .parameter_exact(ParameterLocation::Query, "q", &other)
+            .json_exact(&value)
+            .prepare()
+            .is_ok()
+    );
+
+    // Distinct allocations with equal text must each be charged.
+    let first = Value::parse(
+        format!("{{\"p\":1,\"pad\":\"{}\"}}", "x".repeat(600)),
+        Limits::default(),
+    )
+    .unwrap();
+    let second = Value::parse(first.source(), Limits::default()).unwrap();
+    let error = op
+        .request()
+        .parameter_exact(ParameterLocation::Query, "p", &first.get("p").unwrap())
+        .json_exact(&second.get("p").unwrap())
+        .prepare()
+        .unwrap_err();
+    assert_eq!(kind(&error), LimitKind::InputBytes);
+}
+
+#[test]
+fn exact_and_generated_sources_share_one_byte_allowance_in_both_orders() {
+    let op = operation(
+        Limits {
+            document_bytes: 1024,
+            ..Limits::default()
+        },
+        "application/json",
+    );
+    let owner = Value::parse(
+        format!("{{\"pad\":\"{}\",\"p\":1}}", "x".repeat(900)),
+        Limits::default(),
+    )
+    .unwrap();
+    assert_eq!(owner.source().len(), 916);
+    let value = owner.get("p").unwrap();
+    let data = "y".repeat(900);
+    for error in [
+        op.request()
+            .parameter_exact(ParameterLocation::Query, "p", &value)
+            .json(&data)
+            .prepare()
+            .unwrap_err(),
+        op.request()
+            .json(&data)
+            .parameter_exact(ParameterLocation::Query, "p", &value)
+            .prepare()
+            .unwrap_err(),
+    ] {
+        assert_eq!(kind(&error), LimitKind::InputBytes);
+    }
+    // Metadata + complete retained exact source + generated JSON exactly fill the allowance.
+    let fits = "y".repeat(105);
+    assert!(
+        op.request()
+            .parameter_exact(ParameterLocation::Query, "p", &value)
+            .json(&fits)
+            .prepare()
+            .is_ok()
+    );
+    assert!(
+        op.request()
+            .json(&fits)
+            .parameter_exact(ParameterLocation::Query, "p", &value)
+            .prepare()
+            .is_ok()
+    );
+    let calls = Cell::new(0);
+    let full = Value::parse(
+        format!("{{\"pad\":\"{}\",\"p\":1}}", "x".repeat(1007)),
+        Limits::default(),
+    )
+    .unwrap();
+    let error = op
+        .request()
+        .parameter_exact(ParameterLocation::Query, "p", &full.get("p").unwrap())
+        .json(&Counted {
+            calls: &calls,
+            value: &1,
+        })
+        .prepare()
+        .unwrap_err();
+    assert_eq!(kind(&error), LimitKind::InputBytes);
+    assert_eq!(calls.get(), 0);
+}
+
+#[test]
+fn direct_forms_reject_duplicate_names_before_value_callbacks_with_field_context() {
+    use dynamic_openapi_client::{diagnostics::DiagnosticContext, form::FormReason};
+    struct Later<'a> {
+        calls: &'a Cell<usize>,
+        fail: bool,
+    }
+    impl Serialize for Later<'_> {
+        fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+            self.calls.set(self.calls.get() + 1);
+            if self.fail {
+                Err(serde::ser::Error::custom("private detail"))
+            } else {
+                s.serialize_i32(2)
+            }
+        }
+    }
+    struct Duplicate<'a> {
+        calls: &'a Cell<usize>,
+        fail: bool,
+    }
+    impl Serialize for Duplicate<'_> {
+        fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+            let mut map = s.serialize_map(Some(2))?;
+            map.serialize_entry("p\n", &1)?;
+            map.serialize_entry(
+                "p\n",
+                &Later {
+                    calls: self.calls,
+                    fail: self.fail,
+                },
+            )?;
+            map.end()
+        }
+    }
+    let op = operation(Limits::default(), "application/x-www-form-urlencoded");
+    let explicit = op
+        .request()
+        .form_fields([
+            FormField::value("p\n", &1, Limits::default()).unwrap(),
+            FormField::value("p\n", &2, Limits::default()).unwrap(),
+        ])
+        .prepare()
+        .unwrap_err();
+    for fail in [false, true] {
+        let calls = Cell::new(0);
+        let error = op
+            .request()
+            .form(&Duplicate {
+                calls: &calls,
+                fail,
+            })
+            .prepare()
+            .unwrap_err();
+        assert_eq!(calls.get(), 0);
+        assert_eq!(error.code(), Code::InvalidSelection);
+        assert_eq!(
+            error.reason(),
+            Some(&DiagnosticReason::Form(FormReason::DuplicateField))
+        );
+        assert_eq!(
+            error.context(),
+            Some(&DiagnosticContext::FormField {
+                index: 1,
+                name: "p\n".into(),
+                item: None
+            })
+        );
+        assert_eq!(error.reason(), explicit.reason());
+        assert_eq!(error.context(), explicit.context());
+        assert!(!format!("{error} {error:?}").contains("private detail"));
+    }
+}
+
+#[test]
+fn projection_keeps_root_whitespace_coordinates_and_projects_selected_children() {
+    let value = Value::parse("\n\n  \"bad\"\n", Limits::default()).unwrap();
+    let error = value.deserialize::<u64>().unwrap_err();
+    let parent = serde_json::from_str::<u64>(value.source()).unwrap_err();
+    assert_eq!((error.line(), error.column()), (3, 7));
+    assert_eq!(error.detail().unwrap().to_string(), parent.to_string());
+    let child = Value::parse("\n{\"selected\": 7, \"other\": false}\n", Limits::default())
+        .unwrap()
+        .get("selected")
+        .unwrap();
+    assert_eq!(child.deserialize::<u64>().unwrap(), 7);
+}
+
+#[test]
+fn projection_preserves_structured_serde_error_without_exposing_it_in_the_chain() {
+    use std::error::Error;
+    let data = Value::parse("\"private-data\"", Limits::default())
+        .unwrap()
+        .deserialize::<u64>()
+        .unwrap_err();
+    let syntax = Value::parse("1e400", Limits::default())
+        .unwrap()
+        .deserialize::<f64>()
+        .unwrap_err();
+    assert_eq!(data.code(), syntax.code());
+    assert_eq!(
+        data.detail().unwrap().classify(),
+        serde_json::error::Category::Data
+    );
+    assert_eq!(
+        syntax.detail().unwrap().classify(),
+        serde_json::error::Category::Syntax
+    );
+    assert!(data.detail().unwrap().is_data());
+    assert!(syntax.detail().unwrap().is_syntax());
+    let cloned = data.clone();
+    assert!(std::ptr::eq(
+        data.detail().unwrap(),
+        cloned.detail().unwrap()
+    ));
+    assert_eq!(data, cloned);
+    assert!(!format!("{data:?} {data}").contains("private-data"));
+    assert!(data.source().is_none()); // Parent projection errors also withheld unsafe Serde text.
+}
+
+#[test]
+fn restored_string_lower_bound_and_safe_parse_request_source_chains() {
+    use std::error::Error;
+    let limit = Value::from_serializable(
+        &"x".repeat(1_000_000),
+        Limits {
+            document_bytes: 8,
+            ..Limits::default()
+        },
+    )
+    .unwrap_err();
+    assert_eq!(
+        limit.reason(),
+        Some(&DiagnosticReason::Limit {
+            kind: LimitKind::DocumentBytes,
+            maximum: 8,
+            actual: 1_000_000
+        })
+    );
+    assert!(limit.source_bytes().is_empty());
+    let parse = Value::parse("{\"private-source\":", Limits::default()).unwrap_err();
+    let op = operation(Limits::default(), "application/json");
+    let prepare = op
+        .request()
+        .parameter(ParameterLocation::Query, "private-unknown", &1)
+        .prepare()
+        .unwrap_err();
+    let construction = op.request().json(&f64::NAN).prepare().unwrap_err();
+    for error in [limit, parse, prepare, construction] {
+        let cause = error
+            .source()
+            .unwrap()
+            .downcast_ref::<Diagnostic>()
+            .unwrap();
+        assert_eq!(cause.code(), error.code());
+        assert_eq!(cause.reason(), error.reason());
+        assert_eq!(cause.context(), error.context());
+        assert_eq!(cause.location(), error.location());
+        assert_eq!(cause.source_context(), error.source_context());
+        assert_eq!(cause.source_position(), error.source_position());
+        assert_eq!(cause.source_bytes(), error.source_bytes());
+        assert!(cause.source().is_none());
+        assert!(!format!("{cause:?} {cause}").contains("private-"));
+    }
+}
