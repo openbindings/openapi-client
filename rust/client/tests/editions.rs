@@ -1,4 +1,10 @@
+#[path = "support/request_case.rs"]
+mod request_case;
 use dynamic_openapi_client::*;
+use dynamic_openapi_client::{
+    diagnostics::*, exact::*, graph::*, inspect::*, schema::*, transport::*,
+};
+use request_case::*;
 use serde_json::json;
 
 const VERSIONS: &[&str] = &[
@@ -27,12 +33,11 @@ fn all_published_editions_use_one_ordinary_json_consumer() {
         let doc = document(&fixture(version));
         assert_eq!(doc.version().as_deref(), Some(*version));
         let operation = doc.operation_id("create").unwrap();
-        let payload =
-            ExactJson::parse(br#"{"integer":9007199254740993}"#, Limits::default()).unwrap();
+        let payload = Value::parse(br#"{"integer":9007199254740993}"#, Limits::default()).unwrap();
         let request = operation
             .request()
-            .parameter(ParameterLocation::Path, "id", "A/B")
-            .json(payload.root())
+            .parameter(ParameterLocation::Path, "id", &"A/B")
+            .json_exact(&payload.clone())
             .prepare()
             .unwrap();
         assert_eq!(request.method(), Method::Post);
@@ -139,10 +144,10 @@ fn legacy_collections_servers_and_bodyless_calls_follow_original_declarations() 
             &json!({"swagger":"2.0","basePath":"/v2","schemes":["http","https"],"paths":{"/list":{"get":{"operationId":"list","schemes":["https"],"parameters":[{"name":"q","in":"query","type":"array","items":{"type":"string"},"collectionFormat":format}],"responses":{"204":{"description":"empty"}}}}}}),
         );
         let op = doc.operation_id("list").unwrap();
-        let q = ExactJson::parse(br#"["a,b","c d"]"#, Limits::default()).unwrap();
+        let q = Value::parse(br#"["a,b","c d"]"#, Limits::default()).unwrap();
         let request = op
             .request()
-            .parameter(ParameterLocation::Query, "q", q.root())
+            .parameter_exact(ParameterLocation::Query, "q", &q.clone())
             .prepare()
             .unwrap();
         assert_eq!(
@@ -223,10 +228,10 @@ fn local_references_respect_edition_siblings_and_legacy_body_inheritance() {
         &json!({"swagger":"2.0","consumes":["application/json"],"paths":{"/body":{"parameters":[{"$ref":"#/parameters/B"}],"post":{"operationId":"post","responses":{"200":{"$ref":"#/responses/R"}}}}},"parameters":{"B":{"name":"anything","in":"body","required":true,"schema":{}}},"responses":{"R":{"description":"ok","schema":{}}}}),
     );
     let op = doc.operation_id("post").unwrap();
-    let input = ExactJson::parse(b"null", Limits::default()).unwrap();
+    let input = Value::parse(b"null", Limits::default()).unwrap();
     assert_eq!(
         op.request()
-            .json(input.root())
+            .json_exact(&input.clone())
             .prepare()
             .unwrap()
             .body()
@@ -248,7 +253,7 @@ fn request_body_applicability_differs_between_30_and_later_editions() {
             assert!(empty.is_ok());
             assert!(operation.describe().unwrap().request_body.is_none());
         } else {
-            assert_eq!(empty.unwrap_err().diagnostic().code(), Code::MissingBody);
+            assert_eq!(empty.unwrap_err().code(), Code::MissingBody);
             assert!(operation.describe().unwrap().request_body.is_some());
         }
     }
@@ -268,8 +273,8 @@ fn raw_bodies_and_media_override_use_the_same_selection_api() {
         let op = document(&fixture).operation_id("create").unwrap();
         let prepared = op
             .request()
-            .parameter(ParameterLocation::Path, "id", "one")
-            .body(Body::Raw(b"a\0b".as_slice().into()))
+            .parameter(ParameterLocation::Path, "id", &"one")
+            .raw_body(b"a\0b".as_slice())
             .prepare()
             .unwrap();
         assert_eq!(prepared.body().map(AsRef::as_ref), Some(b"a\0b".as_slice()));
@@ -322,35 +327,23 @@ fn normalized_security_and_scoped_credentials_work_across_editions() {
                     _ => false,
                 }
             );
-            let value = match mechanism {
-                "basic" => CredentialValue::Basic {
-                    username: "user".into(),
-                    password: "pass".into(),
-                },
-                "apiKey" => CredentialValue::ApiKey("a/b".into()),
-                _ => CredentialValue::Bearer("access-token".into()),
+            let credential = |origin: &str| match mechanism {
+                "basic" => Credential::basic("user", "pass", vec![origin.into()]),
+                "apiKey" => Credential::api_key("a/b", vec![origin.into()]),
+                _ => Credential::bearer("access-token", vec![origin.into()]),
             };
-            let payload = ExactJson::parse(b"{}", Limits::default()).unwrap();
-            let input = Input {
-                parameters: vec![ParameterInput {
+            let payload = Value::parse(b"{}", Limits::default()).unwrap();
+            let input = CaseInput {
+                parameters: vec![CaseParameter {
                     location: ParameterLocation::Path,
                     name: "id".into(),
-                    value: ExactJson::parse(br#""id""#, Limits::default())
-                        .unwrap()
-                        .root(),
+                    value: Value::parse(br#""id""#, Limits::default()).unwrap(),
                 }],
-                body: Body::Json(payload.root()),
-                credentials: [(
-                    "auth".into(),
-                    Credential {
-                        value,
-                        origins: vec!["https://api.example".into()],
-                    },
-                )]
-                .into(),
-                ..Input::default()
+                body: CaseBody::Json(payload.clone()),
+                credentials: [("auth".into(), credential("https://api.example"))].into(),
+                ..CaseInput::default()
             };
-            let prepared = op.prepare(&input).unwrap();
+            let prepared = op.prepare_case(&input).unwrap();
             if mechanism == "apiKey" {
                 assert!(prepared.target().ends_with("?token=a%2Fb"));
             } else {
@@ -369,10 +362,11 @@ fn normalized_security_and_scoped_credentials_work_across_editions() {
                 );
             }
             let mut denied = input;
-            denied.credentials.get_mut("auth").unwrap().origins =
-                vec!["https://elsewhere.test".into()];
+            denied
+                .credentials
+                .insert("auth".into(), credential("https://elsewhere.test"));
             assert_eq!(
-                op.prepare(&denied).unwrap_err().code(),
+                op.prepare_case(&denied).unwrap_err().code(),
                 Code::CredentialOrigin
             );
         }
@@ -424,7 +418,6 @@ fn unrelated_unsupported_parameter_does_not_disable_a_healthy_operation() {
             .request()
             .prepare()
             .unwrap_err()
-            .diagnostic()
             .code(),
         Code::UnsupportedParameter
     );
@@ -455,7 +448,6 @@ fn additional_operations_cannot_redeclare_fixed_methods() {
             .request()
             .prepare()
             .unwrap_err()
-            .diagnostic()
             .code(),
         Code::InvalidDeclaration
     );
@@ -511,10 +503,10 @@ fn media_type_references_are_32_positions_and_schemas_remain_opaque() {
             .as_str(),
         Some("https://outside.invalid/schema")
     );
-    let value = ExactJson::parse(b"{}", Limits::default()).unwrap();
+    let value = Value::parse(b"{}", Limits::default()).unwrap();
     assert_eq!(
         op.request()
-            .json(value.root())
+            .json_exact(&value.clone())
             .prepare()
             .unwrap()
             .body()
@@ -600,12 +592,11 @@ fn actual_loopback_wire_uses_one_consumer_for_all_editions_and_new_methods() {
     }
     for (index, (doc, id)) in docs.into_iter().enumerate() {
         let operation = doc.operation_id(id).unwrap();
-        let payload =
-            ExactJson::parse(br#"{"integer":9007199254740993}"#, Limits::default()).unwrap();
-        let builder = operation.request().json(payload.root());
+        let payload = Value::parse(br#"{"integer":9007199254740993}"#, Limits::default()).unwrap();
+        let builder = operation.request().json_exact(&payload.clone());
         let request = if index < VERSIONS.len() {
             builder
-                .parameter(ParameterLocation::Path, "id", "A/B")
+                .parameter(ParameterLocation::Path, "id", &"A/B")
                 .prepare()
                 .unwrap()
         } else {
@@ -688,14 +679,11 @@ fn malformed_media_keys_are_excluded_before_values_in_effective_descriptions() {
             "responses":{"200":{"description":"ok","content":{"application/json;broken":false,"*/*":{}}}}
         }}}}));
         let operation = doc.operation_id("post").unwrap();
-        let payload = ExactJson::parse(b"null", Limits::default()).unwrap();
+        let payload = Value::parse(b"null", Limits::default()).unwrap();
         let prepared = operation
             .request()
-            .json(payload.root())
-            .selection(Selection {
-                media: Some("application/json".into()),
-                ..Selection::default()
-            })
+            .json_exact(&payload.clone())
+            .media("application/json")
             .prepare()
             .unwrap();
         assert_eq!(prepared.body().map(AsRef::as_ref), Some(b"null".as_slice()));
@@ -758,19 +746,16 @@ fn valid_media_key_with_invalid_value_refuses_instead_of_using_wildcard() {
             "requestBody":{"content":{"application/json":false,"*/*":{}}}
         }}}}));
         let operation = doc.operation_id("post").unwrap();
-        let payload = ExactJson::parse(b"null", Limits::default()).unwrap();
+        let payload = Value::parse(b"null", Limits::default()).unwrap();
         let refused = operation
             .request()
-            .json(payload.root())
-            .selection(Selection {
-                media: Some("application/json".into()),
-                ..Selection::default()
-            })
+            .json_exact(&payload.clone())
+            .media("application/json")
             .prepare()
             .unwrap_err();
-        assert_eq!(refused.diagnostic().code(), Code::InvalidDeclaration);
+        assert_eq!(refused.code(), Code::InvalidDeclaration);
         assert_eq!(
-            refused.diagnostic().location().unwrap().pointer,
+            refused.location().unwrap().pointer,
             "/paths/~1/post/requestBody/content/application~1json"
         );
         assert_eq!(
@@ -799,16 +784,16 @@ fn form_descriptions_use_media_essence_and_preserve_authored_spelling() {
                 "{version} {media}"
             );
             assert_eq!(body.media[0].media_type, media);
-            let input = Input {
-                body: Body::Raw(b"field=value".as_slice().into()),
-                selection: Selection {
+            let input = CaseInput {
+                body: CaseBody::Raw(b"field=value".as_slice().into()),
+                selection: CaseSelection {
                     media: Some(media.into()),
-                    ..Selection::default()
+                    ..CaseSelection::default()
                 },
-                ..Input::default()
+                ..CaseInput::default()
             };
             assert_eq!(
-                op.prepare(&input).unwrap().body().map(AsRef::as_ref),
+                op.prepare_case(&input).unwrap().body().map(AsRef::as_ref),
                 Some(b"field=value".as_slice())
             );
         }
@@ -834,21 +819,18 @@ fn oauth_description_fixture(
     value
 }
 
-fn oauth_input() -> Input {
-    Input {
+fn oauth_input() -> CaseInput {
+    CaseInput {
         credentials: [(
             "auth".into(),
-            Credential {
-                value: CredentialValue::Bearer("access-token".into()),
-                origins: vec!["https://api.example".into()],
-            },
+            Credential::bearer("access-token", vec!["https://api.example".into()]),
         )]
         .into(),
-        selection: Selection {
+        selection: CaseSelection {
             security: Some(0),
-            ..Selection::default()
+            ..CaseSelection::default()
         },
-        ..Input::default()
+        ..CaseInput::default()
     }
 }
 
@@ -881,7 +863,7 @@ fn descriptor_security_work_is_aggregate_and_located() {
     let error = op.describe().unwrap_err();
     assert_descriptor_limit(&error, LimitKind::DescriptorWork, 1, &doc);
     assert_eq!(
-        op.prepare(&Input::default()).unwrap_err().code(),
+        op.prepare_case(&CaseInput::default()).unwrap_err().code(),
         Code::Limit
     );
     let mut single = value;
@@ -929,7 +911,7 @@ fn descriptor_repeated_oauth_metadata_is_admitted_before_copying() {
         assert!(error.location().unwrap().pointer.ends_with("/scopes/read"));
         // Invocation validates borrowed acquisition metadata and only prepares the
         // selected credential, so inspection's copied-metadata refusal is independent.
-        let request = op.prepare(&oauth_input()).unwrap();
+        let request = op.prepare_case(&oauth_input()).unwrap();
         assert_eq!(
             request
                 .headers()
@@ -957,7 +939,7 @@ fn descriptor_repeated_entries_have_a_separate_node_budget() {
     let op = doc.operation_id("read").unwrap();
     let error = op.describe().unwrap_err();
     assert_descriptor_limit(&error, LimitKind::DescriptorNodes, 200, &doc);
-    assert!(op.prepare(&oauth_input()).is_ok());
+    assert!(op.prepare_case(&oauth_input()).is_ok());
 }
 
 #[test]
@@ -998,7 +980,7 @@ fn descriptor_shared_root_dialect_is_bounded_for_inspection_and_compilation() {
         let op = doc.operation_id("send").unwrap();
         for error in [
             op.describe().unwrap_err(),
-            op.prepare(&Input::default()).unwrap_err(),
+            op.prepare_case(&CaseInput::default()).unwrap_err(),
         ] {
             assert_descriptor_limit(&error, LimitKind::DescriptorBytes, 8192, &doc);
             assert_eq!(error.location().unwrap().pointer, "/jsonSchemaDialect");
@@ -1029,7 +1011,7 @@ fn descriptor_budgets_are_per_construction_and_do_not_charge_shared_source_owner
         };
         assert_eq!(flows[0].scopes["read"].len(), 4096);
     }
-    assert!(op.prepare(&oauth_input()).is_ok());
+    assert!(op.prepare_case(&oauth_input()).is_ok());
 }
 
 #[test]
@@ -1064,7 +1046,7 @@ fn borrowed_security_validation_preserves_malformed_flow_refusals() {
                 "{version} {defect}"
             );
             assert_eq!(
-                op.prepare(&oauth_input()).unwrap_err().code(),
+                op.prepare_case(&oauth_input()).unwrap_err().code(),
                 Code::InvalidDeclaration,
                 "{version} {defect}"
             );
@@ -1158,7 +1140,7 @@ fn oauth_flow_vocabulary_is_edition_aware_and_device_tokens_use_the_same_request
                         "{version} {flow_name}"
                     );
                     assert_eq!(
-                        operation.prepare(&oauth_input()).unwrap_err().code(),
+                        operation.prepare_case(&oauth_input()).unwrap_err().code(),
                         Code::InvalidDeclaration,
                         "{version} {flow_name}"
                     );
@@ -1184,7 +1166,7 @@ fn oauth_flow_vocabulary_is_edition_aware_and_device_tokens_use_the_same_request
                         other => other,
                     }
                 );
-                let prepared = operation.prepare(&oauth_input()).unwrap();
+                let prepared = operation.prepare_case(&oauth_input()).unwrap();
                 assert_eq!(prepared.target(), "https://api.example/");
                 assert!(
                     prepared
@@ -1216,7 +1198,7 @@ fn device_flow_required_endpoints_and_scope_shape_refuse_with_original_sources()
                 let operation = doc.operation_id("read").unwrap();
                 for error in [
                     operation.describe().unwrap_err(),
-                    operation.prepare(&oauth_input()).unwrap_err(),
+                    operation.prepare_case(&oauth_input()).unwrap_err(),
                 ] {
                     assert_eq!(error.code(), Code::InvalidDeclaration);
                     assert!(

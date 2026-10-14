@@ -1,9 +1,7 @@
 #[path = "o6_support/mod.rs"]
 mod support;
-use dynamic_openapi_client::{
-    Credential, CredentialValue, DiagnosticContext, DiagnosticReason, Document, ExactJson, Limits,
-    ParameterLocation,
-};
+use dynamic_openapi_client::diagnostics::{DiagnosticContext, DiagnosticReason};
+use dynamic_openapi_client::{Credential, Document, Limits, ParameterLocation};
 
 fn main() -> Result<(), support::Error> {
     let document = Document::parse(
@@ -11,25 +9,20 @@ fn main() -> Result<(), support::Error> {
         None,
         Limits::default(),
     )?;
-    let json =
-        ExactJson::from_serializable(&support::Create { name: "example" }, Limits::default())?;
     let error = document
         .operation_id("create")?
         .request()
-        .parameter(ParameterLocation::Query, "typo", 1)
-        .parameter(ParameterLocation::Path, "id", 7)
-        .json(json.root())
+        .parameter(ParameterLocation::Query, "typo", &1)
+        .parameter(ParameterLocation::Path, "id", &7)
+        .json(&support::Create { name: "example" })
         .credential(
             "token",
-            Credential {
-                value: CredentialValue::Bearer("local-token".into()),
-                origins: vec!["https://api.example".into()],
-            },
+            Credential::bearer("local-token", vec!["https://api.example".into()]),
         )
         .prepare()
         .unwrap_err();
     drop(document);
-    let diagnostic = error.diagnostic();
+    let diagnostic = error;
     assert!(matches!(
         diagnostic.reason(),
         Some(DiagnosticReason::UnknownParameter)

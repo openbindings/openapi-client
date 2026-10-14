@@ -1,13 +1,15 @@
-use dynamic_openapi_client::{Code, ExactJson, Limits};
+use dynamic_openapi_client::Limits;
+use dynamic_openapi_client::diagnostics::Code;
+use dynamic_openapi_client::exact::Value;
 
 #[test]
 fn pointer_tokens_keep_rfc6901_escaping_array_rules_and_source_positions() {
-    let json = ExactJson::parse(
+    let json = Value::parse(
         r#"{"plain":"p","":"empty","é":"unicode","a/b":"slash","~1":"once","arr":[{"a/b":"item"}],"01":"object-key"}"#,
         Limits::default(),
     )
     .unwrap();
-    let root = json.root();
+    let root = json.clone();
     for (pointer, expected) in [
         ("/plain", "p"),
         ("/", "empty"),

@@ -335,6 +335,9 @@ mod server {
 }
 
 use dynamic_openapi_client::*;
+use dynamic_openapi_client::{
+    diagnostics::*, exact::*, form::*, graph::*, inspect::*, schema::*, source::*, transport::*,
+};
 use dynamic_openapi_client_reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as Json, json};
@@ -1213,39 +1216,27 @@ fn request(client: &Client, doc: &Document, id: &str, server: &Server) -> Prepar
         .prepare()
         .unwrap()
 }
-fn credential(value: CredentialValue, server: &Server) -> Credential {
-    Credential {
-        value,
-        origins: vec![server.origin()],
-    }
-}
 fn configured(server: &Server) -> Client {
     Client::builder()
         .credential(
             "bearerAuth",
-            credential(CredentialValue::Bearer("bearer-secret-B11".into()), server),
+            Credential::bearer("bearer-secret-B11", vec![server.origin()]),
         )
         .credential(
             "basicAuth",
-            credential(
-                CredentialValue::Basic {
-                    username: "user".into(),
-                    password: "päss".into(),
-                },
-                server,
-            ),
+            Credential::basic("user", "päss", vec![server.origin()]),
         )
         .credential(
             "queryKey",
-            credential(CredentialValue::ApiKey("query-secret-Q22".into()), server),
+            Credential::api_key("query-secret-Q22", vec![server.origin()]),
         )
         .credential(
             "headerKey",
-            credential(CredentialValue::ApiKey("header-secret-H33".into()), server),
+            Credential::api_key("header-secret-H33", vec![server.origin()]),
         )
         .credential(
             "cookieKey",
-            credential(CredentialValue::ApiKey("cookie-secret-K44".into()), server),
+            Credential::api_key("cookie-secret-K44", vec![server.origin()]),
         )
         .build()
         .unwrap()
@@ -1419,25 +1410,26 @@ async fn main() {
         active: true,
         tags: ["red", "x/y"],
     };
-    let owner = ExactJson::from_serializable(&payload, Limits::default()).unwrap();
+    let owner = Value::from_serializable(&payload, Limits::default()).unwrap();
     assert_eq!(owner.source().as_bytes(), fixture("ordinary-request.json"));
-    let tags = [
-        OrdinaryValue::String("red blue"),
-        OrdinaryValue::String("x/y"),
-    ];
+    let tags = ["red blue", "x/y"];
     let operation = doc.operation_id("createItem").unwrap();
     let prepared = client
         .request(&operation)
         .server_variable("port", server.port.to_string())
-        .parameter(ParameterLocation::Path, "id", "A/B ?#雪")
-        .parameter(ParameterLocation::Query, "tag", OrdinaryValue::Array(&tags))
-        .parameter(ParameterLocation::Query, "flag", true)
-        .parameter(ParameterLocation::Query, "limit", 9_007_199_254_740_993_u64)
-        .parameter(ParameterLocation::Header, "X-Trace", "trace-A/42")
-        .parameter(ParameterLocation::Cookie, "sess", "s/a")
+        .parameter(ParameterLocation::Path, "id", &"A/B ?#雪")
+        .parameter(ParameterLocation::Query, "tag", &tags)
+        .parameter(ParameterLocation::Query, "flag", &true)
+        .parameter(
+            ParameterLocation::Query,
+            "limit",
+            &9_007_199_254_740_993_u64,
+        )
+        .parameter(ParameterLocation::Header, "X-Trace", &"trace-A/42")
+        .parameter(ParameterLocation::Cookie, "sess", &"s/a")
         .header(Header::new("X-Multi", "first"))
         .header(Header::new("x-multi", "second"))
-        .json(owner.root())
+        .json_exact(&owner.clone())
         .prepare()
         .unwrap();
     safe_text(&format!("{prepared:?}"));
@@ -1470,7 +1462,7 @@ async fn main() {
     assert_eq!(
         accepted
             .json
-            .root()
+            .clone()
             .get("id")
             .unwrap()
             .number()
@@ -1501,11 +1493,11 @@ async fn main() {
     assert_eq!(wire.values("content-length"), vec!["71"]);
     observations.push(json!({"case":"ordinary-configured-real-post-and-typed-success","wire":wire_observation(&wire),"strictPolicy":"UploadUncertain","receivedPolicy":"accepted"}));
 
-    let exact = ExactJson::parse(fixture("exact-request.json"), Limits::default()).unwrap();
+    let exact = Value::parse(fixture("exact-request.json"), Limits::default()).unwrap();
     let exact_request = client
         .request(&doc.operation_id("sendExact").unwrap())
         .server_variable("port", server.port.to_string())
-        .json(exact.root())
+        .json_exact(&exact.clone())
         .prepare()
         .unwrap();
     let exact_outcome = execute(&client, &exact_request).await;
@@ -1513,9 +1505,9 @@ async fn main() {
     let exact_wire = server.observed("/v1/exact").await;
     assert_eq!(exact_wire.body.as_bytes(), fixture("exact-request.json"));
     let before = server.records().len();
-    let invalid = ExactJson::from_serializable(&f64::NAN, Limits::default()).unwrap_err();
+    let invalid = Value::from_serializable(&f64::NAN, Limits::default()).unwrap_err();
     assert_eq!(
-        invalid.diagnostic().reason(),
+        invalid.reason(),
         Some(&DiagnosticReason::Serialization(
             SerializationReason::NonFiniteNumber
         ))
@@ -1563,11 +1555,11 @@ async fn main() {
     let refused = client
         .request(&operation)
         .server_variable("port", other.port.to_string())
-        .parameter(ParameterLocation::Path, "id", "x")
-        .json(owner.root())
+        .parameter(ParameterLocation::Path, "id", &"x")
+        .json_exact(&owner.clone())
         .prepare()
         .unwrap_err();
-    assert_eq!(refused.diagnostic().code(), Code::CredentialOrigin);
+    assert_eq!(refused.code(), Code::CredentialOrigin);
     safe_error_chain(&refused);
     assert!(other.records().is_empty());
     drop(other);
@@ -1743,7 +1735,7 @@ async fn main() {
             .parameter(
                 ParameterLocation::Path,
                 "id",
-                pair["input"].as_str().unwrap(),
+                &pair["input"].as_str().unwrap(),
             )
             .prepare()
             .unwrap();
@@ -1759,10 +1751,10 @@ async fn main() {
         let refused = client
             .request(&target_op)
             .server_variable("port", server.port.to_string())
-            .parameter(ParameterLocation::Path, "id", id)
+            .parameter(ParameterLocation::Path, "id", &id)
             .prepare()
             .unwrap_err();
-        assert_eq!(refused.diagnostic().code(), Code::InvalidDestination);
+        assert_eq!(refused.code(), Code::InvalidDestination);
         assert_eq!(before, server.records().len());
     }
     for (label, spec, port) in [
@@ -1868,14 +1860,14 @@ async fn main() {
     let direct_negative_zero = serde_json::from_str::<NegativeInteger>(&source).unwrap_err();
     let negative_zero = accepted.json.deserialize::<NegativeInteger>().unwrap_err();
     assert_eq!(
-        negative_zero.detail().to_string(),
+        negative_zero.detail().unwrap().to_string(),
         direct_negative_zero.to_string()
     );
     safe_error_chain(&negative_zero);
     assert_eq!(
         accepted
             .json
-            .root()
+            .clone()
             .get("neg")
             .unwrap()
             .number()
@@ -1886,7 +1878,7 @@ async fn main() {
     assert_eq!(
         accepted
             .json
-            .root()
+            .clone()
             .get("neg")
             .unwrap()
             .number()
@@ -1900,7 +1892,7 @@ async fn main() {
     assert_eq!(float.neg.to_bits(), (-0.0_f64).to_bits());
     let exact = accepted
         .json
-        .root()
+        .clone()
         .get("safe")
         .unwrap()
         .number()
@@ -1951,8 +1943,8 @@ async fn main() {
     ] {
         safe_error_chain(&error);
         assert!(std::error::Error::source(&error).is_none());
-        assert!(!error.detail().to_string().is_empty());
-        assert!(error.detail().to_string().contains(secret));
+        assert!(!error.detail().unwrap().to_string().is_empty());
+        assert!(error.detail().unwrap().to_string().contains(secret));
     }
     #[derive(Debug)]
     struct Custom;
@@ -1967,7 +1959,13 @@ async fn main() {
     .unwrap();
     let error = accepted.json.deserialize::<Custom>().unwrap_err();
     safe_error_chain(&error);
-    assert!(error.detail().to_string().contains("typed-secret-D99"));
+    assert!(
+        error
+            .detail()
+            .unwrap()
+            .to_string()
+            .contains("typed-secret-D99")
+    );
     assert!(std::error::Error::source(&error).is_none());
     observations.push(json!({"case":"typed-errors-private-by-default","explicitDetailAvailable":true,"implicitRawSourceAbsent":true}));
 

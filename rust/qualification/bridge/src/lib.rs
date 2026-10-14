@@ -1,4 +1,5 @@
 //! Disposable qualification bridge. This is not a supported TypeScript API.
+use dynamic_openapi_client::transport::*;
 use dynamic_openapi_client::*;
 use serde_json::{Value as J, json};
 use wasm_bindgen::prelude::*;
@@ -36,8 +37,8 @@ pub struct HostOperation(Operation);
 impl HostOperation {
     pub fn prepare(&self, input_json: &str) -> Result<HostRequest, JsValue> {
         let c: J = serde_json::from_str(input_json).map_err(js_error)?;
-        self.0
-            .prepare(&oac_qualification::input(&c))
+        oac_qualification::input(&self.0, &c)
+            .prepare()
             .map(HostRequest)
             .map_err(js_error)
     }

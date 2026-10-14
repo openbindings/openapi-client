@@ -1,4 +1,8 @@
+#[path = "support/request_case.rs"]
+mod request_case;
 use dynamic_openapi_client::*;
+use dynamic_openapi_client::{diagnostics::*, exact::*, form::*, source::*, transport::*};
+use request_case::*;
 use serde_json::json;
 
 fn parameter_document(
@@ -25,7 +29,7 @@ fn parameter_document(
     Document::parse(source, Some("https://api.example/spec"), Limits::default()).unwrap()
 }
 fn exact(text: &str) -> Value {
-    ExactJson::parse(text, Limits::default()).unwrap().root()
+    Value::parse(text, Limits::default()).unwrap()
 }
 fn direct(
     operation: &Operation,
@@ -33,17 +37,19 @@ fn direct(
     name: &str,
     value: Value,
 ) -> Result<PreparedRequest, Diagnostic> {
-    operation.prepare(&Input {
-        parameters: vec![ParameterInput {
+    operation.prepare_case(&CaseInput {
+        parameters: vec![CaseParameter {
             location,
             name: name.into(),
             value,
         }],
-        ..Input::default()
+        ..CaseInput::default()
     })
 }
 fn check_value_error(error: &Diagnostic, value: &Value, child: &str, reason: DiagnosticReason) {
-    let selected = value.pointer(child).unwrap();
+    let selected = value
+        .pointer(child.strip_prefix("/0").unwrap_or(child))
+        .unwrap();
     assert_eq!(error.code(), Code::UnsupportedValue);
     assert_eq!(error.reason(), Some(&reason));
     assert_eq!(error.source_context(), Some(selected.source_context()));
@@ -75,50 +81,54 @@ fn deep_object_errors_point_to_exact_and_generated_caller_values() {
                 check_value_error(&error, &value, child, reason.clone());
                 let error = op
                     .request()
-                    .parameter(ParameterLocation::Query, "p", value.clone())
+                    .parameter_exact(ParameterLocation::Query, "p", &value.clone())
                     .prepare()
                     .unwrap_err();
-                check_value_error(error.diagnostic(), &value, child, reason);
+                check_value_error(&error, &value, child, reason);
                 assert!(
-                    matches!(error.diagnostic().context(),Some(DiagnosticContext::Parameter {index:0,location:ParameterLocation::Query,name}) if name=="p")
+                    matches!(error.context(),Some(DiagnosticContext::Parameter {index:0,location:ParameterLocation::Query,name}) if name=="p")
                 );
             }
-            let array = [OrdinaryValue::String("x")];
-            let members = [("x[y]", OrdinaryValue::U64(1))];
+            let array = [TestValue::String("x")];
+            let members = [("x[y]", TestValue::U64(1))];
             for (value, child, reason) in [
                 (
-                    OrdinaryValue::Array(&array),
+                    TestValue::Array(&array),
                     "/0",
                     DiagnosticReason::UnsupportedStyleValue,
                 ),
                 (
-                    OrdinaryValue::Object(&members),
-                    "/0/x[y]",
+                    TestValue::Object(&members),
+                    "/x[y]",
                     DiagnosticReason::AmbiguousStyleDelimiter,
                 ),
             ] {
                 let error = op
                     .request()
-                    .parameter(ParameterLocation::Query, "p", value)
+                    .parameter(ParameterLocation::Query, "p", &value)
                     .prepare()
                     .unwrap_err();
-                assert_eq!(error.diagnostic().code(), Code::UnsupportedValue);
-                assert_eq!(error.diagnostic().reason(), Some(&reason));
+                assert_eq!(error.code(), Code::UnsupportedValue);
+                assert_eq!(error.reason(), Some(&reason));
                 assert_eq!(
-                    error.diagnostic().source_context().unwrap().origin,
+                    error.source_context().unwrap().origin,
                     SourceOrigin::Constructed
                 );
-                assert_ne!(
-                    error.diagnostic().source_context(),
-                    Some(d.root().source_context())
-                );
-                assert_eq!(error.diagnostic().location().unwrap().pointer, child);
-                let equivalent =
-                    ExactJson::from_ordinary(OrdinaryValue::Array(&[value]), Limits::default())
-                        .unwrap();
+                assert_ne!(error.source_context(), Some(d.root().source_context()));
                 assert_eq!(
-                    error.diagnostic().location(),
-                    Some(&equivalent.root().pointer(child).unwrap().location())
+                    error.location().unwrap().pointer,
+                    child.strip_prefix("/0").unwrap_or(child)
+                );
+                let equivalent = Value::from_serializable(&value, Limits::default()).unwrap();
+                assert_eq!(
+                    error.location(),
+                    Some(
+                        &equivalent
+                            .clone()
+                            .pointer(child.strip_prefix("/0").unwrap_or(child))
+                            .unwrap()
+                            .location()
+                    )
                 );
             }
         }
@@ -154,17 +164,17 @@ fn authored_deep_object_configuration_stays_at_the_declaration() {
                 .operation_id("send")
                 .unwrap()
                 .request()
-                .parameter(ParameterLocation::Query, name, exact(r#"{"x":1}"#))
+                .parameter_exact(ParameterLocation::Query, name, &exact(r#"{"x":1}"#))
                 .prepare()
                 .unwrap_err();
-            assert_eq!(error.diagnostic().code(), Code::UnsupportedParameter);
-            assert_eq!(error.diagnostic().reason(), Some(&reason));
+            assert_eq!(error.code(), Code::UnsupportedParameter);
+            assert_eq!(error.reason(), Some(&reason));
             assert_eq!(
-                error.diagnostic().source_context(),
+                error.source_context(),
                 Some(d.root().source_trace().authored.unwrap().context())
             );
             assert_eq!(
-                error.diagnostic().location().unwrap().pointer,
+                error.location().unwrap().pointer,
                 "/paths/~1send/get/parameters/0"
             );
         }
@@ -172,8 +182,8 @@ fn authored_deep_object_configuration_stays_at_the_declaration() {
 }
 #[test]
 fn cookie_false_explosion_refuses_before_values_for_all_32_schema_cookie_styles() {
-    let array = [OrdinaryValue::String("a"), OrdinaryValue::String("b")];
-    let object = [("x", OrdinaryValue::String("a"))];
+    let array = [TestValue::String("a"), TestValue::String("b")];
+    let object = [("x", TestValue::String("a"))];
     for version in ["3.2.0", "3.2.1"] {
         for yaml in [false, true] {
             for style in [None, Some("form"), Some("cookie")] {
@@ -182,23 +192,23 @@ fn cookie_false_explosion_refuses_before_values_for_all_32_schema_cookie_styles(
                         parameter_document(version, yaml, "p", "cookie", style, false, reserved);
                     let op = d.operation_id("send").unwrap();
                     for (text, ordinary) in [
-                        (r#""a""#, OrdinaryValue::String("a")),
-                        (r#"["a","b"]"#, OrdinaryValue::Array(&array)),
-                        (r#"{"x":"a"}"#, OrdinaryValue::Object(&object)),
+                        (r#""a""#, TestValue::String("a")),
+                        (r#"["a","b"]"#, TestValue::Array(&array)),
+                        (r#"{"x":"a"}"#, TestValue::Object(&object)),
                     ] {
                         let direct =
                             direct(&op, ParameterLocation::Cookie, "p", exact(text)).unwrap_err();
                         let fluent = op
                             .request()
-                            .parameter(ParameterLocation::Cookie, "p", exact(text))
+                            .parameter_exact(ParameterLocation::Cookie, "p", &exact(text))
                             .prepare()
                             .unwrap_err();
                         let generated = op
                             .request()
-                            .parameter(ParameterLocation::Cookie, "p", ordinary)
+                            .parameter(ParameterLocation::Cookie, "p", &ordinary)
                             .prepare()
                             .unwrap_err();
-                        for error in [&direct, fluent.diagnostic(), generated.diagnostic()] {
+                        for error in [&direct, &fluent, &generated] {
                             assert_eq!(
                                 error.code(),
                                 Code::InvalidDeclaration,
@@ -230,7 +240,7 @@ fn valid_exploded_cookies_and_legacy_false_explosion_keep_existing_behavior() {
             .operation_id("send")
             .unwrap()
             .request()
-            .parameter(ParameterLocation::Cookie, "p", exact(r#"["a","b"]"#))
+            .parameter_exact(ParameterLocation::Cookie, "p", &exact(r#"["a","b"]"#))
             .prepare()
             .unwrap();
         assert_eq!(
@@ -247,7 +257,7 @@ fn valid_exploded_cookies_and_legacy_false_explosion_keep_existing_behavior() {
                 .operation_id("send")
                 .unwrap()
                 .request()
-                .parameter(ParameterLocation::Cookie, "p", exact(r#"["a","b"]"#))
+                .parameter_exact(ParameterLocation::Cookie, "p", &exact(r#"["a","b"]"#))
                 .prepare()
                 .unwrap();
             assert_eq!(
@@ -269,30 +279,32 @@ fn form_member_ambiguity_retains_the_caller_owner_and_form_context() {
         let value = exact(r#"{"x[y]":1}"#);
         let error = op
             .request()
-            .form([FormField::new("p", value.clone())])
+            .form_fields([FormField::exact("p", value.clone())])
             .prepare()
             .unwrap_err();
         check_value_error(
-            error.diagnostic(),
+            &error,
             &value,
             "/x[y]",
             DiagnosticReason::AmbiguousStyleDelimiter,
         );
         assert!(matches!(
-            error.diagnostic().context(),
+            error.context(),
             Some(DiagnosticContext::FormField { index: 0, .. })
         ));
-        let members = [("x[y]", OrdinaryValue::String("a"))];
+        let members = [("x[y]", TestValue::String("a"))];
         let error = op
             .request()
-            .form([FormField::new("p", OrdinaryValue::Object(&members))])
+            .form_fields([
+                FormField::value("p", &TestValue::Object(&members), Limits::default()).unwrap(),
+            ])
             .prepare()
             .unwrap_err();
-        assert_eq!(error.diagnostic().code(), Code::UnsupportedValue);
+        assert_eq!(error.code(), Code::UnsupportedValue);
         assert_eq!(
-            error.diagnostic().source_context().unwrap().origin,
+            error.source_context().unwrap().origin,
             SourceOrigin::Constructed
         );
-        assert_eq!(error.diagnostic().location().unwrap().pointer, "/0/x[y]");
+        assert_eq!(error.location().unwrap().pointer, "/x[y]");
     }
 }

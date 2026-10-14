@@ -3,7 +3,8 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
-use dynamic_openapi_client::{Cancellation, Diagnostic, Outcome, PreparedRequest, ReplayPolicy};
+use dynamic_openapi_client::transport::{PreparedRequest, ReplayPolicy};
+use dynamic_openapi_client::{Cancellation, Diagnostic, Outcome};
 use std::fmt;
 
 #[cfg(any(test, all(target_arch = "wasm32", target_os = "unknown")))]
@@ -50,7 +51,7 @@ impl Client {
         #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
         {
             let _ = profile;
-            Err(dynamic_openapi_client::HostRefusal::Unavailable.into())
+            Err(dynamic_openapi_client::diagnostics::HostRefusal::Unavailable.into())
         }
     }
     /// The caller-selected, immutable profile.
@@ -82,7 +83,7 @@ impl Client {
         {
             let _ = (request, replay);
             Outcome::not_dispatched(
-                dynamic_openapi_client::HostRefusal::Unavailable.into(),
+                dynamic_openapi_client::diagnostics::HostRefusal::Unavailable.into(),
                 cancellation.is_cancelled(),
                 None,
             )

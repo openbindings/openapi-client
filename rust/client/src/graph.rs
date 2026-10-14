@@ -1,8 +1,9 @@
 //! Closed resource graphs. No acquisition or shared mutable semantic state.
+use crate::diagnostics::Code;
 use crate::document::Store;
-use crate::{
-    Code, Diagnostic, Edition, ExactJson, Limits, ParseFailure, ReferenceKind, Value, ValueKind,
-};
+use crate::exact::{Value, ValueKind};
+use crate::inspect::Edition;
+use crate::{Diagnostic, Limits};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     sync::Arc,
@@ -65,7 +66,7 @@ pub(crate) enum LayoutRoot {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct SchemaLayoutRoot {
     pointer: String,
-    profile: crate::SchemaProfile,
+    profile: crate::schema::SchemaProfile,
 }
 impl LayoutRoot {
     pub(crate) fn pointer(&self) -> &str {
@@ -74,7 +75,7 @@ impl LayoutRoot {
             Self::Schema(root) => &root.pointer,
         }
     }
-    pub(crate) fn schema_profile(&self) -> Option<&crate::SchemaProfile> {
+    pub(crate) fn schema_profile(&self) -> Option<&crate::schema::SchemaProfile> {
         match self {
             Self::Schema(root) => Some(&root.profile),
             Self::Protocol { .. } => None,
@@ -105,7 +106,7 @@ impl LayoutRoot {
     }
     fn profile_bytes(&self) -> usize {
         match self.schema_profile() {
-            Some(crate::SchemaProfile::JsonSchema { dialect_uri }) => dialect_uri.len(),
+            Some(crate::schema::SchemaProfile::JsonSchema { dialect_uri }) => dialect_uri.len(),
             _ => 0,
         }
     }
@@ -133,7 +134,11 @@ impl ResourceLayout {
         self
     }
     /// Declare a schema root in an otherwise untyped resource.
-    pub fn schema(mut self, pointer: impl Into<String>, profile: crate::SchemaProfile) -> Self {
+    pub fn schema(
+        mut self,
+        pointer: impl Into<String>,
+        profile: crate::schema::SchemaProfile,
+    ) -> Self {
         self.roots
             .push(LayoutRoot::Schema(Box::new(SchemaLayoutRoot {
                 pointer: pointer.into(),
@@ -218,7 +223,7 @@ pub enum ResourceInterpretation {
     /// A schema root, with a default when the target does not declare its dialect.
     Schema {
         /// Default profile for an otherwise unlabelled schema target.
-        default_profile: crate::SchemaProfile,
+        default_profile: crate::schema::SchemaProfile,
     },
 }
 /// Decoded resource selector; authored spelling remains at ResourceNeed::source.
@@ -418,7 +423,7 @@ impl ProtocolSite {
 #[derive(Clone)]
 pub(crate) struct Resource {
     pub id: ResourceId,
-    pub json: ExactJson,
+    pub json: Value,
     pub retrieval: Option<String>,
     aliases: Vec<String>,
     pub base: Option<String>,
@@ -472,11 +477,8 @@ impl DocumentBuilder {
         &mut self,
         need: &ResourceNeed,
         input: ResourceInput,
-    ) -> Result<ResourceId, ParseFailure> {
-        let refusal = |diagnostic| ParseFailure {
-            diagnostic,
-            source: input.bytes.clone(),
-        };
+    ) -> Result<ResourceId, Diagnostic> {
+        let refusal = |diagnostic: Diagnostic| (diagnostic).with_source_bytes(input.bytes.clone());
         self.check_need(need).map_err(refusal)?;
         metadata_input(
             &input,
@@ -512,7 +514,7 @@ impl DocumentBuilder {
             0,
             layout.roots.len(),
             self.graph_limits.layout_roots,
-            crate::LimitKind::GraphLayouts,
+            crate::diagnostics::LimitKind::GraphLayouts,
         )?;
         if need.kind() != ResourceNeedKind::Layout {
             return Err(Diagnostic::new(Code::ConflictingObjectContext));
@@ -540,7 +542,7 @@ impl DocumentBuilder {
     }
     /// Admit original bytes. Identical effective identity and bytes are idempotent;
     /// layout enrichment is explicit and never silently inferred by re-insertion.
-    pub fn add(&mut self, input: ResourceInput) -> Result<ResourceId, ParseFailure> {
+    pub fn add(&mut self, input: ResourceInput) -> Result<ResourceId, Diagnostic> {
         self.add_with_cancellation(input, &crate::Cancellation::default())
     }
     /// Admit bytes with cooperative parser checkpoints.
@@ -548,11 +550,8 @@ impl DocumentBuilder {
         &mut self,
         input: ResourceInput,
         cancellation: &crate::Cancellation,
-    ) -> Result<ResourceId, ParseFailure> {
-        let fail = |diagnostic| ParseFailure {
-            diagnostic,
-            source: input.bytes.clone(),
-        };
+    ) -> Result<ResourceId, Diagnostic> {
+        let fail = |diagnostic: Diagnostic| (diagnostic).with_source_bytes(input.bytes.clone());
         cancellation.check().map_err(fail)?;
         let input_usage =
             metadata_input(&input, &self.limits, &self.graph_limits, cancellation).map_err(fail)?;
@@ -560,7 +559,7 @@ impl DocumentBuilder {
             cancellation.check().map_err(fail)?;
             if uri.len() > self.limits.target_bytes {
                 return Err(fail(Diagnostic::limited(
-                    crate::LimitKind::TargetBytes,
+                    crate::diagnostics::LimitKind::TargetBytes,
                     self.limits.target_bytes,
                     uri.len(),
                 )));
@@ -634,14 +633,14 @@ impl DocumentBuilder {
             self.resources.len(),
             1,
             self.graph_limits.resources,
-            crate::LimitKind::GraphResources,
+            crate::diagnostics::LimitKind::GraphResources,
         )
         .map_err(fail)?;
         bound(
             bytes,
             input.bytes.len(),
             self.graph_limits.original_bytes,
-            crate::LimitKind::GraphOriginalBytes,
+            crate::diagnostics::LimitKind::GraphOriginalBytes,
         )
         .map_err(fail)?;
         let mut limits = self.limits.clone();
@@ -651,13 +650,13 @@ impl DocumentBuilder {
         let json = crate::loading::parse(&input.bytes, limits, cancellation)?;
         let source = input.bytes.clone();
         self.admit_parsed(json, input, cancellation)
-            .map_err(|diagnostic| ParseFailure { diagnostic, source })
+            .map_err(|diagnostic: Diagnostic| (diagnostic).with_source_bytes(source))
     }
     // Shared by borrowed Document::parse and caller-owned ResourceInput admission.
     // The convenience parse path does not allocate another full-document byte Arc.
     pub(crate) fn admit_parsed(
         &mut self,
-        json: ExactJson,
+        json: Value,
         input: ResourceInput,
         cancellation: &crate::Cancellation,
     ) -> Result<ResourceId, Diagnostic> {
@@ -668,25 +667,25 @@ impl DocumentBuilder {
             self.resources.len(),
             1,
             self.graph_limits.resources,
-            crate::LimitKind::GraphResources,
+            crate::diagnostics::LimitKind::GraphResources,
         )?;
         bound(
             bytes,
             json.original_source().len(),
             self.graph_limits.original_bytes,
-            crate::LimitKind::GraphOriginalBytes,
+            crate::diagnostics::LimitKind::GraphOriginalBytes,
         )?;
         bound(
             nodes,
             json.node_count(),
             self.graph_limits.nodes,
-            crate::LimitKind::GraphNodes,
+            crate::diagnostics::LimitKind::GraphNodes,
         )?;
         bound(
             retained,
             json.retained_bytes(),
             self.graph_limits.retained_bytes,
-            crate::LimitKind::GraphRetainedBytes,
+            crate::diagnostics::LimitKind::GraphRetainedBytes,
         )?;
         let id = ResourceId(json.root().source_context().id);
         let canonical = if Edition::detect_optional(&json.root()) == Ok(Some(Edition::OpenApi32)) {
@@ -700,7 +699,7 @@ impl DocumentBuilder {
                         0,
                         reference.len(),
                         self.limits.target_bytes,
-                        crate::LimitKind::TargetBytes,
+                        crate::diagnostics::LimitKind::TargetBytes,
                     )
                     .map_err(|e| v.locate(e))?;
                     let resolved = resolve_uri(reference, input.retrieval.as_deref())
@@ -709,7 +708,7 @@ impl DocumentBuilder {
                         0,
                         resolved.len(),
                         self.limits.target_bytes,
-                        crate::LimitKind::TargetBytes,
+                        crate::diagnostics::LimitKind::TargetBytes,
                     )
                     .map_err(|e| v.locate(e))?;
                     Ok::<_, Diagnostic>(resolved)
@@ -807,7 +806,7 @@ impl DocumentBuilder {
             0,
             layout.roots.len(),
             self.graph_limits.layout_roots,
-            crate::LimitKind::GraphLayouts,
+            crate::diagnostics::LimitKind::GraphLayouts,
         )?;
         let mut incoming_bytes = 0usize;
         for root in &layout.roots {
@@ -815,21 +814,21 @@ impl DocumentBuilder {
                 0,
                 root.profile_bytes(),
                 self.limits.target_bytes,
-                crate::LimitKind::TargetBytes,
+                crate::diagnostics::LimitKind::TargetBytes,
             )?;
             cancellation.check()?;
             bound(
                 0,
                 root.pointer().len(),
                 self.limits.target_bytes,
-                crate::LimitKind::TargetBytes,
+                crate::diagnostics::LimitKind::TargetBytes,
             )?;
             incoming_bytes = incoming_bytes.saturating_add(root.metadata_bytes());
             bound(
                 0,
                 incoming_bytes,
                 self.graph_limits.metadata_bytes,
-                crate::LimitKind::GraphMetadataBytes,
+                crate::diagnostics::LimitKind::GraphMetadataBytes,
             )?;
         }
         let index = self
@@ -944,19 +943,19 @@ impl MetadataUse {
             0,
             self.identities,
             limits.identities,
-            crate::LimitKind::GraphIdentities,
+            crate::diagnostics::LimitKind::GraphIdentities,
         )?;
         bound(
             0,
             self.layouts,
             limits.layout_roots,
-            crate::LimitKind::GraphLayouts,
+            crate::diagnostics::LimitKind::GraphLayouts,
         )?;
         bound(
             0,
             self.bytes,
             limits.metadata_bytes,
-            crate::LimitKind::GraphMetadataBytes,
+            crate::diagnostics::LimitKind::GraphMetadataBytes,
         )
     }
 }
@@ -1006,7 +1005,7 @@ fn metadata_input(
             0,
             root.profile_bytes(),
             limits.target_bytes,
-            crate::LimitKind::TargetBytes,
+            crate::diagnostics::LimitKind::TargetBytes,
         )?;
     }
     for value in input
@@ -1021,7 +1020,7 @@ fn metadata_input(
             0,
             value.len(),
             limits.target_bytes,
-            crate::LimitKind::TargetBytes,
+            crate::diagnostics::LimitKind::TargetBytes,
         )?;
         usage.bytes = usage.bytes.saturating_add(value.len());
         usage.check(graph)?;
@@ -1055,7 +1054,7 @@ pub(crate) fn bound(
     used: usize,
     more: usize,
     max: usize,
-    kind: crate::LimitKind,
+    kind: crate::diagnostics::LimitKind,
 ) -> Result<(), Diagnostic> {
     let actual = used.saturating_add(more);
     if actual > max {
@@ -1241,7 +1240,7 @@ impl Graph {
                     edges,
                     1,
                     graph.limits.reference_edges,
-                    crate::LimitKind::GraphReferenceEdges,
+                    crate::diagnostics::LimitKind::GraphReferenceEdges,
                 )
                 .map_err(|e| node.locate(e))?;
                 edges += 1;
@@ -1383,7 +1382,7 @@ impl Graph {
             ObjectKind::Reference(ReferenceKind::PathItem) => {
                 if let Some(members) = node.members() {
                     for (name, value) in members {
-                        if crate::Method::parse(name)
+                        if crate::inspect::Method::parse(name)
                             .is_some_and(|_| name == name.to_ascii_lowercase())
                         {
                             child(value, ObjectKind::Operation)?;
@@ -1535,7 +1534,7 @@ impl Graph {
                             *edges,
                             1,
                             self.limits.reference_edges,
-                            crate::LimitKind::GraphReferenceEdges,
+                            crate::diagnostics::LimitKind::GraphReferenceEdges,
                         )
                         .map_err(|e| source.locate(e))?;
                         *edges += 1;
@@ -1594,7 +1593,7 @@ impl Graph {
             0,
             reference.len(),
             self.target_bytes,
-            crate::LimitKind::TargetBytes,
+            crate::diagnostics::LimitKind::TargetBytes,
         )
         .map_err(|e| source.locate(e))?;
         fluent_uri::UriRef::parse(reference).map_err(|_| source.error(Code::InvalidReference))?;
@@ -1708,14 +1707,14 @@ impl Graph {
         node: &Value,
         kind: ReferenceKind,
         limit: usize,
-    ) -> Result<crate::ResolvedReference, Diagnostic> {
+    ) -> Result<crate::graph::ResolvedReference, Diagnostic> {
         let edition = self.context(node, kind)?;
         let mut current = node.clone();
         let mut seen = HashSet::new();
         let (mut summary, mut description) = (None, None);
         let mut chain = vec![];
         let mut path_fields = HashSet::new();
-        let mut path_item_conflicts = Vec::<crate::PathItemConflict>::new();
+        let mut path_item_conflicts = Vec::<crate::graph::PathItemConflict>::new();
         let mut canonical = true;
         loop {
             if current.kind() != ValueKind::Object {
@@ -1732,7 +1731,7 @@ impl Graph {
                                 .iter()
                                 .any(|conflict| conflict.method == method)
                         {
-                            path_item_conflicts.push(crate::PathItemConflict {
+                            path_item_conflicts.push(crate::graph::PathItemConflict {
                                 method,
                                 diagnostic: value.error(Code::AmbiguousReference),
                             });
@@ -1757,11 +1756,11 @@ impl Graph {
             {
                 return Err(reference
                     .error(Code::InvalidDeclaration)
-                    .reasoned(crate::DiagnosticReason::UnsupportedReferencePosition));
+                    .reasoned(crate::diagnostics::DiagnosticReason::UnsupportedReferencePosition));
             }
             if chain.len() > limit {
                 return Err(reference.locate(Diagnostic::limited(
-                    crate::LimitKind::ReferenceDepth,
+                    crate::diagnostics::LimitKind::ReferenceDepth,
                     limit,
                     chain.len(),
                 )));
@@ -1796,7 +1795,7 @@ impl Graph {
         if summary.is_none() && matches!(kind, ReferenceKind::PathItem | ReferenceKind::Example) {
             summary = current.get("summary");
         }
-        Ok(crate::ResolvedReference {
+        Ok(crate::graph::ResolvedReference {
             authored: node.clone(),
             target: current,
             summary,
@@ -1809,11 +1808,12 @@ impl Graph {
 }
 // Only methods defined by the originating edition participate in the operation
 // inventory and reference conflicts. Later-edition fields remain inert.
-pub(crate) fn path_item_method(name: &str, edition: Edition) -> Option<crate::Method> {
-    let method = crate::Method::parse(name).filter(|_| name == name.to_ascii_lowercase())?;
+pub(crate) fn path_item_method(name: &str, edition: Edition) -> Option<crate::inspect::Method> {
+    let method =
+        crate::inspect::Method::parse(name).filter(|_| name == name.to_ascii_lowercase())?;
     match method {
-        crate::Method::Trace if edition == Edition::Swagger20 => None,
-        crate::Method::Query if edition != Edition::OpenApi32 => None,
+        crate::inspect::Method::Trace if edition == Edition::Swagger20 => None,
+        crate::inspect::Method::Query if edition != Edition::OpenApi32 => None,
         _ => Some(method),
     }
 }
@@ -1829,7 +1829,13 @@ fn enqueue(
     edition: Edition,
     limit: usize,
 ) -> Result<(), Diagnostic> {
-    bound(queue.len(), 1, limit, crate::LimitKind::GraphNodes).map_err(|e| value.locate(e))?;
+    bound(
+        queue.len(),
+        1,
+        limit,
+        crate::diagnostics::LimitKind::GraphNodes,
+    )
+    .map_err(|e| value.locate(e))?;
     if queue.len() == queue.capacity() {
         let capacity = queue.capacity().saturating_mul(2).max(4).min(limit);
         queue.reserve_exact(capacity.saturating_sub(queue.len()));
@@ -2022,8 +2028,8 @@ mod identity_controls {
                 if code == "Limit" {
                     assert_eq!(
                         error.reason(),
-                        Some(&crate::DiagnosticReason::Limit {
-                            kind: crate::LimitKind::TargetBytes,
+                        Some(&crate::diagnostics::DiagnosticReason::Limit {
+                            kind: crate::diagnostics::LimitKind::TargetBytes,
                             maximum: 0,
                             actual: 1
                         })
@@ -2113,7 +2119,7 @@ mod identity_controls {
         let error = builder
             .add(input("https://example.TEST/%7E", json!({"different":true})))
             .unwrap_err();
-        assert_eq!(error.diagnostic().code(), Code::IdentityCollision);
+        assert_eq!(error.code(), Code::IdentityCollision);
         let encoded = builder
             .add(input("https://example.test/%41", json!({})))
             .unwrap();
@@ -2214,7 +2220,7 @@ mod ownership_tests {
                     .unwrap(),
             )
             .unwrap_err();
-        assert_eq!(failure.diagnostic.code(), Code::IdentityCollision);
+        assert_eq!(failure.code(), Code::IdentityCollision);
         assert!(
             !builder
                 .admission
@@ -2242,7 +2248,7 @@ mod ownership_tests {
         let failure = builder
             .add(ResourceInput::at("https://docs.example/uncommitted", bytes.clone()).unwrap())
             .unwrap_err();
-        assert_eq!(failure.diagnostic.code(), Code::IdentityCollision);
+        assert_eq!(failure.code(), Code::IdentityCollision);
         assert!(
             !builder
                 .admission
@@ -2323,7 +2329,7 @@ mod ownership_tests {
                     .unwrap(),
             )
             .unwrap_err();
-        assert_eq!(failure.diagnostic.code(), Code::Limit);
+        assert_eq!(failure.code(), Code::Limit);
         assert_eq!(builder.metadata_total(), metadata);
         check_admission(&builder);
         let cancelled = crate::Cancellation::default();
@@ -2331,7 +2337,7 @@ mod ownership_tests {
         let failure = builder
             .add_with_cancellation(input(), &cancelled)
             .unwrap_err();
-        assert_eq!(failure.diagnostic.code(), Code::Cancelled);
+        assert_eq!(failure.code(), Code::Cancelled);
         check_admission(&builder);
         let failure = builder
             .add(
@@ -2342,7 +2348,7 @@ mod ownership_tests {
                 .unwrap(),
             )
             .unwrap_err();
-        assert_ne!(failure.diagnostic.code(), Code::Limit);
+        assert_ne!(failure.code(), Code::Limit);
         check_admission(&builder);
         builder
             .add(ResourceInput::at("https://docs.example/second", bytes).unwrap())
@@ -2356,7 +2362,7 @@ mod ownership_tests {
         let maximum = 1025;
         let mut values = Vec::new();
         let mut queue = VecDeque::new();
-        let node = ExactJson::parse("{}", Limits::default()).unwrap().root();
+        let node = Value::parse("{}", Limits::default()).unwrap().root();
         let (mut vector_growth, mut queue_growth) = (0, 0);
         for i in 0..maximum {
             let old = values.capacity();
@@ -2401,11 +2407,13 @@ mod ownership_tests {
         let weak = Arc::downgrade(&doc.0);
         let source = doc.root();
         let ready = doc
-            .operation("/ok", crate::Method::Get)
+            .operation("/ok", crate::inspect::Method::Get)
             .unwrap()
             .prepare(&crate::Input::default())
             .unwrap();
-        let operation = doc.operation("/missing", crate::Method::Get).unwrap();
+        let operation = doc
+            .operation("/missing", crate::inspect::Method::Get)
+            .unwrap();
         let error = operation.prepare(&crate::Input::default()).unwrap_err();
         assert!(
             operation
@@ -2448,3 +2456,7 @@ mod ownership_tests {
         assert_eq!(source.get("openapi").unwrap().as_str(), Some("3.2.1"));
     }
 }
+
+pub use crate::document::PathItemConflict;
+pub use crate::document::ReferenceKind;
+pub use crate::document::ResolvedReference;

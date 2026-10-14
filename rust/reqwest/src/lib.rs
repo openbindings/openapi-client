@@ -3,10 +3,13 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
-use dynamic_openapi_client::{
-    BodyState, Cancellation, Code, Credential, Diagnostic, Header, HeaderDelivery, HeaderFidelity,
-    HostCapabilities, Operation, Outcome, PreparedRequest, Provenance, RequestBuilder,
+use dynamic_openapi_client::diagnostics::Code;
+use dynamic_openapi_client::transport::{
+    BodyState, HeaderDelivery, HeaderFidelity, HostCapabilities, PreparedRequest, Provenance,
     ResponseAdmission, ResponseInput, TransportResult, UploadState,
+};
+use dynamic_openapi_client::{
+    Cancellation, Credential, Diagnostic, Header, Operation, Outcome, RequestBuilder,
 };
 use std::{fmt, sync::Arc, time::Duration};
 
@@ -131,7 +134,7 @@ impl Client {
 
     /// Begin the existing core builder with this client's configured credentials.
     /// Per-call inputs and security/origin checks remain core preparation work.
-    pub fn request<'a>(&'a self, operation: &Operation) -> RequestBuilder<'a> {
+    pub fn request(&self, operation: &Operation) -> RequestBuilder {
         let mut request = operation.request();
         for (scheme, credential) in self.credentials.iter() {
             request = request.credential(scheme.as_str(), credential.clone());

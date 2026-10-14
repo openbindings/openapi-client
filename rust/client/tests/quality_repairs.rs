@@ -1,5 +1,9 @@
+#[path = "support/request_case.rs"]
+mod request_case;
 use dynamic_openapi_client::*;
+use dynamic_openapi_client::{diagnostics::*, exact::*, source::*, transport::*};
 use policies::complete_2xx_json as accept;
+use request_case::*;
 use std::{
     future::Future,
     task::{Context, Poll, Waker},
@@ -29,7 +33,7 @@ fn outcome(
     body: &[u8],
 ) -> Outcome {
     let p = operation(Limits::default())
-        .prepare(&Input::default())
+        .prepare_case(&CaseInput::default())
         .unwrap();
     let token = Cancellation::default();
     if pre {
@@ -60,21 +64,21 @@ const JSON: &[u8] = br#"{"count":9007199254740993}"#;
 
 #[test]
 fn r01_safe_numeric_and_ordinary_debug() {
-    let owner = ExactJson::parse(
+    let owner = Value::parse(
         r#"{"number":739182645,"string":"synthetic-ordinary-secret"}"#,
         Limits::default(),
     )
     .unwrap();
-    let n = owner.root().get("number").unwrap();
-    let s = owner.root().get("string").unwrap();
-    let input = Input {
+    let n = owner.clone().get("number").unwrap();
+    let s = owner.clone().get("string").unwrap();
+    let input = CaseInput {
         parameters: vec![
-            ParameterInput {
+            CaseParameter {
                 location: ParameterLocation::Query,
                 name: "token".into(),
                 value: n.clone(),
             },
-            ParameterInput {
+            CaseParameter {
                 location: ParameterLocation::Query,
                 name: "other".into(),
                 value: s.clone(),
@@ -86,7 +90,7 @@ fn r01_safe_numeric_and_ordinary_debug() {
         "{owner:?} {n:?} {s:?} {:?} {:?} {input:?} {:?}",
         n.number(),
         n.number().unwrap(),
-        OrdinaryValue::U64(739182645)
+        TestValue::U64(739182645)
     );
     assert!(!formatted.contains("739182645"));
     assert!(!formatted.contains("synthetic-ordinary-secret"));
@@ -105,7 +109,7 @@ fn r02_policy_success() {
     ))
     .unwrap();
     assert_eq!(
-        r.json.root().get("count").unwrap().raw(),
+        r.json.clone().get("count").unwrap().raw(),
         "9007199254740993"
     );
     assert_eq!(r.outcome.dispatch, DispatchEvidence::Dispatched);
@@ -225,8 +229,8 @@ fn r08_numeric_reasons_and_exact_policy() {
         ("9223372036854775808", NumericReason::SignedRange),
         ("9007199254740993", NumericReason::PrecisionLoss),
     ] {
-        let json = ExactJson::parse(text, Limits::default()).unwrap();
-        let value = json.root();
+        let json = Value::parse(text, Limits::default()).unwrap();
+        let value = json.clone();
         let error = value.number().unwrap().to_f64_exact().unwrap_err();
         assert_eq!(
             error.reason(),
@@ -238,15 +242,14 @@ fn r08_numeric_reasons_and_exact_policy() {
         assert_eq!(error.source_context(), Some(value.source_context()));
         assert_eq!(error.location().cloned(), Some(value.location()));
     }
-    let v = ExactJson::parse(
+    let v = Value::parse(
         "123",
         Limits {
             number_conversion_chars: 2,
             ..Default::default()
         },
     )
-    .unwrap()
-    .root();
+    .unwrap();
     assert!(matches!(
         v.number().unwrap().to_u64().unwrap_err().reason(),
         Some(DiagnosticReason::Limit {
@@ -255,7 +258,7 @@ fn r08_numeric_reasons_and_exact_policy() {
             actual: 3
         })
     ));
-    let v = ExactJson::parse("-1", Limits::default()).unwrap().root();
+    let v = Value::parse("-1", Limits::default()).unwrap();
     assert!(matches!(
         v.number().unwrap().to_u64().unwrap_err().reason(),
         Some(DiagnosticReason::Numeric {
@@ -263,7 +266,7 @@ fn r08_numeric_reasons_and_exact_policy() {
             ..
         })
     ));
-    let v = ExactJson::parse("-0", Limits::default()).unwrap().root();
+    let v = Value::parse("-0", Limits::default()).unwrap();
     assert!(
         v.number()
             .unwrap()
@@ -278,7 +281,7 @@ fn r09_corrective_input_selection_and_limits() {
         target_bytes: 5,
         ..Default::default()
     })
-    .prepare(&Input::default())
+    .prepare_case(&CaseInput::default())
     .unwrap_err();
     assert!(matches!(
         error.reason(),
@@ -294,7 +297,7 @@ fn r09_corrective_input_selection_and_limits() {
         headers: 0,
         ..Default::default()
     })
-    .prepare(&Input {
+    .prepare_case(&CaseInput {
         headers: vec![Header::new("X-Test", "v")],
         ..Default::default()
     })
@@ -308,18 +311,20 @@ fn r09_corrective_input_selection_and_limits() {
         })
     ));
     assert!(error.location().is_none());
-    let value = ExactJson::from_ordinary(OrdinaryValue::U64(4), Limits::default())
+    let value = Value::from_serializable(&TestValue::U64(4), Limits::default())
         .unwrap()
-        .root();
-    let input = Input {
-        parameters: vec![ParameterInput {
+        .clone();
+    let input = CaseInput {
+        parameters: vec![CaseParameter {
             location: ParameterLocation::Query,
             name: "synthetic-secret-key".into(),
             value: value.clone(),
         }],
         ..Default::default()
     };
-    let error = operation(Limits::default()).prepare(&input).unwrap_err();
+    let error = operation(Limits::default())
+        .prepare_case(&input)
+        .unwrap_err();
     assert_eq!(error.reason(), Some(&DiagnosticReason::UnknownParameter));
     assert!(
         matches!(error.context(),Some(DiagnosticContext::Parameter{index:0,name,..})if name=="synthetic-secret-key")
@@ -329,8 +334,8 @@ fn r09_corrective_input_selection_and_limits() {
     for (kind, input) in [
         (
             SelectionKind::Server,
-            Input {
-                selection: Selection {
+            CaseInput {
+                selection: CaseSelection {
                     server: Some(9),
                     ..Default::default()
                 },
@@ -339,19 +344,19 @@ fn r09_corrective_input_selection_and_limits() {
         ),
         (
             SelectionKind::Media,
-            Input {
-                selection: Selection {
+            CaseInput {
+                selection: CaseSelection {
                     media: Some("application/unknown".into()),
                     ..Default::default()
                 },
-                body: Body::Json(value.clone()),
+                body: CaseBody::Json(value.clone()),
                 ..Default::default()
             },
         ),
         (
             SelectionKind::Security,
-            Input {
-                selection: Selection {
+            CaseInput {
+                selection: CaseSelection {
                     security: Some(9),
                     ..Default::default()
                 },
@@ -359,34 +364,33 @@ fn r09_corrective_input_selection_and_limits() {
             },
         ),
     ] {
-        let error = operation(Limits::default()).prepare(&input).unwrap_err();
+        let error = operation(Limits::default())
+            .prepare_case(&input)
+            .unwrap_err();
         assert_eq!(error.reason(), Some(&DiagnosticReason::Selection(kind)));
         assert!(matches!(error.context(),Some(DiagnosticContext::Selection{kind:k,..})if *k==kind));
     }
 }
 #[test]
 fn r10_supported_ordinary_values_and_provenance() {
-    let json = ExactJson::from_ordinary(
-        OrdinaryValue::Object(&[
-            ("quoted", OrdinaryValue::String("A/\"B\n雪")),
-            ("boolean", OrdinaryValue::Bool(true)),
-            ("signed", OrdinaryValue::I64(i64::MIN)),
-            ("unsigned", OrdinaryValue::U64(u64::MAX)),
-            ("large", OrdinaryValue::U64(9_007_199_254_740_993)),
+    let json = Value::from_serializable(
+        &TestValue::Object(&[
+            ("quoted", TestValue::String("A/\"B\n雪")),
+            ("boolean", TestValue::Bool(true)),
+            ("signed", TestValue::I64(i64::MIN)),
+            ("unsigned", TestValue::U64(u64::MAX)),
+            ("large", TestValue::U64(9_007_199_254_740_993)),
             (
                 "array",
-                OrdinaryValue::Array(&[OrdinaryValue::Bool(false), OrdinaryValue::String("x")]),
+                TestValue::Array(&[TestValue::Bool(false), TestValue::String("x")]),
             ),
-            (
-                "flat",
-                OrdinaryValue::Object(&[("limit", OrdinaryValue::U64(3))]),
-            ),
-            ("null", OrdinaryValue::Null),
+            ("flat", TestValue::Object(&[("limit", TestValue::U64(3))])),
+            ("null", TestValue::Null),
         ]),
         Limits::default(),
     )
     .unwrap();
-    let root = json.root();
+    let root = json.clone();
     assert_eq!(root.source_context().origin, SourceOrigin::Constructed);
     assert_eq!(root.get("quoted").unwrap().as_str(), Some("A/\"B\n雪"));
     assert_eq!(
@@ -410,7 +414,7 @@ fn r10_supported_ordinary_values_and_provenance() {
     assert_eq!(root.get("large").unwrap().raw(), "9007199254740993");
     assert!(root.get("missing").is_none());
     assert_eq!(root.get("null").unwrap().kind(), ValueKind::Null);
-    assert!(matches!(Body::default(), Body::Absent));
+    assert!(matches!(CaseBody::default(), CaseBody::Absent));
     let retained = root.get("flat").unwrap();
     drop(json);
     drop(root);
@@ -419,8 +423,8 @@ fn r10_supported_ordinary_values_and_provenance() {
 #[test]
 fn r11_construction_limits_and_duplicate_names() {
     let large = "x".repeat(1_000_000);
-    let failure = ExactJson::from_ordinary(
-        OrdinaryValue::String(&large),
+    let failure = Value::from_serializable(
+        &TestValue::String(&large),
         Limits {
             document_bytes: 8,
             ..Default::default()
@@ -429,17 +433,17 @@ fn r11_construction_limits_and_duplicate_names() {
     .unwrap_err();
     assert!(failure.source_bytes().is_empty());
     assert!(matches!(
-        failure.diagnostic().reason(),
+        failure.reason(),
         Some(DiagnosticReason::Limit {
             kind: LimitKind::DocumentBytes,
             maximum: 8,
-            actual: 1_000_000
+            actual: 1_000_002
         })
     ));
 
     for maximum in [2, 3, 4] {
-        let result = ExactJson::from_ordinary(
-            OrdinaryValue::String("x"),
+        let result = Value::from_serializable(
+            &TestValue::String("x"),
             Limits {
                 document_bytes: maximum,
                 ..Default::default()
@@ -449,22 +453,19 @@ fn r11_construction_limits_and_duplicate_names() {
         if let Err(e) = result {
             assert!(e.source_bytes().is_empty());
             assert!(matches!(
-                e.diagnostic().reason(),
+                e.reason(),
                 Some(DiagnosticReason::Limit {
                     kind: LimitKind::DocumentBytes,
                     ..
                 })
             ));
-            assert_eq!(
-                e.diagnostic().context(),
-                Some(&DiagnosticContext::Construction)
-            );
+            assert_eq!(e.context(), Some(&DiagnosticContext::Construction));
         }
     }
-    let array = [OrdinaryValue::U64(1), OrdinaryValue::U64(2)];
+    let array = [TestValue::U64(1), TestValue::U64(2)];
     assert!(
-        ExactJson::from_ordinary(
-            OrdinaryValue::Array(&array),
+        Value::from_serializable(
+            &TestValue::Array(&array),
             Limits {
                 nodes: 3,
                 depth: 1,
@@ -484,24 +485,20 @@ fn r11_construction_limits_and_duplicate_names() {
         },
     ] {
         assert_eq!(
-            ExactJson::from_ordinary(OrdinaryValue::Array(&array), limits)
+            Value::from_serializable(&TestValue::Array(&array), limits)
                 .unwrap_err()
-                .diagnostic()
                 .code(),
             Code::Limit
         );
     }
-    let error = ExactJson::from_ordinary(
-        OrdinaryValue::Object(&[
-            ("same", OrdinaryValue::Null),
-            ("same", OrdinaryValue::Bool(true)),
-        ]),
+    let error = Value::from_serializable(
+        &TestValue::Object(&[("same", TestValue::Null), ("same", TestValue::Bool(true))]),
         Limits::default(),
     )
     .unwrap_err();
-    assert_eq!(error.diagnostic().code(), Code::DuplicateMember);
+    assert_eq!(error.code(), Code::DuplicateMember);
     assert_eq!(
-        error.diagnostic().source_context().unwrap().origin,
+        error.source_context().unwrap().origin,
         SourceOrigin::Constructed
     );
     assert!(!error.source_bytes().is_empty());
@@ -517,29 +514,23 @@ fn r12_error_chaining_and_source_domains() {
         },
     )
     .unwrap_err();
-    assert!(failure.diagnostic().location().is_none());
-    assert!(failure.diagnostic().source_context().is_none());
-    assert_eq!(
-        failure.diagnostic().context(),
-        Some(&DiagnosticContext::CallerInput)
-    );
+    assert!(failure.location().is_none());
+    assert!(failure.source_context().is_none());
+    assert_eq!(failure.context(), Some(&DiagnosticContext::CallerInput));
 
-    let failure = ExactJson::parse("[", Limits::default()).unwrap_err();
-    let cause = std::error::Error::source(&failure)
-        .unwrap()
-        .downcast_ref::<Diagnostic>()
-        .unwrap();
-    assert_eq!(cause, failure.diagnostic());
+    let failure = Value::parse("[", Limits::default()).unwrap_err();
+    assert!(std::error::Error::source(&failure).is_none());
+    let cause = &failure;
     assert_eq!(
         cause.source_context().unwrap().origin,
         SourceOrigin::Authored
     );
-    let a = ExactJson::parse("1", Limits::default()).unwrap().root();
-    let b = ExactJson::parse("1", Limits::default()).unwrap().root();
+    let a = Value::parse("1", Limits::default()).unwrap();
+    let b = Value::parse("1", Limits::default()).unwrap();
     assert_ne!(a.source_context(), b.source_context());
-    let c = ExactJson::from_ordinary(OrdinaryValue::U64(9_007_199_254_740_993), Limits::default())
+    let c = Value::from_serializable(&TestValue::U64(9_007_199_254_740_993), Limits::default())
         .unwrap()
-        .root();
+        .clone();
     let error = c.number().unwrap().to_f64_exact().unwrap_err();
     assert_eq!(error.source_context(), Some(c.source_context()));
     assert_eq!(error.location().cloned(), Some(c.location()));
@@ -548,18 +539,18 @@ fn r12_error_chaining_and_source_domains() {
         .unwrap()
         .operation_id("op")
         .unwrap();
-    let bad = ExactJson::from_ordinary(OrdinaryValue::Null, Limits::default())
+    let bad = Value::from_serializable(&TestValue::Null, Limits::default())
         .unwrap()
-        .root();
-    let input = Input {
-        parameters: vec![ParameterInput {
+        .clone();
+    let input = CaseInput {
+        parameters: vec![CaseParameter {
             location: ParameterLocation::Query,
             name: "q".into(),
             value: bad.clone(),
         }],
         ..Default::default()
     };
-    let error = op.prepare(&input).unwrap_err();
+    let error = op.prepare_case(&input).unwrap_err();
     assert_eq!(error.code(), Code::UnsupportedValue);
     assert_eq!(error.source_context(), Some(bad.source_context()));
     assert_eq!(error.location().cloned(), Some(bad.location()));

@@ -10,47 +10,32 @@ mod cancellation;
 mod deserialize;
 mod document;
 mod error;
-mod graph;
+pub mod graph;
 mod loading;
 mod prepare;
-mod schema;
+/// Owning schema inspection and reference access.
+pub mod schema;
 mod schema_facts;
-mod source;
+/// Original source identities, formats and retained positions.
+pub mod source;
 mod style;
-mod transport;
+/// Finite prepared requests and supplied-host evidence.
+pub mod transport;
 pub mod uri;
 mod value;
 mod yaml;
-pub use source::{SourceFormat, SourcePosition, SourceTrace, YamlReason};
 
 pub use cancellation::Cancellation;
-pub use deserialize::DeserializationError;
-pub use document::{
-    Document, Edition, ExtensionMethod, Method, Operation, OperationDescription, PathItemConflict,
-    ReferenceKind, ResolvedReference,
-};
-pub use error::{
-    Code, Diagnostic, DiagnosticContext, DiagnosticReason, HostRefusal, LimitKind, Location,
-    NumericReason, NumericTarget, SelectionKind, SerializationReason, VersionReason,
-};
-pub use graph::{
-    DocumentBuilder, GraphLimits, ProtocolSite, ResourceFragment, ResourceHandle, ResourceId,
-    ResourceInput, ResourceInterpretation, ResourceLayout, ResourceNeed, ResourceNeedKind,
-};
-pub use prepare::{
-    Body, Credential, CredentialValue, EffectiveOperationDescription, FieldRequirement,
-    FieldShapeIssue, FieldShapeReason, Input, OAuthFlowDescription, Parameter, ParameterInput,
-    ParameterLocation, Parameters, PreparedRequest, ResponseDescription, SecurityAlternative,
-    SecurityRequirement, SecurityScheme, Selection, ServerDescription,
-};
-pub use transport::{
-    BodyState, DispatchEvidence, Header, HeaderDelivery, HeaderFidelity, HostCapabilities, Outcome,
-    Provenance, ReplayAssurance, ReplayPolicy, Response, ResponseAdmission, ResponseInput,
-    TransportResult, UploadState,
-};
-pub use value::{
-    ExactJson, Limits, Number, ParseFailure, SourceContext, SourceOrigin, Value, ValueKind,
-};
+
+pub use document::{Document, Operation};
+
+pub use error::Diagnostic;
+
+pub use prepare::{Credential, ParameterLocation, Parameters};
+
+pub use transport::{Header, Outcome, Response};
+
+pub use value::Limits;
 
 /// Unsupported observations for qualification only, absent from ordinary builds.
 #[cfg(feature = "qualification")]
@@ -63,23 +48,16 @@ pub mod qualification {
         document.0.cached.load(std::sync::atomic::Ordering::Relaxed)
     }
 }
-mod ordinary;
+
 mod serializable;
-pub use ordinary::OrdinaryValue;
 
 mod request;
-pub use request::{Argument, RequestBuilder, RequestError};
-mod form;
-pub use form::{FiniteBytes, Form, FormField, FormReason, FormValue, Part};
+pub use request::RequestBuilder;
+pub mod form;
 
 /// Explicit evidence-preserving application acceptance policies.
 pub mod policies;
 pub use policies::{CompleteJsonRefusal, CompletedJson, JsonCallRefusal};
-
-pub use schema::{
-    ResolvedSchemaReference, SchemaAccessReason, SchemaHandle, SchemaProfile, SchemaReason,
-    SchemaReference, SchemaReferenceKind,
-};
 
 #[cfg(test)]
 mod schema_tests;
@@ -88,7 +66,54 @@ mod schema_tests;
 mod schema_fact_repair_tests;
 
 mod form_description;
-pub use form_description::{
-    BodyFieldDescription, BodyFields, FieldOpenness, FormRepresentationDescription,
-    MediaDescription, RequestBodyDescription, SchemaDescription,
-};
+
+#[cfg(test)]
+use prepare::Input;
+
+/// Structured diagnostic categories and corrective details.
+pub mod diagnostics {
+    pub use crate::error::Code;
+    pub use crate::error::DiagnosticContext;
+    pub use crate::error::DiagnosticReason;
+    pub use crate::error::HostRefusal;
+    pub use crate::error::LimitKind;
+    pub use crate::error::Location;
+    pub use crate::error::NumericReason;
+    pub use crate::error::NumericTarget;
+    pub use crate::error::SelectionKind;
+    pub use crate::error::SerializationReason;
+    pub use crate::error::VersionReason;
+    pub use crate::error::YamlReason;
+}
+
+/// Effective OpenAPI inspection descriptors.
+pub mod inspect {
+    pub use crate::document::Edition;
+    pub use crate::document::ExtensionMethod;
+    pub use crate::document::Method;
+    pub use crate::document::OperationDescription;
+    pub use crate::form_description::BodyFieldDescription;
+    pub use crate::form_description::BodyFields;
+    pub use crate::form_description::FieldOpenness;
+    pub use crate::form_description::FormRepresentationDescription;
+    pub use crate::form_description::MediaDescription;
+    pub use crate::form_description::RequestBodyDescription;
+    pub use crate::prepare::EffectiveOperationDescription;
+    pub use crate::prepare::FieldRequirement;
+    pub use crate::prepare::FieldShapeIssue;
+    pub use crate::prepare::FieldShapeReason;
+    pub use crate::prepare::OAuthFlowDescription;
+    pub use crate::prepare::Parameter;
+    pub use crate::prepare::ResponseDescription;
+    pub use crate::prepare::SecurityAlternative;
+    pub use crate::prepare::SecurityRequirement;
+    pub use crate::prepare::SecurityScheme;
+    pub use crate::prepare::ServerDescription;
+}
+
+/// Owning exact JSON values and checked number views.
+pub mod exact {
+    pub use crate::value::Number;
+    pub use crate::value::Value;
+    pub use crate::value::ValueKind;
+}

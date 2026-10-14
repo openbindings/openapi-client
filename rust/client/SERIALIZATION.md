@@ -29,11 +29,11 @@ needs a custom serialization policy.
 
 ```rust
 use dynamic_openapi_client::*;
-# fn request(operation: &Operation) -> Result<PreparedRequest, RequestError> {
-let metadata = [("order", OrdinaryValue::String("o 7")),
-                ("source", OrdinaryValue::String("web"))];
+use dynamic_openapi_client::{diagnostics::*, exact::*, form::*, graph::*, inspect::*, schema::*, source::*, transport::*};
+# fn request(operation: &Operation) -> Result<PreparedRequest, Diagnostic> {
+let metadata = std::collections::BTreeMap::from([("order", "o 7"), ("source", "web")]);
 operation.request()
-    .parameter(ParameterLocation::Query, "metadata", OrdinaryValue::Object(&metadata))
+    .parameter(ParameterLocation::Query, "metadata", &metadata)
     .prepare()
 # }
 ```

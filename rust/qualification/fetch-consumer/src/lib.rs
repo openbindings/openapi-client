@@ -1,12 +1,13 @@
 //! Public-API consumer compiled against extracted Cargo archives, never workspace sources.
 #![forbid(unsafe_code)]
 
+use dynamic_openapi_client::exact::Value;
+use dynamic_openapi_client::transport::ReplayPolicy;
 use dynamic_openapi_client::{
-    Cancellation, Document, ExactJson, Header, Input, Limits, Outcome, ParameterInput,
-    ParameterLocation, ReplayPolicy, qualification,
+    Cancellation, Document, Header, Limits, Outcome, ParameterLocation, qualification,
 };
 use dynamic_openapi_client_fetch::{Client, Profile};
-use serde_json::{Value, json};
+use serde_json::{Value as Json, json};
 use std::{future::Future, pin::Pin, task::Context};
 use wasm_bindgen::prelude::*;
 
@@ -71,33 +72,27 @@ impl FetchClient {
             body_bytes: body_limit,
             ..Limits::default()
         };
-        let value: Value = serde_json::from_str(input).map_err(js_error)?;
+        let value: Json = serde_json::from_str(input).map_err(js_error)?;
         let headers: Vec<(String, String)> =
             serde_json::from_value(value["headers"].clone()).map_err(js_error)?;
-        let mut input = Input {
-            headers: headers
-                .into_iter()
-                .map(|(name, value)| Header::new(name, value))
-                .collect(),
-            ..Input::default()
-        };
-        if let Some(query) = value["query"].as_object() {
-            for (name, value) in query {
-                input.parameters.push(ParameterInput {
-                    location: ParameterLocation::Query,
-                    name: name.clone(),
-                    value: ExactJson::parse(value.to_string(), limits.clone())
-                        .map_err(js_error)?
-                        .root(),
-                });
-            }
-        }
-        let prepared = Document::parse(document, None, limits)
+        let operation = Document::parse(document, None, limits.clone())
             .map_err(js_error)?
             .operation_id("probe")
-            .map_err(js_error)?
-            .prepare(&input)
             .map_err(js_error)?;
+        let mut request = operation.request();
+        for (name, value) in headers {
+            request = request.header(Header::new(name, value));
+        }
+        if let Some(query) = value["query"].as_object() {
+            for (name, value) in query {
+                request = request.parameter_exact(
+                    ParameterLocation::Query,
+                    name,
+                    &Value::parse(value.to_string(), limits.clone()).map_err(js_error)?,
+                );
+            }
+        }
+        let prepared = request.prepare().map_err(js_error)?;
         let wire = json!({
             "target": prepared.target(),
             "method": prepared.method().as_str(),

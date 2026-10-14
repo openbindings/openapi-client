@@ -1,5 +1,28 @@
-use crate::{ParameterLocation, SourceContext};
+use crate::ParameterLocation;
+use crate::source::SourceContext;
 use std::fmt;
+
+/// Structured YAML refusal, without retaining scalar values in error messages.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum YamlReason {
+    /// Exactly one document is required in a YAML stream.
+    MultipleDocuments,
+    /// An explicit YAML directive selected another version.
+    UnsupportedVersion,
+    /// OpenAPI mapping keys must resolve to strings; keys are never stringified.
+    NonStringKey,
+    /// A tag has no supported JSON-compatible interpretation.
+    UnsupportedTag,
+    /// The scalar does not conform to its explicit standard tag.
+    InvalidTaggedScalar,
+    /// JSON cannot represent YAML infinity or NaN values.
+    NonFiniteNumber,
+    /// Alias expansion would revisit an active definition.
+    AliasCycle,
+    /// An alias refers to no admitted definition.
+    UnknownAlias,
+}
 
 /// The configured resource whose admission check failed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -140,14 +163,14 @@ pub enum DiagnosticReason {
     /// remains the later declaration; this position owns the earlier source.
     IdentityCollision {
         /// Earlier claimant, in authored source when available.
-        previous: crate::SourcePosition,
+        previous: crate::source::SourcePosition,
     },
     /// A controlled host capability or replay policy refusal.
     Host(HostRefusal),
     /// Selected schema interpretation or bounded fact refusal.
-    Schema(crate::SchemaReason),
+    Schema(crate::schema::SchemaReason),
     /// Why a finite named form could not be represented.
-    Form(crate::FormReason),
+    Form(crate::form::FormReason),
     /// The declared style/type/explode combination has no supported defined serialization.
     UnsupportedStyleCombination,
     /// A nested or null value requires a separately selected serialization convention.
@@ -155,7 +178,7 @@ pub enum DiagnosticReason {
     /// A data delimiter needs an explicit interoperability convention.
     AmbiguousStyleDelimiter,
     /// YAML syntax-to-JSON profile refusal.
-    Yaml(crate::YamlReason),
+    Yaml(crate::diagnostics::YamlReason),
     /// Edition discrimination failed without rewriting the authored source.
     Version(VersionReason),
     /// Checked Serde construction refused the emitted representation.
@@ -271,13 +294,16 @@ impl fmt::Debug for DiagnosticContext {
 }
 #[derive(Clone, Default, PartialEq, Eq)]
 struct Details {
+    bytes: std::sync::Arc<[u8]>,
+    projection: Option<(usize, usize, std::sync::Arc<str>)>,
+
     reason: Option<DiagnosticReason>,
     context: Option<DiagnosticContext>,
     source: Option<SourceContext>,
     primary_source: Option<std::sync::Arc<str>>,
     context_omitted_for_limit: bool,
     need_fact: Option<crate::graph::NeedFact>,
-    resource_need: Option<crate::ResourceNeed>,
+    resource_need: Option<crate::graph::ResourceNeed>,
 }
 
 /// Stable failure categories. Diagnostic text never includes input values.
@@ -394,6 +420,8 @@ pub enum Code {
     IncompleteHeaders,
     /// Delivered bytes require content decoding outside this convenience profile.
     UnsupportedCoding,
+    /// Admitted JSON cannot project into the requested application type.
+    Deserialization,
 }
 
 impl Code {
@@ -471,6 +499,7 @@ impl Code {
             Self::EmptyBody => "JSON decoding requires a nonempty response body",
             Self::IncompleteBody => "JSON decoding requires a complete response body",
             Self::IncompleteHeaders => "JSON decoding requires complete response-header delivery",
+            Self::Deserialization => "JSON does not match the requested Rust type",
             Self::UnsupportedCoding => "the response needs unsupported content decoding",
         }
     }
@@ -491,7 +520,7 @@ pub struct Location {
 /// Structured, safely displayed diagnostic. No arbitrary host error is displayed.
 /// Source metadata is immutable to callers; add application context with a wrapper error.
 /// ```compile_fail
-/// use dynamic_openapi_client::{Code, Diagnostic};
+/// use dynamic_openapi_client::{diagnostics::Code, Diagnostic};
 /// let mut error = Diagnostic::new(Code::InvalidJson);
 /// error.location = None;
 /// ```
@@ -517,6 +546,53 @@ impl Diagnostic {
             setting: None,
             details: None,
         }
+    }
+    /// Admitted original bytes, including invalid UTF-8. Empty when byte admission refused.
+    /// The source remains immutable and paired with its diagnostic.
+    ///
+    /// ```compile_fail
+    /// use dynamic_openapi_client::{exact::Value, Limits};
+    /// let error = Value::parse("{", Limits::default()).unwrap_err();
+    /// error.source_bytes()[0] = b'x';
+    /// ```
+    pub fn source_bytes(&self) -> &[u8] {
+        self.details.as_ref().map_or(&[], |details| &details.bytes)
+    }
+    /// One-based projection error line; zero when unavailable.
+    pub fn line(&self) -> usize {
+        self.details
+            .as_ref()
+            .and_then(|d| d.projection.as_ref())
+            .map_or(0, |p| p.0)
+    }
+    /// One-based projection error column; zero when unavailable.
+    pub fn column(&self) -> usize {
+        self.details
+            .as_ref()
+            .and_then(|d| d.projection.as_ref())
+            .map_or(0, |p| p.1)
+    }
+    /// Explicit untrusted projection detail. Never included in safe formatting.
+    pub fn detail(&self) -> Option<&str> {
+        self.details
+            .as_ref()?
+            .projection
+            .as_ref()
+            .map(|p| p.2.as_ref())
+    }
+    pub(crate) fn with_source_bytes(mut self, bytes: std::sync::Arc<[u8]>) -> Self {
+        if !bytes.is_empty() {
+            self.details.get_or_insert_with(Default::default).bytes = bytes;
+        }
+        self
+    }
+    pub(crate) fn projection(error: serde_json::Error) -> Self {
+        let mut diagnostic = Self::new(Code::Deserialization);
+        diagnostic
+            .details
+            .get_or_insert_with(Default::default)
+            .projection = Some((error.line(), error.column(), error.to_string().into()));
+        diagnostic
     }
     /// Stable failure category.
     pub fn code(&self) -> Code {
@@ -572,12 +648,12 @@ impl Diagnostic {
     /// The returned position shares the complete original source text and copies
     /// its pointer; it does not retain the value index or document graph.
     /// It remains usable after this diagnostic and its document/input are dropped.
-    /// Parser or unlocated diagnostics may return None; ParseFailure::source_bytes
+    /// Parser or unlocated diagnostics may return None; Diagnostic::source_bytes
     /// remains the accessor for admitted parse-failure bytes, including invalid UTF-8.
-    pub fn source_position(&self) -> Option<crate::SourcePosition> {
+    pub fn source_position(&self) -> Option<crate::source::SourcePosition> {
         let details = self.details.as_ref()?;
         let source = details.primary_source.as_ref()?;
-        Some(crate::SourcePosition {
+        Some(crate::source::SourcePosition {
             context: details.source?,
             location: self.location.as_ref()?.clone(),
             source: source.clone(),
@@ -585,7 +661,7 @@ impl Diagnostic {
     }
     /// Typed corrective resource need, consistently exposed by direct/fluent preparation
     /// and effective inspection. The need owns its originating immutable snapshot.
-    pub fn resource_need(&self) -> Option<&crate::ResourceNeed> {
+    pub fn resource_need(&self) -> Option<&crate::graph::ResourceNeed> {
         self.details.as_ref()?.resource_need.as_ref()
     }
     pub(crate) fn need_data(&self) -> Option<&crate::graph::NeedFact> {
@@ -599,7 +675,7 @@ impl Diagnostic {
         if let Some(details) = &mut self.details
             && let Some(fact) = &details.need_fact
         {
-            details.resource_need = Some(crate::ResourceNeed {
+            details.resource_need = Some(crate::graph::ResourceNeed {
                 store: store.clone(),
                 fact: fact.clone(),
             });
@@ -622,7 +698,7 @@ impl Diagnostic {
         self.details.get_or_insert_with(Default::default).reason = Some(reason);
         self
     }
-    pub(crate) fn identity_collision(previous: &crate::Value) -> Self {
+    pub(crate) fn identity_collision(previous: &crate::exact::Value) -> Self {
         Self::new(Code::IdentityCollision).reasoned(DiagnosticReason::IdentityCollision {
             previous: previous.diagnostic_position(),
         })
@@ -637,7 +713,7 @@ impl Diagnostic {
         details.source = Some(source);
         self
     }
-    pub(crate) fn positioned(self, position: crate::SourcePosition) -> Self {
+    pub(crate) fn positioned(self, position: crate::source::SourcePosition) -> Self {
         debug_assert!(
             position
                 .source

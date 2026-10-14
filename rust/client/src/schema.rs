@@ -1,14 +1,19 @@
 //! Immutable schema identity and direct-edge inspection. This is not validation.
+use crate::diagnostics::{Code, DiagnosticReason, LimitKind, Location};
 use crate::document::Store;
+use crate::exact::{Value, ValueKind};
+pub use crate::form_description::SchemaDescription;
 use crate::graph::{
     Context, Graph, NeedFact, NodeKey, ObjectKind, bound, identity_key, key, resolve_uri,
     without_fragment,
 };
-use crate::{
-    Cancellation, Code, Diagnostic, DiagnosticReason, Edition, LimitKind, Limits, Location,
+use crate::graph::{
     ReferenceKind, ResourceFragment, ResourceHandle, ResourceId, ResourceInterpretation,
-    ResourceNeedKind, SourceContext, Value, ValueKind,
+    ResourceNeedKind,
 };
+use crate::inspect::Edition;
+use crate::source::SourceContext;
+use crate::{Cancellation, Diagnostic, Limits};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     sync::Arc,
@@ -1242,7 +1247,8 @@ pub(crate) fn cancel_after_for_test(steps: usize) -> TestCancelGuard {
 #[cfg(test)]
 mod lazy_index_tests {
     use super::*;
-    use crate::{Document, DocumentBuilder, GraphLimits, Input, ResourceInput, ResourceLayout};
+    use crate::graph::{DocumentBuilder, GraphLimits, ResourceInput, ResourceLayout};
+    use crate::{Document, Input};
     use serde_json::json;
 
     fn document(value: serde_json::Value) -> Document {

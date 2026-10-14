@@ -1,4 +1,9 @@
-use dynamic_openapi_client::{Code, Document, Input, Limits, Method};
+#[path = "support/request_case.rs"]
+mod request_case;
+use dynamic_openapi_client::diagnostics::Code;
+use dynamic_openapi_client::inspect::Method;
+use dynamic_openapi_client::{Document, Limits};
+use request_case::*;
 use serde_json::{Value as Json, json};
 
 fn source(version: &str, paths: Json) -> Json {
@@ -44,7 +49,7 @@ fn assert_earlier_inventory(version: &str) {
     let get = doc.operation_id("same").unwrap();
     assert_eq!(get.method(), Method::Get);
     assert_eq!(
-        get.prepare(&Input::default()).unwrap().target(),
+        get.prepare_case(&CaseInput::default()).unwrap().target(),
         "https://api.example/items"
     );
     assert!(doc.discovery_complete());
@@ -121,7 +126,10 @@ fn openapi32_indexes_query_and_additional_operations_and_refuses_duplicate_ids()
         assert_eq!(doc.operations().count(), 3);
         for method in &methods {
             let op = doc.operation("/items", method.clone()).unwrap();
-            assert_eq!(op.prepare(&Input::default()).unwrap().method(), *method);
+            assert_eq!(
+                op.prepare_case(&CaseInput::default()).unwrap().method(),
+                *method
+            );
             if duplicate_members.is_empty() {
                 assert_eq!(doc.operation_id(method.as_str()).unwrap().method(), *method);
             }
@@ -150,7 +158,6 @@ fn inert_members_do_not_consume_the_operation_limit() {
         assert_eq!(
             Document::parse(source.to_string(), None, limits.clone())
                 .unwrap_err()
-                .diagnostic()
                 .code(),
             Code::Limit
         );
@@ -162,7 +169,6 @@ fn inert_members_do_not_consume_the_operation_limit() {
             limits
         )
         .unwrap_err()
-        .diagnostic()
         .code(),
         Code::Limit
     );
@@ -192,7 +198,7 @@ fn inert_fields_in_reference_chains_do_not_conflict_or_add_id_evidence() {
         assert_eq!(
             doc.operation("/items", Method::Post)
                 .unwrap()
-                .prepare(&Input::default())
+                .prepare_case(&CaseInput::default())
                 .unwrap()
                 .method(),
             Method::Post

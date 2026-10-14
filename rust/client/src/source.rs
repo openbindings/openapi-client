@@ -1,4 +1,4 @@
-use crate::{Location, SourceContext};
+use crate::diagnostics::Location;
 use std::{collections::HashMap, fmt, ops::Range, sync::Arc};
 
 /// Serialization detected from admitted document bytes. Callers need not branch on it.
@@ -59,28 +59,6 @@ pub struct SourceTrace {
     pub alias_uses: Vec<SourcePosition>,
 }
 
-/// Structured YAML refusal, without retaining scalar values in error messages.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum YamlReason {
-    /// Exactly one document is required in a YAML stream.
-    MultipleDocuments,
-    /// An explicit YAML directive selected another version.
-    UnsupportedVersion,
-    /// OpenAPI mapping keys must resolve to strings; keys are never stringified.
-    NonStringKey,
-    /// A tag has no supported JSON-compatible interpretation.
-    UnsupportedTag,
-    /// The scalar does not conform to its explicit standard tag.
-    InvalidTaggedScalar,
-    /// JSON cannot represent YAML infinity or NaN values.
-    NonFiniteNumber,
-    /// Alias expansion would revisit an active definition.
-    AliasCycle,
-    /// An alias refers to no admitted definition.
-    UnknownAlias,
-}
-
 pub(crate) struct AuthoredMap {
     pub source: Arc<str>,
     pub context: SourceContext,
@@ -92,3 +70,6 @@ pub(crate) struct AuthoredEntry {
     pub aliases: Arc<[Range<usize>]>,
 }
 pub(crate) type PendingMap = HashMap<usize, AuthoredEntry>;
+
+pub use crate::value::SourceContext;
+pub use crate::value::SourceOrigin;

@@ -1,10 +1,13 @@
 //! Actual-socket qualification, with no performance assertions. Pool readiness
 //! is observed through pinned test-only tracing, never inferred from a sleep.
 mod support;
+use dynamic_openapi_client::exact::Value;
+use dynamic_openapi_client::transport::{
+    BodyState, DispatchEvidence, HeaderFidelity, PreparedRequest, Provenance, ReplayAssurance,
+    UploadState,
+};
 use dynamic_openapi_client::{
-    BodyState, Cancellation, Credential, CredentialValue, DispatchEvidence, Document, ExactJson,
-    HeaderFidelity, Limits, Outcome, ParameterLocation, PreparedRequest, Provenance,
-    ReplayAssurance, UploadState, policies,
+    Cancellation, Credential, Document, Limits, Outcome, ParameterLocation, policies,
 };
 use dynamic_openapi_client_reqwest::{Certificate, Client};
 use std::time::Duration;
@@ -35,11 +38,11 @@ fn request(
     let operation = document.operation_id("call").unwrap();
     let mut builder = client
         .request(&operation)
-        .parameter(ParameterLocation::Path, "id", id);
+        .parameter(ParameterLocation::Path, "id", &id);
     // Empty body is useful for zero-byte response limits, which also limit uploads.
-    let exact = (!body.is_empty()).then(|| ExactJson::parse(body, Limits::default()).unwrap());
+    let exact = (!body.is_empty()).then(|| Value::parse(body, Limits::default()).unwrap());
     if let Some(exact) = &exact {
-        builder = builder.json(exact.root());
+        builder = builder.json_exact(&exact.clone());
     }
     builder.prepare().unwrap()
 }
@@ -102,10 +105,7 @@ async fn eligible_http_and_tls_connections_reuse_across_clones() {
         let server = Server::start(tls).await;
         let mut builder = Client::builder().credential(
             "bearer",
-            Credential {
-                value: CredentialValue::Bearer("fixture-token".into()),
-                origins: vec![server.origin.clone()],
-            },
+            Credential::bearer("fixture-token", vec![server.origin.clone()]),
         );
         if tls {
             builder = builder
@@ -189,10 +189,7 @@ async fn origin_and_independent_client_trust_are_isolated() {
     let client = Client::builder()
         .credential(
             "bearer",
-            Credential {
-                value: CredentialValue::Bearer("origin-a-token".into()),
-                origins: vec![a.origin.clone()],
-            },
+            Credential::bearer("origin-a-token", vec![a.origin.clone()]),
         )
         .build()
         .unwrap();
@@ -349,11 +346,11 @@ async fn complete_framing_and_application_refusals_do_not_require_eviction() {
     assert_eq!(received.omitted_header_lines(), 0);
     assert_eq!(
         received.header_delivery(),
-        dynamic_openapi_client::HeaderDelivery::Incomplete
+        dynamic_openapi_client::transport::HeaderDelivery::Incomplete
     );
     assert_eq!(
         received.json().unwrap_err().code(),
-        dynamic_openapi_client::Code::IncompleteHeaders
+        dynamic_openapi_client::diagnostics::Code::IncompleteHeaders
     );
     events.wait(IDLE, 8).await;
     assert_eq!(

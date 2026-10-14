@@ -1,4 +1,8 @@
+#[path = "support/request_case.rs"]
+mod request_case;
 use dynamic_openapi_client::*;
+use dynamic_openapi_client::{diagnostics::*, exact::*, source::*};
+use request_case::*;
 
 #[test]
 fn unlocated_and_parser_refusals_never_fabricate_primary_text() {
@@ -9,10 +13,10 @@ fn unlocated_and_parser_refusals_never_fabricate_primary_text() {
     );
     let host: Diagnostic = HostRefusal::Replay.into();
     assert!(host.source_position().is_none());
-    let invalid = ExactJson::parse([0xff, 0xfe], Limits::default()).unwrap_err();
+    let invalid = Value::parse([0xff, 0xfe], Limits::default()).unwrap_err();
     assert_eq!(invalid.source_bytes(), &[0xff, 0xfe]);
-    assert!(invalid.diagnostic().source_position().is_none());
-    let over_limit = ExactJson::parse(
+    assert!(invalid.source_position().is_none());
+    let over_limit = Value::parse(
         "[1]",
         Limits {
             document_bytes: 1,
@@ -21,7 +25,7 @@ fn unlocated_and_parser_refusals_never_fabricate_primary_text() {
     )
     .unwrap_err();
     assert!(over_limit.source_bytes().is_empty());
-    assert!(over_limit.diagnostic().source_position().is_none());
+    assert!(over_limit.source_position().is_none());
 }
 
 #[test]
@@ -62,21 +66,17 @@ fn primary_positions_survive_caller_scope_and_explicit_error_drop() {
     let ordinary_error = {
         let doc = Document::parse(DOC, None, Limits::default()).unwrap();
         let secret = String::from("primary-source-marker");
-        let nested = [("value", OrdinaryValue::String(&secret))];
-        let fields = [("nested", OrdinaryValue::Object(&nested))];
+        let nested = [("value", TestValue::String(&secret))];
+        let fields = [("nested", TestValue::Object(&nested))];
         doc.operation_id("send")
             .unwrap()
             .request()
-            .parameter(
-                ParameterLocation::Query,
-                "p",
-                OrdinaryValue::Object(&fields),
-            )
+            .parameter(ParameterLocation::Query, "p", &TestValue::Object(&fields))
             .prepare()
             .unwrap_err()
     };
-    let diagnostic = ordinary_error.diagnostic();
-    assert!(matches!(ordinary_error, RequestError::Preparation(_)));
+    let diagnostic = &ordinary_error;
+    assert!(ordinary_error.context().is_some());
     assert_eq!(
         diagnostic.reason(),
         Some(&DiagnosticReason::UnsupportedStyleValue)
@@ -85,7 +85,7 @@ fn primary_positions_survive_caller_scope_and_explicit_error_drop() {
         diagnostic.source_context().unwrap().origin,
         SourceOrigin::Constructed
     );
-    assert_eq!(diagnostic.location().unwrap().pointer, "/0/nested");
+    assert_eq!(diagnostic.location().unwrap().pointer, "/nested");
     assert!(diagnostic.resource_need().is_none());
     assert!(!format!("{ordinary_error:?}").contains("primary-source-marker"));
     let generated = diagnostic.source_position().unwrap();
@@ -94,37 +94,37 @@ fn primary_positions_survive_caller_scope_and_explicit_error_drop() {
     assert_eq!(generated.raw(), r#"{"value":"primary-source-marker"}"#);
     let cloned = ordinary_error.clone();
     drop(ordinary_error);
-    assert_eq!(cloned.diagnostic().source_position().unwrap(), generated);
+    assert_eq!(cloned.source_position().unwrap(), generated);
     drop(cloned);
     assert_eq!(
         generated.source(),
-        r#"[{"nested":{"value":"primary-source-marker"}}]"#
+        r#"{"nested":{"value":"primary-source-marker"}}"#
     );
     assert!(!format!("{generated:?} {generated:#?}").contains("primary-source-marker"));
 
     let (exact_error, trace) = {
         let doc = Document::parse(DOC, None, Limits::default()).unwrap();
-        let exact = ExactJson::parse(
+        let exact = Value::parse(
             r#"{"nested":{"value":"exact-source-marker"}}"#,
             Limits::default(),
         )
         .unwrap();
-        let trace = exact.root().get("nested").unwrap().source_trace();
+        let trace = exact.clone().get("nested").unwrap().source_trace();
         let err = doc
             .operation_id("send")
             .unwrap()
             .request()
-            .parameter(ParameterLocation::Query, "p", exact.root())
+            .parameter_exact(ParameterLocation::Query, "p", &exact.clone())
             .prepare()
             .unwrap_err();
         (err, trace)
     };
     assert_eq!(
-        exact_error.diagnostic().source_context(),
+        exact_error.source_context(),
         Some(trace.representation.context())
     );
     assert_eq!(
-        exact_error.diagnostic().location(),
+        exact_error.location(),
         Some(trace.representation.location())
     );
     assert_eq!(
@@ -132,7 +132,7 @@ fn primary_positions_survive_caller_scope_and_explicit_error_drop() {
         r#"{"value":"exact-source-marker"}"#
     );
     assert!(!format!("{exact_error:?}").contains("exact-source-marker"));
-    let exact_position = exact_error.diagnostic().source_position().unwrap();
+    let exact_position = exact_error.source_position().unwrap();
     assert_eq!(exact_position, trace.representation);
     drop(exact_error);
     drop(trace);
@@ -155,27 +155,21 @@ fn primary_positions_survive_caller_scope_and_explicit_error_drop() {
         (err, trace)
     };
     let authored = yaml_trace.authored.unwrap();
-    assert_eq!(
-        yaml_error.diagnostic().source_context(),
-        Some(authored.context())
-    );
-    assert_eq!(
-        yaml_error.diagnostic().location(),
-        Some(authored.location())
-    );
+    assert_eq!(yaml_error.source_context(), Some(authored.context()));
+    assert_eq!(yaml_error.location(), Some(authored.location()));
     assert!(authored.raw().contains("name: id"));
     assert_eq!(yaml_trace.alias_uses[0].raw(), "*p");
-    let position = yaml_error.diagnostic().source_position().unwrap();
+    let position = yaml_error.source_position().unwrap();
     assert_eq!(position, authored);
-    let aliases = yaml_error.diagnostic().related().to_vec();
+    let aliases = yaml_error.related().to_vec();
     drop(yaml_error);
     assert_eq!(&position.source()[aliases[0].start..aliases[0].end], "*p");
 
     let parse_failure = {
         let source = String::from("{\"parse-source-marker\":");
-        ExactJson::parse(source, Limits::default()).unwrap_err()
+        Value::parse(source, Limits::default()).unwrap_err()
     };
     assert_eq!(parse_failure.source_bytes(), b"{\"parse-source-marker\":");
     assert!(!format!("{parse_failure:?}").contains("parse-source-marker"));
-    assert!(parse_failure.diagnostic().source_position().is_none());
+    assert!(parse_failure.source_position().is_none());
 }

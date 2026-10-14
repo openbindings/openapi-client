@@ -1,9 +1,11 @@
 //! Owner-free, demand-driven declaration facts for selected forms and inspection.
 //! No instance validation, branches, defaults, coercion, acquisition or Store cache.
 #![allow(dead_code)] // Unconsumed facts remain private for subsequent finite coding work.
+use crate::diagnostics::{Code, DiagnosticReason, LimitKind};
+use crate::exact::Value;
 use crate::graph::{Graph, NeedFact, NodeKey, bound, key};
 use crate::schema::{SchemaProfile, SchemaReason, SchemaReferenceKind};
-use crate::{Cancellation, Code, Diagnostic, DiagnosticReason, LimitKind, Limits, Value};
+use crate::{Cancellation, Diagnostic, Limits};
 use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Debug, PartialEq, Eq)]

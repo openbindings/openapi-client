@@ -1,6 +1,7 @@
 //! Author replay of the frozen independent prospective controls. This supplied
 //! callback layer establishes no actual Fetch call or network-decoding claim.
 use dynamic_openapi_client::*;
+use dynamic_openapi_client::{diagnostics::*, transport::*};
 use serde_json::Value as J;
 use std::{
     cell::Cell,
@@ -187,7 +188,7 @@ fn frozen_core_controls_preserve_delivered_bytes_and_independent_guards() {
         } else {
             let json = response.json().unwrap();
             assert_eq!(
-                hex(json.root().raw().as_bytes()),
+                hex(json.clone().raw().as_bytes()),
                 text(i, "body_hex"),
                 "{id}"
             );
@@ -195,7 +196,7 @@ fn frozen_core_controls_preserve_delivered_bytes_and_independent_guards() {
                 let projected: std::collections::BTreeMap<String, u64> =
                     json.deserialize().unwrap();
                 assert_eq!(projected["n"], 9_007_199_254_740_993);
-                assert!(json.root().raw().contains("9007199254740993"));
+                assert!(json.clone().raw().contains("9007199254740993"));
             }
         }
         let received = policies::received_2xx_json(out.clone());
@@ -216,7 +217,7 @@ fn frozen_core_controls_preserve_delivered_bytes_and_independent_guards() {
                 assert_eq!(format!("{:?}", refused.reason), expected_policy, "{id}");
                 if let Some(raw) = e["decoded_hex"].as_str() {
                     assert_eq!(
-                        hex(refused.decoded.unwrap().root().raw().as_bytes()),
+                        hex(refused.decoded.unwrap().clone().raw().as_bytes()),
                         raw,
                         "{id}"
                     );
@@ -228,7 +229,7 @@ fn frozen_core_controls_preserve_delivered_bytes_and_independent_guards() {
             assert_eq!(format!("{:?}", refused.reason), policy, "{id}");
             if let Some(raw) = e["strict_refusal_decoded_hex"].as_str() {
                 assert_eq!(
-                    hex(refused.decoded.unwrap().root().raw().as_bytes()),
+                    hex(refused.decoded.unwrap().clone().raw().as_bytes()),
                     raw,
                     "{id}"
                 );

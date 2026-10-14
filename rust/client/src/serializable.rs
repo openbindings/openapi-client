@@ -1,8 +1,8 @@
 //! Checked Serde emission followed by the existing exact parser/indexer.
-use crate::{
-    Cancellation, Code, Diagnostic, DiagnosticReason, ExactJson, LimitKind, Limits, ParseFailure,
-    SerializationReason, SourceOrigin,
-};
+use crate::diagnostics::{Code, DiagnosticReason, LimitKind, SerializationReason};
+use crate::exact::Value;
+use crate::source::SourceOrigin;
+use crate::{Cancellation, Diagnostic, Limits};
 use serde::{
     Serialize, Serializer,
     ser::{self, SerializeMap, SerializeSeq},
@@ -60,6 +60,9 @@ struct Encoder<'a> {
     nodes: usize,
     depth: usize,
     first: Option<Error>,
+    form: bool,
+    form_metadata: usize,
+    form_work: usize,
 }
 impl<'limits> Encoder<'limits> {
     fn latch(&mut self, error: Error) -> Error {
@@ -234,7 +237,7 @@ impl fmt::Write for Capture<'_> {
     }
 }
 
-impl ExactJson {
+impl Value {
     /// Construct owned exact JSON from the checked Serde data model, then index it once.
     /// Finite floats and exact integers through 128 bits are supported. Object keys
     /// must serialize as strings; duplicate names refuse. None/unit become null,
@@ -258,7 +261,7 @@ impl ExactJson {
     pub fn from_serializable<T: Serialize + ?Sized>(
         value: &T,
         limits: Limits,
-    ) -> Result<Self, ParseFailure> {
+    ) -> Result<Self, Diagnostic> {
         Self::from_serializable_with_cancellation(value, limits, &Cancellation::default())
     }
     /// Checked construction with cooperative cancellation before caller callbacks
@@ -269,34 +272,47 @@ impl ExactJson {
         value: &T,
         limits: Limits,
         cancellation: &Cancellation,
-    ) -> Result<Self, ParseFailure> {
-        let mut encoder = Encoder {
-            bytes: vec![],
-            limits: &limits,
-            cancellation,
-            nodes: 0,
-            depth: 0,
-            first: None,
-        };
-        encoder.child(value).map_err(|error| {
-            // Release the encoder's alias before recovering the owned diagnostic.
-            // Caller Serialize code may retain an error, so uniqueness is not assumed.
-            encoder.first = None;
-            crate::ordinary::construction(error.into_diagnostic())
-        })?;
-        // A custom serializer can abandon a compound without calling end().
-        if encoder.depth != 0 || encoder.nodes == 0 {
-            return Err(crate::ordinary::construction(
-                Error::reason(SerializationReason::InvalidRepresentation).into_diagnostic(),
-            ));
-        }
-        Self::parse_in_origin(
-            &encoder.bytes,
-            limits.clone(),
-            cancellation,
-            SourceOrigin::Constructed,
-        )
+    ) -> Result<Self, Diagnostic> {
+        admit(value, limits, cancellation, false)
     }
+}
+
+pub(crate) fn admit<T: Serialize + ?Sized>(
+    value: &T,
+    limits: Limits,
+    cancellation: &Cancellation,
+    form: bool,
+) -> Result<Value, Diagnostic> {
+    let mut encoder = Encoder {
+        bytes: vec![],
+        limits: &limits,
+        cancellation,
+        nodes: 0,
+        depth: 0,
+        first: None,
+        form,
+        form_metadata: 0,
+        form_work: 0,
+    };
+    encoder.child(value).map_err(|error| {
+        // Release the encoder's alias before recovering the owned diagnostic.
+        // Caller Serialize code may retain an error, so uniqueness is not assumed.
+        encoder.first = None;
+        construction(error.into_diagnostic())
+    })?;
+    // A custom serializer can abandon a compound without calling end().
+    if encoder.depth != 0 || encoder.nodes == 0 {
+        return Err(construction(
+            Error::reason(SerializationReason::InvalidRepresentation).into_diagnostic(),
+        ));
+    }
+    Value::parse_in_origin(
+        &encoder.bytes,
+        limits.clone(),
+        cancellation,
+        SourceOrigin::Constructed,
+    )
+    .map_err(construction)
 }
 
 struct Compound<'a, 'b> {
@@ -329,12 +345,51 @@ impl Compound<'_, '_> {
                 .encoder
                 .fail(SerializationReason::InvalidRepresentation));
         }
+        let form = self.encoder.form && self.encoder.depth == 1;
+        if form {
+            let limits = self.encoder.limits;
+            if self.count >= limits.form_fields {
+                return Err(self.encoder.limit(
+                    LimitKind::FormFields,
+                    limits.form_fields,
+                    self.count.saturating_add(1),
+                ));
+            }
+            let work = self
+                .encoder
+                .form_work
+                .saturating_add(self.count)
+                .saturating_add(1);
+            if work > limits.form_work {
+                return Err(self
+                    .encoder
+                    .limit(LimitKind::FormWork, limits.form_work, work));
+            }
+            self.encoder.form_work = work;
+        }
         self.prefix()?;
+        let start = self.encoder.bytes.len();
         let result = key.serialize(Key {
             encoder: self.encoder,
             number: false,
         });
         result.map_err(|e| self.encoder.latch(e))?;
+        if form {
+            let name: String =
+                serde_json::from_slice(&self.encoder.bytes[start..]).map_err(|_| {
+                    self.encoder
+                        .fail(SerializationReason::InvalidRepresentation)
+                })?;
+            let actual = self.encoder.form_metadata.saturating_add(name.len());
+            if actual > self.encoder.limits.form_metadata_bytes {
+                return Err(self.encoder.limit(
+                    LimitKind::FormMetadataBytes,
+                    self.encoder.limits.form_metadata_bytes,
+                    actual,
+                ));
+            }
+            self.encoder.form_metadata = actual;
+        }
         self.encoder.write(b":")?;
         self.pending = true;
         Ok(())
@@ -760,4 +815,8 @@ impl Serializer for Key<'_, '_> {
         let text = self.encoder.formatted(value)?;
         self.serialize_str(&text)
     }
+}
+
+fn construction(diagnostic: Diagnostic) -> Diagnostic {
+    diagnostic.contextual(crate::diagnostics::DiagnosticContext::Construction)
 }

@@ -1,4 +1,10 @@
+#[path = "support/request_case.rs"]
+mod request_case;
 use dynamic_openapi_client::*;
+use dynamic_openapi_client::{
+    diagnostics::*, exact::*, form::*, graph::*, inspect::*, schema::*, transport::*,
+};
+use request_case::*;
 use serde_json::json;
 use std::{cell::Cell, sync::Arc};
 const URL: &str = "application/x-www-form-urlencoded";
@@ -44,16 +50,11 @@ fn doc(
 fn three<'a>(
     op: &Operation,
     fields: Vec<FormField<'a>>,
-) -> Vec<Result<PreparedRequest, RequestError>> {
-    let form = Form::new(fields.clone(), Limits::default()).unwrap();
-    let input = Input {
-        body: Body::Form(form.clone()),
-        ..Input::default()
-    };
+) -> Vec<Result<PreparedRequest, Diagnostic>> {
     vec![
-        op.prepare(&input).map_err(RequestError::Preparation),
-        op.request().form(fields).prepare(),
-        op.request().body(Body::Form(form)).prepare(),
+        op.request().form_fields(fields.clone()).prepare(),
+        op.request().form_fields(fields.clone()).prepare(),
+        op.request().form_fields(fields).prepare(),
     ]
 }
 #[test]
@@ -67,7 +68,10 @@ fn original_literal_routes_and_unrelated_fact_locality() {
     ] {
         let d = fixture(name, Limits::default());
         let op = d.operation_id("send").unwrap();
-        for result in three(&op, vec![FormField::new(field, value)]) {
+        for result in three(
+            &op,
+            vec![FormField::value(field, value, Limits::default()).unwrap()],
+        ) {
             assert_eq!(
                 result.unwrap().body().map(AsRef::as_ref),
                 Some(expected.as_bytes()),
@@ -77,10 +81,8 @@ fn original_literal_routes_and_unrelated_fact_locality() {
     }
     let d = fixture("json", Limits::default());
     let op = d.operation_id("send").unwrap();
-    let value = ExactJson::parse(br#"{"file":"AP8=","n":1e+00}"#, Limits::default())
-        .unwrap()
-        .root();
-    for result in three(&op, vec![FormField::new("p", value)]) {
+    let value = Value::parse(br#"{"file":"AP8=","n":1e+00}"#, Limits::default()).unwrap();
+    for result in three(&op, vec![FormField::exact("p", value)]) {
         assert_eq!(
             result.unwrap().body().map(AsRef::as_ref),
             Some(b"p=%7B%22file%22%3A%22AP8%3D%22%2C%22n%22%3A1e%2B00%7D".as_slice())
@@ -91,14 +93,12 @@ fn original_literal_routes_and_unrelated_fact_locality() {
         ..Limits::default()
     };
     let d = fixture("whole-json", limits.clone());
-    let value = ExactJson::parse(br#"{"file":"AP8=","n":1e+00}"#, Limits::default())
-        .unwrap()
-        .root();
+    let value = Value::parse(br#"{"file":"AP8=","n":1e+00}"#, Limits::default()).unwrap();
     assert_eq!(
         d.operation_id("send")
             .unwrap()
             .request()
-            .json(value)
+            .json_exact(&value)
             .prepare()
             .unwrap()
             .body()
@@ -110,7 +110,7 @@ fn original_literal_routes_and_unrelated_fact_locality() {
         d.operation_id("send")
             .unwrap()
             .request()
-            .body(Body::Raw(Arc::from([0, 255])))
+            .raw_body(Arc::<[u8]>::from([0, 255]))
             .prepare()
             .unwrap()
             .body()
@@ -122,10 +122,13 @@ fn original_literal_routes_and_unrelated_fact_locality() {
 fn uniform_need_recovery_preserves_the_old_snapshot() {
     let d = fixture("missing", Limits::default());
     let op = d.operation_id("send").unwrap();
-    let mut errors = three(&op, vec![FormField::new("p", "value")])
-        .into_iter()
-        .map(|r| r.unwrap_err().diagnostic().clone())
-        .collect::<Vec<_>>();
+    let mut errors = three(
+        &op,
+        vec![FormField::value("p", &"value", Limits::default()).unwrap()],
+    )
+    .into_iter()
+    .map(|r| r.unwrap_err().clone())
+    .collect::<Vec<_>>();
     errors.push(op.describe_form_field(URL, "p").unwrap_err());
     for error in &errors {
         assert_eq!(error.code(), Code::ResourceUnavailable);
@@ -156,7 +159,7 @@ fn uniform_need_recovery_preserves_the_old_snapshot() {
     let next = b.build(d.entry_resource().id()).unwrap();
     for result in three(
         &next.operation_id("send").unwrap(),
-        vec![FormField::new("p", "value")],
+        vec![FormField::value("p", &"value", Limits::default()).unwrap()],
     ) {
         assert_eq!(
             result.unwrap().body().map(AsRef::as_ref),
@@ -175,7 +178,7 @@ fn uniform_need_recovery_preserves_the_old_snapshot() {
             ResourceInput::at("https://docs.example/field", b"{}".as_slice()).unwrap(),
         )
         .unwrap_err();
-    assert_eq!(stale.diagnostic().code(), Code::SnapshotMismatch);
+    assert_eq!(stale.code(), Code::SnapshotMismatch);
 }
 #[test]
 fn literal_selected_fact_refusals_are_precise() {
@@ -204,15 +207,19 @@ fn literal_selected_fact_refusals_are_precise() {
         let op = d.operation_id("send").unwrap();
         for result in three(
             &op,
-            vec![FormField::new(
-                if name == "dynamic" { "dynamic" } else { "p" },
-                "x",
-            )],
+            vec![
+                FormField::value(
+                    if name == "dynamic" { "dynamic" } else { "p" },
+                    &"x",
+                    Limits::default(),
+                )
+                .unwrap(),
+            ],
         ) {
             let error = result.unwrap_err();
-            assert_eq!(error.diagnostic().code(), code, "{name}");
+            assert_eq!(error.code(), code, "{name}");
             assert_eq!(
-                error.diagnostic().reason(),
+                error.reason(),
                 Some(&DiagnosticReason::Schema(reason.clone())),
                 "{name}"
             );
@@ -230,10 +237,9 @@ fn literal_selected_fact_refusals_are_precise() {
     );
     assert!(matches!(
         op.request()
-            .form([FormField::new("p", "x")])
+            .form_fields([FormField::value("p", &"x", Limits::default()).unwrap()])
             .prepare()
             .unwrap_err()
-            .diagnostic()
             .reason(),
         Some(DiagnosticReason::Form(FormReason::UnsupportedCoding))
     ));
@@ -254,7 +260,7 @@ fn required_hints_and_partial_inventory_are_not_validation() {
     };
     assert_eq!(fields[0].requirement, FieldRequirement::SchemaRequired);
     assert_eq!(fields[1].requirement, FieldRequirement::Optional);
-    assert!(op.request().form([]).prepare().is_ok());
+    assert!(op.request().form_fields([]).prepare().is_ok());
     let d = doc(
         json!({"type":"object","properties":{"p":{"type":"string"}},"allOf":[{"required":["q"],"properties":{"q":{"type":"string"}}}]}),
         json!({}),
@@ -287,7 +293,10 @@ fn explicit_style_makes_child_coding_inapplicable_and_hints_stay_inspection_only
             Limits::default(),
         );
         let op = d.operation_id("send").unwrap();
-        for result in three(&op, vec![FormField::new("p", "x")]) {
+        for result in three(
+            &op,
+            vec![FormField::value("p", &"x", Limits::default()).unwrap()],
+        ) {
             assert_eq!(
                 result.unwrap().body().map(AsRef::as_ref),
                 Some(b"p=x".as_slice())
@@ -322,33 +331,43 @@ fn constructors_stop_before_later_iterator_work_and_recheck_use_limits() {
     let calls = Cell::new(0);
     let fields = std::iter::from_fn(|| {
         calls.set(calls.get() + 1);
-        Some(FormField::new("same", "x"))
+        Some(FormField::value("same", &"x", Limits::default()).unwrap())
     });
-    let error = Form::new(fields, Limits::default()).unwrap_err();
+    let error = fixture("simple", Limits::default())
+        .operation_id("send")
+        .unwrap()
+        .request()
+        .form_fields(fields)
+        .prepare()
+        .unwrap_err();
     assert_eq!(calls.get(), 2);
     assert_eq!(
-        error.diagnostic().reason(),
+        error.reason(),
         Some(&DiagnosticReason::Form(FormReason::DuplicateField))
     );
     let cancel = Cancellation::default();
     cancel.cancel();
     let fields = std::iter::from_fn(|| {
         calls.set(calls.get() + 1);
-        Some(FormField::new("never", "x"))
+        Some(FormField::value("never", &"x", Limits::default()).unwrap())
     });
     assert_eq!(
-        Form::new_with_cancellation(fields, Limits::default(), &cancel)
+        fixture("simple", Limits::default())
+            .operation_id("send")
+            .unwrap()
+            .request()
+            .cancellation(cancel.clone())
+            .form_fields(fields)
+            .prepare()
             .unwrap_err()
-            .diagnostic()
             .code(),
         Code::Cancelled
     );
     assert_eq!(calls.get(), 2);
-    let form = Form::new(
-        [FormField::new("p", "one"), FormField::new("q", "two")],
-        Limits::default(),
-    )
-    .unwrap();
+    let form = vec![
+        FormField::value("p", "one", Limits::default()).unwrap(),
+        FormField::value("q", "two", Limits::default()).unwrap(),
+    ];
     for (limits, kind, actual) in [
         (
             Limits {
@@ -387,9 +406,9 @@ fn constructors_stop_before_later_iterator_work_and_recheck_use_limits() {
         let error = d
             .operation_id("send")
             .unwrap()
-            .prepare(&Input {
-                body: Body::Form(form.clone()),
-                ..Input::default()
+            .prepare_case(&CaseInput {
+                body: CaseBody::Form(form.clone()),
+                ..CaseInput::default()
             })
             .unwrap_err();
         let Some(DiagnosticReason::Limit {
@@ -408,33 +427,33 @@ fn constructors_stop_before_later_iterator_work_and_recheck_use_limits() {
 fn shared_binary_owner_is_retained_shallowly_and_released() {
     let bytes: Arc<[u8]> = Arc::from([0, 255, 7]);
     let weak = Arc::downgrade(&bytes);
-    let form = Form::new(
-        [FormField::new("file", Part::bytes(bytes.clone()))],
-        Limits::default(),
-    )
-    .unwrap();
+    let fields = vec![FormField::part("file", Part::bytes(bytes.clone()))];
     assert_eq!(Arc::strong_count(&bytes), 2);
-    let other = form.clone();
-    assert_eq!(Arc::strong_count(&bytes), 2);
+    let other = fields.clone();
+    assert_eq!(Arc::strong_count(&bytes), 3); // Field clones share the binary allocation.
     drop(bytes);
-    drop(form);
+    drop(fields);
     assert!(weak.upgrade().is_some());
     drop(other);
     assert!(weak.upgrade().is_none());
     let borrowed = vec![1_u8; 131072];
-    let form = Form::new(
-        [FormField::new("file", Part::bytes(borrowed.as_slice()))],
-        Limits::default(),
-    )
-    .unwrap();
+    let operation = Document::parse(r#"{"openapi":"3.1.2","servers":[{"url":"https://api.example"}],"paths":{"/send":{"post":{"operationId":"send","requestBody":{"content":{"multipart/form-data":{"schema":{"type":"object","properties":{"file":{"type":"string","format":"binary"}}}}}}}}}}"#, None, Limits::default()).unwrap().operation_id("send").unwrap();
+    let builder = operation
+        .request()
+        .form_fields([FormField::part("file", Part::bytes(borrowed.as_slice()))]);
     drop(borrowed);
-    assert_eq!(form.len(), 1);
+    let request = builder.prepare().unwrap();
+    assert!(
+        request
+            .body()
+            .unwrap()
+            .windows(131072)
+            .any(|bytes| bytes.iter().all(|v| *v == 1))
+    );
 }
 #[test]
 fn finite_f64_uses_existing_explicit_serializable_boundary() {
-    let value = ExactJson::from_serializable(&12.5_f64, Limits::default())
-        .unwrap()
-        .root();
+    let value = Value::from_serializable(&12.5_f64, Limits::default()).unwrap();
     assert_eq!(value.raw(), "12.5");
     let d = doc(
         json!({"properties":{"p":{"type":["number","string"]}}}),
@@ -444,7 +463,7 @@ fn finite_f64_uses_existing_explicit_serializable_boundary() {
     );
     for result in three(
         &d.operation_id("send").unwrap(),
-        vec![FormField::new("p", value.clone())],
+        vec![FormField::exact("p", value.clone())],
     ) {
         assert_eq!(
             result.unwrap().body().map(AsRef::as_ref),
@@ -452,9 +471,8 @@ fn finite_f64_uses_existing_explicit_serializable_boundary() {
         );
     }
     assert_eq!(
-        ExactJson::from_serializable(&f64::NAN, Limits::default())
+        Value::from_serializable(&f64::NAN, Limits::default())
             .unwrap_err()
-            .diagnostic()
             .code(),
         Code::Serialization
     );
@@ -474,9 +492,14 @@ fn precancel_suppresses_into_iterator_callback() {
     let cancel = Cancellation::default();
     cancel.cancel();
     assert_eq!(
-        Form::new_with_cancellation(Caller(&calls), Limits::default(), &cancel)
+        fixture("simple", Limits::default())
+            .operation_id("send")
+            .unwrap()
+            .request()
+            .cancellation(cancel.clone())
+            .form_fields(Caller(&calls))
+            .prepare()
             .unwrap_err()
-            .diagnostic()
             .code(),
         Code::Cancelled
     );
@@ -503,20 +526,16 @@ fn pinned_original_provider_jobs_are_preparation_only() {
     );
     let op = twilio.operation_id("CreateMessage").unwrap();
     let account = "AC00000000000000000000000000000000";
-    let account_value = ExactJson::from_serializable(&account, Limits::default())
-        .unwrap()
-        .root();
-    let credential = Credential {
-        value: CredentialValue::Basic {
-            username: account.into(),
-            password: "wave01-FAKE-DO-NOT-SEND".into(),
-        },
-        origins: vec!["https://api.twilio.com".into()],
-    };
+    let account_value = Value::from_serializable(&account, Limits::default()).unwrap();
+    let credential = Credential::basic(
+        account,
+        "wave01-FAKE-DO-NOT-SEND",
+        vec!["https://api.twilio.com".into()],
+    );
     let original = [
         ("To", "+15005550006"),
         ("From", "+15005550006"),
-        ("Body", "Preparation only"),
+        ("CaseBody", "Preparation only"),
     ];
     let additives = [
         ("ContentRetention", "retain"),
@@ -533,14 +552,14 @@ fn pinned_original_provider_jobs_are_preparation_only() {
         let fields = original
             .iter()
             .chain(extra.iter())
-            .map(|(n, v)| FormField::new(*n, *v))
+            .map(|(n, v)| FormField::value(*n, *v, Limits::default()).unwrap())
             .collect::<Vec<_>>();
-        let owned = Form::new(fields.clone(), Limits::default()).unwrap();
-        let mut input = Input {
-            body: Body::Form(owned.clone()),
-            ..Input::default()
+        let owned = fields.clone();
+        let mut input = CaseInput {
+            body: CaseBody::Form(owned.clone()),
+            ..CaseInput::default()
         };
-        input.parameters.push(ParameterInput {
+        input.parameters.push(CaseParameter {
             location: ParameterLocation::Path,
             name: "AccountSid".into(),
             value: account_value.clone(),
@@ -549,17 +568,25 @@ fn pinned_original_provider_jobs_are_preparation_only() {
             .credentials
             .insert("accountSid_authToken".into(), credential.clone());
         let results = [
-            op.prepare(&input).unwrap(),
+            op.prepare_case(&input).unwrap(),
             op.request()
-                .parameter(ParameterLocation::Path, "AccountSid", account_value.clone())
+                .parameter_exact(
+                    ParameterLocation::Path,
+                    "AccountSid",
+                    &account_value.clone(),
+                )
                 .credential("accountSid_authToken", credential.clone())
-                .form(fields)
+                .form_fields(fields)
                 .prepare()
                 .unwrap(),
             op.request()
-                .parameter(ParameterLocation::Path, "AccountSid", account_value.clone())
+                .parameter_exact(
+                    ParameterLocation::Path,
+                    "AccountSid",
+                    &account_value.clone(),
+                )
                 .credential("accountSid_authToken", credential.clone())
-                .body(Body::Form(owned))
+                .form_fields(owned)
                 .prepare()
                 .unwrap(),
         ];
@@ -571,7 +598,7 @@ fn pinned_original_provider_jobs_are_preparation_only() {
             ""
         };
         let expected =
-            format!("To=%2B15005550006&From=%2B15005550006&Body=Preparation+only{suffix}");
+            format!("To=%2B15005550006&From=%2B15005550006&CaseBody=Preparation+only{suffix}");
         for request in results {
             assert_eq!(request.body().map(AsRef::as_ref), Some(expected.as_bytes()));
             assert_eq!(
@@ -591,40 +618,38 @@ fn pinned_original_provider_jobs_are_preparation_only() {
     let op = flyn.operation_id("recordConversion").unwrap();
     for (value, expected) in [
         (
-            ExactJson::parse(b"12.5", Limits::default()).unwrap().root(),
+            Value::parse(b"12.5", Limits::default()).unwrap(),
             "click_id=V1StGXR8_Z5jdHi6&value=12.5",
         ),
         (
-            ExactJson::parse(br#""12,5""#, Limits::default())
-                .unwrap()
-                .root(),
+            Value::parse(br#""12,5""#, Limits::default()).unwrap(),
             "click_id=V1StGXR8_Z5jdHi6&value=12%2C5",
         ),
     ] {
         let fields = vec![
-            FormField::new("click_id", "V1StGXR8_Z5jdHi6"),
-            FormField::new("value", value),
+            FormField::value("click_id", &"V1StGXR8_Z5jdHi6", Limits::default()).unwrap(),
+            FormField::exact("value", value),
         ];
-        let owned = Form::new(fields.clone(), Limits::default()).unwrap();
-        let selection = Selection {
+        let owned = fields.clone();
+        let selection = CaseSelection {
             media: Some(URL.into()),
-            ..Selection::default()
+            ..CaseSelection::default()
         };
-        let input = Input {
-            body: Body::Form(owned.clone()),
+        let input = CaseInput {
+            body: CaseBody::Form(owned.clone()),
             selection: selection.clone(),
-            ..Input::default()
+            ..CaseInput::default()
         };
         for request in [
-            op.prepare(&input).unwrap(),
+            op.prepare_case(&input).unwrap(),
             op.request()
-                .selection(selection.clone())
-                .form(fields)
+                .case_selection(selection.clone())
+                .form_fields(fields)
                 .prepare()
                 .unwrap(),
             op.request()
-                .selection(selection)
-                .body(Body::Form(owned))
+                .case_selection(selection)
+                .form_fields(owned)
                 .prepare()
                 .unwrap(),
         ] {
@@ -651,44 +676,42 @@ fn pinned_original_provider_jobs_are_preparation_only() {
     let representation = description.representation.unwrap();
     assert_eq!(representation.media_types, ["text/plain"]);
     assert_eq!(representation.content_encoding, None);
-    let credential = Credential {
-        value: CredentialValue::Bearer("wave01-FAKE-DO-NOT-SEND".into()),
-        origins: vec!["http://0.0.0.0:3313".into()],
-    };
-    let fields = vec![FormField::new(
+    let credential = Credential::bearer(
+        "wave01-FAKE-DO-NOT-SEND",
+        vec!["http://0.0.0.0:3313".into()],
+    );
+    let fields = vec![FormField::part(
         "file",
         Part::bytes(b"hello").filename("fixture.txt"),
     )];
-    let owned = Form::new(fields.clone(), Limits::default()).unwrap();
-    let selection = Selection {
+    let owned = fields.clone();
+    let selection = CaseSelection {
         media: Some("multipart/form-data".into()),
-        ..Selection::default()
+        ..CaseSelection::default()
     };
-    let mut input = Input {
-        body: Body::Form(owned.clone()),
+    let mut input = CaseInput {
+        body: CaseBody::Form(owned.clone()),
         selection: selection.clone(),
-        ..Input::default()
+        ..CaseInput::default()
     };
     input
         .credentials
         .insert("BearerAuth".into(), credential.clone());
     let errors = [
-        op.prepare(&input).unwrap_err(),
+        op.prepare_case(&input).unwrap_err(),
         op.request()
-            .selection(selection.clone())
+            .case_selection(selection.clone())
             .credential("BearerAuth", credential.clone())
-            .form(fields)
+            .form_fields(fields)
             .prepare()
             .unwrap_err()
-            .diagnostic()
             .clone(),
         op.request()
-            .selection(selection)
+            .case_selection(selection)
             .credential("BearerAuth", credential)
-            .body(Body::Form(owned))
+            .form_fields(owned)
             .prepare()
             .unwrap_err()
-            .diagnostic()
             .clone(),
     ];
     for error in errors {
@@ -707,12 +730,10 @@ fn pinned_original_provider_jobs_are_preparation_only() {
 fn selected_json_media_does_not_erase_an_unresolved_field_reference() {
     let d = fixture("selected-json-need", Limits::default());
     let op = d.operation_id("send").unwrap();
-    let value = ExactJson::parse(br#"{"n":1e+00}"#, Limits::default())
-        .unwrap()
-        .root();
-    let errors = three(&op, vec![FormField::new("p", value)])
+    let value = Value::parse(br#"{"n":1e+00}"#, Limits::default()).unwrap();
+    let errors = three(&op, vec![FormField::exact("p", value)])
         .into_iter()
-        .map(|r| r.unwrap_err().diagnostic().clone())
+        .map(|r| r.unwrap_err().clone())
         .collect::<Vec<_>>();
     let selected = op.describe_form_field(URL, "p").unwrap_err();
     for error in errors.iter().chain([&selected]) {
@@ -750,9 +771,12 @@ fn work_depth_layout_and_lower_descriptor_limits_remain_corrective() {
     ] {
         let d = fixture(name, limits);
         let op = d.operation_id("send").unwrap();
-        for result in three(&op, vec![FormField::new("p", "x")]) {
+        for result in three(
+            &op,
+            vec![FormField::value("p", &"x", Limits::default()).unwrap()],
+        ) {
             let error = result.unwrap_err();
-            let e = error.diagnostic();
+            let e = error;
             assert!(
                 matches!(e.reason(),Some(DiagnosticReason::Limit{kind:k,actual:a,..}) if *k==kind && *a==actual)
             );
@@ -770,7 +794,7 @@ fn work_depth_layout_and_lower_descriptor_limits_remain_corrective() {
         d.operation_id("send")
             .unwrap()
             .request()
-            .parameter(ParameterLocation::Query, "p", "x")
+            .parameter(ParameterLocation::Query, "p", &"x")
             .prepare()
             .unwrap()
             .target(),
@@ -788,10 +812,13 @@ fn work_depth_layout_and_lower_descriptor_limits_remain_corrective() {
     .unwrap();
     let d = b.build(d.entry_resource().id()).unwrap();
     let op = d.operation_id("send").unwrap();
-    let errors = three(&op, vec![FormField::new("p", "x")])
-        .into_iter()
-        .map(|r| r.unwrap_err().diagnostic().clone())
-        .collect::<Vec<_>>();
+    let errors = three(
+        &op,
+        vec![FormField::value("p", &"x", Limits::default()).unwrap()],
+    )
+    .into_iter()
+    .map(|r| r.unwrap_err().clone())
+    .collect::<Vec<_>>();
     let selected = op.describe_form_field(URL, "p").unwrap_err();
     for error in &errors {
         assert_eq!(error.code(), Code::ResourceLayoutRequired);
@@ -811,7 +838,7 @@ fn work_depth_layout_and_lower_descriptor_limits_remain_corrective() {
     let next = b.build(d.entry_resource().id()).unwrap();
     for result in three(
         &next.operation_id("send").unwrap(),
-        vec![FormField::new("p", "x")],
+        vec![FormField::value("p", &"x", Limits::default()).unwrap()],
     ) {
         assert_eq!(
             result.unwrap().body().map(AsRef::as_ref),
@@ -929,19 +956,19 @@ fn one_request_fact_budget_is_shared_across_fields() {
     let op = d.operation_id("send").unwrap();
     assert!(
         op.request()
-            .form([FormField::new("one", "x")])
+            .form_fields([FormField::value("one", &"x", Limits::default()).unwrap()])
             .prepare()
             .is_ok()
     );
     let names = (0..32).map(|i| format!("p{i}")).collect::<Vec<_>>();
     let fields = names
         .iter()
-        .map(|s| FormField::new(s.as_str(), "x"))
+        .map(|s| FormField::value(s.as_str(), &"x", Limits::default()).unwrap())
         .collect::<Vec<_>>();
     for result in three(&op, fields) {
         let error = result.unwrap_err();
         assert!(
-            matches!(error.diagnostic().reason(),Some(DiagnosticReason::Limit{kind:LimitKind::SchemaFactWork,maximum:200,actual,..}) if *actual>200)
+            matches!(error.reason(),Some(DiagnosticReason::Limit{kind:LimitKind::SchemaFactWork,maximum:200,actual,..}) if *actual>200)
         );
     }
 }

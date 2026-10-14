@@ -16,6 +16,7 @@ policy. Otherwise explicit permission records `HostManaged`.
 
 ```rust
 use dynamic_openapi_client::*;
+use dynamic_openapi_client::{diagnostics::*, exact::*, form::*, graph::*, inspect::*, schema::*, source::*, transport::*};
 # async fn call(request: &PreparedRequest) -> Outcome {
 let mut host = HostCapabilities::programmable();
 host.no_retries = false; // This supplied callback cannot promise strict replay.

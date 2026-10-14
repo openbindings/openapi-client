@@ -31,23 +31,23 @@ fn tutorial_handles_only_clean_typed_error_body() -> Result<(), Box<dyn std::err
         let request = doc.operation_id("get")?.request().prepare()?;
         let outcome = ready(request.invoke(
             dynamic_openapi_client::Cancellation::default(),
-            &dynamic_openapi_client::HostCapabilities::programmable(),
+            &dynamic_openapi_client::transport::HostCapabilities::programmable(),
             |_, token| async move {
                 if cancel {
                     token.cancel();
                 }
-                dynamic_openapi_client::TransportResult {
-                    response: Some(dynamic_openapi_client::ResponseInput::new(
+                dynamic_openapi_client::transport::TransportResult {
+                    response: Some(dynamic_openapi_client::transport::ResponseInput::new(
                         422,
                         vec![dynamic_openapi_client::Header::new(
                             "Content-Type",
                             "application/json",
                         )],
                         Arc::from(BODY),
-                        dynamic_openapi_client::BodyState::Complete,
-                        dynamic_openapi_client::Provenance::Wire,
+                        dynamic_openapi_client::transport::BodyState::Complete,
+                        dynamic_openapi_client::transport::Provenance::Wire,
                     )),
-                    upload: dynamic_openapi_client::UploadState::Unknown,
+                    upload: dynamic_openapi_client::transport::UploadState::Unknown,
                     error_detail: transport_failure.then(|| Arc::from("late transport failure")),
                 }
             },
@@ -59,7 +59,7 @@ fn tutorial_handles_only_clean_typed_error_body() -> Result<(), Box<dyn std::err
                 .as_ref()
                 .unwrap()
                 .json()?
-                .root()
+                .clone()
                 .get("error")
                 .unwrap()
                 .as_str(),

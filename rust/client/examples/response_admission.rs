@@ -1,8 +1,10 @@
 //! Supplied finite host evidence; this example performs no network I/O.
-use dynamic_openapi_client::{
-    BodyState, Cancellation, Code, Document, Header, HeaderDelivery, HeaderFidelity,
-    HostCapabilities, Limits, ResponseInput, TransportResult, UploadState, policies,
+use dynamic_openapi_client::diagnostics::Code;
+use dynamic_openapi_client::transport::{
+    BodyState, HeaderDelivery, HeaderFidelity, HostCapabilities, ResponseInput, TransportResult,
+    UploadState,
 };
+use dynamic_openapi_client::{Cancellation, Document, Header, Limits, policies};
 use std::{
     error::Error,
     future::Future,
@@ -59,7 +61,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
                     } else {
                         BodyState::Truncated
                     },
-                    dynamic_openapi_client::Provenance::Wire,
+                    dynamic_openapi_client::transport::Provenance::Wire,
                 );
                 response.header_fidelity = HeaderFidelity::HostProcessed;
                 response.header_delivery = delivery;
@@ -72,7 +74,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
         )
         .await;
     match policies::complete_2xx_json(outcome) {
-        Ok(accepted) => println!("{}", accepted.json.root().raw()),
+        Ok(accepted) => println!("{}", accepted.json.clone().raw()),
         Err(refused) => {
             if refused
                 .decode_error

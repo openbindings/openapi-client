@@ -1,10 +1,10 @@
 //! YAML grammar belongs to granit-parser. This adapter applies the JSON-compatible
 //! scalar/key policy, bounded graph expansion, and original-source mappings.
+use crate::diagnostics::{Code, DiagnosticReason, LimitKind, Location, YamlReason};
+use crate::exact::Value;
 use crate::source::{AuthoredEntry, PendingMap};
-use crate::{
-    Cancellation, Code, Diagnostic, DiagnosticReason, ExactJson, LimitKind, Limits, Location,
-    SourceContext, SourceOrigin, YamlReason,
-};
+use crate::source::{SourceContext, SourceOrigin};
+use crate::{Cancellation, Diagnostic, Limits};
 use granit_parser::{Event, Parser, ScalarStyle, Tag};
 use std::{
     collections::{HashMap, HashSet},
@@ -68,7 +68,7 @@ pub(crate) fn parse(
     context: SourceContext,
     limits: Limits,
     cancellation: &Cancellation,
-) -> Result<ExactJson, Diagnostic> {
+) -> Result<Value, Diagnostic> {
     let options = granit_parser::options! {
         emit_comments: false,
         flow_nesting_limit: limits.depth,
@@ -244,12 +244,12 @@ pub(crate) fn parse(
     let (json, mappings) = emit(&nodes, root, context, &limits, cancellation)?;
     // The normalized representation has its own byte/node/depth admission, independently
     // of the original YAML budget. It is never marked as authored JSON.
-    let json = ExactJson::parse_in_origin(&json, limits, cancellation, SourceOrigin::Normalized)
+    let json = Value::parse_in_origin(&json, limits, cancellation, SourceOrigin::Normalized)
         .map_err(|e| {
             // This adapter produces only valid JSON; any remaining admission refusal
             // is attributed to the YAML root rather than exposing generated offsets
-            // against ParseFailure::source_bytes().
-            let mut d = e.diagnostic;
+            // against Diagnostic::source_bytes().
+            let mut d = e;
             d.location = None;
             d.related.clear();
             d.at(Location {

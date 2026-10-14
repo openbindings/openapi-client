@@ -1,5 +1,6 @@
 //! Public shared-response controls from the frozen H1 amendment and Sol review.
 use dynamic_openapi_client::*;
+use dynamic_openapi_client::{diagnostics::*, transport::*};
 use std::{
     future::Future,
     sync::Arc,

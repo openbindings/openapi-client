@@ -1,26 +1,27 @@
+#[path = "support/request_case.rs"]
+mod request_case;
 use dynamic_openapi_client::*;
+use dynamic_openapi_client::{diagnostics::*, exact::*, form::*, source::*, transport::*};
+use request_case::*;
 use serde_json::{Value as Json, json};
 
-fn scalar(value: &Json) -> Option<OrdinaryValue<'_>> {
+fn scalar(value: &Json) -> Option<TestValue<'_>> {
     Some(match value {
-        Json::Null => OrdinaryValue::Null,
-        Json::Bool(v) => OrdinaryValue::Bool(*v),
-        Json::String(v) => OrdinaryValue::String(v),
+        Json::Null => TestValue::Null,
+        Json::Bool(v) => TestValue::Bool(*v),
+        Json::String(v) => TestValue::String(v),
         Json::Number(v) => {
             if let Some(v) = v.as_i64() {
-                OrdinaryValue::I64(v)
+                TestValue::I64(v)
             } else {
-                OrdinaryValue::U64(v.as_u64()?)
+                TestValue::U64(v.as_u64()?)
             }
         }
         _ => return None,
     })
 }
 fn credential() -> Credential {
-    Credential {
-        value: CredentialValue::ApiKey("fixture-secret".into()),
-        origins: vec!["https://api.example".into()],
-    }
+    Credential::api_key("fixture-secret", vec!["https://api.example".into()])
 }
 fn location(name: &str) -> ParameterLocation {
     match name {
@@ -154,9 +155,7 @@ fn run(id: &str) {
         .iter()
         .find(|v| v["id"] == id)
         .unwrap();
-    let input = ExactJson::parse(case["input_json"].as_str().unwrap(), Limits::default())
-        .unwrap()
-        .root();
+    let input = Value::parse(case["input_json"].as_str().unwrap(), Limits::default()).unwrap();
     for family in case["families"].as_array().unwrap() {
         let versions: &[&str] = match family.as_str().unwrap() {
             "3.0" => &["3.0.0", "3.0.4"],
@@ -188,43 +187,45 @@ fn run(id: &str) {
             }
             let document = Document::parse(source.to_string(), None, Limits::default()).unwrap();
             let operation = document.operation_id("send").unwrap();
-            let prepare = |value: Argument<'_>| {
+            let prepare = |value: Value| {
                 let mut request = operation.request();
                 if let Some(p) = p {
-                    request = request.parameter(
+                    request = request.parameter_exact(
                         location(p["in"].as_str().unwrap()),
                         p["name"].as_str().unwrap(),
-                        value,
+                        &value,
                     );
                 } else {
-                    request = request
-                        .form([FormField::new(case["input_field"].as_str().unwrap(), value)]);
+                    request = request.form_fields([FormField::exact(
+                        case["input_field"].as_str().unwrap(),
+                        value,
+                    )]);
                 }
                 if secured {
                     request = request.credential("key", credential());
                 }
-                request.prepare().map_err(|e| e.diagnostic().clone())
+                request.prepare().map_err(|e| e.clone())
             };
-            check(
-                case,
-                prepare(Argument::Exact(input.clone())),
-                &input,
-                false,
-                &document,
-            );
+            check(case, prepare(input.clone()), &input, false, &document);
             if let Some(p) = p {
-                let mut direct = Input {
-                    parameters: vec![ParameterInput {
+                let mut direct = CaseInput {
+                    parameters: vec![CaseParameter {
                         location: location(p["in"].as_str().unwrap()),
                         name: p["name"].as_str().unwrap().into(),
                         value: input.clone(),
                     }],
-                    ..Input::default()
+                    ..CaseInput::default()
                 };
                 if secured {
                     direct.credentials.insert("key".into(), credential());
                 }
-                check(case, operation.prepare(&direct), &input, false, &document);
+                check(
+                    case,
+                    operation.prepare_case(&direct),
+                    &input,
+                    false,
+                    &document,
+                );
             }
             if case["exact_only"] == true {
                 continue;
@@ -248,12 +249,12 @@ fn run(id: &str) {
                     .collect::<Vec<_>>()
             });
             let value = scalar(&parsed)
-                .or_else(|| ordered.as_ref().map(|v| OrdinaryValue::Object(v)))
-                .or_else(|| array.as_ref().map(|v| OrdinaryValue::Array(v)));
+                .or_else(|| ordered.as_ref().map(|v| TestValue::Object(v)))
+                .or_else(|| array.as_ref().map(|v| TestValue::Array(v)));
             if let Some(value) = value {
                 check(
                     case,
-                    prepare(Argument::Ordinary(value)),
+                    prepare(Value::from_serializable(&value, Limits::default()).unwrap()),
                     &input,
                     true,
                     &document,

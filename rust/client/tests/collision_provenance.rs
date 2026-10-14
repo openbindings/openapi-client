@@ -1,4 +1,5 @@
 use dynamic_openapi_client::*;
+use dynamic_openapi_client::{diagnostics::*, graph::*, source::*};
 use std::sync::Arc;
 
 const SECRET: &str = "PRIVATE_COLLISION_DECLARATION_319";
@@ -168,7 +169,6 @@ fn graph_alias_collision_keeps_earlier_resource_owner() {
             .unwrap(),
         )
         .unwrap_err()
-        .diagnostic()
         .clone();
     drop(b);
     let prior = previous(&error);
@@ -198,9 +198,9 @@ fn preparse_retrieval_collision_keeps_primary_absent_and_precancel_wins() {
     let cancelled = b
         .add_with_cancellation(conflicting.clone(), &cancel)
         .unwrap_err();
-    assert_eq!(cancelled.diagnostic().code(), Code::Cancelled);
-    assert!(cancelled.diagnostic().reason().is_none());
-    let error = b.add(conflicting).unwrap_err().diagnostic().clone();
+    assert_eq!(cancelled.code(), Code::Cancelled);
+    assert!(cancelled.reason().is_none());
+    let error = b.add(conflicting).unwrap_err().clone();
     drop(b);
     assert!(error.location().is_none());
     assert!(error.source_context().is_none());

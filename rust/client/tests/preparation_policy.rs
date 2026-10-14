@@ -1,4 +1,8 @@
+#[path = "support/request_case.rs"]
+mod request_case;
 use dynamic_openapi_client::*;
+use dynamic_openapi_client::{diagnostics::*, exact::*, transport::*};
+use request_case::*;
 use serde_json::{Value as Json, json};
 
 fn operation(path: &str, parameters: &[(&str, Json)], content: Option<Json>) -> Operation {
@@ -25,27 +29,21 @@ fn operation(path: &str, parameters: &[(&str, Json)], content: Option<Json>) -> 
     .operation_id("call")
     .unwrap()
 }
-fn parameters(values: &[(&str, Json)]) -> Input {
-    Input {
+fn parameters(values: &[(&str, Json)]) -> CaseInput {
+    CaseInput {
         parameters: values
             .iter()
-            .map(|(name, value)| ParameterInput {
+            .map(|(name, value)| CaseParameter {
                 location: ParameterLocation::Path,
                 name: (*name).into(),
-                value: ExactJson::from_serializable(value, Limits::default())
-                    .unwrap()
-                    .root(),
+                value: Value::from_serializable(value, Limits::default()).unwrap(),
             })
             .collect(),
-        ..Input::default()
+        ..CaseInput::default()
     }
 }
-fn json_body() -> Body {
-    Body::Json(
-        ExactJson::parse("{\"n\":9007199254740993}", Limits::default())
-            .unwrap()
-            .root(),
-    )
+fn json_body() -> CaseBody {
+    CaseBody::Json(Value::parse("{\"n\":9007199254740993}", Limits::default()).unwrap())
 }
 
 #[test]
@@ -62,7 +60,7 @@ fn complete_literal_dot_segments_refuse_including_composed_values() {
         ("/items/../tail", vec![]),
     ] {
         let error = operation(path, &values, None)
-            .prepare(&parameters(&values))
+            .prepare_case(&parameters(&values))
             .unwrap_err();
         assert_eq!(error.code(), Code::InvalidDestination, "{path}");
         assert!(matches!(
@@ -87,12 +85,12 @@ fn empty_embedded_and_encoded_segments_keep_their_exact_targets() {
     ] {
         let values = [("p", value)];
         let request = operation(path, &values, None)
-            .prepare(&parameters(&values))
+            .prepare_case(&parameters(&values))
             .unwrap();
         assert_eq!(request.target(), format!("https://api.example/v1{suffix}"));
     }
     let request = operation("/items/%2e", &[], None)
-        .prepare(&Input::default())
+        .prepare_case(&CaseInput::default())
         .unwrap();
     assert_eq!(request.target(), "https://api.example/v1/items/%2e");
     HostCapabilities::programmable().admit(&request).unwrap();
@@ -112,9 +110,9 @@ fn automatic_media_election_counts_body_compatible_choices() {
         json!({"application/json": {}, "application/*": {}}),
     ] {
         let request = operation("/", &[], Some(content))
-            .prepare(&Input {
+            .prepare_case(&CaseInput {
                 body: json_body(),
-                ..Input::default()
+                ..CaseInput::default()
             })
             .unwrap();
         assert_eq!(
@@ -136,9 +134,9 @@ fn automatic_media_election_counts_body_compatible_choices() {
         &[],
         Some(json!({"Application/Problem+Json; profile=compact": {}, "text/plain": {}})),
     )
-    .prepare(&Input {
+    .prepare_case(&CaseInput {
         body: json_body(),
-        ..Input::default()
+        ..CaseInput::default()
     })
     .unwrap();
     assert_eq!(
@@ -169,7 +167,7 @@ fn automatic_media_election_counts_body_compatible_choices() {
         ),
         (
             json!({"application/json": {}, "text/plain": {}}),
-            Body::Raw(b"raw".as_slice().into()),
+            CaseBody::Raw(b"raw".as_slice().into()),
             Code::AmbiguousSelection,
         ),
         (
@@ -185,9 +183,9 @@ fn automatic_media_election_counts_body_compatible_choices() {
     ] {
         assert_eq!(
             operation("/", &[], Some(content))
-                .prepare(&Input {
+                .prepare_case(&CaseInput {
                     body,
-                    ..Input::default()
+                    ..CaseInput::default()
                 })
                 .unwrap_err()
                 .code(),
@@ -199,13 +197,13 @@ fn automatic_media_election_counts_body_compatible_choices() {
 #[test]
 fn explicit_media_selection_keeps_range_and_body_compatibility_rules() {
     let request = operation("/", &[], Some(json!({"application/*": {}})))
-        .prepare(&Input {
+        .prepare_case(&CaseInput {
             body: json_body(),
-            selection: Selection {
+            selection: CaseSelection {
                 media: Some("application/json".into()),
-                ..Selection::default()
+                ..CaseSelection::default()
             },
-            ..Input::default()
+            ..CaseInput::default()
         })
         .unwrap();
     assert_eq!(request.body_kind(), "json");
@@ -214,20 +212,20 @@ fn explicit_media_selection_keeps_range_and_body_compatibility_rules() {
         &[],
         Some(json!({"application/json": {}, "text/plain": {}})),
     )
-    .prepare(&Input {
+    .prepare_case(&CaseInput {
         body: json_body(),
-        selection: Selection {
+        selection: CaseSelection {
             media: Some("text/plain".into()),
-            ..Selection::default()
+            ..CaseSelection::default()
         },
-        ..Input::default()
+        ..CaseInput::default()
     })
     .unwrap_err();
     assert_eq!(error.code(), Code::UnsupportedMedia);
     let request = operation("/", &[], Some(json!({"text/plain": {}})))
-        .prepare(&Input {
-            body: Body::Raw(b"plain".as_slice().into()),
-            ..Input::default()
+        .prepare_case(&CaseInput {
+            body: CaseBody::Raw(b"plain".as_slice().into()),
+            ..CaseInput::default()
         })
         .unwrap();
     assert_eq!(request.body().map(AsRef::as_ref), Some(b"plain".as_slice()));
@@ -251,24 +249,21 @@ fn security_alternatives_require_an_election_independent_of_credentials() {
         )
         .unwrap();
         let operation = document.operation_id("call").unwrap();
-        let mut input = Input::default();
+        let mut input = CaseInput::default();
         assert_eq!(
-            operation.prepare(&input).unwrap_err().code(),
+            operation.prepare_case(&input).unwrap_err().code(),
             Code::AmbiguousSelection
         );
         input.credentials.insert(
             "a".into(),
-            Credential {
-                value: CredentialValue::ApiKey("synthetic".into()),
-                origins: vec!["https://api.example".into()],
-            },
+            Credential::api_key("synthetic", vec!["https://api.example".into()]),
         );
         assert_eq!(
-            operation.prepare(&input).unwrap_err().code(),
+            operation.prepare_case(&input).unwrap_err().code(),
             Code::AmbiguousSelection
         );
         input.selection.security = Some(0);
-        let request = operation.prepare(&input).unwrap();
+        let request = operation.prepare_case(&input).unwrap();
         assert_eq!(request.headers()[0].value(), b"synthetic");
     }
 }

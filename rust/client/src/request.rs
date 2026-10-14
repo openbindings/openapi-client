@@ -1,141 +1,64 @@
-use crate::{
-    Body, Cancellation, Code, Credential, CredentialValue, Diagnostic, DiagnosticContext,
-    DiagnosticReason, Header, Input, LimitKind, Limits, Operation, OrdinaryValue, ParameterInput,
-    ParameterLocation, ParseFailure, PreparedRequest, Selection, SelectionKind, Value,
-};
-use std::{borrow::Cow, fmt};
-
-/// A checked ordinary draft or an already admitted exact value.
-/// Ordinary strings/containers may be borrowed until prepare consumes the builder.
-/// No floating-point or arbitrary Serialize conversion occurs.
-#[derive(Clone, Debug)]
-pub enum Argument<'a> {
-    /// The existing bounded ordinary JSON profile.
-    Ordinary(OrdinaryValue<'a>),
-    /// An exact value retaining its existing source owner and spelling.
-    Exact(Value),
-}
-impl<'a> From<OrdinaryValue<'a>> for Argument<'a> {
-    fn from(value: OrdinaryValue<'a>) -> Self {
-        Self::Ordinary(value)
-    }
-}
-impl From<Value> for Argument<'_> {
-    fn from(value: Value) -> Self {
-        Self::Exact(value)
-    }
-}
-impl<'a> From<&'a str> for Argument<'a> {
-    fn from(value: &'a str) -> Self {
-        Self::Ordinary(OrdinaryValue::String(value))
-    }
-}
-impl<'a> From<&'a String> for Argument<'a> {
-    fn from(value: &'a String) -> Self {
-        value.as_str().into()
-    }
-}
-impl From<bool> for Argument<'_> {
-    fn from(value: bool) -> Self {
-        Self::Ordinary(OrdinaryValue::Bool(value))
-    }
-}
-macro_rules! integers {
-    ($variant:ident, $wide:ty; $($integer:ty),*) => {$(
-        impl From<$integer> for Argument<'_> {
-            fn from(value: $integer) -> Self {
-                Self::Ordinary(OrdinaryValue::$variant(value as $wide))
-            }
-        }
-    )*};
-}
-integers!(I64, i64; i8, i16, i32, i64, isize);
-integers!(U64, u64; u8, u16, u32, u64, usize);
-
-/// Input-owner construction and request preparation remain distinct failure phases.
-#[derive(Clone, Debug)]
-pub enum RequestError {
-    /// Bounded generated JSON admission failed, retaining source when complete.
-    Input(ParseFailure),
-    /// Builder assignment/admission or protocol preparation refused.
-    Preparation(Diagnostic),
-}
-impl RequestError {
-    /// Structured corrective facts without parsing error text.
-    pub fn diagnostic(&self) -> &Diagnostic {
-        match self {
-            Self::Input(e) => e.diagnostic(),
-            Self::Preparation(e) => e,
-        }
-    }
-}
-impl fmt::Display for RequestError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.diagnostic().fmt(f)
-    }
-}
-impl std::error::Error for RequestError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(match self {
-            Self::Input(e) => e,
-            Self::Preparation(e) => e,
-        })
-    }
-}
-
-struct ParameterDraft<'a> {
+use crate::diagnostics::{Code, DiagnosticContext, DiagnosticReason, LimitKind, SelectionKind};
+use crate::exact::Value;
+use crate::prepare::{Body, CredentialValue, Input, ParameterInput};
+use crate::transport::PreparedRequest;
+use crate::{Cancellation, Credential, Diagnostic, Header, Limits, Operation, ParameterLocation};
+use serde::Serialize;
+use std::{collections::HashSet, fmt, sync::Arc};
+struct ParameterDraft {
     location: ParameterLocation,
-    name: Cow<'a, str>,
-    value: Argument<'a>,
+    name: String,
+    value: Value,
     event: usize,
 }
-enum BodyDraft<'a> {
-    Explicit(Body),
-    Json(Argument<'a>),
-    Form(Vec<crate::FormField<'a>>),
-}
-struct Variable<'a> {
-    key: Cow<'a, str>,
-    value: Cow<'a, str>,
+struct Variable {
+    key: String,
+    value: String,
     event: usize,
 }
-struct CredentialDraft<'a> {
-    scheme: Cow<'a, str>,
+struct CredentialDraft {
+    scheme: String,
     value: Credential,
     event: usize,
 }
-
-/// Per-call fluent construction, lowering to the same Input/prepare primitive.
+/// An owning checked request builder. Setters admit immediately and latch the first
+/// refusal. No later serializer or iterator is invoked after refusal. Caller
+/// Serialize/Display work cannot be preempted. Exact values use explicit setters.
 ///
-/// Setters check library-owned collection/copy quotas and latch the first refusal.
-/// After refusal they retain no later arguments. Ordinary JSON is serialized once
-/// into one generated owner when prepare consumes this builder. Exact backing
-/// owners and caller-provided allocations are accounted separately, not limited
-/// as if the builder allocated them. Caller-defined Into code is caller work.
-/// Duplicate explicit assignments refuse; defaults never clear previous fields.
-/// No callback is invoked by construction or preparation.
-///
+/// Checked setters require a borrow of the serializable input.
 /// ```compile_fail
 /// use dynamic_openapi_client::{Document, Limits, ParameterLocation};
 /// let doc = Document::parse(b"{}", None, Limits::default()).unwrap();
 /// let op = doc.operation_id("x").unwrap();
 /// let _ = op.request().parameter(ParameterLocation::Query, "x", 1.5_f64);
 /// ```
-pub struct RequestBuilder<'a> {
+///
+/// ```compile_fail
+/// use dynamic_openapi_client::{Document, Limits, exact::Value};
+/// let doc = Document::parse("{}", None, Limits::default()).unwrap();
+/// let value = Value::parse("null", Limits::default()).unwrap();
+/// let _ = doc.operation_id("x").unwrap().request().json(&value);
+/// ```
+pub struct RequestBuilder {
     operation: Operation,
-    parameters: Vec<ParameterDraft<'a>>,
-    body: Option<(BodyDraft<'a>, usize)>,
+    parameters: Vec<ParameterDraft>,
+    body: Option<(Body, usize)>,
     server: Option<(usize, usize)>,
-    media: Option<(Cow<'a, str>, usize)>,
+    media: Option<(String, usize)>,
     security: Option<(usize, usize)>,
-    variables: Vec<Variable<'a>>,
-    credentials: Vec<CredentialDraft<'a>>,
+    variables: Vec<Variable>,
+    credentials: Vec<CredentialDraft>,
     headers: Vec<Header>,
     next_event: usize,
     input_bytes: usize,
+    input_nodes: usize,
+    owners: HashSet<usize>,
+    owner_bytes: usize,
+    owner_nodes: usize,
     failure: Option<Diagnostic>,
+    cancellation: Cancellation,
 }
-impl fmt::Debug for RequestBuilder<'_> {
+impl fmt::Debug for RequestBuilder {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RequestBuilder")
             .field("assignments", &self.next_event)
@@ -144,9 +67,8 @@ impl fmt::Debug for RequestBuilder<'_> {
     }
 }
 impl Operation {
-    /// Begin one ordinary call using this operation's limits. The builder owns an
-    /// Operation clone and may borrow ordinary caller data until prepare consumes it.
-    pub fn request<'a>(&self) -> RequestBuilder<'a> {
+    /// Begin an owning checked request using this operation's resource limits.
+    pub fn request(&self) -> RequestBuilder {
         RequestBuilder {
             operation: self.clone(),
             parameters: vec![],
@@ -159,11 +81,16 @@ impl Operation {
             headers: vec![],
             next_event: 0,
             input_bytes: 0,
+            input_nodes: 0,
+            owners: HashSet::new(),
+            owner_bytes: 0,
+            owner_nodes: 0,
             failure: None,
+            cancellation: Cancellation::default(),
         }
     }
 }
-impl<'a> RequestBuilder<'a> {
+impl RequestBuilder {
     fn limits(&self) -> &Limits {
         &self.operation.store.limits
     }
@@ -181,6 +108,7 @@ impl<'a> RequestBuilder<'a> {
             self.headers = vec![];
             self.body = None;
             self.media = None;
+            self.owners.clear();
         }
     }
     fn count(&mut self, actual: usize, header: bool) -> bool {
@@ -242,24 +170,27 @@ impl<'a> RequestBuilder<'a> {
             error.contextual(make(name.to_owned()))
         }
     }
-    /// Assign a dynamic parameter; header identities compare case-insensitively.
-    pub fn parameter(
-        mut self,
-        location: ParameterLocation,
-        name: impl Into<Cow<'a, str>>,
-        value: impl Into<Argument<'a>>,
-    ) -> Self {
+    fn guard(&mut self) -> bool {
         if self.failure.is_some() {
-            return self;
+            return false;
+        }
+        if let Err(error) = self.cancellation.check() {
+            self.latch(error);
+            return false;
+        }
+        true
+    }
+    fn parameter_slot(&mut self, location: ParameterLocation, name: &str) -> Option<usize> {
+        if self.failure.is_some() {
+            return None;
         }
         let event = self.event();
-        let name = name.into();
         if let Some(p) = self
             .parameters
             .iter()
-            .find(|p| p.location == location && crate::prepare::same_name(&p.name, &name, location))
+            .find(|p| p.location == location && crate::prepare::same_name(&p.name, name, location))
         {
-            let error = self.context(self.duplicate(p.event, event), &name, |name| {
+            let error = self.context(self.duplicate(p.event, event), name, |name| {
                 DiagnosticContext::Parameter {
                     index: self.parameters.len(),
                     location,
@@ -267,87 +198,302 @@ impl<'a> RequestBuilder<'a> {
                 }
             });
             self.latch(error);
-            return self;
+            return None;
         }
-        if !self.count(self.parameters.len().saturating_add(1), false) || !self.bytes(name.len()) {
-            return self;
+        if !self.guard()
+            || !self.count(self.parameters.len().saturating_add(1), false)
+            || !self.bytes(name.len())
+        {
+            return None;
         }
-        let value = value.into();
-        let minimum = match &value {
-            Argument::Exact(v) => v.raw().len(),
-            Argument::Ordinary(v) => minimum_bytes(*v),
-        };
-        if !self.bytes(minimum) {
-            return self;
-        }
-        self.parameters.reserve_exact(1);
-        self.parameters.push(ParameterDraft {
-            location,
-            name,
-            value,
-            event,
-        });
-        self
+        Some(event)
     }
-    /// Assign an ordinary or exact JSON body; explicit absent body is also an assignment.
-    pub fn json(mut self, value: impl Into<Argument<'a>>) -> Self {
+    fn body_slot(&mut self) -> Option<usize> {
         if self.failure.is_some() {
-            return self;
+            return None;
         }
         let event = self.event();
-        if let Some((_, first)) = &self.body {
+        if let Some((_, first)) = self.body {
             self.latch(
-                self.duplicate(*first, event)
+                self.duplicate(first, event)
                     .contextual(DiagnosticContext::Body),
             );
-            return self;
+            return None;
         }
-        let value = value.into();
-        let minimum = match &value {
-            Argument::Exact(v) => v.raw().len(),
-            Argument::Ordinary(v) => minimum_bytes(*v),
-        };
-        if self.body_bytes(minimum) {
-            self.body = Some((BodyDraft::Json(value), event));
-        }
-        self
+        self.guard().then_some(event)
     }
-    /// Assign one logical named form. The document chooses URL encoding or multipart.
-    /// Arrays represent repeated values; duplicate logical names refuse. No iterator
-    /// entries after the first refusal are consumed. Field count and name admission
-    /// precede duplicate-name checks, followed by value/part admission.
-    /// Caller iterator/Into work is external.
-    pub fn form(mut self, fields: impl IntoIterator<Item = crate::FormField<'a>>) -> Self {
-        if self.failure.is_some() {
-            return self;
+    fn encode<T: Serialize + ?Sized>(
+        &mut self,
+        value: &T,
+        body: bool,
+        form: bool,
+    ) -> Option<Value> {
+        let mut limits = self.limits().clone();
+        limits.document_bytes = limits.document_bytes.saturating_sub(self.input_bytes);
+        if body {
+            limits.document_bytes = limits.document_bytes.min(limits.body_bytes);
         }
-        let event = self.event();
-        if let Some((_, first)) = &self.body {
-            self.latch(
-                self.duplicate(*first, event)
-                    .contextual(DiagnosticContext::Body),
-            );
-            return self;
-        }
-        let mut admitted: Vec<crate::FormField<'a>> = Vec::new();
-        let mut budget = crate::form::Admission::default();
-        for field in fields {
-            let result = if admitted.len() >= self.limits().form_fields {
-                Err(Diagnostic::limited(
-                    LimitKind::FormFields,
-                    self.limits().form_fields,
-                    admitted.len().saturating_add(1),
-                ))
-            } else if let Err(error) = budget.name(&field, self.limits()) {
-                Err(error)
-            } else if let Err(error) = budget.comparisons(admitted.len(), self.limits()) {
-                Err(error)
-            } else if admitted.iter().any(|old| old.name == field.name) {
-                Err(Diagnostic::new(Code::InvalidSelection)
-                    .reasoned(DiagnosticReason::Form(crate::FormReason::DuplicateField)))
+        limits.nodes = limits
+            .nodes
+            .saturating_sub(self.input_nodes.saturating_add(self.owner_nodes));
+        // Check a minimum nonempty JSON token and node before calling user code.
+        if limits.document_bytes == 0 || limits.nodes == 0 {
+            let (kind, maximum, actual) = if limits.nodes == 0 {
+                (
+                    LimitKind::Nodes,
+                    self.limits().nodes,
+                    self.input_nodes
+                        .saturating_add(self.owner_nodes)
+                        .saturating_add(1),
+                )
+            } else if body && self.limits().body_bytes == 0 {
+                (LimitKind::BodyBytes, 0, 1)
             } else {
-                budget.field(&field, self.limits())
+                (
+                    LimitKind::InputBytes,
+                    self.limits().document_bytes,
+                    self.input_bytes.saturating_add(1),
+                )
             };
+            self.latch(
+                Diagnostic::limited(kind, maximum, actual)
+                    .contextual(DiagnosticContext::Construction),
+            );
+            return None;
+        }
+        match crate::serializable::admit(value, limits, &self.cancellation, form) {
+            Ok(value) => {
+                self.input_nodes += value.node_count();
+                self.input_bytes += value.raw().len();
+                Some(value)
+            }
+            Err(mut error) => {
+                if let Some(DiagnosticReason::Limit {
+                    kind: LimitKind::Nodes,
+                    actual,
+                    ..
+                }) = error.reason()
+                {
+                    error = Diagnostic::limited(
+                        LimitKind::Nodes,
+                        self.limits().nodes,
+                        self.input_nodes
+                            .saturating_add(self.owner_nodes)
+                            .saturating_add(*actual),
+                    )
+                    .contextual(DiagnosticContext::Construction);
+                }
+                if let Some(DiagnosticReason::Limit {
+                    kind: LimitKind::DocumentBytes,
+                    actual,
+                    ..
+                }) = error.reason()
+                {
+                    let actual = *actual;
+                    error = if body
+                        && self.limits().body_bytes
+                            <= self
+                                .limits()
+                                .document_bytes
+                                .saturating_sub(self.input_bytes)
+                    {
+                        Diagnostic::limited(LimitKind::BodyBytes, self.limits().body_bytes, actual)
+                    } else {
+                        Diagnostic::limited(
+                            LimitKind::InputBytes,
+                            self.limits().document_bytes,
+                            self.input_bytes.saturating_add(actual),
+                        )
+                    }
+                    .contextual(DiagnosticContext::Construction);
+                }
+                self.latch(error);
+                None
+            }
+        }
+    }
+    fn exact(&mut self, value: &Value, body: bool) -> bool {
+        if !self.guard() {
+            return false;
+        }
+        if body && value.raw().len() > self.limits().body_bytes {
+            self.latch(
+                value.locate(
+                    Diagnostic::limited(
+                        LimitKind::BodyBytes,
+                        self.limits().body_bytes,
+                        value.raw().len(),
+                    )
+                    .contextual(DiagnosticContext::Body),
+                ),
+            );
+            return false;
+        }
+        if !self.bytes(value.raw().len()) {
+            return false;
+        }
+        let id = value.source_context().id;
+        if !self.owners.contains(&id) {
+            let bytes = self.owner_bytes.saturating_add(value.source().len());
+            let nodes = self.owner_nodes.saturating_add(value.node_count());
+            if bytes > self.limits().document_bytes
+                || nodes.saturating_add(self.input_nodes) > self.limits().nodes
+            {
+                let (kind, max, actual) = if bytes > self.limits().document_bytes {
+                    (LimitKind::InputBytes, self.limits().document_bytes, bytes)
+                } else {
+                    (
+                        LimitKind::Nodes,
+                        self.limits().nodes,
+                        nodes.saturating_add(self.input_nodes),
+                    )
+                };
+                self.latch(
+                    Diagnostic::limited(kind, max, actual)
+                        .contextual(DiagnosticContext::CallerInput),
+                );
+                return false;
+            }
+            self.owner_bytes = bytes;
+            self.owner_nodes = nodes;
+            self.owners.insert(id);
+        }
+        true
+    }
+    /// Immediately check a Serde parameter, after duplicate and cancellation admission.
+    pub fn parameter<T: Serialize + ?Sized>(
+        mut self,
+        location: ParameterLocation,
+        name: impl AsRef<str>,
+        value: &T,
+    ) -> Self {
+        if self.failure.is_some() {
+            return self;
+        }
+        let name = name.as_ref();
+        if let Some(event) = self.parameter_slot(location, name)
+            && let Some(value) = self.encode(value, false, false)
+        {
+            self.parameters.push(ParameterDraft {
+                location,
+                name: name.to_owned(),
+                value,
+                event,
+            });
+        }
+        self
+    }
+    /// Retain an admitted exact parameter subtree without rewriting numbers.
+    pub fn parameter_exact(
+        mut self,
+        location: ParameterLocation,
+        name: impl AsRef<str>,
+        value: &Value,
+    ) -> Self {
+        if self.failure.is_some() {
+            return self;
+        }
+        let name = name.as_ref();
+        if let Some(event) = self.parameter_slot(location, name)
+            && self.exact(value, false)
+        {
+            self.parameters.push(ParameterDraft {
+                location,
+                name: name.to_owned(),
+                value: value.clone(),
+                event,
+            });
+        }
+        self
+    }
+    /// Immediately check a Serde JSON body. Media election remains explicit when ambiguous.
+    pub fn json<T: Serialize + ?Sized>(mut self, value: &T) -> Self {
+        if let Some(event) = self.body_slot()
+            && let Some(value) = self.encode(value, true, false)
+        {
+            self.body = Some((Body::Json(value), event));
+        }
+        self
+    }
+    /// Retain an exact JSON body without rewriting its selected bytes.
+    pub fn json_exact(mut self, value: &Value) -> Self {
+        if let Some(event) = self.body_slot()
+            && self.exact(value, true)
+        {
+            self.body = Some((Body::Json(value.clone()), event));
+        }
+        self
+    }
+    /// Immediately check an object/map and use its ordered members as form fields.
+    pub fn form<T: Serialize + ?Sized>(mut self, value: &T) -> Self {
+        if let Some(event) = self.body_slot()
+            && let Some(value) = self.encode(value, false, true)
+        {
+            if value.kind() != crate::exact::ValueKind::Object {
+                self.latch(
+                    value
+                        .error(Code::UnsupportedValue)
+                        .reasoned(DiagnosticReason::Form(crate::form::FormReason::ValueShape))
+                        .contextual(DiagnosticContext::Body),
+                );
+            } else {
+                let fields = value
+                    .members()
+                    .expect("object")
+                    .map(|(name, value)| crate::form::FormField::exact(name, value));
+                self.admit_fields(fields, event, false);
+            }
+        }
+        self
+    }
+    /// Admit finite fields, copying borrowed bytes and metadata during this call.
+    /// Cancellation is checked before IntoIterator and before each next call.
+    pub fn form_fields<'a>(
+        mut self,
+        fields: impl IntoIterator<Item = crate::form::FormField<'a>>,
+    ) -> Self {
+        if let Some(event) = self.body_slot() {
+            self.admit_fields(fields, event, true);
+        }
+        self
+    }
+    fn admit_fields<'a>(
+        &mut self,
+        fields: impl IntoIterator<Item = crate::form::FormField<'a>>,
+        event: usize,
+        account: bool,
+    ) {
+        if !self.guard() {
+            return;
+        }
+        let mut fields = fields.into_iter();
+        let mut admitted: Vec<crate::form::ReadyField<'static>> = Vec::new();
+        let mut budget = crate::form::Admission::default();
+        loop {
+            if !self.guard() {
+                return;
+            }
+            let Some(field) = fields.next() else { break };
+            let result = (|| {
+                if admitted.len() >= self.limits().form_fields {
+                    return Err(Diagnostic::limited(
+                        LimitKind::FormFields,
+                        self.limits().form_fields,
+                        admitted.len().saturating_add(1),
+                    ));
+                }
+                budget.name(&field, self.limits())?;
+                budget.comparisons(admitted.len(), self.limits())?;
+                for previous in &admitted {
+                    self.cancellation.check()?;
+                    if previous.name == field.name {
+                        return Err(Diagnostic::new(Code::InvalidSelection).reasoned(
+                            DiagnosticReason::Form(crate::form::FormReason::DuplicateField),
+                        ));
+                    }
+                }
+                budget.field_cancel(&field, self.limits(), Some(&self.cancellation))
+            })();
             if let Err(error) = result {
                 let error = self.context(error, &field.name, |name| DiagnosticContext::FormField {
                     index: admitted.len(),
@@ -355,79 +501,92 @@ impl<'a> RequestBuilder<'a> {
                     item: None,
                 });
                 self.latch(error);
-                return self;
+                return;
             }
-            crate::form::reserve_admitted(&mut admitted, self.limits().form_fields);
-            admitted.push(field);
+            if account {
+                if !self.bytes(field.name.len()) {
+                    return;
+                }
+                let cancel = self.cancellation.clone();
+                if let Err(error) = field.arguments(&cancel, &mut |value| {
+                    if self.failure.is_none() {
+                        self.exact(value, false);
+                    }
+                }) {
+                    self.latch(error);
+                }
+                if self.failure.is_some() {
+                    return;
+                }
+            }
+            match field
+                .lower(&mut |value| value, &self.cancellation)
+                .and_then(|field| field.into_owned(&self.cancellation))
+            {
+                Ok(field) => {
+                    crate::form::reserve_admitted(&mut admitted, self.limits().form_fields);
+                    admitted.push(field);
+                }
+                Err(error) => {
+                    self.latch(error);
+                    return;
+                }
+            }
         }
-        self.body = Some((BodyDraft::Form(admitted), event));
+        self.body = Some((Body::Form(admitted), event));
+    }
+    /// Assign finite raw bytes; preparation checks the elected media declaration.
+    pub fn raw_body(mut self, bytes: impl Into<Arc<[u8]>>) -> Self {
+        if let Some(event) = self.body_slot() {
+            let bytes = bytes.into();
+            if self.body_bytes(bytes.len()) {
+                self.body = Some((Body::Raw(bytes), event));
+            }
+        }
         self
     }
-    /// Assign absent, exact JSON or finite raw body without implicit content-type policy.
-    pub fn body(mut self, body: Body) -> Self {
+    /// Explicitly assign absence, distinct from null or an empty body.
+    pub fn no_body(mut self) -> Self {
+        if let Some(event) = self.body_slot() {
+            self.body = Some((Body::Absent, event));
+        }
+        self
+    }
+    /// Elect the authored server index.
+    pub fn server(self, index: usize) -> Self {
+        self.scalar_selection(index, SelectionKind::Server)
+    }
+    /// Elect the authored security alternative index.
+    pub fn security(self, index: usize) -> Self {
+        self.scalar_selection(index, SelectionKind::Security)
+    }
+    /// Elect a concrete request media type.
+    pub fn media(mut self, value: impl AsRef<str>) -> Self {
         if self.failure.is_some() {
             return self;
         }
         let event = self.event();
-        if let Some((_, first)) = &self.body {
+        if let Some((_, first)) = &self.media {
             self.latch(
                 self.duplicate(*first, event)
-                    .contextual(DiagnosticContext::Body),
-            );
-            return self;
-        }
-        let bytes = match &body {
-            Body::Absent => 0,
-            Body::Json(v) => v.raw().len(),
-            Body::Raw(v) => v.len(),
-            Body::Form(_) => 0,
-        };
-        if self.body_bytes(bytes) {
-            self.body = Some((BodyDraft::Explicit(body), event));
-        }
-        self
-    }
-    /// Add populated selection fields in server, media, security, lexical-variable order.
-    /// None and absent map entries assign nothing. Equal repeats still refuse.
-    pub fn selection(mut self, selection: Selection) -> Self {
-        if self.failure.is_some() {
-            return self;
-        }
-        if let Some(value) = selection.server {
-            self = self.scalar_selection(value, SelectionKind::Server);
-        }
-        if self.failure.is_some() {
-            return self;
-        }
-        if let Some(value) = selection.media {
-            let event = self.event();
-            if let Some((_, first)) = &self.media {
-                self.latch(self.duplicate(*first, event).contextual(
-                    DiagnosticContext::Selection {
+                    .contextual(DiagnosticContext::Selection {
                         kind: SelectionKind::Media,
                         index: None,
                         key: None,
-                    },
-                ));
-            } else if self.bytes(value.len()) {
-                self.media = Some((Cow::Owned(value), event));
+                    }),
+            );
+        } else if self.guard() {
+            let value = value.as_ref();
+            if self.bytes(value.len()) {
+                self.media = Some((value.to_owned(), event));
             }
-        }
-        if self.failure.is_some() {
-            return self;
-        }
-        if let Some(value) = selection.security {
-            self = self.scalar_selection(value, SelectionKind::Security);
-        }
-        for (key, value) in selection.variables {
-            if self.failure.is_some() {
-                break;
-            }
-            self = self.server_variable(key, value);
         }
         self
     }
     fn scalar_selection(mut self, value: usize, kind: SelectionKind) -> Self {
+        if self.failure.is_some() {
+            return self;
+        }
         let event = self.event();
         let existing = match kind {
             SelectionKind::Server => self.server,
@@ -443,7 +602,7 @@ impl<'a> RequestBuilder<'a> {
                         key: None,
                     }),
             );
-        } else {
+        } else if self.guard() {
             match kind {
                 SelectionKind::Server => self.server = Some((value, event)),
                 SelectionKind::Security => self.security = Some((value, event)),
@@ -453,18 +612,14 @@ impl<'a> RequestBuilder<'a> {
         self
     }
     /// Add one variable assignment; it composes with other populated selection fields.
-    pub fn server_variable(
-        mut self,
-        name: impl Into<Cow<'a, str>>,
-        value: impl Into<Cow<'a, str>>,
-    ) -> Self {
+    pub fn server_variable(mut self, name: impl AsRef<str>, value: impl AsRef<str>) -> Self {
         if self.failure.is_some() {
             return self;
         }
         let event = self.event();
-        let name = name.into();
+        let name = name.as_ref();
         if let Some(v) = self.variables.iter().find(|v| v.key == name) {
-            let error = self.context(self.duplicate(v.event, event), &name, |key| {
+            let error = self.context(self.duplicate(v.event, event), name, |key| {
                 DiagnosticContext::Selection {
                     kind: SelectionKind::ServerVariable,
                     index: None,
@@ -474,36 +629,41 @@ impl<'a> RequestBuilder<'a> {
             self.latch(error);
             return self;
         }
-        if !self.count(self.variables.len().saturating_add(1), false) || !self.bytes(name.len()) {
+        if !self.guard()
+            || !self.count(self.variables.len().saturating_add(1), false)
+            || !self.bytes(name.len())
+        {
             return self;
         }
-        let value = value.into();
+        let value = value.as_ref();
         if !self.bytes(value.len()) {
             return self;
         }
         self.variables.reserve_exact(1);
         self.variables.push(Variable {
-            key: name,
-            value,
+            key: name.to_owned(),
+            value: value.to_owned(),
             event,
         });
         self
     }
     /// Supply per-call credential material with explicit origin admission. No acquisition occurs.
-    pub fn credential(mut self, scheme: impl Into<Cow<'a, str>>, credential: Credential) -> Self {
+    pub fn credential(mut self, scheme: impl AsRef<str>, credential: Credential) -> Self {
         if self.failure.is_some() {
             return self;
         }
         let event = self.event();
-        let scheme = scheme.into();
+        let scheme = scheme.as_ref();
         if let Some(c) = self.credentials.iter().find(|c| c.scheme == scheme) {
-            let error = self.context(self.duplicate(c.event, event), &scheme, |scheme| {
+            let error = self.context(self.duplicate(c.event, event), scheme, |scheme| {
                 DiagnosticContext::Credential { scheme }
             });
             self.latch(error);
             return self;
         }
-        if !self.count(self.credentials.len().saturating_add(1), false) || !self.bytes(scheme.len())
+        if !self.guard()
+            || !self.count(self.credentials.len().saturating_add(1), false)
+            || !self.bytes(scheme.len())
         {
             return self;
         }
@@ -523,7 +683,7 @@ impl<'a> RequestBuilder<'a> {
         }
         self.credentials.reserve_exact(1);
         self.credentials.push(CredentialDraft {
-            scheme,
+            scheme: scheme.to_owned(),
             value: credential,
             event,
         });
@@ -532,6 +692,9 @@ impl<'a> RequestBuilder<'a> {
     /// Append an ordered header line under the existing multivalue/header policy.
     pub fn header(mut self, header: Header) -> Self {
         if self.failure.is_some() {
+            return self;
+        }
+        if !self.guard() {
             return self;
         }
         self.event();
@@ -543,127 +706,39 @@ impl<'a> RequestBuilder<'a> {
         }
         self
     }
-    /// Consume drafts into one bounded generated owner and the existing prepared request.
-    pub fn prepare(self) -> Result<PreparedRequest, RequestError> {
-        self.prepare_with_cancellation(&Cancellation::default())
+    /// Select a cooperative cancellation token. Earlier callbacks cannot be undone.
+    pub fn cancellation(mut self, token: Cancellation) -> Self {
+        if self.failure.is_none() {
+            self.cancellation = token;
+        }
+        self
     }
-    /// Observe a latched refusal first, otherwise cancellation before serializing ordinary data.
-    pub fn prepare_with_cancellation(
-        self,
-        cancellation: &Cancellation,
-    ) -> Result<PreparedRequest, RequestError> {
+    /// Consume the admitted values into a finite prepared request, without serializing again.
+    pub fn prepare(self) -> Result<PreparedRequest, Diagnostic> {
         if let Some(error) = self.failure {
-            return Err(RequestError::Preparation(error));
+            return Err(error);
         }
-        cancellation.check().map_err(RequestError::Preparation)?;
-        let mut ordinary = Vec::new();
-        for parameter in &self.parameters {
-            if let Argument::Ordinary(value) = &parameter.value {
-                ordinary.push(*value);
-            }
-        }
-        let body_index = if let Some((BodyDraft::Json(Argument::Ordinary(value)), _)) = &self.body {
-            let index = ordinary.len();
-            ordinary.push(*value);
-            Some(index)
-        } else {
-            None
-        };
-        if let Some((BodyDraft::Form(fields), _)) = &self.body {
-            for field in fields {
-                field
-                    .arguments(cancellation, &mut |argument| {
-                        if let Argument::Ordinary(value) = argument {
-                            ordinary.push(*value);
-                        }
-                    })
-                    .map_err(RequestError::Preparation)?;
-            }
-        }
-        let owner = if ordinary.is_empty() {
-            None
-        } else {
-            Some(
-                crate::ordinary::request_values(
-                    &ordinary,
-                    body_index,
-                    self.limits().clone(),
-                    cancellation,
-                )
-                .map_err(RequestError::Input)?,
-            )
-        };
-        let mut cursor = 0;
-        let mut exact = |argument: Argument<'a>| match argument {
-            Argument::Exact(value) => value,
-            Argument::Ordinary(_) => {
-                let value = owner
-                    .as_ref()
-                    .expect("ordinary owner")
-                    .root()
-                    .at(cursor)
-                    .expect("admitted ordinal");
-                cursor += 1;
-                value
-            }
-        };
+        self.cancellation.check()?;
         let mut input = Input::default();
-        for parameter in self.parameters {
+        for p in self.parameters {
             input.parameters.push(ParameterInput {
-                location: parameter.location,
-                name: parameter.name.into_owned(),
-                value: exact(parameter.value),
+                location: p.location,
+                name: p.name,
+                value: p.value,
             });
         }
-        let mut form = None;
-        input.body = match self.body {
-            None => Body::Absent,
-            Some((BodyDraft::Explicit(body), _)) => body,
-            Some((BodyDraft::Json(argument), _)) => Body::Json(exact(argument)),
-            Some((BodyDraft::Form(fields), _)) => {
-                form = Some(
-                    fields
-                        .into_iter()
-                        .map(|field| field.lower(&mut exact, cancellation))
-                        .collect::<Result<Vec<_>, _>>()
-                        .map_err(RequestError::Preparation)?,
-                );
-                Body::Absent
-            }
-        };
+        input.body = self.body.map_or(Body::Absent, |v| v.0);
         input.selection.server = self.server.map(|v| v.0);
         input.selection.security = self.security.map(|v| v.0);
-        input.selection.media = self.media.map(|v| v.0.into_owned());
-        for variable in self.variables {
-            input
-                .selection
-                .variables
-                .insert(variable.key.into_owned(), variable.value.into_owned());
+        input.selection.media = self.media.map(|v| v.0);
+        for v in self.variables {
+            input.selection.variables.insert(v.key, v.value);
         }
-        for credential in self.credentials {
-            input
-                .credentials
-                .insert(credential.scheme.into_owned(), credential.value);
+        for c in self.credentials {
+            input.credentials.insert(c.scheme, c.value);
         }
         input.headers = self.headers;
-        let body = match form.as_deref() {
-            Some(fields) => crate::prepare::AdmittedBody::Form(fields),
-            None => crate::prepare::AdmittedBody::from(&input.body),
-        };
         self.operation
-            .prepare_admitted(&input, body, cancellation)
-            .map_err(RequestError::Preparation)
-    }
-}
-// Constant-time lower bounds only. Borrowed nested data is fully admitted once
-// at prepare; it is not copied or serialized by setters.
-fn minimum_bytes(value: OrdinaryValue<'_>) -> usize {
-    match value {
-        OrdinaryValue::String(v) => v.len().saturating_add(2),
-        OrdinaryValue::Null => 4,
-        OrdinaryValue::Bool(true) => 4,
-        OrdinaryValue::Bool(false) => 5,
-        OrdinaryValue::I64(_) | OrdinaryValue::U64(_) => 1,
-        OrdinaryValue::Array(_) | OrdinaryValue::Object(_) => 2,
+            .prepare_with_cancellation(&input, &self.cancellation)
     }
 }

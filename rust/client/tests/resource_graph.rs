@@ -1,4 +1,8 @@
+#[path = "support/request_case.rs"]
+mod request_case;
 use dynamic_openapi_client::*;
+use dynamic_openapi_client::{diagnostics::*, form::*, graph::*, inspect::*};
+use request_case::*;
 use std::{collections::HashMap, sync::Arc};
 
 struct GraphFixture {
@@ -66,13 +70,10 @@ fn frozen_all_family_json_yaml_protocol_graphs_and_request() {
             .operation_id("getThing")
             .unwrap()
             .request()
-            .parameter(ParameterLocation::Query, "id", "42")
+            .parameter(ParameterLocation::Query, "id", &"42")
             .credential(
                 "Shared",
-                Credential {
-                    value: CredentialValue::ApiKey("disposable".into()),
-                    origins: vec!["https://api.example".into()],
-                },
+                Credential::api_key("disposable", vec!["https://api.example".into()]),
             )
             .prepare()
             .unwrap();
@@ -101,10 +102,10 @@ fn missing_bytes_recover_uniformly_without_mutating_old_snapshots() {
     )
     .unwrap();
     let op = doc.operation_id("x").unwrap();
-    let direct = op.prepare(&Input::default()).unwrap_err();
+    let direct = op.prepare_case(&CaseInput::default()).unwrap_err();
     let fluent = op.request().prepare().unwrap_err();
     let effective = op.describe().unwrap_err();
-    for error in [&direct, fluent.diagnostic(), &effective] {
+    for error in [&direct, &fluent, &effective] {
         assert_eq!(error.code(), Code::ResourceUnavailable);
         let need = error.resource_need().expect("uniform corrective need");
         assert_eq!(need.kind(), ResourceNeedKind::Bytes);
@@ -115,7 +116,7 @@ fn missing_bytes_recover_uniformly_without_mutating_old_snapshots() {
     assert!(
         doc.operation_id("ok")
             .unwrap()
-            .prepare(&Input::default())
+            .prepare_case(&CaseInput::default())
             .is_ok()
     );
     let mut builder = DocumentBuilder::from_document(&doc);
@@ -133,11 +134,11 @@ fn missing_bytes_recover_uniformly_without_mutating_old_snapshots() {
         completed
             .operation_id("x")
             .unwrap()
-            .prepare(&Input::default())
+            .prepare_case(&CaseInput::default())
             .is_ok()
     );
     assert_eq!(
-        op.prepare(&Input::default()).unwrap_err().code(),
+        op.prepare_case(&CaseInput::default()).unwrap_err().code(),
         Code::ResourceUnavailable
     );
     #[cfg(feature = "qualification")]
@@ -156,7 +157,7 @@ fn layout_enrichment_preserves_source_identity_and_rejects_stale_needs_sites() {
     let error = old
         .operation_id("x")
         .unwrap()
-        .prepare(&Input::default())
+        .prepare_case(&CaseInput::default())
         .unwrap_err();
     let need = error.resource_need().unwrap();
     assert_eq!(need.kind(), ResourceNeedKind::Layout);
@@ -189,13 +190,13 @@ fn layout_enrichment_preserves_source_identity_and_rejects_stale_needs_sites() {
     assert!(
         new.operation_id("x")
             .unwrap()
-            .prepare(&Input::default())
+            .prepare_case(&CaseInput::default())
             .is_ok()
     );
     assert_eq!(
         old.operation_id("x")
             .unwrap()
-            .prepare(&Input::default())
+            .prepare_case(&CaseInput::default())
             .unwrap_err()
             .code(),
         Code::ResourceLayoutRequired
@@ -225,7 +226,7 @@ fn incomplete_path_discovery_does_not_block_an_explicit_usable_path() {
     assert!(
         old.operation("/known", Method::Get)
             .unwrap()
-            .prepare(&Input::default())
+            .prepare_case(&CaseInput::default())
             .is_ok()
     );
     let error = old.operation("/other", Method::Get).unwrap_err();
@@ -249,7 +250,7 @@ fn incomplete_path_discovery_does_not_block_an_explicit_usable_path() {
         complete
             .operation("/other", Method::Get)
             .unwrap()
-            .prepare(&Input::default())
+            .prepare_case(&CaseInput::default())
             .is_ok()
     );
 }
@@ -269,7 +270,7 @@ fn declared_self_does_not_rebase_servers_and_aliases_are_unconditional() {
     let ready = doc
         .operation("/x", Method::Get)
         .unwrap()
-        .prepare(&Input::default())
+        .prepare_case(&CaseInput::default())
         .unwrap();
     assert_eq!(ready.target(), "https://retrieval.example/dir/api/x");
     assert_eq!(doc.entry_resource().aliases().count(), 3);
@@ -280,10 +281,10 @@ fn security_uri_keys_recover_and_exact_uri_like_names_take_precedence() {
     let bytes = br##"{"openapi":"3.2.1","servers":[{"url":"https://api.example"}],"paths":{"/x":{"get":{"security":[{"scheme":[]}],"responses":{"200":{"description":"ok"}}}}}}"##;
     let doc = Document::parse(bytes, Some("https://docs.example/root"), Limits::default()).unwrap();
     let op = doc.operation("/x", Method::Get).unwrap();
-    let direct = op.prepare(&Input::default()).unwrap_err();
+    let direct = op.prepare_case(&CaseInput::default()).unwrap_err();
     let effective = op.describe().unwrap_err();
     let fluent = op.request().prepare().unwrap_err();
-    for error in [&direct, &effective, fluent.diagnostic()] {
+    for error in [&direct, &effective, &fluent] {
         let need = error
             .resource_need()
             .expect("URI-key need at every public boundary");
@@ -307,10 +308,7 @@ fn security_uri_keys_recover_and_exact_uri_like_names_take_precedence() {
         .request()
         .credential(
             "scheme",
-            Credential {
-                value: CredentialValue::ApiKey("test".into()),
-                origins: vec!["https://api.example".into()],
-            },
+            Credential::api_key("test", vec!["https://api.example".into()]),
         )
         .prepare()
         .unwrap();
@@ -323,10 +321,7 @@ fn security_uri_keys_recover_and_exact_uri_like_names_take_precedence() {
         .request()
         .credential(
             "https://unavailable.example/scheme",
-            Credential {
-                value: CredentialValue::ApiKey("test".into()),
-                origins: vec!["https://api.example".into()],
-            },
+            Credential::api_key("test", vec!["https://api.example".into()]),
         )
         .prepare()
         .unwrap();
@@ -371,7 +366,7 @@ fn conflicting_identity_and_unrelated_malformed_input_do_not_replace_existing_so
             br#"{"openapi":"3.2.1","paths":{}}"#,
         ))
         .unwrap_err();
-    assert_eq!(error.diagnostic().code(), Code::IdentityCollision);
+    assert_eq!(error.code(), Code::IdentityCollision);
     assert!(
         builder
             .add(input("https://docs.example/bad", b"{"))
@@ -381,7 +376,7 @@ fn conflicting_identity_and_unrelated_malformed_input_do_not_replace_existing_so
     assert!(
         doc.operation("/ok", Method::Get)
             .unwrap()
-            .prepare(&Input::default())
+            .prepare_case(&CaseInput::default())
             .is_ok()
     );
     assert_eq!(doc.resources().count(), 1);
@@ -397,8 +392,8 @@ fn empty_self_uses_real_retrieval_base_or_reports_located_missing_base() {
         Some("https://docs.example/root")
     );
     let error = Document::parse(source, None, Limits::default()).unwrap_err();
-    assert_eq!(error.diagnostic().code(), Code::MissingResourceBase);
-    assert_eq!(error.diagnostic().location().unwrap().pointer, "/$self");
+    assert_eq!(error.code(), Code::MissingResourceBase);
+    assert_eq!(error.location().unwrap().pointer, "/$self");
 }
 
 #[test]
@@ -474,7 +469,7 @@ fn alias_and_layout_admission_are_bounded_before_indexing_or_idempotent_growth()
         )
         .unwrap_err();
     assert!(matches!(
-        error.diagnostic().reason(),
+        error.reason(),
         Some(DiagnosticReason::Limit {
             kind: LimitKind::GraphIdentities,
             maximum: 3,
@@ -488,14 +483,14 @@ fn alias_and_layout_admission_are_bounded_before_indexing_or_idempotent_growth()
     let error = DocumentBuilder::from_document(&doc)
         .add_with_cancellation(input("https://docs.example/root", source), &cancelled)
         .unwrap_err();
-    assert_eq!(error.diagnostic().code(), Code::Cancelled);
+    assert_eq!(error.code(), Code::Cancelled);
     let mut caps = GraphLimits::default();
     caps.metadata_bytes = "https://docs.example/root".len() * 3 - 1;
     let error = DocumentBuilder::new(Limits::default(), caps)
         .add(input("https://docs.example/root", source))
         .unwrap_err();
     assert!(matches!(
-        error.diagnostic().reason(),
+        error.reason(),
         Some(DiagnosticReason::Limit {
             kind: LimitKind::GraphMetadataBytes,
             ..
@@ -627,11 +622,11 @@ fn selected_form_header_references_use_uniform_graph_recovery() {
             .operation_id("send")
             .unwrap()
             .request()
-            .form([FormField::new("x", "value")])
+            .form_fields([FormField::value("x", &"value", Limits::default()).unwrap()])
             .prepare()
             .unwrap_err();
-        assert_eq!(error.diagnostic().code(), Code::ResourceUnavailable);
-        let need = error.diagnostic().resource_need().unwrap();
+        assert_eq!(error.code(), Code::ResourceUnavailable);
+        let need = error.resource_need().unwrap();
         assert_eq!(need.requested_uri(), Some("https://docs.example/header"));
         assert_eq!(need.reference_kind(), Some(ReferenceKind::Header));
         assert!(
@@ -654,16 +649,16 @@ fn selected_form_header_references_use_uniform_graph_recovery() {
                 .operation_id("send")
                 .unwrap()
                 .request()
-                .form([FormField::new("x", "value")])
+                .form_fields([FormField::value("x", &"value", Limits::default()).unwrap()])
                 .prepare();
             if required {
                 let error = result.unwrap_err();
                 assert_eq!(
-                    error.diagnostic().reason(),
+                    error.reason(),
                     Some(&DiagnosticReason::Form(FormReason::UnsupportedHeader))
                 );
                 assert_eq!(
-                    error.diagnostic().source_context(),
+                    error.source_context(),
                     Some(new.resource(header_id).unwrap().root().source_context())
                 );
             } else {
@@ -679,10 +674,9 @@ fn selected_form_header_references_use_uniform_graph_recovery() {
             old.operation_id("send")
                 .unwrap()
                 .request()
-                .form([FormField::new("x", "value")])
+                .form_fields([FormField::value("x", &"value", Limits::default()).unwrap()])
                 .prepare()
                 .unwrap_err()
-                .diagnostic()
                 .code(),
             Code::ResourceUnavailable
         );
@@ -787,10 +781,7 @@ fn security_uri_edges_consume_graph_quota_but_exact_names_do_not() {
                 .request()
                 .credential(
                     "https://defs.example/security#/components/securitySchemes/T",
-                    Credential {
-                        value: CredentialValue::ApiKey("dummy".into()),
-                        origins: vec!["https://api.example".into()],
-                    },
+                    Credential::api_key("dummy", vec!["https://api.example".into()]),
                 )
                 .prepare()
                 .unwrap();
@@ -811,10 +802,7 @@ fn security_uri_edges_consume_graph_quota_but_exact_names_do_not() {
             .request()
             .credential(
                 "https://defs.example/T",
-                Credential {
-                    value: CredentialValue::ApiKey("dummy".into()),
-                    origins: vec!["https://api.example".into()]
-                }
+                Credential::api_key("dummy", vec!["https://api.example".into()])
             )
             .prepare()
             .is_ok()

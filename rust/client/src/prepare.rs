@@ -1,7 +1,10 @@
-use crate::{
-    Code, Diagnostic, Edition, Header, Limits, Method, Operation, ReferenceKind, Value, ValueKind,
-};
-use crate::{DiagnosticContext, DiagnosticReason, LimitKind, SelectionKind, uri};
+use crate::diagnostics::Code;
+use crate::diagnostics::{DiagnosticContext, DiagnosticReason, LimitKind, SelectionKind};
+use crate::exact::{Value, ValueKind};
+use crate::graph::ReferenceKind;
+use crate::inspect::{Edition, Method};
+use crate::uri;
+use crate::{Diagnostic, Header, Limits, Operation};
 use base64::Engine;
 use std::{
     collections::{BTreeMap, HashMap, HashSet, hash_map::Entry},
@@ -31,7 +34,7 @@ impl ParameterLocation {
 }
 /// An exact dynamic parameter value.
 #[derive(Clone, Debug)]
-pub struct ParameterInput {
+pub(crate) struct ParameterInput {
     /// Parameter namespace.
     pub location: ParameterLocation,
     /// Authored name; header lookup is case-insensitive.
@@ -40,9 +43,8 @@ pub struct ParameterInput {
     pub value: Value,
 }
 /// Finite request body with absence distinct from JSON null and empty raw bytes.
-#[derive(Clone, Default)]
-#[non_exhaustive]
-pub enum Body {
+#[derive(Default)]
+pub(crate) enum Body {
     /// No request body.
     #[default]
     Absent,
@@ -51,7 +53,7 @@ pub enum Body {
     /// Explicit finite bytes for a concretely elected media type.
     Raw(Arc<[u8]>),
     /// Reusable admitted logical fields, encoded by the selected operation.
-    Form(crate::Form),
+    Form(Vec<crate::form::ReadyField<'static>>),
 }
 // One internal body view is authoritative for owned and borrowed routes.
 #[derive(Clone, Copy)]
@@ -67,13 +69,13 @@ impl<'a> From<&'a Body> for AdmittedBody<'a> {
             Body::Absent => Self::Absent,
             Body::Json(v) => Self::Json(v),
             Body::Raw(v) => Self::Raw(v),
-            Body::Form(v) => Self::Form(v.fields()),
+            Body::Form(v) => Self::Form(v),
         }
     }
 }
 /// Explicit per-call elections, with the default policy documented per field.
 #[derive(Clone, Default)]
-pub struct Selection {
+pub(crate) struct Selection {
     /// Index in the effective authored server array. None selects a unique usable server.
     pub server: Option<usize>,
     /// Server-variable overrides; values are checked after substitution.
@@ -88,7 +90,7 @@ pub struct Selection {
 /// Supplied credential material. Debug is deliberately opaque.
 #[derive(Clone)]
 #[allow(missing_docs)]
-pub enum CredentialValue {
+pub(crate) enum CredentialValue {
     Basic { username: String, password: String },
     Bearer(String),
     ApiKey(String),
@@ -102,9 +104,39 @@ impl std::fmt::Debug for CredentialValue {
 #[derive(Clone)]
 pub struct Credential {
     /// Material suitable for the elected Security Scheme Object.
-    pub value: CredentialValue,
+    pub(crate) value: CredentialValue,
     /// Origin URLs. Default ports and host/scheme case are compared canonically.
-    pub origins: Vec<String>,
+    pub(crate) origins: Vec<String>,
+}
+impl Credential {
+    /// Scope bearer material to an explicit list of admitted origins.
+    pub fn bearer(token: impl Into<String>, origins: Vec<String>) -> Self {
+        Self {
+            value: CredentialValue::Bearer(token.into()),
+            origins,
+        }
+    }
+    /// Scope HTTP Basic material to an explicit list of admitted origins.
+    pub fn basic(
+        username: impl Into<String>,
+        password: impl Into<String>,
+        origins: Vec<String>,
+    ) -> Self {
+        Self {
+            value: CredentialValue::Basic {
+                username: username.into(),
+                password: password.into(),
+            },
+            origins,
+        }
+    }
+    /// Scope API key material to an explicit list of admitted origins.
+    pub fn api_key(value: impl Into<String>, origins: Vec<String>) -> Self {
+        Self {
+            value: CredentialValue::ApiKey(value.into()),
+            origins,
+        }
+    }
 }
 impl std::fmt::Debug for Credential {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -112,8 +144,8 @@ impl std::fmt::Debug for Credential {
     }
 }
 /// Per-call data. No schema defaults are applied and no credentials are acquired.
-#[derive(Clone, Default)]
-pub struct Input {
+#[derive(Default)]
+pub(crate) struct Input {
     /// Explicit elections.
     pub selection: Selection,
     /// Parameter values distinguished by name and location.
@@ -128,7 +160,7 @@ pub struct Input {
 /// One effective parameter with independently retained source/reference data.
 #[derive(Clone)]
 pub struct Parameter {
-    resolved: crate::ResolvedReference,
+    resolved: crate::graph::ResolvedReference,
     node: Value,
     name: String,
     location: ParameterLocation,
@@ -179,11 +211,11 @@ impl Parameter {
         self.resolved.authored.clone()
     }
     /// Reference use-site siblings, chain and final target, retaining their owners.
-    pub fn resolved(&self) -> crate::ResolvedReference {
+    pub fn resolved(&self) -> crate::graph::ResolvedReference {
         self.resolved.clone()
     }
     /// Opaque schema with retained edition and dialect context.
-    pub fn schema_description(&self) -> Option<crate::SchemaDescription> {
+    pub fn schema_description(&self) -> Option<crate::schema::SchemaDescription> {
         self.schema_context
             .as_ref()
             .map(SchemaDeclaration::describe)
@@ -193,17 +225,17 @@ impl Parameter {
 #[derive(Clone, Debug)]
 pub(crate) struct SchemaDeclaration {
     pub value: Value,
-    pub profile: crate::SchemaProfile,
+    pub profile: crate::schema::SchemaProfile,
 }
 impl SchemaDeclaration {
-    pub(crate) fn into_description(self) -> crate::SchemaDescription {
-        crate::SchemaDescription {
+    pub(crate) fn into_description(self) -> crate::schema::SchemaDescription {
+        crate::schema::SchemaDescription {
             value: self.value,
             profile: self.profile,
         }
     }
-    pub(crate) fn describe(&self) -> crate::SchemaDescription {
-        crate::SchemaDescription {
+    pub(crate) fn describe(&self) -> crate::schema::SchemaDescription {
+        crate::schema::SchemaDescription {
             value: self.value.clone(),
             profile: self.profile.clone(),
         }
@@ -234,7 +266,7 @@ pub(crate) struct MediaDeclaration {
 #[derive(Clone, Debug)]
 pub(crate) struct BodyDeclaration {
     /// Original declaration and local-reference provenance.
-    pub declaration: crate::ResolvedReference,
+    pub declaration: crate::graph::ResolvedReference,
     /// Whether omitting the logical body is permitted.
     pub required: bool,
     /// Effective request representations. Malformed media keys are excluded;
@@ -308,10 +340,10 @@ pub struct ResponseDescription {
     /// Exact, range or default status selector.
     pub status: String,
     /// Original declaration and local-reference provenance.
-    pub declaration: crate::ResolvedReference,
+    pub declaration: crate::graph::ResolvedReference,
     /// Effective response representations. Malformed media keys are excluded;
     /// their original values remain accessible through `declaration`.
-    pub media: Vec<crate::MediaDescription>,
+    pub media: Vec<crate::inspect::MediaDescription>,
 }
 /// One effective target choice. Swagger components become a URL template without source rewriting.
 #[derive(Clone, Debug)]
@@ -384,7 +416,7 @@ pub struct SecurityRequirement {
     /// Required OAuth scopes or later-edition roles; verifying credentials remains caller-owned.
     pub scopes: Vec<String>,
     /// Original scheme declaration and reference provenance.
-    pub declaration: crate::ResolvedReference,
+    pub declaration: crate::graph::ResolvedReference,
     /// Normalized security mechanism; credentials remain separate per-call inputs.
     pub scheme: SecurityScheme,
 }
@@ -410,7 +442,7 @@ pub struct EffectiveOperationDescription {
     /// Effective target choices, in election order.
     pub servers: Vec<ServerDescription>,
     /// Effective logical body; ignored edition-specific body declarations are absent here.
-    pub request_body: Option<crate::RequestBodyDescription>,
+    pub request_body: Option<crate::inspect::RequestBodyDescription>,
     /// Effective status and representation declarations.
     pub responses: Vec<ResponseDescription>,
     /// Effective security alternatives.
@@ -603,7 +635,7 @@ impl<'a> DescriptorWork<'a> {
         graph: &crate::graph::Graph,
         source: &Value,
         kind: ReferenceKind,
-    ) -> Result<crate::ResolvedReference, Diagnostic> {
+    ) -> Result<crate::graph::ResolvedReference, Diagnostic> {
         self.declaration(source)?;
         let work_left = self.limits.descriptor_work - self.usage.references;
         let nodes_left = self.limits.nodes - self.usage.nodes;
@@ -641,7 +673,7 @@ impl Operation {
         let profile = if let Some(scope) = self.store.graph.schemas.scope(crate::graph::key(&value))
         {
             match scope.profile.as_ref() {
-                crate::SchemaProfile::JsonSchema { dialect_uri } => {
+                crate::schema::SchemaProfile::JsonSchema { dialect_uri } => {
                     let dialect_source = self
                         .store
                         .graph
@@ -655,7 +687,7 @@ impl Operation {
                                 .get("jsonSchemaDialect")
                         })
                         .unwrap_or_else(|| value.clone());
-                    crate::SchemaProfile::JsonSchema {
+                    crate::schema::SchemaProfile::JsonSchema {
                         dialect_uri: work.text(&dialect_source, dialect_uri)?,
                     }
                 }
@@ -663,7 +695,7 @@ impl Operation {
             }
         } else if self.store.edition == Ok(Edition::Swagger20) {
             // Swagger's non-body parameter constraints are protocol positions.
-            crate::SchemaProfile::Swagger20
+            crate::schema::SchemaProfile::Swagger20
         } else {
             return Err(value.error(Code::UnsupportedSchema));
         };
@@ -672,9 +704,9 @@ impl Operation {
     fn effective_parameter_references(
         &self,
         work: &mut DescriptorWork<'_>,
-    ) -> Result<Vec<crate::ResolvedReference>, Diagnostic> {
+    ) -> Result<Vec<crate::graph::ResolvedReference>, Diagnostic> {
         self.store.edition.clone()?;
-        let mut parameters: Vec<crate::ResolvedReference> = vec![];
+        let mut parameters: Vec<crate::graph::ResolvedReference> = vec![];
         // One entry per identity records its stable output position and the list
         // that last declared it. This also refuses duplicates within either list.
         let mut identities = HashMap::new();
@@ -1224,7 +1256,7 @@ impl Operation {
     fn response_declarations(
         &self,
         work: &mut DescriptorWork<'_>,
-    ) -> Result<Vec<(String, crate::ResolvedReference)>, Diagnostic> {
+    ) -> Result<Vec<(String, crate::graph::ResolvedReference)>, Diagnostic> {
         let mut result = vec![];
         if let Some(responses) = self.value().get("responses") {
             for (key, value) in responses
@@ -1941,11 +1973,12 @@ impl Operation {
     }
     /// Prepare supported parameters, body and scoped credentials into a finite immutable request.
     /// Inspection remains usable when preparation returns a located refusal.
-    pub fn prepare(&self, input: &Input) -> Result<PreparedRequest, Diagnostic> {
+    #[cfg(test)]
+    pub(crate) fn prepare(&self, input: &Input) -> Result<PreparedRequest, Diagnostic> {
         self.prepare_with_cancellation(input, &crate::Cancellation::default())
     }
     /// Prepare with cancellation checkpoints in owned work; no remote effects occur.
-    pub fn prepare_with_cancellation(
+    pub(crate) fn prepare_with_cancellation(
         &self,
         input: &Input,
         cancellation: &crate::Cancellation,
@@ -3328,7 +3361,7 @@ impl std::fmt::Debug for Body {
             Self::Absent => f.write_str("Body::Absent"),
             Self::Json(v) => f.debug_tuple("Body::Json").field(&v.raw().len()).finish(),
             Self::Raw(b) => f.debug_tuple("Body::Raw").field(&b.len()).finish(),
-            Self::Form(form) => form.fmt(f),
+            Self::Form(form) => f.debug_tuple("Form").field(&form.len()).finish(),
         }
     }
 }
@@ -3337,6 +3370,7 @@ impl std::fmt::Debug for Body {
 mod parameter_work_tests {
     use super::*;
     use crate::{Cancellation, Document};
+
     use serde_json::json;
 
     thread_local! {

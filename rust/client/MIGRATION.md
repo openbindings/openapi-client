@@ -1,3 +1,39 @@
+# Checked input revision (O6 stage 3, unpublished candidate)
+
+Use `operation.request().parameter(location, name, &value).json(&body).prepare()`.
+Serde admission runs in setters, with one private encoder and aggregate byte/node
+budgets. Builders retain owned data and latch the first refusal. Set cancellation
+before setters when callbacks must be suppressed. Duplicates precede cancellation;
+a later token cannot undo callbacks that already ran.
+
+`exact::Value` replaces ExactJson and Value with one owning node handle. Parse and
+project the handle directly; there is no root() step and projection uses the
+selected subtree. Use `parameter_exact`/`json_exact` for exact tokens. Value does
+not implement Serialize. `from_serializable` remains for reusable exact values.
+
+The public OrdinaryValue, Argument, Input, ParameterInput, Body, Selection, Form,
+FormValue, ParseFailure, RequestError and DeserializationError routes are removed.
+Use `server`, `media`, `security`, `server_variable`, `raw_body` and `no_body` for
+explicit assignments. All failures return Diagnostic, with retained source and
+explicit untrusted projection detail. Generated input positions refer to each
+setter's owner, without the former shared array's `/0` prefix.
+
+Use `form(&model)` for ordinary objects, and `form_fields` with FormField's explicit
+`value`, `exact`, `part` and `parts` constructors for finite mixed uploads. Borrowed
+bytes are copied during the setter; shared binary owners remain shared. Clone
+models, exact values or field collections for reuse. Field cloning adds Arc
+references rather than cloning the former public Form's outer storage.
+
+CredentialValue is private. `Credential::bearer(token, origins)`,
+`basic(username, password, origins)` and `api_key(value, origins)` require explicit
+origin lists. Origin checking, elections, execution and response policies retain
+their existing behavior.
+
+Advanced types now live in `exact`, `inspect`, `source`, `graph`, `schema`, `form`,
+`transport` and `diagnostics`, without old root aliases. Root Parameters and the
+response/policy carriers remain for later implementation stages. The sections
+below record earlier revisions; this section supersedes their input API examples.
+
 # Carrier reduction (unpublished candidate)
 
 Custom callbacks passed to `PreparedRequest::invoke` or `invoke_with_replay` now

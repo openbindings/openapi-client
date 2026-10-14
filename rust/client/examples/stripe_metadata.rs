@@ -1,6 +1,7 @@
 //! Prepare the preserved provider document supplied as a local file. No dispatch.
 //! cargo run --example stripe_metadata -- /path/to/stripe.document
 use dynamic_openapi_client::*;
+use dynamic_openapi_client::{diagnostics::*, source::*};
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::env::args()
         .nth(1)
@@ -13,31 +14,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let trace = document.root().source_trace();
     assert_eq!(trace.authored.as_ref().unwrap().source().as_bytes(), source);
-    let metadata = [
-        ("order", OrdinaryValue::String("o 7")),
-        ("source", OrdinaryValue::String("web")),
-    ];
+    let metadata = std::collections::BTreeMap::from([("order", "o 7"), ("source", "web")]);
     for name in ["GetCreditNotesPreview", "GetCreditNotesPreviewLines"] {
         let operation = document.operation_id(name)?;
         let prepared = operation
             .request()
-            .selection(Selection {
-                security: Some(1),
-                ..Selection::default()
-            })
+            .security(1)
             .credential(
                 "bearerAuth",
-                Credential {
-                    value: CredentialValue::Bearer("dummy-token".into()),
-                    origins: vec!["https://api.stripe.com".into()],
-                },
+                Credential::bearer("dummy-token", vec!["https://api.stripe.com".into()]),
             )
-            .parameter(ParameterLocation::Query, "invoice", "in_example")
-            .parameter(
-                ParameterLocation::Query,
-                "metadata",
-                OrdinaryValue::Object(&metadata),
-            )
+            .parameter(ParameterLocation::Query, "invoice", &"in_example")
+            .parameter(ParameterLocation::Query, "metadata", &metadata)
             .prepare()?;
         assert!(
             prepared
@@ -50,24 +38,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             serde_json::json!({"operation":name,"authored_version":document.version(),"prepared":true,"dispatched":false,"original_source_preserved":true})
         );
     }
-    let expand = [OrdinaryValue::String("customer")];
+    let expand = ["customer"];
     let refusal = document
         .operation_id("GetCustomers")?
         .request()
-        .parameter(
-            ParameterLocation::Query,
-            "expand",
-            OrdinaryValue::Array(&expand),
-        )
+        .parameter(ParameterLocation::Query, "expand", &expand)
         .prepare()
         .unwrap_err();
-    assert_eq!(refusal.diagnostic().code(), Code::UnsupportedValue);
+    assert_eq!(refusal.code(), Code::UnsupportedValue);
     assert_eq!(
-        refusal.diagnostic().reason(),
+        refusal.reason(),
         Some(&DiagnosticReason::UnsupportedStyleValue)
     );
     assert_eq!(
-        refusal.diagnostic().source_context().unwrap().origin,
+        refusal.source_context().unwrap().origin,
         SourceOrigin::Constructed
     );
     println!(

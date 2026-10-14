@@ -1,9 +1,10 @@
 use crate::{Profile, admission};
-use dynamic_openapi_client::{
-    BodyState, Cancellation, Diagnostic, Header, HeaderDelivery, HeaderFidelity, HostRefusal,
-    Outcome, PreparedRequest, Provenance, ReplayPolicy, ResponseAdmission, ResponseInput,
-    TransportResult, UploadState,
+use dynamic_openapi_client::diagnostics::HostRefusal;
+use dynamic_openapi_client::transport::{
+    BodyState, HeaderDelivery, HeaderFidelity, PreparedRequest, Provenance, ReplayPolicy,
+    ResponseAdmission, ResponseInput, TransportResult, UploadState,
 };
+use dynamic_openapi_client::{Cancellation, Diagnostic, Header, Outcome};
 use js_sys::{Array, JsString, Object, Promise, Reflect, Uint8Array};
 use std::{
     collections::BTreeSet,

@@ -6,7 +6,8 @@ and author checks do not establish complete host/resource/performance support.
 Native construction returns the controlled Unavailable refusal and performs no I/O.
 
 ```no_run
-use dynamic_openapi_client::{Cancellation, PreparedRequest, ReplayPolicy, policies};
+use dynamic_openapi_client::{Cancellation, policies};
+use dynamic_openapi_client::transport::{PreparedRequest, ReplayPolicy};
 use dynamic_openapi_client_fetch::{Client, Profile};
 # async fn call(prepared: &PreparedRequest) -> Result<(), Box<dyn std::error::Error>> {
 let client = Client::new(Profile::Browser)?;
@@ -14,7 +15,7 @@ let outcome = client.execute_with_replay(
     prepared, Cancellation::default(), ReplayPolicy::AllowHostManaged,
 ).await;
 match policies::received_2xx_json(outcome) {
-    Ok(accepted) => println!("{}", accepted.json.root().raw()),
+    Ok(accepted) => println!("{}", accepted.json.clone().raw()),
     Err(refused) => eprintln!("{refused}"),
 }
 # Ok(()) }

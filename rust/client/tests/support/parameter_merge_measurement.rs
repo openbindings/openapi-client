@@ -5,6 +5,7 @@
 //   -L dependency=target/release/deps -o /tmp/o2-parameter-measurement
 // /tmp/o2-parameter-measurement
 use dynamic_openapi_client::{Document, Input, Limits};
+
 use std::{hint::black_box, time::Instant};
 
 fn source(n: usize) -> String {
@@ -57,7 +58,7 @@ fn main() {
             let doc = document(&source);
             let op = doc.operation_id("read").unwrap();
             let start = Instant::now();
-            let result = black_box(op.prepare(&Input::default()).unwrap());
+            let result = black_box(op.prepare_case(&Input::default()).unwrap());
             prepare.push(start.elapsed().as_secs_f64() * 1_000.0);
             drop(result);
         }

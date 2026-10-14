@@ -1,5 +1,6 @@
 //! Logical path/query styles and exact content share the existing request builder.
 //! Run with: cargo run -p dynamic-openapi-client --example structured_parameters
+use dynamic_openapi_client::exact::*;
 use dynamic_openapi_client::*;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -22,23 +23,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some("https://docs.example/search"),
         Limits::default(),
     )?;
-    let position = [("x", OrdinaryValue::I64(10)), ("y", OrdinaryValue::I64(20))];
-    let tags = [OrdinaryValue::String("red"), OrdinaryValue::String("blue")];
-    let filter = ExactJson::parse(r#"{"min":1e9999,"active":true}"#, Limits::default())?;
+    let position = std::collections::BTreeMap::from([("x", 10), ("y", 20)]);
+    let tags = ["red", "blue"];
+    let filter = Value::parse(r#"{"min":1e9999,"active":true}"#, Limits::default())?;
     let prepared = document
         .operation_id("search")?
         .request()
-        .parameter(
-            ParameterLocation::Path,
-            "position",
-            OrdinaryValue::Object(&position),
-        )
-        .parameter(
-            ParameterLocation::Query,
-            "tags",
-            OrdinaryValue::Array(&tags),
-        )
-        .parameter(ParameterLocation::Query, "filter", filter.root())
+        .parameter(ParameterLocation::Path, "position", &position)
+        .parameter(ParameterLocation::Query, "tags", &tags)
+        .parameter_exact(ParameterLocation::Query, "filter", &filter.clone())
         .prepare()?;
     assert_eq!(
         prepared.target(),

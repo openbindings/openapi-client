@@ -1,11 +1,13 @@
 # Finite named form profile
 
-`RequestBuilder::form` accepts unique logical `FormField`s. Values use the existing
-ordinary/exact `Argument` model, a name-free `Part`, or a borrowed slice of Parts.
+`RequestBuilder::form(&model)` checks a Serde object/map immediately and uses its
+ordered members as logical fields. `form_fields(..)` accepts explicit
+`form::FormField::value`, `exact`, `part` or `parts` inputs for reusable exact values
+and finite files. `Part` is name-free; `parts` borrows a slice of Parts.
 No network or filesystem work occurs in these constructors. Prepared wire bytes
 enter the same media/security/header checks and invocation lifecycle as JSON/raw
 bodies. Missing credentials or unsupported security still refuse before dispatch;
-no retry or replay is introduced. `Body::Raw` remains the explicit finite escape
+no retry or replay is introduced. `raw_body(..)` remains the explicit finite escape
 hatch with existing media election and final header checks.
 
 ## Edition interpretation
@@ -102,12 +104,14 @@ Caller iterator, Into and arbitrary Serialize execution are outside these caps.
 
 Field-count/name admission precede duplicate matching; value/Part admission follows.
 The first refusal stops iteration, drops drafts and ignores later setter work.
-Preparation observes cancellation before ordinary serialization and at encoding
+Set cancellation before setters to suppress ordinary serialization callbacks.
+Preparation performs no user serialization and observes cancellation at encoding
 checkpoints. Field errors carry bounded index/name/item context; source ranges
 belong to their exact original owner (including normalized YAML traces).
 
-Borrowed/shared file owners are retained until preparation. Ordinary values use
-the existing bounded generated exact owner; exact inputs retain existing owners.
+Borrowed file bytes and metadata are copied during `form_fields`; shared file
+owners remain shared. Ordinary values use a bounded generated exact owner;
+exact inputs retain existing owners. Reusing models or fields repeats admission.
 The plan retains Value handles and metadata, not fully encoded per-part buffers.
 Final output is counted before allocation. Conversion from Vec to immutable Arc
 can temporarily retain two wire-sized allocations; source owners, generated input,

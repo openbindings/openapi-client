@@ -8,6 +8,7 @@ no access authority and does not carry API credentials.
 
 ```rust
 use dynamic_openapi_client::*;
+use dynamic_openapi_client::{diagnostics::*, exact::*, form::*, graph::*, inspect::*, schema::*, source::*, transport::*};
 # fn complete(document: &Document, error: &Diagnostic, bytes: &[u8]) -> Result<Document, Box<dyn std::error::Error>> {
 let need = error.resource_need().expect("a missing-resource diagnostic");
 let mut builder = DocumentBuilder::from_document(document);
@@ -19,8 +20,8 @@ let completed = builder.build(document.entry_resource().id())?;
 # }
 ```
 
-Direct preparation, effective inspection, parameter inspection and fluent
-`RequestError::diagnostic()` expose the same `Diagnostic::resource_need()` when
+Builder preparation, effective inspection and parameter inspection expose the
+same `Diagnostic::resource_need()` when
 their selected protocol dependencies are unavailable. A need identifies bytes or
 layout, the requested URI, source edge, expected reference kind and edition, and
 target pointer. These fields are explicit access to untrusted document data.

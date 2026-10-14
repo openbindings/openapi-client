@@ -1,7 +1,8 @@
 //! RFC3986 component handling and literal-dot reference resolution.
 //! The grammar parser is fluent-uri. Resolution implements only RFC3986 §5.2;
 //! percent-encoded dot segments and absent/empty components remain distinct.
-use crate::{Code, Diagnostic};
+use crate::Diagnostic;
+use crate::diagnostics::Code;
 use fluent_uri::UriRef;
 use std::borrow::Cow;
 

@@ -1,6 +1,10 @@
 //! Cross-branch public consumer: recover a schema, reuse an owned form, then
 //! dispatch with the operation's response bounds and inspect host evidence.
+#[path = "support/request_case.rs"]
+mod request_case;
 use dynamic_openapi_client::*;
+use dynamic_openapi_client::{diagnostics::*, form::*, graph::*, transport::*};
+use request_case::*;
 use std::{
     cell::Cell,
     future::Future,
@@ -47,17 +51,17 @@ fn recovered_form_and_response_contract_compose_across_editions() {
             limits.clone(),
         )
         .unwrap();
-        let form = Form::new([FormField::new("p", "a b")], limits).unwrap();
+        let form = vec![FormField::value("p", "a b", limits).unwrap()];
         let operation = document.operation_id("send").unwrap();
         let missing = operation.describe_form_field(MEDIA, "p").unwrap_err();
         assert_eq!(missing.code(), Code::ResourceUnavailable, "{version}");
         let need = missing.resource_need().unwrap();
         let preparation_error = operation
             .request()
-            .body(Body::Form(form.clone()))
+            .form_fields(form.clone())
             .prepare()
             .unwrap_err();
-        assert_eq!(preparation_error.diagnostic().resource_need(), Some(need));
+        assert_eq!(preparation_error.resource_need(), Some(need));
 
         let mut builder = DocumentBuilder::from_document(&document);
         builder
@@ -82,12 +86,12 @@ fn recovered_form_and_response_contract_compose_across_editions() {
             "the original snapshot remains unchanged"
         );
         let direct = current
-            .prepare(&Input {
-                body: Body::Form(form.clone()),
-                ..Input::default()
+            .prepare_case(&CaseInput {
+                body: CaseBody::Form(form.clone()),
+                ..CaseInput::default()
             })
             .unwrap();
-        let fluent = current.request().body(Body::Form(form)).prepare().unwrap();
+        let fluent = current.request().form_fields(form).prepare().unwrap();
         for request in [direct, fluent] {
             assert_eq!(request.body().map(AsRef::as_ref), Some(b"p=a+b".as_slice()));
             let expected_admission = request.response_admission();
@@ -131,11 +135,11 @@ fn recovered_form_and_response_contract_compose_across_editions() {
             );
             let accepted = policies::complete_2xx_json(outcome).unwrap();
             assert_eq!(
-                accepted.json.root().pointer("/id").unwrap().raw(),
+                accepted.json.clone().pointer("/id").unwrap().raw(),
                 "9007199254740993"
             );
             assert_eq!(
-                accepted.json.root().pointer("/n").unwrap().raw(),
+                accepted.json.clone().pointer("/n").unwrap().raw(),
                 "1.2300e+2"
             );
         }

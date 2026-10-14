@@ -1,4 +1,8 @@
+#[path = "support/request_case.rs"]
+mod request_case;
 use dynamic_openapi_client::*;
+use dynamic_openapi_client::{diagnostics::*, exact::*, form::*, graph::*, transport::*};
+use request_case::*;
 use serde_json::json;
 use std::{
     future::Future,
@@ -7,7 +11,7 @@ use std::{
 };
 
 fn exact(text: &str) -> Value {
-    ExactJson::parse(text, Limits::default()).unwrap().root()
+    Value::parse(text, Limits::default()).unwrap()
 }
 fn document(parameter: serde_json::Value, limits: Limits) -> Document {
     let path = if parameter["in"] == "path" {
@@ -48,10 +52,10 @@ fn media_type_reference_recovery_is_protocol_owned_and_schema_independent() {
     let input = exact(r#"{"n":1e9999}"#);
     let error = op
         .request()
-        .parameter(ParameterLocation::Query, "p", input.clone())
+        .parameter_exact(ParameterLocation::Query, "p", &input.clone())
         .prepare()
         .unwrap_err();
-    let need = error.diagnostic().resource_need().unwrap();
+    let need = error.resource_need().unwrap();
     assert_eq!(need.reference_kind(), Some(ReferenceKind::MediaType));
     assert_eq!(need.requested_uri(), Some("https://docs.example/media"));
     let mut builder = DocumentBuilder::from_document(&d);
@@ -70,7 +74,7 @@ fn media_type_reference_recovery_is_protocol_owned_and_schema_independent() {
         .operation_id("send")
         .unwrap()
         .request()
-        .parameter(ParameterLocation::Query, "p", input)
+        .parameter_exact(ParameterLocation::Query, "p", &input)
         .prepare()
         .unwrap();
     assert_eq!(
@@ -78,7 +82,7 @@ fn media_type_reference_recovery_is_protocol_owned_and_schema_independent() {
         "https://api.example/send?p=%7B%22n%22%3A1e9999%7D"
     );
     assert_eq!(
-        op.request().prepare().unwrap_err().diagnostic().code(),
+        op.request().prepare().unwrap_err().code(),
         Code::ResourceUnavailable
     );
 }
@@ -108,13 +112,13 @@ fn credential_collision_keeps_external_scheme_source_after_parent_drop() {
         let operation = document.operation_id("send").unwrap();
         let error = operation
             .request()
-            .parameter(ParameterLocation::Query, "token", "caller-private-value")
+            .parameter(ParameterLocation::Query, "token", &"caller-private-value")
             .credential(
                 "key",
-                Credential {
-                    value: CredentialValue::ApiKey("credential-private-value".into()),
-                    origins: vec!["https://api.example".into()],
-                },
+                Credential::api_key(
+                    "credential-private-value",
+                    vec!["https://api.example".into()],
+                ),
             )
             .prepare()
             .unwrap_err();
@@ -122,13 +126,10 @@ fn credential_collision_keeps_external_scheme_source_after_parent_drop() {
         drop(operation);
         drop(document);
         let authored = scheme.source_trace().authored.unwrap();
-        assert_eq!(error.diagnostic().code(), Code::CredentialCollision);
-        assert_eq!(
-            error.diagnostic().source_context(),
-            Some(authored.context())
-        );
-        assert_eq!(error.diagnostic().location(), Some(authored.location()));
-        assert!(error.diagnostic().related().is_empty());
+        assert_eq!(error.code(), Code::CredentialCollision);
+        assert_eq!(error.source_context(), Some(authored.context()));
+        assert_eq!(error.location(), Some(authored.location()));
+        assert!(error.related().is_empty());
         let routine = format!("{error} {error:?}");
         assert!(!routine.contains("caller-private-value"));
         assert!(!routine.contains("credential-private-value"));
@@ -147,19 +148,19 @@ fn empty_collections_and_completed_dot_segments_keep_existing_policy() {
                 .operation_id("send")
                 .unwrap()
                 .request()
-                .parameter(
+                .parameter_exact(
                     if path {
                         ParameterLocation::Path
                     } else {
                         ParameterLocation::Query
                     },
                     "p",
-                    exact(value),
+                    &exact(value),
                 )
                 .prepare()
                 .unwrap_err();
             assert_eq!(
-                e.diagnostic().reason(),
+                e.reason(),
                 Some(&DiagnosticReason::UnsupportedStyleCombination)
             );
         }
@@ -169,10 +170,9 @@ fn empty_collections_and_completed_dot_segments_keep_existing_policy() {
         d.operation_id("send")
             .unwrap()
             .request()
-            .parameter(ParameterLocation::Path, "p", "")
+            .parameter(ParameterLocation::Path, "p", &"")
             .prepare()
             .unwrap_err()
-            .diagnostic()
             .code(),
         Code::InvalidDestination
     );
@@ -182,7 +182,7 @@ fn empty_collections_and_completed_dot_segments_keep_existing_policy() {
             d.operation_id("send")
                 .unwrap()
                 .request()
-                .form([FormField::new("p", exact("{}"))])
+                .form_fields([FormField::exact("p", exact("{}"))])
                 .prepare()
                 .unwrap()
                 .body()
@@ -195,9 +195,7 @@ fn empty_collections_and_completed_dot_segments_keep_existing_policy() {
 fn delimiters_cross_chunks_and_caller_locations_remain_exact() {
     for padding in [4094, 4095, 4096] {
         let text = format!("{}%7c", "x".repeat(padding));
-        let value = ExactJson::from_serializable(&json!([text, "y"]), Limits::default())
-            .unwrap()
-            .root();
+        let value = Value::from_serializable(&json!([text, "y"]), Limits::default()).unwrap();
         let d = document(
             json!({"name":"p","in":"query","schema":{},"style":"pipeDelimited","allowReserved":true}),
             Limits::default(),
@@ -206,21 +204,12 @@ fn delimiters_cross_chunks_and_caller_locations_remain_exact() {
             .operation_id("send")
             .unwrap()
             .request()
-            .parameter(ParameterLocation::Query, "p", value.clone())
+            .parameter_exact(ParameterLocation::Query, "p", &value.clone())
             .prepare()
             .unwrap_err();
-        assert_eq!(
-            e.diagnostic().reason(),
-            Some(&DiagnosticReason::AmbiguousStyleDelimiter)
-        );
-        assert_eq!(
-            e.diagnostic().source_context(),
-            Some(value.source_context())
-        );
-        assert_eq!(
-            e.diagnostic().location(),
-            Some(&value.pointer("/0").unwrap().location())
-        );
+        assert_eq!(e.reason(), Some(&DiagnosticReason::AmbiguousStyleDelimiter));
+        assert_eq!(e.source_context(), Some(value.source_context()));
+        assert_eq!(e.location(), Some(&value.pointer("/0").unwrap().location()));
     }
 }
 #[test]
@@ -240,13 +229,13 @@ fn content_and_new_style_bounds_precede_invocation() {
             .operation_id("send")
             .unwrap()
             .request()
-            .parameter(ParameterLocation::Path, "p", "x")
+            .parameter(ParameterLocation::Path, "p", &"x")
             .prepare();
         if cap == expected.len() {
             assert_eq!(prepared.unwrap().target(), expected);
         } else {
             assert!(matches!(
-                prepared.unwrap_err().diagnostic().reason(),
+                prepared.unwrap_err().reason(),
                 Some(DiagnosticReason::Limit {
                     kind: LimitKind::TargetBytes,
                     ..
@@ -266,16 +255,16 @@ fn content_and_new_style_bounds_precede_invocation() {
     cancellation.cancel();
     assert_eq!(
         op.request()
-            .parameter(ParameterLocation::Query, "p", "ok")
-            .prepare_with_cancellation(&cancellation)
+            .parameter(ParameterLocation::Query, "p", &"ok")
+            .cancellation(cancellation.clone())
+            .prepare()
             .unwrap_err()
-            .diagnostic()
             .code(),
         Code::Cancelled
     );
     let prepared = op
         .request()
-        .parameter(ParameterLocation::Query, "p", "a +")
+        .parameter(ParameterLocation::Query, "p", &"a +")
         .prepare()
         .unwrap();
     let calls = std::cell::Cell::new(0);
@@ -298,7 +287,7 @@ fn content_and_new_style_bounds_precede_invocation() {
         .operation_id("send")
         .unwrap()
         .request()
-        .parameter(ParameterLocation::Query, "p", exact(r#"["a|b"]"#))
+        .parameter_exact(ParameterLocation::Query, "p", &exact(r#"["a|b"]"#))
         .prepare();
     if let Ok(prepared) = rejected {
         ready(prepared.invoke(
@@ -332,17 +321,16 @@ fn ordinary_outer_object_items_share_the_32_form_path() {
         Limits::default(),
     )
     .unwrap();
-    let first = [("x", OrdinaryValue::String("a"))];
-    let second = [("y", OrdinaryValue::String("b"))];
-    let items = [
-        OrdinaryValue::Object(&first),
-        OrdinaryValue::Object(&second),
-    ];
+    let first = [("x", TestValue::String("a"))];
+    let second = [("y", TestValue::String("b"))];
+    let items = [TestValue::Object(&first), TestValue::Object(&second)];
     assert_eq!(
         d.operation_id("send")
             .unwrap()
             .request()
-            .form([FormField::new("p", OrdinaryValue::Array(&items))])
+            .form_fields([
+                FormField::value("p", &TestValue::Array(&items), Limits::default()).unwrap()
+            ])
             .prepare()
             .unwrap()
             .body()
@@ -365,13 +353,13 @@ fn content_header_and_generated_node_limits_keep_existing_admission() {
             .operation_id("send")
             .unwrap()
             .request()
-            .parameter(ParameterLocation::Header, "p", exact(r#"{"n":1e9999}"#))
+            .parameter_exact(ParameterLocation::Header, "p", &exact(r#"{"n":1e9999}"#))
             .prepare();
         if cap == 1 {
             assert_eq!(request.unwrap().headers()[0].value(), br#"{"n":1e9999}"#);
         } else {
             assert!(matches!(
-                request.unwrap_err().diagnostic().reason(),
+                request.unwrap_err().reason(),
                 Some(DiagnosticReason::Limit {
                     kind: LimitKind::HeaderCount,
                     ..
@@ -386,16 +374,16 @@ fn content_header_and_generated_node_limits_keep_existing_admission() {
             ..Limits::default()
         },
     );
-    let values = vec![OrdinaryValue::Bool(true); 65];
+    let values = vec![TestValue::Bool(true); 65];
     let error = d
         .operation_id("send")
         .unwrap()
         .request()
-        .parameter(ParameterLocation::Query, "p", OrdinaryValue::Array(&values))
+        .parameter(ParameterLocation::Query, "p", &TestValue::Array(&values))
         .prepare()
         .unwrap_err();
     assert!(matches!(
-        error.diagnostic().reason(),
+        error.reason(),
         Some(DiagnosticReason::Limit {
             kind: LimitKind::Nodes,
             ..
@@ -430,7 +418,7 @@ fn new_form_delimiters_are_included_in_complete_output_admission() {
             .operation_id("send")
             .unwrap()
             .request()
-            .form([FormField::new("p", exact(r#"{"x":"a","y":"b"}"#))])
+            .form_fields([FormField::exact("p", exact(r#"{"x":"a","y":"b"}"#))])
             .prepare();
         if cap == expected.len() {
             assert_eq!(
@@ -439,7 +427,7 @@ fn new_form_delimiters_are_included_in_complete_output_admission() {
             );
         } else {
             assert!(matches!(
-                request.unwrap_err().diagnostic().reason(),
+                request.unwrap_err().reason(),
                 Some(DiagnosticReason::Limit {
                     kind: LimitKind::BodyBytes,
                     ..

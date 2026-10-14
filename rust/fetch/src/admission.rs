@@ -1,5 +1,6 @@
 use crate::Profile;
-use dynamic_openapi_client::{Cancellation, Header, HostCapabilities, PreparedRequest};
+use dynamic_openapi_client::transport::{HostCapabilities, PreparedRequest};
+use dynamic_openapi_client::{Cancellation, Header};
 
 const BROWSER: &[&str] = &[
     "accept-charset",

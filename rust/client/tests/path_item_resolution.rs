@@ -1,6 +1,10 @@
 //! Consumer regressions for Path Item reference locality. These exercise both
 //! inspection and request preparation; finding a raw operation alone is insufficient.
+#[path = "support/request_case.rs"]
+mod request_case;
 use dynamic_openapi_client::*;
+use dynamic_openapi_client::{diagnostics::*, exact::*, graph::*, inspect::*, transport::*};
+use request_case::*;
 use serde_json::{Value as Json, json};
 
 fn document(version: &str, paths: Json, items: Json, limits: Limits) -> Document {
@@ -26,7 +30,7 @@ fn resolved(doc: &Document, path: &str) -> Result<ResolvedReference, Diagnostic>
 fn prepared(doc: &Document, method: Method) -> PreparedRequest {
     let operation = doc.operation("/x", method.clone()).unwrap();
     operation.describe().unwrap();
-    let request = operation.prepare(&Input::default()).unwrap();
+    let request = operation.prepare_case(&CaseInput::default()).unwrap();
     assert_eq!(request.method(), method);
     assert_eq!(request.target(), "https://api.example/x");
     request
@@ -99,7 +103,10 @@ fn method_conflicts_preserve_other_methods_and_all_operation_ids() {
     );
     let ambiguous = doc.operation("/x", Method::Get).unwrap();
     assert_eq!(
-        ambiguous.prepare(&Input::default()).unwrap_err().code(),
+        ambiguous
+            .prepare_case(&CaseInput::default())
+            .unwrap_err()
+            .code(),
         Code::AmbiguousReference
     );
     assert_eq!(
@@ -178,7 +185,7 @@ fn external_conflict_evidence_retains_the_declaring_source_and_shared_parameters
         .operation_id("create")
         .unwrap()
         .request()
-        .parameter(ParameterLocation::Query, "q", "visible")
+        .parameter(ParameterLocation::Query, "q", &"visible")
         .prepare()
         .unwrap();
     assert_eq!(request.target(), "https://api.example/x?q=visible");
@@ -294,7 +301,7 @@ fn missing_cycles_wrong_kinds_editions_and_depth_remain_resolution_failures() {
         assert_eq!(
             doc.operation("/x", Method::Get)
                 .unwrap()
-                .prepare(&Input::default())
+                .prepare_case(&CaseInput::default())
                 .unwrap_err()
                 .code(),
             expected
@@ -363,7 +370,6 @@ fn duplicate_declarations_do_not_spend_the_mounted_operation_budget_twice() {
             }
         )
         .unwrap_err()
-        .diagnostic()
         .code(),
         Code::Limit
     );
@@ -398,7 +404,7 @@ fn repeated_ids_across_many_mounts_preserve_global_ambiguity() {
     assert_eq!(
         doc.operation("/m1023", Method::Post)
             .unwrap()
-            .prepare(&Input::default())
+            .prepare_case(&CaseInput::default())
             .unwrap()
             .target(),
         "https://api.example/m1023"
