@@ -53,8 +53,9 @@ for row in rows:
         path = (root / "rust/client" / target.split("#", 1)[0]).resolve()
         assert path.is_relative_to(root), target
         assert path.is_file(), f"Missing evidence: {target}"
-        assert ("/tests/" in str(path) or "/qualification/" in str(path)
-                or "/examples/" in str(path) or path.name.endswith("_tests.rs")), f"Not a test or case: {target}"
+        directories = set(path.relative_to(root).parts[:-1])
+        assert (directories & {"tests", "qualification", "examples"}
+                or path.name.endswith("_tests.rs")), f"Not a test or case: {target}"
 print(f"Checked {count} compiled-example excerpts and {len(rows)} capability/policy rows")
 
 # Keep subject-named example/test links usable in both repository docs and rustdoc.
