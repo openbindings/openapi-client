@@ -21,10 +21,7 @@ async fn main() -> Result<(), support::Error> {
             )
             .prepare()?;
         let outcome = client.execute(&prepared, Cancellation::default()).await;
-        println!(
-            "status: {:?}",
-            outcome.response.as_ref().map(|r| r.status())
-        );
+        println!("status: {:?}", outcome.status());
     }
     server.await??;
     Ok(())

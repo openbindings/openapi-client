@@ -1,5 +1,8 @@
+#[path = "support/strict_json.rs"]
+mod policies;
 use dynamic_openapi_client::*;
 use dynamic_openapi_client::{diagnostics::*, exact::*, source::*, transport::*};
+use policies::CompleteJsonRefusal;
 use serde::Deserialize;
 use std::{
     error::Error,
@@ -115,28 +118,27 @@ fn explicit_response_policy_preserves_uncertain_upload_and_http_error_evidence()
             .reason,
         CompleteJsonRefusal::UploadUncertain
     );
-    let accepted = policies::received_2xx_json(received).unwrap();
-    assert_eq!(accepted.outcome.upload, UploadState::Unknown);
+    let accepted = (received).received_2xx_json_exact().unwrap();
+    assert_eq!(received.upload(), UploadState::Unknown);
     #[derive(Deserialize)]
     struct Item {
         id: u64,
     }
     assert_eq!(
-        accepted.json.deserialize::<Item>().unwrap().id,
+        accepted.deserialize::<Item>().unwrap().id,
         9_007_199_254_740_993
     );
-    let refusal =
-        policies::received_2xx_json(outcome(UploadState::Unknown, 422, Cancellation::default()))
-            .unwrap_err();
-    assert_eq!(refusal.reason, CompleteJsonRefusal::HttpStatus);
-    assert_eq!(refusal.outcome.response.as_ref().unwrap().status(), 422);
-    assert!(refusal.decoded.is_some());
+    let rejected = outcome(UploadState::Unknown, 422, Cancellation::default());
+    let refusal = rejected.received_2xx_json_exact().unwrap_err();
+    assert_eq!(refusal.code(), Code::HttpStatus);
+    assert_eq!(rejected.status(), Some(422));
+    assert!(rejected.body_json().is_ok());
     let token = Cancellation::default();
     token.cancel();
-    let refusal =
-        policies::received_2xx_json(outcome(UploadState::Unknown, 200, token)).unwrap_err();
-    assert_eq!(refusal.reason, CompleteJsonRefusal::Cancelled);
-    assert_eq!(refusal.outcome.dispatch, DispatchEvidence::NotDispatched);
+    let rejected = outcome(UploadState::Unknown, 200, token);
+    let refusal = rejected.received_2xx_json_exact().unwrap_err();
+    assert_eq!(refusal.code(), Code::Cancelled);
+    assert_eq!(rejected.dispatch(), DispatchEvidence::NotDispatched);
 }
 
 #[test]
@@ -156,13 +158,13 @@ fn default_errors_are_readable_and_explicit_location_formatting_is_escaped() {
 }
 
 #[test]
-fn repeated_response_json_calls_keep_independent_exact_owners() {
+fn repeated_response_json_calls_share_one_exact_owner() {
     let outcome = outcome(UploadState::Complete, 200, Cancellation::default());
-    let response = outcome.response.as_ref().unwrap();
-    let first = response.json().unwrap();
-    let second = response.json().unwrap();
+    let response = &outcome;
+    let first = response.body_json().unwrap();
+    let second = response.body_json().unwrap();
     assert_eq!(first.source(), second.source());
-    assert_ne!(
+    assert_eq!(
         first.clone().source_context().id,
         second.clone().source_context().id
     );

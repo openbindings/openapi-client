@@ -105,21 +105,21 @@ fn main() {
     let payload = r#"{"n":9007199254740993,"fraction":0.12345678901234567890123456789,"a":[true,false,null]}"#;
     let p = op.request().prepare().unwrap();
     let host = HostCapabilities::programmable();
-    let response = oac_qualification::block_on(p.invoke(Cancellation::default(), &host, |_, _| {
-        std::future::ready(TransportResult {
-            response: Some(ResponseInput::new(
-                200,
-                vec![Header::new("Content-Type", "application/json")],
-                payload.as_bytes().into(),
-                BodyState::Complete,
-                Provenance::Wire,
-            )),
-            upload: UploadState::Unknown,
-            error_detail: None,
-        })
-    }))
-    .response
-    .unwrap();
+    let response = || {
+        oac_qualification::block_on(p.invoke(Cancellation::default(), &host, |_, _| {
+            std::future::ready(TransportResult {
+                response: Some(ResponseInput::new(
+                    200,
+                    vec![Header::new("Content-Type", "application/json")],
+                    payload.as_bytes().into(),
+                    BodyState::Complete,
+                    Provenance::Wire,
+                )),
+                upload: UploadState::Unknown,
+                error_detail: None,
+            })
+        }))
+    };
     let mut rows = vec![];
     for sample in 0..samples {
         let mut stages = vec![];
@@ -169,12 +169,9 @@ fn main() {
                     .unwrap()
             },
         ));
-        stages.push(measure(
-            "decode-json-response",
-            5000,
-            || (),
-            |_| response.json().unwrap(),
-        ));
+        stages.push(measure("decode-json-response", 5000, response, |outcome| {
+            outcome.body_json().unwrap()
+        }));
         rows.push(json!({"sample":sample,"stages":stages}));
     }
     let owners = live_owners();

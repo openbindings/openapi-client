@@ -54,15 +54,7 @@ fn tutorial_handles_only_clean_typed_error_body() -> Result<(), Box<dyn std::err
         ));
         // Decoding remains possible even when interpreting the call must fail.
         assert_eq!(
-            outcome
-                .response
-                .as_ref()
-                .unwrap()
-                .json()?
-                .clone()
-                .get("error")
-                .unwrap()
-                .as_str(),
+            outcome.body_json()?.clone().get("error").unwrap().as_str(),
             Some("rejected")
         );
         let current = current_job::interpret(outcome);

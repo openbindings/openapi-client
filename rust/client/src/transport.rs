@@ -2,7 +2,11 @@ use crate::diagnostics::{Code, HostRefusal};
 use crate::exact::Value;
 pub use crate::prepare::PreparedRequest;
 use crate::{Cancellation, Diagnostic, Limits};
-use std::{fmt, future::Future, sync::Arc};
+use std::{
+    fmt,
+    future::Future,
+    sync::{Arc, OnceLock},
+};
 
 /// Ordered HTTP header field with explicit credential sensitivity.
 #[derive(Clone, PartialEq, Eq)]
@@ -356,54 +360,55 @@ impl fmt::Debug for TransportResult {
 }
 /// Preserved response evidence, whether successful, erroneous, partial or undecodable.
 #[derive(Clone, Debug)]
-pub struct Response {
+struct ReceivedResponse {
     input: ResponseInput,
     limits: Limits,
     validation: Option<Diagnostic>,
     omitted_header_lines: usize,
+    decoded: Arc<OnceLock<Result<Value, Diagnostic>>>,
 }
-impl Response {
+impl ReceivedResponse {
     /// HTTP status as supplied, including a preserved invalid/opaque value on refusal.
-    pub fn status(&self) -> u16 {
+    fn status(&self) -> u16 {
         self.input.status
     }
     /// Retained delivered entries in host delivery order; see header_fidelity().
-    pub fn headers(&self) -> &[Header] {
+    fn headers(&self) -> &[Header] {
         &self.input.headers
     }
     /// Supplied entries omitted by core metadata bounds; the historical name does
     /// not imply raw field lines. Zero does not rule out host filtering. JSON decode
     /// refuses incomplete retained metadata, including with ExactFields fidelity.
-    pub fn omitted_header_lines(&self) -> usize {
+    fn omitted_header_lines(&self) -> usize {
         self.omitted_header_lines
     }
     /// Host-supplied structured-field declaration, unchanged by core omission.
-    pub fn header_fidelity(&self) -> HeaderFidelity {
+    fn header_fidelity(&self) -> HeaderFidelity {
         self.input.header_fidelity
     }
 
     /// The adapter's original enumeration declaration, unchanged by core omission.
     /// Complete means all host-exposed entries were supplied, not all wire fields.
     /// Inspect omitted_header_lines separately for entries discarded by core.
-    pub fn header_delivery(&self) -> HeaderDelivery {
+    fn header_delivery(&self) -> HeaderDelivery {
         self.input.header_delivery
     }
     /// Bounded bytes delivered by the host; provenance is reported separately.
-    pub fn raw(&self) -> &[u8] {
+    fn raw(&self) -> &[u8] {
         &self.input.bytes
     }
     /// Body completion evidence.
-    pub fn body_state(&self) -> BodyState {
+    fn body_state(&self) -> BodyState {
         self.input.body_state
     }
     /// Declared source/interpretation; raw never silently means original wire bytes.
-    pub fn provenance(&self) -> Provenance {
+    fn provenance(&self) -> Provenance {
         self.input.provenance
     }
-    /// Validate delivered JSON into a new, independent exact owner on each call.
+    /// Initialize the single admitted exact owner or diagnostic.
     /// All admission checks finish here; dynamic access may materialize its index later.
     /// Failure leaves this response and raw bytes available.
-    pub fn json(&self) -> Result<Value, Diagnostic> {
+    fn decode(&self) -> Result<Value, Diagnostic> {
         if let Some(e) = &self.validation {
             return Err(e.clone());
         }
@@ -451,19 +456,36 @@ impl Response {
         Value::parse_response(self.raw(), limits)
     }
 }
-/// Honest combined outcome. Inspect the response independently from any failure.
+/// Immutable execution and response evidence. Inspect body data independently of failure.
+///
+/// ```compile_fail
+/// use dynamic_openapi_client::{Outcome, Diagnostic, diagnostics::Code};
+/// let mut out = Outcome::not_dispatched(Diagnostic::new(Code::TransportFailure), true, None);
+/// out.error = None;
+/// ```
+/// ```compile_fail
+/// use dynamic_openapi_client::Outcome;
+/// fn read(out: &Outcome) { let _ = out.json(); }
+/// ```
+/// ```compile_fail
+/// use dynamic_openapi_client::Response;
+/// ```
+/// ```compile_fail
+/// use dynamic_openapi_client::policies::received_2xx_json;
+/// ```
+#[must_use]
 #[derive(Clone)]
 pub struct Outcome {
     /// Whether the supplied callback was entered with this request.
-    pub dispatch: DispatchEvidence,
+    dispatch: DispatchEvidence,
     /// Independent upload evidence.
-    pub upload: UploadState,
+    upload: UploadState,
     /// Response metadata/body evidence when available.
-    pub response: Option<Response>,
+    response: Option<ReceivedResponse>,
     /// Safe SDK-controlled category; arbitrary callback text is not formatted.
-    pub error: Option<Diagnostic>,
+    error: Option<Diagnostic>,
     /// Cancellation observed locally, even if the host returned a response.
-    pub cancelled: bool,
+    cancelled: bool,
     detail: Option<Arc<str>>,
     replay_assurance: Option<ReplayAssurance>,
 }
@@ -480,6 +502,98 @@ impl fmt::Debug for Outcome {
     }
 }
 impl Outcome {
+    /// Whether the supplied callback was entered with this request.
+    pub fn dispatch(&self) -> DispatchEvidence {
+        self.dispatch
+    }
+    /// Independent upload evidence; receipt never establishes upload completion.
+    pub fn upload(&self) -> UploadState {
+        self.upload
+    }
+    /// Cancellation observed locally, independently of the execution diagnostic.
+    pub fn cancelled(&self) -> bool {
+        self.cancelled
+    }
+    /// Selected actual preparation or transport diagnostic.
+    pub fn error(&self) -> Option<&Diagnostic> {
+        self.error.as_ref()
+    }
+    /// HTTP status as supplied. No response is None; an invalid status remains Some(0).
+    pub fn status(&self) -> Option<u16> {
+        self.response.as_ref().map(ReceivedResponse::status)
+    }
+    /// Retained host-delivered entries, preserving duplicates and delivery order.
+    pub fn headers(&self) -> Option<&[Header]> {
+        self.response.as_ref().map(ReceivedResponse::headers)
+    }
+    /// Bounded host-delivered bytes. An empty response body is Some(&[]).
+    pub fn raw(&self) -> Option<&[u8]> {
+        self.response.as_ref().map(ReceivedResponse::raw)
+    }
+    /// Body completion evidence, when a response exists.
+    pub fn body_state(&self) -> Option<BodyState> {
+        self.response.as_ref().map(ReceivedResponse::body_state)
+    }
+    /// Host-declared byte interpretation, when a response exists.
+    pub fn provenance(&self) -> Option<Provenance> {
+        self.response.as_ref().map(ReceivedResponse::provenance)
+    }
+    /// Original host enumeration declaration; Complete means all host-exposed entries.
+    pub fn header_delivery(&self) -> Option<HeaderDelivery> {
+        self.response
+            .as_ref()
+            .map(ReceivedResponse::header_delivery)
+    }
+    /// Host-declared fidelity, unchanged by core omission.
+    pub fn header_fidelity(&self) -> Option<HeaderFidelity> {
+        self.response
+            .as_ref()
+            .map(ReceivedResponse::header_fidelity)
+    }
+    /// Entries omitted by core bounds; zero does not rule out host filtering.
+    pub fn omitted_header_lines(&self) -> Option<usize> {
+        self.response
+            .as_ref()
+            .map(ReceivedResponse::omitted_header_lines)
+    }
+    /// Admit exact response JSON independently of status, execution, cancellation and upload.
+    /// The one cached owner or diagnostic is shared by all reads and outcome clones.
+    /// Unspecified enumeration and Unknown fidelity remain admissible; known omission refuses.
+    pub fn body_json(&self) -> Result<Value, Diagnostic> {
+        let response = self
+            .response
+            .as_ref()
+            .ok_or_else(|| Diagnostic::new(Code::InvalidHostEvidence))?;
+        response.decoded.get_or_init(|| response.decode()).clone()
+    }
+    /// Accept dispatched, uncancelled, error-free received 2xx JSON with a complete body.
+    /// Unknown and Incomplete upload remain accepted and unchanged. Actual execution
+    /// diagnostics precede cancellation, status and body admission failures.
+    pub fn received_2xx_json_exact(&self) -> Result<Value, Diagnostic> {
+        if let Some(error) = self.error() {
+            return Err(error.clone());
+        }
+        if self.cancelled() {
+            return Err(Diagnostic::new(Code::Cancelled));
+        }
+        if self.dispatch() != DispatchEvidence::Dispatched {
+            return Err(Diagnostic::new(Code::InvalidHostEvidence));
+        }
+        let status = self
+            .status()
+            .ok_or_else(|| Diagnostic::new(Code::InvalidHostEvidence))?;
+        if !(200..300).contains(&status) {
+            return Err(Diagnostic::http_status(status));
+        }
+        self.body_json()
+    }
+    /// Accept received 2xx JSON, then project the requested owned application type.
+    /// Projection is rerun per call, outside the decode cache's initialization lock.
+    /// Float projection may round; use the exact read to retain number tokens.
+    pub fn received_2xx_json<T: serde::de::DeserializeOwned>(&self) -> Result<T, Diagnostic> {
+        self.received_2xx_json_exact()?.deserialize()
+    }
+
     /// Construct a transport adapter's pre-dispatch refusal. The adapter asserts
     /// that it has not started I/O for this request. Upload is NotStarted and no
     /// response exists. Optional detail remains explicit-access, untrusted text.
@@ -496,9 +610,9 @@ impl Outcome {
     }
     /// Replay declaration recorded at callback entry. None on every core or adapter
     /// refusal before entry. This is not server receipt or attempt-count evidence;
-    /// later mutation of public outcome fields does not rewrite this historical record.
+    /// the immutable outcome preserves this historical record.
     /// ```compile_fail
-    /// use dynamic_openapi_client::{Code, Diagnostic, Outcome, ReplayAssurance};
+    /// use dynamic_openapi_client::{diagnostics::Code, Diagnostic, Outcome, transport::ReplayAssurance};
     /// let mut out = Outcome::not_dispatched(Diagnostic::new(Code::HostCapability), false, None);
     /// out.replay_assurance = Some(ReplayAssurance::NoReplayDeclared);
     /// ```
@@ -624,11 +738,12 @@ impl PreparedRequest {
             if error.is_none() {
                 error = validation.clone();
             }
-            Response {
+            ReceivedResponse {
                 input,
                 limits: self.limits.clone(),
                 validation,
                 omitted_header_lines,
+                decoded: Arc::default(),
             }
         });
         if response.is_none() && error.is_none() {
@@ -721,7 +836,7 @@ mod host_delivered_tests {
         );
         input.header_delivery = HeaderDelivery::Complete;
         input.header_fidelity = HeaderFidelity::HostProcessed;
-        let response = Response {
+        let response = ReceivedResponse {
             input,
             limits: Limits {
                 body_bytes: 64,
@@ -733,8 +848,9 @@ mod host_delivered_tests {
             },
             validation: None,
             omitted_header_lines: 0,
+            decoded: Arc::default(),
         };
-        let error = response.json().unwrap_err();
+        let error = response.decode().unwrap_err();
         assert_eq!(error.code(), Code::Limit);
         assert!(matches!(
             error.reason(),

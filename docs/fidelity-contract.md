@@ -41,7 +41,7 @@ an implicit instruction to change standard OpenAPI semantics.
 The core host contract and each companion's restrictions determine which
 prepared requests can be dispatched. Native evidence does not promise
 original wire header spelling, host-unfiltered metadata, remote rollback or
-known complete upload. Optional JSON acceptance policies retain these facts;
+known complete upload. Borrowed JSON acceptance reads retain these facts;
 they do not define every application's success criteria.
 
 ## Evaluation and qualification

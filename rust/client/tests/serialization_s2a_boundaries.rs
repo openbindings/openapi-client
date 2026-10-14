@@ -278,7 +278,7 @@ fn content_and_new_style_bounds_precede_invocation() {
         },
     ));
     assert_eq!(calls.get(), 1);
-    assert_eq!(outcome.response.unwrap().status(), 204);
+    assert_eq!(outcome.status().unwrap(), 204);
     let invalid = document(
         json!({"name":"p","in":"query","schema":{},"style":"pipeDelimited"}),
         Limits::default(),
@@ -290,7 +290,7 @@ fn content_and_new_style_bounds_precede_invocation() {
         .parameter_exact(ParameterLocation::Query, "p", &exact(r#"["a|b"]"#))
         .prepare();
     if let Ok(prepared) = rejected {
-        ready(prepared.invoke(
+        let _ = ready(prepared.invoke(
             Cancellation::default(),
             &HostCapabilities::programmable(),
             |_, _| async {

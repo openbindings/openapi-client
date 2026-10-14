@@ -1,3 +1,5 @@
+#[path = "../../tests/support/strict_json.rs"]
+mod strict_policy;
 // Independent consuming-crate acceptance cases. Generated only from this lane's
 // authored server/caller and frozen literal fixtures; no product/backend oracle.
 mod server {
@@ -1271,19 +1273,17 @@ fn safe_error_chain(mut error: &(dyn std::error::Error + 'static)) {
     panic!("unexpected cyclic/deep error chain");
 }
 fn response(outcome: &Outcome, status: u16, raw: &[u8], state: BodyState) {
-    assert_eq!(outcome.dispatch, DispatchEvidence::Dispatched);
-    assert_eq!(outcome.upload, UploadState::Unknown);
-    let value = outcome
-        .response
-        .as_ref()
-        .expect("retained response evidence");
-    assert_eq!(value.status(), status);
-    assert_eq!(value.raw(), raw);
-    assert_eq!(value.body_state(), state);
-    assert_eq!(value.provenance(), Provenance::Wire);
+    assert_eq!(outcome.dispatch(), DispatchEvidence::Dispatched);
+    assert_eq!(outcome.upload(), UploadState::Unknown);
+    let value = outcome;
+    assert_eq!(value.status().unwrap(), status);
+    assert_eq!(value.raw().unwrap(), raw);
+    assert_eq!(value.body_state().unwrap(), state);
+    assert_eq!(value.provenance().unwrap(), Provenance::Wire);
     assert_eq!(
         value
             .headers()
+            .unwrap()
             .iter()
             .filter(|h| h.name().eq_ignore_ascii_case("x-duplicate"))
             .map(|h| h.value())
@@ -1435,15 +1435,15 @@ async fn main() {
     safe_text(&format!("{prepared:?}"));
     let outcome = execute(&client, &prepared).await;
     response(&outcome, 200, &fixture("success.json"), BodyState::Complete);
-    assert!(outcome.error.is_none());
-    let strict = policies::complete_2xx_json(outcome.clone()).unwrap_err();
+    assert!(outcome.error().is_none());
+    let strict = strict_policy::complete_2xx_json(outcome.clone()).unwrap_err();
     assert_eq!(
         strict.reason,
-        policies::CompleteJsonRefusal::UploadUncertain
+        strict_policy::CompleteJsonRefusal::UploadUncertain
     );
     safe_error_chain(&*strict);
-    let accepted = policies::received_2xx_json(outcome).unwrap();
-    let success: Success = accepted.json.deserialize().unwrap();
+    let accepted = (outcome).received_2xx_json_exact().unwrap();
+    let success: Success = accepted.deserialize().unwrap();
     assert_eq!(
         success,
         Success {
@@ -1452,16 +1452,15 @@ async fn main() {
             ok: true
         }
     );
-    let borrowed: Borrowed<'_> = accepted.json.deserialize().unwrap();
+    let borrowed: Borrowed<'_> = accepted.deserialize().unwrap();
     assert_eq!(borrowed.name, "accepted");
     assert!(
-        (accepted.json.source().as_ptr() as usize
-            ..accepted.json.source().as_ptr() as usize + accepted.json.source().len())
+        (accepted.source().as_ptr() as usize
+            ..accepted.source().as_ptr() as usize + accepted.source().len())
             .contains(&(borrowed.name.as_ptr() as usize))
     );
     assert_eq!(
         accepted
-            .json
             .clone()
             .get("id")
             .unwrap()
@@ -1501,7 +1500,7 @@ async fn main() {
         .prepare()
         .unwrap();
     let exact_outcome = execute(&client, &exact_request).await;
-    assert!(policies::received_2xx_json(exact_outcome).is_ok());
+    assert!((exact_outcome).received_2xx_json_exact().is_ok());
     let exact_wire = server.observed("/v1/exact").await;
     assert_eq!(exact_wire.body.as_bytes(), fixture("exact-request.json"));
     let before = server.records().len();
@@ -1544,7 +1543,7 @@ async fn main() {
     ] {
         let prepared = request(&client, &doc, operation, &server);
         let outcome = execute(&client, &prepared).await;
-        assert!(policies::received_2xx_json(outcome).is_ok());
+        assert!((outcome).received_2xx_json_exact().is_ok());
         let wire = server.observed(target).await;
         if let Some(header) = header {
             assert_eq!(wire.values(header), vec![want.unwrap()]);
@@ -1570,7 +1569,11 @@ async fn main() {
         .server_variable("port", server.port.to_string())
         .prepare()
         .unwrap();
-    assert!(policies::received_2xx_json(execute(&client, &public).await).is_ok());
+    assert!(
+        (execute(&client, &public).await)
+            .received_2xx_json_exact()
+            .is_ok()
+    );
     let public_wire = server.observed("/v1/ok").await;
     for header in ["authorization", "x-api-key", "cookie"] {
         assert!(public_wire.values(header).is_empty());
@@ -1579,14 +1582,14 @@ async fn main() {
 
     let outcome = execute(&client, &request(&client, &doc, "reject", &server)).await;
     response(&outcome, 422, &fixture("problem.json"), BodyState::Complete);
-    let refusal = policies::received_2xx_json(outcome).unwrap_err();
-    assert_eq!(refusal.reason, policies::CompleteJsonRefusal::HttpStatus);
-    assert!(refusal.decode_error.is_none());
+    let refusal = (outcome).received_2xx_json_exact().unwrap_err();
+    assert_eq!(refusal.code(), Code::HttpStatus);
+    assert!(outcome.body_json().is_ok());
     assert_eq!(
-        refusal.decoded.as_ref().unwrap().source().as_bytes(),
+        outcome.body_json().unwrap().source().as_bytes(),
         fixture("problem.json")
     );
-    safe_error_chain(&*refusal);
+    safe_error_chain(&refusal);
     observations.push(json!({"case":"non2xx-retains-response-and-decoded-owner","status":422,"reason":"HttpStatus"}));
 
     let exact_limit = document(33);
@@ -1601,7 +1604,7 @@ async fn main() {
         &fixture("exact-limit.json"),
         BodyState::Complete,
     );
-    assert!(policies::received_2xx_json(limit_outcome).is_ok());
+    assert!((limit_outcome).received_2xx_json_exact().is_ok());
     let limited = document(32);
     let outcome = execute(&client, &request(&client, &limited, "large", &server)).await;
     response(
@@ -1610,11 +1613,11 @@ async fn main() {
         &fixture("large.json")[..32],
         BodyState::Truncated,
     );
-    assert!(outcome.error.is_none());
-    let refusal = policies::received_2xx_json(outcome).unwrap_err();
-    assert_eq!(refusal.reason, policies::CompleteJsonRefusal::Decode);
+    assert!(outcome.error().is_none());
+    let refusal = (outcome).received_2xx_json_exact().unwrap_err();
+    assert_eq!(refusal.code(), Code::IncompleteBody);
     assert_eq!(
-        refusal.decode_error.as_ref().unwrap().code(),
+        outcome.body_json().unwrap_err().code(),
         Code::IncompleteBody
     );
     observations.push(json!({"case":"exact-bound-eof-and-delivered-overflow","exactBytes":33,"retainedOverflowBytes":32,"overflowState":"Truncated"}));
@@ -1625,27 +1628,24 @@ async fn main() {
         &fixture("broken-prefix.bin"),
         BodyState::Failed,
     );
+    assert_eq!(outcome.error().unwrap().code(), Code::TransportFailure);
+    let refusal = (outcome).received_2xx_json_exact().unwrap_err();
+    assert_eq!(refusal.code(), Code::TransportFailure);
     assert_eq!(
-        outcome.error.as_ref().unwrap().code(),
-        Code::TransportFailure
-    );
-    let refusal = policies::received_2xx_json(outcome).unwrap_err();
-    assert_eq!(refusal.reason, policies::CompleteJsonRefusal::Transport);
-    assert_eq!(
-        refusal.decode_error.as_ref().unwrap().code(),
+        outcome.body_json().unwrap_err().code(),
         Code::IncompleteBody
     );
-    safe_error_chain(&*refusal);
-    observations.push(json!({"case":"late-body-failure-retains-prefix-and-status","status":200,"bodyState":"Failed","primary":"Transport","decode":"IncompleteBody"}));
+    safe_error_chain(&refusal);
+    observations.push(json!({"case":"late-body-failure-retains-prefix-and-status","status":200,"bodyState":"Failed","primary":"TransportFailure","decode":"IncompleteBody"}));
 
     let before = server.records().len();
     let token = Cancellation::default();
     token.cancel();
     let pre = client.execute(&public, token).await;
-    assert_eq!(pre.dispatch, DispatchEvidence::NotDispatched);
-    assert_eq!(pre.upload, UploadState::NotStarted);
-    assert!(pre.cancelled && pre.response.is_none());
-    assert_eq!(pre.error.unwrap().code(), Code::Cancelled);
+    assert_eq!(pre.dispatch(), DispatchEvidence::NotDispatched);
+    assert_eq!(pre.upload(), UploadState::NotStarted);
+    assert!(pre.cancelled() && pre.status().is_none());
+    assert_eq!(pre.error().unwrap().code(), Code::Cancelled);
     assert_eq!(before, server.records().len());
     for (operation, path) in [("wait", "/v1/wait"), ("wait_body", "/v1/wait-body")] {
         let prepared = request(&client, &doc, operation, &server);
@@ -1663,35 +1663,34 @@ async fn main() {
             .expect("pending cancellation functional deadline")
             .unwrap();
         server.release(path);
-        assert!(outcome.cancelled);
-        assert_eq!(outcome.dispatch, DispatchEvidence::Dispatched);
-        assert_eq!(outcome.upload, UploadState::Unknown);
+        assert!(outcome.cancelled());
+        assert_eq!(outcome.dispatch(), DispatchEvidence::Dispatched);
+        assert_eq!(outcome.upload(), UploadState::Unknown);
         if operation == "wait" {
-            assert!(outcome.response.is_none());
+            assert!(outcome.status().is_none());
         }
-        if let Some(ref response) = outcome.response {
-            assert_eq!(response.status(), 200);
-            assert_eq!(response.body_state(), BodyState::Failed);
+        if outcome.status().is_some() {
+            let response = &outcome;
+            assert_eq!(response.status().unwrap(), 200);
+            assert_eq!(response.body_state().unwrap(), BodyState::Failed);
             assert_eq!(
-                response.raw(),
-                &fixture("pending-prefix.bin")[..response.raw().len()]
+                response.raw().unwrap(),
+                &fixture("pending-prefix.bin")[..response.raw().unwrap().len()]
             );
         }
         safe_text(&format!("{outcome:?}"));
-        let refusal = policies::received_2xx_json(outcome).unwrap_err();
-        assert_eq!(refusal.reason, policies::CompleteJsonRefusal::Cancelled);
-        safe_error_chain(&*refusal);
-        observations.push(json!({"case":"pending-local-cancellation","operation":operation,"serverAlreadyObserved":true,"reason":"Cancelled","remoteUndoAsserted":false}));
+        let refusal = (outcome).received_2xx_json_exact().unwrap_err();
+        assert_eq!(refusal.code(), Code::TransportFailure);
+        safe_error_chain(&refusal);
+        observations.push(json!({"case":"pending-local-cancellation","operation":operation,"serverAlreadyObserved":true,"reason":"TransportFailure","remoteUndoAsserted":false}));
     }
 
     let outcome = execute(&client, &request(&client, &doc, "redirect", &server)).await;
     response(&outcome, 302, &fixture("success.json"), BodyState::Complete);
     assert_eq!(
         outcome
-            .response
-            .as_ref()
-            .unwrap()
             .headers()
+            .unwrap()
             .iter()
             .find(|h| h.name().eq_ignore_ascii_case("location"))
             .unwrap()
@@ -1699,16 +1698,15 @@ async fn main() {
         format!("{}/v1/landing", server.origin()).as_bytes()
     );
     assert_eq!(
-        policies::received_2xx_json(outcome).unwrap_err().reason,
-        policies::CompleteJsonRefusal::HttpStatus
+        (outcome).received_2xx_json_exact().unwrap_err().code(),
+        Code::HttpStatus
     );
     assert_eq!(server.count("/v1/landing"), 0);
     for operation in ["cookie_set", "cookie_check"] {
         assert!(
-            policies::received_2xx_json(
-                execute(&client, &request(&client, &doc, operation, &server)).await
-            )
-            .is_ok()
+            (execute(&client, &request(&client, &doc, operation, &server)).await)
+                .received_2xx_json_exact()
+                .is_ok()
         );
     }
     assert!(
@@ -1719,11 +1717,8 @@ async fn main() {
             .is_empty()
     );
     let outcome = execute(&client, &request(&client, &doc, "once", &server)).await;
-    assert_eq!(
-        outcome.error.as_ref().unwrap().code(),
-        Code::TransportFailure
-    );
-    assert!(outcome.response.is_none());
+    assert_eq!(outcome.error().unwrap().code(), Code::TransportFailure);
+    assert!(outcome.status().is_none());
     assert_eq!(server.count("/v1/once"), 1);
     observations.push(json!({"case":"no-redirect-no-cookie-jar-no-retry","landingRequests":0,"onceRequests":1,"sameConfiguredClientReused":true}));
 
@@ -1741,7 +1736,7 @@ async fn main() {
             .unwrap();
         let original = prepared.target().to_owned();
         let outcome = execute(&client, &prepared).await;
-        assert!(policies::received_2xx_json(outcome).is_ok());
+        assert!((outcome).received_2xx_json_exact().is_ok());
         assert_eq!(prepared.target(), original);
         let wire = server.observed(pair["wire"].as_str().unwrap()).await;
         observations.push(json!({"case":"exact-allowed-target","wire":wire_observation(&wire)}));
@@ -1791,10 +1786,10 @@ async fn main() {
         let original = prepared.target().to_owned();
         let before = server.records().len();
         let outcome = execute(&client, &prepared).await;
-        assert_eq!(outcome.dispatch, DispatchEvidence::NotDispatched);
-        assert_eq!(outcome.upload, UploadState::NotStarted);
-        assert_eq!(outcome.error.as_ref().unwrap().code(), Code::HostCapability);
-        assert!(outcome.response.is_none());
+        assert_eq!(outcome.dispatch(), DispatchEvidence::NotDispatched);
+        assert_eq!(outcome.upload(), UploadState::NotStarted);
+        assert_eq!(outcome.error().unwrap().code(), Code::HostCapability);
+        assert!(outcome.status().is_none());
         assert_eq!(prepared.target(), original);
         assert_eq!(before, server.records().len());
         safe_text(&format!("{outcome:?}"));
@@ -1821,15 +1816,15 @@ async fn main() {
             .unwrap();
         let before = server.records().len();
         let outcome = execute(&client, &prepared).await;
-        assert_eq!(outcome.dispatch, DispatchEvidence::NotDispatched);
-        assert_eq!(outcome.error.as_ref().unwrap().code(), Code::HostCapability);
+        assert_eq!(outcome.dispatch(), DispatchEvidence::NotDispatched);
+        assert_eq!(outcome.error().unwrap().code(), Code::HostCapability);
         assert_eq!(before, server.records().len());
     }
     observations.push(json!({"case":"transport-controlled-headers-refuse-before-io","fields":11}));
 
     let outcome = execute(&client, &request(&client, &doc, "numeric", &server)).await;
-    let accepted = policies::received_2xx_json(outcome).unwrap();
-    let source = accepted.json.source().to_owned();
+    let accepted = (outcome).received_2xx_json_exact().unwrap();
+    let source = accepted.source().to_owned();
     #[derive(Deserialize)]
     struct Integers {
         safe: u64,
@@ -1851,14 +1846,14 @@ async fn main() {
         #[allow(dead_code)]
         overflow: u64,
     }
-    let ints: Integers = accepted.json.deserialize().unwrap();
+    let ints: Integers = accepted.deserialize().unwrap();
     assert_eq!(ints.safe, 9_007_199_254_740_993);
     assert_eq!(ints.wide, u128::MAX);
     assert_eq!(ints.min, i128::MIN);
     // Standard Serde treats the lexical -0 as floating negative zero and
     // refuses an i64 destination. The core lexical convenience remains distinct.
     let direct_negative_zero = serde_json::from_str::<NegativeInteger>(&source).unwrap_err();
-    let negative_zero = accepted.json.deserialize::<NegativeInteger>().unwrap_err();
+    let negative_zero = accepted.deserialize::<NegativeInteger>().unwrap_err();
     assert_eq!(
         negative_zero.detail().unwrap().to_string(),
         direct_negative_zero.to_string()
@@ -1866,7 +1861,6 @@ async fn main() {
     safe_error_chain(&negative_zero);
     assert_eq!(
         accepted
-            .json
             .clone()
             .get("neg")
             .unwrap()
@@ -1877,7 +1871,6 @@ async fn main() {
     );
     assert_eq!(
         accepted
-            .json
             .clone()
             .get("neg")
             .unwrap()
@@ -1887,11 +1880,10 @@ async fn main() {
             .unwrap(),
         0
     );
-    let float: Floating = accepted.json.deserialize().unwrap();
+    let float: Floating = accepted.deserialize().unwrap();
     assert_eq!(float.safe, 9_007_199_254_740_992.0);
     assert_eq!(float.neg.to_bits(), (-0.0_f64).to_bits());
     let exact = accepted
-        .json
         .clone()
         .get("safe")
         .unwrap()
@@ -1906,11 +1898,11 @@ async fn main() {
             reason: NumericReason::PrecisionLoss
         })
     );
-    let overflow = accepted.json.deserialize::<Overflow>().unwrap_err();
+    let overflow = accepted.deserialize::<Overflow>().unwrap_err();
     safe_error_chain(&overflow);
     assert!(std::error::Error::source(&overflow).is_none());
-    assert_eq!(accepted.json.source(), source);
-    assert_eq!(accepted.json.source().as_bytes(), fixture("numeric.json"));
+    assert_eq!(accepted.source(), source);
+    assert_eq!(accepted.source().as_bytes(), fixture("numeric.json"));
     observations.push(json!({"case":"typed-numbers-are-explicit-projections","u128Exact":true,"i128Exact":true,"u64OverflowRefused":true,"integerNegativeZeroRefusalMatchesStandardSerde":true,"floatingRoundingExplicit":true,"exactSourceUnchanged":true}));
     #[derive(Deserialize, Debug)]
     enum Kind {
@@ -1927,17 +1919,16 @@ async fn main() {
         #[allow(dead_code)]
         kind: serde::de::IgnoredAny,
     }
-    let accepted = policies::received_2xx_json(
-        execute(&client, &request(&client, &doc, "bad_type", &server)).await,
-    )
-    .unwrap();
+    let accepted = (execute(&client, &request(&client, &doc, "bad_type", &server)).await)
+        .received_2xx_json_exact()
+        .unwrap();
     for (error, secret) in [
         (
-            accepted.json.deserialize::<Variant>().unwrap_err(),
+            accepted.deserialize::<Variant>().unwrap_err(),
             "variant-secret-V77",
         ),
         (
-            accepted.json.deserialize::<Unexpected>().unwrap_err(),
+            accepted.deserialize::<Unexpected>().unwrap_err(),
             "unexpected-secret-field",
         ),
     ] {
@@ -1953,11 +1944,10 @@ async fn main() {
             Err(serde::de::Error::custom("typed-secret-D99"))
         }
     }
-    let accepted = policies::received_2xx_json(
-        execute(&client, &request(&client, &doc, "custom_type", &server)).await,
-    )
-    .unwrap();
-    let error = accepted.json.deserialize::<Custom>().unwrap_err();
+    let accepted = (execute(&client, &request(&client, &doc, "custom_type", &server)).await)
+        .received_2xx_json_exact()
+        .unwrap();
+    let error = accepted.deserialize::<Custom>().unwrap_err();
     safe_error_chain(&error);
     assert!(
         error
@@ -1981,13 +1971,7 @@ async fn main() {
         BodyState::Complete,
     );
     assert_eq!(
-        outcome
-            .response
-            .as_ref()
-            .unwrap()
-            .json()
-            .unwrap_err()
-            .code(),
+        outcome.body_json().unwrap_err().code(),
         Code::UnsupportedCoding
     );
     observations.push(json!({"case":"unified-features-do-not-decode-wire-bytes","provenance":"Wire","jsonRefusal":"UnsupportedCoding"}));
@@ -1999,12 +1983,9 @@ async fn main() {
     let timeout_request = request(&timed, &doc, "wait", &server);
     let outcome = execute(&timed, &timeout_request).await;
     server.release("/v1/wait");
-    assert!(!outcome.cancelled);
-    assert_eq!(
-        outcome.error.as_ref().unwrap().code(),
-        Code::TransportFailure
-    );
-    assert!(outcome.response.is_none());
+    assert!(!outcome.cancelled());
+    assert_eq!(outcome.error().unwrap().code(), Code::TransportFailure);
+    assert!(outcome.status().is_none());
     safe_text(&format!("{outcome:?}"));
     observations.push(json!({"case":"bounded-native-timeout","cancelled":false,"response":false,"code":"TransportFailure"}));
 

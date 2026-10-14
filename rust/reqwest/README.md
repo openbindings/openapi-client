@@ -15,7 +15,7 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 The short caller flow uses a runtime-loaded OpenAPI document and ordinary typed data. The full executable includes a controlled local server:
 
 ```no_run
-use dynamic_openapi_client::{Cancellation, Credential, Document, Limits, ParameterLocation, policies};
+use dynamic_openapi_client::{Cancellation, Credential, Document, Limits, ParameterLocation};
 use dynamic_openapi_client_reqwest::Client;
 use serde::{Deserialize, Serialize};
 
@@ -33,22 +33,18 @@ let request = client.request(&operation)
     .parameter(ParameterLocation::Query, "mode", &"normal")
     .json(&body).prepare()?;
 let outcome = client.execute(&request, Cancellation::default()).await;
-match policies::received_2xx_json(outcome) {
-    Ok(accepted) => {
-        let created: Created = accepted.json.deserialize()?;
-        println!("{}: {}", created.id, created.name);
-        // accepted.outcome still records Unknown upload completion.
-    }
+match outcome.received_2xx_json::<Created>() {
+    Ok(created) => println!("{}: {}", created.id, created.name),
     Err(refused) => {
-        // Non-2xx JSON can be available in refused.decoded.
-        // Raw bytes/status/headers remain in refused.outcome.response.
+        // Status, headers, bytes and Unknown upload remain on outcome.
+        // Decode a typed non-2xx body with outcome.body_json()?.deserialize().
         eprintln!("{}", refused);
     }
 }
 # Ok(()) }
 ```
 
-Typed projection follows ordinary Serde numeric semantics: floating-point targets can round exact JSON numbers, and out-of-range integer targets refuse. Keep `accepted.json` and its exact tokens when that distinction matters. Finite float input serializes its existing value; conversion cannot recover precision already lost before the call.
+Typed projection follows ordinary Serde numeric semantics: floating-point targets can round exact JSON numbers, and out-of-range integer targets refuse. Use `outcome.received_2xx_json_exact()` and its exact tokens when that distinction matters. Finite float input serializes its existing value; conversion cannot recover precision already lost before the call.
 
 Cancel an in-flight call by passing a cloned `Cancellation` to `execute` and calling `cancel()` on the retained handle from another task. This ends the local wait and preserves available response evidence. The complete example triggers cancellation only after its local server receives the request:
 
@@ -68,7 +64,7 @@ Redirect following, system proxies, automatic cookies/authentication, referrer g
 
 Before dispatch, the adapter refuses targets that its URL parser would change, including normalized encoded dot segments, altered host/scheme spelling and removed explicit default ports. It also refuses caller-controlled Host, Content-Length, Transfer-Encoding, Connection, Proxy-Connection, Proxy-Authorization, Keep-Alive, Upgrade, TE, Trailer and Expect fields. The backend generates Host/body framing and adds its default `Accept: */*` when none was prepared. Admitted request path/query and entity bytes are preserved. Header names are normalized; header values and duplicate values are exposed through the HTTP stack's HeaderMap order. Original wire header spelling/global order and response trailers are not available. Delivered responses explicitly report `HeaderFidelity::HostProcessed`; this is an explicit metadata fidelity boundary.
 
-`Dispatched` means the core host callback was entered, not that a server received or executed the operation. Upload state is `Unknown` after backend execution starts, even when a complete response arrives. Preflight refusal and pre-cancellation have `NotStarted` upload evidence. The core's strict upload-completion acceptance policy therefore remains strict; its separate received-response policy is available when accepting a complete response without known complete upload is the caller's intent.
+`Dispatched` means the core host callback was entered, not that a server received or executed the operation. Upload state is `Unknown` after backend execution starts, even when a complete response arrives. Preflight refusal and pre-cancellation have `NotStarted` upload evidence. The borrowed received-2xx reads accept complete incoming JSON without requiring complete upload. Applications requiring complete upload must check that evidence explicitly.
 
 The companion continues to use strict `admit`/`invoke` and offers no host-managed replay option. Entered callbacks report `ReplayAssurance::NoReplayDeclared`; native preflight refusals report no assurance. This records the admitted declaration, not observed request attempts.
 

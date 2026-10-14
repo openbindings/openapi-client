@@ -28,36 +28,38 @@ async fn main() -> Result<(), support::Error> {
 }
 
 pub(crate) fn interpret(outcome: dynamic_openapi_client::Outcome) -> Result<(), support::Error> {
-    println!("upload: {:?}", outcome.upload);
-    if let Some(response) = &outcome.response {
+    println!("upload: {:?}", outcome.upload());
+    if outcome.status().is_some() {
+        let response = &outcome;
         println!(
             "status: {}, body: {:?}",
-            response.status(),
-            response.body_state()
+            response.status().unwrap(),
+            response.body_state().unwrap()
         );
-        for h in response.headers() {
+        for h in response.headers().unwrap() {
             println!("{}: {}", h.name(), String::from_utf8_lossy(h.value()));
         }
-        if !(200..300).contains(&response.status()) {
-            println!("error body: {}", String::from_utf8_lossy(response.raw()));
+        if !(200..300).contains(&response.status().unwrap()) {
+            println!(
+                "error body: {}",
+                String::from_utf8_lossy(response.raw().unwrap())
+            );
         }
     }
     if outcome
-        .response
-        .as_ref()
-        .is_some_and(|r| !(200..300).contains(&r.status()))
+        .status()
+        .is_some_and(|status| !(200..300).contains(&status))
     {
         let body: Result<support::ApiError, support::Error> =
-            (|| Ok(outcome.response.as_ref().unwrap().json()?.deserialize()?))();
+            (|| Ok(outcome.body_json()?.deserialize()?))();
         println!("independent error-body inspection: {body:?}");
-        if outcome.error.is_some() || outcome.cancelled {
-            dynamic_openapi_client::policies::received_2xx_json(outcome)?;
+        if outcome.error().is_some() || outcome.cancelled() {
+            let _: support::Created = outcome.received_2xx_json()?;
         }
         let error = body?;
         println!("handled API error: {}", error.error);
     } else {
-        let accepted = dynamic_openapi_client::policies::received_2xx_json(outcome)?;
-        let created: support::Created = accepted.json.deserialize()?;
+        let created: support::Created = outcome.received_2xx_json()?;
         assert_eq!(created.id, 9_007_199_254_740_993);
         println!("created: {}", created.name);
     }

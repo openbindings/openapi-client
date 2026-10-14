@@ -16,21 +16,21 @@ fn js_error(error: impl std::fmt::Display) -> JsValue {
 }
 
 fn facts(outcome: Outcome) -> String {
-    let response = outcome.response.as_ref().map(|response| {
+    let response = outcome.status().map(|status| {
         json!({
-            "status": response.status(),
-            "body_state": format!("{:?}", response.body_state()),
-            "provenance": format!("{:?}", response.provenance()),
-            "raw": response.raw(),
+            "status": status,
+            "body_state": format!("{:?}", outcome.body_state().unwrap()),
+            "provenance": format!("{:?}", outcome.provenance().unwrap()),
+            "raw": outcome.raw().unwrap(),
         })
     });
     json!({
-        "dispatch": format!("{:?}", outcome.dispatch),
-        "upload": format!("{:?}", outcome.upload),
-        "cancelled": outcome.cancelled,
+        "dispatch": format!("{:?}", outcome.dispatch()),
+        "upload": format!("{:?}", outcome.upload()),
+        "cancelled": outcome.cancelled(),
         "replay": outcome.replay_assurance().map(|value| format!("{value:?}")),
-        "error": outcome.error.as_ref().map(|error| format!("{:?}", error.code())),
-        "reason": outcome.error.as_ref().and_then(|error| error.reason()).map(|reason| format!("{reason:?}")),
+        "error": outcome.error().map(|error| format!("{:?}", error.code())),
+        "reason": outcome.error().and_then(|error| error.reason()).map(|reason| format!("{reason:?}")),
         "response": response,
     }).to_string()
 }

@@ -54,7 +54,7 @@ fn malformed_response_retains_parent_error_chain() {
     else {
         panic!("pending")
     };
-    let e = out.response.unwrap().json().unwrap_err();
+    let e = out.body_json().unwrap_err();
     println!("malformed response cause: {:?}", e.source());
     assert_eq!(e.code(), Code::InvalidJson);
     assert!(e.source().is_none());

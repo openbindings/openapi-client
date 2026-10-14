@@ -48,7 +48,7 @@ observed before invocation takes precedence over admission.
 callback entry, including `Outcome::not_dispatched`, and retained after entry
 for successful responses, HTTP errors, opaque redirects, missing/invalid evidence
 and callback failures. Caller mutation of public outcome fields does not rewrite
-it. Acceptance policies preserve it and never manufacture upload completion or
+it. Outcome and its borrowed reads preserve it and never manufacture upload completion or
 remote cancellation. Arbitrary adapter detail remains explicit-access only.
 External adapters may construct a controlled refusal using
 `let error: Diagnostic = HostRefusal::ForbiddenHeader.into();`.
@@ -77,7 +77,7 @@ completion; stop on the first inadmissible entry. Host/parser buffering is separ
 the host. `Unspecified` is the constructor default and adds no acceptance refusal;
 `Complete` records observed EOF; `Incomplete` records a known cutoff. It cannot
 establish absence of CORS filtering, combination, or other host transformations.
-`Response::header_delivery()` preserves this supplied fact after core admission.
+`Outcome::header_delivery()` preserves this supplied fact after core admission.
 Core bounds may omit supplied entries under any fidelity declaration;
 `omitted_header_lines()` counts only those actual entries despite its historical
 name. Its zero value does not imply complete adapter delivery or wire fidelity.
@@ -88,7 +88,7 @@ alone does not create `Outcome::error` or transport detail. JSON refuses with
 uninspected fields remain unclassified. Opaque evidence takes priority, followed
 by invalid status/retained fields or the contradictory `ExactFields` plus
 `Incomplete` assertion (`InvalidHostEvidence`); then known metadata incompleteness,
-body completeness, media and coding checks. Both JSON acceptance policies retain
+body completeness, media and coding checks. The named JSON reads retain
 their separate cancellation/dispatch/transport/status/upload priority and preserve
 the decode result. Metadata cutoff/conversion failure alone must not be passed as
 `TransportResult::error_detail`, which reports transport failure.

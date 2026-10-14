@@ -7,7 +7,7 @@ use dynamic_openapi_client::transport::{
     UploadState,
 };
 use dynamic_openapi_client::{
-    Cancellation, Credential, Document, Limits, Outcome, ParameterLocation, policies,
+    Cancellation, Credential, Document, Limits, Outcome, ParameterLocation,
 };
 use dynamic_openapi_client_reqwest::{Certificate, Client};
 use std::time::Duration;
@@ -65,19 +65,22 @@ async fn done(task: JoinHandle<Outcome>) -> Outcome {
     bounded(task).await.unwrap()
 }
 fn complete(outcome: Outcome, body: &[u8]) {
-    assert!(!outcome.cancelled);
-    assert!(outcome.error.is_none(), "{outcome:?}");
-    assert_eq!(outcome.dispatch, DispatchEvidence::Dispatched);
-    assert_eq!(outcome.upload, UploadState::Unknown);
+    assert!(!outcome.cancelled());
+    assert!(outcome.error().is_none(), "{outcome:?}");
+    assert_eq!(outcome.dispatch(), DispatchEvidence::Dispatched);
+    assert_eq!(outcome.upload(), UploadState::Unknown);
     assert_eq!(
         outcome.replay_assurance(),
         Some(ReplayAssurance::NoReplayDeclared)
     );
-    let received = outcome.response.unwrap();
-    assert_eq!(received.body_state(), BodyState::Complete);
-    assert_eq!(received.raw(), body);
-    assert_eq!(received.provenance(), Provenance::Wire);
-    assert_eq!(received.header_fidelity(), HeaderFidelity::HostProcessed);
+    let received = &outcome;
+    assert_eq!(received.body_state().unwrap(), BodyState::Complete);
+    assert_eq!(received.raw().unwrap(), body);
+    assert_eq!(received.provenance().unwrap(), Provenance::Wire);
+    assert_eq!(
+        received.header_fidelity().unwrap(),
+        HeaderFidelity::HostProcessed
+    );
 }
 async fn good_followup(server: &Server, client: &Client, index: usize, id: &str) -> usize {
     let task = call(client, &server.origin, id);
@@ -256,9 +259,9 @@ async fn origin_and_independent_client_trust_are_isolated() {
         }
         let untrusted = builder.build().unwrap();
         let outcome = done(call(&untrusted, &tls.origin, "must-not-arrive")).await;
-        assert!(outcome.error.is_some());
-        assert!(outcome.response.is_none());
-        assert_eq!(outcome.upload, UploadState::Unknown);
+        assert!(outcome.error().is_some());
+        assert!(outcome.status().is_none());
+        assert_eq!(outcome.upload(), UploadState::Unknown);
     }
     tls.wait(|observations| {
         observations
@@ -314,9 +317,9 @@ async fn complete_framing_and_application_refusals_do_not_require_eviction() {
         let outcome = done(task).await;
         complete(outcome.clone(), body);
         if index == 1 {
-            assert!(policies::received_2xx_json(outcome).is_ok());
+            assert!((outcome).received_2xx_json_exact().is_ok());
         } else {
-            assert!(policies::received_2xx_json(outcome).is_err());
+            assert!((outcome).received_2xx_json_exact().is_err());
         }
         events.wait(IDLE, index + 1).await;
     }
@@ -338,18 +341,18 @@ async fn complete_framing_and_application_refusals_do_not_require_eviction() {
         )
         .await;
     let outcome = done(task).await;
-    assert!(outcome.error.is_none());
-    let received = outcome.response.unwrap();
-    assert_eq!(received.raw(), b"{}");
-    assert_eq!(received.body_state(), BodyState::Complete);
-    assert_eq!(received.headers().len(), 4);
-    assert_eq!(received.omitted_header_lines(), 0);
+    assert!(outcome.error().is_none());
+    let received = &outcome;
+    assert_eq!(received.raw().unwrap(), b"{}");
+    assert_eq!(received.body_state().unwrap(), BodyState::Complete);
+    assert_eq!(received.headers().unwrap().len(), 4);
+    assert_eq!(received.omitted_header_lines().unwrap(), 0);
     assert_eq!(
-        received.header_delivery(),
+        received.header_delivery().unwrap(),
         dynamic_openapi_client::transport::HeaderDelivery::Incomplete
     );
     assert_eq!(
-        received.json().unwrap_err().code(),
+        received.body_json().unwrap_err().code(),
         dynamic_openapi_client::diagnostics::Code::IncompleteHeaders
     );
     events.wait(IDLE, 8).await;
@@ -412,13 +415,17 @@ async fn malformed_or_incomplete_framing_cannot_contaminate_a_following_response
             .reply_mode(capture.connection, bytes, ReadMode::Full, true)
             .await;
         let outcome = done(task).await;
-        assert!(outcome.error.is_some());
-        assert_eq!(outcome.upload, UploadState::Unknown);
+        assert!(outcome.error().is_some());
+        assert_eq!(outcome.upload(), UploadState::Unknown);
         if index == 3 {
-            assert!(outcome.response.is_none());
-        } else if let Some(received) = outcome.response {
-            assert_eq!(received.body_state(), BodyState::Failed);
-            assert!(b"abc".starts_with(received.raw()) || b"ab".starts_with(received.raw()));
+            assert!(outcome.status().is_none());
+        } else if outcome.status().is_some() {
+            let received = &outcome;
+            assert_eq!(received.body_state().unwrap(), BodyState::Failed);
+            assert!(
+                b"abc".starts_with(received.raw().unwrap())
+                    || b"ab".starts_with(received.raw().unwrap())
+            );
         }
         assert_ne!(
             good_followup(&server, &client, 1, &format!("clean{index}")).await,
@@ -496,9 +503,9 @@ async fn retained_body_limits_distinguish_complete_and_withheld_framing() {
         .reply(capture.connection, response("200 OK", "", b"12345"))
         .await;
     let outcome = done(task).await;
-    let received = outcome.response.unwrap();
-    assert_eq!(received.raw(), b"123");
-    assert_eq!(received.body_state(), BodyState::Truncated);
+    let received = &outcome;
+    assert_eq!(received.raw().unwrap(), b"123");
+    assert_eq!(received.body_state().unwrap(), BodyState::Truncated);
     // Wait for an actual backend disposition, not a guessed chunk boundary.
     tokio::select! { _ = events.wait(IDLE, 3) => {}, _ = server.wait(|observations| observations.iter().any(|e| matches!(e, Observation::Closed(id) if *id == capture.connection))) => {} }
     good_followup(&server, &client, 3, "after-complete-limit").await;
@@ -526,9 +533,9 @@ async fn retained_body_limits_distinguish_complete_and_withheld_framing() {
         )
         .await;
     let outcome = done(task).await;
-    let received = outcome.response.unwrap();
-    assert_eq!(received.raw(), b"123");
-    assert_eq!(received.body_state(), BodyState::Truncated);
+    let received = &outcome;
+    assert_eq!(received.raw().unwrap(), b"123");
+    assert_eq!(received.body_state().unwrap(), BodyState::Truncated);
     server
         .wait(|events| {
             events
@@ -591,15 +598,16 @@ async fn pending_cancellation_and_deadlines_dispose_unavailable_framing() {
                 cancellation.cancel();
             }
             let outcome = done(task).await;
-            assert!(outcome.error.is_some());
-            assert_eq!(outcome.cancelled, !deadline);
-            assert_eq!(outcome.dispatch, DispatchEvidence::Dispatched);
-            assert_eq!(outcome.upload, UploadState::Unknown);
-            if let Some(received) = outcome.response {
+            assert!(outcome.error().is_some());
+            assert_eq!(outcome.cancelled(), !deadline);
+            assert_eq!(outcome.dispatch(), DispatchEvidence::Dispatched);
+            assert_eq!(outcome.upload(), UploadState::Unknown);
+            if outcome.status().is_some() {
+                let received = &outcome;
                 assert!(headers);
-                assert_eq!(received.status(), 503);
-                assert!(b"abc".starts_with(received.raw()));
-                assert_eq!(received.body_state(), BodyState::Failed);
+                assert_eq!(received.status().unwrap(), 503);
+                assert!(b"abc".starts_with(received.raw().unwrap()));
+                assert_eq!(received.body_state().unwrap(), BodyState::Failed);
             }
             server
                 .wait(|events| {
@@ -723,7 +731,7 @@ async fn observed_server_close_and_racy_close_do_not_duplicate_an_application_ca
         // awaiting either its one request or its failure, with no forced schedule.
         let mut task = task;
         tokio::select! {
-            result = &mut task => { let outcome = result.unwrap(); assert!(outcome.error.is_some()); assert_eq!(outcome.upload, UploadState::Unknown); }
+            result = &mut task => { let outcome = result.unwrap(); assert!(outcome.error().is_some()); assert_eq!(outcome.upload(), UploadState::Unknown); }
             capture = server.request(1) => { assert!(capture.head.starts_with("POST /calls/stale HTTP/1.1\r\n")); server.reply(capture.connection, response("200 OK", "", b"{}")).await; complete(done(task).await, b"{}"); }
         }
         let before = server.requests().len();
@@ -822,9 +830,9 @@ async fn started_partial_and_complete_post_are_never_replayed() {
             server.close(capture.connection).await;
         }
         let outcome = done(task).await;
-        assert!(outcome.error.is_some());
-        assert!(outcome.response.is_none());
-        assert_eq!(outcome.upload, UploadState::Unknown);
+        assert!(outcome.error().is_some());
+        assert!(outcome.status().is_none());
+        assert_eq!(outcome.upload(), UploadState::Unknown);
         let index = if partial { 1 } else { 2 };
         assert_ne!(
             good_followup(&server, &client, index, "explicit-next").await,

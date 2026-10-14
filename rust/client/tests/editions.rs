@@ -1,3 +1,5 @@
+#[path = "support/strict_json.rs"]
+mod policies;
 #[path = "support/request_case.rs"]
 mod request_case;
 use dynamic_openapi_client::*;

@@ -1,9 +1,7 @@
 //! Run with `cargo run -p dynamic-openapi-client-reqwest --example real_http`.
 //! All traffic is to the controlled loopback server below; no external service.
 use dynamic_openapi_client::transport::{DispatchEvidence, UploadState};
-use dynamic_openapi_client::{
-    Cancellation, Credential, Document, Limits, ParameterLocation, policies,
-};
+use dynamic_openapi_client::{Cancellation, Credential, Document, Limits, ParameterLocation};
 use dynamic_openapi_client_reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -45,11 +43,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .parameter(ParameterLocation::Query, "mode", &"normal")
         .json(&body)
         .prepare()?;
-    let accepted =
-        policies::received_2xx_json(client.execute(&prepared, Cancellation::default()).await)?;
-    let created: Created = accepted.json.deserialize()?;
+    let outcome = client.execute(&prepared, Cancellation::default()).await;
+    let created: Created = outcome.received_2xx_json()?;
     assert_eq!((created.id, created.name.as_str()), (42, "example"));
-    assert_eq!(accepted.outcome.upload, UploadState::Unknown);
+    assert_eq!(outcome.upload(), UploadState::Unknown);
     println!(
         "authenticated typed HTTP response: id={}, name={}; upload remains Unknown",
         created.id, created.name
@@ -72,10 +69,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         client.execute(&prepared, cancellation),
     )
     .await?;
-    assert!(cancelled.cancelled);
-    assert_eq!(cancelled.dispatch, DispatchEvidence::Dispatched);
-    assert_eq!(cancelled.upload, UploadState::Unknown);
-    assert!(cancelled.response.is_none());
+    assert!(cancelled.cancelled());
+    assert_eq!(cancelled.dispatch(), DispatchEvidence::Dispatched);
+    assert_eq!(cancelled.upload(), UploadState::Unknown);
+    assert!(cancelled.status().is_none());
     cancel_task.await?;
     server.await??;
     println!(
