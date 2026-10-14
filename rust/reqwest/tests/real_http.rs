@@ -4,7 +4,7 @@ use dynamic_openapi_client::transport::{BodyState, DispatchEvidence, Provenance,
 use dynamic_openapi_client::{
     Cancellation, Credential, Document, Header, Limits, ParameterLocation,
 };
-use dynamic_openapi_client_reqwest::{Certificate, Client};
+use dynamic_openapi_client_reqwest::{Client, advanced, tls::Certificate};
 use std::{sync::Arc, time::Duration};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
@@ -96,9 +96,12 @@ async fn execute(
     request: &dynamic_openapi_client::transport::PreparedRequest,
     cancel: Cancellation,
 ) -> dynamic_openapi_client::Outcome {
-    tokio::time::timeout(Duration::from_secs(3), client.execute(request, cancel))
-        .await
-        .expect("adapter did not finish")
+    tokio::time::timeout(
+        Duration::from_secs(3),
+        advanced::execute(client, request, cancel),
+    )
+    .await
+    .expect("adapter did not finish")
 }
 
 #[tokio::test]
@@ -136,15 +139,13 @@ async fn configured_auth_exact_body_and_explicit_server_close() {
     )
     .unwrap();
     let op = doc.operation_id("run").unwrap();
-    let request = client
-        .request(&op)
-        .parameter(ParameterLocation::Path, "id", &"a/b")
-        .parameter(ParameterLocation::Query, "q", &"x y&z")
-        .json_exact(&exact.clone())
-        .prepare()
-        .unwrap();
     for _ in 0..2 {
-        let outcome = execute(&client, &request, Cancellation::default()).await;
+        let request = op
+            .request()
+            .parameter(ParameterLocation::Path, "id", &"a/b")
+            .parameter(ParameterLocation::Query, "q", &"x y&z")
+            .json_exact(&exact.clone());
+        let outcome = client.send(request).await;
         assert_eq!(outcome.dispatch(), DispatchEvidence::Dispatched);
         assert_eq!(outcome.upload(), UploadState::Unknown);
         let accepted = (outcome).received_2xx_json_exact().unwrap();
@@ -168,13 +169,18 @@ async fn configured_auth_exact_body_and_explicit_server_close() {
     }
     assert!(!format!("{client:?}").contains("local-test-token"));
     let wrong_origin = document("http://127.0.0.1:1", 4096, true);
-    assert!(
-        client
-            .request(&wrong_origin.operation_id("run").unwrap())
-            .parameter(ParameterLocation::Path, "id", &"x")
-            .prepare()
-            .is_err()
-    );
+    let outcome = client
+        .send(
+            wrong_origin
+                .operation_id("run")
+                .unwrap()
+                .request()
+                .parameter(ParameterLocation::Path, "id", &"x"),
+        )
+        .await;
+    assert_eq!(outcome.error().unwrap().code(), Code::CredentialOrigin);
+    assert_eq!(outcome.dispatch(), DispatchEvidence::NotDispatched);
+    assert_eq!(outcome.upload(), UploadState::NotStarted);
 }
 
 #[tokio::test]
@@ -514,12 +520,10 @@ async fn https_checks_trust_and_additional_roots_are_additive() {
         let client = builder.build().unwrap();
         let doc = document(&origin, 4096, true);
         let operation = doc.operation_id("run").unwrap();
-        let request = client
-            .request(&operation)
-            .parameter(ParameterLocation::Path, "id", &"alpha")
-            .prepare()
-            .unwrap();
-        let outcome = execute(&client, &request, Cancellation::default()).await;
+        let request = operation
+            .request()
+            .parameter(ParameterLocation::Path, "id", &"alpha");
+        let outcome = client.send(request).await;
         if trusted {
             assert_eq!(
                 (outcome).received_2xx_json_exact().unwrap().clone().raw(),
@@ -550,10 +554,8 @@ async fn h0_native_preflight_preserves_absent_assurance() {
         .prepare()
         .unwrap();
     assert_eq!(request.target(), "https://EXAMPLE.test/echo");
-    let outcome = Client::new()
-        .unwrap()
-        .execute(&request, Cancellation::default())
-        .await;
+    let outcome =
+        advanced::execute(&Client::new().unwrap(), &request, Cancellation::default()).await;
     assert_eq!(outcome.dispatch(), DispatchEvidence::NotDispatched);
     assert_eq!(outcome.replay_assurance(), None);
     assert_eq!(outcome.upload(), UploadState::NotStarted);

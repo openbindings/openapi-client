@@ -3,13 +3,12 @@
 mod support;
 use dynamic_openapi_client::exact::Value;
 use dynamic_openapi_client::transport::{
-    BodyState, DispatchEvidence, HeaderFidelity, PreparedRequest, Provenance, ReplayAssurance,
-    UploadState,
+    BodyState, DispatchEvidence, HeaderFidelity, Provenance, ReplayAssurance, UploadState,
 };
 use dynamic_openapi_client::{
-    Cancellation, Credential, Document, Limits, Outcome, ParameterLocation,
+    Cancellation, Credential, Document, Limits, Outcome, ParameterLocation, RequestBuilder,
 };
-use dynamic_openapi_client_reqwest::{Certificate, Client};
+use dynamic_openapi_client_reqwest::{Client, tls::Certificate};
 use std::time::Duration;
 use support::{Observation, PoolEvents, ReadMode, Server, bounded};
 use tokio::task::JoinHandle;
@@ -21,13 +20,13 @@ fn response(status: &str, headers: &str, body: &[u8]) -> Vec<u8> {
     bytes
 }
 fn request(
-    client: &Client,
+    _client: &Client,
     origin: &str,
     id: &str,
     body: &str,
     limits: Limits,
     secure: bool,
-) -> PreparedRequest {
+) -> RequestBuilder {
     let security = if secure {
         serde_json::json!([{"bearer":[]}])
     } else {
@@ -36,23 +35,23 @@ fn request(
     let source = serde_json::json!({"openapi":"3.1.0", "info":{"title":"pool qualification","version":"1"}, "servers":[{"url":origin}], "components":{"securitySchemes":{"bearer":{"type":"http","scheme":"bearer"}}}, "paths":{"/calls/{id}":{"post":{"operationId":"call", "security":security, "parameters":[{"in":"path","name":"id","required":true,"schema":{"type":"string"}}], "requestBody":{"content":{"application/json":{"schema":{}}}}, "responses":{"200":{"description":"ok"}}}}}});
     let document = Document::parse(serde_json::to_vec(&source).unwrap(), None, limits).unwrap();
     let operation = document.operation_id("call").unwrap();
-    let mut builder = client
-        .request(&operation)
+    let mut builder = operation
+        .request()
         .parameter(ParameterLocation::Path, "id", &id);
     // Empty body is useful for zero-byte response limits, which also limit uploads.
     let exact = (!body.is_empty()).then(|| Value::parse(body, Limits::default()).unwrap());
     if let Some(exact) = &exact {
         builder = builder.json_exact(&exact.clone());
     }
-    builder.prepare().unwrap()
+    builder
 }
 fn start(
     client: &Client,
-    request: PreparedRequest,
+    request: RequestBuilder,
     cancellation: Cancellation,
 ) -> JoinHandle<Outcome> {
     let client = client.clone();
-    tokio::spawn(async move { client.execute(&request, cancellation).await })
+    tokio::spawn(async move { client.send(request.cancellation(cancellation)).await })
 }
 fn call(client: &Client, origin: &str, id: &str) -> JoinHandle<Outcome> {
     start(

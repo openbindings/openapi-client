@@ -1,6 +1,6 @@
 # Optional native HTTP transport
 
-`dynamic-openapi-client-reqwest` connects the independent core's prepared requests to native Tokio HTTP/1.1 and HTTPS. Configure it once, use the existing core builder, then execute without per-call transport callbacks.
+`dynamic-openapi-client-reqwest` connects the independent core's checked request builders to native Tokio HTTP/1.1 and HTTPS. Configure it once, use `Operation::request`, then send without per-call transport callbacks.
 
 These packages are unpublished. From an external project, point Cargo at your checkout (replace the example paths):
 
@@ -15,7 +15,7 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 The short caller flow uses a runtime-loaded OpenAPI document and ordinary typed data. The full executable includes a controlled local server:
 
 ```no_run
-use dynamic_openapi_client::{Cancellation, Credential, Document, Limits, ParameterLocation};
+use dynamic_openapi_client::{Credential, Document, Limits, ParameterLocation};
 use dynamic_openapi_client_reqwest::Client;
 use serde::{Deserialize, Serialize};
 
@@ -29,10 +29,10 @@ let document = Document::parse(source, None, Limits::default())?;
 let operation = document.operation_id("create")?;
 let client = Client::builder().credential("bearer", Credential::bearer("explicit-caller-token", vec![origin])).build()?;
 let body = Create { name: "example", labels: ["local", "typed"] };
-let request = client.request(&operation)
+let request = operation.request()
     .parameter(ParameterLocation::Query, "mode", &"normal")
-    .json(&body).prepare()?;
-let outcome = client.execute(&request, Cancellation::default()).await;
+    .json(&body);
+let outcome = client.send(request).await;
 match outcome.received_2xx_json::<Created>() {
     Ok(created) => println!("{}: {}", created.id, created.name),
     Err(refused) => {
@@ -46,7 +46,7 @@ match outcome.received_2xx_json::<Created>() {
 
 Typed projection follows ordinary Serde numeric semantics: floating-point targets can round exact JSON numbers, and out-of-range integer targets refuse. Use `outcome.received_2xx_json_exact()` and its exact tokens when that distinction matters. Finite float input serializes its existing value; conversion cannot recover precision already lost before the call.
 
-Cancel an in-flight call by passing a cloned `Cancellation` to `execute` and calling `cancel()` on the retained handle from another task. This ends the local wait and preserves available response evidence. The complete example triggers cancellation only after its local server receives the request:
+Cancel an in-flight call by selecting a cloned `Cancellation` with `request.cancellation(token)` before `send` and calling `cancel()` on the retained handle from another task. This ends the local wait and preserves available response evidence. The complete example triggers cancellation only after its local server receives the request:
 
 ```sh
 cargo run --manifest-path rust/Cargo.toml -p dynamic-openapi-client-reqwest --example real_http
@@ -54,7 +54,13 @@ cargo run --manifest-path rust/Cargo.toml -p dynamic-openapi-client-reqwest --ex
 
 Run this command from the repository root. The [example source](examples/real_http.rs) separates the caller flow from server setup and needs no external service or credentials.
 
-Credentials enter core preparation and its origin checks. The adapter never injects authentication afterward. Repeated configured credentials for one scheme retain the core's duplicate-assignment refusal. Choose security alternatives and per-call inputs through the existing request builder. Callers provide a Tokio runtime; the core itself requires no HTTP client or executor.
+`send` consumes the builder, applies configured credentials once, and prepares and executes with its selected cancellation token. Preparation failures return a non-dispatched Outcome whose JSON acceptance read returns the actual corrective Diagnostic. `Client::new` and `ClientBuilder::build` also return Diagnostic; TLS roots use `tls::Certificate`.
+
+Credentials enter core preparation and its origin checks. The adapter never injects authentication afterward. Repeated configured credentials or a configured/per-call assignment for one scheme retain the core's duplicate-assignment refusal. Choose security alternatives and per-call inputs through the existing request builder. Callers provide a Tokio runtime; the core itself requires no HTTP client or executor.
+
+Request setters check and serialize eagerly, before `send` applies configured credentials in their configured order. A body serializer can therefore run once before a duplicate default or configured/per-call credential refuses; preparation does not run it again. The first setter failure stays primary, so a non-finite JSON body refuses before duplicate defaults are considered. Assignment indices and aggregate-input byte accounting follow this same order: adding a default after an admitted body can exceed the input budget at the credential setter (`CallerInput`), instead of during body serialization (`Construction`). These are client input policies, not OpenAPI requirements.
+
+For deliberate execution after inspection, use `advanced::execute(&client, &prepared, cancellation)`. It applies no client credential defaults; supply them before preparation.
 
 The client reuses eligible HTTP/1.1 connections, configuration and TLS state. Clones share the pool; independently built clients have separate pools and trust settings. Each origin retains at most eight idle connections, with a 90-second idle timeout. This does not cap active concurrency, the number of origins, or total connections across origins. Completing an application call does not promise that its connection is already idle; the backend can race pool checkout with connection establishment.
 

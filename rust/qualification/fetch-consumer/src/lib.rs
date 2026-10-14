@@ -79,20 +79,24 @@ impl FetchClient {
             .map_err(js_error)?
             .operation_id("probe")
             .map_err(js_error)?;
-        let mut request = operation.request();
-        for (name, value) in headers {
-            request = request.header(Header::new(name, value));
-        }
-        if let Some(query) = value["query"].as_object() {
-            for (name, value) in query {
-                request = request.parameter_exact(
-                    ParameterLocation::Query,
-                    name,
-                    &Value::parse(value.to_string(), limits.clone()).map_err(js_error)?,
-                );
+        // Keep independent preparation for wire inspection; send consumes a fresh builder.
+        let build = || -> Result<_, JsValue> {
+            let mut request = operation.request();
+            for (name, value) in &headers {
+                request = request.header(Header::new(name, value));
             }
-        }
-        let prepared = request.prepare().map_err(js_error)?;
+            if let Some(query) = value["query"].as_object() {
+                for (name, value) in query {
+                    request = request.parameter_exact(
+                        ParameterLocation::Query,
+                        name,
+                        &Value::parse(value.to_string(), limits.clone()).map_err(js_error)?,
+                    );
+                }
+            }
+            Ok(request)
+        };
+        let prepared = build()?.prepare().map_err(js_error)?;
         let wire = json!({
             "target": prepared.target(),
             "method": prepared.method().as_str(),
@@ -106,15 +110,13 @@ impl FetchClient {
             cancellation.cancel();
         }
         let token = cancellation.clone();
-        let future = Box::pin(async move {
-            if allow_replay {
-                client
-                    .execute_with_replay(&prepared, token, ReplayPolicy::AllowHostManaged)
-                    .await
-            } else {
-                client.execute(&prepared, token).await
-            }
-        });
+        let request = build()?.cancellation(token);
+        let replay = if allow_replay {
+            ReplayPolicy::AllowHostManaged
+        } else {
+            ReplayPolicy::RequireNoReplay
+        };
+        let future = Box::pin(async move { client.send(request, replay).await });
         Ok(FetchCall {
             future: Some(future),
             cancellation,

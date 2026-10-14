@@ -34,6 +34,8 @@ def run(name, command, cwd=root):
 
 run('format', ['cargo', 'fmt', '--all', '--check'])
 run('lint', [sys.executable, root / 'qualification/lint.py'])
+run('native-api', [sys.executable, root / 'qualification/companion_api.py', 'native',
+                   root / 'client', root / 'reqwest', output / 'native-api'])
 run('tests', ['cargo', 'test', '--locked', '--workspace'])
 for inventory in ['cases', 'additions']:
     run('corpus-' + inventory, ['cargo', 'run', '--locked', '-p', 'oac-qualification',
@@ -83,6 +85,8 @@ with tempfile.TemporaryDirectory(prefix='openapi-consumer-', dir=output) as temp
                  consumer / 'tests/serializable.rs')
     shutil.copy2(root / 'client/tests/response_projection.rs',
                  consumer / 'tests/response_projection.rs')
+    shutil.copy2(root / 'client/tests/advanced_prepare.rs',
+                 consumer / 'tests/advanced_prepare.rs')
     # Features belong to this external consumer and unify with the actual archive.
     # Read version constraints from the packaged manifest; do not add product features
     # or maintain a second dependency-version list here.
@@ -91,7 +95,8 @@ with tempfile.TemporaryDirectory(prefix='openapi-consumer-', dir=output) as temp
                             ('preserve-order', 'preserve_order'),
                             ('combined', 'arbitrary_precision,preserve_order')]:
         command = ['cargo', 'test', '--locked', '--manifest-path', consumer / 'Cargo.toml',
-                   '--test', 'serializable', '--test', 'response_projection']
+                   '--test', 'serializable', '--test', 'response_projection',
+                   '--test', 'advanced_prepare']
         if features:
             command += ['--features', features]
         run('external-serde-' + label, command, consumer)

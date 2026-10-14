@@ -6,6 +6,53 @@ network attempts or prove server receipt. The host declaration, caller replay
 permission, recorded admission, upload evidence, cancellation and application
 acceptance are independent facts.
 
+## Preparing a builder in a custom transport
+
+Any transport can consume a checked `RequestBuilder` through the public
+`advanced::prepare(request) -> (Result<PreparedRequest, Diagnostic>, Cancellation)`.
+Native and Fetch use exactly this route; it needs no feature or privileged access.
+Keeping the token outside the Result preserves independent cancellation evidence
+even when preparation fails. It is the builder's selected token, or its fresh
+uncancelled default. Preparation does not rerun user serialization or perform I/O.
+
+Apply any transport-wide scoped credentials with `request.credential(...)` before
+this call. Duplicate defaults/per-call assignments refuse instead of overriding.
+The native companion applies configured credentials, in their configured order,
+inside `send`, after the caller's eager setters and before `advanced::prepare`.
+Custom transports using defaults should follow this order. Serialization can run
+once before a credential duplicate is detected; preparation never reruns it.
+The first setter failure remains primary, so a non-finite body takes precedence
+over duplicate defaults. Assignment indices and aggregate-input byte accounting
+also follow setter order: a default added after a body can exceed the budget in
+`CallerInput` rather than the body's `Construction` context. This ordering is
+client policy, not an OpenAPI requirement.
+On success, custom hosts work from PreparedRequest and pass the returned token to
+`invoke` or `invoke_with_replay`; retain the actual preparation Diagnostic on
+failure. This strict callback example supports both Send and local host futures:
+
+```rust
+use dynamic_openapi_client::{advanced, Cancellation, Outcome, RequestBuilder};
+use dynamic_openapi_client::transport::{HostCapabilities, PreparedRequest, TransportResult};
+use std::future::Future;
+
+async fn send<F, Fut>(request: RequestBuilder, capabilities: &HostCapabilities, host: F) -> Outcome
+where
+    F: FnOnce(PreparedRequest, Cancellation) -> Fut,
+    Fut: Future<Output = TransportResult>,
+{
+    let (prepared, cancellation) = advanced::prepare(request);
+    match prepared {
+        Ok(prepared) => prepared.invoke(cancellation, capabilities, host).await,
+        Err(error) => Outcome::not_dispatched(error, cancellation.is_cancelled(), None),
+    }
+}
+```
+
+A host needing host-managed replay must instead take an explicit ReplayPolicy
+and use `invoke_with_replay`. Preparation grants no replay permission. An
+application that prepares requests itself can still call `RequestBuilder::prepare`
+and later choose an explicit execution token when handing them to a transport.
+
 `HostCapabilities::admit` and `PreparedRequest::invoke` require
 `ReplayPolicy::RequireNoReplay`. The explicit `admit_with_replay` and
 `invoke_with_replay` methods accept a caller policy and share the same
@@ -122,3 +169,35 @@ encoded binary fails exact parsing. No sniffing or decompression retry occurs.
 All other admission and outcome guards apply. Exact JSON positions are relative
 to these delivered bytes. Wire, Decoded and Unknown keep their existing semantics;
 the native companion keeps Wire. A successful parse never upgrades provenance.
+
+## Custom callback example
+
+Apply it after invoking the supplied transport:
+
+```rust
+use dynamic_openapi_client::*;
+use dynamic_openapi_client::{diagnostics::*, exact::*, form::*, graph::*, inspect::*, schema::*, source::*, transport::*};
+async fn inspect_and_call(text: &[u8]) -> Result<(Outcome, Value), Box<dyn std::error::Error>> {
+    let document = Document::parse(text, Some("https://api.example/openapi.json"), Limits::default())?;
+    let operation = document.operation_id("listItems")?;
+    let request = operation.request().prepare()?;
+    drop(document); // The operation and request retain their owners.
+    let outcome = request.invoke(
+        Cancellation::default(), &HostCapabilities::programmable(),
+        |request, cancellation| async move {
+            // Finite fixture transport; supply a qualified host for real I/O.
+            assert!(!cancellation.is_cancelled());
+            assert_eq!(request.method(), Method::Get);
+            TransportResult {
+                response: Some(ResponseInput::new(
+                    200, vec![Header::new("Content-Type", "application/json")],
+                    br#"{"count":9007199254740993}"#.as_slice().into(),
+                    BodyState::Complete, Provenance::Wire,
+                )), upload: UploadState::Complete, error_detail: None,
+            }
+        },
+    ).await;
+    let json = outcome.received_2xx_json_exact()?;
+    Ok((outcome, json))
+}
+```

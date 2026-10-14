@@ -20,6 +20,7 @@ mod schema_facts;
 pub mod source;
 mod style;
 /// Finite prepared requests and supplied-host evidence.
+#[doc = include_str!("../HOSTS.md")]
 pub mod transport;
 pub mod uri;
 mod value;
@@ -54,6 +55,26 @@ mod serializable;
 mod request;
 pub use request::RequestBuilder;
 pub mod form;
+
+/// Preparation for custom transports using the same public route as the companions.
+pub mod advanced {
+    /// Consume a checked builder and return its preparation result and selected
+    /// cancellation token. Preparation does not serialize caller input again.
+    ///
+    /// The token is returned even on failure, so a transport can preserve both the
+    /// actual diagnostic and independent cancellation evidence in an Outcome.
+    /// With no explicit selection it is the builder's fresh uncancelled token.
+    /// On success, pass it to PreparedRequest::invoke or invoke_with_replay.
+    /// This function performs no I/O and applies no transport credential defaults.
+    pub fn prepare(
+        request: crate::RequestBuilder,
+    ) -> (
+        Result<crate::transport::PreparedRequest, crate::Diagnostic>,
+        crate::Cancellation,
+    ) {
+        request.prepare_with_token()
+    }
+}
 
 #[cfg(test)]
 mod schema_tests;

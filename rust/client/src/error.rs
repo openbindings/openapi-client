@@ -144,6 +144,8 @@ pub enum HostRefusal {
     Replay,
     /// The selected host's required execution APIs are unavailable.
     Unavailable,
+    /// Native client construction failed; check explicit trust roots and host TLS availability.
+    Configuration,
     /// The host cannot represent or execute this request method.
     Method,
     /// The host prohibits the supplied body for this request method.
@@ -814,7 +816,14 @@ impl Diagnostic {
 }
 impl fmt::Display for Diagnostic {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: ", self.code.message())?;
+        if matches!(
+            self.reason(),
+            Some(DiagnosticReason::Host(HostRefusal::Configuration))
+        ) {
+            f.write_str("native client construction failed; check additional TLS trust certificates and host TLS availability: ")?;
+        } else {
+            write!(f, "{}: ", self.code.message())?;
+        }
         if let Some(status) = self.details.as_ref().and_then(|d| d.http_status) {
             write!(f, "{status} ")?;
         }

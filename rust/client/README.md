@@ -30,37 +30,22 @@ Outcome is immutable. Keep it in a local variable to inspect partial evidence af
 
 The received reads return the actual preparation or transport Diagnostic first, preserving correction information and sources even after Outcome is dropped. Without an execution diagnostic, priority is cancellation, invalid dispatch/response evidence, non-2xx `HttpStatus`, then body admission or projection. Cancellation remains visible when it coexists with a transport failure. `HttpStatus` includes the numeric status in its bounded message; projection uses `Deserialization` with explicit untrusted `detail()`.
 
-Apply it after invoking the supplied transport:
+Start with the [native companion tutorial](../reqwest/README.md): build with
+`operation.request().json(&model)`, then call `client.send(request).await` and
+`outcome.received_2xx_json::<Created>()`. The executable
+[`o6_send`](../reqwest/examples/o6_send.rs) and
+[`o6_response`](../reqwest/examples/o6_response.rs) examples include a local service,
+scoped credentials, typed success and independent non-2xx body inspection.
+Preparation failures stay on Outcome as corrective diagnostics.
 
-```rust
-use dynamic_openapi_client::*;
-use dynamic_openapi_client::{diagnostics::*, exact::*, form::*, graph::*, inspect::*, schema::*, source::*, transport::*};
-async fn inspect_and_call(text: &[u8]) -> Result<(Outcome, Value), Box<dyn std::error::Error>> {
-    let document = Document::parse(text, Some("https://api.example/openapi.json"), Limits::default())?;
-    let operation = document.operation_id("listItems")?;
-    let request = operation.request().prepare()?;
-    drop(document); // The operation and request retain their owners.
-    let outcome = request.invoke(
-        Cancellation::default(), &HostCapabilities::programmable(),
-        |request, cancellation| async move {
-            // Finite fixture transport; supply a qualified host for real I/O.
-            assert!(!cancellation.is_cancelled());
-            assert_eq!(request.method(), Method::Get);
-            TransportResult {
-                response: Some(ResponseInput::new(
-                    200, vec![Header::new("Content-Type", "application/json")],
-                    br#"{"count":9007199254740993}"#.as_slice().into(),
-                    BodyState::Complete, Provenance::Wire,
-                )), upload: UploadState::Complete, error_detail: None,
-            }
-        },
-    ).await;
-    let json = outcome.received_2xx_json_exact()?;
-    Ok((outcome, json))
-}
-```
-
-`HostCapabilities::programmable()` is a caller promise for controlled callbacks, not proof about an arbitrary HTTP stack. `cargo run --example dynamic` executes the fixture flow. Real asynchronous I/O requires the caller's host/executor. All three reads share one lazy exact decode result or diagnostic. Repeated exact reads share source identity, including across Outcome clones. Typed projection reruns for each requested type outside the cache lock. Body admission accepts Unspecified enumeration and Unknown fidelity; known header omission refuses. A caller requiring complete upload must explicitly check `outcome.upload() == UploadState::Complete`. The old strict ordering survives only as a private qualification application example.
+Custom host callbacks and `transport::PreparedRequest::invoke` belong to the
+[supplied-host reference](HOSTS.md); [`dynamic`](examples/dynamic.rs) is an
+executable finite fixture transport. All three reads share one lazy exact decode
+result or diagnostic. Repeated exact reads share source identity, including across
+Outcome clones. Typed projection reruns for each requested type outside the cache
+lock. Body admission accepts Unspecified enumeration and Unknown fidelity; known
+header omission refuses. A caller requiring complete upload must explicitly check
+`outcome.upload() == UploadState::Complete`.
 
 ## Shared parameter and form styles
 

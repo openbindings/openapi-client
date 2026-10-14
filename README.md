@@ -15,7 +15,7 @@ development checkpoint includes edition-aware inspection, caller-supplied resour
 graphs, schema inspection and finite JSON/raw/named-form request preparation;
 it does not implement every feature in those editions.
 The optional [`dynamic-openapi-client-reqwest`](rust/reqwest/README.md)
-companion provides a reusable native HTTP client and a runnable getting-started example. The [Rust API guide](rust/client/README.md) shows complete dynamic
+companion provides a reusable native HTTP client. Start with its [native tutorial](rust/reqwest/README.md) and executable [send](rust/reqwest/examples/o6_send.rs) and [response](rust/reqwest/examples/o6_response.rs) examples: build with `operation.request()`, call `client.send(request).await`, then read `outcome.received_2xx_json::<T>()`. The [Rust API guide](rust/client/README.md) shows complete dynamic
 calls, diagnostics, ownership and application outcome policy. The optional
 [Rust Fetch companion](rust/fetch/README.md) provides Browser/Worker profiles on
 Wasm with explicit host-managed replay; host qualification remains in progress.
