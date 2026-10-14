@@ -1,8 +1,9 @@
 # Logical parameter and form serialization
 
 Parameters and applicable form encodings share one private traversal of scalar,
-array and flat-object values. Keep using `.parameter(...)` and `.form(...)` with
-ordinary/exact inputs. The library owns framing; no template or wire-string
+array and flat-object values. Use `.parameter(...)` and `.form(...)` for checked
+Serde input, `.parameter_exact(...)` for an exact parameter, and `.form_fields(...)`
+for explicit exact fields or files. The library owns framing; no template or wire-string
 constructor is needed. Names, data and structural separators are distinct atoms.
 
 The implemented style profile is:

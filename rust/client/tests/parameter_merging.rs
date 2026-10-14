@@ -55,7 +55,6 @@ fn overrides_keep_source_order_provenance_and_location_identity() {
         );
         let op = doc.operation_id("read").unwrap();
         for parameters in [op.parameters().unwrap(), op.describe().unwrap().parameters] {
-            let parameters: Vec<_> = parameters.iter().collect();
             let names: Vec<_> = parameters.iter().map(Parameter::name).collect();
             assert_eq!(
                 names,
@@ -77,7 +76,7 @@ fn overrides_keep_source_order_provenance_and_location_identity() {
         }
         let prepared = op.prepare_case(&CaseInput::default()).unwrap();
         assert_eq!(prepared.target(), "https://api.example/");
-        assert_eq!(op.parameters().unwrap().iter().len(), 7);
+        assert_eq!(op.parameters().unwrap().len(), 7);
     }
 }
 
@@ -132,8 +131,8 @@ fn resolved_overrides_retain_the_operation_use_site_and_target() {
     }}}).to_string(), None, Limits::default()).unwrap();
     let op = doc.operation_id("read").unwrap();
     let parameters = op.parameters().unwrap();
-    assert_eq!(parameters.iter().len(), 1);
-    let p = parameters.iter().next().unwrap();
+    assert_eq!(parameters.len(), 1);
+    let p = parameters.first().unwrap();
     assert_eq!(
         p.authored().location().pointer,
         "/paths/~1/get/parameters/0"
@@ -194,12 +193,12 @@ fn parameter_inspection_remains_available_after_request_declaration_failure() {
     )
     .unwrap();
     let op = doc.operation_id("read").unwrap();
-    assert_eq!(op.parameters().unwrap().iter().len(), 1);
+    assert_eq!(op.parameters().unwrap().len(), 1);
     assert_eq!(
         op.prepare_case(&CaseInput::default()).unwrap_err().code(),
         Code::InvalidReference
     );
-    assert_eq!(op.parameters().unwrap().iter().len(), 1);
+    assert_eq!(op.parameters().unwrap().len(), 1);
 }
 
 #[test]
@@ -215,10 +214,7 @@ fn cache_disabled_still_merges_and_prepares() {
     );
     let op = doc.operation_id("read").unwrap();
     for _ in 0..2 {
-        assert_eq!(
-            op.parameters().unwrap().iter().next().unwrap().name(),
-            "x-TRACE"
-        );
+        assert_eq!(op.parameters().unwrap().first().unwrap().name(), "x-TRACE");
         op.prepare_case(&CaseInput::default()).unwrap();
         #[cfg(feature = "qualification")]
         assert_eq!(qualification::cached_operations(&doc), 0);

@@ -25,7 +25,6 @@ fn parameter_views_share_resolution_override_and_retained_sources() {
     let parameters = operation.parameters().unwrap();
     drop(document);
     drop(operation);
-    let parameters: Vec<_> = parameters.iter().collect();
     assert_eq!(
         parameters.iter().map(Parameter::name).collect::<Vec<_>>(),
         ["id", "x-key", "content"]

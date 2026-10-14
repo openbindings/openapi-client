@@ -173,18 +173,6 @@ pub struct Parameter {
     collection: Option<String>,
     schema_context: Option<SchemaDeclaration>,
 }
-/// Effective parameter declarations retaining their exact source owners.
-/// Structured refusal leaves Operation::inspect available for raw inspection.
-#[derive(Clone, Debug)]
-pub struct Parameters {
-    entries: Arc<[Parameter]>,
-}
-impl Parameters {
-    /// Effective order, with operation declarations overriding path declarations.
-    pub fn iter(&self) -> impl ExactSizeIterator<Item = Parameter> + '_ {
-        self.entries.iter().cloned()
-    }
-}
 impl std::fmt::Debug for Parameter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Parameter")
@@ -438,7 +426,7 @@ pub struct EffectiveOperationDescription {
     /// Optional operation ID.
     pub operation_id: Option<String>,
     /// Effective non-body parameter declarations.
-    pub parameters: Parameters,
+    pub parameters: Vec<Parameter>,
     /// Effective target choices, in election order.
     pub servers: Vec<ServerDescription>,
     /// Effective logical body; ignored edition-specific body declarations are absent here.
@@ -1244,9 +1232,7 @@ impl Operation {
                 .filter(|v| v.as_str().is_some())
                 .map(|v| work.text(&v, v.as_str().expect("string operation ID")))
                 .transpose()?,
-            parameters: Parameters {
-                entries: parameters.into(),
-            },
+            parameters,
             servers: self.server_descriptions(&mut work)?,
             request_body,
             responses,
@@ -1651,11 +1637,10 @@ fn serialize_legacy(
 impl Operation {
     /// Inspect effective parameters without compiling body/media/security requirements.
     /// Unsupported editions and invalid parameter declarations refuse; raw inspection remains.
-    pub fn parameters(&self) -> Result<Parameters, Diagnostic> {
+    /// The owned sequence preserves effective order and each parameter's source owners.
+    pub fn parameters(&self) -> Result<Vec<Parameter>, Diagnostic> {
         self.compiled(&crate::Cancellation::default())
-            .map(|compiled| Parameters {
-                entries: compiled.parameters.clone(),
-            })
+            .map(|compiled| compiled.parameters.to_vec())
             .map_err(|e| e.bind_graph(&self.store))
     }
     fn parameter_declarations(
@@ -3438,12 +3423,45 @@ mod parameter_work_tests {
         CHECKPOINTS.with(|count| count.set(0));
         op.prepare(&Input::default()).unwrap();
         assert!(CHECKPOINTS.with(|count| count.get()) > n);
+        let compiled = op
+            .record()
+            .compiled
+            .get()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .clone();
+        CHECKPOINTS.with(|count| count.set(0));
         let first = op.parameters().unwrap();
+        let first_cached = op.compiled(&Cancellation::default()).unwrap();
         let second = op.clone().parameters().unwrap();
-        assert_eq!(first.iter().len(), n);
-        assert!(Arc::ptr_eq(&first.entries, &second.entries));
-        let compiled = op.record().compiled.get().unwrap().as_ref().unwrap();
-        assert!(Arc::ptr_eq(&first.entries, &compiled.parameters));
+        let second_cached = op.compiled(&Cancellation::default()).unwrap();
+        assert!(Arc::ptr_eq(
+            &first_cached.parameters,
+            &second_cached.parameters
+        ));
+        assert!(Arc::ptr_eq(&first_cached.parameters, &compiled.parameters));
+        assert_eq!(CHECKPOINTS.with(|count| count.get()), 0);
+        assert_eq!(first.len(), n);
+        assert_eq!(second.len(), first.len());
+        for (first, second) in first.iter().zip(&second) {
+            assert_eq!(
+                first.authored().source_context(),
+                second.authored().source_context()
+            );
+            assert_eq!(first.authored().location(), second.authored().location());
+        }
+        assert_eq!(compiled.parameters.len(), first.len());
+        for (parameter, cached) in first.iter().zip(compiled.parameters.iter()) {
+            assert_eq!(
+                parameter.authored().source_context(),
+                cached.authored().source_context()
+            );
+            assert_eq!(
+                parameter.authored().location(),
+                cached.authored().location()
+            );
+        }
     }
 
     #[test]
@@ -3452,6 +3470,7 @@ mod parameter_work_tests {
         let op = doc.operation_id("read").unwrap();
         let parameters = op.parameters().unwrap();
         let compiled = op.record().compiled.get().unwrap().as_ref().unwrap();
+        let cached_parameters = compiled.parameters.clone();
         assert!(compiled.request.get().is_none());
         let cancel = Cancellation::default();
         let guard = crate::schema::cancel_after_for_test(1_000);
@@ -3464,13 +3483,26 @@ mod parameter_work_tests {
         );
         assert_eq!(CHECKPOINTS.with(|count| count.get()), 1_000);
         assert!(compiled.request.get().is_none());
+        assert!(Arc::ptr_eq(
+            &cached_parameters,
+            &op.compiled(&Cancellation::default()).unwrap().parameters
+        ));
         drop(guard);
         op.prepare(&Input::default()).unwrap();
         assert!(compiled.request.get().unwrap().is_ok());
-        assert!(Arc::ptr_eq(
-            &parameters.entries,
-            &op.parameters().unwrap().entries
-        ));
+        CHECKPOINTS.with(|count| count.set(0));
+        let after = op.parameters().unwrap();
+        let after_cached = op.compiled(&Cancellation::default()).unwrap();
+        assert!(Arc::ptr_eq(&cached_parameters, &after_cached.parameters));
+        assert_eq!(CHECKPOINTS.with(|count| count.get()), 0);
+        assert_eq!(parameters.len(), after.len());
+        for (before, after) in parameters.iter().zip(after) {
+            assert_eq!(
+                before.authored().source_context(),
+                after.authored().source_context()
+            );
+            assert_eq!(before.authored().location(), after.authored().location());
+        }
     }
 
     #[test]
@@ -3488,7 +3520,7 @@ mod parameter_work_tests {
         source["paths"]["/"]["get"]["responses"] = json!({"200":{"description":"ok"}});
         let doc = Document::parse(source.to_string(), None, doc.0.limits.clone()).unwrap();
         let op = doc.operation_id("read").unwrap();
-        assert_eq!(op.parameters().unwrap().iter().len(), 1);
+        assert_eq!(op.parameters().unwrap().len(), 1);
         let error = op.prepare(&Input::default()).unwrap_err();
         assert_eq!(error.code(), Code::Limit);
         assert_eq!(
@@ -3499,6 +3531,6 @@ mod parameter_work_tests {
                 actual: 5,
             })
         );
-        assert_eq!(op.parameters().unwrap().iter().len(), 1);
+        assert_eq!(op.parameters().unwrap().len(), 1);
     }
 }
