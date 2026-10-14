@@ -198,7 +198,7 @@ fn frozen_literal_contract() {
             } else if action == "profile" {
                 match schema.profile() {
                     SchemaProfile::JsonSchema { dialect_uri } => {
-                        json!({"dialect":dialect_uri,"capability":format!("{:?}",schema.dialect_capability())})
+                        json!({"dialect":dialect_uri,"capability":if schema.keywords_supported() { "Supported" } else { "Opaque" }})
                     }
                     _ => panic!("{name}"),
                 }
@@ -622,7 +622,7 @@ fn dialect_boundaries_and_opaque_data_do_not_activate_guessed_keywords() {
         Some(&DiagnosticReason::Schema(SchemaReason::InvalidDialectSite))
     );
     let opaque = selected(&doc, "/$defs/opaque");
-    assert_eq!(opaque.dialect_capability(), DialectCapability::Opaque);
+    assert!(!opaque.keywords_supported());
     assert!(
         doc.entry_resource()
             .schema_at("/$defs/opaque/properties/inert")
@@ -1062,15 +1062,9 @@ fn opaque_targets_are_inspectable_only_at_independently_indexed_sites() {
         } else {
             let result = result.unwrap();
             if layout {
-                assert_eq!(
-                    result.target().dialect_capability(),
-                    DialectCapability::Supported
-                );
+                assert!(result.target().keywords_supported());
             } else {
-                assert_eq!(
-                    result.target().dialect_capability(),
-                    DialectCapability::Opaque
-                );
+                assert!(!result.target().keywords_supported());
                 assert_eq!(
                     result.target().references().err().unwrap().code(),
                     Code::UnsupportedSchema

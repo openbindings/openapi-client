@@ -139,7 +139,12 @@ fn resolved_overrides_retain_the_operation_use_site_and_target() {
         "/components/parameters/operation"
     );
     assert_eq!(
-        p.schema().unwrap().get("type").unwrap().as_str(),
+        p.schema_description()
+            .map(|s| s.value)
+            .unwrap()
+            .get("type")
+            .unwrap()
+            .as_str(),
         Some("integer")
     );
 }

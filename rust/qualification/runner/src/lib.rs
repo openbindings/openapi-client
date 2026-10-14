@@ -126,7 +126,7 @@ fn headers(h: &[Header]) -> J {
     )
 }
 pub fn request_facts(p: &PreparedRequest) -> J {
-    json!({"method":p.method().as_str(),"target":p.target(),"headers":headers(p.headers()),"body_kind":p.body_kind(),"body_hex":p.body().map(hex),"safe_debug":format!("{p:?}")})
+    json!({"method":p.method().as_str(),"target":p.target(),"headers":headers(p.headers()),"body_kind":p.body_kind(),"body_hex":p.body().map(AsRef::as_ref).map(hex),"safe_debug":format!("{p:?}")})
 }
 pub fn operation(d: &Document, c: &J) -> Result<Operation, Diagnostic> {
     if let Some(id) = c.get("operation_id").and_then(J::as_str) {
@@ -150,20 +150,18 @@ pub fn response_input(r: &J) -> ResponseInput {
                         .collect()
                 })
                 .unwrap_or_default(),
-            DeliveredBody {
-                bytes: unhex(r.get("body_hex").and_then(J::as_str).unwrap_or("")).into(),
-                state: if r.get("body_error").is_some() {
-                    BodyState::Failed
-                } else if r.get("truncated").and_then(J::as_bool) == Some(true) {
-                    BodyState::Truncated
-                } else {
-                    BodyState::Complete
-                },
-                provenance: match r.get("provenance").and_then(J::as_str) {
-                    Some("wire") => Provenance::Wire,
-                    Some("decoded") => Provenance::Decoded,
-                    _ => Provenance::Unknown,
-                },
+            unhex(r.get("body_hex").and_then(J::as_str).unwrap_or("")).into(),
+            if r.get("body_error").is_some() {
+                BodyState::Failed
+            } else if r.get("truncated").and_then(J::as_bool) == Some(true) {
+                BodyState::Truncated
+            } else {
+                BodyState::Complete
+            },
+            match r.get("provenance").and_then(J::as_str) {
+                Some("wire") => Provenance::Wire,
+                Some("decoded") => Provenance::Decoded,
+                _ => Provenance::Unknown,
             },
         );
         response.opaque_redirect = r.get("opaque_redirect").and_then(J::as_bool) == Some(true);
@@ -571,11 +569,9 @@ pub fn campaign(family: &str, seconds: u64, seed: u64) -> J {
                     response: Some(ResponseInput::new(
                         (rng % 700) as u16,
                         vec![Header::new("Content-Type", &bytes)],
-                        DeliveredBody {
-                            bytes: bytes.clone().into(),
-                            state: BodyState::Complete,
-                            provenance: Provenance::Unknown,
-                        },
+                        bytes.clone().into(),
+                        BodyState::Complete,
+                        Provenance::Unknown,
                     )),
                     upload: UploadState::Unknown,
                     error_detail: None,

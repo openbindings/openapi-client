@@ -106,6 +106,8 @@ with tempfile.TemporaryDirectory(prefix='native-consumer-', dir=output) as tempo
     shutil.copy2(native / 'examples/real_http.rs', consumer / 'src/main.rs')
     shutil.copy2(root / 'qualification/native_consumer.rs', consumer / 'src/bin/independent-consumer.rs')
     shutil.copytree(native / 'tests', consumer / 'tests')
+    # The response tutorial's socket-free tests execute its actual reader.
+    shutil.copytree(native / 'examples', consumer / 'examples')
     # H0 controls use only public APIs from the extracted core archive, including
     # the external adapter's controlled HostRefusal conversion.
     shutil.copy2(core / 'tests/host_contract.rs', consumer / 'tests/host_contract.rs')

@@ -279,7 +279,11 @@ fn form_style_and_content_profiles_keep_32_outer_array_expansion() {
                 .form([FormField::new("p", exact(input))])
                 .prepare()
                 .unwrap();
-            assert_eq!(r.body().unwrap(), expected.as_bytes(), "{version}");
+            assert_eq!(
+                r.body().map(AsRef::as_ref).unwrap(),
+                expected.as_bytes(),
+                "{version}"
+            );
         }
     }
 }
@@ -300,7 +304,7 @@ fn multipart_style_is_literal_and_30_ignores_style_fields() {
             .form([FormField::new("p", exact(r#"{"x":"a%2F&=+é"}"#))])
             .prepare()
             .unwrap();
-        let body = std::str::from_utf8(r.body().unwrap()).unwrap();
+        let body = std::str::from_utf8(r.body().map(AsRef::as_ref).unwrap()).unwrap();
         if version.starts_with("3.0") {
             assert!(body.contains(
                 "name=\"p\"\r\nContent-Type: application/json\r\n\r\n{\"x\":\"a%2F&=+é\"}"
@@ -375,7 +379,7 @@ fn security_compares_final_names_and_preserves_namespace_separation() {
             .credential("Key", key())
             .prepare()
             .unwrap();
-        assert_eq!(r.body().unwrap(), b"token=body-value");
+        assert_eq!(r.body().map(AsRef::as_ref).unwrap(), b"token=body-value");
         assert!(r.target().ends_with("?token=dummy-token"));
     }
 }

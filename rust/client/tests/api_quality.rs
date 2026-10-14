@@ -30,7 +30,8 @@ fn parameter_views_share_resolution_override_and_retained_sources() {
     assert!(!parameters[1].required());
     assert_eq!(
         parameters[0]
-            .schema()
+            .schema_description()
+            .map(|s| s.value)
             .unwrap()
             .get("x-exact")
             .unwrap()
@@ -46,7 +47,12 @@ fn parameter_views_share_resolution_override_and_retained_sources() {
         resolved.authored.source_context(),
         resolved.target.source_context()
     );
-    assert!(parameters[2].schema().is_none());
+    assert!(
+        parameters[2]
+            .schema_description()
+            .map(|s| s.value)
+            .is_none()
+    );
     assert!(parameters[2].resolved().target.get("content").is_some());
 }
 
@@ -290,12 +296,15 @@ fn builder_matches_equivalent_input_and_distinct_assignments_commute() {
         assert_eq!(actual.method(), raw.method());
         assert_eq!(actual.target(), raw.target());
         assert_eq!(actual.headers(), raw.headers());
-        assert_eq!(actual.body(), raw.body());
+        assert_eq!(
+            actual.body().map(AsRef::as_ref),
+            raw.body().map(AsRef::as_ref)
+        );
         assert_eq!(actual.body_kind(), raw.body_kind());
     }
     assert!(a.target().contains("9007199254740993"));
     assert_eq!(
-        a.body(),
+        a.body().map(AsRef::as_ref),
         Some(br#"{"count":18446744073709551615,"null":null}"#.as_slice())
     );
 }

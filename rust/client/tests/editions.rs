@@ -42,7 +42,7 @@ fn all_published_editions_use_one_ordinary_json_consumer() {
             "{version}"
         );
         assert_eq!(
-            request.body(),
+            request.body().map(AsRef::as_ref),
             Some(br#"{"integer":9007199254740993}"#.as_slice())
         );
         assert_eq!(
@@ -149,7 +149,7 @@ fn legacy_collections_servers_and_bodyless_calls_follow_original_declarations() 
             request.target(),
             format!("https://api.example/v2/list?q={expected}")
         );
-        assert!(request.body().is_none());
+        assert!(request.body().map(AsRef::as_ref).is_none());
         assert_eq!(op.describe().unwrap().servers.len(), 1);
     }
     let doc = document(
@@ -225,7 +225,12 @@ fn local_references_respect_edition_siblings_and_legacy_body_inheritance() {
     let op = doc.operation_id("post").unwrap();
     let input = ExactJson::parse(b"null", Limits::default()).unwrap();
     assert_eq!(
-        op.request().json(input.root()).prepare().unwrap().body(),
+        op.request()
+            .json(input.root())
+            .prepare()
+            .unwrap()
+            .body()
+            .map(AsRef::as_ref),
         Some(b"null".as_slice())
     );
     assert_eq!(op.parameters().unwrap().iter().count(), 0);
@@ -267,7 +272,7 @@ fn raw_bodies_and_media_override_use_the_same_selection_api() {
             .body(Body::Raw(b"a\0b".as_slice().into()))
             .prepare()
             .unwrap();
-        assert_eq!(prepared.body(), Some(b"a\0b".as_slice()));
+        assert_eq!(prepared.body().map(AsRef::as_ref), Some(b"a\0b".as_slice()));
         assert_eq!(prepared.body_kind(), "raw");
         assert_eq!(
             op.describe().unwrap().request_body.unwrap().media[0].media_type,
@@ -508,7 +513,12 @@ fn media_type_references_are_32_positions_and_schemas_remain_opaque() {
     );
     let value = ExactJson::parse(b"{}", Limits::default()).unwrap();
     assert_eq!(
-        op.request().json(value.root()).prepare().unwrap().body(),
+        op.request()
+            .json(value.root())
+            .prepare()
+            .unwrap()
+            .body()
+            .map(AsRef::as_ref),
         Some(b"{}".as_slice())
     );
 }
@@ -610,7 +620,7 @@ fn actual_loopback_wire_uses_one_consumer_for_all_editions_and_new_methods() {
                     .set_read_timeout(Some(Duration::from_secs(5)))
                     .unwrap();
                 let path = request
-                    .target
+                    .target()
                     .split_once("://")
                     .unwrap()
                     .1
@@ -620,20 +630,20 @@ fn actual_loopback_wire_uses_one_consumer_for_all_editions_and_new_methods() {
                 write!(
                     stream,
                     "{} /{} HTTP/1.1\r\nHost: {}\r\nContent-Length: {}\r\n",
-                    request.method.as_str(),
+                    request.method().as_str(),
                     path,
                     address,
-                    request.body.as_ref().map_or(0, |b| b.len())
+                    request.body().map_or(0, |b| b.len())
                 )
                 .unwrap();
-                for header in request.headers {
+                for header in request.headers() {
                     write!(stream, "{}: ", header.name()).unwrap();
                     stream.write_all(header.value()).unwrap();
                     stream.write_all(b"\r\n").unwrap();
                 }
                 stream.write_all(b"\r\n").unwrap();
-                if let Some(body) = request.body {
-                    stream.write_all(&body).unwrap();
+                if let Some(body) = request.body() {
+                    stream.write_all(body).unwrap();
                 }
                 let mut response = vec![];
                 stream.read_to_end(&mut response).unwrap();
@@ -643,11 +653,9 @@ fn actual_loopback_wire_uses_one_consumer_for_all_editions_and_new_methods() {
                     response: Some(ResponseInput::new(
                         200,
                         vec![Header::new("Content-Type", "application/json")],
-                        DeliveredBody {
-                            bytes: response[end + 4..].into(),
-                            state: BodyState::Complete,
-                            provenance: Provenance::Wire,
-                        },
+                        response[end + 4..].into(),
+                        BodyState::Complete,
+                        Provenance::Wire,
                     )),
                     upload: UploadState::Complete,
                     error_detail: None,
@@ -690,7 +698,7 @@ fn malformed_media_keys_are_excluded_before_values_in_effective_descriptions() {
             })
             .prepare()
             .unwrap();
-        assert_eq!(prepared.body(), Some(b"null".as_slice()));
+        assert_eq!(prepared.body().map(AsRef::as_ref), Some(b"null".as_slice()));
         assert_eq!(
             prepared
                 .headers()
@@ -800,7 +808,7 @@ fn form_descriptions_use_media_essence_and_preserve_authored_spelling() {
                 ..Input::default()
             };
             assert_eq!(
-                op.prepare(&input).unwrap().body(),
+                op.prepare(&input).unwrap().body().map(AsRef::as_ref),
                 Some(b"field=value".as_slice())
             );
         }

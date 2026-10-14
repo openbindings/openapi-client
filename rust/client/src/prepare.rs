@@ -182,10 +182,6 @@ impl Parameter {
     pub fn resolved(&self) -> crate::ResolvedReference {
         self.resolved.clone()
     }
-    /// Raw Schema Object. None does not mean a content declaration is absent.
-    pub fn schema(&self) -> Option<Value> {
-        self.schema_context.as_ref().map(|s| s.value.clone())
-    }
     /// Opaque schema with retained edition and dialect context.
     pub fn schema_description(&self) -> Option<crate::SchemaDescription> {
         self.schema_context
@@ -431,6 +427,9 @@ struct RequestDeclarations {
     responses: Vec<(String, Value)>,
 }
 /// Immutable request plan. Preparing or cloning it does not authorize a retry.
+/// A host retaining this request also retains its operation, compiled declarations
+/// and source graph. Release it after extracting transport facts when those owners
+/// are unnecessary; a cloned body Arc can outlive the request independently.
 #[derive(Clone)]
 pub struct PreparedRequest {
     pub(crate) operation: Operation,
@@ -3270,9 +3269,10 @@ impl PreparedRequest {
     pub fn headers(&self) -> &[Header] {
         &self.headers
     }
-    /// Finite owned payload, distinct from absence.
-    pub fn body(&self) -> Option<&[u8]> {
-        self.body.as_deref()
+    /// Finite shared payload, distinct from absence. Clone the Arc to retain bytes
+    /// without retaining the operation and source graph or copying the payload.
+    pub fn body(&self) -> Option<&Arc<[u8]>> {
+        self.body.as_ref()
     }
     /// Payload category: absent, json, raw or form.
     pub fn body_kind(&self) -> &'static str {

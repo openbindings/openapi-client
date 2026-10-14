@@ -1,6 +1,4 @@
-use crate::{
-    Cancellation, Code, Diagnostic, ExactJson, HostRefusal, Limits, Method, PreparedRequest,
-};
+use crate::{Cancellation, Code, Diagnostic, ExactJson, HostRefusal, Limits, PreparedRequest};
 use std::{fmt, future::Future, sync::Arc};
 
 /// Ordered HTTP header field with explicit credential sensitivity.
@@ -221,25 +219,6 @@ pub enum BodyState {
     Truncated,
     Failed,
 }
-/// Finite body evidence supplied by the host, including a late failure or truncation.
-#[derive(Clone)]
-pub struct DeliveredBody {
-    /// Bytes delivered so far. Core will retain at most its configured limit.
-    pub bytes: Arc<[u8]>,
-    /// Whether these bytes end at representation completion.
-    pub state: BodyState,
-    /// Explicit body-source and interpretation evidence.
-    pub provenance: Provenance,
-}
-impl fmt::Debug for DeliveredBody {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("DeliveredBody")
-            .field("bytes", &self.bytes.len())
-            .field("state", &self.state)
-            .field("provenance", &self.provenance)
-            .finish()
-    }
-}
 /// Meaning of delivered structured header metadata, independent of body provenance.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
@@ -295,15 +274,19 @@ impl ResponseAdmission {
 }
 
 /// Response metadata and finite body delivered by the host.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 #[non_exhaustive]
 pub struct ResponseInput {
     /// HTTP status. Zero is permitted only to describe an opaque redirect refusal.
     pub status: u16,
     /// Delivered entries in host delivery order; interpreted through header_fidelity.
     pub headers: Vec<Header>,
-    /// Body evidence.
-    pub body: DeliveredBody,
+    /// Bytes delivered so far. Core retains at most its configured limit.
+    pub bytes: Arc<[u8]>,
+    /// Whether these bytes end at representation completion.
+    pub body_state: BodyState,
+    /// Explicit body-source and interpretation evidence.
+    pub provenance: Provenance,
     /// A browser returned an opaque redirect instead of inspectable response metadata.
     pub opaque_redirect: bool,
     /// Host declaration about delivered structured fields, independent of body bytes.
@@ -316,15 +299,37 @@ impl ResponseInput {
     /// Construct evidence with Unknown fidelity, Unspecified header delivery and
     /// no opaque redirect. These defaults preserve the supplied-host policy;
     /// they do not assert that metadata was completely enumerated.
-    pub fn new(status: u16, headers: Vec<Header>, body: DeliveredBody) -> Self {
+    pub fn new(
+        status: u16,
+        headers: Vec<Header>,
+        bytes: Arc<[u8]>,
+        body_state: BodyState,
+        provenance: Provenance,
+    ) -> Self {
         Self {
             status,
             headers,
-            body,
+            bytes,
+            body_state,
+            provenance,
             opaque_redirect: false,
             header_fidelity: HeaderFidelity::Unknown,
             header_delivery: HeaderDelivery::Unspecified,
         }
+    }
+}
+impl fmt::Debug for ResponseInput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ResponseInput")
+            .field("status", &self.status)
+            .field("headers", &self.headers)
+            .field("bytes", &self.bytes.len())
+            .field("body_state", &self.body_state)
+            .field("provenance", &self.provenance)
+            .field("opaque_redirect", &self.opaque_redirect)
+            .field("header_fidelity", &self.header_fidelity)
+            .field("header_delivery", &self.header_delivery)
+            .finish()
     }
 }
 /// Host outcome; an arbitrary failure detail is retained privately and never formatted.
@@ -343,49 +348,6 @@ impl fmt::Debug for TransportResult {
             .field("response", &self.response)
             .field("upload", &self.upload)
             .field("has_error", &self.error_detail.is_some())
-            .finish()
-    }
-}
-/// Owned finite data handed to the transport once.
-/// Obtain this envelope through PreparedRequest::invoke or invoke_with_replay;
-/// its response bounds are immutable prepared evidence.
-///
-/// ```compile_fail
-/// use dynamic_openapi_client::DispatchRequest;
-/// fn old_bound(request: DispatchRequest) -> usize { request.response_limit }
-/// ```
-/// ```compile_fail
-/// use dynamic_openapi_client::{DispatchRequest, Method};
-/// let request = DispatchRequest {
-///     method: Method::Get, target: "https://example.test/".into(),
-///     headers: vec![], body: None, response_limit: 64,
-/// };
-/// ```
-#[derive(Clone)]
-#[non_exhaustive]
-pub struct DispatchRequest {
-    /// HTTP method.
-    pub method: Method,
-    /// Exact target, potentially containing credentials.
-    pub target: String,
-    /// Complete ordered header lines.
-    pub headers: Vec<Header>,
-    /// Absent or finite payload; sharing these bytes does not authorize retries.
-    /// Cloneable bytes do not establish that the original request was unsent.
-    pub body: Option<Arc<[u8]>>,
-    response_admission: ResponseAdmission,
-}
-impl DispatchRequest {
-    /// Required finite body and metadata bounds for the supplied transport.
-    pub fn response_admission(&self) -> ResponseAdmission {
-        self.response_admission
-    }
-}
-impl fmt::Debug for DispatchRequest {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("DispatchRequest")
-            .field("method", &self.method)
-            .field("body_bytes", &self.body.as_ref().map(|b| b.len()))
             .finish()
     }
 }
@@ -425,15 +387,15 @@ impl Response {
     }
     /// Bounded bytes delivered by the host; provenance is reported separately.
     pub fn raw(&self) -> &[u8] {
-        &self.input.body.bytes
+        &self.input.bytes
     }
     /// Body completion evidence.
     pub fn body_state(&self) -> BodyState {
-        self.input.body.state
+        self.input.body_state
     }
     /// Declared source/interpretation; raw never silently means original wire bytes.
     pub fn provenance(&self) -> Provenance {
-        self.input.body.provenance
+        self.input.provenance
     }
     /// Validate delivered JSON into a new, independent exact owner on each call.
     /// All admission checks finish here; dynamic access may materialize its index later.
@@ -547,6 +509,18 @@ impl Outcome {
 }
 impl PreparedRequest {
     /// Immutable response admission bounds derived from this request's Limits.
+    ///
+    /// ```compile_fail
+    /// use dynamic_openapi_client::PreparedRequest;
+    /// fn old_bound(request: PreparedRequest) -> usize { request.response_limit }
+    /// ```
+    /// ```compile_fail
+    /// use dynamic_openapi_client::{PreparedRequest, Method};
+    /// let request = PreparedRequest {
+    ///     method: Method::Get, target: "https://example.test/".into(),
+    ///     headers: vec![], body: None, response_limit: 64,
+    /// };
+    /// ```
     pub fn response_admission(&self) -> ResponseAdmission {
         ResponseAdmission {
             body_bytes: self.limits.body_bytes,
@@ -557,6 +531,8 @@ impl PreparedRequest {
 
     /// Invoke once through a supplied future-producing callback, without a universal Send bound.
     /// Dropping this future does not establish remote cancellation or upload completion.
+    /// The callback receives a clone sharing the body and retaining the operation
+    /// and source graph; saving it extends their lifetime beyond this invocation.
     pub async fn invoke<F, Fut>(
         &self,
         cancellation: Cancellation,
@@ -564,7 +540,7 @@ impl PreparedRequest {
         dispatch: F,
     ) -> Outcome
     where
-        F: FnOnce(DispatchRequest, Cancellation) -> Fut,
+        F: FnOnce(PreparedRequest, Cancellation) -> Fut,
         Fut: Future<Output = TransportResult>,
     {
         self.invoke_with_replay(cancellation, host, ReplayPolicy::RequireNoReplay, dispatch)
@@ -573,6 +549,7 @@ impl PreparedRequest {
     /// Invoke the callback once under the caller's explicit replay policy.
     /// Host-managed permission does not change bytes or other admission rules.
     /// The callback may itself use a host that retransmits; its entry is not an attempt count.
+    /// As with invoke, retaining the callback request also retains its source graph.
     pub async fn invoke_with_replay<F, Fut>(
         &self,
         cancellation: Cancellation,
@@ -581,7 +558,7 @@ impl PreparedRequest {
         dispatch: F,
     ) -> Outcome
     where
-        F: FnOnce(DispatchRequest, Cancellation) -> Fut,
+        F: FnOnce(PreparedRequest, Cancellation) -> Fut,
         Fut: Future<Output = TransportResult>,
     {
         let preflight = cancellation
@@ -601,14 +578,7 @@ impl PreparedRequest {
                 };
             }
         };
-        let request = DispatchRequest {
-            method: self.method.clone(),
-            target: self.target.clone(),
-            headers: self.headers.clone(),
-            body: self.body.clone(),
-            response_admission: self.response_admission(),
-        };
-        let result = dispatch(request, cancellation.clone()).await;
+        let result = dispatch(self.clone(), cancellation.clone()).await;
         let mut error = result
             .error_detail
             .as_ref()
@@ -644,9 +614,9 @@ impl PreparedRequest {
             {
                 validation = Some(Diagnostic::new(Code::InvalidHostEvidence));
             }
-            if input.body.bytes.len() > self.limits.body_bytes {
-                input.body.bytes = Arc::from(&input.body.bytes[..self.limits.body_bytes]);
-                input.body.state = BodyState::Truncated;
+            if input.bytes.len() > self.limits.body_bytes {
+                input.bytes = Arc::from(&input.bytes[..self.limits.body_bytes]);
+                input.body_state = BodyState::Truncated;
             }
             if error.is_none() {
                 error = validation.clone();
@@ -677,6 +647,64 @@ impl PreparedRequest {
 mod host_delivered_tests {
     use super::*;
 
+    #[test]
+    fn saved_callback_request_shares_body_and_retains_graph_until_released() {
+        use std::task::{Context, Poll, Waker};
+        let source = format!(
+            r#"{{"openapi":"3.1.2","x-padding":"{}","servers":[{{"url":"https://api.example/SECRET-TARGET"}}],"paths":{{"/send":{{"post":{{"operationId":"send","requestBody":{{"content":{{"application/octet-stream":{{}}}}}}}}}}}}}}"#,
+            "x".repeat(1024 * 1024),
+        );
+        let document = crate::Document::parse(source, None, Limits::default()).unwrap();
+        let graph = Arc::downgrade(&document.0);
+        let retained = document.retained_bytes();
+        let payload: Arc<[u8]> = b"SECRET-BODY".as_slice().into();
+        let request = document
+            .operation_id("send")
+            .unwrap()
+            .request()
+            .body(crate::Body::Raw(payload.clone()))
+            .header(Header::new("SECRET-NAME", "SECRET-VALUE"))
+            .prepare()
+            .unwrap();
+        let compiled = Arc::downgrade(&request.compiled);
+        let mut saved = None;
+        let host = HostCapabilities::programmable();
+        let future = request.invoke(Cancellation::default(), &host, |received, _| {
+            assert!(Arc::ptr_eq(
+                request.body().unwrap(),
+                received.body().unwrap()
+            ));
+            assert!(Arc::ptr_eq(&payload, received.body().unwrap()));
+            assert!(!format!("{received:?} {received:#?}").contains("SECRET"));
+            saved = Some(received);
+            std::future::ready(TransportResult {
+                response: None,
+                upload: UploadState::Unknown,
+                error_detail: Some("synthetic failure".into()),
+            })
+        });
+        assert!(matches!(
+            Box::pin(future)
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop())),
+            Poll::Ready(_)
+        ));
+        drop(document);
+        drop(request);
+        assert!(graph.upgrade().is_some());
+        assert!(compiled.upgrade().is_some());
+        assert_eq!(
+            saved.as_ref().unwrap().operation().id().as_deref(),
+            Some("send")
+        );
+        println!("saved prepared request retains {retained} accounted document bytes");
+        drop(saved);
+        assert!(graph.upgrade().is_none());
+        assert!(compiled.upgrade().is_none());
+        assert_eq!(Arc::strong_count(&payload), 1);
+        assert_eq!(payload.as_ref(), b"SECRET-BODY");
+    }
+
     // Frozen BDS-35 is a private response boundary: depth=1 cannot admit the
     // operation-bearing source needed to construct a public PreparedRequest.
     #[test]
@@ -684,11 +712,9 @@ mod host_delivered_tests {
         let mut input = ResponseInput::new(
             200,
             vec![Header::new("content-type", "application/json")],
-            DeliveredBody {
-                bytes: b"[[0]]".as_slice().into(),
-                state: BodyState::Complete,
-                provenance: Provenance::HostDelivered,
-            },
+            b"[[0]]".as_slice().into(),
+            BodyState::Complete,
+            Provenance::HostDelivered,
         );
         input.header_delivery = HeaderDelivery::Complete;
         input.header_fidelity = HeaderFidelity::HostProcessed;

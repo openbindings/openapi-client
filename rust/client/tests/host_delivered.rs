@@ -94,16 +94,14 @@ fn frozen_core_controls_preserve_delivered_bytes_and_independent_guards() {
                     let mut response = ResponseInput::new(
                         i["status"].as_u64().unwrap() as u16,
                         headers,
-                        DeliveredBody {
-                            bytes: unhex(text(i, "body_hex")).into(),
-                            state: match text(i, "body_state") {
-                                "Complete" => BodyState::Complete,
-                                "Truncated" => BodyState::Truncated,
-                                "Failed" => BodyState::Failed,
-                                _ => unreachable!(),
-                            },
-                            provenance: provenance(text(i, "provenance")),
+                        unhex(text(i, "body_hex")).into(),
+                        match text(i, "body_state") {
+                            "Complete" => BodyState::Complete,
+                            "Truncated" => BodyState::Truncated,
+                            "Failed" => BodyState::Failed,
+                            _ => unreachable!(),
                         },
+                        provenance(text(i, "provenance")),
                     );
                     response.header_delivery = match text(i, "header_delivery") {
                         "Complete" => HeaderDelivery::Complete,

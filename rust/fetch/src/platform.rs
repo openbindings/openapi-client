@@ -1,8 +1,8 @@
 use crate::{Profile, admission};
 use dynamic_openapi_client::{
-    BodyState, Cancellation, DeliveredBody, Diagnostic, Header, HeaderDelivery, HeaderFidelity,
-    HostRefusal, Outcome, PreparedRequest, Provenance, ReplayPolicy, ResponseAdmission,
-    ResponseInput, TransportResult, UploadState,
+    BodyState, Cancellation, Diagnostic, Header, HeaderDelivery, HeaderFidelity, HostRefusal,
+    Outcome, PreparedRequest, Provenance, ReplayPolicy, ResponseAdmission, ResponseInput,
+    TransportResult, UploadState,
 };
 use js_sys::{Array, JsString, Object, Promise, Reflect, Uint8Array};
 use std::{
@@ -195,7 +195,7 @@ impl Bindings {
                 .map_err(|_| Diagnostic::from(HostRefusal::Unavailable))?,
         )?;
         if let Some(body) = prepared.body() {
-            set(&init, "body", &Uint8Array::from(body))?;
+            set(&init, "body", &Uint8Array::from(body.as_ref()))?;
         }
         cancellation.check()?;
         let request = construct(&self.0, prepared.target(), &init)
@@ -343,15 +343,7 @@ impl Bindings {
             },
             Err(_) => (BodyState::Failed, Some("response body unavailable")),
         };
-        let mut input = ResponseInput::new(
-            status,
-            headers,
-            DeliveredBody {
-                bytes: bytes.into(),
-                state,
-                provenance,
-            },
-        );
+        let mut input = ResponseInput::new(status, headers, bytes.into(), state, provenance);
         input.opaque_redirect = opaque;
         input.header_fidelity = HeaderFidelity::HostProcessed;
         input.header_delivery = delivery;

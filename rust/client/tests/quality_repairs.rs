@@ -48,11 +48,9 @@ fn outcome(
                 response: Some(ResponseInput::new(
                     status,
                     vec![Header::new("Content-Type", "application/json")],
-                    DeliveredBody {
-                        bytes: body.into(),
-                        state: BodyState::Complete,
-                        provenance: Provenance::Wire,
-                    },
+                    body.into(),
+                    BodyState::Complete,
+                    Provenance::Wire,
                 )),
             }
         },

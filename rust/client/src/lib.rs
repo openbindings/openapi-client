@@ -44,9 +44,9 @@ pub use prepare::{
     SecurityRequirement, SecurityScheme, Selection, ServerDescription,
 };
 pub use transport::{
-    BodyState, DeliveredBody, DispatchEvidence, DispatchRequest, Header, HeaderDelivery,
-    HeaderFidelity, HostCapabilities, Outcome, Provenance, ReplayAssurance, ReplayPolicy, Response,
-    ResponseAdmission, ResponseInput, TransportResult, UploadState,
+    BodyState, DispatchEvidence, Header, HeaderDelivery, HeaderFidelity, HostCapabilities, Outcome,
+    Provenance, ReplayAssurance, ReplayPolicy, Response, ResponseAdmission, ResponseInput,
+    TransportResult, UploadState,
 };
 pub use value::{
     ExactJson, Limits, Number, ParseFailure, SourceContext, SourceOrigin, Value, ValueKind,
@@ -77,8 +77,8 @@ pub mod policies;
 pub use policies::{CompleteJsonRefusal, CompletedJson, JsonCallRefusal};
 
 pub use schema::{
-    DialectCapability, ResolvedSchemaReference, SchemaAccessReason, SchemaHandle, SchemaProfile,
-    SchemaReason, SchemaReference, SchemaReferenceKind, SchemaReferences,
+    ResolvedSchemaReference, SchemaAccessReason, SchemaHandle, SchemaProfile, SchemaReason,
+    SchemaReference, SchemaReferenceKind,
 };
 
 #[cfg(test)]

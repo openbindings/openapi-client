@@ -4,9 +4,9 @@
 #![warn(missing_docs)]
 
 use dynamic_openapi_client::{
-    BodyState, Cancellation, Code, Credential, DeliveredBody, Diagnostic, Header, HeaderDelivery,
-    HeaderFidelity, HostCapabilities, Operation, Outcome, PreparedRequest, Provenance,
-    RequestBuilder, ResponseAdmission, ResponseInput, TransportResult, UploadState,
+    BodyState, Cancellation, Code, Credential, Diagnostic, Header, HeaderDelivery, HeaderFidelity,
+    HostCapabilities, Operation, Outcome, PreparedRequest, Provenance, RequestBuilder,
+    ResponseAdmission, ResponseInput, TransportResult, UploadState,
 };
 use std::{fmt, sync::Arc, time::Duration};
 
@@ -172,8 +172,8 @@ impl Client {
             .invoke(cancellation, capabilities, |dispatch, cancellation| {
                 let admission = dispatch.response_admission();
                 let mut request = request;
-                if let Some(body) = dispatch.body {
-                    *request.body_mut() = Some(bytes::Bytes::from_owner(body).into());
+                if let Some(body) = dispatch.body() {
+                    *request.body_mut() = Some(bytes::Bytes::from_owner(body.clone()).into());
                 }
                 self.exchange(request, admission, cancellation)
             })
@@ -244,15 +244,8 @@ impl Client {
         };
         TransportResult {
             response: Some({
-                let mut response = ResponseInput::new(
-                    status,
-                    headers,
-                    DeliveredBody {
-                        bytes: bytes.into(),
-                        state,
-                        provenance: Provenance::Wire,
-                    },
-                );
+                let mut response =
+                    ResponseInput::new(status, headers, bytes.into(), state, Provenance::Wire);
                 response.header_fidelity = HeaderFidelity::HostProcessed;
                 response.header_delivery = header_delivery;
                 response

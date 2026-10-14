@@ -30,11 +30,9 @@ fn response() -> TransportResult {
         response: Some(ResponseInput::new(
             204,
             vec![],
-            DeliveredBody {
-                bytes: Arc::from([]),
-                state: BodyState::Complete,
-                provenance: Provenance::Wire,
-            },
+            Arc::from([]),
+            BodyState::Complete,
+            Provenance::Wire,
         )),
         upload: UploadState::Complete,
         error_detail: None,
@@ -187,7 +185,8 @@ fn empty_collections_and_completed_dot_segments_keep_existing_policy() {
                 .form([FormField::new("p", exact("{}"))])
                 .prepare()
                 .unwrap()
-                .body(),
+                .body()
+                .map(AsRef::as_ref),
             Some(b"".as_slice())
         );
     }
@@ -285,7 +284,7 @@ fn content_and_new_style_bounds_precede_invocation() {
         &HostCapabilities::programmable(),
         |r, _| {
             calls.set(calls.get() + 1);
-            assert_eq!(r.target, "https://api.example/send?p=a+%2B");
+            assert_eq!(r.target(), "https://api.example/send?p=a+%2B");
             async { response() }
         },
     ));
@@ -346,7 +345,8 @@ fn ordinary_outer_object_items_share_the_32_form_path() {
             .form([FormField::new("p", OrdinaryValue::Array(&items))])
             .prepare()
             .unwrap()
-            .body(),
+            .body()
+            .map(AsRef::as_ref),
         Some(b"p=x%7Ca&p=y%7Cb".as_slice())
     );
 }
@@ -433,7 +433,10 @@ fn new_form_delimiters_are_included_in_complete_output_admission() {
             .form([FormField::new("p", exact(r#"{"x":"a","y":"b"}"#))])
             .prepare();
         if cap == expected.len() {
-            assert_eq!(request.unwrap().body(), Some(expected.as_slice()));
+            assert_eq!(
+                request.unwrap().body().map(AsRef::as_ref),
+                Some(expected.as_slice())
+            );
         } else {
             assert!(matches!(
                 request.unwrap_err().diagnostic().reason(),

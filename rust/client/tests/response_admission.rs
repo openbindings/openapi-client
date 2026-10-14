@@ -40,11 +40,9 @@ fn input(delivery: HeaderDelivery, fidelity: HeaderFidelity) -> ResponseInput {
     let mut input = ResponseInput::new(
         200,
         vec![Header::new("content-type", "application/json")],
-        DeliveredBody {
-            bytes: Arc::from(b"{}".as_slice()),
-            state: BodyState::Complete,
-            provenance: Provenance::Unknown,
-        },
+        Arc::from(b"{}".as_slice()),
+        BodyState::Complete,
+        Provenance::Unknown,
     );
     input.header_delivery = delivery;
     input.header_fidelity = fidelity;
@@ -111,11 +109,9 @@ fn unspecified_constructor_preserves_acceptance_without_inventing_completeness()
     let constructed = ResponseInput::new(
         200,
         vec![],
-        DeliveredBody {
-            bytes: Arc::from([]),
-            state: BodyState::Complete,
-            provenance: Provenance::Unknown,
-        },
+        Arc::from([]),
+        BodyState::Complete,
+        Provenance::Unknown,
     );
     assert_eq!(constructed.header_delivery, HeaderDelivery::Unspecified);
     for delivery in [HeaderDelivery::Unspecified, HeaderDelivery::Complete] {
@@ -269,7 +265,7 @@ fn metadata_refusal_precedes_body_while_execution_policy_keeps_its_order() {
     ] {
         let mut i = input(HeaderDelivery::Incomplete, HeaderFidelity::HostProcessed);
         i.status = status;
-        i.body.state = body;
+        i.body_state = body;
         let mut out = invoke(&prepare(1), i, UploadState::Complete, detail);
         // Public policy input mutation is intentional; no host cancellation claim.
         out.cancelled = cancelled;

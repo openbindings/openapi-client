@@ -88,11 +88,9 @@ fn outcome(upload: UploadState, status: u16, token: Cancellation) -> Outcome {
                 response: Some(ResponseInput::new(
                     status,
                     vec![Header::new("Content-Type", "application/json")],
-                    DeliveredBody {
-                        bytes: Arc::from(br#"{"id":9007199254740993}"#.as_slice()),
-                        state: BodyState::Complete,
-                        provenance: Provenance::Wire,
-                    },
+                    Arc::from(br#"{"id":9007199254740993}"#.as_slice()),
+                    BodyState::Complete,
+                    Provenance::Wire,
                 )),
                 upload,
                 error_detail: None,

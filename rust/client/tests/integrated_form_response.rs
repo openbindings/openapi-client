@@ -89,7 +89,7 @@ fn recovered_form_and_response_contract_compose_across_editions() {
             .unwrap();
         let fluent = current.request().body(Body::Form(form)).prepare().unwrap();
         for request in [direct, fluent] {
-            assert_eq!(request.body(), Some(b"p=a+b".as_slice()));
+            assert_eq!(request.body().map(AsRef::as_ref), Some(b"p=a+b".as_slice()));
             let expected_admission = request.response_admission();
             assert_eq!(expected_admission.body_bytes(), 64);
             assert_eq!(expected_admission.header_entries(), 4);
@@ -100,18 +100,19 @@ fn recovered_form_and_response_contract_compose_across_editions() {
                 &HostCapabilities::programmable(),
                 |dispatch, _| {
                     calls.set(calls.get() + 1);
-                    assert_eq!(dispatch.target, "https://api.example/send");
-                    assert_eq!(dispatch.body.as_deref(), Some(b"p=a+b".as_slice()));
+                    assert_eq!(dispatch.target(), "https://api.example/send");
+                    assert_eq!(
+                        dispatch.body().map(AsRef::as_ref),
+                        Some(b"p=a+b".as_slice())
+                    );
                     assert_eq!(dispatch.response_admission(), expected_admission);
                     async {
                         let mut response = ResponseInput::new(
                             200,
                             vec![Header::new("content-type", "application/json")],
-                            DeliveredBody {
-                                bytes: RESPONSE.into(),
-                                state: BodyState::Complete,
-                                provenance: Provenance::HostDelivered,
-                            },
+                            RESPONSE.into(),
+                            BodyState::Complete,
+                            Provenance::HostDelivered,
                         );
                         response.header_delivery = HeaderDelivery::Complete;
                         response.header_fidelity = HeaderFidelity::HostProcessed;
