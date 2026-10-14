@@ -14,15 +14,6 @@ use std::{fmt, io, sync::Arc};
 const NUMBER: &str = "$serde_json::private::Number";
 const PRIVATE: &str = "$serde_json::private::";
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Admission {
-    // Preserve the checked constructor's quoted-string lower bound. Ordinary
-    // request inputs retain their earlier unquoted preflight before emission.
-    Reusable,
-    Json,
-    Form,
-}
-
 #[derive(Clone)]
 struct Error(Arc<Diagnostic>);
 impl fmt::Debug for Error {
@@ -69,7 +60,7 @@ struct Encoder<'a> {
     nodes: usize,
     depth: usize,
     first: Option<Error>,
-    admission: Admission,
+    form: bool,
     form_metadata: usize,
     form_work: usize,
     form_names: Vec<String>,
@@ -146,10 +137,8 @@ impl<'limits> Encoder<'limits> {
             .map_err(|_| self.fail(SerializationReason::InvalidRepresentation))
     }
     fn string(&mut self, value: &str) -> Result<(), Error> {
-        // Escaping cannot shorten the input. Reject before scanning it.
-        if self.admission != Admission::Reusable {
-            self.room(value.len())?;
-        }
+        // Constructors and request setters include both JSON quotes in their
+        // lower bound. Escaping cannot shorten it; reject before scanning.
         self.room(value.len().saturating_add(2))?;
         self.primitive(value)
     }
@@ -286,7 +275,7 @@ impl Value {
         limits: Limits,
         cancellation: &Cancellation,
     ) -> Result<Self, Diagnostic> {
-        admit(value, limits, cancellation, Admission::Reusable)
+        admit(value, limits, cancellation, false)
     }
 }
 
@@ -294,7 +283,7 @@ pub(crate) fn admit<T: Serialize + ?Sized>(
     value: &T,
     limits: Limits,
     cancellation: &Cancellation,
-    admission: Admission,
+    form: bool,
 ) -> Result<Value, Diagnostic> {
     let mut encoder = Encoder {
         bytes: vec![],
@@ -303,7 +292,7 @@ pub(crate) fn admit<T: Serialize + ?Sized>(
         nodes: 0,
         depth: 0,
         first: None,
-        admission,
+        form,
         form_metadata: 0,
         form_work: 0,
         form_names: vec![],
@@ -359,7 +348,7 @@ impl Compound<'_, '_> {
                 .encoder
                 .fail(SerializationReason::InvalidRepresentation));
         }
-        let form = self.encoder.admission == Admission::Form && self.encoder.depth == 1;
+        let form = self.encoder.form && self.encoder.depth == 1;
         if form {
             let limits = self.encoder.limits;
             if self.count >= limits.form_fields {
@@ -869,32 +858,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ordinary_and_checked_construction_keep_their_distinct_string_lower_bounds() {
+    fn checked_inputs_share_the_quoted_string_lower_bound() {
         let text = "x".repeat(1_000_000);
         let limits = Limits {
             document_bytes: 8,
             ..Limits::default()
         };
-        for (admission, actual) in [
-            (Admission::Json, 1_000_000),
-            (Admission::Form, 1_000_000),
-            (Admission::Reusable, 1_000_002),
-        ] {
-            let error =
-                admit(&text, limits.clone(), &Cancellation::default(), admission).unwrap_err();
+        for form in [false, true] {
+            let error = admit(&text, limits.clone(), &Cancellation::default(), form).unwrap_err();
             assert_eq!(
                 error.reason(),
                 Some(&DiagnosticReason::Limit {
                     kind: LimitKind::DocumentBytes,
                     maximum: 8,
-                    actual,
+                    actual: 1_000_002,
                 })
             );
             assert!(error.source_bytes().is_empty());
-            // Both bounds admit the same complete output, including quotes.
+            // The complete output, including quotes, must fit in either mode.
             for (text, accepted) in [("123456", true), ("1234567", false)] {
                 assert_eq!(
-                    admit(&text, limits.clone(), &Cancellation::default(), admission).is_ok(),
+                    admit(&text, limits.clone(), &Cancellation::default(), form).is_ok(),
                     accepted
                 );
             }

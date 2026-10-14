@@ -423,22 +423,23 @@ fn r10_supported_ordinary_values_and_provenance() {
 #[test]
 fn r11_construction_limits_and_duplicate_names() {
     let large = "x".repeat(1_000_000);
-    // The removed ordinary constructor now enters through the ordinary setter.
-    let failure = operation(Limits {
-        body_bytes: 8,
-        ..Default::default()
-    })
-    .request()
-    .json(&TestValue::String(&large))
-    .prepare()
+    // The surviving checked constructor includes JSON quotes. The deleted
+    // from_ordinary constructor's raw-bound case is recorded in the stage-3 ledger.
+    let failure = Value::from_serializable(
+        &TestValue::String(&large),
+        Limits {
+            document_bytes: 8,
+            ..Default::default()
+        },
+    )
     .unwrap_err();
     assert!(failure.source_bytes().is_empty());
     assert!(matches!(
         failure.reason(),
         Some(DiagnosticReason::Limit {
-            kind: LimitKind::BodyBytes,
+            kind: LimitKind::DocumentBytes,
             maximum: 8,
-            actual: 1_000_000
+            actual: 1_000_002
         })
     ));
 

@@ -602,7 +602,7 @@ fn restored_string_lower_bound_and_safe_parse_request_source_chains() {
         Some(&DiagnosticReason::Limit {
             kind: LimitKind::BodyBytes,
             maximum: 8,
-            actual: 1_000_000
+            actual: 1_000_002
         })
     );
     assert!(limit.source_bytes().is_empty());
