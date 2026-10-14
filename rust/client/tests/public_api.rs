@@ -47,17 +47,10 @@ fn send_and_local_callbacks_preserve_response() {
     let send = p.invoke(Cancellation::default(), &host, |_, _| async { result() });
     assert_send(&send);
     let o = ready(send);
-    assert_eq!(o.upload, UploadState::Incomplete);
-    assert_eq!(o.error.unwrap().code(), Code::TransportFailure);
+    assert_eq!(o.upload(), UploadState::Incomplete);
+    assert_eq!(o.error().unwrap().code(), Code::TransportFailure);
     assert_eq!(
-        o.response
-            .unwrap()
-            .json()
-            .unwrap()
-            .clone()
-            .get("n")
-            .unwrap()
-            .raw(),
+        o.body_json().unwrap().clone().get("n").unwrap().raw(),
         "9007199254740993"
     );
     let local = Rc::new(7);
@@ -67,7 +60,7 @@ fn send_and_local_callbacks_preserve_response() {
             result()
         }),
     );
-    assert_eq!(o.response.unwrap().status(), 503);
+    assert_eq!(o.status().unwrap(), 503);
 }
 #[test]
 fn cancellation_and_small_limits_are_explicit() {
@@ -141,7 +134,7 @@ fn raw_body_debug_and_pending_invocation_are_honest() {
     let Poll::Ready(out) = f.as_mut().poll(&mut cx) else {
         panic!()
     };
-    assert!(out.cancelled);
-    assert_eq!(out.dispatch, DispatchEvidence::Dispatched);
-    assert_eq!(out.response.unwrap().status(), 503);
+    assert!(out.cancelled());
+    assert_eq!(out.dispatch(), DispatchEvidence::Dispatched);
+    assert_eq!(out.status().unwrap(), 503);
 }

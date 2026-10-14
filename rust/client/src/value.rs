@@ -673,7 +673,7 @@ impl Value {
     ) -> Result<Self, Diagnostic> {
         Self::parse_mode(bytes, limits, cancellation, origin, false).map_err(Diagnostic::caused)
     }
-    // Response::json has no caller cancellation token. Public parsing and
+    // Outcome::body_json has no caller cancellation token. Public parsing and
     // construction retain their eager indexing checkpoints and behavior.
     pub(crate) fn parse_response(bytes: &[u8], limits: Limits) -> Result<Self, Diagnostic> {
         Self::parse_mode(

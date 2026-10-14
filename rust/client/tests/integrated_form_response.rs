@@ -1,5 +1,7 @@
 //! Cross-branch public consumer: recover a schema, reuse an owned form, then
 //! dispatch with the operation's response bounds and inspect host evidence.
+#[path = "support/strict_json.rs"]
+mod policies;
 #[path = "support/request_case.rs"]
 mod request_case;
 use dynamic_openapi_client::*;

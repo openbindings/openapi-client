@@ -1,3 +1,6 @@
+#[path = "support/strict_json.rs"]
+mod policies;
+use policies::CompleteJsonRefusal;
 #[path = "support/request_case.rs"]
 mod request_case;
 use dynamic_openapi_client::*;
@@ -112,8 +115,8 @@ fn r02_policy_success() {
         r.json.clone().get("count").unwrap().raw(),
         "9007199254740993"
     );
-    assert_eq!(r.outcome.dispatch, DispatchEvidence::Dispatched);
-    assert_eq!(r.outcome.upload, UploadState::Complete);
+    assert_eq!(r.outcome.dispatch(), DispatchEvidence::Dispatched);
+    assert_eq!(r.outcome.upload(), UploadState::Complete);
 }
 #[test]
 fn r03_policy_late_error_retains_decode_and_response() {
@@ -128,11 +131,8 @@ fn r03_policy_late_error_retains_decode_and_response() {
         ))
         .unwrap_err();
         assert!(matches!(e.reason, CompleteJsonRefusal::Transport));
-        assert_eq!(
-            e.outcome.error.as_ref().unwrap().code(),
-            Code::TransportFailure
-        );
-        assert_eq!(e.outcome.response.as_ref().unwrap().raw(), bytes);
+        assert_eq!(e.outcome.error().unwrap().code(), Code::TransportFailure);
+        assert_eq!(e.outcome.raw().unwrap(), bytes);
         if bytes == JSON {
             assert!(e.decoded.is_some());
             assert!(e.decode_error.is_none());
@@ -162,9 +162,9 @@ fn r04_policy_cancelled_with_response() {
     ))
     .unwrap_err();
     assert!(matches!(e.reason, CompleteJsonRefusal::Cancelled));
-    assert!(e.outcome.cancelled);
+    assert!(e.outcome.cancelled());
     assert!(e.decoded.is_some());
-    assert_eq!(e.outcome.response.as_ref().unwrap().status(), 200);
+    assert_eq!(e.outcome.status().unwrap(), 200);
 }
 #[test]
 fn r05_policy_pre_dispatch_cancellation() {
@@ -178,8 +178,8 @@ fn r05_policy_pre_dispatch_cancellation() {
     ))
     .unwrap_err();
     assert!(matches!(e.reason, CompleteJsonRefusal::Cancelled));
-    assert_eq!(e.outcome.dispatch, DispatchEvidence::NotDispatched);
-    assert!(e.outcome.response.is_none());
+    assert_eq!(e.outcome.dispatch(), DispatchEvidence::NotDispatched);
+    assert!(e.outcome.status().is_none());
     assert!(e.decoded.is_none());
     assert_eq!(
         std::error::Error::source(e.as_ref())
@@ -202,8 +202,8 @@ fn r06_policy_http_error() {
     ))
     .unwrap_err();
     assert!(matches!(e.reason, CompleteJsonRefusal::HttpStatus));
-    assert_eq!(e.outcome.response.as_ref().unwrap().status(), 429);
-    assert!(e.outcome.error.is_none());
+    assert_eq!(e.outcome.status().unwrap(), 429);
+    assert!(e.outcome.error().is_none());
     assert!(e.decoded.is_some());
 }
 #[test]
@@ -218,7 +218,7 @@ fn r07_policy_unknown_upload_policy() {
     ))
     .unwrap_err();
     assert!(matches!(e.reason, CompleteJsonRefusal::UploadUncertain));
-    assert_eq!(e.outcome.upload, UploadState::Unknown);
+    assert_eq!(e.outcome.upload(), UploadState::Unknown);
     assert!(e.decoded.is_some());
 }
 #[test]
@@ -575,7 +575,7 @@ fn named_policy_orders_primary_reason_without_hiding_other_facts() {
         std::error::Error::source(failure.as_ref())
             .unwrap()
             .downcast_ref::<Diagnostic>(),
-        failure.outcome.error.as_ref()
+        failure.outcome.error()
     );
     let out = ready(p.invoke(
         Cancellation::default(),
@@ -593,17 +593,12 @@ fn named_policy_orders_primary_reason_without_hiding_other_facts() {
     let failure = accept(out).unwrap_err();
     assert_eq!(failure.reason, CompleteJsonRefusal::Transport);
     assert_eq!(
-        failure.outcome.error.as_ref().unwrap().code(),
+        failure.outcome.error().unwrap().code(),
         Code::InvalidHostEvidence
     );
-    // Exercise the policy's missing-response branch with an explicitly edited
-    // public Outcome rather than falsely expecting invoke to omit its evidence.
-    let mut out = failure.outcome;
-    out.error = None;
-    let failure = accept(out).unwrap_err();
-    assert_eq!(failure.reason, CompleteJsonRefusal::MissingResponse);
-    assert!(std::error::Error::source(failure.as_ref()).is_none());
-    assert_eq!(failure.outcome.upload, UploadState::Unknown);
+    // Missing response always carries InvalidHostEvidence in immutable Outcome.
+    assert!(failure.outcome.status().is_none());
+    assert_eq!(failure.outcome.upload(), UploadState::Unknown);
     assert!(failure.decoded.is_none());
     assert!(failure.decode_error.is_none());
     for (cancel, late, status, upload, expected) in [
@@ -653,11 +648,11 @@ fn named_policy_orders_primary_reason_without_hiding_other_facts() {
             _ => None,
         };
         assert_eq!(source, expected_source);
-        assert_eq!(failure.outcome.cancelled, cancel);
-        assert_eq!(failure.outcome.error.is_some(), late);
-        assert_eq!(failure.outcome.upload, upload);
-        assert_eq!(failure.outcome.response.as_ref().unwrap().status(), status);
-        assert_eq!(failure.outcome.response.as_ref().unwrap().raw(), b"{");
+        assert_eq!(failure.outcome.cancelled(), cancel);
+        assert_eq!(failure.outcome.error().is_some(), late);
+        assert_eq!(failure.outcome.upload(), upload);
+        assert_eq!(failure.outcome.status().unwrap(), status);
+        assert_eq!(failure.outcome.raw().unwrap(), b"{");
         assert_eq!(
             failure.decode_error.as_ref().unwrap().code(),
             Code::InvalidJson

@@ -1,5 +1,12 @@
 # Unreleased (0.0.0)
 
+- Merge Response into immutable Outcome with optional received-fact accessors.
+  Replace composite JSON policy records/functions with borrowed `received_2xx_json`,
+  `received_2xx_json_exact` and `body_json` reads sharing one lazy decode cache.
+  Actual execution diagnostics precede cancellation; HttpStatus is explicit.
+  Unspecified headers and uncertain upload remain admissible. The former strict
+  upload policy survives only as a private qualification application example.
+
 - Add an optional unpublished Rust Fetch companion with Browser/Worker profiles,
   explicit host-managed replay, exact Request preflight, bounded incremental
   response collection and local future cleanup. Every body uses HostDelivered;

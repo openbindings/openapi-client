@@ -4,7 +4,7 @@ use dynamic_openapi_client::transport::{
     BodyState, HeaderDelivery, HeaderFidelity, HostCapabilities, ResponseInput, TransportResult,
     UploadState,
 };
-use dynamic_openapi_client::{Cancellation, Document, Header, Limits, policies};
+use dynamic_openapi_client::{Cancellation, Document, Header, Limits};
 use std::{
     error::Error,
     future::Future,
@@ -73,22 +73,19 @@ async fn run() -> Result<(), Box<dyn Error>> {
             },
         )
         .await;
-    match policies::complete_2xx_json(outcome) {
-        Ok(accepted) => println!("{}", accepted.json.clone().raw()),
+    match outcome.received_2xx_json_exact() {
+        Ok(accepted) => println!("{}", accepted.clone().raw()),
         Err(refused) => {
-            if refused
-                .decode_error
-                .as_ref()
-                .is_some_and(|error| error.code() == Code::IncompleteHeaders)
-            {
-                if let Some(response) = &refused.outcome.response {
+            if refused.code() == Code::IncompleteHeaders {
+                if outcome.status().is_some() {
+                    let response = &outcome;
                     // Adapter cutoff is independent of core omission. Both raw
                     // body and precise metadata facts remain available.
                     println!(
                         "delivery={:?}, core omissions={}, raw bytes={}",
-                        response.header_delivery(),
-                        response.omitted_header_lines(),
-                        response.raw().len()
+                        response.header_delivery().unwrap(),
+                        response.omitted_header_lines().unwrap(),
+                        response.raw().unwrap().len()
                     );
                 }
             } else {

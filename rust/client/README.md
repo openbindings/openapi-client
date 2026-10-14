@@ -22,20 +22,20 @@ Supplied hosts must enforce no ambient authentication or implicit redirects, dis
 
 Use the optional [native HTTP companion](../reqwest/README.md) to configure a client and origin-scoped credentials once. It supplies `client.request(&operation)` and `client.execute(&prepared, cancellation)`, so application code uses the same request builder without implementing a transport callback. Its getting-started example runs against a local HTTP server and includes typed input and output.
 
-A native HTTP response does not prove complete upload. Select `policies::received_2xx_json(outcome)` when your application accepts a complete, uncancelled, transport-error-free 2xx JSON response while retaining upload uncertainty. The stricter `complete_2xx_json` below requires known complete upload. Both return the same evidence-bearing types; neither policy changes invocation or retries.
+A native HTTP response does not prove complete upload. `outcome.received_2xx_json::<T>()` accepts a received 2xx with a complete delivered body, no execution diagnostic or cancellation, and admitted JSON. Unknown and Incomplete upload remain visible and accepted. `received_2xx_json_exact()` applies the same acceptance rule and returns an exact value.
 
 ## A dynamic Rust call
 
-The complete outcome is the application-policy boundary. This example requires dispatched, uncancelled execution without a transport error, a 2xx response, known complete upload and valid JSON. Unknown upload is a refusal **for this example**. A different application may accept an early response while preserving/reporting uncertainty. Success and failure both retain Outcome; failure also retains any decode error and successfully decoded data. A response alone does not establish successful execution.
+Outcome is immutable. Keep it in a local variable to inspect partial evidence after a read refuses. `status()`, `headers()` and `raw()` return `None` for no response; empty body bytes and status zero remain distinct received facts. `body_json()` decodes independently of status, execution, cancellation and upload, so a typed error body uses `outcome.body_json()?.deserialize::<ApiError>()`.
 
-Select `policies::complete_2xx_json(outcome)` to use that policy. It returns `CompletedJson` or a boxed `JsonCallRefusal`, both retaining the complete Outcome. Refusals retain a successfully decoded value or a decode diagnostic; decoding is attempted at most once. The primary reason order is cancellation, non-dispatch, transport, missing response, non-2xx, upload not known complete, decode. Independent facts remain inspectable, including a useful error response accompanied by a late transport failure. `Error::source` follows the primary reason when it has a diagnostic: transport/preflight, decode, or an actual cancellation diagnostic. Status, upload uncertainty, missing response, or cancellation without a matching diagnostic have no source; inspect retained fields for independent errors.
+The received reads return the actual preparation or transport Diagnostic first, preserving correction information and sources even after Outcome is dropped. Without an execution diagnostic, priority is cancellation, invalid dispatch/response evidence, non-2xx `HttpStatus`, then body admission or projection. Cancellation remains visible when it coexists with a transport failure. `HttpStatus` includes the numeric status in its bounded message; projection uses `Deserialization` with explicit untrusted `detail()`.
 
 Apply it after invoking the supplied transport:
 
 ```rust
 use dynamic_openapi_client::*;
 use dynamic_openapi_client::{diagnostics::*, exact::*, form::*, graph::*, inspect::*, schema::*, source::*, transport::*};
-async fn inspect_and_call(text: &[u8]) -> Result<CompletedJson, Box<dyn std::error::Error>> {
+async fn inspect_and_call(text: &[u8]) -> Result<(Outcome, Value), Box<dyn std::error::Error>> {
     let document = Document::parse(text, Some("https://api.example/openapi.json"), Limits::default())?;
     let operation = document.operation_id("listItems")?;
     let request = operation.request().prepare()?;
@@ -55,12 +55,12 @@ async fn inspect_and_call(text: &[u8]) -> Result<CompletedJson, Box<dyn std::err
             }
         },
     ).await;
-    // The boxed application failure keeps the full outcome and decode diagnostic.
-    Ok(policies::complete_2xx_json(outcome)?)
+    let json = outcome.received_2xx_json_exact()?;
+    Ok((outcome, json))
 }
 ```
 
-`HostCapabilities::programmable()` is a caller promise for controlled callbacks, not proof about an arbitrary HTTP stack. `cargo run --example dynamic` executes the complete fixture flow. Real asynchronous I/O requires the caller's host/executor. `Response::json()` parses on each call: retain the returned exact value when reusing decoded data. For a different application policy, inspect raw `Outcome` directly and choose your own order/acceptance rule. Preserve dispatch, upload, cancellation, error and response facts; a response alone does not establish execution success. Calling the named policy is never implicit in `invoke`.
+`HostCapabilities::programmable()` is a caller promise for controlled callbacks, not proof about an arbitrary HTTP stack. `cargo run --example dynamic` executes the fixture flow. Real asynchronous I/O requires the caller's host/executor. All three reads share one lazy exact decode result or diagnostic. Repeated exact reads share source identity, including across Outcome clones. Typed projection reruns for each requested type outside the cache lock. Body admission accepts Unspecified enumeration and Unknown fidelity; known header omission refuses. A caller requiring complete upload must explicitly check `outcome.upload() == UploadState::Complete`. The old strict ordering survives only as a private qualification application example.
 
 ## Shared parameter and form styles
 
@@ -77,7 +77,7 @@ corrective refusals and the real provider preparation example.
 `invoke_with_replay` and `admit_with_replay` methods accept the explicit caller
 policy. `Outcome::replay_assurance()` records the admitted declaration at callback
 entry: `NoReplayDeclared` or `HostManaged`. It is absent on pre-dispatch outcomes
-and survives later caller mutation of public outcome fields. It proves neither
+and is immutable. It proves neither
 network attempts nor server receipt. Native reqwest retains its strict path and
 exposes no replay opt-in. See [HOSTS.md](HOSTS.md).
 
@@ -159,7 +159,7 @@ assert_eq!(json.clone().get("id").unwrap().raw(), "9007199254740993");
 
 `Diagnostic` safely reports the conversion failure and line/column. Its `detail()` returns the original `serde_json::Error` when a projection failed, including structured `classify()`/`is_data()`/`is_syntax()` access. Its text can include response values or custom error text; default Display, Debug and error chaining omit that text. Root projection preserves coordinates in the complete source, including leading whitespace; child projection reads the selected subtree. A projection failure leaves the exact JSON and original Outcome available to the caller.
 
-Response decoding may defer construction of the full dynamic value index. Validation still finishes before `Response::json()` or a JSON policy accepts the response, including duplicate names, Unicode and resource limits. Typed projection reads the original bytes without forcing index construction. The response retains compact admission data; later dynamic access reuses the checked strings and object metadata without parsing them again. Cloned owners share the resulting index. Public `exact::Value::parse`, document parsing and input construction remain eager.
+Response decoding may defer construction of the full dynamic value index. Validation still finishes before `Outcome::body_json()` or a received-2xx read accepts the response, including duplicate names, Unicode and resource limits. Typed projection reads the original bytes without forcing index construction. The response retains compact admission data; later dynamic access reuses the checked strings and object metadata without parsing them again. Cloned owners share the resulting index. Public `exact::Value::parse`, document parsing and input construction remain eager.
 
 ## Constructing ordinary inputs
 

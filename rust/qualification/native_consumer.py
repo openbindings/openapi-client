@@ -111,6 +111,7 @@ with tempfile.TemporaryDirectory(prefix='native-consumer-', dir=output) as tempo
     # H0 controls use only public APIs from the extracted core archive, including
     # the external adapter's controlled HostRefusal conversion.
     shutil.copy2(core / 'tests/host_contract.rs', consumer / 'tests/host_contract.rs')
+    shutil.copy2(core / 'tests/support/strict_json.rs', consumer / 'tests/support/strict_json.rs')
     run('example', ['cargo', 'run', '--manifest-path', consumer / 'Cargo.toml',
                     '--bin', 'openapi-native-package-consumer'], consumer)
     selected_packages = tomllib.loads((consumer / 'Cargo.lock').read_text())['package']

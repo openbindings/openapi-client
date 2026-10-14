@@ -1,7 +1,8 @@
+use dynamic_openapi_client::diagnostics::Code;
 use dynamic_openapi_client::exact::Value;
 use dynamic_openapi_client::transport::{BodyState, DispatchEvidence, Provenance, UploadState};
 use dynamic_openapi_client::{
-    Cancellation, Credential, Document, Header, Limits, ParameterLocation, policies,
+    Cancellation, Credential, Document, Header, Limits, ParameterLocation,
 };
 use dynamic_openapi_client_reqwest::{Certificate, Client};
 use std::{sync::Arc, time::Duration};
@@ -144,10 +145,10 @@ async fn configured_auth_exact_body_and_explicit_server_close() {
         .unwrap();
     for _ in 0..2 {
         let outcome = execute(&client, &request, Cancellation::default()).await;
-        assert_eq!(outcome.dispatch, DispatchEvidence::Dispatched);
-        assert_eq!(outcome.upload, UploadState::Unknown);
-        let accepted = policies::received_2xx_json(outcome).unwrap();
-        assert_eq!(accepted.json.clone().raw(), r#"{"ok":true}"#);
+        assert_eq!(outcome.dispatch(), DispatchEvidence::Dispatched);
+        assert_eq!(outcome.upload(), UploadState::Unknown);
+        let accepted = (outcome).received_2xx_json_exact().unwrap();
+        assert_eq!(accepted.clone().raw(), r#"{"ok":true}"#);
     }
     for received in server.await.unwrap() {
         assert!(
@@ -190,14 +191,18 @@ async fn non_success_json_and_duplicate_response_headers_survive() {
         Cancellation::default(),
     )
     .await;
-    assert!(outcome.error.is_none());
-    let refusal = policies::received_2xx_json(outcome).unwrap_err();
-    assert_eq!(refusal.reason, policies::CompleteJsonRefusal::HttpStatus);
-    assert_eq!(refusal.decoded.unwrap().raw(), r#"{"error":"bad input"}"#);
-    let response = refusal.outcome.response.unwrap();
+    assert!(outcome.error().is_none());
+    let refusal = (outcome).received_2xx_json_exact().unwrap_err();
+    assert_eq!(refusal.code(), Code::HttpStatus);
+    assert_eq!(
+        outcome.body_json().unwrap().raw(),
+        r#"{"error":"bad input"}"#
+    );
+    let response = &outcome;
     assert_eq!(
         response
             .headers()
+            .unwrap()
             .iter()
             .filter(|h| h.name() == "x-evidence")
             .map(|h| h.value())
@@ -226,9 +231,9 @@ async fn redirects_are_evidence_and_never_followed() {
         Cancellation::default(),
     )
     .await;
-    let received = outcome.response.unwrap();
-    assert_eq!(received.status(), 307);
-    assert_eq!(received.raw(), br#"{"moved":true}"#);
+    let received = &outcome;
+    assert_eq!(received.status().unwrap(), 307);
+    assert_eq!(received.raw().unwrap(), br#"{"moved":true}"#);
     assert!(
         tokio::time::timeout(Duration::from_millis(50), destination.accept())
             .await
@@ -252,10 +257,10 @@ async fn response_limit_distinguishes_eof_from_more_bytes() {
             Cancellation::default(),
         )
         .await;
-        let received = outcome.response.unwrap();
-        assert_eq!(received.raw(), &body[..body.len().min(limit)]);
-        assert_eq!(received.body_state(), state);
-        assert_eq!(received.provenance(), Provenance::Wire);
+        let received = &outcome;
+        assert_eq!(received.raw().unwrap(), &body[..body.len().min(limit)]);
+        assert_eq!(received.body_state().unwrap(), state);
+        assert_eq!(received.provenance().unwrap(), Provenance::Wire);
         server.await.unwrap();
     }
 }
@@ -269,12 +274,12 @@ async fn late_disconnect_preserves_received_prefix() {
         Cancellation::default(),
     )
     .await;
-    assert!(outcome.error.is_some());
-    assert_eq!(outcome.upload, UploadState::Unknown);
-    let received = outcome.response.unwrap();
-    assert_eq!(received.raw(), br#"{"partial":"#);
-    assert_eq!(received.body_state(), BodyState::Failed);
-    assert!(received.json().is_err());
+    assert!(outcome.error().is_some());
+    assert_eq!(outcome.upload(), UploadState::Unknown);
+    let received = &outcome;
+    assert_eq!(received.raw().unwrap(), br#"{"partial":"#);
+    assert_eq!(received.body_state().unwrap(), BodyState::Failed);
+    assert!(received.body_json().is_err());
     server.await.unwrap();
 }
 
@@ -289,9 +294,9 @@ async fn cancelled_before_dispatch_never_opens_a_connection() {
     let cancellation = Cancellation::default();
     cancellation.cancel();
     let outcome = execute(&Client::new().unwrap(), &prepared(&doc), cancellation).await;
-    assert_eq!(outcome.dispatch, DispatchEvidence::NotDispatched);
-    assert_eq!(outcome.upload, UploadState::NotStarted);
-    assert!(outcome.cancelled);
+    assert_eq!(outcome.dispatch(), DispatchEvidence::NotDispatched);
+    assert_eq!(outcome.upload(), UploadState::NotStarted);
+    assert!(outcome.cancelled());
     assert!(
         tokio::time::timeout(Duration::from_millis(50), listener.accept())
             .await
@@ -326,14 +331,15 @@ async fn cancellation_interrupts_stalled_headers_and_body() {
             trigger.cancel();
         });
         let outcome = execute(&Client::new().unwrap(), &prepared(&doc), cancellation).await;
-        assert!(outcome.cancelled);
-        assert_eq!(outcome.dispatch, DispatchEvidence::Dispatched);
-        assert_eq!(outcome.upload, UploadState::Unknown);
-        assert!(outcome.error.is_some());
-        if let Some(received) = outcome.response {
+        assert!(outcome.cancelled());
+        assert_eq!(outcome.dispatch(), DispatchEvidence::Dispatched);
+        assert_eq!(outcome.upload(), UploadState::Unknown);
+        assert!(outcome.error().is_some());
+        if outcome.status().is_some() {
+            let received = &outcome;
             assert!(with_headers);
-            assert!(br#"{"partial":"#.starts_with(received.raw()));
-            assert_eq!(received.body_state(), BodyState::Failed);
+            assert!(br#"{"partial":"#.starts_with(received.raw().unwrap()));
+            assert_eq!(received.body_state().unwrap(), BodyState::Failed);
         }
         cancel_task.await.unwrap();
         server.abort();
@@ -362,12 +368,12 @@ async fn deadline_interrupts_body_and_keeps_metadata() {
         .build()
         .unwrap();
     let outcome = execute(&client, &prepared(&doc), Cancellation::default()).await;
-    assert!(!outcome.cancelled);
-    assert!(outcome.error.is_some());
-    let received = outcome.response.unwrap();
-    assert_eq!(received.status(), 503);
-    assert_eq!(received.raw(), b"abc");
-    assert_eq!(received.body_state(), BodyState::Failed);
+    assert!(!outcome.cancelled());
+    assert!(outcome.error().is_some());
+    let received = &outcome;
+    assert_eq!(received.status().unwrap(), 503);
+    assert_eq!(received.raw().unwrap(), b"abc");
+    assert_eq!(received.body_state().unwrap(), BodyState::Failed);
     server.abort();
 }
 
@@ -382,12 +388,12 @@ async fn target_normalization_and_framing_headers_refuse_before_dispatch() {
         let request = prepared(&document(origin, 4096, false));
         let outcome = execute(&client, &request, Cancellation::default()).await;
         assert_eq!(
-            outcome.dispatch,
+            outcome.dispatch(),
             DispatchEvidence::NotDispatched,
             "{origin}"
         );
-        assert_eq!(outcome.upload, UploadState::NotStarted);
-        assert!(outcome.error.is_some());
+        assert_eq!(outcome.upload(), UploadState::NotStarted);
+        assert!(outcome.error().is_some());
     }
     let doc = document("http://127.0.0.1:1", 4096, false);
     let request = doc
@@ -399,7 +405,7 @@ async fn target_normalization_and_framing_headers_refuse_before_dispatch() {
         .prepare()
         .unwrap();
     let outcome = execute(&client, &request, Cancellation::default()).await;
-    assert_eq!(outcome.dispatch, DispatchEvidence::NotDispatched);
+    assert_eq!(outcome.dispatch(), DispatchEvidence::NotDispatched);
 }
 
 #[tokio::test]
@@ -413,10 +419,10 @@ async fn encoded_representation_is_not_silently_decoded() {
         Cancellation::default(),
     )
     .await;
-    let received = outcome.response.unwrap();
-    assert_eq!(received.raw(), compressed);
-    assert_eq!(received.provenance(), Provenance::Wire);
-    assert!(received.json().is_err());
+    let received = &outcome;
+    assert_eq!(received.raw().unwrap(), compressed);
+    assert_eq!(received.provenance().unwrap(), Provenance::Wire);
+    assert!(received.body_json().is_err());
     server.await.unwrap();
 }
 
@@ -444,9 +450,9 @@ async fn failure_after_request_does_not_replay_on_a_fresh_connection() {
         Cancellation::default(),
     )
     .await;
-    assert!(outcome.error.is_some());
-    assert!(outcome.response.is_none());
-    assert_eq!(outcome.upload, UploadState::Unknown);
+    assert!(outcome.error().is_some());
+    assert!(outcome.status().is_none());
+    assert_eq!(outcome.upload(), UploadState::Unknown);
     server.await.unwrap();
 }
 
@@ -516,17 +522,13 @@ async fn https_checks_trust_and_additional_roots_are_additive() {
         let outcome = execute(&client, &request, Cancellation::default()).await;
         if trusted {
             assert_eq!(
-                policies::received_2xx_json(outcome)
-                    .unwrap()
-                    .json
-                    .clone()
-                    .raw(),
+                (outcome).received_2xx_json_exact().unwrap().clone().raw(),
                 r#"{"tls":true}"#
             );
         } else {
-            assert!(outcome.error.is_some());
-            assert!(outcome.response.is_none());
-            assert_eq!(outcome.upload, UploadState::Unknown);
+            assert!(outcome.error().is_some());
+            assert!(outcome.status().is_none());
+            assert_eq!(outcome.upload(), UploadState::Unknown);
         }
         server.await.unwrap();
     }
@@ -552,11 +554,11 @@ async fn h0_native_preflight_preserves_absent_assurance() {
         .unwrap()
         .execute(&request, Cancellation::default())
         .await;
-    assert_eq!(outcome.dispatch, DispatchEvidence::NotDispatched);
+    assert_eq!(outcome.dispatch(), DispatchEvidence::NotDispatched);
     assert_eq!(outcome.replay_assurance(), None);
-    assert_eq!(outcome.upload, UploadState::NotStarted);
+    assert_eq!(outcome.upload(), UploadState::NotStarted);
     assert_eq!(
-        outcome.error.as_ref().unwrap().code(),
+        outcome.error().unwrap().code(),
         dynamic_openapi_client::diagnostics::Code::HostCapability
     );
 }
@@ -594,33 +596,40 @@ async fn native_metadata_cutoff_is_partial_evidence_and_body_still_completes() {
         .prepare()
         .unwrap();
     let out = execute(&Client::new().unwrap(), &request, Cancellation::default()).await;
-    assert!(out.error.is_none());
+    assert!(out.error().is_none());
     assert_eq!(out.host_error_detail(), None);
-    assert_eq!(out.upload, UploadState::Unknown);
+    assert_eq!(out.upload(), UploadState::Unknown);
     assert_eq!(
         out.replay_assurance(),
         Some(ReplayAssurance::NoReplayDeclared)
     );
-    let response = out.response.as_ref().unwrap();
-    assert_eq!(response.raw(), b"{}");
-    assert_eq!(response.body_state(), BodyState::Complete);
-    assert_eq!(response.header_delivery(), HeaderDelivery::Incomplete);
-    assert_eq!(response.header_fidelity(), HeaderFidelity::HostProcessed);
-    assert_eq!(response.omitted_header_lines(), 0);
+    let response = &out;
+    assert_eq!(response.raw().unwrap(), b"{}");
+    assert_eq!(response.body_state().unwrap(), BodyState::Complete);
+    assert_eq!(
+        response.header_delivery().unwrap(),
+        HeaderDelivery::Incomplete
+    );
+    assert_eq!(
+        response.header_fidelity().unwrap(),
+        HeaderFidelity::HostProcessed
+    );
+    assert_eq!(response.omitted_header_lines().unwrap(), 0);
     assert!(
         response
             .headers()
+            .unwrap()
             .iter()
             .all(|header| header.name() != "x-large")
     );
-    assert_eq!(response.json().unwrap_err().code(), Code::IncompleteHeaders);
     assert_eq!(
-        policies::complete_2xx_json(out.clone()).unwrap_err().reason,
-        policies::CompleteJsonRefusal::UploadUncertain
+        response.body_json().unwrap_err().code(),
+        Code::IncompleteHeaders
     );
+    assert!(out.upload() != UploadState::Complete);
     assert_eq!(
-        policies::received_2xx_json(out).unwrap_err().reason,
-        policies::CompleteJsonRefusal::Decode
+        (out).received_2xx_json_exact().unwrap_err().code(),
+        Code::IncompleteHeaders
     );
     server.await.unwrap();
 }

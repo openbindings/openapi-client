@@ -294,6 +294,7 @@ impl fmt::Debug for DiagnosticContext {
 }
 #[derive(Clone, Default, PartialEq, Eq)]
 struct Details {
+    http_status: Option<u16>,
     bytes: std::sync::Arc<[u8]>,
     projection: Option<Projection>,
 
@@ -431,6 +432,8 @@ pub enum Code {
     IncompleteHeaders,
     /// Delivered bytes require content decoding outside this convenience profile.
     UnsupportedCoding,
+    /// Received status is outside the selected 2xx acceptance range.
+    HttpStatus,
     /// Admitted JSON cannot project into the requested application type.
     Deserialization,
 }
@@ -510,6 +513,7 @@ impl Code {
             Self::EmptyBody => "JSON decoding requires a nonempty response body",
             Self::IncompleteBody => "JSON decoding requires a complete response body",
             Self::IncompleteHeaders => "JSON decoding requires complete response-header delivery",
+            Self::HttpStatus => "HTTP status is outside the accepted 2xx range",
             Self::Deserialization => "JSON does not match the requested Rust type",
             Self::UnsupportedCoding => "the response needs unsupported content decoding",
         }
@@ -630,6 +634,14 @@ impl Diagnostic {
         } else {
             self
         }
+    }
+    pub(crate) fn http_status(status: u16) -> Self {
+        let mut diagnostic = Self::new(Code::HttpStatus);
+        diagnostic
+            .details
+            .get_or_insert_with(Default::default)
+            .http_status = Some(status);
+        diagnostic
     }
     pub(crate) fn projection(error: serde_json::Error) -> Self {
         let mut diagnostic = Self::new(Code::Deserialization);
@@ -803,6 +815,9 @@ impl Diagnostic {
 impl fmt::Display for Diagnostic {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}: ", self.code.message())?;
+        if let Some(status) = self.details.as_ref().and_then(|d| d.http_status) {
+            write!(f, "{status} ")?;
+        }
         self.fmt_structured(f)
     }
 }

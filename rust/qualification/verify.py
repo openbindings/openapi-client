@@ -78,6 +78,7 @@ with tempfile.TemporaryDirectory(prefix='openapi-consumer-', dir=output) as temp
         'client_features': client_features, 'owner_accounting_compiled': False,
     }, indent=2) + '\n')
     (consumer / 'tests').mkdir()
+    shutil.copytree(crate / 'tests/support', consumer / 'tests/support')
     shutil.copy2(root / 'qualification/serializable_consumer.rs',
                  consumer / 'tests/serializable.rs')
     shutil.copy2(root / 'client/tests/response_projection.rs',

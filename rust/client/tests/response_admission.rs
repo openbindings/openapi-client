@@ -1,6 +1,9 @@
 //! Public shared-response controls from the frozen H1 amendment and Sol review.
+#[path = "support/strict_json.rs"]
+mod policies;
 use dynamic_openapi_client::*;
 use dynamic_openapi_client::{diagnostics::*, transport::*};
+use policies::CompleteJsonRefusal;
 use std::{
     future::Future,
     sync::Arc,
@@ -127,9 +130,9 @@ fn unspecified_constructor_preserves_acceptance_without_inventing_completeness()
                 UploadState::Complete,
                 None,
             );
-            let response = out.response.as_ref().unwrap();
-            assert_eq!(response.header_delivery(), delivery);
-            assert_eq!(response.header_fidelity(), fidelity);
+            let response = &out;
+            assert_eq!(response.header_delivery().unwrap(), delivery);
+            assert_eq!(response.header_fidelity().unwrap(), fidelity);
             assert!(policies::complete_2xx_json(out).is_ok());
         }
     }
@@ -158,15 +161,18 @@ fn adapter_and_core_omissions_preserve_distinct_facts_and_policy_priority() {
                 i.headers.push(Header::new("x", "v"));
             }
             let out = invoke(&prepare(1), i, upload, None);
-            assert!(out.error.is_none());
+            assert!(out.error().is_none());
             assert_eq!(out.host_error_detail(), None);
-            let response = out.response.as_ref().unwrap();
-            assert_eq!(response.header_delivery(), delivery);
-            assert_eq!(response.header_fidelity(), fidelity);
-            assert_eq!(response.omitted_header_lines(), expected_omitted);
-            assert_eq!(response.raw(), b"{}");
-            assert_eq!(response.body_state(), BodyState::Complete);
-            assert_eq!(response.json().unwrap_err().code(), Code::IncompleteHeaders);
+            let response = &out;
+            assert_eq!(response.header_delivery().unwrap(), delivery);
+            assert_eq!(response.header_fidelity().unwrap(), fidelity);
+            assert_eq!(response.omitted_header_lines().unwrap(), expected_omitted);
+            assert_eq!(response.raw().unwrap(), b"{}");
+            assert_eq!(response.body_state().unwrap(), BodyState::Complete);
+            assert_eq!(
+                response.body_json().unwrap_err().code(),
+                Code::IncompleteHeaders
+            );
             let refused = policies::complete_2xx_json(out.clone()).unwrap_err();
             assert_eq!(
                 refused.reason,
@@ -181,8 +187,8 @@ fn adapter_and_core_omissions_preserve_distinct_facts_and_policy_priority() {
                 Code::IncompleteHeaders
             );
             assert_eq!(
-                policies::received_2xx_json(out).unwrap_err().reason,
-                CompleteJsonRefusal::Decode
+                (out).received_2xx_json_exact().unwrap_err().code(),
+                Code::IncompleteHeaders
             );
         }
     }
@@ -194,17 +200,14 @@ fn only_retained_fields_are_classified_and_opaque_wins_contradictions() {
     let mut i = input(HeaderDelivery::Complete, HeaderFidelity::Unknown);
     i.headers.push(Header::new("bad name", "v"));
     let out = invoke(&prepare(1), i.clone(), UploadState::Complete, None);
-    assert!(out.error.is_none());
-    assert_eq!(
-        out.response.unwrap().json().unwrap_err().code(),
-        Code::IncompleteHeaders
-    );
+    assert!(out.error().is_none());
+    assert_eq!(out.body_json().unwrap_err().code(), Code::IncompleteHeaders);
     i.header_delivery = HeaderDelivery::Incomplete;
     i.headers.swap(0, 1);
     let out = invoke(&prepare(1), i, UploadState::Complete, None);
-    assert_eq!(out.error.unwrap().code(), Code::InvalidHostEvidence);
+    assert_eq!(out.error().unwrap().code(), Code::InvalidHostEvidence);
     assert_eq!(
-        out.response.unwrap().json().unwrap_err().code(),
+        out.body_json().unwrap_err().code(),
         Code::InvalidHostEvidence
     );
     for opaque in [false, true] {
@@ -220,11 +223,17 @@ fn only_retained_fields_are_classified_and_opaque_wins_contradictions() {
         } else {
             Code::InvalidHostEvidence
         };
-        assert_eq!(out.error.as_ref().unwrap().code(), code);
-        let response = out.response.as_ref().unwrap();
-        assert_eq!(response.header_delivery(), HeaderDelivery::Incomplete);
-        assert_eq!(response.header_fidelity(), HeaderFidelity::ExactFields);
-        assert_eq!(response.json().unwrap_err().code(), code);
+        assert_eq!(out.error().unwrap().code(), code);
+        let response = &out;
+        assert_eq!(
+            response.header_delivery().unwrap(),
+            HeaderDelivery::Incomplete
+        );
+        assert_eq!(
+            response.header_fidelity().unwrap(),
+            HeaderFidelity::ExactFields
+        );
+        assert_eq!(response.body_json().unwrap_err().code(), code);
         assert_eq!(
             policies::complete_2xx_json(out).unwrap_err().reason,
             CompleteJsonRefusal::Transport
@@ -267,16 +276,28 @@ fn metadata_refusal_precedes_body_while_execution_policy_keeps_its_order() {
         let mut i = input(HeaderDelivery::Incomplete, HeaderFidelity::HostProcessed);
         i.status = status;
         i.body_state = body;
-        let mut out = invoke(&prepare(1), i, UploadState::Complete, detail);
-        // Public policy input mutation is intentional; no host cancellation claim.
-        out.cancelled = cancelled;
+        let token = Cancellation::default();
+        let out = ready(prepare(1).invoke(
+            token,
+            &HostCapabilities::programmable(),
+            |_, token| async move {
+                if cancelled {
+                    token.cancel();
+                }
+                TransportResult {
+                    response: Some(i),
+                    upload: UploadState::Complete,
+                    error_detail: detail.map(Into::into),
+                }
+            },
+        ));
         let refusal = policies::complete_2xx_json(out).unwrap_err();
         assert_eq!(refusal.reason, expected);
         assert_eq!(
             refusal.decode_error.unwrap().code(),
             Code::IncompleteHeaders
         );
-        assert_eq!(refusal.outcome.response.unwrap().body_state(), body);
+        assert_eq!(refusal.outcome.body_state().unwrap(), body);
     }
 }
 
@@ -293,6 +314,6 @@ fn host_refusals_remain_controlled_and_do_not_fabricate_locations() {
         assert!(diagnostic.source_position().is_none());
         let out = Outcome::not_dispatched(diagnostic, false, None);
         assert_eq!(out.replay_assurance(), None);
-        assert_eq!(out.upload, UploadState::NotStarted);
+        assert_eq!(out.upload(), UploadState::NotStarted);
     }
 }

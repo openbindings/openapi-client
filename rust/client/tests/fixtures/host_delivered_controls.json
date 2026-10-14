@@ -311,7 +311,7 @@
       },
       "expected": {
         "json_code": "InvalidUtf8",
-        "received_policy": "Decode",
+        "received_policy": "InvalidUtf8",
         "raw_hex": "1f8b0800000000000013ab56cacf56b22a292a4dad0500905fd4a70b000000",
         "provenance": "HostDelivered",
         "core_decompressions": 0
@@ -353,7 +353,7 @@
       },
       "expected": {
         "json_code": "InvalidUtf8",
-        "received_policy": "Decode",
+        "received_policy": "InvalidUtf8",
         "raw_hex": "1f8b0800000000000013ab56cacf56b22a292a4dad0500905fd4a70b000000",
         "no_second_json_attempt": true
       },
@@ -394,7 +394,7 @@
       },
       "expected": {
         "json_code": "InvalidUtf8",
-        "received_policy": "Decode",
+        "received_policy": "InvalidUtf8",
         "raw_hex": "1f8b0800000000000013ab56cacf56b22a292a4dad0500905fd4a70b000000"
       },
       "status": "registered_not_executed"
@@ -435,7 +435,7 @@
       },
       "expected": {
         "json_code": "InvalidJson",
-        "received_policy": "Decode",
+        "received_policy": "InvalidJson",
         "outcome_error": null,
         "raw_hex": "010203"
       },
@@ -477,7 +477,7 @@
       },
       "expected": {
         "json_code": "IncompleteBody",
-        "received_policy": "Transport",
+        "received_policy": "TransportFailure",
         "raw_prefix_retained": true
       },
       "status": "registered_not_executed"
@@ -551,7 +551,7 @@
       },
       "expected": {
         "json_code": "InvalidJson",
-        "received_policy": "Decode",
+        "received_policy": "InvalidJson",
         "raw_hex": "7b226f6b223a",
         "safe_default_formatting": true
       },
@@ -592,7 +592,7 @@
       },
       "expected": {
         "json_code": "UnsupportedMedia",
-        "received_policy": "Decode",
+        "received_policy": "UnsupportedMedia",
         "raw_retained": true
       },
       "status": "registered_not_executed"
@@ -623,7 +623,7 @@
       },
       "expected": {
         "json_code": "InvalidMedia",
-        "received_policy": "Decode"
+        "received_policy": "InvalidMedia"
       },
       "status": "registered_not_executed"
     },
@@ -662,7 +662,7 @@
       },
       "expected": {
         "json_code": "InvalidMedia",
-        "received_policy": "Decode"
+        "received_policy": "InvalidMedia"
       },
       "status": "registered_not_executed"
     },
@@ -697,7 +697,7 @@
       },
       "expected": {
         "json_code": "IncompleteHeaders",
-        "received_policy": "Decode",
+        "received_policy": "IncompleteHeaders",
         "outcome_error": null,
         "body_state": "Complete",
         "core_omissions": 0
@@ -735,7 +735,7 @@
       },
       "expected": {
         "json_code": "InvalidHostEvidence",
-        "received_policy": "Transport"
+        "received_policy": "InvalidHostEvidence"
       },
       "status": "registered_not_executed"
     },
@@ -770,7 +770,7 @@
       },
       "expected": {
         "json_code": "InvalidHostEvidence",
-        "received_policy": "Transport"
+        "received_policy": "InvalidHostEvidence"
       },
       "status": "registered_not_executed"
     },
@@ -805,7 +805,7 @@
       },
       "expected": {
         "json_code": "OpaqueRedirect",
-        "received_policy": "Transport"
+        "received_policy": "OpaqueRedirect"
       },
       "status": "registered_not_executed"
     },
@@ -840,7 +840,7 @@
       },
       "expected": {
         "json_code": "IncompleteBody",
-        "received_policy": "Decode",
+        "received_policy": "IncompleteBody",
         "outcome_error": null
       },
       "status": "registered_not_executed"
@@ -878,7 +878,7 @@
         "retained_hex": "7b226f6b223a74727565",
         "body_state": "Truncated",
         "json_code": "IncompleteBody",
-        "received_policy": "Decode"
+        "received_policy": "IncompleteBody"
       },
       "status": "registered_not_executed"
     },
@@ -1022,7 +1022,7 @@
         }
       },
       "expected": {
-        "policy_primary": "Cancelled",
+        "policy_primary": "TransportFailure",
         "decode_error": "IncompleteBody",
         "independent_facts": "all retained"
       },
@@ -1058,7 +1058,7 @@
         }
       },
       "expected": {
-        "policy_primary": "Transport",
+        "policy_primary": "TransportFailure",
         "decoded_hex": "7b226f6b223a747275657d",
         "outcome_error": "TransportFailure"
       },
@@ -1099,7 +1099,7 @@
       },
       "expected": {
         "json_code": "UnsupportedCoding",
-        "received_policy": "Decode"
+        "received_policy": "UnsupportedCoding"
       },
       "status": "registered_not_executed"
     },
@@ -1138,7 +1138,7 @@
       },
       "expected": {
         "json_code": "UnsupportedCoding",
-        "received_policy": "Decode"
+        "received_policy": "UnsupportedCoding"
       },
       "status": "registered_not_executed"
     },
@@ -1307,7 +1307,7 @@
       },
       "expected": {
         "json_code": "DuplicateMember",
-        "received_policy": "Decode",
+        "received_policy": "DuplicateMember",
         "raw_hex": "7b2261223a312c2261223a327d"
       },
       "status": "registered_not_executed"
@@ -1344,7 +1344,7 @@
       "expected": {
         "json_code": "Limit",
         "limit": "Depth",
-        "received_policy": "Decode",
+        "received_policy": "Limit",
         "basis": "existing depth counting; no HostDelivered exemption"
       },
       "status": "registered_not_executed"
@@ -1380,7 +1380,7 @@
       },
       "expected": {
         "json_code": "EmptyBody",
-        "received_policy": "Decode"
+        "received_policy": "EmptyBody"
       },
       "status": "registered_not_executed"
     }

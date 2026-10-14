@@ -1,7 +1,10 @@
 //! Public H0 controls. Literal expectations are mapped to the frozen review IDs
 //! in the author evidence; this is not independent host qualification.
+#[path = "support/strict_json.rs"]
+mod policies;
 use dynamic_openapi_client::*;
 use dynamic_openapi_client::{diagnostics::*, exact::*, transport::*};
+use policies::CompleteJsonRefusal;
 use std::{
     cell::Cell,
     future::Future,
@@ -76,11 +79,11 @@ fn host_error(error: &Diagnostic, reason: HostRefusal) {
     assert_eq!(error.reason(), Some(&DiagnosticReason::Host(reason)));
 }
 fn refused(out: &Outcome, reason: HostRefusal) {
-    assert_eq!(out.dispatch, DispatchEvidence::NotDispatched);
-    assert_eq!(out.upload, UploadState::NotStarted);
+    assert_eq!(out.dispatch(), DispatchEvidence::NotDispatched);
+    assert_eq!(out.upload(), UploadState::NotStarted);
     assert_eq!(out.replay_assurance(), None);
-    assert!(out.response.is_none());
-    host_error(out.error.as_ref().unwrap(), reason);
+    assert!(out.status().is_none());
+    host_error(out.error().unwrap(), reason);
 }
 #[test]
 fn strict_delegates_and_explicit_policy_agree_without_mutating_host() {
@@ -114,9 +117,9 @@ fn strict_delegates_and_explicit_policy_agree_without_mutating_host() {
         } else {
             assert_eq!(admission.unwrap(), ReplayAssurance::HostManaged);
             assert_eq!(out.replay_assurance(), Some(ReplayAssurance::HostManaged));
-            assert_eq!(out.dispatch, DispatchEvidence::Dispatched);
+            assert_eq!(out.dispatch(), DispatchEvidence::Dispatched);
             assert_eq!(calls, 1);
-            assert_eq!(out.response.unwrap().body_state(), BodyState::Complete);
+            assert_eq!(out.body_state().unwrap(), BodyState::Complete);
         }
         assert!(!h.no_retries);
     }
@@ -255,11 +258,11 @@ fn cancellation_precedes_admission_and_callback_cancellation_preserves_evidence(
                 result(None, UploadState::Unknown, None)
             }),
         );
-        assert_eq!(out.error.as_ref().unwrap().code(), Code::Cancelled);
+        assert_eq!(out.error().unwrap().code(), Code::Cancelled);
         assert_eq!(calls.get(), 0);
-        assert_eq!(out.dispatch, DispatchEvidence::NotDispatched);
+        assert_eq!(out.dispatch(), DispatchEvidence::NotDispatched);
         assert_eq!(out.replay_assurance(), None);
-        assert!(out.cancelled);
+        assert!(out.cancelled());
     }
     let mut evidence = input();
     evidence.body_state = BodyState::Failed;
@@ -282,21 +285,18 @@ fn cancellation_precedes_admission_and_callback_cancellation_preserves_evidence(
         },
     ));
     assert_eq!(calls.get(), 1);
-    assert!(out.cancelled);
+    assert!(out.cancelled());
     assert_eq!(out.replay_assurance(), Some(ReplayAssurance::HostManaged));
-    assert_eq!(out.upload, UploadState::Incomplete);
+    assert_eq!(out.upload(), UploadState::Incomplete);
     assert_eq!(out.host_error_detail(), Some("host-private-error"));
-    assert_eq!(out.response.as_ref().unwrap().raw(), b"{\"id\":");
-    assert_eq!(out.error.as_ref().unwrap().code(), Code::TransportFailure);
-    let refusal = policies::received_2xx_json(out).unwrap_err();
-    assert_eq!(refusal.reason, CompleteJsonRefusal::Cancelled);
-    assert_eq!(
-        refusal.outcome.replay_assurance(),
-        Some(ReplayAssurance::HostManaged)
-    );
+    assert_eq!(out.raw().unwrap(), b"{\"id\":");
+    assert_eq!(out.error().unwrap().code(), Code::TransportFailure);
+    let refusal = (out).received_2xx_json_exact().unwrap_err();
+    assert_eq!(refusal.code(), Code::TransportFailure);
+    assert_eq!(out.replay_assurance(), Some(ReplayAssurance::HostManaged));
 }
 #[test]
-fn callback_failures_421_and_mutated_public_fields_never_rewrite_assurance() {
+fn callback_failures_and_421_preserve_assurance() {
     let p = prepared(Limits::default());
     for (response, detail, code) in [
         (
@@ -306,19 +306,17 @@ fn callback_failures_421_and_mutated_public_fields_never_rewrite_assurance() {
         ),
         (None, None, Code::InvalidHostEvidence),
     ] {
-        let (mut out, calls) = invoke(
+        let (out, calls) = invoke(
             &p,
             &host_managed(),
             ReplayPolicy::AllowHostManaged,
             result(response, UploadState::NotStarted, detail),
         );
         assert_eq!(calls, 1);
-        assert_eq!(out.dispatch, DispatchEvidence::Dispatched);
-        assert_eq!(out.upload, UploadState::NotStarted);
-        assert_eq!(out.error.as_ref().unwrap().code(), code);
+        assert_eq!(out.dispatch(), DispatchEvidence::Dispatched);
+        assert_eq!(out.upload(), UploadState::NotStarted);
+        assert_eq!(out.error().unwrap().code(), code);
         assert_eq!(out.host_error_detail(), detail);
-        out.dispatch = DispatchEvidence::NotDispatched;
-        out.upload = UploadState::Complete;
         assert_eq!(out.replay_assurance(), Some(ReplayAssurance::HostManaged));
     }
     let mut response = input();
@@ -330,13 +328,10 @@ fn callback_failures_421_and_mutated_public_fields_never_rewrite_assurance() {
         result(Some(response), UploadState::Unknown, None),
     );
     assert_eq!(calls, 1);
-    let refusal = policies::received_2xx_json(out).unwrap_err();
-    assert_eq!(refusal.reason, CompleteJsonRefusal::HttpStatus);
-    assert_eq!(refusal.outcome.response.as_ref().unwrap().status(), 421);
-    assert_eq!(
-        refusal.outcome.replay_assurance(),
-        Some(ReplayAssurance::HostManaged)
-    );
+    let refusal = (out).received_2xx_json_exact().unwrap_err();
+    assert_eq!(refusal.code(), Code::HttpStatus);
+    assert_eq!(out.status().unwrap(), 421);
+    assert_eq!(out.replay_assurance(), Some(ReplayAssurance::HostManaged));
 }
 #[test]
 fn acceptance_keeps_fidelity_replay_and_upload_independent() {
@@ -351,23 +346,12 @@ fn acceptance_keeps_fidelity_replay_and_upload_independent() {
                 ReplayPolicy::AllowHostManaged,
                 result(Some(response), upload, None),
             );
-            let received = policies::received_2xx_json(out.clone()).unwrap();
+            let received = (out.clone()).received_2xx_json_exact().unwrap();
+            assert_eq!(out.replay_assurance(), Some(ReplayAssurance::HostManaged));
+            assert_eq!(out.upload(), upload);
+            assert_eq!(out.header_fidelity().unwrap(), fidelity);
             assert_eq!(
-                received.outcome.replay_assurance(),
-                Some(ReplayAssurance::HostManaged)
-            );
-            assert_eq!(received.outcome.upload, upload);
-            assert_eq!(
-                received
-                    .outcome
-                    .response
-                    .as_ref()
-                    .unwrap()
-                    .header_fidelity(),
-                fidelity
-            );
-            assert_eq!(
-                received.json.clone().get("id").unwrap().raw(),
+                received.clone().get("id").unwrap().raw(),
                 "9007199254740993"
             );
             let complete = policies::complete_2xx_json(out);
@@ -382,8 +366,8 @@ fn acceptance_keeps_fidelity_replay_and_upload_independent() {
                 preserved.replay_assurance(),
                 Some(ReplayAssurance::HostManaged)
             );
-            assert_eq!(preserved.upload, upload);
-            assert_eq!(preserved.response.unwrap().header_fidelity(), fidelity);
+            assert_eq!(preserved.upload(), upload);
+            assert_eq!(preserved.header_fidelity().unwrap(), fidelity);
         }
     }
 }
@@ -412,15 +396,21 @@ fn response_constructor_fidelity_and_core_omission_are_distinct() {
     );
     // H1 prospective correction: truthful core cutoff is a decode refusal,
     // not fabricated invalid-host or transport evidence. Original H0 is archived.
-    assert!(out.error.is_none());
-    let response = out.response.unwrap();
-    assert_eq!(response.header_fidelity(), HeaderFidelity::ExactFields);
-    assert_eq!(response.omitted_header_lines(), 1);
+    assert!(out.error().is_none());
+    let response = &out;
     assert_eq!(
-        response.headers(),
+        response.header_fidelity().unwrap(),
+        HeaderFidelity::ExactFields
+    );
+    assert_eq!(response.omitted_header_lines().unwrap(), 1);
+    assert_eq!(
+        response.headers().unwrap(),
         [Header::new("X-A", "one"), Header::new("x-a", "two")]
     );
-    assert_eq!(response.json().unwrap_err().code(), Code::IncompleteHeaders);
+    assert_eq!(
+        response.body_json().unwrap_err().code(),
+        Code::IncompleteHeaders
+    );
     let mut response = input();
     response.header_fidelity = HeaderFidelity::HostProcessed;
     let (out, _) = invoke(
@@ -429,10 +419,13 @@ fn response_constructor_fidelity_and_core_omission_are_distinct() {
         ReplayPolicy::AllowHostManaged,
         result(Some(response), UploadState::Unknown, None),
     );
-    let response = out.response.unwrap();
-    assert_eq!(response.omitted_header_lines(), 0);
-    assert_eq!(response.header_fidelity(), HeaderFidelity::HostProcessed);
-    assert_eq!(response.headers().len(), 1); // Core cannot infer host-filtered entries.
+    let response = &out;
+    assert_eq!(response.omitted_header_lines().unwrap(), 0);
+    assert_eq!(
+        response.header_fidelity().unwrap(),
+        HeaderFidelity::HostProcessed
+    );
+    assert_eq!(response.headers().unwrap().len(), 1); // Core cannot infer host-filtered entries.
 }
 #[test]
 fn processed_metadata_never_decides_body_decoding_or_repairs_invalid_content_type() {
@@ -450,7 +443,7 @@ fn processed_metadata_never_decides_body_decoding_or_repairs_invalid_content_typ
             ReplayPolicy::AllowHostManaged,
             result(Some(response), UploadState::Complete, None),
         );
-        let decoded = out.response.unwrap().json();
+        let decoded = out.body_json();
         if provenance == Provenance::Decoded {
             assert!(decoded.is_ok());
         } else {
@@ -473,10 +466,7 @@ fn processed_metadata_never_decides_body_decoding_or_repairs_invalid_content_typ
             ReplayPolicy::AllowHostManaged,
             result(Some(response), UploadState::Complete, None),
         );
-        assert_eq!(
-            out.response.unwrap().json().unwrap_err().code(),
-            Code::InvalidMedia
-        );
+        assert_eq!(out.body_json().unwrap_err().code(), Code::InvalidMedia);
     }
 }
 #[test]
@@ -506,23 +496,17 @@ fn opaque_redirect_and_inspectable_status_are_separate_for_every_fidelity() {
             assert_eq!(calls, 1);
             assert_eq!(out.replay_assurance(), Some(ReplayAssurance::HostManaged));
             if opaque {
-                assert_eq!(out.error.as_ref().unwrap().code(), Code::OpaqueRedirect);
+                assert_eq!(out.error().unwrap().code(), Code::OpaqueRedirect);
             } else {
-                assert!(out.error.is_none());
+                assert!(out.error().is_none());
             }
-            assert_eq!(
-                out.response.as_ref().unwrap().status(),
-                if opaque { 0 } else { 302 }
-            );
-            assert_eq!(out.response.as_ref().unwrap().header_fidelity(), fidelity);
+            assert_eq!(out.status().unwrap(), if opaque { 0 } else { 302 });
+            assert_eq!(out.header_fidelity().unwrap(), fidelity);
             if !opaque {
+                assert_eq!(out.headers().unwrap()[0].value(), b"/next");
                 assert_eq!(
-                    out.response.as_ref().unwrap().headers()[0].value(),
-                    b"/next"
-                );
-                assert_eq!(
-                    policies::received_2xx_json(out).unwrap_err().reason,
-                    CompleteJsonRefusal::HttpStatus
+                    (out).received_2xx_json_exact().unwrap_err().code(),
+                    Code::HttpStatus
                 );
             }
         }
@@ -561,13 +545,13 @@ fn all_header_names_and_values_are_private_in_default_and_alternate_debug() {
             transport,
         );
         texts.push(format!("{out:?} {out:#?}"));
-        texts.push(format!("{:?} {:#?}", out.response, out.response));
+        texts.push(format!("{:?} {:#?}", out, out));
         for text in texts {
             for secret in [name, value, "host-detail-secret"] {
                 assert!(!text.contains(secret), "{text}");
             }
         }
-        assert_eq!(out.response.unwrap().headers()[1], header);
+        assert_eq!(out.headers().unwrap()[1], header);
     }
     let mut host = host_managed();
     host.forbidden_headers = vec![
@@ -625,15 +609,7 @@ fn source_request_and_response_owners_survive_only_as_explicitly_retained() {
     drop(p);
     assert!(weak.upgrade().is_none());
     assert_eq!(
-        out.response
-            .as_ref()
-            .unwrap()
-            .json()
-            .unwrap()
-            .clone()
-            .get("id")
-            .unwrap()
-            .raw(),
+        out.body_json().unwrap().clone().get("id").unwrap().raw(),
         "9007199254740993"
     );
     assert!(response_weak.upgrade().is_some());
@@ -689,16 +665,16 @@ fn invalid_public_inputs_refuse_in_preparation_and_delivered_bounds_remain_indep
                 ReplayPolicy::AllowHostManaged,
                 result(Some(response), UploadState::Unknown, None),
             );
-            let response = out.response.unwrap();
-            assert_eq!(response.header_fidelity(), fidelity);
-            assert_eq!(response.raw(), b"{\"id");
-            assert_eq!(response.body_state(), BodyState::Truncated);
+            let response = &out;
+            assert_eq!(response.header_fidelity().unwrap(), fidelity);
+            assert_eq!(response.raw().unwrap(), b"{\"id");
+            assert_eq!(response.body_state().unwrap(), BodyState::Truncated);
             assert_eq!(
-                response.omitted_header_lines(),
+                response.omitted_header_lines().unwrap(),
                 usize::from(kind == "bytes")
             );
             assert_eq!(
-                response.json().unwrap_err().code(),
+                response.body_json().unwrap_err().code(),
                 match kind {
                     "body" => Code::IncompleteBody,
                     "bytes" => Code::IncompleteHeaders,

@@ -40,8 +40,9 @@ The [Rust API guide](../rust/client/README.md) documents the actual surface:
 - `PreparedRequest::invoke` admits a supplied host and enters its asynchronous
   callback at most once. Optional native HTTP and Fetch companions supply hosts.
 - `Outcome` keeps dispatch, upload, cancellation, errors and available response
-  evidence independent. `Response` retains status, admitted headers, delivered
-  bytes and fidelity/provenance facts, including unsuccessful HTTP responses.
+  evidence independent through read-only accessors. Optional status, headers,
+  delivered bytes and fidelity/provenance distinguish no response from received
+  empty or invalid evidence, including unsuccessful HTTP responses.
 
 The [graph](../rust/client/GRAPH.md),
 [schema inspection](../rust/client/SCHEMAS.md),
@@ -72,12 +73,15 @@ operation.request()
 
 ## Application policy
 
-Invocation returns native evidence rather than imposing a universal application
-success/failure mapping. `policies::complete_2xx_json` requires known complete
-upload and a complete, uncancelled, transport-error-free 2xx JSON response.
-`policies::received_2xx_json` permits unknown or incomplete upload while retaining
-that fact. A caller may instead inspect `Outcome` directly. These optional
-policies do not retry, validate schemas or establish remote completion.
+Invocation returns immutable evidence. `Outcome::received_2xx_json::<T>()` and
+`received_2xx_json_exact()` accept a complete, uncancelled, error-free received
+2xx JSON response while retaining Unknown or Incomplete upload. `body_json()`
+admits JSON independently of status and execution. All three share one lazy
+decode result; typed projection reruns outside the cache lock. The actual
+execution Diagnostic precedes cancellation, which remains independently visible.
+Without an execution error, cancellation precedes invalid evidence, HttpStatus,
+and body/projection failures. Applications requiring complete upload check it
+explicitly. These reads do not retry, validate schemas or establish remote completion.
 
 Exact JSON tokens are preserved. Ordinary Serde projection has the numeric
 semantics of the selected target type; callers retain exact values when

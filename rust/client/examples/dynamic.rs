@@ -35,18 +35,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let Poll::Ready(outcome) = future.as_mut().poll(&mut cx) else {
         panic!("fixture must be ready")
     };
-    let completed = policies::complete_2xx_json(outcome).map_err(|failure| {
+    let completed = outcome.received_2xx_json_exact().map_err(|failure| {
         eprintln!(
-            "{}; response_available={}, decoded_available={}",
+            "{}; response_available={}",
             failure,
-            failure.outcome.response.is_some(),
-            failure.decoded.is_some()
+            outcome.status().is_some()
         );
-        failure // The caller receives all evidence, not only the displayed text.
+        failure
     })?;
-    assert_eq!(completed.outcome.upload, UploadState::Complete);
+    assert_eq!(outcome.upload(), UploadState::Complete);
     assert_eq!(
-        completed.json.clone().get("n").unwrap().raw(),
+        completed.clone().get("n").unwrap().raw(),
         "9007199254740993"
     );
     println!(

@@ -1,3 +1,24 @@
+# Immutable outcome reads (O6 stage 4)
+
+`Response`, `CompletedJson`, `JsonCallRefusal`, `CompleteJsonRefusal` and the
+`policies` module are removed. Outcome fields are private: use `dispatch()`,
+`upload()`, `cancelled()`, `error()` and optional received-fact accessors. Replace
+`outcome.response.as_ref().map(|r| r.status())` with `outcome.status()`; no response,
+an empty body and an invalid status zero remain distinct.
+
+Use `received_2xx_json::<T>()` for typed acceptance, `received_2xx_json_exact()` for
+exact acceptance and `body_json()` for independent body inspection, including
+non-2xx JSON. There is no bare `json` alias. All reads borrow Outcome and share one
+lazy decode cache; repeated reads share source identity. Typed projections rerun.
+
+The actual execution Diagnostic now precedes cancellation, preserving correction
+information, source bytes and error details. Cancellation remains on Outcome.
+Without an execution error, cancellation precedes invalid evidence, HttpStatus,
+and body/projection errors. `HttpStatus` retains its numeric status in the message.
+Unknown/Incomplete upload, Unspecified headers and Unknown fidelity retain their
+previous admission. A strict caller checks Complete upload explicitly; the former
+strict ordering is preserved only in a private qualification example.
+
 # Checked input revision (O6 stage 3, unpublished candidate)
 
 Use `operation.request().parameter(location, name, &value).json(&body).prepare()`.
@@ -33,7 +54,7 @@ references rather than cloning the former public Form's outer storage.
 
 CredentialValue is private. `Credential::bearer(token, origins)`,
 `basic(username, password, origins)` and `api_key(value, origins)` require explicit
-origin lists. Origin checking, elections, execution and response policies retain
+origin lists. Origin checking, elections and execution retain
 their existing behavior.
 
 Advanced types now live in `exact`, `inspect`, `source`, `graph`, `schema`, `form`,
@@ -89,8 +110,8 @@ sniffing, decompression, retry or second JSON API. Raw bytes, exact tokens and
 positions are relative to the delivered source. Wire, Decoded and Unknown retain
 their meanings and coding behavior; the native companion remains Wire.
 
-The `CompletedJson.json` and refusal `decoded` fields hold parsed exact JSON;
-the historical names do not establish network decompression. Status, replay,
+The values returned by the three outcome reads hold parsed exact JSON;
+they do not establish network decompression. Status, replay,
 upload, cancellation, metadata, media, body completeness and resource bounds stay
 independent. This core contract alone does not qualify a Fetch or TypeScript host.
 
@@ -140,7 +161,7 @@ constructor sets `false` and `HeaderFidelity::Unknown`; it never silently claims
 exact fields. The native HeaderMap and Fetch-derived bridge metadata explicitly
 use `HostProcessed`.
 
-`Response::headers()` exposes retained delivered entries in host delivery order.
+`Outcome::headers()` exposes retained delivered entries in host delivery order.
 `header_fidelity()` describes their source; `omitted_header_lines()` retains its
 historical name but counts entries omitted by core bounds. Zero core omissions
 cannot establish absence of host filtering. `ExactFields` describes structured
@@ -257,7 +278,7 @@ The optional `dynamic-openapi-client-reqwest` companion now supplies native HTTP
 
 `Cancellation::cancelled().await` wakes pending local waits and supports multiple waiters. Existing polling/checkpoint APIs remain. `ExactJson::deserialize` explicitly selects standard Serde projection of the original bytes; typed floating-point results can round, while exact source remains unchanged. Projection errors hide arbitrary Serde text by default and expose it only through `detail()`.
 
-Select `policies::received_2xx_json` to accept a complete 2xx JSON response without requiring known complete upload. It retains all Outcome evidence. The existing `complete_2xx_json` policy still refuses Unknown/Incomplete upload.
+Use the borrowed received-2xx reads above; upload evidence remains independent.
 
 **Changed:** completed literal dot-only operation-path segments refuse with InvalidDestination as an explicit safety policy. Empty path segments remain supported. Automatic media election now filters by body compatibility; no compatible concrete media yields UnsupportedMedia. Multiple compatible media still require an election. Multiple security alternatives still require an explicit index.
 
@@ -290,9 +311,7 @@ Assignments are explicit: populated selection fields compose, `None`/missing ent
 
 `RequestError::Input(ParseFailure)` preserves generated-source construction failures; `RequestError::Preparation(Diagnostic)` preserves builder assignment/admission or protocol refusal. Both implement standard error chaining; `diagnostic()` provides the structured correction facts. No callback runs until a prepared request is explicitly invoked.
 
-Select `policies::complete_2xx_json(outcome)` to require dispatched, uncancelled, transport-error-free, 2xx, complete-upload JSON. It replaces the copied example policy. `CompletedJson`/`JsonCallRefusal` retain the full Outcome; refusals retain decoded data or a decode diagnostic. `CompleteJsonRefusal` identifies the primary failed condition in documented order. Raw `invoke -> Outcome` is unchanged and remains the boundary for custom policies, local non-Send callbacks and native Send futures. No production transport is added.
-
-The named policy's standard `Error::source` follows its primary reason when represented by a Diagnostic. Transport/preflight points to `outcome.error`, Decode to `decode_error`, and Cancelled only to an actual Cancelled diagnostic. Other conditions return no source; independent secondary errors remain available through the retained fields. In particular, a late transport error accompanied by malformed JSON chains to the transport diagnostic while keeping the decode diagnostic separately.
+The former composite policies are superseded by the immutable reads described above.
 
 ## JSON/YAML source provenance
 

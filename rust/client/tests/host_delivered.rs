@@ -1,5 +1,7 @@
 //! Author replay of the frozen independent prospective controls. This supplied
 //! callback layer establishes no actual Fetch call or network-decoding claim.
+#[path = "support/strict_json.rs"]
+mod policies;
 use dynamic_openapi_client::*;
 use dynamic_openapi_client::{diagnostics::*, transport::*};
 use serde_json::Value as J;
@@ -132,40 +134,49 @@ fn frozen_core_controls_preserve_delivered_bytes_and_independent_guards() {
             assert_eq!(calls.get(), 0, "{id}");
             assert_eq!(out.replay_assurance(), None);
             assert_eq!(
-                out.error.unwrap().reason(),
+                out.error().unwrap().reason(),
                 Some(&DiagnosticReason::Host(HostRefusal::Replay))
             );
             continue;
         }
         assert_eq!(calls.get(), 1, "{id}");
-        let response = out.response.as_ref().unwrap();
+        let response = &out;
         assert_eq!(
-            response.provenance(),
+            response.provenance().unwrap(),
             provenance(text(i, "provenance")),
             "{id}"
         );
         assert_eq!(
-            response.status(),
+            response.status().unwrap(),
             i["status"].as_u64().unwrap() as u16,
             "{id}"
         );
-        assert_eq!(out.cancelled, i["cancelled"].as_bool().unwrap(), "{id}");
+        assert_eq!(out.cancelled(), i["cancelled"].as_bool().unwrap(), "{id}");
         let expected_raw = e
             .get("retained_hex")
             .unwrap_or(&i["body_hex"])
             .as_str()
             .unwrap();
-        assert_eq!(hex(response.raw()), expected_raw, "{id}");
+        assert_eq!(hex(response.raw().unwrap()), expected_raw, "{id}");
         if let Some(state) = e["body_state"].as_str() {
-            assert_eq!(format!("{:?}", response.body_state()), state, "{id}");
+            assert_eq!(
+                format!("{:?}", response.body_state().unwrap()),
+                state,
+                "{id}"
+            );
         }
         if let Some(omitted) = e["core_omissions"].as_u64() {
-            assert_eq!(response.omitted_header_lines(), omitted as usize, "{id}");
+            assert_eq!(
+                response.omitted_header_lines().unwrap(),
+                omitted as usize,
+                "{id}"
+            );
         }
         if let Some(value) = e["coding_metadata_retained"].as_str() {
             assert!(
                 response
                     .headers()
+                    .unwrap()
                     .iter()
                     .any(|h| h.name() == "content-encoding" && h.value() == value.as_bytes()),
                 "{id}"
@@ -173,20 +184,20 @@ fn frozen_core_controls_preserve_delivered_bytes_and_independent_guards() {
         }
         if let Some(expected) = e.get("outcome_error") {
             assert_eq!(
-                out.error.as_ref().map(|x| format!("{:?}", x.code())),
+                out.error().map(|x| format!("{:?}", x.code())),
                 expected.as_str().map(str::to_owned),
                 "{id}"
             );
         }
         if let Some(code) = e["json_code"].as_str().or(e["decode_error"].as_str()) {
-            let error = response.json().unwrap_err();
+            let error = response.body_json().unwrap_err();
             assert_eq!(format!("{:?}", error.code()), code, "{id}");
             if e["safe_default_formatting"] == true {
                 let formatted = format!("{error} {error:?} {error:#?}");
                 assert!(!formatted.contains("\"ok\""), "{id}");
             }
         } else {
-            let json = response.json().unwrap();
+            let json = response.body_json().unwrap();
             assert_eq!(
                 hex(json.clone().raw().as_bytes()),
                 text(i, "body_hex"),
@@ -199,28 +210,24 @@ fn frozen_core_controls_preserve_delivered_bytes_and_independent_guards() {
                 assert!(json.clone().raw().contains("9007199254740993"));
             }
         }
-        let received = policies::received_2xx_json(out.clone());
+        let received = (out.clone()).received_2xx_json_exact();
         let expected_policy = e["received_policy"]
             .as_str()
             .or(e["policy_primary"].as_str())
             .unwrap_or("accepted"); // BDS-33 only registers exact numeric success.
         match received {
-            Ok(accepted) => {
+            Ok(_) => {
                 assert_eq!(expected_policy, "accepted", "{id}");
                 assert_eq!(
-                    accepted.outcome.response.unwrap().provenance(),
+                    out.provenance().unwrap(),
                     provenance(text(i, "provenance")),
                     "{id}"
                 );
             }
             Err(refused) => {
-                assert_eq!(format!("{:?}", refused.reason), expected_policy, "{id}");
+                assert_eq!(format!("{:?}", refused.code()), expected_policy, "{id}");
                 if let Some(raw) = e["decoded_hex"].as_str() {
-                    assert_eq!(
-                        hex(refused.decoded.unwrap().clone().raw().as_bytes()),
-                        raw,
-                        "{id}"
-                    );
+                    assert_eq!(hex(out.body_json().unwrap().raw().as_bytes()), raw, "{id}");
                 }
             }
         }

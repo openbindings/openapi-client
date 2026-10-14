@@ -176,23 +176,24 @@ pub fn upload(r: &J) -> UploadState {
     }
 }
 pub fn outcome_facts(out: Outcome, p: &PreparedRequest) -> J {
-    let mut facts = json!({"dispatch":if out.dispatch==DispatchEvidence::Dispatched{"dispatched"}else{"not_dispatched"},"upload":format!("{:?}",out.upload).to_ascii_lowercase(),"cancelled":out.cancelled,"error":null,"safe_debug":format!("{out:?}")});
-    if let Some(e) = out.error {
+    let mut facts = json!({"dispatch":if out.dispatch()==DispatchEvidence::Dispatched{"dispatched"}else{"not_dispatched"},"upload":format!("{:?}",out.upload()).to_ascii_lowercase(),"cancelled":out.cancelled(),"error":null,"safe_debug":format!("{out:?}")});
+    if let Some(e) = out.error() {
         facts["error"] = json!(format!("{:?}", e.code()));
         facts["display"] = json!(e.to_string());
     }
-    if let Some(r) = out.response {
-        facts["response_status"] = json!(r.status());
-        facts["omitted_header_lines"] = json!(r.omitted_header_lines());
-        facts["headers"] = headers(r.headers());
-        facts["raw_hex"] = json!(hex(r.raw()));
-        facts["body_state"] = json!(format!("{:?}", r.body_state()).to_ascii_lowercase());
-        facts["provenance"] = json!(format!("{:?}", r.provenance()).to_ascii_lowercase());
+    if out.status().is_some() {
+        let r = &out;
+        facts["response_status"] = json!(r.status().unwrap());
+        facts["omitted_header_lines"] = json!(r.omitted_header_lines().unwrap());
+        facts["headers"] = headers(r.headers().unwrap());
+        facts["raw_hex"] = json!(hex(r.raw().unwrap()));
+        facts["body_state"] = json!(format!("{:?}", r.body_state().unwrap()).to_ascii_lowercase());
+        facts["provenance"] = json!(format!("{:?}", r.provenance().unwrap()).to_ascii_lowercase());
         facts["response_key"] = json!(
-            p.response_declaration(r.status())
+            p.response_declaration(r.status().unwrap())
                 .map(|(k, _)| k.to_owned())
         );
-        match r.json() {
+        match r.body_json() {
             Ok(v) => facts["json_raw"] = json!(v.clone().raw()),
             Err(e) => facts["decode_error"] = json!(format!("{:?}", e.code())),
         }
@@ -569,8 +570,9 @@ pub fn campaign(family: &str, seconds: u64, seed: u64) -> J {
                 let o = block_on(p.invoke(Cancellation::default(), &host, |_, _| {
                     std::future::ready(result)
                 }));
-                if let Some(r) = o.response {
-                    accepted += u64::from(r.json().is_ok());
+                if o.status().is_some() {
+                    let r = &o;
+                    accepted += u64::from(r.body_json().is_ok());
                 }
             }
             _ => panic!("unknown campaign"),

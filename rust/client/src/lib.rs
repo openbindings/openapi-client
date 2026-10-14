@@ -33,7 +33,7 @@ pub use error::Diagnostic;
 
 pub use prepare::{Credential, ParameterLocation, Parameters};
 
-pub use transport::{Header, Outcome, Response};
+pub use transport::{Header, Outcome};
 
 pub use value::Limits;
 
@@ -54,10 +54,6 @@ mod serializable;
 mod request;
 pub use request::RequestBuilder;
 pub mod form;
-
-/// Explicit evidence-preserving application acceptance policies.
-pub mod policies;
-pub use policies::{CompleteJsonRefusal, CompletedJson, JsonCallRefusal};
 
 #[cfg(test)]
 mod schema_tests;
