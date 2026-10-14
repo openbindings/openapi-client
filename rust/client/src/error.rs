@@ -296,7 +296,6 @@ impl fmt::Debug for DiagnosticContext {
 struct Details {
     bytes: std::sync::Arc<[u8]>,
     projection: Option<Projection>,
-    cause: Option<std::sync::Arc<Diagnostic>>,
 
     reason: Option<DiagnosticReason>,
     context: Option<DiagnosticContext>,
@@ -531,12 +530,13 @@ pub struct Location {
 
 /// Structured, safely displayed diagnostic. No arbitrary host error is displayed.
 /// Source metadata is immutable to callers; add application context with a wrapper error.
+/// Equality compares all diagnostic data, independently of its source-chain snapshot.
 /// ```compile_fail
 /// use dynamic_openapi_client::{diagnostics::Code, Diagnostic};
 /// let mut error = Diagnostic::new(Code::InvalidJson);
 /// error.location = None;
 /// ```
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct Diagnostic {
     /// Stable category.
     pub(crate) code: Code,
@@ -547,7 +547,19 @@ pub struct Diagnostic {
     /// A setting that can repair the failure; never contains a setting value.
     pub(crate) setting: Option<String>,
     details: Option<Box<Details>>,
+    // Compatibility with removed parse/request wrappers; not diagnostic data.
+    cause: Option<std::sync::Arc<Diagnostic>>,
 }
+impl PartialEq for Diagnostic {
+    fn eq(&self, other: &Self) -> bool {
+        self.code == other.code
+            && self.location == other.location
+            && self.related == other.related
+            && self.setting == other.setting
+            && self.details == other.details
+    }
+}
+impl Eq for Diagnostic {}
 impl Diagnostic {
     /// Construct a category-only diagnostic; source/input details are optional.
     pub fn new(code: Code) -> Self {
@@ -557,6 +569,7 @@ impl Diagnostic {
             related: vec![],
             setting: None,
             details: None,
+            cause: None,
         }
     }
     /// Admitted original bytes, including invalid UTF-8. Empty when byte admission refused.
@@ -596,25 +609,23 @@ impl Diagnostic {
         if !bytes.is_empty() {
             self.details.get_or_insert_with(Default::default).bytes = bytes;
         }
-        self.caused()
+        self.refresh_cause()
+    }
+    // Only boundaries formerly returning ParseFailure expose a diagnostic cause.
+    pub(crate) fn parse_failure(self, bytes: std::sync::Arc<[u8]>) -> Self {
+        self.with_source_bytes(bytes).caused()
     }
     // Preserve the safe structured cause formerly supplied by the parse/request
     // wrappers. The cause is another Diagnostic, never the untrusted Serde error.
     // Refresh a single terminal snapshot rather than building wrapper chains.
     pub(crate) fn caused(mut self) -> Self {
         let mut cause = self.clone();
-        if let Some(details) = &mut cause.details {
-            details.cause = None;
-        }
-        self.details.get_or_insert_with(Default::default).cause = Some(std::sync::Arc::new(cause));
+        cause.cause = None;
+        self.cause = Some(std::sync::Arc::new(cause));
         self
     }
     fn refresh_cause(self) -> Self {
-        if self
-            .details
-            .as_ref()
-            .is_some_and(|details| details.cause.is_some())
-        {
+        if self.cause.is_some() {
             self.caused()
         } else {
             self
@@ -817,11 +828,7 @@ impl Diagnostic {
 }
 impl std::error::Error for Diagnostic {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        self.details
-            .as_ref()?
-            .cause
-            .as_deref()
-            .map(|cause| cause as _)
+        self.cause.as_deref().map(|cause| cause as _)
     }
 }
 

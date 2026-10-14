@@ -423,19 +423,20 @@ fn r10_supported_ordinary_values_and_provenance() {
 #[test]
 fn r11_construction_limits_and_duplicate_names() {
     let large = "x".repeat(1_000_000);
-    let failure = Value::from_serializable(
-        &TestValue::String(&large),
-        Limits {
-            document_bytes: 8,
-            ..Default::default()
-        },
-    )
+    // The removed ordinary constructor now enters through the ordinary setter.
+    let failure = operation(Limits {
+        body_bytes: 8,
+        ..Default::default()
+    })
+    .request()
+    .json(&TestValue::String(&large))
+    .prepare()
     .unwrap_err();
     assert!(failure.source_bytes().is_empty());
     assert!(matches!(
         failure.reason(),
         Some(DiagnosticReason::Limit {
-            kind: LimitKind::DocumentBytes,
+            kind: LimitKind::BodyBytes,
             maximum: 8,
             actual: 1_000_000
         })
@@ -523,7 +524,7 @@ fn r12_error_chaining_and_source_domains() {
         .unwrap()
         .downcast_ref::<Diagnostic>()
         .unwrap();
-    assert_eq!(cause.code(), failure.code());
+    assert_eq!(cause, &failure);
     assert_eq!(
         cause.source_context().unwrap().origin,
         SourceOrigin::Authored

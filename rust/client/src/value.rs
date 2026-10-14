@@ -671,7 +671,7 @@ impl Value {
         cancellation: &crate::Cancellation,
         origin: SourceOrigin,
     ) -> Result<Self, Diagnostic> {
-        Self::parse_mode(bytes, limits, cancellation, origin, false)
+        Self::parse_mode(bytes, limits, cancellation, origin, false).map_err(Diagnostic::caused)
     }
     // Response::json has no caller cancellation token. Public parsing and
     // construction retain their eager indexing checkpoints and behavior.

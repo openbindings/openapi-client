@@ -262,7 +262,12 @@ impl RequestBuilder {
             );
             return None;
         }
-        match crate::serializable::admit(value, limits, &self.cancellation, form) {
+        let admission = if form {
+            crate::serializable::Admission::Form
+        } else {
+            crate::serializable::Admission::Json
+        };
+        match crate::serializable::admit(value, limits, &self.cancellation, admission) {
             Ok(value) => {
                 self.input_nodes += value.node_count();
                 for (id, bytes) in value.retained_sources() {

@@ -285,14 +285,14 @@ impl Document {
     ) -> Result<Self, Diagnostic> {
         cancellation
             .check()
-            .map_err(|diagnostic| (diagnostic).with_source_bytes(Arc::from([])))?;
+            .map_err(|diagnostic| (diagnostic).parse_failure(Arc::from([])))?;
         if bytes.as_ref().len() > limits.document_bytes {
             return Err((Diagnostic::limited(
                 crate::diagnostics::LimitKind::DocumentBytes,
                 limits.document_bytes,
                 bytes.as_ref().len(),
             ))
-            .with_source_bytes(Arc::from([])));
+            .parse_failure(Arc::from([])));
         }
         if let Some(base) = base {
             crate::graph::bound(
@@ -303,23 +303,23 @@ impl Document {
             )
             .map_err(|diagnostic| {
                 (diagnostic.contextual(crate::diagnostics::DiagnosticContext::CallerInput))
-                    .with_source_bytes(Arc::from([]))
+                    .parse_failure(Arc::from([]))
             })?;
         }
         let json = crate::loading::parse(bytes.as_ref(), limits.clone(), cancellation)?;
         let metadata = match base {
             Some(base) => crate::graph::ResourceInput::at(base, Arc::<[u8]>::from([]))
-                .map_err(|diagnostic| (diagnostic).with_source_bytes(Arc::from(bytes.as_ref())))?,
+                .map_err(|diagnostic| (diagnostic).parse_failure(Arc::from(bytes.as_ref())))?,
             None => crate::graph::ResourceInput::anonymous(Arc::<[u8]>::from([])),
         };
         let mut builder =
             crate::graph::DocumentBuilder::new(limits, crate::graph::GraphLimits::default());
         let entry = builder
             .admit_parsed(json, metadata, cancellation)
-            .map_err(|diagnostic| (diagnostic).with_source_bytes(Arc::from(bytes.as_ref())))?;
+            .map_err(|diagnostic| (diagnostic).parse_failure(Arc::from(bytes.as_ref())))?;
         builder
             .build_with_cancellation(entry, cancellation)
-            .map_err(|diagnostic| (diagnostic).with_source_bytes(Arc::from(bytes.as_ref())))
+            .map_err(|diagnostic| (diagnostic).parse_failure(Arc::from(bytes.as_ref())))
     }
 
     pub(crate) fn from_graph(

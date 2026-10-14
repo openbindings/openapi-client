@@ -14,6 +14,15 @@ use std::{fmt, io, sync::Arc};
 const NUMBER: &str = "$serde_json::private::Number";
 const PRIVATE: &str = "$serde_json::private::";
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Admission {
+    // Preserve the checked constructor's quoted-string lower bound. Ordinary
+    // request inputs retain their earlier unquoted preflight before emission.
+    Reusable,
+    Json,
+    Form,
+}
+
 #[derive(Clone)]
 struct Error(Arc<Diagnostic>);
 impl fmt::Debug for Error {
@@ -60,7 +69,7 @@ struct Encoder<'a> {
     nodes: usize,
     depth: usize,
     first: Option<Error>,
-    form: bool,
+    admission: Admission,
     form_metadata: usize,
     form_work: usize,
     form_names: Vec<String>,
@@ -138,7 +147,9 @@ impl<'limits> Encoder<'limits> {
     }
     fn string(&mut self, value: &str) -> Result<(), Error> {
         // Escaping cannot shorten the input. Reject before scanning it.
-        self.room(value.len())?;
+        if self.admission != Admission::Reusable {
+            self.room(value.len())?;
+        }
         self.room(value.len().saturating_add(2))?;
         self.primitive(value)
     }
@@ -275,7 +286,7 @@ impl Value {
         limits: Limits,
         cancellation: &Cancellation,
     ) -> Result<Self, Diagnostic> {
-        admit(value, limits, cancellation, false)
+        admit(value, limits, cancellation, Admission::Reusable)
     }
 }
 
@@ -283,7 +294,7 @@ pub(crate) fn admit<T: Serialize + ?Sized>(
     value: &T,
     limits: Limits,
     cancellation: &Cancellation,
-    form: bool,
+    admission: Admission,
 ) -> Result<Value, Diagnostic> {
     let mut encoder = Encoder {
         bytes: vec![],
@@ -292,7 +303,7 @@ pub(crate) fn admit<T: Serialize + ?Sized>(
         nodes: 0,
         depth: 0,
         first: None,
-        form,
+        admission,
         form_metadata: 0,
         form_work: 0,
         form_names: vec![],
@@ -348,7 +359,7 @@ impl Compound<'_, '_> {
                 .encoder
                 .fail(SerializationReason::InvalidRepresentation));
         }
-        let form = self.encoder.form && self.encoder.depth == 1;
+        let form = self.encoder.admission == Admission::Form && self.encoder.depth == 1;
         if form {
             let limits = self.encoder.limits;
             if self.count >= limits.form_fields {
@@ -851,4 +862,42 @@ fn construction(diagnostic: Diagnostic) -> Diagnostic {
         diagnostic
     };
     diagnostic.caused()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ordinary_and_checked_construction_keep_their_distinct_string_lower_bounds() {
+        let text = "x".repeat(1_000_000);
+        let limits = Limits {
+            document_bytes: 8,
+            ..Limits::default()
+        };
+        for (admission, actual) in [
+            (Admission::Json, 1_000_000),
+            (Admission::Form, 1_000_000),
+            (Admission::Reusable, 1_000_002),
+        ] {
+            let error =
+                admit(&text, limits.clone(), &Cancellation::default(), admission).unwrap_err();
+            assert_eq!(
+                error.reason(),
+                Some(&DiagnosticReason::Limit {
+                    kind: LimitKind::DocumentBytes,
+                    maximum: 8,
+                    actual,
+                })
+            );
+            assert!(error.source_bytes().is_empty());
+            // Both bounds admit the same complete output, including quotes.
+            for (text, accepted) in [("123456", true), ("1234567", false)] {
+                assert_eq!(
+                    admit(&text, limits.clone(), &Cancellation::default(), admission).is_ok(),
+                    accepted
+                );
+            }
+        }
+    }
 }

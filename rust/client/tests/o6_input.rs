@@ -586,18 +586,21 @@ fn projection_preserves_structured_serde_error_without_exposing_it_in_the_chain(
 #[test]
 fn restored_string_lower_bound_and_safe_parse_request_source_chains() {
     use std::error::Error;
-    let limit = Value::from_serializable(
-        &"x".repeat(1_000_000),
+    let limit = operation(
         Limits {
-            document_bytes: 8,
+            body_bytes: 8,
             ..Limits::default()
         },
+        "application/json",
     )
+    .request()
+    .json(&"x".repeat(1_000_000))
+    .prepare()
     .unwrap_err();
     assert_eq!(
         limit.reason(),
         Some(&DiagnosticReason::Limit {
-            kind: LimitKind::DocumentBytes,
+            kind: LimitKind::BodyBytes,
             maximum: 8,
             actual: 1_000_000
         })
@@ -617,6 +620,7 @@ fn restored_string_lower_bound_and_safe_parse_request_source_chains() {
             .unwrap()
             .downcast_ref::<Diagnostic>()
             .unwrap();
+        assert_eq!(cause, &error);
         assert_eq!(cause.code(), error.code());
         assert_eq!(cause.reason(), error.reason());
         assert_eq!(cause.context(), error.context());

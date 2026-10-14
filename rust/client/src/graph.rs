@@ -478,7 +478,7 @@ impl DocumentBuilder {
         need: &ResourceNeed,
         input: ResourceInput,
     ) -> Result<ResourceId, Diagnostic> {
-        let refusal = |diagnostic: Diagnostic| (diagnostic).with_source_bytes(input.bytes.clone());
+        let refusal = |diagnostic: Diagnostic| (diagnostic).parse_failure(input.bytes.clone());
         self.check_need(need).map_err(refusal)?;
         metadata_input(
             &input,
@@ -551,7 +551,7 @@ impl DocumentBuilder {
         input: ResourceInput,
         cancellation: &crate::Cancellation,
     ) -> Result<ResourceId, Diagnostic> {
-        let fail = |diagnostic: Diagnostic| (diagnostic).with_source_bytes(input.bytes.clone());
+        let fail = |diagnostic: Diagnostic| (diagnostic).parse_failure(input.bytes.clone());
         cancellation.check().map_err(fail)?;
         let input_usage =
             metadata_input(&input, &self.limits, &self.graph_limits, cancellation).map_err(fail)?;
@@ -650,7 +650,7 @@ impl DocumentBuilder {
         let json = crate::loading::parse(&input.bytes, limits, cancellation)?;
         let source = input.bytes.clone();
         self.admit_parsed(json, input, cancellation)
-            .map_err(|diagnostic: Diagnostic| (diagnostic).with_source_bytes(source))
+            .map_err(|diagnostic: Diagnostic| (diagnostic).parse_failure(source))
     }
     // Shared by borrowed Document::parse and caller-owned ResourceInput admission.
     // The convenience parse path does not allocate another full-document byte Arc.

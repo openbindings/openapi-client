@@ -12,7 +12,7 @@ pub(crate) fn parse(
     // Admission precedes both format detection and any copy of original source.
     let admitted = bytes.len() <= limits.document_bytes;
     let fail = |diagnostic: Diagnostic| {
-        (diagnostic).with_source_bytes(if admitted {
+        (diagnostic).parse_failure(if admitted {
             Arc::from(bytes)
         } else {
             Arc::from([])

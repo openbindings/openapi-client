@@ -101,9 +101,8 @@ fn immutable_parse_pair_still_composes_as_standard_error() {
             .source()
             .unwrap()
             .downcast_ref::<Diagnostic>()
-            .unwrap()
-            .code(),
-        error.code()
+            .unwrap(),
+        &error
     );
     let too_large = Document::parse(
         b"{}",
