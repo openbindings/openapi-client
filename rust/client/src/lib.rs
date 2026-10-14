@@ -10,13 +10,16 @@ mod cancellation;
 mod deserialize;
 mod document;
 mod error;
+#[doc = include_str!("../GRAPH.md")]
 pub mod graph;
 mod loading;
 mod prepare;
 /// Owning schema inspection and reference access.
+#[doc = include_str!("../SCHEMAS.md")]
 pub mod schema;
 mod schema_facts;
 /// Original source identities, formats and retained positions.
+#[doc = include_str!("../LOADING.md")]
 pub mod source;
 mod style;
 /// Finite prepared requests and supplied-host evidence.
@@ -70,6 +73,7 @@ mod serializable;
 
 mod request;
 pub use request::RequestBuilder;
+#[doc = include_str!("../FORMS.md")]
 pub mod form;
 
 /// Preparation for custom transports using the same public route as the companions.
@@ -120,6 +124,8 @@ pub mod diagnostics {
 }
 
 /// Effective OpenAPI inspection descriptors.
+/// See [`crate::graph`], [`crate::schema`] and [`crate::form`] for their reference
+/// contracts, and [`crate::uri`] for parameter serialization.
 pub mod inspect {
     pub use crate::document::Edition;
     pub use crate::document::ExtensionMethod;
@@ -145,6 +151,7 @@ pub mod inspect {
 }
 
 /// Owning exact JSON values and checked number views.
+#[doc = include_str!("../EXACT.md")]
 pub mod exact {
     pub use crate::value::Number;
     pub use crate::value::Value;

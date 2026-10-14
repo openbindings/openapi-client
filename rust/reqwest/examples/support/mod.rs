@@ -16,7 +16,7 @@ pub struct Created {
 }
 pub fn document(origin: &str) -> Vec<u8> {
     serde_json::to_vec(&serde_json::json!({
-        "openapi":"3.1.2", "info":{"title":"O6 jobs","version":"1"},
+        "openapi":"3.1.2", "info":{"title":"Dynamic client tutorial","version":"1"},
         "servers":[{"url":origin}],
         "components":{"securitySchemes":{"token":{"type":"http","scheme":"bearer"}}},
         "paths":{"/items/{id}":{"post":{

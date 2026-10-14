@@ -1,4 +1,4 @@
-#[path = "o6_support/mod.rs"]
+#[path = "support/mod.rs"]
 mod support;
 use dynamic_openapi_client::{Credential, Document, Limits, ParameterLocation};
 use dynamic_openapi_client_reqwest::Client;
@@ -49,8 +49,11 @@ pub(crate) fn interpret(outcome: dynamic_openapi_client::Outcome) -> Result<(), 
         .status()
         .is_some_and(|status| !(200..300).contains(&status))
     {
-        let body: Result<support::ApiError, support::Error> =
-            (|| Ok(outcome.body_json()?.deserialize()?))();
+        // docs-start: error-body
+        let body = outcome
+            .body_json()
+            .and_then(|json| json.deserialize::<support::ApiError>());
+        // docs-end: error-body
         println!("independent error-body inspection: {body:?}");
         if outcome.error().is_some() || outcome.cancelled() {
             let _: support::Created = outcome.received_2xx_json()?;
@@ -58,9 +61,11 @@ pub(crate) fn interpret(outcome: dynamic_openapi_client::Outcome) -> Result<(), 
         let error = body?;
         println!("handled API error: {}", error.error);
     } else {
+        // docs-start: success-body
         let created: support::Created = outcome.received_2xx_json()?;
         assert_eq!(created.id, 9_007_199_254_740_993);
         println!("created: {}", created.name);
+        // docs-end: success-body
     }
     Ok(())
 }

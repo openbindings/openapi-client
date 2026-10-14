@@ -136,7 +136,7 @@ uninspected fields remain unclassified. Opaque evidence takes priority, followed
 by invalid status/retained fields or the contradictory `ExactFields` plus
 `Incomplete` assertion (`InvalidHostEvidence`); then known metadata incompleteness,
 body completeness, media and coding checks. The named JSON reads retain
-their separate cancellation/dispatch/transport/status/upload priority and preserve
+their separate execution-diagnostic/cancellation/evidence/status/decode priority and preserve
 the decode result. Metadata cutoff/conversion failure alone must not be passed as
 `TransportResult::error_detail`, which reports transport failure.
 
@@ -202,3 +202,9 @@ async fn inspect_and_call(text: &[u8]) -> Result<(Outcome, Value), Box<dyn std::
     Ok((outcome, json))
 }
 ```
+
+These are client host and acceptance policies. HTTP field/coding/status semantics
+come from [RFC9110 §§5, 8, 15](https://www.rfc-editor.org/rfc/rfc9110#section-5);
+2xx means successful HTTP status, not proven complete upload.
+Matrix rows H01–H09 and R01–R02 in [CAPABILITIES.md](CAPABILITIES.md) distinguish
+core evidence tests, native socket gates and Fetch runtime qualification.

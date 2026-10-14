@@ -1,8 +1,9 @@
-#[path = "o6_support/mod.rs"]
+#[path = "support/mod.rs"]
 mod support;
 use dynamic_openapi_client::{Document, Limits};
 
 fn main() -> Result<(), support::Error> {
+    // docs-start: load
     let bytes = support::document("https://api.example");
     let document = Document::parse(
         bytes,
@@ -10,5 +11,6 @@ fn main() -> Result<(), support::Error> {
         Limits::default(),
     )?;
     println!("discovery complete: {}", document.discovery_complete());
+    // docs-end: load
     Ok(())
 }

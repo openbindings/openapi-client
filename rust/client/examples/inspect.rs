@@ -1,4 +1,4 @@
-#[path = "o6_support/mod.rs"]
+#[path = "support/mod.rs"]
 mod support;
 use dynamic_openapi_client::{Document, Limits};
 
@@ -13,8 +13,10 @@ fn main() -> Result<(), support::Error> {
         eprintln!("{issue}");
     }
     for operation in document.operations() {
+        // docs-start: inspect
         let d = operation.describe()?;
         println!("{} {} {:?}", d.method.as_str(), d.path, d.operation_id);
+        // docs-end: inspect
         for p in d.parameters.iter() {
             println!("{:?} {} required={}", p.location(), p.name(), p.required());
         }

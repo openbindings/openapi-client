@@ -56,3 +56,6 @@ authority or migration gate for this client.
 Go and TypeScript provider models are legacy, not the maintained analysis API.
 Their tests and snapshots impose no cross-language parity or Rust projection
 obligation. See [legacy qualification](../LEGACY.md).
+
+The [capability and policy matrix](../rust/client/CAPABILITIES.md) records the
+implemented shapes, standards authority, policies and verification scope.

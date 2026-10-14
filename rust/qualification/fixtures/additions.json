@@ -7,7 +7,7 @@
       "group": "P03",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\"}}}}",
-      "authority": "OAS 3.1.2 Operation/Responses/Path Item/Media Type/Security Requirement; RFC9110 5/8.3; OAC-D02/05/07",
+      "authority": "OAS 3.1.2 Operation/Responses/Path Item/Media Type/Security Requirement; RFC9110 5/8.3",
       "expected": {
         "target": "https://api.example/v1/items"
       }
@@ -17,7 +17,7 @@
       "group": "P03",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{}}}}}",
-      "authority": "OAS 3.1.2 Operation/Responses/Path Item/Media Type/Security Requirement; RFC9110 5/8.3; OAC-D02/05/07",
+      "authority": "OAS 3.1.2 Operation/Responses/Path Item/Media Type/Security Requirement; RFC9110 5/8.3",
       "expected": {
         "error": "InvalidDeclaration"
       }
@@ -27,7 +27,7 @@
       "group": "P03",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"$ref\":\"#/components/pathItems/a\"}},\"components\":{\"pathItems\":{\"a\":{\"$ref\":\"#/components/pathItems/b\",\"servers\":[{\"url\":\"https://middle.example\"}]},\"b\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}}",
-      "authority": "OAS 3.1.2 Operation/Responses/Path Item/Media Type/Security Requirement; RFC9110 5/8.3; OAC-D02/05/07",
+      "authority": "OAS 3.1.2 Operation/Responses/Path Item/Media Type/Security Requirement; RFC9110 5/8.3",
       "expected": {
         "target": "https://middle.example/items"
       }
@@ -37,7 +37,7 @@
       "group": "P07",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}},\"security\":[{\"key\":[\"reader\"]}],\"components\":{\"securitySchemes\":{\"key\":{\"type\":\"apiKey\",\"in\":\"header\",\"name\":\"X-Key\"}}}}",
-      "authority": "OAS 3.1.2 Operation/Responses/Path Item/Media Type/Security Requirement; RFC9110 5/8.3; OAC-D02/05/07",
+      "authority": "OAS 3.1.2 Operation/Responses/Path Item/Media Type/Security Requirement; RFC9110 5/8.3",
       "expected": {
         "headers": [
           [
@@ -61,7 +61,7 @@
       "group": "P07",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}},\"security\":[{\"key\":[{}]}],\"components\":{\"securitySchemes\":{\"key\":{\"type\":\"apiKey\",\"in\":\"header\",\"name\":\"X-Key\"}}}}",
-      "authority": "OAS 3.1.2 Operation/Responses/Path Item/Media Type/Security Requirement; RFC9110 5/8.3; OAC-D02/05/07",
+      "authority": "OAS 3.1.2 Operation/Responses/Path Item/Media Type/Security Requirement; RFC9110 5/8.3",
       "expected": {
         "error": "InvalidDeclaration"
       },
@@ -80,7 +80,7 @@
       "group": "P06",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"requestBody\":{\"content\":{\"application/*\":{}}}}}}}",
-      "authority": "OAS 3.1.2 Operation/Responses/Path Item/Media Type/Security Requirement; RFC9110 5/8.3; OAC-D02/05/07",
+      "authority": "OAS 3.1.2 Operation/Responses/Path Item/Media Type/Security Requirement; RFC9110 5/8.3",
       "expected": {
         "headers": [
           [
@@ -100,7 +100,7 @@
       "group": "P06",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"requestBody\":{\"content\":{\"*/*\":{}}}}}}}",
-      "authority": "OAS 3.1.2 Operation/Responses/Path Item/Media Type/Security Requirement; RFC9110 5/8.3; OAC-D02/05/07",
+      "authority": "OAS 3.1.2 Operation/Responses/Path Item/Media Type/Security Requirement; RFC9110 5/8.3",
       "expected": {
         "headers": [
           [
@@ -120,7 +120,7 @@
       "group": "P06",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"requestBody\":{\"content\":{\"application/json\":{}}}}}}}",
-      "authority": "OAS 3.1.2 Operation/Responses/Path Item/Media Type/Security Requirement; RFC9110 5/8.3; OAC-D02/05/07",
+      "authority": "OAS 3.1.2 Operation/Responses/Path Item/Media Type/Security Requirement; RFC9110 5/8.3",
       "expected": {
         "headers": [
           [
@@ -140,7 +140,7 @@
       "group": "P06",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"requestBody\":{\"content\":{\"application/json;broken\":false,\"*/*\":{}}}}}}}",
-      "authority": "OAS 3.1.2 Operation/Responses/Path Item/Media Type/Security Requirement; RFC9110 5/8.3; OAC-D02/05/07",
+      "authority": "OAS 3.1.2 Operation/Responses/Path Item/Media Type/Security Requirement; RFC9110 5/8.3",
       "expected": {
         "headers": [
           [
@@ -159,7 +159,7 @@
       "group": "P06",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"requestBody\":{\"content\":{\"*/*\":{},\"application/json\":false}}}}}}",
-      "authority": "OAS 3.1.2 Operation/Responses/Path Item/Media Type/Security Requirement; RFC9110 5/8.3; OAC-D02/05/07",
+      "authority": "OAS 3.1.2 Operation/Responses/Path Item/Media Type/Security Requirement; RFC9110 5/8.3",
       "expected": {
         "error": "InvalidDeclaration"
       },
@@ -173,7 +173,7 @@
       "group": "P06",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"requestBody\":{\"content\":{\"application/json\":{},\"APPLICATION/JSON\":{}}}}}}}",
-      "authority": "OAS 3.1.2 Operation/Responses/Path Item/Media Type/Security Requirement; RFC9110 5/8.3; OAC-D02/05/07",
+      "authority": "OAS 3.1.2 Operation/Responses/Path Item/Media Type/Security Requirement; RFC9110 5/8.3",
       "expected": {
         "error": "AmbiguousSelection"
       },
@@ -247,7 +247,7 @@
       "group": "P04",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://user@api.example/{x}\",\"variables\":{\"x\":{\"default\":\"valid\"}}}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "Distinct adversarial review; OAC-D02/04/05/06/07; RFC9110; RFC6750 2.1",
+      "authority": "RFC9110; RFC6750 2.1",
       "expected": {
         "error": "InvalidDestination",
         "setting": null
@@ -258,7 +258,7 @@
       "group": "P07",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}},\"security\":[{\"bearer\":[]}],\"components\":{\"securitySchemes\":{\"bearer\":{\"type\":\"http\",\"scheme\":\"bearer\"}}}}",
-      "authority": "Distinct adversarial review; OAC-D02/04/05/06/07; RFC9110; RFC6750 2.1",
+      "authority": "RFC9110; RFC6750 2.1",
       "expected": {
         "error": "MissingCredential"
       },
@@ -277,7 +277,7 @@
       "group": "P07",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}},\"security\":[{\"bearer\":[]}],\"components\":{\"securitySchemes\":{\"bearer\":{\"type\":\"http\",\"scheme\":\"bearer\"}}}}",
-      "authority": "Distinct adversarial review; OAC-D02/04/05/06/07; RFC9110; RFC6750 2.1",
+      "authority": "RFC9110; RFC6750 2.1",
       "expected": {
         "error": "MissingCredential"
       },
@@ -296,7 +296,7 @@
       "group": "P07",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}},\"security\":[{\"bearer\":[]}],\"components\":{\"securitySchemes\":{\"bearer\":{\"type\":\"http\",\"scheme\":\"bearer\"}}}}",
-      "authority": "Distinct adversarial review; OAC-D02/04/05/06/07; RFC9110; RFC6750 2.1",
+      "authority": "RFC9110; RFC6750 2.1",
       "expected": {
         "headers": [
           [
@@ -320,7 +320,7 @@
       "group": "P10",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "Distinct adversarial review; OAC-D02/04/05/06/07; RFC9110; RFC6750 2.1",
+      "authority": "RFC9110; RFC6750 2.1",
       "expected": {
         "error": "Cancelled"
       },
@@ -369,7 +369,7 @@
       "group": "P08",
       "action": "exchange",
       "document": "{\"openapi\": \"3.1.2\", \"info\": {\"title\": \"runtime fixture\", \"version\": \"1\"}, \"servers\": [{\"url\": \"https://api.example/v1\"}], \"paths\": {\"/items\": {\"get\": {\"operationId\": \"items\", \"responses\": {\"200\": {\"description\": \"ok\"}}}}}}",
-      "authority": "OAC-D07 host bound; RFC9110 5.4",
+      "authority": "Client policy: finite host admission; RFC9110 §5.4",
       "expected": {
         "error": null,
         "omitted_header_lines": 1,
@@ -398,7 +398,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"all\",\"in\":\"querystring\",\"schema\":{}}]}}}}",
-      "authority": "Per-clause R1 disposition review; OAC-D03/05/06/08/11; OAS3.1.2; RFC3986 5.2; RFC9110 8.4",
+      "authority": "OAS3.1.2; RFC3986 5.2; RFC9110 8.4",
       "expected": {
         "error": "UnsupportedParameter"
       }
@@ -408,7 +408,7 @@
       "group": "P06",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"requestBody\":{\"content\":{}}}}}}",
-      "authority": "Per-clause R1 disposition review; OAC-D03/05/06/08/11; OAS3.1.2; RFC3986 5.2; RFC9110 8.4",
+      "authority": "OAS3.1.2; RFC3986 5.2; RFC9110 8.4",
       "expected": {
         "error": "InvalidMedia"
       },
@@ -421,7 +421,7 @@
       "group": "P07",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}},\"security\":[{\"key\":{\"$ref\":\"#/components/schemas/scopes\"}}],\"components\":{\"securitySchemes\":{\"key\":{\"type\":\"apiKey\",\"in\":\"query\",\"name\":\"key\"}}}}",
-      "authority": "Per-clause R1 disposition review; OAC-D03/05/06/08/11; OAS3.1.2; RFC3986 5.2; RFC9110 8.4",
+      "authority": "OAS3.1.2; RFC3986 5.2; RFC9110 8.4",
       "expected": {
         "error": "InvalidDeclaration"
       }
@@ -431,7 +431,7 @@
       "group": "P06",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "Per-clause R1 disposition review; OAC-D03/05/06/08/11; OAS3.1.2; RFC3986 5.2; RFC9110 8.4",
+      "authority": "OAS3.1.2; RFC3986 5.2; RFC9110 8.4",
       "expected": {
         "error": "InvalidHeader"
       },
@@ -447,7 +447,7 @@
       "group": "P06",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "Per-clause R1 disposition review; OAC-D03/05/06/08/11; OAS3.1.2; RFC3986 5.2; RFC9110 8.4",
+      "authority": "OAS3.1.2; RFC3986 5.2; RFC9110 8.4",
       "expected": {
         "headers": [
           [
@@ -468,7 +468,7 @@
       "group": "P08",
       "action": "exchange",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "Per-clause R1 disposition review; OAC-D03/05/06/08/11; OAS3.1.2; RFC3986 5.2; RFC9110 8.4",
+      "authority": "OAS3.1.2; RFC3986 5.2; RFC9110 8.4",
       "expected": {
         "json_raw": "null"
       },
@@ -496,7 +496,7 @@
       "group": "P08",
       "action": "exchange",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "Per-clause R1 disposition review; OAC-D03/05/06/08/11; OAS3.1.2; RFC3986 5.2; RFC9110 8.4",
+      "authority": "OAS3.1.2; RFC3986 5.2; RFC9110 8.4",
       "expected": {
         "decode_error": "UnsupportedCoding"
       },
@@ -524,7 +524,7 @@
       "group": "P08",
       "action": "exchange",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "Per-clause R1 disposition review; OAC-D03/05/06/08/11; OAS3.1.2; RFC3986 5.2; RFC9110 8.4",
+      "authority": "OAS3.1.2; RFC3986 5.2; RFC9110 8.4",
       "expected": {
         "json_raw": "null"
       },
@@ -548,7 +548,7 @@
       "group": "P04",
       "action": "uri",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "Per-clause R1 disposition review; OAC-D03/05/06/08/11; OAS3.1.2; RFC3986 5.2; RFC9110 8.4",
+      "authority": "OAS3.1.2; RFC3986 5.2; RFC9110 8.4",
       "expected": {
         "resolved": "file:/x"
       },
@@ -560,7 +560,7 @@
       "group": "P04",
       "action": "uri",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "Per-clause R1 disposition review; OAC-D03/05/06/08/11; OAS3.1.2; RFC3986 5.2; RFC9110 8.4",
+      "authority": "OAS3.1.2; RFC3986 5.2; RFC9110 8.4",
       "expected": {
         "resolved": "file:///x"
       },
@@ -572,7 +572,7 @@
       "group": "P03",
       "action": "document",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\",\"content\":{\"application/json\":{\"encoding\":{\"value\":{\"contentType\":\"application/opaque\"}}}}}}}}}}",
-      "authority": "Per-clause R1 disposition review; OAC-D03/05/06/08/11; OAS3.1.2; RFC3986 5.2; RFC9110 8.4",
+      "authority": "OAS3.1.2; RFC3986 5.2; RFC9110 8.4",
       "expected": {
         "selected_raw": "{\"value\":{\"contentType\":\"application/opaque\"}}"
       },
@@ -583,7 +583,7 @@
       "group": "P06",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"requestBody\":{\"content\":{\"application/json\":{}}}}}}}",
-      "authority": "Per-clause R1 disposition review; OAC-D03/05/06/08/11; OAS3.1.2; RFC3986 5.2; RFC9110 8.4",
+      "authority": "OAS3.1.2; RFC3986 5.2; RFC9110 8.4",
       "expected": {
         "headers": [
           [
@@ -616,7 +616,7 @@
       "limits": {
         "target_bytes": 64
       },
-      "authority": "OAC-D07 owned metadata admission",
+      "authority": "Client policy: finite owned metadata admission",
       "expected": {
         "error": "Limit"
       }

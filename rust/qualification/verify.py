@@ -32,8 +32,13 @@ def run(name, command, cwd=root):
         raise SystemExit(result.returncode)
 
 
+run('docs', [sys.executable, root / 'qualification/docs.py'])
 run('format', ['cargo', 'fmt', '--all', '--check'])
 run('lint', [sys.executable, root / 'qualification/lint.py'])
+run('examples', ['cargo', 'build', '--locked', '--workspace', '--examples'])
+for example in ['load', 'inspect', 'correction', 'forms']:
+    run(example + '-example', ['cargo', 'run', '--locked', '-p', 'dynamic-openapi-client',
+                              '--example', example])
 run('native-api', [sys.executable, root / 'qualification/companion_api.py', 'native',
                    root / 'client', root / 'reqwest', output / 'native-api'])
 run('tests', ['cargo', 'test', '--locked', '--workspace'])

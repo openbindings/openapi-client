@@ -64,3 +64,6 @@ Go and TypeScript are legacy implementations, not maintained-product fidelity
 claims. Their corpora and parity checks remain scoped to
 [legacy gates](../LEGACY.md). Downstream synthesis, SDK behavior and migration
 are not this client's qualification obligations.
+
+The [capability and policy matrix](../rust/client/CAPABILITIES.md) records the
+implemented shapes, standards authority, policies and verification scope.

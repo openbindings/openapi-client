@@ -74,7 +74,7 @@ export async function runFetch(api, base, host, runId) {
         error ??= String(failure);
       }
     }
-    cases.push({ id: `${host}-fetch-${name}`, group: 'OAC-4', executed: true, passed: !error, assertions, facts, ...(error ? { error } : {}) });
+    cases.push({ id: `${host}-fetch-${name}`, group: 'fetch-transport', executed: true, passed: !error, assertions, facts, ...(error ? { error } : {}) });
   }
   try {
     for (const [name, kind, limit, expected, bodyState] of [
@@ -216,7 +216,7 @@ export async function runFetch(api, base, host, runId) {
     client.free(); client = null;
     await observer.tick();
     const after = resources(), released = after.owners === initial.owners && after.js_values === initial.js_values;
-    cases.push({ id: `${host}-fetch-client-release`, group: 'OAC-4', executed: true, passed: released,
+    cases.push({ id: `${host}-fetch-client-release`, group: 'fetch-transport', executed: true, passed: released,
       assertions: [{ assertion: 'disposing the reusable client returns Rust owners and owned Wasm references to the suite baseline', passed: released, actual: { initial, after } }] });
     return { cases, passed: cases.every(row => row.passed), live_after: after, measurement: 'Rust JSON owners; owned Wasm externrefs; native Fetch/read/closed/cancel promises; reader locks; product timers; active server responses. No GC, RSS or global memory bound.' };
   } finally {
