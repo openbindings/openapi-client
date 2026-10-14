@@ -62,7 +62,7 @@ fn all_published_editions_use_one_ordinary_json_consumer() {
             b"application/json"
         );
         assert!(request.response_declaration(200).is_some());
-        assert_eq!(operation.parameters().unwrap().iter().count(), 1);
+        assert_eq!(operation.parameters().unwrap().len(), 1);
     }
 }
 
@@ -111,7 +111,7 @@ fn effective_description_retains_schema_dialects_and_source_without_conversion()
         let operation = doc.operation_id("create").unwrap();
         let desc = operation.describe().unwrap();
         assert_eq!(desc.servers[0].url, "https://api.example/v1");
-        assert_eq!(desc.parameters.iter().count(), 1);
+        assert_eq!(desc.parameters.len(), 1);
         let body = desc.request_body.unwrap();
         assert!(body.required);
         assert_eq!(body.media[0].media_type, "application/json");
@@ -215,7 +215,7 @@ fn local_references_respect_edition_siblings_and_legacy_body_inheritance() {
             json!({"$ref":reference,"description":"use site"});
         let doc = document(&fixture);
         let op = doc.operation_id("create").unwrap();
-        let resolved = op.parameters().unwrap().iter().next().unwrap().resolved();
+        let resolved = op.parameters().unwrap().first().unwrap().resolved();
         assert_eq!(
             resolved.description.unwrap().as_str(),
             Some(if version == "2.0" || version == "3.0.4" {
@@ -240,7 +240,7 @@ fn local_references_respect_edition_siblings_and_legacy_body_inheritance() {
             .map(AsRef::as_ref),
         Some(b"null".as_slice())
     );
-    assert_eq!(op.parameters().unwrap().iter().count(), 0);
+    assert_eq!(op.parameters().unwrap().len(), 0);
 }
 
 #[test]

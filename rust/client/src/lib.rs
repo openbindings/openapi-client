@@ -32,7 +32,7 @@ pub use document::{Document, Operation};
 
 pub use error::Diagnostic;
 
-pub use prepare::{Credential, ParameterLocation, Parameters};
+pub use prepare::{Credential, ParameterLocation};
 
 pub use transport::{Header, Outcome};
 
@@ -47,6 +47,22 @@ pub mod qualification {
     /// Number of retained operation compilation entries.
     pub fn cached_operations(document: &crate::Document) -> usize {
         document.0.cached.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Accounted immutable graph storage, excluding compiled operation caches.
+    pub fn document_retained_bytes(document: &crate::Document) -> usize {
+        document
+            .0
+            .graph
+            .resources
+            .iter()
+            .map(|r| value_retained_bytes(&r.json))
+            .sum()
+    }
+
+    /// Accounted shared value-owner storage; does not materialize a deferred index.
+    pub fn value_retained_bytes(value: &crate::exact::Value) -> usize {
+        value.retained_bytes()
     }
 }
 

@@ -58,8 +58,12 @@ origin lists. Origin checking, elections and execution retain
 their existing behavior.
 
 Advanced types now live in `exact`, `inspect`, `source`, `graph`, `schema`, `form`,
-`transport` and `diagnostics`, without old root aliases. Root Parameters and the
-response/policy carriers remain for later implementation stages. The sections
+`transport` and `diagnostics`, without old root aliases. `Parameters` is removed: effective descriptors and `Operation::parameters()`
+return `Vec<inspect::Parameter>`, retaining each parameter owner.
+`Document::retained_bytes` is removed and `Value::retained_bytes` stays private;
+unsupported observations use the non-default `qualification` module
+functions `document_retained_bytes` and `value_retained_bytes`.
+The response/policy carriers are removed as described above. The sections
 below record earlier revisions; this section supersedes their input API examples.
 
 # Carrier reduction (unpublished candidate)
@@ -154,6 +158,10 @@ See the executable `response_admission` example and [HOSTS.md](HOSTS.md).
 
 # Supplied-host contract revision (unpublished candidate)
 
+This section records the earlier host revision. O6 uses the five-argument
+`ResponseInput::new(status, headers, bytes, body_state, provenance)` and an
+immutable Outcome; the O6 migration sections above supersede earlier signatures.
+
 **Changed:** `ResponseInput` is non-exhaustive. Replace external struct literals
 with `ResponseInput::new(status, headers, body)`, then assign `opaque_redirect`
 and `header_fidelity` explicitly where the host supplies that evidence. The
@@ -169,8 +177,8 @@ field metadata, never raw HTTP framing. Body provenance remains separate.
 
 `admit` and `invoke` retain strict defaults. Explicit `*_with_replay` methods take
 `ReplayPolicy`; replay assurance is privately recorded on callback entry and
-exposed by `Outcome::replay_assurance()`. Acceptance and mutations of public
-outcome fields do not rewrite that record. Native execution remains strict.
+exposed by `Outcome::replay_assurance()`. Borrowed reads of the immutable Outcome
+do not rewrite that record. Native execution remains strict.
 External adapters can convert `HostRefusal` into a fixed HostCapability Diagnostic
 with its controlled Host reason; no generic mutable reason setter is introduced.
 
@@ -285,6 +293,9 @@ Use the borrowed received-2xx reads above; upload evidence remains independent.
 **Changed:** public Diagnostic Display/Debug begins with a human-readable explanation. Structured codes/reasons remain the programmatic interface. An opt-in `display_with_location()` includes escaped, bounded document-controlled pointers/names. Default output still omits them. The serializer's associated error formatting is deliberately unchanged because a custom Serialize implementation can embed it into successful JSON output.
 
 ## Previous API quality revision
+
+This historical section describes the pre-O6 API. The O6 sections above replace
+its Input, OrdinaryValue, ExactJson, RequestError and builder signatures.
 
 
 This pre-stabilization revision preserves the JSON/OpenAPI 3.1 finite supplied-transport profile. It does not add HTTP acquisition, a production transport or schema evaluation.

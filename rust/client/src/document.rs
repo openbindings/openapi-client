@@ -668,15 +668,6 @@ impl Document {
             .cloned()
             .map(|e| e.bind_graph(&self.0))
     }
-    /// Accounted immutable JSON storage, excluding compiled operation caches.
-    pub fn retained_bytes(&self) -> usize {
-        self.0
-            .graph
-            .resources
-            .iter()
-            .map(|r| r.json.retained_bytes())
-            .sum()
-    }
 }
 impl Operation {
     pub(crate) fn record(&self) -> &Record {

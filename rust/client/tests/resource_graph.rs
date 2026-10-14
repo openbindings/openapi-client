@@ -345,8 +345,7 @@ fn descriptor_width_does_not_spend_reference_chain_depth() {
             .describe()
             .unwrap()
             .parameters
-            .iter()
-            .count(),
+            .len(),
         129
     );
 }

@@ -774,7 +774,8 @@ mod host_delivered_tests {
         );
         let document = crate::Document::parse(source, None, Limits::default()).unwrap();
         let graph = Arc::downgrade(&document.0);
-        let retained = document.retained_bytes();
+        #[cfg(feature = "qualification")]
+        let retained = crate::qualification::document_retained_bytes(&document);
         let payload: Arc<[u8]> = b"SECRET-BODY".as_slice().into();
         let request = document
             .operation_id("send")
@@ -815,6 +816,7 @@ mod host_delivered_tests {
             saved.as_ref().unwrap().operation().id().as_deref(),
             Some("send")
         );
+        #[cfg(feature = "qualification")]
         println!("saved prepared request retains {retained} accounted document bytes");
         drop(saved);
         assert!(graph.upgrade().is_none());

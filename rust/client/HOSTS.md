@@ -94,8 +94,8 @@ observed before invocation takes precedence over admission.
 `Outcome::replay_assurance()` is private recorded evidence. It is absent before
 callback entry, including `Outcome::not_dispatched`, and retained after entry
 for successful responses, HTTP errors, opaque redirects, missing/invalid evidence
-and callback failures. Caller mutation of public outcome fields does not rewrite
-it. Outcome and its borrowed reads preserve it and never manufacture upload completion or
+and callback failures. Outcome is immutable; its borrowed reads preserve that
+record and never manufacture upload completion or
 remote cancellation. Arbitrary adapter detail remains explicit-access only.
 External adapters may construct a controlled refusal using
 `let error: Diagnostic = HostRefusal::ForbiddenHeader.into();`.
@@ -130,7 +130,7 @@ Core bounds may omit supplied entries under any fidelity declaration;
 name. Its zero value does not imply complete adapter delivery or wire fidelity.
 
 A truthful adapter cutoff or any core omission leaves raw evidence usable and
-alone does not create `Outcome::error` or transport detail. JSON refuses with
+alone does not create an `Outcome::error()` diagnostic or transport detail. JSON refuses with
 `IncompleteHeaders`, including when the core omission count is zero. Omitted,
 uninspected fields remain unclassified. Opaque evidence takes priority, followed
 by invalid status/retained fields or the contradictory `ExactFields` plus
@@ -150,9 +150,10 @@ policy after serialization may have begun. Its proven-unsent connection recovery
 exception is unchanged. HeaderMap evidence is HostProcessed. The disposable
 Fetch qualification bridge also marks delivered metadata HostProcessed, but its
 historical programmable declaration is not qualified as a Fetch replay promise.
-A truthful supported Fetch companion, runtime characterization and TypeScript
-ownership/recovery APIs remain separate work. No H0 callback test establishes
-those host or product capabilities.
+The optional [Fetch companion](../fetch/README.md) declares Browser/Worker
+restrictions and requires an explicit replay policy. Its complete host/resource
+qualification and a supported TypeScript API remain open work. No H0 callback
+test establishes those host or product capabilities.
 
 The controlled `Unavailable`, `Method` and `RequestBody` host refusal reasons
 support adapter preflight without arbitrary platform rejection text or fabricated

@@ -20,7 +20,7 @@ Supplied hosts must enforce no ambient authentication or implicit redirects, dis
 
 ## Calling a real service
 
-Use the optional [native HTTP companion](../reqwest/README.md) to configure a client and origin-scoped credentials once. It supplies `client.request(&operation)` and `client.execute(&prepared, cancellation)`, so application code uses the same request builder without implementing a transport callback. Its getting-started example runs against a local HTTP server and includes typed input and output.
+Use the optional [native HTTP companion](../reqwest/README.md) to configure a client and origin-scoped credentials once. Pass `operation.request()` with its checked input setters to `client.send(request)`. Its getting-started example runs against a local HTTP server and includes typed input and output. Prepared execution is available through `dynamic_openapi_client_reqwest::advanced::execute(&client, &prepared, cancellation)`.
 
 A native HTTP response does not prove complete upload. `outcome.received_2xx_json::<T>()` accepts a received 2xx with a complete delivered body, no execution diagnostic or cancellation, and admitted JSON. Unknown and Incomplete upload remain visible and accepted. `received_2xx_json_exact()` applies the same acceptance rule and returns an exact value.
 
@@ -229,7 +229,7 @@ Generated ranges identify each constructed JSON owner, never the OpenAPI documen
 
 ## Effective parameter inspection
 
-`operation.parameters()?` resolves effective path/operation declarations with the same graph-reference, override and required-default rules as preparation, without compiling unrelated body/media/security requirements. Iterate the returned `Parameters` and use `name()`, `location()`, `required()`, `authored()`, `resolved()` and `schema_description()`. Each retained parameter keeps its original source owners independently of the operation. Reference inspection distinguishes authored use site, sibling overrides, chain and target. `schema_description() == None` does not imply no `content` declaration; resolved raw values remain available. Unsupported editions or invalid typed declarations refuse; raw `Operation::inspect`/`value` remain available. These views do not assert full document validity or schema conformance.
+`operation.parameters()?` resolves effective path/operation declarations with the same graph-reference, override and required-default rules as preparation, without compiling unrelated body/media/security requirements. Iterate the returned `Vec<inspect::Parameter>` and use `name()`, `location()`, `required()`, `authored()`, `resolved()` and `schema_description()`. Each retained parameter keeps its original source owners independently of the operation. Reference inspection distinguishes authored use site, sibling overrides, chain and target. `schema_description() == None` does not imply no `content` declaration; resolved raw values remain available. Unsupported editions or invalid typed declarations refuse; raw `Operation::inspect`/`value` remain available. These views do not assert full document validity or schema conformance.
 
 ## Correcting a refusal
 
@@ -258,7 +258,7 @@ Cancellation is cooperative. Cancellable parse/prepare methods check owned work;
 
 Media election supports concrete types and matching declaration ranges, with explicit concrete selection required for range-only declarations. Malformed keys do not govern. More-specific matching declarations take precedence; equivalent best matches are ambiguous. Quoted media parameters are parsed as HTTP field parameters. Duplicate parameter names are refused. No codec or encoding metadata is applied to opaque schemas or raw caller bytes. UTF-8 is the explicit Basic credential policy. Header controls and surrounding whitespace are refused; header parameter values are not URI encoded. Cookies use `; ` between pairs.
 
-`Document::retained_bytes()` is a storage estimate for its immutable JSON owner, including retained YAML source mappings when present, and excluding document descriptors, compiled caches, allocator metadata and reserved pages. Qualification reports measure allocator traffic, live allocation sizes and process RSS separately. Exact value handles use the source owner's identity and do not imply equality across distinct documents.
+Retained-storage estimates are available only through the non-default `qualification` module: `document_retained_bytes(&document)` counts supplied graph owners and `value_retained_bytes(&value)` counts one shared value owner. These unsupported observations exclude compiled caches, allocator metadata and reserved pages; qualification reports measure allocator traffic, live allocation sizes and process RSS separately. Exact value handles use the source owner's identity and do not imply equality across distinct documents.
 
 The non-default `qualification` Cargo feature is reserved for qualification
 runners, benchmarks and instrumented tests. Its hidden hooks are unsupported and
@@ -312,7 +312,7 @@ Finite `f64` is checked by `.form(&model)` or `FormField::value(name, &value, li
 ### Response admission
 
 Supplied transports receive immutable response bounds through
-`dispatch.response_admission()`; the same view is available on prepared requests.
+`prepared.response_admission()` on the owned PreparedRequest passed to the callback.
 Adapters can report known metadata cutoff with `HeaderDelivery::Incomplete` while
 preserving the finite response. JSON then refuses with `IncompleteHeaders`; no
 transport failure is invented. See [HOSTS.md](HOSTS.md), the unpublished
