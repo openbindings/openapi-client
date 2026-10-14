@@ -1,6 +1,7 @@
 //! RFC3986 component handling and literal-dot reference resolution.
 //! The grammar parser is fluent-uri. Resolution implements only RFC3986 §5.2;
 //! percent-encoded dot segments and absent/empty components remain distinct.
+#![doc = include_str!("../SERIALIZATION.md")]
 use crate::Diagnostic;
 use crate::diagnostics::Code;
 use fluent_uri::UriRef;

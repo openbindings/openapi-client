@@ -1,77 +1,60 @@
-# Dynamic OpenAPI Rust foundation
+# Dynamic OpenAPI for Rust
 
-The maintained Rust implementation is `client/`, package
-`dynamic-openapi-client`. It is an unpublished foundation with bounded
-qualification and independently verified API repairs. Version `0.0.0` is not a
-registry release. All packages retain `publish = false`.
+Load an OpenAPI description at runtime, inspect its operations, and call them
+with ordinary Rust data. The maintained packages are unpublished (`0.0.0`,
+`publish = false`): [the core client](client/README.md),
+[native HTTP](reqwest/README.md), and [Wasm Fetch](fetch/README.md).
+Start with the native HTTP path in the [client tutorial](client/README.md).
 
-The compatibility candidate accepts JSON and YAML documents from Swagger 2.0
-and OpenAPI 3.0, 3.1 and 3.2 through one public API, retaining authored source
-and edition semantics. Local JSON-Pointer protocol references and finite
-JSON/raw/named-form invocation use caller-supplied transport. Refer to
-[the API guide](client/README.md) for the implemented parameter/media/security
-profile and explicit limitations. Acceptance of an edition does not imply
-complete support for its features. Immutable caller-supplied resource graphs and
-schema inspection are implemented. Schema evaluation, resource acquisition,
-remaining form styles/codings, positional/nested multipart, streaming and a
-supported npm API remain open work.
+## Four jobs
 
-The [development status](DEVELOPMENT-STATUS.md) records the integrated checkpoint,
-known qualification failures and preserved unfinished work.
+1. **Load.** `Document::parse` takes supplied JSON/YAML bytes, an optional
+   retrieval base, and `Limits`. It accepts Swagger 2.0 and OpenAPI 3.0, 3.1 and
+   3.2 families without changing their edition. [Run `load`](client/examples/load.rs).
+2. **List and describe.** Enumerate `operations()`, check `discovery_complete()`
+   and `graph_issues()`, then read each operation's effective `describe()` or
+   focused `parameters()`. [Run `inspect`](client/examples/inspect.rs).
+3. **Build and send natively.** Create a native `Client`, build with
+   `operation.request().parameter(..., &value).json(&model)`, and await
+   `client.send(request)`. [Run `send`](reqwest/examples/send.rs).
+4. **Read the outcome.** Keep the immutable outcome for status, headers, bytes,
+   upload and errors. Read a typed received 2xx with the compiled excerpt below;
+   `body_json()` also admits non-2xx bodies. [Run `read_response`](reqwest/examples/read_response.rs).
 
-The optional [`dynamic-openapi-client-reqwest`](reqwest/README.md) companion supplies
-a configured native HTTP/1.1 client, origin-scoped credentials, finite responses
-and cancellation while waiting for I/O. Its stricter host profile is documented
-separately; the core has no reqwest or Tokio dependency.
+<!-- include: rust/reqwest/examples/read_response.rs#success-body -->
+```rust,ignore
+let created: support::Created = outcome.received_2xx_json()?;
+assert_eq!(created.id, 9_007_199_254_740_993);
+println!("created: {}", created.name);
+```
+<!-- endinclude -->
 
-## Source and evidence
+For a refusal, inspect `Diagnostic::reason()` and `context()`, then build a fresh
+request with the corrected input. [Run `correction`](client/examples/correction.rs).
+The tutorial includes the short correction example and complete run commands.
+These excerpts are included from compiled examples and checked by
+`python3 rust/qualification/docs.py`; they need the example's surrounding setup.
 
-The implementation imports preserved candidate
-`df15ab3ae79cf1a4897fe22496c61a04c9332453`. Original qualification source,
-packages, assertions and independent repair review are preserved by the project.
-The import adds repository documentation and portable host/CI replay without
-changing the engine's semantics or fixture expectations. Original benchmark and
-robustness results retain their recorded host, workload and source boundaries;
-new CI results identify their own checked-out source.
+## Scope and verification
 
-## Verification
+OpenAPI and its cited RFCs are the only behavioral authority. Our choices are
+labelled client policies. The single [capability and policy matrix](client/CAPABILITIES.md)
+links every row to implementation evidence and records verification scope.
+Edition admission does not establish complete feature coverage. Acquisition,
+schema evaluation, streaming and remaining codecs are open capabilities.
 
-Rust 1.99.0, Python 3.13+ and the committed Cargo lock are required. From the
-repository root, `python3 rust/qualification/verify.py` runs formatting, lint,
-native tests/doctests, both native fixture inventories, the dynamic example and a
-fresh external consumer of a locally packaged crate. Outputs go to
-`rust/target/qualification` by default; an explicit output path is accepted.
+Advanced contracts live in [exact values and Serde](client/EXACT.md),
+[loading](client/LOADING.md), [graphs](client/GRAPH.md), [schemas](client/SCHEMAS.md),
+[forms](client/FORMS.md), [parameter serialization](client/SERIALIZATION.md), and
+[custom hosts](client/HOSTS.md). Existing consumers use the coordinated
+[migration guide](client/MIGRATION.md).
 
-The runner and host bridge enable the core's non-default `qualification` feature.
-It provides hidden, unsupported owner-lifecycle and operation-cache observations
-for qualification and benchmarks. Workspace tests also enable it through those
-dependencies, preserving the cache assertions in `parameter_merging` and
-`resource_graph`. For an isolated core test run with those assertions, use
-`cargo test --locked -p dynamic-openapi-client --features qualification`.
-Ordinary consumers omit this feature, so the global owner counter and its updates
-are compiled out. The verifier records and checks the packaged consumer's resolved
-feature graph in `external-feature-graph.log` and `external-instrumentation.json`.
-
-The API quality revision resolves the six previously retained Clippy warnings.
-Workspace lint now passes without warnings. `lint.py` still rejects warnings
-outside its historical exact-code/source-location baseline, and compiler errors
-fail the check; no lint category is suppressed.
-
-For host qualification, install the `wasm32-unknown-unknown` target and
-wasm-bindgen-cli 0.2.129. Build `oac-host-qualification` for that target with the
-workspace's locked dependencies, then generate web glue into
-`qualification/bridge/generated` with wasm-bindgen. In `qualification/host`, run
-`npm ci`, `npx playwright-core install --with-deps chromium`, and
-`node run.mjs <output-directory>`. The checked-in workflow gives the complete
-commands. `CHROMIUM_EXECUTABLE` can select an installed browser;
-`PLAYWRIGHT_BROWSERS_PATH` can select a Playwright installation. The default uses
-Playwright's installed Chromium. Wrangler runs locally, uses loopback fixtures
-and never deploys a Worker. The host smoke suite executes one finite POST
-consumer against equivalent JSON/YAML descriptions in all eleven published
-version strings, including Unicode, aliases and exact numbers. These fixtures
-cover the shared finite flow, not every capability of those editions.
-
-The qualification bridge is not a public SDK. Initial dependency/tool downloads
-need network access. Success requires actual commands and host assertions; a
-workflow definition alone is not a pass. Package publication, API stabilization,
-legacy retirement and application migration are separate decisions.
+From the repository root with Rust 1.99.0, Python 3.13+ and locked dependencies,
+run `python3 rust/qualification/verify.py`. It checks excerpts, matrix evidence,
+formatting, lint, tests/doctests, fixtures and packaged consumers. Native tests
+and examples need loopback sockets. Browser/Worker qualification has additional
+tooling and runtime gates in [the release guide](../docs/release-qualification.md).
+Use cached dependencies and `CARGO_NET_OFFLINE=true` for offline replay.
+The non-default `qualification` feature is unsupported test instrumentation;
+ordinary consumers omit it. [Development status](DEVELOPMENT-STATUS.md) retains
+the broader qualification history and open work.

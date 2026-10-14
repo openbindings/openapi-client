@@ -179,7 +179,7 @@ fn strict_header_rules_do_not_drop_supplied_values_or_optional_declarations() {
     );
     // Rejected caller-header routes are compile-fail examples on Part.
     // Required authored header behavior is covered by the original YAML refusal
-    // case below and by the scalar/array cases in o6_carriers.rs.
+    // case below and by the scalar/array cases in owned_carriers.rs.
 }
 #[test]
 fn explicit_json_cannot_erase_unknown_coding_but_keeps_partial_inventory() {

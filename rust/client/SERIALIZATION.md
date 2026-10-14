@@ -106,3 +106,7 @@ Sources: [3.0.4](https://spec.openapis.org/oas/v3.0.4.html#parameter-object),
 [3.2.1](https://spec.openapis.org/oas/v3.2.1.html#parameter-object),
 [OAS encoding guidance](https://spec.openapis.org/oas/v3.2.1.html#appendix-e-percent-encoding-and-form-media-types),
 [RFC6570](https://www.rfc-editor.org/rfc/rfc6570.html).
+
+The finite shape/codec profile, escaping spellings and ambiguous-delimiter
+refusals are client policies. Matrix rows T01 and T02 in
+[CAPABILITIES.md](CAPABILITIES.md) link those policies and existing test vectors.

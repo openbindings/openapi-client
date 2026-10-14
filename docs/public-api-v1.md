@@ -97,3 +97,6 @@ streaming, acquisition, schema evaluation, complete host qualification and a
 supported TypeScript facade remain open. The
 [release contract](release-qualification.md) separates these claims from legacy
 qualification and downstream integration schedules.
+
+The [capability and policy matrix](../rust/client/CAPABILITIES.md) records the
+implemented shapes, standards authority, policies and verification scope.

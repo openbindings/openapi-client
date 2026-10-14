@@ -1,7 +1,7 @@
 use dynamic_openapi_client::{diagnostics::*, exact::*, transport::*, *};
 
 #[test]
-fn checked_serde_string_limit_keeps_parent_actual() {
+fn checked_serde_string_limit_reports_encoded_size() {
     let e = Value::from_serializable(
         &"x".repeat(1_000_000),
         Limits {
@@ -21,7 +21,7 @@ fn checked_serde_string_limit_keeps_parent_actual() {
     );
 }
 #[test]
-fn malformed_response_retains_parent_error_chain() {
+fn malformed_response_reports_json_error_without_a_cause() {
     use std::{
         error::Error,
         future::Future,

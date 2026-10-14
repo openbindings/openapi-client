@@ -7,7 +7,7 @@
       "group": "P01",
       "action": "document",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}},\"x\":9007199254740993}",
-      "authority": "RFC8259 §§4–9; OAC-D02",
+      "authority": "RFC8259 §§4–9",
       "expected": {
         "selected_raw": "9007199254740993"
       },
@@ -18,7 +18,7 @@
       "group": "P01",
       "action": "document",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}},\"x\":-0}",
-      "authority": "RFC8259 §§4–9; OAC-D02",
+      "authority": "RFC8259 §§4–9",
       "expected": {
         "selected_raw": "-0"
       },
@@ -29,7 +29,7 @@
       "group": "P01",
       "action": "document",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}},\"x\":1.0}",
-      "authority": "RFC8259 §§4–9; OAC-D02",
+      "authority": "RFC8259 §§4–9",
       "expected": {
         "selected_raw": "1.0"
       },
@@ -40,7 +40,7 @@
       "group": "P01",
       "action": "document",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}},\"x\":1e0}",
-      "authority": "RFC8259 §§4–9; OAC-D02",
+      "authority": "RFC8259 §§4–9",
       "expected": {
         "selected_raw": "1e0"
       },
@@ -51,7 +51,7 @@
       "group": "P01",
       "action": "document",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}},\"x\":0.123456789012345678901234567890}",
-      "authority": "RFC8259 §§4–9; OAC-D02",
+      "authority": "RFC8259 §§4–9",
       "expected": {
         "selected_raw": "0.123456789012345678901234567890"
       },
@@ -62,7 +62,7 @@
       "group": "P01",
       "action": "document",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}},\"x\":1e10000}",
-      "authority": "RFC8259 §§4–9; OAC-D02",
+      "authority": "RFC8259 §§4–9",
       "expected": {
         "selected_raw": "1e10000"
       },
@@ -73,7 +73,7 @@
       "group": "P01",
       "action": "document",
       "document": "{\"a\":1,\"\\u0061\":2}",
-      "authority": "RFC8259 §§4–9; OAC-D02",
+      "authority": "RFC8259 §§4–9",
       "expected": {
         "error": "DuplicateMember"
       }
@@ -83,7 +83,7 @@
       "group": "P01",
       "action": "document",
       "document": "{\"x\":\"\\q\"}",
-      "authority": "RFC8259 §§4–9; OAC-D02",
+      "authority": "RFC8259 §§4–9",
       "expected": {
         "error": "InvalidJson"
       }
@@ -93,7 +93,7 @@
       "group": "P01",
       "action": "document",
       "document": "{\"x\":\"\\ud800\"}",
-      "authority": "RFC8259 §§4–9; OAC-D02",
+      "authority": "RFC8259 §§4–9",
       "expected": {
         "error": "UnsupportedString"
       }
@@ -103,7 +103,7 @@
       "group": "P01",
       "action": "document",
       "document": "{} false",
-      "authority": "RFC8259 §§4–9; OAC-D02",
+      "authority": "RFC8259 §§4–9",
       "expected": {
         "error": "InvalidJson"
       }
@@ -113,7 +113,7 @@
       "group": "P01",
       "action": "document",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "RFC8259 §§4–9; OAC-D02",
+      "authority": "RFC8259 §§4–9",
       "expected": {
         "error": "InvalidUtf8"
       },
@@ -124,7 +124,7 @@
       "group": "P01",
       "action": "document",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}},\"x\":null}",
-      "authority": "RFC8259 §§4–9; OAC-D02",
+      "authority": "RFC8259 §§4–9",
       "expected": {
         "selected_raw": "null"
       },
@@ -135,7 +135,7 @@
       "group": "P01",
       "action": "document",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "RFC8259 §§4–9; OAC-D02",
+      "authority": "RFC8259 §§4–9",
       "expected": {
         "selected_raw": null
       },
@@ -146,7 +146,7 @@
       "group": "P01",
       "action": "document",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}},\"x\":\"é\\n😀\"}",
-      "authority": "RFC8259 §§4–9; OAC-D02",
+      "authority": "RFC8259 §§4–9",
       "expected": {
         "selected_raw": "\"é\\n😀\""
       },
@@ -157,7 +157,7 @@
       "group": "P01",
       "action": "document",
       "document": " \n{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}} \t",
-      "authority": "RFC8259 §§4–9; OAC-D02",
+      "authority": "RFC8259 §§4–9",
       "expected": {
         "source_preserved": true
       }
@@ -167,7 +167,7 @@
       "group": "P01",
       "action": "number",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "RFC8259 §§4–9; OAC-D02",
+      "authority": "RFC8259 §§4–9",
       "expected": {
         "integer": "9007199254740993",
         "float_error": "NumericConversion"
@@ -179,7 +179,7 @@
       "group": "P01",
       "action": "number",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "RFC8259 §§4–9; OAC-D02",
+      "authority": "RFC8259 §§4–9",
       "expected": {
         "integer_error": "NumericConversion",
         "float_error": "NumericConversion"
@@ -191,7 +191,7 @@
       "group": "P01",
       "action": "number",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "RFC8259 §§4–9; OAC-D02",
+      "authority": "RFC8259 §§4–9",
       "expected": {
         "integer": "42",
         "float": "42"
@@ -203,7 +203,7 @@
       "group": "P02",
       "action": "ownership",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAS3.1.2 §§4.8.8–10; OAC-D09",
+      "authority": "OAS3.1.2 §§4.8.8–10",
       "expected": {
         "source_preserved": true,
         "survived": true,
@@ -216,7 +216,7 @@
       "group": "P02",
       "action": "document",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/z\":{\"get\":{\"operationId\":\"dup\",\"responses\":{\"200\":{\"description\":\"ok\"}}}},\"/a\":{\"post\":{\"operationId\":\"dup\",\"responses\":{\"201\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAS3.1.2 §§4.8.8–10; OAC-D09",
+      "authority": "OAS3.1.2 §§4.8.8–10",
       "expected": {
         "paths": [
           "/z",
@@ -233,7 +233,7 @@
       "group": "P02",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/z\":{\"get\":{\"operationId\":\"dup\",\"responses\":{\"200\":{\"description\":\"ok\"}}}},\"/a\":{\"post\":{\"operationId\":\"dup\",\"responses\":{\"201\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAS3.1.2 §§4.8.8–10; OAC-D09",
+      "authority": "OAS3.1.2 §§4.8.8–10",
       "expected": {
         "error": "AmbiguousOperation"
       },
@@ -244,7 +244,7 @@
       "group": "P02",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAS3.1.2 §§4.8.8–10; OAC-D09",
+      "authority": "OAS3.1.2 §§4.8.8–10",
       "expected": {
         "error": "MissingOperation"
       },
@@ -255,7 +255,7 @@
       "group": "P02",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/z\":{\"get\":{\"operationId\":\"dup\",\"responses\":{\"200\":{\"description\":\"ok\"}}}},\"/a\":{\"post\":{\"operationId\":\"dup\",\"responses\":{\"201\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAS3.1.2 §§4.8.8–10; OAC-D09",
+      "authority": "OAS3.1.2 §§4.8.8–10",
       "expected": {
         "method": "POST",
         "target": "https://api.example/v1/a"
@@ -268,7 +268,7 @@
       "group": "P02",
       "action": "document",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/bad\":{\"get\":false},\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAS3.1.2 §§4.8.8–10; OAC-D09",
+      "authority": "OAS3.1.2 §§4.8.8–10",
       "expected": {
         "paths": [
           "/bad",
@@ -282,7 +282,7 @@
       "group": "P02",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/bad\":{\"get\":false},\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAS3.1.2 §§4.8.8–10; OAC-D09",
+      "authority": "OAS3.1.2 §§4.8.8–10",
       "expected": {
         "error": "InvalidDeclaration"
       },
@@ -294,7 +294,7 @@
       "group": "P02",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/bad\":{\"get\":false},\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAS3.1.2 §§4.8.8–10; OAC-D09",
+      "authority": "OAS3.1.2 §§4.8.8–10",
       "expected": {
         "target": "https://api.example/v1/items"
       },
@@ -306,7 +306,7 @@
       "group": "P02",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.0\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAS3.1.2 §§4.8.8–10; OAC-D09",
+      "authority": "OAS3.1.2 §§4.8.8–10",
       "expected": {
         "target": "https://api.example/v1/items"
       }
@@ -316,7 +316,7 @@
       "group": "P02",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.1\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAS3.1.2 §§4.8.8–10; OAC-D09",
+      "authority": "OAS3.1.2 §§4.8.8–10",
       "expected": {
         "target": "https://api.example/v1/items"
       }
@@ -326,7 +326,7 @@
       "group": "P02",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAS3.1.2 §§4.8.8–10; OAC-D09",
+      "authority": "OAS3.1.2 §§4.8.8–10",
       "expected": {
         "target": "https://api.example/v1/items"
       }
@@ -364,7 +364,7 @@
       "group": "P02",
       "action": "prepare",
       "document": "{\"openapi\":\"2.0\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAS3.1.2 §§4.8.8–10; OAC-D09",
+      "authority": "OAS3.1.2 §§4.8.8–10",
       "expected": {
         "error": "UnsupportedVersion"
       }
@@ -725,7 +725,7 @@
       "group": "P04",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"servers\":[{\"url\":\"https://operation.example\"}]},\"servers\":[{\"url\":\"https://path.example\"}]}}}",
-      "authority": "OAS3.1.2 §§4.7,4.8.5–6; RFC3986 §5.2; OAC-D05",
+      "authority": "OAS3.1.2 §§4.7,4.8.5–6; RFC3986 §5.2",
       "expected": {
         "target": "https://operation.example/items"
       }
@@ -735,7 +735,7 @@
       "group": "P04",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}},\"servers\":[{\"url\":\"https://path.example\"}]}}}",
-      "authority": "OAS3.1.2 §§4.7,4.8.5–6; RFC3986 §5.2; OAC-D05",
+      "authority": "OAS3.1.2 §§4.7,4.8.5–6; RFC3986 §5.2",
       "expected": {
         "target": "https://path.example/items"
       }
@@ -745,7 +745,7 @@
       "group": "P04",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAS3.1.2 §§4.7,4.8.5–6; RFC3986 §5.2; OAC-D05",
+      "authority": "OAS3.1.2 §§4.7,4.8.5–6; RFC3986 §5.2",
       "expected": {
         "target": "https://api.example/v1/items"
       }
@@ -755,7 +755,7 @@
       "group": "P04",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAS3.1.2 §§4.7,4.8.5–6; RFC3986 §5.2; OAC-D05",
+      "authority": "OAS3.1.2 §§4.7,4.8.5–6; RFC3986 §5.2",
       "expected": {
         "target": "https://api.example/items"
       },
@@ -766,7 +766,7 @@
       "group": "P04",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAS3.1.2 §§4.7,4.8.5–6; RFC3986 §5.2; OAC-D05",
+      "authority": "OAS3.1.2 §§4.7,4.8.5–6; RFC3986 §5.2",
       "expected": {
         "target": "https://api.example/items"
       },
@@ -777,7 +777,7 @@
       "group": "P04",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"../api\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAS3.1.2 §§4.7,4.8.5–6; RFC3986 §5.2; OAC-D05",
+      "authority": "OAS3.1.2 §§4.7,4.8.5–6; RFC3986 §5.2",
       "expected": {
         "target": "https://api.example/api/items"
       },
@@ -788,7 +788,7 @@
       "group": "P04",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/a/../b\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAS3.1.2 §§4.7,4.8.5–6; RFC3986 §5.2; OAC-D05",
+      "authority": "OAS3.1.2 §§4.7,4.8.5–6; RFC3986 §5.2",
       "expected": {
         "target": "https://api.example/b/items"
       },
@@ -799,7 +799,7 @@
       "group": "P04",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/a/%2e%2e/b\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAS3.1.2 §§4.7,4.8.5–6; RFC3986 §5.2; OAC-D05",
+      "authority": "OAS3.1.2 §§4.7,4.8.5–6; RFC3986 §5.2",
       "expected": {
         "target": "https://api.example/a/%2e%2e/b/items"
       },
@@ -810,7 +810,7 @@
       "group": "P04",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAS3.1.2 §§4.7,4.8.5–6; RFC3986 §5.2; OAC-D05",
+      "authority": "OAS3.1.2 §§4.7,4.8.5–6; RFC3986 §5.2",
       "expected": {
         "error": "MissingBase"
       }
@@ -820,7 +820,7 @@
       "group": "P04",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://a.example\"},{\"url\":\"https://b.example\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAS3.1.2 §§4.7,4.8.5–6; RFC3986 §5.2; OAC-D05",
+      "authority": "OAS3.1.2 §§4.7,4.8.5–6; RFC3986 §5.2",
       "expected": {
         "error": "AmbiguousSelection"
       }
@@ -830,7 +830,7 @@
       "group": "P04",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://a.example\"},{\"url\":\"https://b.example\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAS3.1.2 §§4.7,4.8.5–6; RFC3986 §5.2; OAC-D05",
+      "authority": "OAS3.1.2 §§4.7,4.8.5–6; RFC3986 §5.2",
       "expected": {
         "target": "https://b.example/items"
       },
@@ -841,7 +841,7 @@
       "group": "P04",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://user:pw@a.example\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAS3.1.2 §§4.7,4.8.5–6; RFC3986 §5.2; OAC-D05",
+      "authority": "OAS3.1.2 §§4.7,4.8.5–6; RFC3986 §5.2",
       "expected": {
         "error": "InvalidDestination"
       }
@@ -851,7 +851,7 @@
       "group": "P04",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://a.example?\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAS3.1.2 §§4.7,4.8.5–6; RFC3986 §5.2; OAC-D05",
+      "authority": "OAS3.1.2 §§4.7,4.8.5–6; RFC3986 §5.2",
       "expected": {
         "error": "InvalidDestination"
       }
@@ -861,7 +861,7 @@
       "group": "P04",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://a.example#\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAS3.1.2 §§4.7,4.8.5–6; RFC3986 §5.2; OAC-D05",
+      "authority": "OAS3.1.2 §§4.7,4.8.5–6; RFC3986 §5.2",
       "expected": {
         "error": "InvalidDestination"
       }
@@ -871,7 +871,7 @@
       "group": "P04",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://a.example:99999\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAS3.1.2 §§4.7,4.8.5–6; RFC3986 §5.2; OAC-D05",
+      "authority": "OAS3.1.2 §§4.7,4.8.5–6; RFC3986 §5.2",
       "expected": {
         "error": "InvalidDestination"
       }
@@ -881,7 +881,7 @@
       "group": "P04",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://:443\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAS3.1.2 §§4.7,4.8.5–6; RFC3986 §5.2; OAC-D05",
+      "authority": "OAS3.1.2 §§4.7,4.8.5–6; RFC3986 §5.2",
       "expected": {
         "error": "InvalidDestination"
       }
@@ -891,7 +891,7 @@
       "group": "P04",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://a.example/%GG\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAS3.1.2 §§4.7,4.8.5–6; RFC3986 §5.2; OAC-D05",
+      "authority": "OAS3.1.2 §§4.7,4.8.5–6; RFC3986 §5.2",
       "expected": {
         "error": "InvalidDestination"
       }
@@ -901,7 +901,7 @@
       "group": "P04",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"ftp://a.example\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAS3.1.2 §§4.7,4.8.5–6; RFC3986 §5.2; OAC-D05",
+      "authority": "OAS3.1.2 §§4.7,4.8.5–6; RFC3986 §5.2",
       "expected": {
         "error": "InvalidDestination"
       }
@@ -911,7 +911,7 @@
       "group": "P04",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example:{p}/v1\",\"variables\":{\"p\":{\"default\":\"x1\"}}}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAS3.1.2 §§4.7,4.8.5–6; RFC3986 §5.2; OAC-D05",
+      "authority": "OAS3.1.2 §§4.7,4.8.5–6; RFC3986 §5.2",
       "expected": {
         "error": "InvalidDestination",
         "setting": "server.variables.p"
@@ -922,7 +922,7 @@
       "group": "P04",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example:{p}/v1\",\"variables\":{\"p\":{\"default\":\"x1\"}}}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAS3.1.2 §§4.7,4.8.5–6; RFC3986 §5.2; OAC-D05",
+      "authority": "OAS3.1.2 §§4.7,4.8.5–6; RFC3986 §5.2",
       "expected": {
         "target": "https://api.example:443/v1/items"
       },
@@ -935,7 +935,7 @@
       "group": "P04",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/{v}\",\"variables\":{\"v\":{\"default\":\"one\",\"enum\":[\"one\",\"two\"]}}}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAS3.1.2 §§4.7,4.8.5–6; RFC3986 §5.2; OAC-D05",
+      "authority": "OAS3.1.2 §§4.7,4.8.5–6; RFC3986 §5.2",
       "expected": {
         "target": "https://api.example/one/items"
       }
@@ -945,7 +945,7 @@
       "group": "P04",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/{v}\",\"variables\":{\"v\":{\"default\":\"one\",\"enum\":[\"one\",\"two\"]}}}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAS3.1.2 §§4.7,4.8.5–6; RFC3986 §5.2; OAC-D05",
+      "authority": "OAS3.1.2 §§4.7,4.8.5–6; RFC3986 §5.2",
       "expected": {
         "error": "InvalidSelection"
       },
@@ -958,7 +958,7 @@
       "group": "P04",
       "action": "uri",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAS3.1.2 §§4.7,4.8.5–6; RFC3986 §5.2; OAC-D05",
+      "authority": "OAS3.1.2 §§4.7,4.8.5–6; RFC3986 §5.2",
       "expected": {
         "resolved": "http://a/b/c/d;p?q"
       },
@@ -970,7 +970,7 @@
       "group": "P04",
       "action": "uri",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAS3.1.2 §§4.7,4.8.5–6; RFC3986 §5.2; OAC-D05",
+      "authority": "OAS3.1.2 §§4.7,4.8.5–6; RFC3986 §5.2",
       "expected": {
         "resolved": "http://a/b/c/d;p?"
       },
@@ -982,7 +982,7 @@
       "group": "P04",
       "action": "uri",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAS3.1.2 §§4.7,4.8.5–6; RFC3986 §5.2; OAC-D05",
+      "authority": "OAS3.1.2 §§4.7,4.8.5–6; RFC3986 §5.2",
       "expected": {
         "resolved": "http://a/b/g"
       },
@@ -994,7 +994,7 @@
       "group": "P04",
       "action": "uri",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAS3.1.2 §§4.7,4.8.5–6; RFC3986 §5.2; OAC-D05",
+      "authority": "OAS3.1.2 §§4.7,4.8.5–6; RFC3986 §5.2",
       "expected": {
         "resolved": "http://a/b/c/%2e%2e/g"
       },
@@ -1006,7 +1006,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items/{color}\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"color\",\"in\":\"path\",\"style\":\"simple\",\"explode\":false,\"schema\":{},\"required\":true}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "target": "https://api.example/v1/items/blue"
       },
@@ -1024,7 +1024,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items/{color}\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"color\",\"in\":\"path\",\"style\":\"simple\",\"explode\":true,\"schema\":{},\"required\":true}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "target": "https://api.example/v1/items/blue"
       },
@@ -1042,7 +1042,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items/{color}\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"color\",\"in\":\"path\",\"style\":\"simple\",\"explode\":false,\"schema\":{},\"required\":true}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "target": "https://api.example/v1/items/blue,black"
       },
@@ -1060,7 +1060,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items/{color}\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"color\",\"in\":\"path\",\"style\":\"simple\",\"explode\":true,\"schema\":{},\"required\":true}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "target": "https://api.example/v1/items/blue,black"
       },
@@ -1078,7 +1078,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items/{color}\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"color\",\"in\":\"path\",\"style\":\"simple\",\"explode\":false,\"schema\":{},\"required\":true}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "target": "https://api.example/v1/items/R,100,G,200"
       },
@@ -1096,7 +1096,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items/{color}\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"color\",\"in\":\"path\",\"style\":\"simple\",\"explode\":true,\"schema\":{},\"required\":true}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "target": "https://api.example/v1/items/R=100,G=200"
       },
@@ -1114,7 +1114,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"color\",\"in\":\"query\",\"style\":\"form\",\"explode\":false,\"schema\":{}}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "target": "https://api.example/v1/items?color=blue"
       },
@@ -1132,7 +1132,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"color\",\"in\":\"query\",\"style\":\"form\",\"explode\":true,\"schema\":{}}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "target": "https://api.example/v1/items?color=blue"
       },
@@ -1150,7 +1150,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"color\",\"in\":\"query\",\"style\":\"form\",\"explode\":false,\"schema\":{}}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "target": "https://api.example/v1/items?color=blue,black"
       },
@@ -1168,7 +1168,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"color\",\"in\":\"query\",\"style\":\"form\",\"explode\":true,\"schema\":{}}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "target": "https://api.example/v1/items?color=blue&color=black"
       },
@@ -1186,7 +1186,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"color\",\"in\":\"query\",\"style\":\"form\",\"explode\":false,\"schema\":{}}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "target": "https://api.example/v1/items?color=R,100,G,200"
       },
@@ -1204,7 +1204,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"color\",\"in\":\"query\",\"style\":\"form\",\"explode\":true,\"schema\":{}}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "target": "https://api.example/v1/items?R=100&G=200"
       },
@@ -1222,7 +1222,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"color\",\"in\":\"header\",\"style\":\"simple\",\"explode\":false,\"schema\":{}}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "target": "https://api.example/v1/items",
         "headers": [
@@ -1246,7 +1246,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"color\",\"in\":\"header\",\"style\":\"simple\",\"explode\":true,\"schema\":{}}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "target": "https://api.example/v1/items",
         "headers": [
@@ -1270,7 +1270,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"color\",\"in\":\"header\",\"style\":\"simple\",\"explode\":false,\"schema\":{}}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "target": "https://api.example/v1/items",
         "headers": [
@@ -1294,7 +1294,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"color\",\"in\":\"header\",\"style\":\"simple\",\"explode\":true,\"schema\":{}}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "target": "https://api.example/v1/items",
         "headers": [
@@ -1318,7 +1318,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"color\",\"in\":\"header\",\"style\":\"simple\",\"explode\":false,\"schema\":{}}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "target": "https://api.example/v1/items",
         "headers": [
@@ -1342,7 +1342,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"color\",\"in\":\"header\",\"style\":\"simple\",\"explode\":true,\"schema\":{}}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "target": "https://api.example/v1/items",
         "headers": [
@@ -1366,7 +1366,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"color\",\"in\":\"cookie\",\"style\":\"form\",\"explode\":false,\"schema\":{}}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "target": "https://api.example/v1/items",
         "headers": [
@@ -1390,7 +1390,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"color\",\"in\":\"cookie\",\"style\":\"form\",\"explode\":true,\"schema\":{}}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "target": "https://api.example/v1/items",
         "headers": [
@@ -1414,7 +1414,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"color\",\"in\":\"cookie\",\"style\":\"form\",\"explode\":false,\"schema\":{}}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "target": "https://api.example/v1/items",
         "headers": [
@@ -1438,7 +1438,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"color\",\"in\":\"cookie\",\"style\":\"form\",\"explode\":true,\"schema\":{}}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "target": "https://api.example/v1/items",
         "headers": [
@@ -1462,7 +1462,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"color\",\"in\":\"cookie\",\"style\":\"form\",\"explode\":false,\"schema\":{}}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "target": "https://api.example/v1/items",
         "headers": [
@@ -1486,7 +1486,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"color\",\"in\":\"cookie\",\"style\":\"form\",\"explode\":true,\"schema\":{}}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "target": "https://api.example/v1/items",
         "headers": [
@@ -1510,7 +1510,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items/{q}\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"q\",\"in\":\"path\",\"schema\":{},\"required\":true}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "target": "https://api.example/v1/items/"
       },
@@ -1528,7 +1528,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items/{q}\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"q\",\"in\":\"path\",\"schema\":{},\"required\":true}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "target": "https://api.example/v1/items/a%20%2B%25%2F%C3%A9"
       },
@@ -1546,7 +1546,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items/{q}\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"q\",\"in\":\"path\",\"schema\":{},\"required\":true}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "target": "https://api.example/v1/items/9007199254740993"
       },
@@ -1564,7 +1564,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items/{q}\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"q\",\"in\":\"path\",\"schema\":{},\"required\":true}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "error": "UnsupportedValue"
       },
@@ -1582,7 +1582,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items/{q}\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"q\",\"in\":\"path\",\"schema\":{},\"required\":true}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "error": "UnsupportedParameter",
         "location": {
@@ -1605,7 +1605,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items/{q}\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"q\",\"in\":\"path\",\"schema\":{},\"required\":true}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "error": "UnsupportedValue"
       },
@@ -1623,7 +1623,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items/{q}\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"q\",\"in\":\"path\",\"schema\":{},\"required\":true}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "error": "MissingInput"
       },
@@ -1634,7 +1634,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"q\",\"in\":\"query\",\"schema\":{},\"required\":true}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "target": "https://api.example/v1/items?q="
       },
@@ -1652,7 +1652,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"q\",\"in\":\"query\",\"schema\":{},\"required\":true}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "target": "https://api.example/v1/items?q=a%20%2B%25%2F%C3%A9"
       },
@@ -1670,7 +1670,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"q\",\"in\":\"query\",\"schema\":{},\"required\":true}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "target": "https://api.example/v1/items?q=9007199254740993"
       },
@@ -1688,7 +1688,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"q\",\"in\":\"query\",\"schema\":{},\"required\":true}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "error": "UnsupportedValue"
       },
@@ -1706,7 +1706,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"q\",\"in\":\"query\",\"schema\":{},\"required\":true}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "error": "UnsupportedParameter",
         "location": {
@@ -1729,7 +1729,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"q\",\"in\":\"query\",\"schema\":{},\"required\":true}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "error": "UnsupportedValue"
       },
@@ -1747,7 +1747,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"q\",\"in\":\"query\",\"schema\":{},\"required\":true}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "error": "MissingInput"
       },
@@ -1758,7 +1758,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"q\",\"in\":\"header\",\"schema\":{},\"required\":true}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "target": "https://api.example/v1/items",
         "headers": [
@@ -1782,7 +1782,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"q\",\"in\":\"header\",\"schema\":{},\"required\":true}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "target": "https://api.example/v1/items",
         "headers": [
@@ -1806,7 +1806,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"q\",\"in\":\"header\",\"schema\":{},\"required\":true}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "target": "https://api.example/v1/items",
         "headers": [
@@ -1830,7 +1830,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"q\",\"in\":\"header\",\"schema\":{},\"required\":true}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "error": "UnsupportedValue"
       },
@@ -1848,7 +1848,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"q\",\"in\":\"header\",\"schema\":{},\"required\":true}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "error": "UnsupportedParameter",
         "location": {
@@ -1871,7 +1871,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"q\",\"in\":\"header\",\"schema\":{},\"required\":true}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "error": "UnsupportedValue"
       },
@@ -1889,7 +1889,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"q\",\"in\":\"header\",\"schema\":{},\"required\":true}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "error": "MissingInput"
       },
@@ -1900,7 +1900,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"q\",\"in\":\"cookie\",\"schema\":{},\"required\":true}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "target": "https://api.example/v1/items",
         "headers": [
@@ -1924,7 +1924,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"q\",\"in\":\"cookie\",\"schema\":{},\"required\":true}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "target": "https://api.example/v1/items",
         "headers": [
@@ -1948,7 +1948,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"q\",\"in\":\"cookie\",\"schema\":{},\"required\":true}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "target": "https://api.example/v1/items",
         "headers": [
@@ -1972,7 +1972,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"q\",\"in\":\"cookie\",\"schema\":{},\"required\":true}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "error": "UnsupportedValue"
       },
@@ -1990,7 +1990,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"q\",\"in\":\"cookie\",\"schema\":{},\"required\":true}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "error": "UnsupportedParameter",
         "location": {
@@ -2013,7 +2013,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"q\",\"in\":\"cookie\",\"schema\":{},\"required\":true}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "error": "UnsupportedValue"
       },
@@ -2031,7 +2031,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"q\",\"in\":\"cookie\",\"schema\":{},\"required\":true}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "error": "MissingInput"
       },
@@ -2042,7 +2042,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"q\",\"in\":\"query\",\"schema\":{},\"style\":\"deepObject\"}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "error": "UnsupportedParameter"
       },
@@ -2059,7 +2059,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"q\",\"in\":\"query\",\"content\":{\"text/plain\":{}}}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "method": "GET",
         "target": "https://api.example/v1/items?q=v",
@@ -2080,7 +2080,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"q\",\"in\":\"query\",\"schema\":{},\"allowReserved\":true}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "method": "GET",
         "target": "https://api.example/v1/items?q=v",
@@ -2101,7 +2101,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"X-Value\",\"in\":\"header\",\"schema\":{}}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "error": "InvalidHeader"
       },
@@ -2118,7 +2118,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"X-Value\",\"in\":\"header\",\"schema\":{}}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "error": "InvalidHeader"
       },
@@ -2135,7 +2135,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"q\",\"in\":\"query\",\"schema\":{},\"required\":false}]},\"parameters\":[{\"name\":\"q\",\"in\":\"query\",\"schema\":{},\"required\":true}]}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "target": "https://api.example/v1/items"
       }
@@ -2145,7 +2145,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"Accept\",\"in\":\"header\",\"required\":true,\"schema\":{}}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "target": "https://api.example/v1/items",
         "headers": []
@@ -2156,7 +2156,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"content-type\",\"in\":\"header\",\"required\":true,\"schema\":{}}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "target": "https://api.example/v1/items",
         "headers": []
@@ -2167,7 +2167,7 @@
       "group": "P05",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"parameters\":[{\"name\":\"AUTHORIZATION\",\"in\":\"header\",\"required\":true,\"schema\":{}}]}}}}",
-      "authority": "OAS3.1.2 §4.8.12, Appendices B–E; OAC-D05",
+      "authority": "OAS3.1.2 §4.8.12, Appendices B–E",
       "expected": {
         "target": "https://api.example/v1/items",
         "headers": []
@@ -2178,7 +2178,7 @@
       "group": "P06",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"requestBody\":{\"required\":true,\"content\":{\"application/json\":{\"schema\":{\"default\":{\"injected\":true}}}}}}}}}",
-      "authority": "OAS3.1.2 §§4.8.13–14; OAC-D08",
+      "authority": "OAS3.1.2 §§4.8.13–14",
       "expected": {
         "body_hex": "7b226e223a393030373139393235343734303939337d"
       },
@@ -2191,7 +2191,7 @@
       "group": "P06",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"requestBody\":{\"required\":true,\"content\":{\"application/problem+json\":{\"schema\":{\"default\":{\"injected\":true}}}}}}}}}",
-      "authority": "OAS3.1.2 §§4.8.13–14; OAC-D08",
+      "authority": "OAS3.1.2 §§4.8.13–14",
       "expected": {
         "body_hex": "6e756c6c"
       },
@@ -2204,7 +2204,7 @@
       "group": "P06",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"requestBody\":{\"required\":true,\"content\":{\"image/png\":{\"schema\":{\"default\":{\"injected\":true}}}}}}}}}",
-      "authority": "OAS3.1.2 §§4.8.13–14; OAC-D08",
+      "authority": "OAS3.1.2 §§4.8.13–14",
       "expected": {
         "body_hex": "00ff01"
       },
@@ -2217,7 +2217,7 @@
       "group": "P06",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"requestBody\":{\"required\":true,\"content\":{\"application/xml\":{\"schema\":{\"default\":{\"injected\":true}}}}}}}}}",
-      "authority": "OAS3.1.2 §§4.8.13–14; OAC-D08",
+      "authority": "OAS3.1.2 §§4.8.13–14",
       "expected": {
         "error": "UnsupportedMedia"
       },
@@ -2230,7 +2230,7 @@
       "group": "P06",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"requestBody\":{\"required\":true,\"content\":{\"application/json\":{\"schema\":{\"default\":{\"injected\":true}}}}}}}}}",
-      "authority": "OAS3.1.2 §§4.8.13–14; OAC-D08",
+      "authority": "OAS3.1.2 §§4.8.13–14",
       "expected": {
         "body_hex": "6e756c6c"
       },
@@ -2243,7 +2243,7 @@
       "group": "P06",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"requestBody\":{\"required\":true,\"content\":{\"application/json\":{}}}}}}}",
-      "authority": "OAS3.1.2 §§4.8.13–14; OAC-D08",
+      "authority": "OAS3.1.2 §§4.8.13–14",
       "expected": {
         "error": "MissingBody"
       }
@@ -2253,7 +2253,7 @@
       "group": "P06",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"requestBody\":{\"required\":false,\"content\":{\"application/json\":{}}}}}}}",
-      "authority": "OAS3.1.2 §§4.8.13–14; OAC-D08",
+      "authority": "OAS3.1.2 §§4.8.13–14",
       "expected": {
         "body_kind": "absent"
       }
@@ -2263,7 +2263,7 @@
       "group": "P06",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"requestBody\":{\"required\":false,\"content\":{\"application/json\":{},\"application/problem+json\":{}}}}}}}",
-      "authority": "OAS3.1.2 §§4.8.13–14; OAC-D08",
+      "authority": "OAS3.1.2 §§4.8.13–14",
       "expected": {
         "error": "AmbiguousSelection"
       },
@@ -2276,7 +2276,7 @@
       "group": "P06",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"requestBody\":{\"required\":false,\"content\":{\"application/json\":{},\"application/problem+json\":{}}}}}}}",
-      "authority": "OAS3.1.2 §§4.8.13–14; OAC-D08",
+      "authority": "OAS3.1.2 §§4.8.13–14",
       "expected": {
         "body_hex": "7b7d"
       },
@@ -2290,7 +2290,7 @@
       "group": "P06",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"requestBody\":{\"required\":false,\"content\":{\"bad/type/extra\":{},\"application/json\":{}}}}}}}",
-      "authority": "OAS3.1.2 §§4.8.13–14; OAC-D08",
+      "authority": "OAS3.1.2 §§4.8.13–14",
       "expected": {
         "body_hex": "7b7d"
       },
@@ -2303,7 +2303,7 @@
       "group": "P07",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}},\"components\":{\"securitySchemes\":{\"auth\":{\"type\":\"http\",\"scheme\":\"bearer\"}}},\"security\":[{\"auth\":[]}]}",
-      "authority": "OAS3.1.2 §§4.8.27,4.8.30; RFC7617 §2; OAC-D06",
+      "authority": "OAS3.1.2 §§4.8.27,4.8.30; RFC7617 §2",
       "expected": {
         "headers": [
           [
@@ -2328,7 +2328,7 @@
       "group": "P07",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}},\"components\":{\"securitySchemes\":{\"auth\":{\"type\":\"http\",\"scheme\":\"bearer\"}}},\"security\":[{\"auth\":[]}]}",
-      "authority": "OAS3.1.2 §§4.8.27,4.8.30; RFC7617 §2; OAC-D06",
+      "authority": "OAS3.1.2 §§4.8.27,4.8.30; RFC7617 §2",
       "expected": {
         "error": "MissingCredential"
       }
@@ -2338,7 +2338,7 @@
       "group": "P07",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}},\"components\":{\"securitySchemes\":{\"auth\":{\"type\":\"http\",\"scheme\":\"bearer\"}}},\"security\":[{\"auth\":[]}]}",
-      "authority": "OAS3.1.2 §§4.8.27,4.8.30; RFC7617 §2; OAC-D06",
+      "authority": "OAS3.1.2 §§4.8.27,4.8.30; RFC7617 §2",
       "expected": {
         "error": "CredentialOrigin"
       },
@@ -2357,7 +2357,7 @@
       "group": "P07",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}},\"components\":{\"securitySchemes\":{\"auth\":{\"type\":\"http\",\"scheme\":\"basic\"}}},\"security\":[{\"auth\":[]}]}",
-      "authority": "OAS3.1.2 §§4.8.27,4.8.30; RFC7617 §2; OAC-D06",
+      "authority": "OAS3.1.2 §§4.8.27,4.8.30; RFC7617 §2",
       "expected": {
         "headers": [
           [
@@ -2384,7 +2384,7 @@
       "group": "P07",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}},\"components\":{\"securitySchemes\":{\"auth\":{\"type\":\"http\",\"scheme\":\"basic\"}}},\"security\":[{\"auth\":[]}]}",
-      "authority": "OAS3.1.2 §§4.8.27,4.8.30; RFC7617 §2; OAC-D06",
+      "authority": "OAS3.1.2 §§4.8.27,4.8.30; RFC7617 §2",
       "expected": {
         "error": "MissingCredential"
       }
@@ -2394,7 +2394,7 @@
       "group": "P07",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}},\"components\":{\"securitySchemes\":{\"auth\":{\"type\":\"http\",\"scheme\":\"basic\"}}},\"security\":[{\"auth\":[]}]}",
-      "authority": "OAS3.1.2 §§4.8.27,4.8.30; RFC7617 §2; OAC-D06",
+      "authority": "OAS3.1.2 §§4.8.27,4.8.30; RFC7617 §2",
       "expected": {
         "error": "CredentialOrigin"
       },
@@ -2415,7 +2415,7 @@
       "group": "P07",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}},\"components\":{\"securitySchemes\":{\"auth\":{\"type\":\"apiKey\",\"in\":\"header\",\"name\":\"X-Key\"}}},\"security\":[{\"auth\":[]}]}",
-      "authority": "OAS3.1.2 §§4.8.27,4.8.30; RFC7617 §2; OAC-D06",
+      "authority": "OAS3.1.2 §§4.8.27,4.8.30; RFC7617 §2",
       "expected": {
         "headers": [
           [
@@ -2440,7 +2440,7 @@
       "group": "P07",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}},\"components\":{\"securitySchemes\":{\"auth\":{\"type\":\"apiKey\",\"in\":\"header\",\"name\":\"X-Key\"}}},\"security\":[{\"auth\":[]}]}",
-      "authority": "OAS3.1.2 §§4.8.27,4.8.30; RFC7617 §2; OAC-D06",
+      "authority": "OAS3.1.2 §§4.8.27,4.8.30; RFC7617 §2",
       "expected": {
         "error": "MissingCredential"
       }
@@ -2450,7 +2450,7 @@
       "group": "P07",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}},\"components\":{\"securitySchemes\":{\"auth\":{\"type\":\"apiKey\",\"in\":\"header\",\"name\":\"X-Key\"}}},\"security\":[{\"auth\":[]}]}",
-      "authority": "OAS3.1.2 §§4.8.27,4.8.30; RFC7617 §2; OAC-D06",
+      "authority": "OAS3.1.2 §§4.8.27,4.8.30; RFC7617 §2",
       "expected": {
         "error": "CredentialOrigin"
       },
@@ -2469,7 +2469,7 @@
       "group": "P07",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}},\"components\":{\"securitySchemes\":{\"auth\":{\"type\":\"apiKey\",\"in\":\"query\",\"name\":\"api_key\"}}},\"security\":[{\"auth\":[]}]}",
-      "authority": "OAS3.1.2 §§4.8.27,4.8.30; RFC7617 §2; OAC-D06",
+      "authority": "OAS3.1.2 §§4.8.27,4.8.30; RFC7617 §2",
       "expected": {
         "headers": [],
         "target": "https://api.example/v1/items?api_key=DUMMY%20%2B%25"
@@ -2489,7 +2489,7 @@
       "group": "P07",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}},\"components\":{\"securitySchemes\":{\"auth\":{\"type\":\"apiKey\",\"in\":\"query\",\"name\":\"api_key\"}}},\"security\":[{\"auth\":[]}]}",
-      "authority": "OAS3.1.2 §§4.8.27,4.8.30; RFC7617 §2; OAC-D06",
+      "authority": "OAS3.1.2 §§4.8.27,4.8.30; RFC7617 §2",
       "expected": {
         "error": "MissingCredential"
       }
@@ -2499,7 +2499,7 @@
       "group": "P07",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}},\"components\":{\"securitySchemes\":{\"auth\":{\"type\":\"apiKey\",\"in\":\"query\",\"name\":\"api_key\"}}},\"security\":[{\"auth\":[]}]}",
-      "authority": "OAS3.1.2 §§4.8.27,4.8.30; RFC7617 §2; OAC-D06",
+      "authority": "OAS3.1.2 §§4.8.27,4.8.30; RFC7617 §2",
       "expected": {
         "error": "CredentialOrigin"
       },
@@ -2518,7 +2518,7 @@
       "group": "P07",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}},\"components\":{\"securitySchemes\":{\"auth\":{\"type\":\"apiKey\",\"in\":\"cookie\",\"name\":\"sid\"}}},\"security\":[{\"auth\":[]}]}",
-      "authority": "OAS3.1.2 §§4.8.27,4.8.30; RFC7617 §2; OAC-D06",
+      "authority": "OAS3.1.2 §§4.8.27,4.8.30; RFC7617 §2",
       "expected": {
         "headers": [
           [
@@ -2543,7 +2543,7 @@
       "group": "P07",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}},\"components\":{\"securitySchemes\":{\"auth\":{\"type\":\"apiKey\",\"in\":\"cookie\",\"name\":\"sid\"}}},\"security\":[{\"auth\":[]}]}",
-      "authority": "OAS3.1.2 §§4.8.27,4.8.30; RFC7617 §2; OAC-D06",
+      "authority": "OAS3.1.2 §§4.8.27,4.8.30; RFC7617 §2",
       "expected": {
         "error": "MissingCredential"
       }
@@ -2553,7 +2553,7 @@
       "group": "P07",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}},\"components\":{\"securitySchemes\":{\"auth\":{\"type\":\"apiKey\",\"in\":\"cookie\",\"name\":\"sid\"}}},\"security\":[{\"auth\":[]}]}",
-      "authority": "OAS3.1.2 §§4.8.27,4.8.30; RFC7617 §2; OAC-D06",
+      "authority": "OAS3.1.2 §§4.8.27,4.8.30; RFC7617 §2",
       "expected": {
         "error": "CredentialOrigin"
       },
@@ -2572,7 +2572,7 @@
       "group": "P07",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}},\"components\":{\"securitySchemes\":{\"a\":{\"type\":\"apiKey\",\"in\":\"header\",\"name\":\"X-Key\"},\"b\":{\"type\":\"apiKey\",\"in\":\"query\",\"name\":\"api_key\"}}},\"security\":[{\"a\":[],\"b\":[]}]}",
-      "authority": "OAS3.1.2 §§4.8.27,4.8.30; RFC7617 §2; OAC-D06",
+      "authority": "OAS3.1.2 §§4.8.27,4.8.30; RFC7617 §2",
       "expected": {
         "headers": [
           [
@@ -2604,7 +2604,7 @@
       "group": "P07",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}},\"components\":{\"securitySchemes\":{\"a\":{\"type\":\"apiKey\",\"in\":\"header\",\"name\":\"X-Key\"},\"b\":{\"type\":\"apiKey\",\"in\":\"query\",\"name\":\"api_key\"}}},\"security\":[{\"a\":[]},{}]}",
-      "authority": "OAS3.1.2 §§4.8.27,4.8.30; RFC7617 §2; OAC-D06",
+      "authority": "OAS3.1.2 §§4.8.27,4.8.30; RFC7617 §2",
       "expected": {
         "error": "AmbiguousSelection"
       },
@@ -2630,7 +2630,7 @@
       "group": "P07",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}},\"components\":{\"securitySchemes\":{\"a\":{\"type\":\"apiKey\",\"in\":\"header\",\"name\":\"X-Key\"},\"b\":{\"type\":\"apiKey\",\"in\":\"query\",\"name\":\"api_key\"}}},\"security\":[{\"a\":[]},{}]}",
-      "authority": "OAS3.1.2 §§4.8.27,4.8.30; RFC7617 §2; OAC-D06",
+      "authority": "OAS3.1.2 §§4.8.27,4.8.30; RFC7617 §2",
       "expected": {
         "headers": []
       },
@@ -2641,7 +2641,7 @@
       "group": "P07",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}},\"security\":[]}}},\"components\":{\"securitySchemes\":{\"a\":{\"type\":\"apiKey\",\"in\":\"header\",\"name\":\"X-Key\"},\"b\":{\"type\":\"apiKey\",\"in\":\"query\",\"name\":\"api_key\"}}},\"security\":[{\"a\":[]},{}]}",
-      "authority": "OAS3.1.2 §§4.8.27,4.8.30; RFC7617 §2; OAC-D06",
+      "authority": "OAS3.1.2 §§4.8.27,4.8.30; RFC7617 §2",
       "expected": {
         "headers": []
       }
@@ -2670,7 +2670,7 @@
       "group": "P07",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}},\"components\":{\"securitySchemes\":{\"a\":{\"type\":\"apiKey\",\"in\":\"query\",\"name\":\"bad%GG\"}}},\"security\":[{\"a\":[]}]}",
-      "authority": "OAS3.1.2 §§4.8.27,4.8.30; RFC7617 §2; OAC-D06",
+      "authority": "OAS3.1.2 §§4.8.27,4.8.30; RFC7617 §2",
       "expected": {
         "error": "InvalidQuery"
       },
@@ -2689,7 +2689,7 @@
       "group": "P07",
       "action": "prepare",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}},\"components\":{\"securitySchemes\":{\"a\":{\"type\":\"apiKey\",\"in\":\"header\",\"name\":\"Bad\\nName\"}}},\"security\":[{\"a\":[]}]}",
-      "authority": "OAS3.1.2 §§4.8.27,4.8.30; RFC7617 §2; OAC-D06",
+      "authority": "OAS3.1.2 §§4.8.27,4.8.30; RFC7617 §2",
       "expected": {
         "error": "InvalidHeader"
       },
@@ -2708,7 +2708,7 @@
       "group": "P08",
       "action": "exchange",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"exact\"},\"2XX\":{\"description\":\"range\"},\"default\":{\"description\":\"fallback\"}}}}}}",
-      "authority": "OAS3.1.2 §§4.8.16–17; RFC9110 §§5,8,15; OAC-D04/07/08",
+      "authority": "OAS3.1.2 §§4.8.16–17; RFC9110 §§5,8,15",
       "expected": {
         "response_status": 200,
         "response_key": "200",
@@ -2732,7 +2732,7 @@
       "group": "P08",
       "action": "exchange",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"exact\"},\"2XX\":{\"description\":\"range\"},\"default\":{\"description\":\"fallback\"}}}}}}",
-      "authority": "OAS3.1.2 §§4.8.16–17; RFC9110 §§5,8,15; OAC-D04/07/08",
+      "authority": "OAS3.1.2 §§4.8.16–17; RFC9110 §§5,8,15",
       "expected": {
         "response_status": 204,
         "response_key": "2XX",
@@ -2756,7 +2756,7 @@
       "group": "P08",
       "action": "exchange",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"exact\"},\"2XX\":{\"description\":\"range\"},\"default\":{\"description\":\"fallback\"}}}}}}",
-      "authority": "OAS3.1.2 §§4.8.16–17; RFC9110 §§5,8,15; OAC-D04/07/08",
+      "authority": "OAS3.1.2 §§4.8.16–17; RFC9110 §§5,8,15",
       "expected": {
         "response_status": 404,
         "response_key": "default",
@@ -2780,7 +2780,7 @@
       "group": "P08",
       "action": "exchange",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAS3.1.2 §§4.8.16–17; RFC9110 §§5,8,15; OAC-D04/07/08",
+      "authority": "OAS3.1.2 §§4.8.16–17; RFC9110 §§5,8,15",
       "expected": {
         "response_status": 400,
         "headers": [
@@ -2815,7 +2815,7 @@
       "group": "P08",
       "action": "exchange",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAS3.1.2 §§4.8.16–17; RFC9110 §§5,8,15; OAC-D04/07/08",
+      "authority": "OAS3.1.2 §§4.8.16–17; RFC9110 §§5,8,15",
       "expected": {
         "decode_error": "InvalidJson",
         "response_status": 500,
@@ -2837,7 +2837,7 @@
       "group": "P08",
       "action": "exchange",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAS3.1.2 §§4.8.16–17; RFC9110 §§5,8,15; OAC-D04/07/08",
+      "authority": "OAS3.1.2 §§4.8.16–17; RFC9110 §§5,8,15",
       "expected": {
         "json_raw": "null"
       },
@@ -2857,7 +2857,7 @@
       "group": "P08",
       "action": "exchange",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAS3.1.2 §§4.8.16–17; RFC9110 §§5,8,15; OAC-D04/07/08",
+      "authority": "OAS3.1.2 §§4.8.16–17; RFC9110 §§5,8,15",
       "expected": {
         "decode_error": "EmptyBody",
         "raw_hex": ""
@@ -2873,7 +2873,7 @@
       "group": "P08",
       "action": "exchange",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAS3.1.2 §§4.8.16–17; RFC9110 §§5,8,15; OAC-D04/07/08",
+      "authority": "OAS3.1.2 §§4.8.16–17; RFC9110 §§5,8,15",
       "expected": {
         "decode_error": "InvalidMedia"
       },
@@ -2897,7 +2897,7 @@
       "group": "P08",
       "action": "exchange",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAS3.1.2 §§4.8.16–17; RFC9110 §§5,8,15; OAC-D04/07/08",
+      "authority": "OAS3.1.2 §§4.8.16–17; RFC9110 §§5,8,15",
       "expected": {
         "decode_error": "InvalidMedia"
       },
@@ -2917,7 +2917,7 @@
       "group": "P08",
       "action": "exchange",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAS3.1.2 §§4.8.16–17; RFC9110 §§5,8,15; OAC-D04/07/08",
+      "authority": "OAS3.1.2 §§4.8.16–17; RFC9110 §§5,8,15",
       "expected": {
         "decode_error": "UnsupportedCoding"
       },
@@ -2942,7 +2942,7 @@
       "group": "P08",
       "action": "exchange",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAS3.1.2 §§4.8.16–17; RFC9110 §§5,8,15; OAC-D04/07/08",
+      "authority": "OAS3.1.2 §§4.8.16–17; RFC9110 §§5,8,15",
       "expected": {
         "json_raw": "{}"
       },
@@ -2967,7 +2967,7 @@
       "group": "P08",
       "action": "exchange",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAS3.1.2 §§4.8.16–17; RFC9110 §§5,8,15; OAC-D04/07/08",
+      "authority": "OAS3.1.2 §§4.8.16–17; RFC9110 §§5,8,15",
       "expected": {
         "body_state": "failed",
         "response_status": 200,
@@ -2992,7 +2992,7 @@
       "group": "P08",
       "action": "exchange",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAS3.1.2 §§4.8.16–17; RFC9110 §§5,8,15; OAC-D04/07/08",
+      "authority": "OAS3.1.2 §§4.8.16–17; RFC9110 §§5,8,15",
       "expected": {
         "response_status": 202,
         "upload": "unknown"
@@ -3009,7 +3009,7 @@
       "group": "P08",
       "action": "exchange",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAS3.1.2 §§4.8.16–17; RFC9110 §§5,8,15; OAC-D04/07/08",
+      "authority": "OAS3.1.2 §§4.8.16–17; RFC9110 §§5,8,15",
       "expected": {
         "body_state": "truncated",
         "raw_hex": "61626364",
@@ -3030,7 +3030,7 @@
       "group": "P08",
       "action": "exchange",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAS3.1.2 §§4.8.16–17; RFC9110 §§5,8,15; OAC-D04/07/08",
+      "authority": "OAS3.1.2 §§4.8.16–17; RFC9110 §§5,8,15",
       "expected": {
         "dispatch": "not_dispatched",
         "error": "Cancelled"
@@ -3042,7 +3042,7 @@
       "group": "P08",
       "action": "exchange",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAS3.1.2 §§4.8.16–17; RFC9110 §§5,8,15; OAC-D04/07/08",
+      "authority": "OAS3.1.2 §§4.8.16–17; RFC9110 §§5,8,15",
       "expected": {
         "dispatch": "dispatched",
         "cancelled": true,
@@ -3062,7 +3062,7 @@
       "group": "P07",
       "action": "exchange",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAS3.1.2 §§4.8.27,4.8.30; RFC7617 §2; OAC-D06",
+      "authority": "OAS3.1.2 §§4.8.27,4.8.30; RFC7617 §2",
       "expected": {
         "error": "TransportFailure",
         "display_excludes": "DUMMY-secret"
@@ -3074,7 +3074,7 @@
       "group": "P09",
       "action": "host",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAC-D09/10; supplied host capability contract",
+      "authority": "Client policy: supplied-host capability contract",
       "expected": {
         "passed": true
       },
@@ -3085,7 +3085,7 @@
       "group": "P09",
       "action": "host",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAC-D09/10; supplied host capability contract",
+      "authority": "Client policy: supplied-host capability contract",
       "expected": {
         "passed": true
       },
@@ -3096,7 +3096,7 @@
       "group": "P09",
       "action": "host",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAC-D09/10; supplied host capability contract",
+      "authority": "Client policy: supplied-host capability contract",
       "expected": {
         "passed": true
       },
@@ -3107,7 +3107,7 @@
       "group": "P09",
       "action": "host",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAC-D09/10; supplied host capability contract",
+      "authority": "Client policy: supplied-host capability contract",
       "expected": {
         "passed": true
       },
@@ -3118,7 +3118,7 @@
       "group": "P09",
       "action": "host",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAC-D09/10; supplied host capability contract",
+      "authority": "Client policy: supplied-host capability contract",
       "expected": {
         "passed": true
       },
@@ -3129,7 +3129,7 @@
       "group": "P09",
       "action": "host",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAC-D09/10; supplied host capability contract",
+      "authority": "Client policy: supplied-host capability contract",
       "expected": {
         "passed": true
       },
@@ -3140,7 +3140,7 @@
       "group": "P09",
       "action": "host",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAC-D09/10; supplied host capability contract",
+      "authority": "Client policy: supplied-host capability contract",
       "expected": {
         "passed": true
       },
@@ -3151,7 +3151,7 @@
       "group": "P09",
       "action": "host",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAC-D09/10; supplied host capability contract",
+      "authority": "Client policy: supplied-host capability contract",
       "expected": {
         "passed": true
       },
@@ -3162,7 +3162,7 @@
       "group": "P09",
       "action": "host",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAC-D09/10; supplied host capability contract",
+      "authority": "Client policy: supplied-host capability contract",
       "expected": {
         "passed": true
       },
@@ -3173,7 +3173,7 @@
       "group": "P09",
       "action": "host",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAC-D09/10; supplied host capability contract",
+      "authority": "Client policy: supplied-host capability contract",
       "expected": {
         "passed": true
       },
@@ -3184,7 +3184,7 @@
       "group": "P09",
       "action": "host",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAC-D09/10; supplied host capability contract",
+      "authority": "Client policy: supplied-host capability contract",
       "expected": {
         "passed": true
       },
@@ -3195,7 +3195,7 @@
       "group": "P09",
       "action": "host",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAC-D09/10; supplied host capability contract",
+      "authority": "Client policy: supplied-host capability contract",
       "expected": {
         "passed": true
       },
@@ -3206,7 +3206,7 @@
       "group": "P09",
       "action": "host",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAC-D09/10; supplied host capability contract",
+      "authority": "Client policy: supplied-host capability contract",
       "expected": {
         "passed": true
       },
@@ -3217,7 +3217,7 @@
       "group": "P09",
       "action": "host",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAC-D09/10; supplied host capability contract",
+      "authority": "Client policy: supplied-host capability contract",
       "expected": {
         "passed": true
       },
@@ -3228,7 +3228,7 @@
       "group": "P09",
       "action": "host",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAC-D09/10; supplied host capability contract",
+      "authority": "Client policy: supplied-host capability contract",
       "expected": {
         "passed": true
       },
@@ -3239,7 +3239,7 @@
       "group": "P09",
       "action": "host",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAC-D09/10; supplied host capability contract",
+      "authority": "Client policy: supplied-host capability contract",
       "expected": {
         "passed": true
       },
@@ -3250,7 +3250,7 @@
       "group": "P10",
       "action": "limits",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAC-D02/03/07/09; fixed resource policy",
+      "authority": "Client policy: finite resource bounds",
       "expected": {
         "passed": true
       },
@@ -3263,7 +3263,7 @@
       "group": "P10",
       "action": "limits",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAC-D02/03/07/09; fixed resource policy",
+      "authority": "Client policy: finite resource bounds",
       "expected": {
         "passed": true
       },
@@ -3276,7 +3276,7 @@
       "group": "P10",
       "action": "limits",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAC-D02/03/07/09; fixed resource policy",
+      "authority": "Client policy: finite resource bounds",
       "expected": {
         "passed": true
       },
@@ -3289,7 +3289,7 @@
       "group": "P10",
       "action": "limits",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAC-D02/03/07/09; fixed resource policy",
+      "authority": "Client policy: finite resource bounds",
       "expected": {
         "passed": true
       },
@@ -3302,7 +3302,7 @@
       "group": "P10",
       "action": "limits",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAC-D02/03/07/09; fixed resource policy",
+      "authority": "Client policy: finite resource bounds",
       "expected": {
         "passed": true
       },
@@ -3315,7 +3315,7 @@
       "group": "P10",
       "action": "limits",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAC-D02/03/07/09; fixed resource policy",
+      "authority": "Client policy: finite resource bounds",
       "expected": {
         "passed": true
       },
@@ -3328,7 +3328,7 @@
       "group": "P10",
       "action": "limits",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAC-D02/03/07/09; fixed resource policy",
+      "authority": "Client policy: finite resource bounds",
       "expected": {
         "passed": true
       },
@@ -3341,7 +3341,7 @@
       "group": "P10",
       "action": "limits",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAC-D02/03/07/09; fixed resource policy",
+      "authority": "Client policy: finite resource bounds",
       "expected": {
         "passed": true
       },
@@ -3354,7 +3354,7 @@
       "group": "P10",
       "action": "limits",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAC-D02/03/07/09; fixed resource policy",
+      "authority": "Client policy: finite resource bounds",
       "expected": {
         "passed": true
       },
@@ -3367,7 +3367,7 @@
       "group": "P10",
       "action": "limits",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAC-D02/03/07/09; fixed resource policy",
+      "authority": "Client policy: finite resource bounds",
       "expected": {
         "passed": true
       },
@@ -3380,7 +3380,7 @@
       "group": "P10",
       "action": "limits",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAC-D02/03/07/09; fixed resource policy",
+      "authority": "Client policy: finite resource bounds",
       "expected": {
         "passed": true
       },
@@ -3393,7 +3393,7 @@
       "group": "P10",
       "action": "limits",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAC-D02/03/07/09; fixed resource policy",
+      "authority": "Client policy: finite resource bounds",
       "expected": {
         "passed": true
       },
@@ -3406,7 +3406,7 @@
       "group": "P10",
       "action": "limits",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAC-D02/03/07/09; fixed resource policy",
+      "authority": "Client policy: finite resource bounds",
       "expected": {
         "passed": true
       },
@@ -3419,7 +3419,7 @@
       "group": "P10",
       "action": "limits",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAC-D02/03/07/09; fixed resource policy",
+      "authority": "Client policy: finite resource bounds",
       "expected": {
         "passed": true
       },
@@ -3432,7 +3432,7 @@
       "group": "P10",
       "action": "limits",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAC-D02/03/07/09; fixed resource policy",
+      "authority": "Client policy: finite resource bounds",
       "expected": {
         "passed": true
       },
@@ -3445,7 +3445,7 @@
       "group": "P10",
       "action": "limits",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAC-D02/03/07/09; fixed resource policy",
+      "authority": "Client policy: finite resource bounds",
       "expected": {
         "passed": true
       },
@@ -3458,7 +3458,7 @@
       "group": "P10",
       "action": "limits",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAC-D02/03/07/09; fixed resource policy",
+      "authority": "Client policy: finite resource bounds",
       "expected": {
         "passed": true
       },
@@ -3471,7 +3471,7 @@
       "group": "P10",
       "action": "limits",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAC-D02/03/07/09; fixed resource policy",
+      "authority": "Client policy: finite resource bounds",
       "expected": {
         "passed": true
       },
@@ -3484,7 +3484,7 @@
       "group": "P10",
       "action": "limits",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAC-D02/03/07/09; fixed resource policy",
+      "authority": "Client policy: finite resource bounds",
       "expected": {
         "passed": true
       },
@@ -3497,7 +3497,7 @@
       "group": "P10",
       "action": "limits",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAC-D02/03/07/09; fixed resource policy",
+      "authority": "Client policy: finite resource bounds",
       "expected": {
         "passed": true
       },
@@ -3510,7 +3510,7 @@
       "group": "P10",
       "action": "limits",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAC-D02/03/07/09; fixed resource policy",
+      "authority": "Client policy: finite resource bounds",
       "expected": {
         "passed": true
       },
@@ -3523,7 +3523,7 @@
       "group": "P10",
       "action": "limits",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAC-D02/03/07/09; fixed resource policy",
+      "authority": "Client policy: finite resource bounds",
       "expected": {
         "passed": true
       },
@@ -3536,7 +3536,7 @@
       "group": "P10",
       "action": "limits",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAC-D02/03/07/09; fixed resource policy",
+      "authority": "Client policy: finite resource bounds",
       "expected": {
         "passed": true
       },
@@ -3549,7 +3549,7 @@
       "group": "P10",
       "action": "limits",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAC-D02/03/07/09; fixed resource policy",
+      "authority": "Client policy: finite resource bounds",
       "expected": {
         "passed": true
       },
@@ -3562,7 +3562,7 @@
       "group": "P10",
       "action": "campaign",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAC-D02/03/07/09; fixed resource policy",
+      "authority": "Client policy: finite resource bounds",
       "expected": {
         "passed": true
       },
@@ -3575,7 +3575,7 @@
       "group": "P10",
       "action": "campaign",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAC-D02/03/07/09; fixed resource policy",
+      "authority": "Client policy: finite resource bounds",
       "expected": {
         "passed": true
       },
@@ -3588,7 +3588,7 @@
       "group": "P10",
       "action": "campaign",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAC-D02/03/07/09; fixed resource policy",
+      "authority": "Client policy: finite resource bounds",
       "expected": {
         "passed": true
       },
@@ -3601,7 +3601,7 @@
       "group": "P10",
       "action": "campaign",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAC-D02/03/07/09; fixed resource policy",
+      "authority": "Client policy: finite resource bounds",
       "expected": {
         "passed": true
       },
@@ -3614,7 +3614,7 @@
       "group": "P10",
       "action": "campaign",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAC-D02/03/07/09; fixed resource policy",
+      "authority": "Client policy: finite resource bounds",
       "expected": {
         "passed": true
       },
@@ -3627,7 +3627,7 @@
       "group": "P10",
       "action": "campaign",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAC-D02/03/07/09; fixed resource policy",
+      "authority": "Client policy: finite resource bounds",
       "expected": {
         "passed": true
       },
@@ -3640,7 +3640,7 @@
       "group": "P10",
       "action": "concurrency",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAC-D02/03/07/09; fixed resource policy",
+      "authority": "Client policy: finite resource bounds",
       "expected": {
         "passed": true
       },
@@ -3652,7 +3652,7 @@
       "group": "P10",
       "action": "depth_drop",
       "document": "{\"openapi\":\"3.1.2\",\"info\":{\"title\":\"runtime fixture\",\"version\":\"1\"},\"servers\":[{\"url\":\"https://api.example/v1\"}],\"paths\":{\"/items\":{\"get\":{\"operationId\":\"items\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}}}",
-      "authority": "OAC-D02/03/07/09; fixed resource policy",
+      "authority": "Client policy: finite resource bounds",
       "expected": {
         "passed": true
       },

@@ -47,17 +47,20 @@ internally inconsistent default-content-type prose in 3.1.0 using 3.1.2.
 Sources: [Swagger parameters](https://spec.openapis.org/oas/v2.0.html#parameter-object),
 [3.0 encoding](https://spec.openapis.org/oas/v3.0.4.html#encoding-object),
 [3.1 encoding](https://spec.openapis.org/oas/v3.1.2.html#encoding-object),
-[3.2 encoding by name](https://spec.openapis.org/oas/v3.2.1.html#encoding-by-name),
-[form percent encoding](https://url.spec.whatwg.org/#concept-urlencoded-serializer).
+[3.2 encoding by name](https://spec.openapis.org/oas/v3.2.1.html#encoding-by-name).
+The tuple percent-encoding spelling is the client's policy P11.
 
 Schema evaluation is separate. The client reads only facts needed for an
 unambiguous wire representation and never applies defaults, selects schema
 branches, coerces values or projects objects. The original schema/encoding Values
 remain available. An inline field with explicit JSON media can retain an opaque
 field schema while copying its exact JSON value. This does not resolve schema
-references: a media-level schema reference still prevents field discovery, and
-field references cannot supply default media or hidden coding facts. Missing
-required facts refuse rather than being inferred from supplied data.
+references speculatively. Supported static references, anchors and compatible
+type conjunctions supply declaration facts, including field membership, default
+media and effective content coding. Unresolved relevant references produce typed
+needs through [GRAPH.md](GRAPH.md); unsupported or conflicting facts refuse
+without being inferred from supplied data. `describe_form_field` uses the same
+selected facts. Explicit JSON media cannot erase an unresolved relevant fact.
 OAS schema `required` remains a hint; Swagger
 `required` is a protocol requirement.
 
@@ -119,10 +122,14 @@ plan structures, allocator overhead and RSS are separate measured resource domai
 
 ## Remaining capabilities
 
-Schema/external-reference resolution needed for default codecs, custom
-serialization conventions, content encodings such as base64,
+Custom serialization conventions, schema branch/dynamic evaluation,
+content encodings such as base64,
 non-UTF-8 charsets, nested/positional multipart and streaming are explicit open
 capabilities. A declaration/refusal is not positive support for them. General
 multipart types need their own header/framing rules. The name-free Part/value
 model leaves room to compose those representations without requiring callers to
 build wire bodies or boundaries. Finite raw input remains available now.
+
+The finite representation choices, UTF-8 profile, field admission and boundaries
+are client policies where standards do not determine them. Matrix row F01 in
+[CAPABILITIES.md](CAPABILITIES.md) links edition authority and tests.

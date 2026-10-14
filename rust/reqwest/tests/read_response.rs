@@ -1,7 +1,7 @@
 // Execute the exact interpretation functions used by both native tutorials.
 // Their native main functions are compiled but never called here.
 #[allow(dead_code)]
-#[path = "../examples/o6_response.rs"]
+#[path = "../examples/read_response.rs"]
 mod current_job;
 use std::{
     future::Future,

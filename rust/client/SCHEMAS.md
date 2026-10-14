@@ -46,7 +46,7 @@ same `Diagnostic::resource_need()` as protocol references. See the executable
 anonymous Layout recovery. Reacquire handles after publishing the completed graph.
 Old handles continue to describe the old graph.
 
-This unpublished slice changes several ResourceNeed getters:
+Schema and protocol recovery use the same ResourceNeed getters:
 
 | Getter | Result |
 | --- | --- |
@@ -55,7 +55,7 @@ This unpublished slice changes several ResourceNeed getters:
 | `target_pointer()` | `Option<&str>`; root is Some empty string, pointer is Some pointer, anchor is None. |
 | `interpretation()` | `Protocol { kind, edition }` or `Schema { default_profile }`. |
 | `fragment()` | `Root`, `Pointer`, or `Anchor`. |
-| `kind()` / `target_resource()` / `source()` | Retain their prior meanings. |
+| `kind()` / `target_resource()` / `source()` | Need category, optional existing resource identity and authored source edge. |
 
 Identity-collision diagnostics keep the later declaration as their primary site.
 `DiagnosticReason::IdentityCollision { previous }` identifies the earlier claimant
@@ -93,12 +93,25 @@ caller-name cache persists in the snapshot.
 Facts and retained caches contain owner-free keys, never handles owning the same
 snapshot. Raw authored values retain only their source arenas after graph owners drop.
 
-Request/form preparation does not consume these schema facts yet. Selected coding,
-media, richer representation behavior, acquisition and evaluation remain later work.
-A correct Twilio enum reference, Flyn declared type union or Transmute content metadata
-fact is not evidence that its full request workflow is supported.
+Form preparation and `Operation::describe_form_field(media, name)` consume
+supported static declaration facts to choose a field's wire representation.
+`MediaDescription::fields` records contributor schemas, openness and required
+hints as Declared, Partial, Opaque or NotApplicable. None for a selected
+representation means it was not requested; absent effective content coding is
+distinct from an unresolved applicable fact. Explicit styles can make content
+coding irrelevant; explicit JSON media cannot erase a relevant unresolved
+reference. Missing facts needed for encoding return corrective resource needs
+or located form refusals. Schema-required hints never enforce missing inputs.
+This does not evaluate instances, choose branches, implement content codings or
+acquire resources. Whole JSON and raw bodies do not require these form facts.
 
 `SchemaHandle::keywords_supported()` reports whether direct keyword semantics are
 supported. Unknown dialects remain inspectable without a schema-validation claim.
 `references()` returns an exact-size iterator owning its ordered edges; it may be
 consumed after dropping the originating handle and Document.
+
+Schema semantics come from the applicable OpenAPI Schema Object and its cited
+JSON Schema vocabulary, including [OAS 3.1.2 §4.8.24](https://spec.openapis.org/oas/v3.1.2.html#schema-object).
+The finite static-fact profile and its refusals are client policies.
+Matrix row S01 in [CAPABILITIES.md](CAPABILITIES.md) links graph, contributor and
+selected-form cases; successful facts do not qualify an entire provider workflow.

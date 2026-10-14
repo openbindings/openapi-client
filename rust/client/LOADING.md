@@ -2,6 +2,10 @@
 
 `Document::parse(bytes, original_url, limits)` detects the serialization internally. The same document, operation and request types apply to every supported OpenAPI edition. The optional URL is the original retrieval identity/base, not a request-target override. Loading supplied bytes performs no I/O. The exact JSON parser runs first; JSON syntax failures may select YAML, including YAML flow collections beginning with `{` or `[`. Duplicate names, Unicode restrictions and JSON resource refusals are never bypassed by YAML fallback. A preliminary depth refusal is disambiguated because JSON-shaped punctuation can occur in YAML strings. When both grammars fail on brace/bracket-leading input, the JSON diagnostic is retained. `exact::Value::parse` and response JSON decoding remain JSON-only.
 
+Successful loading is not whole-document validation. `Document::edition()`
+returns a Result: malformed, missing, conflicting or unsupported version markers
+remain raw inspection data while semantic interpretation refuses.
+
 `Document::source()` retains the complete original text, including comments, scalar notation and whitespace. `Document::format()` reports the detected format for inspection, without being required to invoke operations.
 
 ## Values and provenance
@@ -53,6 +57,16 @@ Original bytes and normalized JSON output are independently capped at `limits.do
 
 The default remains 8 MiB per source/representation, 500,000 nodes and depth 128. Configure a larger document profile explicitly, for example `Limits { document_bytes: 32 * 1024 * 1024, ..Limits::default() }`. JSON/YAML owners can coexist during normalization. Retained-byte estimates include original YAML, generated JSON and source mappings; peak parser/normalizer memory and allocator overhead are separate from this estimate.
 
-## Remaining graph work
+## References and acquisition
 
-Caller-supplied resources, retrieval aliases, external protocol references and OpenAPI 3.2 `$self` are supported by the [immutable graph layer](GRAPH.md), preserving original JSON/YAML owners. File/HTTP/custom acquisition drivers and dialect-aware schema `$id`/anchor graphs remain subsequent work. The core never authorizes retrieval or reuses invocation credentials to acquire descriptions. No extension or instance `$ref` field gains behavior from YAML loading.
+Caller-supplied resources, retrieval aliases, external protocol references and
+OpenAPI 3.2 `$self` use the [immutable graph layer](GRAPH.md). Dialect-aware schema
+`$id`, anchor indexing and static references are implemented in [SCHEMAS.md](SCHEMAS.md).
+Form representation facts use that graph; schema evaluation is separate.
+File/HTTP/custom acquisition remains caller-owned. The core never authorizes
+retrieval or reuses invocation credentials to acquire descriptions. No extension
+or instance `$ref` field gains behavior from YAML loading.
+
+The finite profile, duplicate-key refusal and bounds are client policies.
+See matrix row L01 in [CAPABILITIES.md](CAPABILITIES.md) for edition authority,
+configuration and loading tests.

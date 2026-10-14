@@ -64,15 +64,15 @@ Section 2 is a record of design alternatives and early recommendations, not a no
 
 | # | Requirement | Editions | Level | Source |
 |---|---|---|---|---|
-| O1 | Operation slots on a Path Item: 2.0 `get put post delete options head patch`; 3.0/3.1 add `trace`; 3.2 adds `query` and `additionalOperations`, whose key "is the HTTP method with the same capitalization that is to be sent" and MUST NOT duplicate a fixed-field method. | all | def, MUST NOT | 2.0 §6.4.6; 3.0 §4.7.9; 3.1 §4.8.9; 3.2 §4.9.1 |
-| O2 | Paths keys MUST begin with `/`. The path is appended to the server URL (3.x) or to `basePath` (2.0) with no relative resolution. Templated paths that differ only in variable names MUST NOT exist. 3.2: a template expression MUST NOT appear more than once in a path. | all | MUST, MUST NOT | 2.0 §6.4.5; 3.0 §4.7.8; 3.1 §4.8.8; 3.2 §4.8.1, §4.8.2 |
-| O3 | Each template expression MUST correspond to a path parameter (exception for empty Path Items in 3.1+). A path parameter's `name` MUST correspond to a template expression. | all | MUST | 3.0 §3.5, §4.7.12; 3.1 §3.5, §4.8.12; 3.2 §4.8.2, §4.12.2.1; 2.0 §6.4.9 |
-| O4 | `operationId` is optional; if present it MUST be unique among all operations; tools MAY use it to identify operations. 3.2 states it is case-sensitive. | all | MUST, MAY | 2.0 §6.4.7; 3.0 §4.7.10; 3.1 §4.8.10; 3.2 §4.10.1 |
-| O5 | `responses` is REQUIRED on 2.0 and 3.0 operations, optional in 3.1/3.2. A Responses Object MUST contain at least one response code. | all | REQUIRED, MUST | 2.0 §6.4.7, §6.4.11; 3.0 §4.7.10, §4.7.16; 3.1 §4.8.16; 3.2 §4.16 |
-| O6 | `deprecated: true` means consumers SHOULD refrain from use; the operation still exists. | all | SHOULD | 2.0 §6.4.7; 3.x Operation Object |
-| O7 | HTTP method tokens are case-sensitive; standard methods are uppercase by convention. | all | def | RFC 9110 §9.1 |
-| O8 | Callbacks and webhooks describe requests initiated by the API provider, not by the client. | 3.x | def | 3.0 §4.7.18; 3.1 §4.8.1 (`webhooks`), §4.8.18; 3.2 §4.1.1, §4.18 |
-| O9 | Links are design-time relationships; "the presence of a link does not guarantee the caller's ability to successfully invoke it". | 3.x | def | 3.0 §4.7.20; 3.1 §4.8.20; 3.2 §4.20 |
+| OP1 | Operation slots on a Path Item: 2.0 `get put post delete options head patch`; 3.0/3.1 add `trace`; 3.2 adds `query` and `additionalOperations`, whose key "is the HTTP method with the same capitalization that is to be sent" and MUST NOT duplicate a fixed-field method. | all | def, MUST NOT | 2.0 §6.4.6; 3.0 §4.7.9; 3.1 §4.8.9; 3.2 §4.9.1 |
+| OP2 | Paths keys MUST begin with `/`. The path is appended to the server URL (3.x) or to `basePath` (2.0) with no relative resolution. Templated paths that differ only in variable names MUST NOT exist. 3.2: a template expression MUST NOT appear more than once in a path. | all | MUST, MUST NOT | 2.0 §6.4.5; 3.0 §4.7.8; 3.1 §4.8.8; 3.2 §4.8.1, §4.8.2 |
+| OP3 | Each template expression MUST correspond to a path parameter (exception for empty Path Items in 3.1+). A path parameter's `name` MUST correspond to a template expression. | all | MUST | 3.0 §3.5, §4.7.12; 3.1 §3.5, §4.8.12; 3.2 §4.8.2, §4.12.2.1; 2.0 §6.4.9 |
+| OP4 | `operationId` is optional; if present it MUST be unique among all operations; tools MAY use it to identify operations. 3.2 states it is case-sensitive. | all | MUST, MAY | 2.0 §6.4.7; 3.0 §4.7.10; 3.1 §4.8.10; 3.2 §4.10.1 |
+| OP5 | `responses` is REQUIRED on 2.0 and 3.0 operations, optional in 3.1/3.2. A Responses Object MUST contain at least one response code. | all | REQUIRED, MUST | 2.0 §6.4.7, §6.4.11; 3.0 §4.7.10, §4.7.16; 3.1 §4.8.16; 3.2 §4.16 |
+| OP6 | `deprecated: true` means consumers SHOULD refrain from use; the operation still exists. | all | SHOULD | 2.0 §6.4.7; 3.x Operation Object |
+| OP7 | HTTP method tokens are case-sensitive; standard methods are uppercase by convention. | all | def | RFC 9110 §9.1 |
+| OP8 | Callbacks and webhooks describe requests initiated by the API provider, not by the client. | 3.x | def | 3.0 §4.7.18; 3.1 §4.8.1 (`webhooks`), §4.8.18; 3.2 §4.1.1, §4.18 |
+| OP9 | Links are design-time relationships; "the presence of a link does not guarantee the caller's ability to successfully invoke it". | 3.x | def | 3.0 §4.7.20; 3.1 §4.8.20; 3.2 §4.20 |
 
 ### 1.4 Servers and the base URL
 

@@ -1,4 +1,4 @@
-# Immutable resource graphs (unpublished candidate)
+# Immutable resource graphs
 
 `Document::parse(bytes, retrieval_uri, limits)` remains the ordinary single-resource
 entry point. When callers already hold several resources, `DocumentBuilder::new`
@@ -113,14 +113,23 @@ reference edges, identities, layout roots and URI/pointer metadata bytes. Admiss
 checks counts before constructing metadata indices, including idempotent additions
 and enrichment. Per-source `Limits` still apply. `reference_steps` bounds each
 protocol chain; `descriptor_work` independently bounds aggregate declaration work.
-`retained_bytes()` sums accounted source arenas and excludes graph metadata,
-compiled descriptors, temporary overlap and allocator overhead. Bounds describe
-library work; constructing a caller-owned ResourceInput/layout is caller work.
+There is no product retained-byte telemetry API. Unsupported qualification hooks
+account for source arenas separately from graph metadata, compiled descriptors,
+temporary overlap and allocator overhead. Bounds describe library work;
+constructing a caller-owned ResourceInput/layout is caller work.
 
 Explicit Link operationRef/operationId connection resolution and discriminator
 URI inspection are not implemented by this Reference Object resolver; their raw
 fields remain inspectable. Schema inspection and private bounded facts are described
-in [SCHEMAS.md](SCHEMAS.md). Selected encoder schema needs and file/HTTP/custom
-acquisition drivers remain subsequent slices. No evaluator,
+in [SCHEMAS.md](SCHEMAS.md). Form planning and selected-field descriptions expose
+schema needs through this same recovery path. File/HTTP/custom acquisition
+remains caller-owned. No evaluator,
 implicit fetching, synthetic base, document rewrite or complete-feature claim is
 introduced by this graph layer.
+
+Protocol interpretation follows the edition's Reference and Path Item Objects,
+[RFC3986 §5.2](https://www.rfc-editor.org/rfc/rfc3986#section-5.2) and
+[RFC6901 §§4–6](https://www.rfc-editor.org/rfc/rfc6901#section-4).
+Snapshot identity, fragment layouts, conflict handling and bounded discovery are
+client policies. Matrix rows I01 and G01 in [CAPABILITIES.md](CAPABILITIES.md)
+link their authority and implementation evidence.

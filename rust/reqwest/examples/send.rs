@@ -1,4 +1,4 @@
-#[path = "o6_support/mod.rs"]
+#[path = "support/mod.rs"]
 mod support;
 use dynamic_openapi_client::{Credential, Document, Limits, ParameterLocation};
 use dynamic_openapi_client_reqwest::Client;
@@ -9,6 +9,7 @@ async fn main() -> Result<(), support::Error> {
     let operation = document.operation_id("create")?;
     let client = Client::new()?;
     for mode in ["ok", "reject"] {
+        // docs-start: send
         let request = operation
             .request()
             .parameter(ParameterLocation::Path, "id", &7_u64)
@@ -20,6 +21,7 @@ async fn main() -> Result<(), support::Error> {
                 Credential::bearer("local-token", vec![origin.clone()]),
             );
         let outcome = client.send(request).await;
+        // docs-end: send
         println!("status: {:?}", outcome.status());
     }
     server.await??;
