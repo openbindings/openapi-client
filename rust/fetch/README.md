@@ -1,18 +1,18 @@
 # Optional finite Fetch transport
 
-This unpublished companion connects prepared core requests to Browser or Worker
+This unpublished companion connects checked core request builders to Browser or Worker
 Fetch on wasm32-unknown-unknown. It is under qualification; raw host observations
 and author checks do not establish complete host/resource/performance support.
 Native construction returns the controlled Unavailable refusal and performs no I/O.
 
 ```no_run
-use dynamic_openapi_client::{Cancellation};
-use dynamic_openapi_client::transport::{PreparedRequest, ReplayPolicy};
+use dynamic_openapi_client::RequestBuilder;
+use dynamic_openapi_client::transport::{ReplayPolicy};
 use dynamic_openapi_client_fetch::{Client, Profile};
-# async fn call(prepared: &PreparedRequest) -> Result<(), Box<dyn std::error::Error>> {
+# async fn call(request: RequestBuilder) -> Result<(), Box<dyn std::error::Error>> {
 let client = Client::new(Profile::Browser)?;
-let outcome = client.execute_with_replay(
-    prepared, Cancellation::default(), ReplayPolicy::AllowHostManaged,
+let outcome = client.send(
+    request, ReplayPolicy::AllowHostManaged,
 ).await;
 match outcome.received_2xx_json_exact() {
     Ok(accepted) => println!("{}", accepted.clone().raw()),
@@ -21,7 +21,7 @@ match outcome.received_2xx_json_exact() {
 # Ok(()) }
 ```
 
-`execute` uses strict RequireNoReplay and ordinary Fetch refuses before its callback.
+`send` requires a replay policy on every call. `RequireNoReplay` makes ordinary Fetch refuse before its callback. The builder supplies cancellation through preparation and host I/O; prepared execution uses `advanced::execute(&client, &prepared, cancellation, replay)` with both elections explicit.
 Explicit AllowHostManaged authorizes the host's repetition behavior. The library
 calls Fetch once; this is not a bound on network attempts. Upload remains Unknown.
 The separate received-response policy accepts a complete response without inventing

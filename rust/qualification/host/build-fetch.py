@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import tomllib
@@ -48,6 +49,8 @@ with tempfile.TemporaryDirectory(prefix='archives-', dir=output) as temporary:
             packed.extractall(work, filter='data')
     core = work / 'dynamic-openapi-client-0.0.0'
     fetch = work / 'dynamic-openapi-client-fetch-0.0.0'
+    run('archived-api', [sys.executable, root / 'qualification/companion_api.py',
+                         'fetch', core, fetch, output / 'api'])
     # The supplementary controls also consume the archived JS plumbing.
     shutil.copy2(fetch / 'src/host.js', output / 'host.mjs')
     consumer = work / 'consumer'

@@ -103,6 +103,8 @@ with tempfile.TemporaryDirectory(prefix='native-consumer-', dir=output) as tempo
         + ',default-features=false}\n'
         '[dev-dependencies]\n' + ''.join(extra_dev_deps)
         + '[patch.crates-io]\ndynamic-openapi-client={path=' + json.dumps(str(core)) + '}\n')
+    run('archived-api', [sys.executable, root / 'qualification/companion_api.py',
+                         'native', core, native, output / 'api'])
     shutil.copy2(native / 'examples/real_http.rs', consumer / 'src/main.rs')
     shutil.copy2(root / 'qualification/native_consumer.rs', consumer / 'src/bin/independent-consumer.rs')
     shutil.copytree(native / 'tests', consumer / 'tests')

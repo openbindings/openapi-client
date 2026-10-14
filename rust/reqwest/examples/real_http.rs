@@ -38,12 +38,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         name: "example",
         labels: ["local", "typed"],
     };
-    let prepared = client
-        .request(&operation)
+    let request = operation
+        .request()
         .parameter(ParameterLocation::Query, "mode", &"normal")
-        .json(&body)
-        .prepare()?;
-    let outcome = client.execute(&prepared, Cancellation::default()).await;
+        .json(&body);
+    let outcome = client.send(request).await;
     let created: Created = outcome.received_2xx_json()?;
     assert_eq!((created.id, created.name.as_str()), (42, "example"));
     assert_eq!(outcome.upload(), UploadState::Unknown);
@@ -53,11 +52,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Cancellation is triggered only after the server has received the second request.
-    let prepared = client
-        .request(&operation)
+    let request = operation
+        .request()
         .parameter(ParameterLocation::Query, "mode", &"stall")
-        .json(&body)
-        .prepare()?;
+        .json(&body);
     let cancellation = Cancellation::default();
     let trigger = cancellation.clone();
     let cancel_task = tokio::spawn(async move {
@@ -66,7 +64,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     let cancelled = tokio::time::timeout(
         Duration::from_secs(3),
-        client.execute(&prepared, cancellation),
+        client.send(request.cancellation(cancellation)),
     )
     .await?;
     assert!(cancelled.cancelled());

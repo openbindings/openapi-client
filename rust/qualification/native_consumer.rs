@@ -336,11 +336,12 @@ mod server {
     }
 }
 
+use dynamic_openapi_client::RequestBuilder;
 use dynamic_openapi_client::*;
 use dynamic_openapi_client::{
     diagnostics::*, exact::*, form::*, graph::*, inspect::*, schema::*, source::*, transport::*,
 };
-use dynamic_openapi_client_reqwest::Client;
+use dynamic_openapi_client_reqwest::{Client, advanced};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as Json, json};
 use server::{Server, Wire};
@@ -1211,12 +1212,16 @@ fn document(body_bytes: usize) -> Document {
     )
     .unwrap()
 }
-fn request(client: &Client, doc: &Document, id: &str, server: &Server) -> PreparedRequest {
-    client
-        .request(&doc.operation_id(id).unwrap())
-        .server_variable("port", server.port.to_string())
-        .prepare()
+fn request(_client: &Client, doc: &Document, id: &str, server: &Server) -> RequestBuilder {
+    doc.operation_id(id)
         .unwrap()
+        .request()
+        .server_variable("port", server.port.to_string())
+}
+async fn send(client: &Client, request: RequestBuilder) -> Outcome {
+    tokio::time::timeout(Duration::from_secs(2), client.send(request))
+        .await
+        .expect("functional execution deadline")
 }
 fn configured(server: &Server) -> Client {
     Client::builder()
@@ -1246,7 +1251,7 @@ fn configured(server: &Server) -> Client {
 async fn execute(client: &Client, request: &PreparedRequest) -> Outcome {
     tokio::time::timeout(
         Duration::from_secs(2),
-        client.execute(request, Cancellation::default()),
+        advanced::execute(client, request, Cancellation::default()),
     )
     .await
     .expect("functional execution deadline")
@@ -1414,8 +1419,8 @@ async fn main() {
     assert_eq!(owner.source().as_bytes(), fixture("ordinary-request.json"));
     let tags = ["red blue", "x/y"];
     let operation = doc.operation_id("createItem").unwrap();
-    let prepared = client
-        .request(&operation)
+    let prepared = operation
+        .request()
         .server_variable("port", server.port.to_string())
         .parameter(ParameterLocation::Path, "id", &"A/B ?#雪")
         .parameter(ParameterLocation::Query, "tag", &tags)
@@ -1429,11 +1434,9 @@ async fn main() {
         .parameter(ParameterLocation::Cookie, "sess", &"s/a")
         .header(Header::new("X-Multi", "first"))
         .header(Header::new("x-multi", "second"))
-        .json_exact(&owner.clone())
-        .prepare()
-        .unwrap();
+        .json_exact(&owner.clone());
     safe_text(&format!("{prepared:?}"));
-    let outcome = execute(&client, &prepared).await;
+    let outcome = send(&client, prepared).await;
     response(&outcome, 200, &fixture("success.json"), BodyState::Complete);
     assert!(outcome.error().is_none());
     let strict = strict_policy::complete_2xx_json(outcome.clone()).unwrap_err();
@@ -1493,13 +1496,13 @@ async fn main() {
     observations.push(json!({"case":"ordinary-configured-real-post-and-typed-success","wire":wire_observation(&wire),"strictPolicy":"UploadUncertain","receivedPolicy":"accepted"}));
 
     let exact = Value::parse(fixture("exact-request.json"), Limits::default()).unwrap();
-    let exact_request = client
-        .request(&doc.operation_id("sendExact").unwrap())
+    let exact_request = doc
+        .operation_id("sendExact")
+        .unwrap()
+        .request()
         .server_variable("port", server.port.to_string())
-        .json_exact(&exact.clone())
-        .prepare()
-        .unwrap();
-    let exact_outcome = execute(&client, &exact_request).await;
+        .json_exact(&exact.clone());
+    let exact_outcome = send(&client, exact_request).await;
     assert!((exact_outcome).received_2xx_json_exact().is_ok());
     let exact_wire = server.observed("/v1/exact").await;
     assert_eq!(exact_wire.body.as_bytes(), fixture("exact-request.json"));
@@ -1542,7 +1545,7 @@ async fn main() {
         ),
     ] {
         let prepared = request(&client, &doc, operation, &server);
-        let outcome = execute(&client, &prepared).await;
+        let outcome = send(&client, prepared).await;
         assert!((outcome).received_2xx_json_exact().is_ok());
         let wire = server.observed(target).await;
         if let Some(header) = header {
@@ -1552,14 +1555,17 @@ async fn main() {
     }
     let other = Server::start();
     let refused = client
-        .request(&operation)
-        .server_variable("port", other.port.to_string())
-        .parameter(ParameterLocation::Path, "id", &"x")
-        .json_exact(&owner.clone())
-        .prepare()
-        .unwrap_err();
+        .send(
+            operation
+                .request()
+                .server_variable("port", other.port.to_string())
+                .parameter(ParameterLocation::Path, "id", &"x")
+                .json_exact(&owner.clone()),
+        )
+        .await;
+    let refused = refused.error().unwrap();
     assert_eq!(refused.code(), Code::CredentialOrigin);
-    safe_error_chain(&refused);
+    safe_error_chain(refused);
     assert!(other.records().is_empty());
     drop(other);
     let public = doc
@@ -1580,7 +1586,7 @@ async fn main() {
     }
     observations.push(json!({"case":"credential-origin-and-no-execute-time-auth-injection","publicWire":wire_observation(&public_wire)}));
 
-    let outcome = execute(&client, &request(&client, &doc, "reject", &server)).await;
+    let outcome = send(&client, request(&client, &doc, "reject", &server)).await;
     response(&outcome, 422, &fixture("problem.json"), BodyState::Complete);
     let refusal = (outcome).received_2xx_json_exact().unwrap_err();
     assert_eq!(refusal.code(), Code::HttpStatus);
@@ -1593,9 +1599,9 @@ async fn main() {
     observations.push(json!({"case":"non2xx-retains-response-and-decoded-owner","status":422,"reason":"HttpStatus"}));
 
     let exact_limit = document(33);
-    let limit_outcome = execute(
+    let limit_outcome = send(
         &client,
-        &request(&client, &exact_limit, "exact_limit", &server),
+        request(&client, &exact_limit, "exact_limit", &server),
     )
     .await;
     response(
@@ -1606,7 +1612,7 @@ async fn main() {
     );
     assert!((limit_outcome).received_2xx_json_exact().is_ok());
     let limited = document(32);
-    let outcome = execute(&client, &request(&client, &limited, "large", &server)).await;
+    let outcome = send(&client, request(&client, &limited, "large", &server)).await;
     response(
         &outcome,
         200,
@@ -1621,7 +1627,7 @@ async fn main() {
         Code::IncompleteBody
     );
     observations.push(json!({"case":"exact-bound-eof-and-delivered-overflow","exactBytes":33,"retainedOverflowBytes":32,"overflowState":"Truncated"}));
-    let outcome = execute(&client, &request(&client, &doc, "broken", &server)).await;
+    let outcome = send(&client, request(&client, &doc, "broken", &server)).await;
     response(
         &outcome,
         200,
@@ -1641,7 +1647,7 @@ async fn main() {
     let before = server.records().len();
     let token = Cancellation::default();
     token.cancel();
-    let pre = client.execute(&public, token).await;
+    let pre = advanced::execute(&client, &public, token).await;
     assert_eq!(pre.dispatch(), DispatchEvidence::NotDispatched);
     assert_eq!(pre.upload(), UploadState::NotStarted);
     assert!(pre.cancelled() && pre.status().is_none());
@@ -1651,7 +1657,9 @@ async fn main() {
         let prepared = request(&client, &doc, operation, &server);
         let token = Cancellation::default();
         let (c, t) = (client.clone(), token.clone());
-        let task = tokio::spawn(send_future(async move { c.execute(&prepared, t).await }));
+        let task = tokio::spawn(send_future(async move {
+            c.send(prepared.cancellation(t)).await
+        }));
         let observed = server.observed(path).await;
         assert_eq!(observed.method, "GET");
         if operation == "wait_body" {
@@ -1685,7 +1693,7 @@ async fn main() {
         observations.push(json!({"case":"pending-local-cancellation","operation":operation,"serverAlreadyObserved":true,"reason":"TransportFailure","remoteUndoAsserted":false}));
     }
 
-    let outcome = execute(&client, &request(&client, &doc, "redirect", &server)).await;
+    let outcome = send(&client, request(&client, &doc, "redirect", &server)).await;
     response(&outcome, 302, &fixture("success.json"), BodyState::Complete);
     assert_eq!(
         outcome
@@ -1704,7 +1712,7 @@ async fn main() {
     assert_eq!(server.count("/v1/landing"), 0);
     for operation in ["cookie_set", "cookie_check"] {
         assert!(
-            (execute(&client, &request(&client, &doc, operation, &server)).await)
+            (send(&client, request(&client, &doc, operation, &server)).await)
                 .received_2xx_json_exact()
                 .is_ok()
         );
@@ -1716,7 +1724,7 @@ async fn main() {
             .values("cookie")
             .is_empty()
     );
-    let outcome = execute(&client, &request(&client, &doc, "once", &server)).await;
+    let outcome = send(&client, request(&client, &doc, "once", &server)).await;
     assert_eq!(outcome.error().unwrap().code(), Code::TransportFailure);
     assert!(outcome.status().is_none());
     assert_eq!(server.count("/v1/once"), 1);
@@ -1724,8 +1732,8 @@ async fn main() {
 
     let target_op = doc.operation_id("normalizedTarget").unwrap();
     for pair in expected["targets"]["allowed"].as_array().unwrap() {
-        let prepared = client
-            .request(&target_op)
+        let prepared = target_op
+            .request()
             .server_variable("port", server.port.to_string())
             .parameter(
                 ParameterLocation::Path,
@@ -1743,8 +1751,8 @@ async fn main() {
     }
     for id in [".", ".."] {
         let before = server.records().len();
-        let refused = client
-            .request(&target_op)
+        let refused = target_op
+            .request()
             .server_variable("port", server.port.to_string())
             .parameter(ParameterLocation::Path, "id", &id)
             .prepare()
@@ -1778,8 +1786,10 @@ async fn main() {
         ),
     ] {
         let special = Document::parse(spec, None, Limits::default()).unwrap();
-        let prepared = client
-            .request(&special.operation_id("ok").unwrap())
+        let prepared = special
+            .operation_id("ok")
+            .unwrap()
+            .request()
             .server_variable("port", port)
             .prepare()
             .unwrap();
@@ -1808,8 +1818,10 @@ async fn main() {
         "Trailer",
         "Expect",
     ] {
-        let prepared = client
-            .request(&doc.operation_id("ok").unwrap())
+        let prepared = doc
+            .operation_id("ok")
+            .unwrap()
+            .request()
             .server_variable("port", server.port.to_string())
             .header(Header::new(name, "value"))
             .prepare()
@@ -1822,7 +1834,7 @@ async fn main() {
     }
     observations.push(json!({"case":"transport-controlled-headers-refuse-before-io","fields":11}));
 
-    let outcome = execute(&client, &request(&client, &doc, "numeric", &server)).await;
+    let outcome = send(&client, request(&client, &doc, "numeric", &server)).await;
     let accepted = (outcome).received_2xx_json_exact().unwrap();
     let source = accepted.source().to_owned();
     #[derive(Deserialize)]
@@ -1919,7 +1931,7 @@ async fn main() {
         #[allow(dead_code)]
         kind: serde::de::IgnoredAny,
     }
-    let accepted = (execute(&client, &request(&client, &doc, "bad_type", &server)).await)
+    let accepted = (send(&client, request(&client, &doc, "bad_type", &server)).await)
         .received_2xx_json_exact()
         .unwrap();
     for (error, secret) in [
@@ -1944,7 +1956,7 @@ async fn main() {
             Err(serde::de::Error::custom("typed-secret-D99"))
         }
     }
-    let accepted = (execute(&client, &request(&client, &doc, "custom_type", &server)).await)
+    let accepted = (send(&client, request(&client, &doc, "custom_type", &server)).await)
         .received_2xx_json_exact()
         .unwrap();
     let error = accepted.deserialize::<Custom>().unwrap_err();
@@ -1963,7 +1975,7 @@ async fn main() {
     // the first source/expectation freeze intact.
     let encoded_spec = SPEC.replace("\"/ok\":", "\"/encoded\":");
     let encoded_doc = Document::parse(encoded_spec, None, Limits::default()).unwrap();
-    let outcome = execute(&client, &request(&client, &encoded_doc, "ok", &server)).await;
+    let outcome = send(&client, request(&client, &encoded_doc, "ok", &server)).await;
     response(
         &outcome,
         200,
@@ -1981,7 +1993,7 @@ async fn main() {
         .build()
         .unwrap();
     let timeout_request = request(&timed, &doc, "wait", &server);
-    let outcome = execute(&timed, &timeout_request).await;
+    let outcome = send(&timed, timeout_request).await;
     server.release("/v1/wait");
     assert!(!outcome.cancelled());
     assert_eq!(outcome.error().unwrap().code(), Code::TransportFailure);

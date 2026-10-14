@@ -91,6 +91,11 @@ impl Operation {
     }
 }
 impl RequestBuilder {
+    pub(crate) fn prepare_with_token(self) -> (Result<PreparedRequest, Diagnostic>, Cancellation) {
+        let cancellation = self.cancellation.clone();
+        (self.prepare(), cancellation)
+    }
+
     fn limits(&self) -> &Limits {
         &self.operation.store.limits
     }

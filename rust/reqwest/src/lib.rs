@@ -9,12 +9,16 @@ use dynamic_openapi_client::transport::{
     ResponseAdmission, ResponseInput, TransportResult, UploadState,
 };
 use dynamic_openapi_client::{
-    Cancellation, Credential, Diagnostic, Header, Operation, Outcome, RequestBuilder,
+    Cancellation, Credential, Diagnostic, Header, Outcome, RequestBuilder,
 };
 use std::{fmt, sync::Arc, time::Duration};
 
-/// Explicit additional TLS trust root. Hostname and certificate checks stay enabled.
-pub use reqwest::Certificate;
+/// Explicit TLS trust configuration using the backend's certificate type.
+pub mod tls {
+    /// Additional trust root. Hostname and certificate checks stay enabled.
+    pub use reqwest::Certificate;
+}
+use tls::Certificate;
 
 const FORBIDDEN: &[&str] = &[
     "host",
@@ -91,9 +95,11 @@ impl ClientBuilder {
     }
 
     /// Build the configured native client without making a request.
-    pub fn build(self) -> Result<Client, reqwest::Error> {
+    pub fn build(self) -> Result<Client, Diagnostic> {
         Ok(Client {
-            inner: self.inner.build()?,
+            inner: self.inner.build().map_err(|_| {
+                Diagnostic::from(dynamic_openapi_client::diagnostics::HostRefusal::Configuration)
+            })?,
             credentials: self.credentials.into(),
             capabilities: Arc::new(capabilities()),
         })
@@ -102,7 +108,7 @@ impl ClientBuilder {
 
 impl Client {
     /// Build a client using the documented deadlines and no configured credentials.
-    pub fn new() -> Result<Self, reqwest::Error> {
+    pub fn new() -> Result<Self, Diagnostic> {
         Self::builder().build()
     }
 
@@ -132,55 +138,19 @@ impl Client {
         }
     }
 
-    /// Begin the existing core builder with this client's configured credentials.
-    /// Per-call inputs and security/origin checks remain core preparation work.
-    pub fn request(&self, operation: &Operation) -> RequestBuilder {
-        let mut request = operation.request();
+    /// Consume a checked builder, applying configured scoped credentials once before
+    /// preparation. Per-call/default duplicates refuse rather than overriding.
+    /// Preparation and I/O share the builder's cancellation token. Preparation
+    /// failure returns a non-dispatched Outcome with the actual corrective diagnostic.
+    pub async fn send(&self, mut request: RequestBuilder) -> Outcome {
         for (scheme, credential) in self.credentials.iter() {
             request = request.credential(scheme.as_str(), credential.clone());
         }
-        request
-    }
-
-    /// Execute a prepared request and preserve available response evidence.
-    /// An unusable idle connection may be replaced only while the backend can
-    /// recover the original request before serialization has begun.
-    ///
-    /// Unsupported URL spelling or transport-controlled headers refuse before
-    /// dispatch. After entering backend execution, upload completion is unknown.
-    /// Cancellation stops the local wait without asserting remote cancellation.
-    pub async fn execute(&self, prepared: &PreparedRequest, cancellation: Cancellation) -> Outcome {
-        if let Err(error) = cancellation.check() {
-            return Outcome::not_dispatched(error, true, None);
+        let (prepared, cancellation) = dynamic_openapi_client::advanced::prepare(request);
+        match prepared {
+            Ok(prepared) => advanced::execute(self, &prepared, cancellation).await,
+            Err(error) => Outcome::not_dispatched(error, cancellation.is_cancelled(), None),
         }
-        let capabilities = &self.capabilities;
-        if let Err(error) = capabilities.admit(prepared) {
-            return Outcome::not_dispatched(
-                error,
-                cancellation.is_cancelled(),
-                Some(Arc::from("native request profile refused")),
-            );
-        }
-        let request = match backend_request(prepared) {
-            Ok(request) => request,
-            Err(detail) => {
-                return Outcome::not_dispatched(
-                    Diagnostic::new(Code::HostCapability),
-                    cancellation.is_cancelled(),
-                    Some(Arc::from(detail)),
-                );
-            }
-        };
-        prepared
-            .invoke(cancellation, capabilities, |dispatch, cancellation| {
-                let admission = dispatch.response_admission();
-                let mut request = request;
-                if let Some(body) = dispatch.body() {
-                    *request.body_mut() = Some(bytes::Bytes::from_owner(body.clone()).into());
-                }
-                self.exchange(request, admission, cancellation)
-            })
-            .await
     }
 
     async fn exchange(
@@ -256,6 +226,57 @@ impl Client {
             upload: UploadState::Unknown,
             error_detail: detail.map(Arc::from),
         }
+    }
+}
+
+/// Deliberate execution of an already prepared request.
+/// No client credential defaults are applied after preparation.
+pub mod advanced {
+    use super::*;
+
+    /// Execute a prepared request and preserve available response evidence.
+    /// An unusable idle connection may be replaced only while the backend can
+    /// recover the original request before serialization has begun.
+    ///
+    /// Unsupported URL spelling or transport-controlled headers refuse before
+    /// dispatch. After entering backend execution, upload completion is unknown.
+    /// Cancellation stops the local wait without asserting remote cancellation.
+    pub async fn execute(
+        client: &Client,
+        prepared: &PreparedRequest,
+        cancellation: Cancellation,
+    ) -> Outcome {
+        if let Err(error) = cancellation.check() {
+            return Outcome::not_dispatched(error, true, None);
+        }
+        let capabilities = &client.capabilities;
+        if let Err(error) = capabilities.admit(prepared) {
+            return Outcome::not_dispatched(
+                error,
+                cancellation.is_cancelled(),
+                Some(Arc::from("native request profile refused")),
+            );
+        }
+        let request = match backend_request(prepared) {
+            Ok(request) => request,
+            Err(detail) => {
+                return Outcome::not_dispatched(
+                    Diagnostic::new(Code::HostCapability),
+                    cancellation.is_cancelled(),
+                    Some(Arc::from(detail)),
+                );
+            }
+        };
+        prepared
+            .invoke(cancellation, capabilities, |dispatch, cancellation| {
+                let admission = dispatch.response_admission();
+                let mut request = request;
+                if let Some(body) = dispatch.body() {
+                    *request.body_mut() = Some(bytes::Bytes::from_owner(body.clone()).into());
+                }
+                client.exchange(request, admission, cancellation)
+            })
+            .await
     }
 }
 

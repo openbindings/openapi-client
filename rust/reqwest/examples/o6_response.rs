@@ -1,6 +1,6 @@
 #[path = "o6_support/mod.rs"]
 mod support;
-use dynamic_openapi_client::{Cancellation, Credential, Document, Limits, ParameterLocation};
+use dynamic_openapi_client::{Credential, Document, Limits, ParameterLocation};
 use dynamic_openapi_client_reqwest::Client;
 #[tokio::main]
 async fn main() -> Result<(), support::Error> {
@@ -9,7 +9,7 @@ async fn main() -> Result<(), support::Error> {
     let operation = document.operation_id("create")?;
     let client = Client::new()?;
     for mode in ["ok", "reject"] {
-        let prepared = operation
+        let request = operation
             .request()
             .parameter(ParameterLocation::Path, "id", &7_u64)
             .parameter(ParameterLocation::Query, "mode", &mode)
@@ -18,9 +18,8 @@ async fn main() -> Result<(), support::Error> {
             .credential(
                 "token",
                 Credential::bearer("local-token", vec![origin.clone()]),
-            )
-            .prepare()?;
-        let outcome = client.execute(&prepared, Cancellation::default()).await;
+            );
+        let outcome = client.send(request).await;
         interpret(outcome)?;
     }
     server.await??;
