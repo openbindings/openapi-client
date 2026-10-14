@@ -169,19 +169,18 @@ async fn configured_auth_exact_body_and_explicit_server_close() {
     }
     assert!(!format!("{client:?}").contains("local-test-token"));
     let wrong_origin = document("http://127.0.0.1:1", 4096, true);
-    assert!(
-        client
-            .send(
-                wrong_origin
-                    .operation_id("run")
-                    .unwrap()
-                    .request()
-                    .parameter(ParameterLocation::Path, "id", &"x")
-            )
-            .await
-            .error()
-            .is_some()
-    );
+    let outcome = client
+        .send(
+            wrong_origin
+                .operation_id("run")
+                .unwrap()
+                .request()
+                .parameter(ParameterLocation::Path, "id", &"x"),
+        )
+        .await;
+    assert_eq!(outcome.error().unwrap().code(), Code::CredentialOrigin);
+    assert_eq!(outcome.dispatch(), DispatchEvidence::NotDispatched);
+    assert_eq!(outcome.upload(), UploadState::NotStarted);
 }
 
 #[tokio::test]

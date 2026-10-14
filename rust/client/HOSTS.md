@@ -17,6 +17,15 @@ uncancelled default. Preparation does not rerun user serialization or perform I/
 
 Apply any transport-wide scoped credentials with `request.credential(...)` before
 this call. Duplicate defaults/per-call assignments refuse instead of overriding.
+The native companion applies configured credentials, in their configured order,
+inside `send`, after the caller's eager setters and before `advanced::prepare`.
+Custom transports using defaults should follow this order. Serialization can run
+once before a credential duplicate is detected; preparation never reruns it.
+The first setter failure remains primary, so a non-finite body takes precedence
+over duplicate defaults. Assignment indices and aggregate-input byte accounting
+also follow setter order: a default added after a body can exceed the budget in
+`CallerInput` rather than the body's `Construction` context. This ordering is
+client policy, not an OpenAPI requirement.
 On success, custom hosts work from PreparedRequest and pass the returned token to
 `invoke` or `invoke_with_replay`; retain the actual preparation Diagnostic on
 failure. This strict callback example supports both Send and local host futures:

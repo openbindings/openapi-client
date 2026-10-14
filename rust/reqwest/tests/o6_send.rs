@@ -1,7 +1,9 @@
-use dynamic_openapi_client::diagnostics::{Code, DiagnosticReason};
+use dynamic_openapi_client::diagnostics::{
+    Code, DiagnosticContext, DiagnosticReason, LimitKind, SerializationReason,
+};
 use dynamic_openapi_client::transport::{DispatchEvidence, UploadState};
 use dynamic_openapi_client::{
-    Cancellation, Credential, Document, Header, Limits, ParameterLocation,
+    Cancellation, Credential, Document, Header, Limits, Outcome, ParameterLocation,
 };
 use dynamic_openapi_client_reqwest::{Client, advanced};
 use serde::Serialize;
@@ -201,4 +203,171 @@ async fn send_keeps_the_selected_token_first_error_and_single_serialization() {
     let retained = out.received_2xx_json_exact().unwrap_err();
     drop(out);
     assert_eq!(retained.code(), Code::Serialization);
+}
+
+// Match the paired stage-4/stage-5 review probes: one JSON body, no parameter
+// assignments, and a scoped bearer credential. These refuse before any I/O.
+fn ordering_document(document_bytes: usize) -> Document {
+    let spec = serde_json::json!({
+        "openapi": "3.1.0", "servers": [{"url": "https://EXAMPLE.test"}],
+        "components": {"securitySchemes": {"token": {"type": "http", "scheme": "bearer"}}},
+        "paths": {"/": {"post": {"operationId": "probe", "security": [{"token": []}],
+            "requestBody": {"content": {"application/json": {"schema": {}}}}}}}
+    });
+    Document::parse(
+        spec.to_string(),
+        None,
+        Limits {
+            document_bytes,
+            ..Limits::default()
+        },
+    )
+    .unwrap()
+}
+
+fn ordering_credential() -> Credential {
+    Credential::bearer("secret", vec!["https://example.test".into()])
+}
+
+struct Count150<'a>(&'a Cell<usize>);
+impl Serialize for Count150<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.0.set(self.0.get() + 1);
+        serializer.serialize_str(&"x".repeat(150))
+    }
+}
+
+fn assert_ordering_refusal(outcome: &Outcome) {
+    assert_eq!(outcome.dispatch(), DispatchEvidence::NotDispatched);
+    assert_eq!(outcome.upload(), UploadState::NotStarted);
+    assert!(!outcome.cancelled());
+    assert_eq!(outcome.replay_assurance(), None);
+    assert_eq!(outcome.error().unwrap().location(), None);
+    assert_eq!(outcome.error().unwrap().setting(), None);
+}
+
+#[tokio::test]
+async fn duplicate_defaults_follow_eager_body_serialization() {
+    let doc = ordering_document(1_000_000);
+    let client = Client::builder()
+        .credential("token", ordering_credential())
+        .credential("token", ordering_credential())
+        .build()
+        .unwrap();
+    let count = Cell::new(0);
+    let request = doc
+        .operation_id("probe")
+        .unwrap()
+        .request()
+        .json(&Count150(&count));
+    assert_eq!(count.get(), 1);
+    let outcome = client.send(request).await;
+    assert_eq!(count.get(), 1);
+    let error = outcome.error().unwrap();
+    assert_eq!(error.code(), Code::InvalidSelection);
+    assert_eq!(
+        error.context(),
+        Some(&DiagnosticContext::Credential {
+            scheme: "token".into()
+        })
+    );
+    assert_eq!(
+        error.reason(),
+        Some(&DiagnosticReason::DuplicateAssignment {
+            first_assignment: 1,
+            repeated_assignment: 2,
+        })
+    );
+    assert_ordering_refusal(&outcome);
+}
+
+#[tokio::test]
+async fn configured_and_per_call_duplicates_follow_eager_body_serialization() {
+    let doc = ordering_document(1_000_000);
+    let client = Client::builder()
+        .credential("token", ordering_credential())
+        .build()
+        .unwrap();
+    let count = Cell::new(0);
+    let request = doc
+        .operation_id("probe")
+        .unwrap()
+        .request()
+        .credential("token", ordering_credential())
+        .json(&Count150(&count));
+    assert_eq!(count.get(), 1);
+    let outcome = client.send(request).await;
+    assert_eq!(count.get(), 1);
+    let error = outcome.error().unwrap();
+    assert_eq!(error.code(), Code::InvalidSelection);
+    assert_eq!(
+        error.context(),
+        Some(&DiagnosticContext::Credential {
+            scheme: "token".into()
+        })
+    );
+    assert_eq!(
+        error.reason(),
+        Some(&DiagnosticReason::DuplicateAssignment {
+            first_assignment: 0,
+            repeated_assignment: 2,
+        })
+    );
+    assert_ordering_refusal(&outcome);
+}
+
+#[tokio::test]
+async fn non_finite_body_refusal_precedes_duplicate_defaults() {
+    let doc = ordering_document(1_000_000);
+    let client = Client::builder()
+        .credential("token", ordering_credential())
+        .credential("token", ordering_credential())
+        .build()
+        .unwrap();
+    let outcome = client
+        .send(doc.operation_id("probe").unwrap().request().json(&f64::NAN))
+        .await;
+    let error = outcome.error().unwrap();
+    assert_eq!(error.code(), Code::Serialization);
+    assert_eq!(error.context(), Some(&DiagnosticContext::Construction));
+    assert_eq!(
+        error.reason(),
+        Some(&DiagnosticReason::Serialization(
+            SerializationReason::NonFiniteNumber
+        ))
+    );
+    assert_ordering_refusal(&outcome);
+}
+
+#[tokio::test]
+async fn default_credential_budget_refusal_follows_eager_body_serialization() {
+    let doc = ordering_document(700);
+    let client = Client::builder()
+        .credential(
+            "token",
+            Credential::bearer("x".repeat(600), vec!["https://example.test".into()]),
+        )
+        .build()
+        .unwrap();
+    let count = Cell::new(0);
+    let request = doc
+        .operation_id("probe")
+        .unwrap()
+        .request()
+        .json(&Count150(&count));
+    assert_eq!(count.get(), 1);
+    let outcome = client.send(request).await;
+    assert_eq!(count.get(), 1);
+    let error = outcome.error().unwrap();
+    assert_eq!(error.code(), Code::Limit);
+    assert_eq!(error.context(), Some(&DiagnosticContext::CallerInput));
+    assert_eq!(
+        error.reason(),
+        Some(&DiagnosticReason::Limit {
+            kind: LimitKind::InputBytes,
+            maximum: 700,
+            actual: 757,
+        })
+    );
+    assert_ordering_refusal(&outcome);
 }
