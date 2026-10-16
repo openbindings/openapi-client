@@ -55,6 +55,8 @@ formatting, lint, tests/doctests, fixtures and packaged consumers. Native tests
 and examples need loopback sockets. Browser/Worker qualification has additional
 tooling and runtime gates in [the release guide](../docs/release-qualification.md).
 Use cached dependencies and `CARGO_NET_OFFLINE=true` for offline replay.
+CI also checks the locked dependencies against the RustSec advisory database
+with `cargo deny check advisories` under [the advisory policy](deny.toml).
 The non-default `qualification` feature is unsupported test instrumentation;
 ordinary consumers omit it. [Development status](DEVELOPMENT-STATUS.md) retains
 the broader qualification history and open work.

@@ -1,0 +1,7 @@
+# Dependency advisory policy for the Rust workspace, checked in CI by
+# `cargo deny check advisories`. Vulnerabilities and yanked versions fail.
+# An ignore entry needs the advisory ID and a written reason.
+[advisories]
+version = 2
+yanked = "deny"
+ignore = []
