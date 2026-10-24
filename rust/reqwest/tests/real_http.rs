@@ -248,6 +248,88 @@ async fn redirects_are_evidence_and_never_followed() {
     server.await.unwrap();
 }
 
+async fn replies(replies: Vec<Vec<u8>>) -> (String, tokio::task::JoinHandle<Vec<Captured>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let task = tokio::spawn(async move {
+        let mut requests = Vec::new();
+        for reply in replies {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            requests.push(capture(&mut stream).await);
+            stream.write_all(&reply).await.unwrap();
+        }
+        requests
+    });
+    (origin, task)
+}
+
+#[tokio::test]
+async fn redirect_step_follows_a_native_chain_explicitly() {
+    let (elsewhere, destination) = replies(vec![response(
+        "200 OK",
+        "Connection: close\r\n",
+        br#"{"done":true}"#,
+    )])
+    .await;
+    let (origin, server) = replies(vec![
+        response(
+            "303 See Other",
+            "Location: /items/alpha/status?q=1\r\nConnection: close\r\n",
+            b"",
+        ),
+        response(
+            "307 Temporary Redirect",
+            &format!("Location: {elsewhere}/files/alpha\r\nConnection: close\r\n"),
+            b"",
+        ),
+    ])
+    .await;
+    let doc = document(&origin, 4096, true);
+    let client = Client::new().unwrap();
+    let cancellation = Cancellation::default();
+    let mut request = doc
+        .operation_id("run")
+        .unwrap()
+        .request()
+        .parameter(ParameterLocation::Path, "id", &"alpha")
+        .json_exact(&Value::parse(br#"{"n":1}"#, Limits::default()).unwrap())
+        .credential(
+            "bearer",
+            Credential::bearer("local-test-token", vec![origin.clone()]),
+        )
+        .prepare()
+        .unwrap();
+    let mut outcome = execute(&client, &request, cancellation.clone()).await;
+    let mut statuses = vec![outcome.status().unwrap()];
+    while let Some(next) = request.follow_redirect(&outcome).unwrap() {
+        request = next;
+        outcome = execute(&client, &request, cancellation.clone()).await;
+        statuses.push(outcome.status().unwrap());
+    }
+    assert_eq!(statuses, [303, 307, 200]);
+    assert_eq!(
+        outcome.received_2xx_json_exact().unwrap().raw(),
+        r#"{"done":true}"#
+    );
+    let [first, second] = <[Captured; 2]>::try_from(server.await.unwrap()).unwrap();
+    assert!(first.head.starts_with("POST /items/alpha HTTP/1.1\r\n"));
+    assert_eq!(first.body, br#"{"n":1}"#);
+    // 303 turns POST into GET without content; the same origin keeps credentials.
+    let head = second.head.to_ascii_lowercase();
+    assert!(
+        second
+            .head
+            .starts_with("GET /items/alpha/status?q=1 HTTP/1.1\r\n")
+    );
+    assert!(head.contains("authorization: bearer local-test-token\r\n"));
+    assert!(!head.contains("content-type") && !head.contains("content-length"));
+    assert!(second.body.is_empty());
+    // Another origin receives no credential.
+    let [moved] = <[Captured; 1]>::try_from(destination.await.unwrap()).unwrap();
+    assert!(moved.head.starts_with("GET /files/alpha HTTP/1.1\r\n"));
+    assert!(!moved.head.to_ascii_lowercase().contains("authorization"));
+}
+
 #[tokio::test]
 async fn response_limit_distinguishes_eof_from_more_bytes() {
     for (limit, body, state) in [

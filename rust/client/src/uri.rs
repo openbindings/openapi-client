@@ -144,6 +144,19 @@ pub fn origin(target: &str) -> Result<String, Diagnostic> {
         a.host().to_ascii_lowercase()
     ))
 }
+/// Resolve a redirect's Location reference against the request target, drop any
+/// fragment and require an admitted HTTP(S) destination. Only literal dot
+/// segments are removed; no other normalization occurs.
+pub(crate) fn redirect_target(location: &str, target: &str) -> Result<String, Diagnostic> {
+    let mut resolved = resolve(location, target)?;
+    // Scheme, authority, path and query never contain a raw '#', so the first
+    // one, if any, begins the fragment.
+    if let Some(fragment) = resolved.find('#') {
+        resolved.truncate(fragment);
+    }
+    origin(&resolved)?;
+    Ok(resolved)
+}
 pub(crate) fn server_target(server: &str, base: Option<&str>) -> Result<String, Diagnostic> {
     let u = UriRef::parse(server).map_err(|_| invalid())?;
     if u.query().is_some() || u.fragment().is_some() {

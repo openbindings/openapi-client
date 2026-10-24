@@ -6,7 +6,7 @@ use dynamic_openapi_client::transport::ReplayPolicy;
 use dynamic_openapi_client::{
     Cancellation, Document, Header, Limits, Outcome, ParameterLocation, qualification,
 };
-use dynamic_openapi_client_fetch::{Client, Profile};
+use dynamic_openapi_client_fetch::{Client, Profile, advanced};
 use serde_json::{Value as Json, json};
 use std::{future::Future, pin::Pin, task::Context};
 use wasm_bindgen::prelude::*;
@@ -16,6 +16,10 @@ fn js_error(error: impl std::fmt::Display) -> JsValue {
 }
 
 fn facts(outcome: Outcome) -> String {
+    outcome_facts(&outcome).to_string()
+}
+
+fn outcome_facts(outcome: &Outcome) -> Json {
     let response = outcome.status().map(|status| {
         json!({
             "status": status,
@@ -32,14 +36,14 @@ fn facts(outcome: Outcome) -> String {
         "error": outcome.error().map(|error| format!("{:?}", error.code())),
         "reason": outcome.error().and_then(|error| error.reason()).map(|reason| format!("{reason:?}")),
         "response": response,
-    }).to_string()
+    })
 }
 
 /// The harness polls an ordinary product future and can actually drop it mid-call.
 /// No spawned task keeps that future alive after JavaScript calls free().
 #[wasm_bindgen]
 pub struct FetchCall {
-    future: Option<Pin<Box<dyn Future<Output = Outcome>>>>,
+    future: Option<Pin<Box<dyn Future<Output = String>>>>,
     cancellation: Cancellation,
     wire: String,
 }
@@ -116,7 +120,67 @@ impl FetchClient {
         } else {
             ReplayPolicy::RequireNoReplay
         };
-        let future = Box::pin(async move { client.send(request, replay).await });
+        let future = Box::pin(async move { facts(client.send(request, replay).await) });
+        Ok(FetchCall {
+            future: Some(future),
+            cancellation,
+            wire,
+        })
+    }
+
+    /// Execute the probe operation and follow each redirect through the public
+    /// redirect step, recording every hop's evidence and the step's refusal.
+    pub fn follow(&self, document: &str, body_limit: usize) -> Result<FetchCall, JsValue> {
+        let client = self.0.clone();
+        let limits = Limits {
+            body_bytes: body_limit,
+            ..Limits::default()
+        };
+        let prepared = Document::parse(document, None, limits)
+            .map_err(js_error)?
+            .operation_id("probe")
+            .map_err(js_error)?
+            .request()
+            .prepare()
+            .map_err(js_error)?;
+        let wire = json!({
+            "target": prepared.target(),
+            "method": prepared.method().as_str(),
+        })
+        .to_string();
+        let cancellation = Cancellation::default();
+        let token = cancellation.clone();
+        let replay = ReplayPolicy::AllowHostManaged;
+        let future = Box::pin(async move {
+            let mut request = prepared;
+            let mut requests = vec![json!({
+                "target": request.target(),
+                "method": request.method().as_str(),
+            })];
+            let mut hops = vec![];
+            let mut outcome = advanced::execute(&client, &request, token.clone(), replay).await;
+            let refusal = loop {
+                hops.push(outcome_facts(&outcome));
+                match request.follow_redirect(&outcome) {
+                    Ok(Some(next)) => {
+                        request = next;
+                        requests.push(json!({
+                            "target": request.target(),
+                            "method": request.method().as_str(),
+                        }));
+                        outcome = advanced::execute(&client, &request, token.clone(), replay).await;
+                    }
+                    Ok(None) => break Json::Null,
+                    Err(error) => {
+                        break json!({
+                            "error": format!("{:?}", error.code()),
+                            "reason": error.reason().map(|reason| format!("{reason:?}")),
+                        });
+                    }
+                }
+            };
+            json!({"requests": requests, "hops": hops, "refusal": refusal}).to_string()
+        });
         Ok(FetchCall {
             future: Some(future),
             cancellation,
@@ -148,9 +212,9 @@ impl FetchCall {
         let mut context = Context::from_waker(std::task::Waker::noop());
         match future.as_mut().poll(&mut context) {
             std::task::Poll::Pending => Ok(None),
-            std::task::Poll::Ready(outcome) => {
+            std::task::Poll::Ready(facts) => {
                 self.future = None;
-                Ok(Some(facts(outcome)))
+                Ok(Some(facts))
             }
         }
     }

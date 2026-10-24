@@ -26,6 +26,11 @@ Explicit AllowHostManaged authorizes the host's repetition behavior. The library
 calls Fetch once; this is not a bound on network attempts. Upload remains Unknown.
 The separate received-response policy accepts a complete response without inventing
 complete upload. There is no automatic library retry or redirect-follow loop.
+To follow a redirect, derive the next request with `PreparedRequest::follow_redirect`
+and execute it with `advanced::execute`. Worker returns a manual redirect as the
+actual 3xx response with its `Location`, which the step follows. A Browser manual
+redirect is opaque, with neither status nor `Location`, so the step refuses it with
+`OpaqueRedirect`.
 
 Profiles use a real Request with manual redirects, omitted ambient credentials and
 an empty referrer. Browser uses CORS. Request URL, method and every unique supplied
@@ -101,7 +106,9 @@ in Chromium and workerd alongside the existing core checks. Every Fetch probe
 records concrete assertions in `observations/hosts-*/results.json`: exact and
 excess response limits (including zero and delayed EOF/extra-byte evidence), preserved URL/method/header values,
 default replay refusal and explicit HostManaged admission, preflight header/URL
-refusals, cancellation before dispatch and during pending headers/body reads,
+refusals, a manual redirect through the redirect step (followed by a second Fetch
+call on Worker, refused as opaque on Browser), cancellation before dispatch and
+during pending headers/body reads,
 future drop during both waits, a body with no completion timer, and independent
 cancellation tokens on one reusable client whose sibling completes. Each probe checks Rust JSON owners
 and owned Wasm JS references return to baseline, with no pending observed native

@@ -117,6 +117,7 @@ pub mod diagnostics {
     pub use crate::error::Location;
     pub use crate::error::NumericReason;
     pub use crate::error::NumericTarget;
+    pub use crate::error::RedirectRefusal;
     pub use crate::error::SelectionKind;
     pub use crate::error::SerializationReason;
     pub use crate::error::VersionReason;

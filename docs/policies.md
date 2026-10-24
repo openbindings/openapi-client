@@ -17,9 +17,9 @@ faithful. See [the API contract](public-api-v1.md) for the supported call flow.
 
 No implicit redirect following. Core admission requires a host that does not follow redirects; native HTTP and Fetch use manual redirects. Nonopaque 3xx responses remain evidence.
 
-Configuration: Fixed for admitted invocation; there is no redirect-follow switch. The caller can inspect a response and explicitly initiate another call.
+Configuration: Fixed for admitted invocation; there is no redirect-follow switch. The caller can inspect a response, derive the next request with `PreparedRequest::follow_redirect` under [CP25](#cp25-explicit-redirect-step), and invoke it as another admitted call.
 
-Evidence: [Host contract](../rust/client/HOSTS.md), [host restriction tests](../rust/client/tests/host_contract.rs) (`non_replay_restrictions_precede_replay_and_opt_in_never_relaxes_them`), [native redirect test](../rust/reqwest/tests/real_http.rs) (`redirects_are_evidence_and_never_followed`).
+Evidence: [Host contract](../rust/client/HOSTS.md), [host restriction tests](../rust/client/tests/host_contract.rs) (`non_replay_restrictions_precede_replay_and_opt_in_never_relaxes_them`), [native redirect test](../rust/reqwest/tests/real_http.rs) (`redirects_are_evidence_and_never_followed`), [redirect step tests](../rust/client/tests/redirect_step.rs) (`each_hop_is_a_separate_admitted_call_and_the_step_never_sends`).
 
 ## P02
 
@@ -195,6 +195,20 @@ Resolve and expand the server, then append the complete operation path. At a
 slash/slash boundary remove exactly one final server slash; preserve all other
 repeated/trailing slashes. OpenAPI specifies appending without fixing those bytes.
 This is client policy, configurable only through server/variable election. See B01.
+
+## CP25: Explicit redirect step
+
+`PreparedRequest::follow_redirect(&outcome)` derives the request that follows a 301, 302, 303, 307 or 308 response and sends nothing. No response, any other status (including 300, 304 and 305) or no `Location` field returns `None`: the outcome is final. 301 and 302 turn POST into GET without content and keep any other method and content; 303 turns every method but HEAD into GET without content, and HEAD stays HEAD; 307 and 308 keep the method and content. Dropping content also drops the `Content-Type`, `Content-Encoding`, `Content-Language` and `Content-Location` fields. These are the Fetch standard's rules, which [RFC9110 §15.4](https://www.rfc-editor.org/rfc/rfc9110#section-15.4) describes as where practice converged; following a redirect is optional there.
+
+`Location` resolves against the request target as an [RFC3986 §5.2](https://www.rfc-editor.org/rfc/rfc3986#section-5.2) reference with [P08](#p08)'s literal dot-segment removal and no other normalization. The fragment is dropped, and the result must be an absolute http or https URI with a host and no userinfo. A redirect from https to http refuses.
+
+On the same origin (scheme, host and effective port, compared as credential origins are) the request keeps its credentials, still within their origin grants. Query credentials are reapplied after the `Location`'s own query, so a redirect that preserves the query does not repeat them; a `Location` pair that names a query credential with another value refuses with `CredentialCollision`, as at preparation. On another origin the step removes every credential the request carries, wherever it was applied (header, query or cookie), together with every field the caller marked sensitive, every `Authorization` field (whose value consists of credentials, [RFC9110 §11.6.2](https://www.rfc-editor.org/rfc/rfc9110#section-11.6.2)) and every `Cookie` field. A removed credential does not return on a later hop.
+
+Each derived request records how many redirects led to it; deriving one past `Limits::redirects` (default 20, the Fetch standard's limit) refuses. The step requires `HeaderDelivery::Complete` evidence with no core omission, so a truncated header list cannot hide or forge a `Location`, and it does not read the body. A Browser opaque redirect has no status or `Location`; the step refuses it with `OpaqueRedirect` instead of guessing.
+
+Configuration: `Limits::redirects` bounds a chain. The method, content, credential, cookie and downgrade rules are fixed; to send a credential to another origin, prepare a new request with it. Each derived request is a separate call the caller chooses to make, through the same host admission as any request.
+
+Evidence: [redirect step tests](../rust/client/tests/redirect_step.rs), [native chain](../rust/reqwest/tests/real_http.rs) (`redirect_step_follows_a_native_chain_explicitly`), [Fetch host probe](../rust/qualification/host/fetch-probes.mjs) (`redirect-step`), [host contract](../rust/client/HOSTS.md).
 
 The optional companions impose additional documented host restrictions. Native
 HTTP timeout and trust-root configuration is in the
