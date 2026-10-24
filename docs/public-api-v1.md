@@ -39,6 +39,9 @@ The [Rust API guide](../rust/client/README.md) documents the actual surface:
   server, body-compatible media and security alternatives require selection.
 - `PreparedRequest::invoke` admits a supplied host and enters its asynchronous
   callback at most once. Optional native HTTP and Fetch companions supply hosts.
+- `PreparedRequest::follow_redirect` derives the request that follows a redirect
+  outcome without sending it, under the [redirect policy](policies.md#cp25-explicit-redirect-step).
+  The caller invokes it as another admitted call; nothing follows automatically.
 - `Outcome` keeps dispatch, upload, cancellation, errors and available response
   evidence independent through read-only accessors. Optional status, headers,
   delivered bytes and fidelity/provenance distinguish no response from received

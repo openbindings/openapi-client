@@ -127,6 +127,9 @@ pub struct Limits {
     pub number_conversion_chars: usize,
     /// Maximum compiled operation entries retained by a document.
     pub cached_operations: usize,
+    /// Maximum redirects `PreparedRequest::follow_redirect` derives in one chain
+    /// (default 20); the step refuses to derive one more.
+    pub redirects: usize,
 }
 impl Default for Limits {
     fn default() -> Self {
@@ -149,6 +152,7 @@ impl Default for Limits {
             headers: 256,
             number_conversion_chars: 256,
             cached_operations: 1024,
+            redirects: 20,
         }
     }
 }

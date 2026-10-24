@@ -7,7 +7,7 @@ The core accepts supplied JSON/YAML descriptions in Swagger 2.0 and OpenAPI
 Both packages are unpublished; use Cargo path dependencies to `rust/client`
 and `rust/reqwest` in your checkout. Typed models use Serde derives.
 
-The four jobs below use five executable examples. The excerpts need the imports,
+The four jobs below use six executable examples. The excerpts need the imports,
 models and fixture setup in those files;
 the native examples start their own loopback service and need no real credentials.
 Run the commands from the repository root.
@@ -132,6 +132,35 @@ arrived. Empty bytes remain a received body. Actual execution diagnostics preced
 cancellation, then invalid evidence, HTTP status and JSON/projection refusals.
 Typed floating-point projection can round; exact tokens remain unchanged.
 See [host evidence and body admission](HOSTS.md) and [Serde projection](EXACT.md).
+
+## Follow a redirect
+
+Neither the client nor its hosts follow redirects on their own. [`redirect`](../reqwest/examples/redirect.rs)
+prepares a call and, for each redirect outcome, derives the next request and sends it as a new call:
+
+<!-- include: rust/reqwest/examples/redirect.rs#follow-redirect -->
+```rust,ignore
+let mut request = prepared;
+let mut outcome = advanced::execute(&client, &request, cancellation.clone()).await;
+while let Some(next) = request.follow_redirect(&outcome)? {
+    request = next;
+    outcome = advanced::execute(&client, &request, cancellation.clone()).await;
+}
+```
+<!-- endinclude -->
+
+Run `cargo run --manifest-path rust/Cargo.toml -p dynamic-openapi-client-reqwest --example redirect`.
+`follow_redirect` sends nothing and returns `None` when the outcome is final: no
+response, a status other than 301, 302, 303, 307 or 308, or no `Location`. It
+applies each status's method and content rule, keeps credentials on the same
+origin, removes every credential and `Cookie` field on another origin, refuses
+https to http and stops past `Limits::redirects` (default 20). These are client
+policies ([CP25](../../docs/policies.md#cp25-explicit-redirect-step)). The loop
+starts from a `PreparedRequest`, so supply credentials on the builder: the native
+companion applies its configured credentials only in `send`. A browser exposes a
+manual redirect only as an opaque response, which the step refuses with
+`OpaqueRedirect`; native, Worker and custom hosts deliver real 3xx responses.
+See [following a redirect](HOSTS.md#following-a-redirect).
 
 ## Correct a refusal
 

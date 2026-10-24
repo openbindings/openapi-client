@@ -1,5 +1,16 @@
 # Unreleased (0.0.0)
 
+- Add `PreparedRequest::follow_redirect`, an explicit redirect step that derives
+  the next request from a 301, 302, 303, 307 or 308 outcome and sends nothing.
+  It applies the Fetch standard's method and content rules, resolves `Location`
+  under the literal dot-segment policy, keeps credentials on the same origin and
+  removes them and `Cookie` on another, refuses https to http, requires complete
+  header delivery and refuses an opaque redirect. Add `Limits::redirects`
+  (default 20), `LimitKind::Redirects`, `DiagnosticReason::Redirect` and
+  `diagnostics::RedirectRefusal`. Struct literals of `Limits` without
+  `..Limits::default()` need the new field. Admission, `send` and existing
+  outcomes are unchanged.
+
 - Merge Response into immutable Outcome with optional received-fact accessors.
   Replace composite JSON policy records/functions with borrowed `received_2xx_json`,
   `received_2xx_json_exact` and `body_json` reads sharing one lazy decode cache.

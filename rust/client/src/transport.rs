@@ -8,6 +8,8 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
+mod redirect;
+
 /// Ordered HTTP header field with explicit credential sensitivity.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Header {

@@ -460,6 +460,13 @@ pub struct PreparedRequest {
     pub(crate) body: Option<Arc<[u8]>>,
     pub(crate) body_kind: &'static str,
     pub(crate) limits: Limits,
+    /// Byte offset in `target` where query pairs applied from credentials begin.
+    /// They follow every other pair, so they are the query's tail; equal to
+    /// `target.len()` when no credential is applied in the query. Credential
+    /// header lines are marked sensitive, as is the Cookie line built here.
+    pub(crate) credential_query: usize,
+    /// Redirects followed to derive this request; zero when prepared directly.
+    pub(crate) redirects: usize,
 }
 impl std::fmt::Debug for PreparedRequest {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -2160,6 +2167,7 @@ impl Operation {
             }
             headers.push(Header::new("Content-Type", media.as_bytes()));
         }
+        let parameter_pairs = query.len();
         apply_security(
             &self.store.graph,
             &root,
@@ -2209,6 +2217,18 @@ impl Operation {
             target.push('?');
             append_pairs(&mut target, &query, "&", cancellation)?;
         }
+        // Credential pairs were applied after every parameter pair, so they end
+        // the query: each spans its name, `=` and value, joined by one `&`.
+        let credential_query = match &query[parameter_pairs..] {
+            [] => target.len(),
+            pairs => {
+                target.len() + 1
+                    - pairs
+                        .iter()
+                        .map(|(name, value)| name.len() + value.len() + 2)
+                        .sum::<usize>()
+            }
+        };
         if target.len() > limits.target_bytes {
             return Err(Diagnostic::limited(
                 LimitKind::TargetBytes,
@@ -2237,6 +2257,8 @@ impl Operation {
             body,
             body_kind,
             limits,
+            credential_query,
+            redirects: 0,
         })
     }
 }
