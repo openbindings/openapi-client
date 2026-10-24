@@ -143,7 +143,8 @@ the decode result. Metadata cutoff/conversion failure alone must not be passed a
 Complete decoded JSON can succeed with Unknown/HostProcessed fidelity and
 Unspecified delivery. A combined invalid Content-Type is not heuristically split.
 Body `Provenance` independently determines whether listed codings remain unresolved.
-Nonopaque 3xx responses are ordinary evidence, not opaque redirects.
+Nonopaque 3xx responses are ordinary evidence, not opaque redirects; see
+[following a redirect](#following-a-redirect) to derive the next request from one.
 
 The native companion uses strict defaults and retains its existing never-replay
 policy after serialization may have begun. Its proven-unsent connection recovery
@@ -208,3 +209,58 @@ come from [RFC9110 §§5, 8, 15](https://www.rfc-editor.org/rfc/rfc9110#section-
 2xx means successful HTTP status, not proven complete upload.
 Matrix rows H01–H09 and R01–R02 in [CAPABILITIES.md](CAPABILITIES.md) distinguish
 core evidence tests, native socket gates and Fetch runtime qualification.
+
+## Following a redirect
+
+Neither the core nor an admitted host follows a redirect. To follow one, derive
+the next request from the outcome with `PreparedRequest::follow_redirect` and
+invoke it as another call:
+
+```rust
+use dynamic_openapi_client::{Cancellation, Diagnostic, Outcome};
+use dynamic_openapi_client::transport::{HostCapabilities, PreparedRequest, TransportResult};
+use std::future::Future;
+
+async fn follow<F, Fut>(
+    prepared: PreparedRequest,
+    cancellation: Cancellation,
+    host: &HostCapabilities,
+    send: F,
+) -> Result<Outcome, Diagnostic>
+where
+    F: Fn(PreparedRequest, Cancellation) -> Fut,
+    Fut: Future<Output = TransportResult>,
+{
+    let mut request = prepared;
+    let mut outcome = request.invoke(cancellation.clone(), host, &send).await;
+    while let Some(next) = request.follow_redirect(&outcome)? {
+        request = next;
+        outcome = request.invoke(cancellation.clone(), host, &send).await;
+    }
+    Ok(outcome)
+}
+```
+
+The step performs no I/O. `Ok(None)` means there is no redirect to follow: no
+response arrived, the status is not 301, 302, 303, 307 or 308, or there is no
+`Location` field. Each hop is a new request the server asked for, not a replay:
+it enters its callback once and passes the same admission as any request, and
+destination policy, including after DNS resolution, remains the host's at every
+hop. The step reads only the status and `Location`, never the body, and it
+requires `HeaderDelivery::Complete` with no core omission, so a truncated header
+list cannot hide or forge a `Location`. A host whose redirects should be
+followable declares complete enumeration; `Unspecified` or `Incomplete` delivery
+refuses with `InvalidHostEvidence` and `RedirectRefusal::HeaderDelivery`.
+
+The method, content, credential, cookie, downgrade and chain-limit rules are
+client policy [CP25](../../docs/policies.md#cp25-explicit-redirect-step). An unusable
+`Location` and an https to http redirect refuse with `InvalidDestination` and
+`RedirectRefusal::Location` or `RedirectRefusal::Downgrade`; a chain past
+`Limits::redirects` (default 20) refuses with a `Limit` of `LimitKind::Redirects`.
+
+Native HTTP and custom hosts deliver real 3xx responses with their headers. The
+Fetch Worker profile does too: workerd returns the actual 3xx response for a manual
+redirect, with its `Location`, and the host probe `redirect-step` follows it. A
+browser's manual redirect is an opaque response with neither status nor `Location`,
+so the step refuses it with `OpaqueRedirect` instead of guessing; a Browser
+caller cannot follow a redirect through the step.

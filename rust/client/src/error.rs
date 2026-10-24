@@ -62,6 +62,8 @@ pub enum LimitKind {
     FormWork,
     BoundaryAttempts,
     NumberCharacters,
+    /// Redirects followed in one chain, bounded by Limits::redirects.
+    Redirects,
 }
 /// Requested checked numeric representation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -156,6 +158,18 @@ impl From<HostRefusal> for Diagnostic {
         Self::new(Code::HostCapability).reasoned(DiagnosticReason::Host(refusal))
     }
 }
+/// Controlled reason the redirect step cannot derive the next request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum RedirectRefusal {
+    /// The Location field is repeated, is not a URI reference, or does not
+    /// resolve to an absolute http or https URI with a host and no userinfo.
+    Location,
+    /// The redirect leaves https for http.
+    Downgrade,
+    /// Header delivery is not known complete, so a Location field could be missing.
+    HeaderDelivery,
+}
 /// Corrective information with privacy-safe default formatting.
 /// Retained source evidence is available only through explicit accessors.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -169,6 +183,8 @@ pub enum DiagnosticReason {
     },
     /// A controlled host capability or replay policy refusal.
     Host(HostRefusal),
+    /// A controlled refusal of the redirect step.
+    Redirect(RedirectRefusal),
     /// Selected schema interpretation or bounded fact refusal.
     Schema(crate::schema::SchemaReason),
     /// Why a finite named form could not be represented.

@@ -30,6 +30,17 @@ export async function runFetch(api, base, host, runId) {
     owned.add(call);
     return call;
   }
+  function follow(id, kind, limit = 4096) {
+    const path = `/fetch/${id}/${kind}`;
+    const document = {
+      openapi: '3.1.2', info: { title: 'packaged Fetch consumer', version: '1' },
+      servers: [{ url: base }],
+      paths: { [path]: { get: { operationId: 'probe', responses: { '200': { description: 'ok' } } } } },
+    };
+    const call = client.follow(JSON.stringify(document), limit);
+    owned.add(call);
+    return call;
+  }
   function dispose(call) { call.free(); owned.delete(call); }
   async function finish(call) {
     let result;
@@ -124,6 +135,29 @@ export async function runFetch(api, base, host, runId) {
         && echo.headers['x-probe'] === 'preserved, value' && echo.headers['x-second'] === 'second'
         && observed.headers.some(([name, value]) => name === 'x-probe' && value === 'preserved, value')
         && observed.headers.some(([name, value]) => name === 'x-second' && value === 'second'), echo);
+      dispose(call);
+    });
+    await probe('redirect-step', async ({ id, facts, check, before }) => {
+      const call = follow(id, 'redirect');
+      const out = facts.outcome = await finish(call);
+      const echoTarget = `${base}/fetch/${id}/echo`;
+      if (host === 'workerd') {
+        check('a manual Worker redirect is the actual 302 with its Location',
+          out.hops[0]?.error === null && out.hops[0].response?.status === 302, out);
+        check('the step derives a GET to the resolved Location, sent as a second admitted call',
+          out.refusal === null && out.requests.length === 2 && out.requests[1].target === echoTarget
+          && out.requests[1].method === 'GET' && out.hops.length === 2 && out.hops[1].response?.status === 200, out);
+        const echo = facts.server_echo = JSON.parse(text(out.hops[1]?.response?.raw ?? []));
+        check('the fixture receives the followed request, and Fetch is entered once per hop',
+          echo.method === 'GET' && echo.target === echoTarget.slice(base.length) && (await state(id)).received === 2
+          && observer.snapshot().fetch_calls === before.fetch_calls + 2, { echo, server: await state(id) });
+      } else {
+        check('a browser manual redirect is opaque, and the step refuses it instead of guessing',
+          out.hops.length === 1 && out.hops[0].error === 'OpaqueRedirect' && out.requests.length === 1
+          && out.refusal?.error === 'OpaqueRedirect', out);
+        check('the redirect target is never requested', (await state(id)).received === 1
+          && observer.snapshot().fetch_calls === before.fetch_calls + 1, await state(id));
+      }
       dispose(call);
     });
     for (const [name, options, reason] of [

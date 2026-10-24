@@ -87,6 +87,54 @@ pub async fn service() -> Result<
     Ok((source, origin, task))
 }
 
+/// Answer the create call with 303 See Other, then serve the status it names.
+pub async fn redirect_service() -> Result<
+    (
+        Vec<u8>,
+        String,
+        tokio::task::JoinHandle<std::io::Result<()>>,
+    ),
+    Error,
+> {
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let origin = format!("http://{}", listener.local_addr()?);
+    let source = document(&origin);
+    let task = tokio::spawn(async move {
+        for hop in 0..2 {
+            let (mut stream, _) = listener.accept().await?;
+            let mut head = Vec::new();
+            while !head.ends_with(b"\r\n\r\n") {
+                head.push(stream.read_u8().await?);
+                assert!(head.len() < 16384);
+            }
+            let head = String::from_utf8(head).unwrap();
+            // The same origin keeps the credential on both hops.
+            assert!(head.contains("authorization: Bearer local-token\r\n"));
+            if hop == 0 {
+                assert!(head.starts_with("POST /items/7 "));
+                let length: usize = head
+                    .lines()
+                    .find_map(|s| s.strip_prefix("content-length: "))
+                    .unwrap()
+                    .parse()
+                    .unwrap();
+                let mut body = vec![0; length];
+                stream.read_exact(&mut body).await?;
+                stream.write_all(b"HTTP/1.1 303 See Other\r\nLocation: /items/7/status\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await?;
+            } else {
+                // 303 turned the POST into a GET without content.
+                assert!(head.starts_with("GET /items/7/status "));
+                assert!(!head.contains("content-type"));
+                let body = br#"{"id":7,"name":"example"}"#;
+                stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).as_bytes()).await?;
+                stream.write_all(body).await?;
+            }
+        }
+        Ok(())
+    });
+    Ok((source, origin, task))
+}
+
 #[derive(Debug, Deserialize)]
 pub struct ApiError {
     pub error: String,

@@ -42,6 +42,9 @@ export function fetchFixtures() {
       res.end();
     } else if (kind === 'one-byte') {
       res.end('a');
+    } else if (kind === 'redirect') {
+      res.writeHead(302, { Location: `/fetch/${id}/echo` });
+      res.end();
     } else {
       res.writeHead(404);
       res.end();
